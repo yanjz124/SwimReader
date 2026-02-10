@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet sln add:*)",
+      "Bash(cd:*)",
+      "Bash(del \"c:\\\\Users\\\\yanjz\\\\Documents\\\\VSCode Projects\\\\SwimReader\\\\src\\\\SwimReader.Core\\\\Class1.cs\")",
+      "Bash(del \"c:\\\\Users\\\\yanjz\\\\Documents\\\\VSCode Projects\\\\SwimReader\\\\src\\\\SwimReader.Scds\\\\Class1.cs\")",
+      "Bash(del \"c:\\\\Users\\\\yanjz\\\\Documents\\\\VSCode Projects\\\\SwimReader\\\\src\\\\SwimReader.Parsers\\\\Class1.cs\")",
+      "Bash(dotnet restore:*)",
+      "Bash(dotnet test:*)",
+      "Bash(dotnet run:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.faa.gov)",
+      "Bash(git clone:*)",
+      "WebFetch(domain:files.swim.faa.gov)",
+      "WebFetch(domain:aviationdatascience.org)",
+      "Bash(SCDSCONNECTION__HOST=\"tcps://ems2.swim.faa.gov:55443\" SCDSCONNECTION__USERNAME=\"yanjz124.gmail.com\" SCDSCONNECTION__PASSWORD=\"MuAREVwtQN6P-efy69F5DA\" SCDSCONNECTION__MESSAGEVPN=\"STDDS\" SCDSCONNECTION__QUEUENAME=\"yanjz124.gmail.com.STDDS.a9340f17-1ea4-478f-b89f-c8aaa5ed0cac.OUT\" dotnet run:*)",
+      "Bash(curl:*)",
+      "Bash(powershell -Command:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(echo:*)",
+      "WebFetch(domain:dstars.graiani.com)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

@@ -64,5 +64,8 @@ public sealed class DstarsFlightPlanUpdate
     public string? EquipmentSuffix { get; init; }
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? LDRDirection { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Guid? AssociatedTrackGuid { get; init; }
 }

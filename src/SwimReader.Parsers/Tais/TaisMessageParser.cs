@@ -81,15 +81,14 @@ public sealed class TaisMessageParser : IStddsMessageParser
 
             var status = track.Element("status")?.Value;
 
-            // Compute ground speed from vx/vy (velocities in ~0.22 knot units)
+            // Compute ground speed from vx/vy components (in knots)
             int? groundSpeed = null;
             int? groundTrack = null;
             if (int.TryParse(track.Element("vx")?.Value, out var vx) &&
                 int.TryParse(track.Element("vy")?.Value, out var vy))
             {
-                // vx/vy are in internal STARS units (~1/4.55 knots)
                 var speedRaw = Math.Sqrt(vx * vx + vy * vy);
-                groundSpeed = (int)Math.Round(speedRaw * 4.55); // Approximate conversion
+                groundSpeed = (int)Math.Round(speedRaw);
                 if (speedRaw > 0)
                 {
                     var heading = Math.Atan2(vx, vy) * 180.0 / Math.PI;
@@ -154,6 +153,8 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 Scratchpad1 = NullIfEmpty(fp.Element("scratchPad1")?.Value),
                 Scratchpad2 = NullIfEmpty(fp.Element("scratchPad2")?.Value),
                 Owner = fp.Element("cps")?.Value,
+                WakeCategory = NullIfEmpty(fp.Element("category")?.Value),
+                LdrDirection = ParseLdrDirection(fp.Element("lld")?.Value),
                 Facility = facility
             };
         }
@@ -185,4 +186,21 @@ public sealed class TaisMessageParser : IStddsMessageParser
 
     private static string? NullIfUnavailable(string? value)
         => value is null or "unavailable" ? null : value;
+
+    /// <summary>
+    /// Maps TAIS leader line direction string to DGScope LDRDirection enum value.
+    /// NW=1, N=2, NE=3, W=4, E=6, SW=7, S=8, SE=9
+    /// </summary>
+    private static int? ParseLdrDirection(string? lld) => lld?.ToUpperInvariant() switch
+    {
+        "NW" => 1,
+        "N" => 2,
+        "NE" => 3,
+        "W" => 4,
+        "E" => 6,
+        "SW" => 7,
+        "S" => 8,
+        "SE" => 9,
+        _ => null
+    };
 }

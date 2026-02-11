@@ -27,12 +27,13 @@ public sealed class TrackStateManager
         var key = BuildTrackKey(modeSCode, trackNumber, facility);
         var target = _targets.GetOrAdd(key, _ =>
         {
-            var t = new TrackedTarget { TrackGuid = Guid.NewGuid() };
+            var t = new TrackedTarget { TrackGuid = Guid.NewGuid(), Facility = facility };
             _logger.LogDebug("New track {Key} -> {Guid}", key, t.TrackGuid);
             return t;
         });
 
         target.LastSeen = DateTime.UtcNow;
+        target.Facility ??= facility;
         return target.TrackGuid;
     }
 
@@ -65,12 +66,12 @@ public sealed class TrackStateManager
     }
 
     /// <summary>
-    /// Remove stale targets and return deletion updates for purged entries.
+    /// Remove stale targets and return deletion updates (guid + facility) for purged entries.
     /// </summary>
-    public IReadOnlyList<Guid> PurgeStale()
+    public IReadOnlyList<(Guid Guid, string? Facility)> PurgeStale()
     {
         var cutoff = DateTime.UtcNow - _staleTimeout;
-        var deletions = new List<Guid>();
+        var deletions = new List<(Guid, string?)>();
 
         foreach (var kvp in _targets)
         {
@@ -78,9 +79,9 @@ public sealed class TrackStateManager
             {
                 if (_targets.TryRemove(kvp.Key, out var target))
                 {
-                    deletions.Add(target.TrackGuid);
+                    deletions.Add((target.TrackGuid, target.Facility));
                     if (target.FlightPlanGuid != Guid.Empty)
-                        deletions.Add(target.FlightPlanGuid);
+                        deletions.Add((target.FlightPlanGuid, target.Facility));
 
                     _logger.LogDebug("Purged stale target {Key}", kvp.Key);
                 }
@@ -107,6 +108,7 @@ public sealed class TrackStateManager
         public Guid TrackGuid { get; set; }
         public Guid FlightPlanGuid { get; set; }
         public string? Callsign { get; set; }
+        public string? Facility { get; set; }
         public DateTime LastSeen { get; set; } = DateTime.UtcNow;
     }
 }

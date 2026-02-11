@@ -57,6 +57,27 @@ public sealed class ClientConnectionManager
             kvp.Value.TryWrite(jsonLine);
         }
     }
+
+    /// <summary>
+    /// Broadcast a JSON line only to clients subscribed to the given facility.
+    /// If facility is null, broadcasts to all clients.
+    /// </summary>
+    public void Broadcast(string jsonLine, string? facility)
+    {
+        if (facility is null)
+        {
+            Broadcast(jsonLine);
+            return;
+        }
+
+        foreach (var kvp in _clients)
+        {
+            if (string.Equals(kvp.Value.Facility, facility, StringComparison.OrdinalIgnoreCase))
+            {
+                kvp.Value.TryWrite(jsonLine);
+            }
+        }
+    }
 }
 
 /// <summary>

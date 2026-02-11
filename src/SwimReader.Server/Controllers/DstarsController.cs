@@ -92,9 +92,7 @@ public sealed class DstarsController : ControllerBase
         else
         {
             // HTTP streaming response (newline-delimited JSON)
-            Response.ContentType = "application/x-ndjson";
-            Response.Headers.CacheControl = "no-cache";
-            Response.Headers.Connection = "keep-alive";
+            Response.ContentType = "application/json";
 
             await Response.StartAsync(ct);
 

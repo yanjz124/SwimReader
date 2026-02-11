@@ -35,6 +35,7 @@ public sealed class FlightPlanDataEvent : ISwimEvent
     public string? Scratchpad2 { get; init; }
     public string? Owner { get; init; }
     public string? PendingHandoff { get; init; }
+    public int? LdrDirection { get; init; }
 
     // Source facility
     public string? Facility { get; init; }

@@ -49,10 +49,10 @@ public sealed class DgScopeAdapter : BackgroundService
         {
             try
             {
-                var json = ConvertToJson(evt);
+                var (json, facility) = ConvertToJsonWithFacility(evt);
                 if (json is not null)
                 {
-                    _clients.Broadcast(json);
+                    _clients.Broadcast(json, facility);
                 }
             }
             catch (Exception ex)
@@ -62,18 +62,18 @@ public sealed class DgScopeAdapter : BackgroundService
         }
     }
 
-    private string? ConvertToJson(ISwimEvent evt)
+    private (string? json, string? facility) ConvertToJsonWithFacility(ISwimEvent evt)
     {
         switch (evt)
         {
             case TrackPositionEvent track:
-                return ConvertTrack(track);
+                return (ConvertTrack(track), track.Facility);
 
             case FlightPlanDataEvent fp:
-                return ConvertFlightPlan(fp);
+                return (ConvertFlightPlan(fp), fp.Facility);
 
             default:
-                return null;
+                return (null, null);
         }
     }
 
@@ -134,6 +134,7 @@ public sealed class DgScopeAdapter : BackgroundService
             PendingHandoff = fp.PendingHandoff,
             AssignedSquawk = fp.AssignedSquawk,
             EquipmentSuffix = fp.EquipmentSuffix,
+            LDRDirection = fp.LdrDirection,
             AssociatedTrackGuid = trackGuid
         };
 
@@ -148,8 +149,8 @@ public sealed class DgScopeAdapter : BackgroundService
         {
             try
             {
-                var deletedGuids = _trackState.PurgeStale();
-                foreach (var guid in deletedGuids)
+                var deletedTargets = _trackState.PurgeStale();
+                foreach (var (guid, facility) in deletedTargets)
                 {
                     var deletion = new DstarsDeletionUpdate
                     {
@@ -158,12 +159,12 @@ public sealed class DgScopeAdapter : BackgroundService
                     };
 
                     var json = JsonSerializer.Serialize(deletion, JsonOptions);
-                    _clients.Broadcast(json);
+                    _clients.Broadcast(json, facility);
                 }
 
-                if (deletedGuids.Count > 0)
+                if (deletedTargets.Count > 0)
                 {
-                    _logger.LogInformation("Purged {Count} stale targets", deletedGuids.Count);
+                    _logger.LogInformation("Purged {Count} stale targets", deletedTargets.Count);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -30,6 +30,8 @@ public sealed class TrackPositionEvent : ISwimEvent
     // Status
     public bool? IsOnGround { get; init; }
     public bool? Ident { get; init; }
+    public bool IsFrozen { get; init; }
+    public bool IsPseudo { get; init; }
 
     // Source facility
     public string? Facility { get; init; }

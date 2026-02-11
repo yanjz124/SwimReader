@@ -80,6 +80,7 @@ public sealed class DgScopeAdapter : BackgroundService
     private string ConvertTrack(TrackPositionEvent track)
     {
         var guid = _trackState.GetTrackGuid(track.ModeSCode, track.TrackNumber, track.Facility);
+        var positionOnly = track.IsFrozen || track.IsPseudo;
 
         var update = new DstarsTrackUpdate
         {
@@ -90,19 +91,21 @@ public sealed class DgScopeAdapter : BackgroundService
                 Latitude = track.Position.Latitude,
                 Longitude = track.Position.Longitude
             },
-            Altitude = track.AltitudeFeet.HasValue ? new DstarsAltitude
+            // Omit altitude, squawk, Mode S for frozen/pseudo tracks so DGScope
+            // treats them as PrimaryOnly (position symbol only, no datablock)
+            Altitude = !positionOnly && track.AltitudeFeet.HasValue ? new DstarsAltitude
             {
                 Value = track.AltitudeFeet.Value,
                 AltitudeType = (int)track.AltitudeType
             } : null,
-            GroundSpeed = track.GroundSpeedKnots,
+            GroundSpeed = positionOnly ? null : track.GroundSpeedKnots,
             GroundTrack = track.GroundTrackDegrees,
-            VerticalRate = track.VerticalRateFpm,
-            Squawk = track.Squawk,
-            Callsign = track.Callsign,
-            ModeSCode = track.ModeSCode,
+            VerticalRate = positionOnly ? null : track.VerticalRateFpm,
+            Squawk = positionOnly ? null : track.Squawk,
+            Callsign = positionOnly ? null : track.Callsign,
+            ModeSCode = positionOnly ? null : track.ModeSCode,
             Ident = track.Ident,
-            IsOnGround = track.IsOnGround
+            IsOnGround = positionOnly ? null : track.IsOnGround
         };
 
         return JsonSerializer.Serialize(update, JsonOptions);

@@ -97,6 +97,9 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 }
             }
 
+            var isFrozen = track.Element("frozen")?.Value == "1";
+            var isPseudo = track.Element("pseudo")?.Value == "1";
+
             return new TrackPositionEvent
             {
                 Timestamp = receivedAt,
@@ -112,6 +115,8 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 GroundTrackDegrees = groundTrack,
                 VerticalRateFpm = ParseInt(track.Element("vVert")?.Value),
                 IsOnGround = status == "drop" ? null : (ParseInt(track.Element("reportedAltitude")?.Value) == 0),
+                IsFrozen = isFrozen,
+                IsPseudo = isPseudo,
                 Facility = facility
             };
         }

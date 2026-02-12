@@ -157,7 +157,7 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 Runway = NullIfEmpty(fp.Element("runway")?.Value),
                 Scratchpad1 = NullIfEmpty(fp.Element("scratchPad1")?.Value),
                 Scratchpad2 = NullIfEmpty(fp.Element("scratchPad2")?.Value),
-                Owner = fp.Element("cps")?.Value,
+                Owner = NullIfUnassigned(fp.Element("cps")?.Value),
                 WakeCategory = NullIfEmpty(fp.Element("category")?.Value),
                 LdrDirection = ParseLdrDirection(fp.Element("lld")?.Value),
                 Facility = facility
@@ -191,6 +191,9 @@ public sealed class TaisMessageParser : IStddsMessageParser
 
     private static string? NullIfUnavailable(string? value)
         => value is null or "unavailable" ? null : value;
+
+    private static string? NullIfUnassigned(string? value)
+        => value is null or "unassigned" ? null : value;
 
     /// <summary>
     /// Maps TAIS leader line direction string to DGScope LDRDirection enum value.

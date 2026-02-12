@@ -1,0 +1,14 @@
+{"ac":[
+{"hex":"a54343","type":"adsb_icao","flight":"AXO930  ","r":"N4380W","t":"BE58","desc":"BEECH 58 Baron",
+"ownOp":"ATARAXIA AIRCRAFT HOLDINGS LLC",
+"year":"1974","alt_baro":3400,"alt_geom":3400,"gs":150.2,"track":233.66,"baro_rate":0,"squawk":"5670","emergency":"none","category":"A1","nav_qnh":1016.8,"nav_altitude_mcp":3488,"nav_heading":170.16,"nav_modes":["autopilot","althold","lnav"],"lat":34.116552,"lon":-78.106956,"nic":9,"rc":75,"seen_pos":0.358,"version":2,"nic_baro":1,"nac_p":10,"nac_v":2,"sil":3,"sil_type":"perhour","gva":2,"sda":2,"alert":0,"spi":0,"mlat":[],"tisb":[],"messages":15112990,"seen":0.4,"rssi":-16.5,"dst":13.803,"dir":228.2},
+{"hex":"add2b5","type":"adsb_icao","flight":"DAL548  ","r":"N990AT","t":"B712","desc":"BOEING 717-200",
+"ownOp":"DELTA AIR LINES INC",
+"year":"2001","alt_baro":500,"alt_geom":450,"gs":121.2,"track":228.68,"baro_rate":-640,"squawk":"2007","emergency":"none","category":"A3","nav_qnh":1016.8,"nav_altitude_mcp":3104,"nav_heading":237.66,"lat":34.294327,"lon":-77.866441,"nic":8,"rc":186,"seen_pos":0.114,"version":2,"nic_baro":1,"nac_p":10,"nac_v":2,"sil":3,"sil_type":"perhour","gva":2,"sda":2,"alert":0,"spi":0,"mlat":[],"tisb":[],"messages":153382461,"seen":0.1,"rssi":-0.4,"dst":2.215,"dir":48.7}
+]
+,"msg": "No error"
+,"now": 1770784634000
+,"total": 2
+,"ctime": 1770784634000
+,"ptime": 0
+}

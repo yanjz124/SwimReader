@@ -91,6 +91,30 @@ public sealed class TrackStateManager
         return deletions;
     }
 
+    /// <summary>
+    /// Check if a target with the given Mode S code is already being tracked.
+    /// Used by military injection to avoid duplicating TAIS targets.
+    /// </summary>
+    public bool HasTrack(int modeSCode)
+    {
+        var key = $"MS:{modeSCode:X6}";
+        return _targets.ContainsKey(key);
+    }
+
+    /// <summary>
+    /// Check if a tracked target in the same facility already has the given callsign.
+    /// Used by enrichment to avoid creating duplicate entries when TAIS
+    /// already has a correlated flight plan for the same callsign.
+    /// Facility-scoped to avoid cross-facility false positives (e.g., same flight
+    /// tracked by both PCT and ILM STARS systems).
+    /// </summary>
+    public bool HasCallsign(string callsign, string? facility)
+    {
+        return _targets.Values.Any(t =>
+            string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase) &&
+            (facility is null || string.Equals(t.Facility, facility, StringComparison.OrdinalIgnoreCase)));
+    }
+
     public int ActiveTrackCount => _targets.Count;
 
     private static string BuildTrackKey(int? modeSCode, string? trackNumber, string? facility)

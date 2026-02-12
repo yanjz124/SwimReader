@@ -23,7 +23,31 @@
       "Bash(echo:*)",
       "WebFetch(domain:dstars.graiani.com)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: SwimReader STDDS server\n\nFAA SWIM SCDS client that connects to STDDS via Solace SMF, parses\nreal-time TAIS surveillance data, and serves it to DGScope via the\nDstars ScopeServer protocol \\(newline-delimited JSON over HTTP streaming\\).\n\n- SwimReader.Core: Event bus, domain events, models\n- SwimReader.Scds: Solace SMF connection to FAA SCDS over TLS\n- SwimReader.Parsers: TAIS TATrackAndFlightPlan XML parser \\(+ stubs for TDES, SMES, APDS, ISMC\\)\n- SwimReader.Server: DGScope-compatible Dstars streaming endpoint\n- SwimReader.MessageCapture: Diagnostic tool for capturing raw SCDS messages\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(gh repo create:*)",
+      "Bash(python:*)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(gh api:*)",
+      "Bash(findstr:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nFix facility filtering, ground speed, LDR direction, and wake category\n\n- Route track/flight plan updates only to clients subscribed to the\n  matching facility, fixing DGScope showing no targets when facilities\n  outside radar range were being broadcast to all clients\n- Remove incorrect 4.55x velocity multiplier; TAIS vx/vy are already\n  in knots \\(vxRaw/vyRaw are the raw STARS units\\)\n- Parse leader line direction \\(<lld>\\) from TAIS XML and map compass\n  directions to DGScope LDRDirection enum values for datablock offset\n- Fix wake category parsing to use <category> element \\(not <wakeCategory>\\)\n- Change Content-Type to application/json to match DGScope expectations\n- Track facility in TrackStateManager for deletion routing\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)",
+      "Bash(find:*)",
+      "Bash(taskkill:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd frozen/pseudo track support for position-only display\n\nParse <frozen> and <pseudo> flags from TAIS XML. When either flag is\nset, strip altitude, squawk, Mode S, speed, and callsign from the\nDGScope JSON output so DGScope treats them as PrimaryOnly targets\n\\(diamond position symbol with no datablock\\).\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "WebFetch(domain:opendata.adsb.fi)",
+      "Bash(dir:*)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:www.ztlartcc.org)",
+      "WebFetch(domain:grokipedia.com)",
+      "WebFetch(domain:scauwg.org)",
+      "Bash(pip install:*)",
+      "Bash(python3:*)",
+      "Bash(powershell -NoProfile -Command \"Start-Sleep 3; $wc = New-Object System.Net.WebClient; $json = $wc.DownloadString\\(''https://opendata.adsb.fi/api/v3/lat/34.27/lon/-77.90/dist/60''\\); $json.Substring\\(0, 2000\\)\")",
+      "Bash(Start-Sleep -Seconds 30)",
+      "Bash(Select-String -Path \"C:\\\\Users\\\\yanjz\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-yanjz-Documents-VSCode-Projects-SwimReader\\\\tasks\\\\b9a7f24.output\" -Pattern \"DIAG ILM\")",
+      "Bash(Select-Object -First 30)",
+      "WebFetch(domain:api.adsb.fi)"
     ]
   }
 }

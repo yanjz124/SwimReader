@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Options;
 using SwimReader.Core.Bus;
 using SwimReader.Parsers;
 using SwimReader.Parsers.Apds;
@@ -9,6 +10,7 @@ using SwimReader.Scds;
 using SwimReader.Scds.Configuration;
 using SwimReader.Scds.Connection;
 using SwimReader.Server.Adapters;
+using SwimReader.Server.AdsbFi;
 using SwimReader.Server.Streaming;
 
 // Load .env file into environment variables (search upward from working directory)
@@ -62,6 +64,31 @@ builder.Services.AddHostedService<ParserPipelineHostedService>();
 builder.Services.AddSingleton<TrackStateManager>();
 builder.Services.AddSingleton<ClientConnectionManager>();
 builder.Services.AddHostedService<DgScopeAdapter>();
+
+// --- adsb.fi integration ---
+builder.Services.Configure<AdsbFiOptions>(
+    builder.Configuration.GetSection(AdsbFiOptions.SectionName));
+
+builder.Services.AddHttpClient("AdsbFi", (sp, client) =>
+{
+    var opts = sp.GetRequiredService<IOptions<AdsbFiOptions>>().Value;
+    client.BaseAddress = new Uri(opts.BaseUrl);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader/1.0");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+
+builder.Services.AddSingleton<AdsbFiClient>();
+builder.Services.AddSingleton<AdsbFiCache>();
+
+var adsbFiConfig = builder.Configuration.GetSection(AdsbFiOptions.SectionName).Get<AdsbFiOptions>();
+if (adsbFiConfig?.Enabled == true)
+{
+    if (adsbFiConfig.CallsignEnrichmentEnabled)
+        builder.Services.AddHostedService<CallsignEnrichmentService>();
+
+    if (adsbFiConfig.MilitaryInjectionEnabled)
+        builder.Services.AddHostedService<MilitaryInjectionService>();
+}
 
 // --- ASP.NET Core ---
 builder.Services.AddControllers();

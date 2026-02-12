@@ -116,6 +116,9 @@ public sealed class DgScopeAdapter : BackgroundService
         var guid = _trackState.GetFlightPlanGuid(fp.ModeSCode, fp.TrackNumber, fp.Callsign, fp.Facility);
         var trackGuid = _trackState.GetAssociatedTrackGuid(fp.ModeSCode, fp.TrackNumber, fp.Facility);
 
+        // When no primary scratchpad, default to the exit fix (matches STARS behavior)
+        var scratchpad1 = fp.Scratchpad1 ?? fp.ExitFix;
+
         var update = new DstarsFlightPlanUpdate
         {
             Guid = guid,
@@ -124,13 +127,13 @@ public sealed class DgScopeAdapter : BackgroundService
             AircraftType = fp.AircraftType,
             WakeCategory = fp.WakeCategory,
             FlightRules = fp.FlightRules,
-            Origin = fp.Origin,
-            Destination = fp.Destination,
+            Origin = IcaoToFaaLid(fp.Origin),
+            Destination = IcaoToFaaLid(fp.Destination),
             EntryFix = fp.EntryFix,
             ExitFix = fp.ExitFix,
             Route = fp.Route,
             RequestedAltitude = fp.RequestedAltitude,
-            Scratchpad1 = fp.Scratchpad1,
+            Scratchpad1 = scratchpad1,
             Scratchpad2 = fp.Scratchpad2,
             Runway = fp.Runway,
             Owner = fp.Owner,
@@ -142,6 +145,17 @@ public sealed class DgScopeAdapter : BackgroundService
         };
 
         return JsonSerializer.Serialize(update, JsonOptions);
+    }
+
+    /// <summary>
+    /// Convert ICAO airport code to FAA LID (e.g. KDCA → DCA, KORD → ORD).
+    /// US airports with "K" prefix are converted; others pass through unchanged.
+    /// </summary>
+    private static string? IcaoToFaaLid(string? icao)
+    {
+        if (icao is not null && icao.Length == 4 && icao[0] == 'K')
+            return icao[1..];
+        return icao;
     }
 
     private async Task PurgeLoopAsync(CancellationToken ct)

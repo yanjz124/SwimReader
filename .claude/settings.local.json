@@ -47,7 +47,19 @@
       "Bash(Start-Sleep -Seconds 30)",
       "Bash(Select-String -Path \"C:\\\\Users\\\\yanjz\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-yanjz-Documents-VSCode-Projects-SwimReader\\\\tasks\\\\b9a7f24.output\" -Pattern \"DIAG ILM\")",
       "Bash(Select-Object -First 30)",
-      "WebFetch(domain:api.adsb.fi)"
+      "WebFetch(domain:api.adsb.fi)",
+      "Bash(git pull:*)",
+      "Bash(git stash:*)",
+      "Bash(git reset:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git checkout:*)",
+      "Bash(dotnet build:*)",
+      "WebFetch(domain:crc.virtualnas.net)",
+      "WebFetch(domain:quizlet.com)",
+      "WebFetch(domain:virtualnas.net)",
+      "WebFetch(domain:vnas.vatsim.net)",
+      "Bash(powershell:*)",
+      "Bash(copy:*)"
     ]
   }
 }

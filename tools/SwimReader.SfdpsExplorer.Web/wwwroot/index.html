@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SFDPS Explorer</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
+    --fg: #c9d1d9; --fg2: #8b949e; --accent: #58a6ff; --green: #3fb950;
+    --red: #f85149; --yellow: #d29922; --purple: #bc8cff; --cyan: #39d2c0;
+    --orange: #d2a04e; --pin: #d2a04e;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--fg); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Top bar */
+  .topbar { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 8px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .topbar h1 { font-size: 15px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+  .status-dot.on { background: var(--green); }
+  .chip { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; font-size: 12px; color: var(--fg2); white-space: nowrap; }
+  .chip b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+
+  /* Filter bar */
+  .filterbar { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 6px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; flex-wrap: wrap; }
+  .filter-group { display: flex; align-items: center; gap: 4px; }
+  .filter-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--fg2); font-weight: 600; }
+  .filter-select { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px; color: var(--fg); outline: none; min-width: 80px; }
+  .filter-select:focus { border-color: var(--accent); }
+  .filter-input { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px; color: var(--fg); outline: none; width: 60px; }
+  .filter-input:focus { border-color: var(--accent); }
+  .filter-input::placeholder { color: var(--fg2); }
+  .search-box { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; font-size: 12px; color: var(--fg); width: 220px; outline: none; }
+  .search-box:focus { border-color: var(--accent); }
+  .search-box::placeholder { color: var(--fg2); }
+  .filter-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+  .pin-count { font-size: 11px; color: var(--pin); }
+  .btn-sm { background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font-size: 11px; color: var(--fg2); cursor: pointer; }
+  .btn-sm:hover { border-color: var(--accent); color: var(--fg); }
+
+  /* Main layout */
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  /* Flight table */
+  .table-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .table-wrapper { flex: 1; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead { position: sticky; top: 0; z-index: 1; }
+  thead th { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; color: var(--fg2); cursor: pointer; white-space: nowrap; user-select: none; }
+  thead th:hover { color: var(--fg); }
+  thead th.sorted { color: var(--accent); }
+  tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.1s; }
+  tbody tr:hover { background: var(--bg3); }
+  tbody tr.selected { background: #1a2332; border-left: 2px solid var(--accent); }
+  tbody tr.pinned { background: #1c1a11; }
+  tbody tr.pinned.selected { background: #22201a; border-left: 2px solid var(--pin); }
+  tbody td { padding: 4px 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .cs { font-weight: 700; color: var(--fg); }
+  .pin-icon { color: var(--pin); margin-right: 3px; font-size: 10px; }
+  .fac { color: var(--accent); font-weight: 600; }
+  .airport { color: var(--fg2); }
+  .alt { color: var(--cyan); }
+  .interim { color: var(--orange); font-weight: 700; }
+  .status-active { color: var(--green); }
+  .status-dropped { color: var(--red); }
+  .status-cancelled { color: var(--fg2); text-decoration: line-through; }
+  .dl-yes { color: var(--green); font-weight: 600; }
+  .dl-no { color: var(--fg2); opacity: 0.4; }
+  .ho-event { font-size: 11px; }
+  .sect-divider { height: 1px; background: var(--border); }
+  .sect-divider td { padding: 0; height: 2px; background: var(--pin); opacity: 0.3; }
+
+  /* Detail panel */
+  .detail-panel { width: 420px; background: var(--bg2); border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: width 0.2s; flex-shrink: 0; }
+  .detail-panel.collapsed { width: 0; border: none; }
+  .detail-header { display: flex; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border); gap: 8px; flex-shrink: 0; }
+  .detail-header .cs-big { font-size: 18px; font-weight: 700; color: var(--fg); }
+  .detail-header .type-badge { background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 11px; color: var(--fg2); }
+  .btn-pin { background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 3px 10px; font-size: 11px; cursor: pointer; color: var(--fg2); }
+  .btn-pin:hover { border-color: var(--pin); color: var(--pin); }
+  .btn-pin.active { background: var(--pin); color: #000; border-color: var(--pin); font-weight: 600; }
+  .detail-close { margin-left: auto; cursor: pointer; color: var(--fg2); font-size: 20px; padding: 2px 6px; border-radius: 4px; }
+  .detail-close:hover { background: var(--bg3); color: var(--fg); }
+  .detail-body { flex: 1; overflow-y: auto; padding: 10px 14px; }
+
+  /* Detail sections */
+  .section { margin-bottom: 14px; }
+  .section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--fg2); margin-bottom: 6px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .field-grid { display: grid; grid-template-columns: 110px 1fr; gap: 2px 8px; font-size: 12px; }
+  .field-label { color: var(--fg2); }
+  .field-value { color: var(--fg); word-break: break-all; }
+  .field-value.highlight { color: var(--cyan); font-weight: 600; }
+  .field-value.warn { color: var(--orange); font-weight: 600; }
+
+  /* Event log */
+  .event-log { font-size: 11px; }
+  .event-row { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+  .event-time { color: var(--fg2); font-family: 'Cascadia Code', monospace; font-size: 10px; white-space: nowrap; min-width: 70px; }
+  .event-src { color: var(--accent); font-weight: 600; min-width: 24px; }
+  .event-centre { color: var(--fg2); min-width: 30px; }
+  .event-summary { color: var(--fg); flex: 1; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+  .no-results { padding: 40px; text-align: center; color: var(--fg2); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <h1>SFDPS Explorer</h1>
+  <div class="status-dot" id="statusDot"></div>
+  <div class="chip">Msgs: <b id="statTotal">0</b></div>
+  <div class="chip">Rate: <b id="statRate">0</b>/s</div>
+  <div class="chip">Flights: <b id="statFlights">0</b></div>
+  <div class="chip">Shown: <b id="statShown">0</b></div>
+  <div class="chip">Elapsed: <b id="statElapsed">--</b></div>
+</div>
+
+<!-- Filter bar -->
+<div class="filterbar">
+  <div class="filter-group">
+    <span class="filter-label">Facility</span>
+    <select class="filter-select" id="filterFacility" onchange="onFilterChange()">
+      <option value="">All</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <span class="filter-label">Sector</span>
+    <input type="text" class="filter-input" id="filterSector" placeholder="e.g. 32" oninput="onFilterChange()">
+  </div>
+  <div class="filter-sep"></div>
+  <div class="filter-group">
+    <span class="filter-label">Search</span>
+    <input type="text" class="search-box" id="search" placeholder="Callsign, airport, operator..." oninput="onFilterChange()">
+  </div>
+  <div class="filter-sep"></div>
+  <span class="pin-count" id="pinCount"></span>
+  <button class="btn-sm" id="btnClearPins" onclick="clearPins()" style="display:none">Clear pins</button>
+  <div class="spacer"></div>
+  <div class="filter-group">
+    <span class="filter-label">Status</span>
+    <select class="filter-select" id="filterStatus" onchange="onFilterChange()">
+      <option value="">All</option>
+      <option value="ACTIVE" selected>Active</option>
+      <option value="DROPPED">Dropped</option>
+      <option value="CANCELLED">Cancelled</option>
+    </select>
+  </div>
+</div>
+
+<div class="main">
+  <div class="table-panel">
+    <div class="table-wrapper" id="tableWrapper">
+      <table>
+        <thead>
+          <tr>
+            <th data-col="callsign" class="sorted">Callsign</th>
+            <th data-col="aircraftType">Type</th>
+            <th data-col="origin">Dep</th>
+            <th data-col="destination">Arr</th>
+            <th data-col="assignedAltitude">Alt</th>
+            <th data-col="interimAltitude">Intm</th>
+            <th data-col="groundSpeed">GS</th>
+            <th data-col="squawk">Sqk</th>
+            <th data-col="reportingFacility">Fac</th>
+            <th data-col="controllingFacility">Sector</th>
+            <th data-col="handoffEvent">Handoff</th>
+            <th data-col="dataLinkCode">DL</th>
+            <th data-col="flightStatus">Status</th>
+          </tr>
+        </thead>
+        <tbody id="flightBody"></tbody>
+      </table>
+      <div class="no-results" id="noResults" style="display:none">Waiting for flights...</div>
+    </div>
+  </div>
+
+  <div class="detail-panel collapsed" id="detailPanel">
+    <div class="detail-header">
+      <span class="cs-big" id="detailCallsign"></span>
+      <span class="type-badge" id="detailType"></span>
+      <span class="type-badge" id="detailStatus"></span>
+      <button class="btn-pin" id="btnPin" onclick="togglePin()">Pin</button>
+      <div class="detail-close" onclick="closeDetail()">&times;</div>
+    </div>
+    <div class="detail-body" id="detailBody"></div>
+  </div>
+</div>
+
+<script>
+// State
+const allFlights = new Map();
+const pinnedGufis = new Set();
+let sortCol = 'callsign', sortAsc = true;
+let selectedGufi = null;
+let ws = null;
+let knownFacilities = new Set();
+
+function onFilterChange() { scheduleRender(); }
+
+// Connect
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen = () => document.getElementById('statusDot').classList.add('on');
+  ws.onclose = () => { document.getElementById('statusDot').classList.remove('on'); setTimeout(connect, 2000); };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'snapshot') msg.data.forEach(f => { allFlights.set(f.gufi, f); noteFacility(f); });
+    else if (msg.type === 'update') { allFlights.set(msg.data.gufi, msg.data); noteFacility(msg.data); }
+    else if (msg.type === 'remove') {
+      allFlights.delete(msg.data.gufi);
+      // Don't auto-close detail for pinned flights that get removed
+      if (selectedGufi === msg.data.gufi && !pinnedGufis.has(msg.data.gufi)) closeDetail();
+    }
+    else if (msg.type === 'stats') updateStats(msg.data);
+    scheduleRender();
+  };
+}
+
+function noteFacility(f) {
+  if (f.reportingFacility && !knownFacilities.has(f.reportingFacility)) {
+    knownFacilities.add(f.reportingFacility);
+    rebuildFacilityDropdown();
+  }
+}
+
+function rebuildFacilityDropdown() {
+  const sel = document.getElementById('filterFacility');
+  const current = sel.value;
+  const sorted = [...knownFacilities].sort();
+  sel.innerHTML = '<option value="">All</option>' +
+    sorted.map(f => `<option value="${f}"${f === current ? ' selected' : ''}>${f}</option>`).join('');
+}
+
+function updateStats(s) {
+  document.getElementById('statTotal').textContent = (s.total || 0).toLocaleString();
+  document.getElementById('statRate').textContent = (s.rate || 0).toFixed(0);
+  document.getElementById('statFlights').textContent = (s.flights || 0).toLocaleString();
+  document.getElementById('statElapsed').textContent = s.elapsed || '--';
+}
+
+// Rendering (throttled)
+let renderPending = false;
+function scheduleRender() {
+  if (renderPending) return;
+  renderPending = true;
+  requestAnimationFrame(() => { renderPending = false; renderTable(); });
+}
+
+function getFilters() {
+  return {
+    facility: document.getElementById('filterFacility').value,
+    sector: document.getElementById('filterSector').value.trim(),
+    search: document.getElementById('search').value.trim(),
+    status: document.getElementById('filterStatus').value,
+  };
+}
+
+function matchesFilter(f, filters) {
+  if (filters.status && f.flightStatus !== filters.status) return false;
+  if (filters.facility && f.reportingFacility !== filters.facility) return false;
+  if (filters.sector) {
+    const sec = (f.controllingSector || '').toUpperCase();
+    const ctrlFac = (f.controllingFacility || '').toUpperCase();
+    const q = filters.sector.toUpperCase();
+    if (!sec.includes(q) && !(ctrlFac + '/' + sec).includes(q)) return false;
+  }
+  if (filters.search) {
+    const q = filters.search.toUpperCase();
+    if (!(f.callsign || '').toUpperCase().includes(q) &&
+        !(f.origin || '').toUpperCase().includes(q) &&
+        !(f.destination || '').toUpperCase().includes(q) &&
+        !(f.operator || '').toUpperCase().includes(q) &&
+        !(f.aircraftType || '').toUpperCase().includes(q) &&
+        !(f.squawk || '').includes(q) &&
+        !(f.reportingFacility || '').toUpperCase().includes(q))
+      return false;
+  }
+  return true;
+}
+
+function renderTable() {
+  const filters = getFilters();
+  const hasFilter = filters.facility || filters.sector || filters.search || filters.status;
+
+  // Separate pinned and filtered flights
+  let pinned = [];
+  let filtered = [];
+
+  for (const f of allFlights.values()) {
+    const isPinned = pinnedGufis.has(f.gufi);
+    if (isPinned) {
+      pinned.push(f);
+    } else if (matchesFilter(f, filters)) {
+      filtered.push(f);
+    }
+  }
+
+  // Sort each group
+  const sortFn = (a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    if (typeof va === 'number') return sortAsc ? va - vb : vb - va;
+    return sortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+  };
+  pinned.sort(sortFn);
+  filtered.sort(sortFn);
+
+  const tbody = document.getElementById('flightBody');
+  const noRes = document.getElementById('noResults');
+
+  // Update shown count
+  document.getElementById('statShown').textContent = (pinned.length + filtered.length).toLocaleString();
+
+  // Update pin count
+  const pinCountEl = document.getElementById('pinCount');
+  const clearBtn = document.getElementById('btnClearPins');
+  if (pinnedGufis.size > 0) {
+    pinCountEl.textContent = `${pinnedGufis.size} pinned`;
+    clearBtn.style.display = '';
+  } else {
+    pinCountEl.textContent = '';
+    clearBtn.style.display = 'none';
+  }
+
+  if (pinned.length === 0 && filtered.length === 0) {
+    tbody.innerHTML = '';
+    noRes.style.display = '';
+    noRes.textContent = hasFilter ? 'No flights match the current filters' : 'Waiting for flights...';
+    return;
+  }
+  noRes.style.display = 'none';
+
+  let html = '';
+
+  // Pinned flights first
+  for (const f of pinned) {
+    html += renderRow(f, true);
+  }
+
+  // Divider if we have both pinned and filtered
+  if (pinned.length > 0 && filtered.length > 0) {
+    html += `<tr class="sect-divider"><td colspan="13"></td></tr>`;
+  }
+
+  // Filtered flights
+  for (const f of filtered) {
+    html += renderRow(f, false);
+  }
+
+  tbody.innerHTML = html;
+}
+
+function renderRow(f, isPinned) {
+  const sel = f.gufi === selectedGufi ? ' selected' : '';
+  const pinCls = isPinned ? ' pinned' : '';
+  const statusCls = f.flightStatus === 'ACTIVE' ? 'status-active' :
+                    f.flightStatus === 'DROPPED' ? 'status-dropped' :
+                    f.flightStatus === 'CANCELLED' ? 'status-cancelled' : '';
+  const hasDl = f.dataLinkCode && f.dataLinkCode.includes('J');
+  const intm = f.interimAltitude ? `<span class="interim">${fmtAlt(f.interimAltitude)}</span>` : '';
+  const ho = f.handoffEvent ? `<span class="ho-event">${f.handoffEvent}</span>` : '';
+  const hoDetail = f.handoffReceiving ? ` ${f.handoffTransferring||''}&rarr;${f.handoffReceiving}` : '';
+  const pinIcon = isPinned ? '<span class="pin-icon">&#9733;</span>' : '';
+  const sector = f.controllingFacility ? (f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '')) : '';
+
+  return `<tr class="${sel}${pinCls}" data-gufi="${f.gufi}" onclick="selectFlight('${f.gufi}')">
+    <td class="cs">${pinIcon}${f.callsign || '?'}</td>
+    <td>${f.aircraftType || ''}</td>
+    <td class="airport">${f.origin || ''}</td>
+    <td class="airport">${f.destination || ''}</td>
+    <td class="alt">${f.assignedAltitude ? fmtAlt(f.assignedAltitude) : ''}</td>
+    <td>${intm}</td>
+    <td>${f.groundSpeed ? Math.round(f.groundSpeed) : ''}</td>
+    <td>${f.squawk || ''}</td>
+    <td class="fac">${f.reportingFacility || ''}</td>
+    <td>${sector}</td>
+    <td>${ho}${hoDetail}</td>
+    <td class="${hasDl ? 'dl-yes' : 'dl-no'}">${hasDl ? 'CPDLC' : '-'}</td>
+    <td class="${statusCls}">${f.flightStatus || ''}</td>
+  </tr>`;
+}
+
+function fmtAlt(ft) {
+  if (ft >= 18000) return 'FL' + Math.round(ft / 100);
+  return Math.round(ft).toLocaleString();
+}
+
+// Pin management
+function togglePin() {
+  if (!selectedGufi) return;
+  if (pinnedGufis.has(selectedGufi)) {
+    pinnedGufis.delete(selectedGufi);
+  } else {
+    pinnedGufis.add(selectedGufi);
+  }
+  updatePinButton();
+  scheduleRender();
+}
+
+function clearPins() {
+  pinnedGufis.clear();
+  scheduleRender();
+}
+
+function updatePinButton() {
+  const btn = document.getElementById('btnPin');
+  if (selectedGufi && pinnedGufis.has(selectedGufi)) {
+    btn.textContent = 'Unpin';
+    btn.classList.add('active');
+  } else {
+    btn.textContent = 'Pin';
+    btn.classList.remove('active');
+  }
+}
+
+// Selection & detail
+async function selectFlight(gufi) {
+  selectedGufi = gufi;
+  document.getElementById('detailPanel').classList.remove('collapsed');
+  updatePinButton();
+  scheduleRender();
+
+  try {
+    const resp = await fetch(`/api/flights/${encodeURIComponent(gufi)}`);
+    if (!resp.ok) return;
+    const d = await resp.json();
+    renderDetail(d);
+  } catch {}
+}
+
+function closeDetail() {
+  selectedGufi = null;
+  document.getElementById('detailPanel').classList.add('collapsed');
+  scheduleRender();
+}
+
+function renderDetail(d) {
+  document.getElementById('detailCallsign').textContent = d.callsign || '?';
+  document.getElementById('detailType').textContent = [d.aircraftType, d.wakeCategory].filter(Boolean).join('/');
+  const statEl = document.getElementById('detailStatus');
+  statEl.textContent = d.flightStatus || '';
+  statEl.className = 'type-badge' + (d.flightStatus === 'ACTIVE' ? ' status-active' : '');
+  updatePinButton();
+
+  const body = document.getElementById('detailBody');
+  body.innerHTML = `
+    ${section('Flight Plan', [
+      ['Origin', d.origin],
+      ['Destination', d.destination],
+      ['Flight Rules', d.flightRules],
+      ['Route', d.route],
+      ['STAR', d.star],
+      ['Remarks', d.remarks, d.remarks ? 'warn' : ''],
+      ['Req Speed', d.requestedSpeed ? Math.round(d.requestedSpeed) + ' kt' : null],
+    ])}
+    ${section('Altitude', [
+      ['Assigned', d.assignedAltitude ? fmtAlt(d.assignedAltitude) + ' (' + Math.round(d.assignedAltitude) + ' ft)' : null, 'highlight'],
+      ['Interim (4th)', d.interimAltitude ? fmtAlt(d.interimAltitude) + ' (' + Math.round(d.interimAltitude) + ' ft)' : null, 'warn'],
+      ['Reported', d.reportedAltitude ? fmtAlt(d.reportedAltitude) : null],
+    ])}
+    ${section('Position', [
+      ['Latitude', d.latitude?.toFixed(4)],
+      ['Longitude', d.longitude?.toFixed(4)],
+      ['Ground Speed', d.groundSpeed ? Math.round(d.groundSpeed) + ' kt' : null],
+      ['Squawk', d.squawk],
+    ])}
+    ${section('Ownership / Handoff', [
+      ['Reporting Fac', d.reportingFacility, 'highlight'],
+      ['Controlling', d.controllingFacility ? d.controllingFacility + (d.controllingSector ? ' / Sector ' + d.controllingSector : '') : null, 'highlight'],
+      ['Handoff Event', d.handoffEvent],
+      ['Transferring', d.handoffTransferring],
+      ['Receiving', d.handoffReceiving],
+      ['Accepting', d.handoffAccepting],
+      ['Coord Fix', d.coordinationFix],
+      ['Coord Time', d.coordinationTime ? fmtTime(d.coordinationTime) : null],
+    ])}
+    ${section('Aircraft', [
+      ['Type', d.aircraftType],
+      ['Registration', d.registration],
+      ['Wake Category', d.wakeCategory],
+      ['Mode S', d.modeSCode],
+      ['Equipment', d.equipmentQualifier],
+      ['CID', d.computerId],
+    ])}
+    ${section('Datalink / CPDLC', [
+      ['Data Link Code', d.dataLinkCode, d.dataLinkCode?.includes('J') ? 'highlight' : ''],
+      ['Other Datalink', d.otherDataLink],
+      ['Comm Code', d.communicationCode],
+      ['SELCAL', d.selcal],
+    ])}
+    ${section('Navigation / Surveillance', [
+      ['Nav Code', d.navigationCode],
+      ['PBN', d.pbnCode],
+      ['Surveillance', d.surveillanceCode],
+    ])}
+    ${section('Times', [
+      ['Actual Dep', d.actualDepartureTime ? fmtTime(d.actualDepartureTime) : null],
+      ['ETA', d.eta ? fmtTime(d.eta) : null],
+    ])}
+    ${section('Identifiers', [
+      ['GUFI', d.gufi],
+      ['FDPS GUFI', d.fdpsGufi],
+    ])}
+    <div class="section">
+      <h3>Event Log (last ${d.events?.length || 0})</h3>
+      <div class="event-log">
+        ${(d.events || []).slice().reverse().map(e => `
+          <div class="event-row">
+            <span class="event-time">${fmtTime(e.time)}</span>
+            <span class="event-src">${e.source}</span>
+            <span class="event-centre">${e.centre}</span>
+            <span class="event-summary">${e.summary}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function section(title, fields) {
+  const rows = fields.filter(f => f[1] != null && f[1] !== '');
+  if (rows.length === 0) return '';
+  return `<div class="section"><h3>${title}</h3><div class="field-grid">
+    ${rows.map(([label, value, cls]) => `<span class="field-label">${label}</span><span class="field-value${cls ? ' ' + cls : ''}">${value}</span>`).join('')}
+  </div></div>`;
+}
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  try { const d = new Date(iso); return d.toUTCString().slice(17, 25) + 'Z'; }
+  catch { return iso; }
+}
+
+// Sort
+document.querySelectorAll('thead th').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) sortAsc = !sortAsc;
+    else { sortCol = col; sortAsc = true; }
+    document.querySelectorAll('thead th').forEach(t => t.classList.remove('sorted'));
+    th.classList.add('sorted');
+    scheduleRender();
+  });
+});
+
+// Auto-refresh detail panel for selected flight
+setInterval(() => { if (selectedGufi) selectFlight(selectedGufi); }, 3000);
+
+connect();
+</script>
+</body>
+</html>

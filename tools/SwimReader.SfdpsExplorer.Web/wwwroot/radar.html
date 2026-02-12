@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SFDPS Radar Display</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Courier New', monospace; overflow: hidden; height: 100vh; }
+
+/* ── Layout ── */
+#app { display: flex; height: 100vh; }
+#sidebar { width: 260px; min-width: 260px; background: #111; border-right: 1px solid #333; display: flex; flex-direction: column; overflow: hidden; }
+#map-container { flex: 1; position: relative; }
+#map { width: 100%; height: 100%; }
+
+/* ── Sidebar ── */
+#sidebar-header { padding: 10px 12px; border-bottom: 1px solid #333; }
+#sidebar-header h2 { font-size: 13px; color: #aaa; font-weight: normal; letter-spacing: 1px; }
+#connection-status { font-size: 11px; margin-top: 4px; }
+
+.panel-section { padding: 10px 12px; border-bottom: 1px solid #222; }
+.panel-label { font-size: 10px; color: #666; letter-spacing: 1.5px; margin-bottom: 8px; font-weight: bold; }
+
+.ctrl-row { display: flex; align-items: center; margin-bottom: 6px; font-size: 11px; }
+.ctrl-row label { color: #aaa; min-width: 60px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.ctrl-row select {
+    flex: 1; background: #1a1a1a; color: #cccc44; border: 1px solid #333;
+    padding: 3px 6px; font-family: inherit; font-size: 11px; outline: none;
+}
+.ctrl-row select:focus { border-color: #cccc44; }
+.ctrl-row input[type="checkbox"] { accent-color: #cccc44; }
+
+.traffic-row { font-size: 12px; padding: 2px 0; display: flex; justify-content: space-between; }
+.traffic-row.own { color: #cccc44; }
+.traffic-row.ho { color: #cccc44; }
+.traffic-row.other { color: #cccc44; }
+.traffic-row.total { color: #aaa; border-top: 1px solid #333; margin-top: 4px; padding-top: 6px; }
+
+#sidebar-footer {
+    margin-top: auto; padding: 8px 12px; border-top: 1px solid #333;
+    font-size: 11px; color: #666;
+}
+
+/* ── Map overrides ── */
+.leaflet-container { background: #0a0a0a !important; }
+.leaflet-control-zoom a { background: #222 !important; color: #cccc44 !important; border-color: #444 !important; }
+.leaflet-control-attribution { display: none !important; }
+
+/* ── Aircraft target group ── */
+.ac-group { position: absolute; pointer-events: none; }
+
+/* ── Target symbols (Table 1 — radar return present) ── */
+/* Correlated Beacon: \ backslash — transponder on, correlated to flight plan */
+.ac-sym-corr-bcn {
+    position: absolute; width: 2px; height: 12px;
+    background: #cccc44;
+    transform: translate(-1px, -6px) rotate(-45deg);
+    pointer-events: auto; cursor: pointer;
+}
+.ac-sym-corr-bcn.emrg { background: #ff4444; }
+
+/* Uncorrelated Beacon: / forward slash — transponder on, no flight plan */
+.ac-sym-uncorr-bcn {
+    position: absolute; width: 2px; height: 12px;
+    background: #cccc44;
+    transform: translate(-1px, -6px) rotate(45deg);
+    pointer-events: auto; cursor: pointer;
+}
+
+/* Uncorrelated Primary: + plus — transponder off/standby */
+.ac-sym-uncorr-pri {
+    position: absolute; width: 12px; height: 12px;
+    transform: translate(-6px, -6px);
+    pointer-events: auto; cursor: pointer;
+}
+.ac-sym-uncorr-pri::before, .ac-sym-uncorr-pri::after {
+    content: ''; position: absolute; background: #cccc44;
+}
+.ac-sym-uncorr-pri::before { width: 12px; height: 2px; top: 5px; left: 0; }
+.ac-sym-uncorr-pri::after { width: 2px; height: 12px; top: 0; left: 5px; }
+
+/* ── Track position symbols (Table 2 — coasting/no target) ── */
+/* Flight Plan Aided (Flat) Track: hollow diamond */
+.ac-sym-flat-track {
+    position: absolute; width: 7px; height: 7px;
+    border: 1.5px solid #cccc44; background: transparent;
+    transform: translate(-4px, -4px) rotate(45deg);
+    pointer-events: auto; cursor: pointer;
+}
+.ac-sym-flat-track.emrg { border-color: #ff4444; }
+
+/* Coast Track: # hash */
+.ac-sym-coast {
+    position: absolute;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 14px; font-weight: bold;
+    color: #cccc44;
+    transform: translate(-5px, -7px);
+    pointer-events: auto; cursor: pointer;
+}
+
+/* Handoff flash animation */
+.ho-flash { animation: hoFlash 1s ease-in-out infinite; }
+@keyframes hoFlash { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ── Leader line ── */
+.ac-leader { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+/* ── Data block ── */
+.ac-db {
+    position: absolute; white-space: pre; pointer-events: auto; cursor: default;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 10px; line-height: 12.5px; letter-spacing: 0.5px;
+    padding: 1px 2px; color: #cccc44;
+    text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
+}
+.ac-db.emrg { color: #ff4444; }
+.ac-db.ho { animation: hoFlash 1s ease-in-out infinite; }
+
+/* ── Column 0 (R / VCI) — left of data block ── */
+.ac-col0 {
+    position: absolute; white-space: pre; pointer-events: none;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 10px; line-height: 12.5px; letter-spacing: 0.5px;
+    color: #cccc44;
+    text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
+}
+
+/* ── Line 0 (P/A pointout) — above data block ── */
+.ac-line0 {
+    position: absolute; white-space: pre; pointer-events: none;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 10px; line-height: 12.5px; letter-spacing: 0.5px;
+    text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
+}
+.ac-line0.po-initiated { color: #cccc44; }
+.ac-line0.po-acknowledged { color: #ffffff; }
+
+/* ── Flight detail popup ── */
+#flight-detail {
+    position: absolute; bottom: 10px; left: 270px; z-index: 1000;
+    background: rgba(10,10,10,0.95); border: 1px solid #444; padding: 10px 14px;
+    font-size: 11px; color: #aaa; display: none; min-width: 360px; max-width: 520px;
+}
+#flight-detail .fd-title { color: #cccc44; font-size: 13px; margin-bottom: 6px; }
+#flight-detail .fd-row { display: flex; gap: 16px; margin-bottom: 2px; }
+#flight-detail .fd-label { color: #666; min-width: 70px; }
+#flight-detail .fd-val { color: #cccc44; }
+#flight-detail .fd-close {
+    position: absolute; top: 6px; right: 10px; cursor: pointer; color: #666; font-size: 14px;
+}
+#flight-detail .fd-close:hover { color: #ff4444; }
+</style>
+</head>
+<body>
+<div id="app">
+    <div id="sidebar">
+        <div id="sidebar-header">
+            <h2>SFDPS RADAR</h2>
+            <div id="connection-status">Connecting...</div>
+        </div>
+
+        <div class="panel-section">
+            <div class="panel-label">YOUR POSITION</div>
+            <div class="ctrl-row">
+                <label>Facility</label>
+                <select id="sel-facility"><option value="">-- None --</option></select>
+            </div>
+            <div class="ctrl-row">
+                <label>Sector</label>
+                <select id="sel-sector"><option value="">-- All --</option></select>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="panel-label">DISPLAY</div>
+            <div class="ctrl-row">
+                <label><input type="checkbox" id="chk-fdb" checked> Data Blocks</label>
+            </div>
+            <div class="ctrl-row">
+                <label><input type="checkbox" id="chk-history" checked> History</label>
+            </div>
+            <div class="ctrl-row">
+                <label>Hist #</label>
+                <select id="sel-histcount">
+                    <option value="0">0</option>
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5" selected>5</option>
+                    <option value="6">6</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                    <option value="9">9</option>
+                    <option value="10">10</option>
+                </select>
+            </div>
+            <div class="ctrl-row">
+                <label>Vector</label>
+                <select id="sel-vector">
+                    <option value="0">Off</option>
+                    <option value="1" selected>1 min</option>
+                    <option value="2">2 min</option>
+                    <option value="4">4 min</option>
+                    <option value="8">8 min</option>
+                </select>
+            </div>
+            <div class="ctrl-row">
+                <label><input type="checkbox" id="chk-boundaries" checked> Boundaries</label>
+            </div>
+            <div class="ctrl-row">
+                <label>Font</label>
+                <select id="sel-fontsize">
+                    <option value="8">8 px</option>
+                    <option value="9">9 px</option>
+                    <option value="10" selected>10 px</option>
+                    <option value="11">11 px</option>
+                    <option value="12">12 px</option>
+                    <option value="14">14 px</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="panel-label">ALTITUDE FILTER</div>
+            <div class="ctrl-row">
+                <label>Low FL</label>
+                <input type="number" id="inp-alt-low" value="0" min="0" max="999" step="10"
+                    style="flex:1; background:#1a1a1a; color:#cccc44; border:1px solid #333; padding:3px 6px; font-family:inherit; font-size:11px; outline:none; width:60px;">
+            </div>
+            <div class="ctrl-row">
+                <label>High FL</label>
+                <input type="number" id="inp-alt-high" value="999" min="0" max="999" step="10"
+                    style="flex:1; background:#1a1a1a; color:#cccc44; border:1px solid #333; padding:3px 6px; font-family:inherit; font-size:11px; outline:none; width:60px;">
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <div class="panel-label">TRAFFIC</div>
+            <div id="traffic-counts">
+                <div class="traffic-row own">Own <span id="cnt-own">0</span></div>
+                <div class="traffic-row ho">Handoff <span id="cnt-ho">0</span></div>
+                <div class="traffic-row other">Other <span id="cnt-other">0</span></div>
+                <div class="traffic-row total">Total <span id="cnt-total">0</span></div>
+            </div>
+        </div>
+
+        <div id="sidebar-footer">
+            <span id="stat-rate">0</span> msg/s &middot;
+            <span id="stat-flights">0</span> flights &middot;
+            <span id="stat-uptime">00:00:00</span>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div id="map"></div>
+        <div id="flight-detail">
+            <span class="fd-close" onclick="closeFd()">&times;</span>
+            <div class="fd-title" id="fd-title"></div>
+            <div id="fd-body"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════════════════════
+const flights = new Map();
+const flightHistory = new Map();
+let MAX_HISTORY = 5;
+const TRACK_COLOR = '#cccc44';
+const EMRG_COLOR = '#ff4444';
+const MAP_COLOR = '#555555';
+const RENDER_INTERVAL = 4000;  // 4s render cycle (SFDPS updates ~12s per aircraft)
+
+let myFacility = '';
+let mySector = '';
+let showFdb = true;
+let showHistory = true;
+let vectorMinutes = 1;
+let showBoundaries = true;
+let selectedGufi = null;
+let wsConnected = false;
+let msgRate = 0;
+let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
+let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
+let fontSize = 10;          // data block font size in px
+
+const knownFacilities = new Map();
+
+// ════════════════════════════════════════════════════════════════════════════
+// Map setup
+// ════════════════════════════════════════════════════════════════════════════
+const map = L.map('map', {
+    center: [39.0, -98.0],
+    zoom: 6,
+    zoomControl: true,
+    attributionControl: false,
+});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd', maxZoom: 19, opacity: 0.4
+}).addTo(map);
+
+map.createPane('targets');
+map.getPane('targets').style.zIndex = 450;
+
+const markers = new Map();
+
+// ════════════════════════════════════════════════════════════════════════════
+// Canvas overlay for history dots + velocity vectors
+// ════════════════════════════════════════════════════════════════════════════
+const overlayCanvas = document.createElement('canvas');
+overlayCanvas.style.position = 'absolute';
+overlayCanvas.style.pointerEvents = 'none';
+overlayCanvas.style.zIndex = '440';
+map.getPane('overlayPane').appendChild(overlayCanvas);
+
+function drawOverlay() {
+    const size = map.getSize();
+    if (size.x === 0 || size.y === 0) return;
+    const bounds = map.getBounds();
+    const topLeft = map.containerPointToLayerPoint([0, 0]);
+    overlayCanvas.width = size.x;
+    overlayCanvas.height = size.y;
+    L.DomUtil.setPosition(overlayCanvas, topLeft);
+
+    const ctx = overlayCanvas.getContext('2d');
+
+    // ── History symbols (dimmer target symbols) ──
+    if (showHistory) {
+        const histFontSize = Math.max(fontSize, 10);
+        ctx.font = `bold ${histFontSize}px ERAM, Consolas, monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        for (const [gufi, hist] of flightHistory) {
+            if (hist.length === 0) continue;
+            const f = flights.get(gufi);
+            if (!f || f.latitude == null) continue;
+            if (!isVisible(f)) continue;
+
+            const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
+
+            for (let i = 0; i < hist.length; i++) {
+                if (!bounds.contains([hist[i].lat, hist[i].lon])) continue;
+                const pt = map.latLngToLayerPoint([hist[i].lat, hist[i].lon]);
+                const x = pt.x - topLeft.x;
+                const y = pt.y - topLeft.y;
+                const opacity = 0.10 + (i / hist.length) * 0.30;
+                ctx.globalAlpha = opacity;
+                ctx.fillStyle = color;
+                ctx.fillText(hist[i].sym || '\\', x, y);
+            }
+        }
+    }
+
+    // ── Velocity vectors ──
+    if (vectorMinutes > 0) {
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.5;
+        for (const [gufi, f] of flights) {
+            if (f.latitude == null || f.longitude == null) continue;
+            if (f.trackVelocityX == null || f.trackVelocityY == null) continue;
+            if (!isVisible(f)) continue;
+            if (!bounds.contains([f.latitude, f.longitude])) continue;
+
+            const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
+
+            const dLat = f.trackVelocityY * vectorMinutes / 3600;
+            const dLon = f.trackVelocityX * vectorMinutes / (3600 * Math.cos(f.latitude * Math.PI / 180));
+
+            const startPt = map.latLngToLayerPoint([f.latitude, f.longitude]);
+            const endPt = map.latLngToLayerPoint([f.latitude + dLat, f.longitude + dLon]);
+
+            ctx.strokeStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(startPt.x - topLeft.x, startPt.y - topLeft.y);
+            ctx.lineTo(endPt.x - topLeft.x, endPt.y - topLeft.y);
+            ctx.stroke();
+        }
+    }
+
+    ctx.globalAlpha = 1;
+}
+
+map.on('move zoom viewreset resize', () => { try { drawOverlay(); } catch(e) { console.error('[Overlay]', e); } });
+
+// ════════════════════════════════════════════════════════════════════════════
+// KML sector boundaries (video maps — grey)
+// ════════════════════════════════════════════════════════════════════════════
+let kmlSectors = [];
+const boundaryLayers = {};
+let activeBoundaryArtcc = '';
+
+async function loadKml() {
+    try {
+        const resp = await fetch('/api/kml/AllSectors.kml');
+        if (!resp.ok) return;
+        const text = await resp.text();
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(text, 'text/xml');
+        const placemarks = xml.querySelectorAll('Placemark');
+
+        for (const pm of placemarks) {
+            const name = pm.querySelector('name')?.textContent || '';
+            const desc = pm.querySelector('description')?.textContent || '';
+            const coordEl = pm.querySelector('coordinates');
+            if (!coordEl) continue;
+
+            const descDoc = new DOMParser().parseFromString(desc, 'text/html');
+            const tds = descDoc.querySelectorAll('td');
+            const data = {};
+            for (let i = 0; i < tds.length - 1; i += 2) {
+                data[tds[i].textContent.trim()] = tds[i + 1].textContent.trim();
+            }
+
+            const folderPath = data['FolderPath'] || '';
+            const parts = folderPath.split('/');
+            const artcc = parts.length >= 2 ? parts[1] : '';
+            if (!artcc) continue;
+
+            const coords = coordEl.textContent.trim().split(/\s+/).map(c => {
+                const [lon, lat] = c.split(',');
+                return [parseFloat(lat), parseFloat(lon)];
+            }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
+
+            if (coords.length < 2) continue;
+            kmlSectors.push({ artcc, name, sectorId: parts.length >= 4 ? parts[3] : name, alt: data['ALT'] || '', coords });
+        }
+        console.log(`[KML] Loaded ${kmlSectors.length} sectors`);
+    } catch (e) { console.warn('[KML]', e); }
+}
+
+function showBoundariesForFacility(artcc) {
+    if (activeBoundaryArtcc && boundaryLayers[activeBoundaryArtcc]) {
+        map.removeLayer(boundaryLayers[activeBoundaryArtcc]);
+    }
+    activeBoundaryArtcc = artcc;
+    if (!artcc || !showBoundaries) return;
+
+    if (!boundaryLayers[artcc]) {
+        const group = L.layerGroup();
+        for (const sec of kmlSectors.filter(s => s.artcc === artcc)) {
+            L.polyline(sec.coords, { color: MAP_COLOR, weight: 1, opacity: 0.6, interactive: false }).addTo(group);
+        }
+        boundaryLayers[artcc] = group;
+    }
+    boundaryLayers[artcc].addTo(map);
+}
+
+loadKml();
+
+// ════════════════════════════════════════════════════════════════════════════
+// Visibility & classification
+// ════════════════════════════════════════════════════════════════════════════
+function isEmergency(f) {
+    return f.squawk === '7700' || f.squawk === '7600' || f.squawk === '7500';
+}
+
+// When a facility is selected, only show targets reported by/to that ARTCC
+function isVisible(f) {
+    if (f.latitude == null || f.longitude == null) return false;
+    if (f.flightStatus && f.flightStatus !== 'ACTIVE') return false;
+
+    // Altitude filter (reported altitude in feet → FL in hundreds)
+    if (altFilterLow > 0 || altFilterHigh < 999) {
+        const alt = f.reportedAltitude;
+        if (alt != null) {
+            const fl = Math.round(alt / 100);
+            if (fl < altFilterLow || fl > altFilterHigh) return false;
+        }
+    }
+
+    // No facility selected → show all
+    if (!myFacility) return true;
+    // Show if controlling/reporting facility matches
+    const fac = f.controllingFacility || '';
+    const rptFac = f.reportingFacility || '';
+    if (fac === myFacility || rptFac === myFacility) return true;
+    // Show if handoff involves our facility
+    if (f.handoffReceiving && extractFac(f.handoffReceiving) === myFacility) return true;
+    if (f.handoffTransferring && extractFac(f.handoffTransferring) === myFacility) return true;
+    return false;
+}
+
+function classifyTrack(f) {
+    if (isEmergency(f)) return 'emrg';
+    if (!myFacility) return 'own';
+
+    const fac = f.controllingFacility || f.reportingFacility || '';
+    const sec = f.controllingSector || '';
+    const hoEvt = (f.handoffEvent || '').toUpperCase();
+
+    // Active handoff involving our position
+    if (hoEvt && (hoEvt === 'PROPOSED' || hoEvt === 'ACCEPTED' || hoEvt === 'EXECUTING')) {
+        const recvFac = extractFac(f.handoffReceiving);
+        const xferFac = extractFac(f.handoffTransferring);
+        const recvSec = extractSec(f.handoffReceiving);
+        const xferSec = extractSec(f.handoffTransferring);
+        const recvIsMe = recvFac === myFacility && (!mySector || recvSec === mySector);
+        const xferIsMe = xferFac === myFacility && (!mySector || xferSec === mySector);
+        if (recvIsMe || xferIsMe) return 'ho';
+    }
+
+    if (fac === myFacility && (!mySector || sec === mySector)) return 'own';
+    return 'other';
+}
+
+function extractFac(unitStr) { return unitStr ? unitStr.split('/')[0] : ''; }
+function extractSec(unitStr) { if (!unitStr) return ''; const p = unitStr.split('/'); return p.length > 1 ? p[1] : ''; }
+
+// ════════════════════════════════════════════════════════════════════════════
+// ERAM Full Data Block formatting
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Line 0: P/A (point out) — above data block
+// Column 0: R (not your control) — left of data block, bulges out
+// Line 1: Field A (callsign) + SatComm (*)
+// Line 2: Field B (assigned alt) + status char + Field C (reported alt)
+// Line 3: Field D (CID) + Field E (GS/Hxxx/Oxxx/EMRG)
+// Line 4: Field F (destination ICAO)
+//
+// Status chars: C=conforming(hide Field C), T=interim, L=local interim,
+//   P=procedure, ↑=climbing, ↓=descending, +=above, -=below,
+//   X=no Mode C, N=no target, B=block alt, /=VFR
+
+const LDR_DX = 20;
+const LDR_DY = -5;
+let CHAR_W = fontSize * 0.625;  // approx char width in ERAM font
+let LINE_H = fontSize * 1.25;   // line-height
+
+function getSymbolClass(f) {
+    // Table 1 — Target symbols (active surveillance return)
+    // Table 2 — Track position symbols (coasting, no target)
+    const hasBeacon = !!f.squawk;
+    const hasFlightPlan = !!f.callsign;
+
+    if (hasBeacon && hasFlightPlan) return 'ac-sym-corr-bcn';    // \ Correlated Beacon
+    if (hasBeacon && !hasFlightPlan) return 'ac-sym-uncorr-bcn';  // / Uncorrelated Beacon
+    if (!hasBeacon && hasFlightPlan) return 'ac-sym-flat-track';   // ◇ Flight Plan Aided Track
+    return 'ac-sym-uncorr-pri';                                    // + Uncorrelated Primary
+}
+
+// History symbol character per target type (drawn on canvas)
+function getSymbolChar(f) {
+    const hasBeacon = !!f.squawk;
+    const hasFlightPlan = !!f.callsign;
+    if (hasBeacon && hasFlightPlan) return '\\';  // Correlated Beacon
+    if (hasBeacon && !hasFlightPlan) return '/';   // Uncorrelated Beacon
+    if (!hasBeacon && hasFlightPlan) return '\u25C7'; // ◇ Flat Track
+    return '+';                                       // Uncorrelated Primary
+}
+
+function buildMarkerHtml(f, cls) {
+    const isEmrg = cls === 'emrg';
+    const isHo = cls === 'ho';
+    const emrgCls = isEmrg ? ' emrg' : '';
+    const hoCls = isHo ? ' ho-flash' : '';
+
+    // Current position always shows hollow diamond; target symbols go to history trail
+    let html = `<div class="ac-sym-flat-track${emrgCls}${hoCls}"></div>`;
+
+    if (!showFdb) return html;
+
+    const color = isEmrg ? EMRG_COLOR : TRACK_COLOR;
+    const dbTop = LDR_DY - 7;
+
+    // Leader line: SVG from symbol center (0,0) to data block start
+    html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${LDR_DX}" y2="${LDR_DY}" stroke="${color}" stroke-width="1"/></svg>`;
+
+    // Line 0: Point out indicator (P=initiated yellow, A=acknowledged white)
+    // SFDPS doesn't provide pointout data natively; structure ready if added
+    // if (f.pointout) {
+    //     const poChar = f.pointoutAcknowledged ? 'A' : 'P';
+    //     const poCls = f.pointoutAcknowledged ? 'po-acknowledged' : 'po-initiated';
+    //     html += `<div class="ac-line0 ${poCls}" style="left:${LDR_DX}px; top:${dbTop - LINE_H}px;">${poChar}</div>`;
+    // }
+
+    // Column 0: R indicator for tracks not under our control (bulges left of data block)
+    // +1 accounts for the 1px top padding on .ac-db
+    if (myFacility && cls === 'other') {
+        html += `<div class="ac-col0" style="left:${LDR_DX - CHAR_W}px; top:${dbTop + 1 + LINE_H * 2}px;">R</div>`;
+    }
+
+    // Data block (lines 1-4, CID aligns with callsign — no Column 0 in text)
+    const db = formatDatablock(f, cls);
+    const dbCls = isEmrg ? ' emrg' : (isHo ? ' ho' : '');
+    html += `<div class="ac-db${dbCls}" style="left:${LDR_DX}px; top:${dbTop}px;">${db}</div>`;
+
+    return html;
+}
+
+function formatDatablock(f, cls) {
+    // Line 1: Field A (callsign)
+    const l1 = f.callsign || '???';
+
+    // Line 2: Field B + status + Field C (per ERAM spec)
+    const l2 = formatAltLine(f);
+
+    // Line 3: Field D (CID) + Field E
+    const l3 = formatLine3(f, cls);
+
+    // Line 4: Field F (full ICAO destination)
+    const l4 = f.destination || '';
+
+    return l4 ? `${l1}\n${l2}\n${l3}\n${l4}` : `${l1}\n${l2}\n${l3}`;
+}
+
+function formatAltLine(f) {
+    const assigned = f.assignedAltitude;
+    const reported = f.reportedAltitude;
+    const interim = f.interimAltitude;
+
+    const afl = assigned != null ? String(Math.round(assigned / 100)).padStart(3, '0') : '';
+    const rfl = reported != null ? String(Math.round(reported / 100)).padStart(3, '0') : '';
+
+    // Interim altitude → T indicator: {interim}T{reported}
+    if (interim != null) {
+        const ifl = String(Math.round(interim / 100)).padStart(3, '0');
+        return rfl ? `${ifl}T${rfl}` : `${ifl}T`;
+    }
+
+    if (assigned == null && reported == null) return '';
+    if (assigned == null) return rfl;
+
+    // No Mode C reported → X indicator (assigned but no Mode C)
+    if (reported == null) return `${afl}X`;
+
+    const aAlt = Math.round(assigned / 100);
+    const rAlt = Math.round(reported / 100);
+    const diff = rAlt - aAlt;
+
+    // Conforming (at altitude) → C, hide Field C: xxxC
+    if (Math.abs(diff) <= 1) return `${afl}C`;
+
+    // Non-conforming → procedural altitude indicator: xxxPyyy
+    return `${afl}P${rfl}`;
+}
+
+function formatLine3(f, cls) {
+    const cid = f.computerId ? String(f.computerId).padStart(3, ' ') : '   ';
+
+    // Emergency squawks in Field E
+    if (f.squawk === '7700') return `${cid} EMRG`;
+    if (f.squawk === '7600') return `${cid} RDOF`;
+    if (f.squawk === '7500') return `${cid} HIJK`;
+    if (f.squawk === '7400') return `${cid} LLNK`;
+
+    // Handoff in Field E (case-insensitive match for SFDPS event values)
+    const hoEvt = (f.handoffEvent || '').toUpperCase();
+    if (hoEvt && f.handoffReceiving) {
+        if (hoEvt === 'PROPOSED') {
+            // Pending handoff: Hxx (xx = receiving sector)
+            return `${cid} H${extractSectorDisplay(f.handoffReceiving)}`;
+        }
+        if (hoEvt === 'ACCEPTED') {
+            // Accepted handoff: Oxx (xx = receiving sector)
+            return `${cid} O${extractSectorDisplay(f.handoffReceiving)}`;
+        }
+        if (hoEvt === 'COMPLETED' || hoEvt === 'EXECUTING') {
+            // Executing handoff (route transfer): Oxx
+            return `${cid} O${extractSectorDisplay(f.handoffReceiving)}`;
+        }
+    }
+
+    // Normal: CID + first-char destination + groundspeed
+    const destChar = f.destination ? f.destination.replace(/^K/, '').charAt(0) : '';
+    const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
+    return gs ? `${cid}${destChar}${gs}` : `${cid}`;
+}
+
+function extractSectorDisplay(unitStr) {
+    if (!unitStr) return '??';
+    const parts = unitStr.split('/');
+    return parts.length > 1 ? parts[1].padStart(2, '0') : unitStr.substring(0, 3);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// History tracking
+// ════════════════════════════════════════════════════════════════════════════
+function addHistoryPoint(gufi, lat, lon, sym) {
+    if (!flightHistory.has(gufi)) flightHistory.set(gufi, []);
+    const hist = flightHistory.get(gufi);
+    hist.push({ lat, lon, sym: sym || '\\' });
+    if (hist.length > MAX_HISTORY) hist.shift();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WebSocket
+// ════════════════════════════════════════════════════════════════════════════
+function connectWs() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+    ws.onopen = () => {
+        wsConnected = true;
+        document.getElementById('connection-status').textContent = 'Connected';
+        document.getElementById('connection-status').style.color = '#cccc44';
+    };
+
+    ws.onclose = () => {
+        wsConnected = false;
+        document.getElementById('connection-status').textContent = 'Disconnected \u2014 reconnecting...';
+        document.getElementById('connection-status').style.color = '#cc4444';
+        setTimeout(connectWs, 3000);
+    };
+
+    ws.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data);
+
+        if (msg.type === 'snapshot') {
+            for (const f of msg.data) {
+                flights.set(f.gufi, f);
+                trackFacility(f);
+            }
+        } else if (msg.type === 'update') {
+            const f = msg.data;
+            const old = flights.get(f.gufi);
+
+            // Record history before overwriting position
+            if (old && old.latitude != null && f.latitude != null) {
+                const dlat = Math.abs(old.latitude - f.latitude);
+                const dlon = Math.abs(old.longitude - f.longitude);
+                if (dlat > 0.0001 || dlon > 0.0001) {
+                    addHistoryPoint(f.gufi, old.latitude, old.longitude, getSymbolChar(old));
+                }
+            }
+
+            flights.set(f.gufi, f);
+            trackFacility(f);
+        } else if (msg.type === 'remove') {
+            flights.delete(msg.data.gufi);
+            flightHistory.delete(msg.data.gufi);
+            const m = markers.get(msg.data.gufi);
+            if (m) { map.removeLayer(m); markers.delete(msg.data.gufi); }
+        } else if (msg.type === 'stats') {
+            msgRate = msg.data.rate;
+        }
+    };
+}
+connectWs();
+
+// ════════════════════════════════════════════════════════════════════════════
+// Facility/sector tracking
+// ════════════════════════════════════════════════════════════════════════════
+function trackFacility(f) {
+    const fac = f.controllingFacility || f.reportingFacility || '';
+    if (!fac) return;
+    const sec = f.controllingSector || '';
+    if (!knownFacilities.has(fac)) knownFacilities.set(fac, new Set());
+    if (sec) knownFacilities.get(fac).add(sec);
+}
+
+function rebuildFacilityDropdown() {
+    const sel = document.getElementById('sel-facility');
+    const curVal = sel.value;
+    const facs = [...knownFacilities.keys()].sort();
+    let html = '<option value="">-- None --</option>';
+    for (const fac of facs) {
+        html += `<option value="${esc(fac)}" ${fac === curVal ? 'selected' : ''}>${esc(fac)}</option>`;
+    }
+    sel.innerHTML = html;
+}
+
+function rebuildSectorDropdown() {
+    const sel = document.getElementById('sel-sector');
+    const curVal = sel.value;
+    const secs = myFacility && knownFacilities.has(myFacility) ? [...knownFacilities.get(myFacility)].sort() : [];
+    let html = '<option value="">-- All --</option>';
+    for (const sec of secs) {
+        html += `<option value="${esc(sec)}" ${sec === curVal ? 'selected' : ''}>${esc(sec)}</option>`;
+    }
+    sel.innerHTML = html;
+}
+
+function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Render loop — guaranteed to never stop via requestAnimationFrame-first
+// ════════════════════════════════════════════════════════════════════════════
+let lastRenderTime = 0;
+
+function render() {
+    requestAnimationFrame(render);  // ALWAYS schedule next — loop never dies
+
+    const now = performance.now();
+    if (now - lastRenderTime < RENDER_INTERVAL) return;
+    lastRenderTime = now;
+
+    try {
+        doRender();
+    } catch (e) {
+        console.error('[Render]', e);
+    }
+}
+
+function doRender() {
+    const activeGufis = new Set();
+    const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
+
+    for (const [gufi, f] of flights) {
+        if (!isVisible(f)) continue;
+
+        activeGufis.add(gufi);
+        const cls = classifyTrack(f);
+        counts[cls]++;
+
+        const ll = [f.latitude, f.longitude];
+        const html = buildMarkerHtml(f, cls);
+
+        const existing = markers.get(gufi);
+        if (existing) {
+            existing.setLatLng(ll);
+            const el = existing.getElement();
+            if (el && el._lastHtml !== html) {
+                el.innerHTML = html;
+                el._lastHtml = html;
+            }
+        } else {
+            const icon = L.divIcon({ className: 'ac-group', html, iconSize: [0, 0], iconAnchor: [0, 0] });
+            const m = L.marker(ll, { icon, pane: 'targets', interactive: false });
+            m.addTo(map);
+            const el = m.getElement();
+            if (el) {
+                el._lastHtml = html;
+                el.style.pointerEvents = 'auto';
+                el.style.cursor = 'pointer';
+                el.addEventListener('click', () => showFlightDetail(gufi));
+            }
+            markers.set(gufi, m);
+        }
+    }
+
+    // Remove stale markers
+    for (const [gufi, m] of markers) {
+        if (!activeGufis.has(gufi)) {
+            map.removeLayer(m);
+            markers.delete(gufi);
+            flightHistory.delete(gufi);
+        }
+    }
+
+    // Redraw canvas overlay
+    drawOverlay();
+
+    // Update counters
+    document.getElementById('cnt-own').textContent = counts.own;
+    document.getElementById('cnt-ho').textContent = counts.ho;
+    document.getElementById('cnt-other').textContent = counts.other;
+    document.getElementById('cnt-total').textContent = counts.own + counts.ho + counts.other + counts.emrg;
+}
+
+requestAnimationFrame(render);
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sidebar controls
+// ════════════════════════════════════════════════════════════════════════════
+document.getElementById('sel-facility').addEventListener('change', function () {
+    myFacility = this.value;
+    mySector = '';
+    document.getElementById('sel-sector').value = '';
+    rebuildSectorDropdown();
+    showBoundariesForFacility(myFacility);
+});
+
+document.getElementById('sel-sector').addEventListener('change', function () {
+    mySector = this.value;
+});
+
+document.getElementById('chk-fdb').addEventListener('change', function () {
+    showFdb = this.checked;
+});
+
+document.getElementById('chk-history').addEventListener('change', function () {
+    showHistory = this.checked;
+});
+
+document.getElementById('sel-histcount').addEventListener('change', function () {
+    MAX_HISTORY = parseInt(this.value);
+    // Trim existing histories to new max
+    for (const [, hist] of flightHistory) {
+        while (hist.length > MAX_HISTORY) hist.shift();
+    }
+});
+
+document.getElementById('sel-vector').addEventListener('change', function () {
+    vectorMinutes = parseInt(this.value);
+});
+
+document.getElementById('chk-boundaries').addEventListener('change', function () {
+    showBoundaries = this.checked;
+    if (showBoundaries) showBoundariesForFacility(myFacility);
+    else if (activeBoundaryArtcc && boundaryLayers[activeBoundaryArtcc]) {
+        map.removeLayer(boundaryLayers[activeBoundaryArtcc]);
+    }
+});
+
+document.getElementById('sel-fontsize').addEventListener('change', function () {
+    fontSize = parseInt(this.value);
+    updateFontSize();
+});
+
+document.getElementById('inp-alt-low').addEventListener('change', function () {
+    altFilterLow = parseInt(this.value) || 0;
+});
+
+document.getElementById('inp-alt-high').addEventListener('change', function () {
+    altFilterHigh = parseInt(this.value) || 999;
+});
+
+function updateFontSize() {
+    CHAR_W = fontSize * 0.625;
+    LINE_H = fontSize * 1.25;
+    // Update data block and symbol CSS dynamically
+    let styleEl = document.getElementById('dynamic-fontsize');
+    if (!styleEl) {
+        styleEl = document.createElement('style');
+        styleEl.id = 'dynamic-fontsize';
+        document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = `
+        .ac-db, .ac-col0, .ac-line0 {
+            font-size: ${fontSize}px !important;
+            line-height: ${LINE_H}px !important;
+        }
+    `;
+}
+
+setInterval(() => {
+    rebuildFacilityDropdown();
+    rebuildSectorDropdown();
+    document.getElementById('stat-flights').textContent = flights.size;
+    document.getElementById('stat-rate').textContent = msgRate;
+}, 5000);
+
+// ════════════════════════════════════════════════════════════════════════════
+// Flight detail panel
+// ════════════════════════════════════════════════════════════════════════════
+function showFlightDetail(gufi) {
+    selectedGufi = gufi;
+    const f = flights.get(gufi);
+    if (!f) return;
+
+    document.getElementById('fd-title').textContent =
+        `${f.callsign || '???'}  ${f.aircraftType || ''} ${f.origin || ''}\u2192${f.destination || ''}`;
+
+    const cls = classifyTrack(f);
+    const heading = (f.trackVelocityX != null && f.trackVelocityY != null)
+        ? `${Math.round((Math.atan2(f.trackVelocityX, f.trackVelocityY) * 180 / Math.PI + 360) % 360)}\u00b0` : '';
+    const tvSpd = (f.trackVelocityX != null && f.trackVelocityY != null)
+        ? `${Math.round(Math.sqrt(f.trackVelocityX ** 2 + f.trackVelocityY ** 2))} kt` : '';
+
+    const rows = [
+        ['Track', cls === 'own' ? 'OWN' : cls === 'ho' ? 'HANDOFF' : cls === 'emrg' ? 'EMERGENCY' : 'OTHER'],
+        ['Squawk', f.squawk],
+        ['Assigned', f.assignedAltitude != null ? `FL${Math.round(f.assignedAltitude / 100)}` : ''],
+        ['Reported', f.reportedAltitude != null ? `FL${Math.round(f.reportedAltitude / 100)}` : ''],
+        ['Interim', f.interimAltitude != null ? `FL${Math.round(f.interimAltitude / 100)}` : ''],
+        ['GS', f.groundSpeed != null ? `${Math.round(f.groundSpeed)} kt` : ''],
+        ['Heading', heading],
+        ['T/V Speed', tvSpd],
+        ['Facility', `${f.controllingFacility || f.reportingFacility || ''} ${f.controllingSector ? '/ ' + f.controllingSector : ''}`],
+        ['Handoff', f.handoffEvent ? `${f.handoffEvent} ${f.handoffReceiving || ''} \u2190 ${f.handoffTransferring || ''}` : ''],
+        ['CID', f.computerId],
+        ['Operator', f.operator],
+        ['Wake', f.wakeCategory],
+        ['Datalink', f.dataLinkCode],
+        ['Last msg', f.lastMsgSource],
+        ['Last seen', f.lastSeen],
+    ];
+
+    let html = '';
+    for (const [label, val] of rows) {
+        if (!val) continue;
+        html += `<div class="fd-row"><span class="fd-label">${label}</span><span class="fd-val">${esc(String(val))}</span></div>`;
+    }
+    document.getElementById('fd-body').innerHTML = html;
+    document.getElementById('flight-detail').style.display = 'block';
+}
+
+function closeFd() {
+    selectedGufi = null;
+    document.getElementById('flight-detail').style.display = 'none';
+}
+
+setInterval(() => { if (selectedGufi) showFlightDetail(selectedGufi); }, 5000);
+
+// ════════════════════════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════════════════════════
+rebuildFacilityDropdown();
+rebuildSectorDropdown();
+</script>
+</body>
+</html>

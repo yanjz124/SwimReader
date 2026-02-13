@@ -2097,11 +2097,11 @@ async function showRouteForFlight(gufi, minutes = null, persistent = false) {
     return null;  // success
 }
 
-// Auto-remove expired QU route displays (20s timeout)
+// Auto-remove expired QU route displays (30s timeout)
 setInterval(() => {
     const now = performance.now();
     for (const [gufi, r] of activeRoutes) {
-        if (r.time !== null && now - r.time >= 20000) {
+        if (r.time !== null && now - r.time >= 30000) {
             removeRoute(gufi);
         }
     }

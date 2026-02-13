@@ -23,7 +23,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SwimReader.Core.Tests", "te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SwimReader.SfdpsExplorer", "tools\SwimReader.SfdpsExplorer\SwimReader.SfdpsExplorer.csproj", "{1CD5790E-22A4-48B0-AD05-9C63C414F1C9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SwimReader.SfdpsExplorer.Web", "tools\SwimReader.SfdpsExplorer.Web\SwimReader.SfdpsExplorer.Web.csproj", "{93B7B0F0-B7BB-4DF4-A80C-97BB6E455B47}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SfdpsERAM", "tools\SfdpsERAM\SfdpsERAM.csproj", "{93B7B0F0-B7BB-4DF4-A80C-97BB6E455B47}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

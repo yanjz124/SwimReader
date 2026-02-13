@@ -157,14 +157,8 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .ac-db.dwell.emrg { outline-color: #ff4444; }
 /* .ac-db.ho — handoff flash now driven by JS */
 
-/* ── Column 0 (R / VCI) — left of data block ── */
-.ac-col0 {
-    position: absolute; white-space: pre; pointer-events: none;
-    font-family: 'ERAM', 'Consolas', monospace;
-    font-size: 10px; line-height: 12.5px; letter-spacing: 0.5px;
-    color: #cccc44;
-    text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
-}
+/* ── Column 0 (R / VCI) — inline prefix on each data block line ── */
+.ac-col0 { color: #cccc44; }
 .ac-vci { color: #44cc44; }
 
 /* ── Line 0 (P/A pointout) — above data block ── */
@@ -708,11 +702,15 @@ function isVisible(f) {
     if (f.flightStatus && f.flightStatus !== 'ACTIVE') return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
+    // FDB tracks are exempt — own, handoff, emergency, user-forced, and quick look tracks always show
     if (altFilterLow > 0 || altFilterHigh < 999) {
-        const alt = f.reportedAltitude;
-        if (alt != null) {
-            const fl = Math.round(alt / 100);
-            if (fl < altFilterLow || fl > altFilterHigh) return false;
+        const cls = classifyTrack(f);
+        if (!shouldShowFdb(f.gufi, cls)) {
+            const alt = f.reportedAltitude;
+            if (alt != null) {
+                const fl = Math.round(alt / 100);
+                if (fl < altFilterLow || fl > altFilterHigh) return false;
+            }
         }
     }
 
@@ -980,8 +978,8 @@ function buildMarkerHtml(f, cls) {
     const pos = dbPositions.get(f.gufi) || 6;
     const isVertical = (pos === 2 || pos === 8);
 
-    // Gap from leader endpoint to data block text (R juts left from the block)
-    const dbGap = Math.ceil(CHAR_W * 2);
+    // Gap from leader endpoint to data block (Column 0 is inline, provides visual separation)
+    const dbGap = Math.ceil(CHAR_W * 0.5);
 
     // Compute data block CSS position
     let leftStyle;
@@ -990,28 +988,16 @@ function buildMarkerHtml(f, cls) {
     else leftStyle = `left:${ldr.dx + dbGap}px`;
 
     // Left-positioned blocks: fixed min-width to prevent jitter during flash
-    const leftExtra = isLeftPos ? ` min-width:${Math.ceil(CHAR_W * 8)}px;` : '';
+    const leftExtra = isLeftPos ? ` min-width:${Math.ceil(CHAR_W * 9.5)}px;` : '';
 
     if (useFdb) {
         // Full Data Block (lines 1-4) — with leader line
         html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${ldr.dx}" y2="${ldr.dy}" stroke="${color}" stroke-width="1"/></svg>`;
 
-        const db = formatDatablock(f, cls);
+        const db = formatFdbHtml(f, cls);
         const dbCls = isEmrg ? ' emrg' : '';
 
-        // Column 0: VCI (line 2) + R indicator (line 3)
-        let col0Html = '';
-        // VCI click target — always present in FDB for toggle area
-        col0Html += `<div class="ac-vci-hit" style="position:absolute; left:${-Math.ceil(CHAR_W * 2.5)}px; top:${Math.round(LINE_H * 0.5)}px; width:${Math.ceil(CHAR_W * 2.5)}px; height:${Math.round(LINE_H * 1.5)}px; pointer-events:auto; cursor:pointer;"></div>`;
-        if (vciActive.has(f.gufi)) {
-            const vciSize = Math.round(LINE_H);
-            col0Html += `<div class="ac-vci" style="position:absolute; left:${-Math.ceil(CHAR_W * 2)}px; top:${Math.round(LINE_H * 0.95) + 1}px; width:${vciSize}px; height:${vciSize}px; pointer-events:none;"><svg viewBox="0 0 16 16" width="${vciSize}" height="${vciSize}"><path d="M3,5 L3,13 L11,13" fill="none" stroke="#44cc44" stroke-width="1.5"/><path d="M5,8 A3,3 0 0,1 8,11" fill="none" stroke="#44cc44" stroke-width="1.5" stroke-linecap="round"/><path d="M5,5.5 A5.5,5.5 0 0,1 10.5,11" fill="none" stroke="#44cc44" stroke-width="1.5" stroke-linecap="round"/></svg></div>`;
-        }
-        if (shouldShowR(f, cls)) {
-            col0Html += `<div class="ac-col0 ac-r" style="position:absolute; left:${-Math.ceil(CHAR_W * 1.5)}px; top:${Math.round(LINE_H * 2) + 1}px;">R</div>`;
-        }
-
-        html += `<div class="ac-db${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift}px;${leftExtra}">${col0Html}${db}</div>`;
+        html += `<div class="ac-db${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift}px;${leftExtra}">${db}</div>`;
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
         vciActive.delete(f.gufi);
@@ -1044,6 +1030,31 @@ function formatDatablock(f, cls) {
     return l4 ? `${l1}\n${l2}\n${l3}\n${l4}` : `${l1}\n${l2}\n${l3}`;
 }
 
+// Format FDB with Column 0 inline (VCI, R) — returns HTML
+const VCI_SVG = '<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:-0.15em;"><path d="M3,5 L3,13 L11,13" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5,8 A3,3 0 0,1 8,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5,5.5 A5.5,5.5 0 0,1 10.5,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+function formatFdbHtml(f, cls) {
+    const showVci = vciActive.has(f.gufi);
+    const showR = shouldShowR(f, cls);
+
+    const l1 = esc(f.callsign || '???');
+    const l2 = esc(formatAltLine(f));
+    const l3 = esc(formatLine3(f, cls));
+    const l4 = f.destination ? esc(f.destination) : '';
+
+    // Column 0: inline spans — VCI hit area on lines 1-2, R on line 3
+    const col0Hit = '<span class="ac-vci-hit" style="display:inline-block;width:1.5ch;pointer-events:auto;cursor:pointer;">\u00a0</span>';
+    const col0Vci = `<span class="ac-vci-hit ac-vci" style="display:inline-block;width:1.5ch;pointer-events:auto;cursor:pointer;">${VCI_SVG}</span>`;
+    const col0R   = '<span class="ac-col0 ac-r" style="display:inline-block;width:1.5ch;text-align:center;">R</span>';
+    const col0Sp  = '<span style="display:inline-block;width:1.5ch;">\u00a0</span>';
+
+    let html = `${col0Hit}${l1}\n`;
+    html += `${showVci ? col0Vci : col0Hit}${l2}\n`;
+    html += `${showR ? col0R : col0Sp}${l3}`;
+    if (l4) html += `\n${col0Sp}${l4}`;
+    return html;
+}
+
 function formatAltLine(f) {
     const assigned = f.assignedAltitude;
     const reported = f.reportedAltitude;
@@ -1068,11 +1079,17 @@ function formatAltLine(f) {
     const rAlt = Math.round(reported / 100);
     const diff = rAlt - aAlt;
 
-    // Conforming (at altitude) → C, hide Field C: xxxC
-    if (Math.abs(diff) <= 1) return `${afl}C`;
+    // Conforming (at altitude, within ±2 FL / 200ft) → C, hide Field C: xxxC
+    if (Math.abs(diff) <= 2) return `${afl}C`;
 
-    // Non-conforming → procedural altitude indicator: xxxPyyy
-    return `${afl}P${rfl}`;
+    // Non-conforming: climbing or descending indicators
+    if (diff < 0) {
+        // Reported below assigned → climbing to assigned
+        return `${afl}\u2191${rfl}`;  // ↑
+    } else {
+        // Reported above assigned → descending to assigned
+        return `${afl}\u2193${rfl}`;  // ↓
+    }
 }
 
 function formatLine3(f, cls) {
@@ -1368,7 +1385,8 @@ function flightHash(f, cls) {
     const rInd = shouldShowR(f, cls) ? 1 : 0;
     const dbPos = dbPositions.get(f.gufi) || 0;
     const ldrLen = ldrLenOverrides.get(f.gufi) ?? 1;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}`;
+    const vci = vciActive.has(f.gufi) ? 1 : 0;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1580,23 +1598,8 @@ setInterval(() => {
         if (!dbEl) continue;
         const cls = classifyTrack(f);
         if (shouldShowFdb(gufi, cls)) {
-            // Preserve Column 0 children (VCI, R, hit target) when updating text
-            const savedChildren = Array.from(dbEl.querySelectorAll('.ac-col0, .ac-vci-hit, .ac-vci'));
-            dbEl.textContent = formatDatablock(f, cls);
-            savedChildren.forEach(ch => dbEl.appendChild(ch));
-        }
-
-        // Sync R indicator with handoff state
-        const rNow = shouldShowFdb(gufi, cls) && shouldShowR(f, cls);
-        const rEl = dbEl.querySelector('.ac-r');
-        if (rNow && !rEl) {
-            const div = document.createElement('div');
-            div.className = 'ac-col0 ac-r';
-            div.style.cssText = `position:absolute; left:${-Math.ceil(CHAR_W * 1.5)}px; top:${Math.round(LINE_H * 2) + 1}px;`;
-            div.textContent = 'R';
-            dbEl.appendChild(div);
-        } else if (!rNow && rEl) {
-            rEl.remove();
+            // Column 0 is inline — just regenerate full HTML (includes R, VCI)
+            dbEl.innerHTML = formatFdbHtml(f, cls);
         }
     }
 }, 500);
@@ -1703,7 +1706,7 @@ function updateFontSize() {
         document.head.appendChild(styleEl);
     }
     styleEl.textContent = `
-        .ac-db, .ac-col0, .ac-line0 {
+        .ac-db, .ac-line0 {
             font-size: ${fontSize}px !important;
             line-height: ${LINE_H}px !important;
         }

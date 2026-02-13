@@ -194,9 +194,11 @@ Server-side in `Program.cs` ProcessFlight():
 ```
 
 **Line 2 altitude status codes:**
-- `C` = conforming (reported within ±300ft of assigned)
-- `T` = interim altitude assigned (4th line override)
-- `P` = procedural (no Mode C reported altitude)
+- `C` = conforming (reported within ±200ft of assigned)
+- `T` = interim altitude assigned (from SFDPS interimAltitude)
+- `↑` = climbing to assigned altitude (reported below assigned)
+- `↓` = descending to assigned altitude (reported above assigned)
+- `P` = procedure altitude assigned (not yet available from SFDPS data)
 - `X` = no Mode C data at all
 
 **Line 3 Field E (right side after CID):**

@@ -116,26 +116,28 @@ app.Map("/ws", async (HttpContext ctx) =>
 });
 
 // REST API for flight detail (full state + event log)
-app.MapGet("/api/flights/{gufi}", (string gufi) =>
+app.MapGet("/api/flights/{*gufi}", (string gufi) =>
 {
     if (!flights.TryGetValue(gufi, out var f)) return Results.NotFound();
     return Results.Json(f.ToDetail(), jsonOpts);
 });
 
 // REST API for stats
-app.MapGet("/api/stats", () => Results.Json(stats.Snapshot(), jsonOpts));
+app.MapGet("/api/stats", () => Results.Json(stats.Snapshot(flights.Count), jsonOpts));
 
 // REST API for resolved route waypoints
-app.MapGet("/api/route/{gufi}", (string gufi) =>
+app.MapGet("/api/route/{*gufi}", (string gufi) =>
 {
     if (nasrData is null)
-        return Results.Json(new { waypoints = Array.Empty<double[]>() }, jsonOpts);
-    if (!flights.TryGetValue(gufi, out var f) || string.IsNullOrEmpty(f.Route))
-        return Results.Json(new { waypoints = Array.Empty<double[]>() }, jsonOpts);
+        return Results.Json(new { waypoints = Array.Empty<double[]>(), debug = "NASR not loaded" }, jsonOpts);
+    if (!flights.TryGetValue(gufi, out var f))
+        return Results.Json(new { waypoints = Array.Empty<double[]>(), debug = "Flight not found" }, jsonOpts);
+    if (string.IsNullOrEmpty(f.Route))
+        return Results.Json(new { waypoints = Array.Empty<double[]>(), debug = "No route string" }, jsonOpts);
 
     var key = $"{f.Origin}:{f.Destination}:{f.Route}";
     var wps = routeCache.GetOrAdd(key, _ => ResolveRoute(f.Route, f.Origin, f.Destination, nasrData));
-    return Results.Json(new { waypoints = wps }, jsonOpts);
+    return Results.Json(new { waypoints = wps, route = f.Route, origin = f.Origin, destination = f.Destination }, jsonOpts);
 });
 
 // REST API for NASR data status
@@ -150,6 +152,24 @@ app.MapGet("/api/nasr/status", () => Results.Json(new
     procedures = nasrData?.Procedures.Count ?? 0,
     cachedRoutes = routeCache.Count
 }, jsonOpts));
+
+// Debug: find duplicate CIDs for a facility
+app.MapGet("/api/debug/dupe-cids/{facility}", (string facility) =>
+{
+    facility = facility.ToUpperInvariant();
+    var cidMap = new Dictionary<string, List<object>>();
+    foreach (var (gufi, f) in flights)
+    {
+        if (f.ComputerIds.TryGetValue(facility, out var cid) && !string.IsNullOrEmpty(cid))
+        {
+            if (!cidMap.ContainsKey(cid)) cidMap[cid] = new List<object>();
+            cidMap[cid].Add(new { gufi, f.Callsign, f.Origin, f.Destination, f.FlightStatus, cid });
+        }
+    }
+    var dupes = cidMap.Where(kv => kv.Value.Count > 1)
+        .ToDictionary(kv => kv.Key, kv => kv.Value);
+    return Results.Json(new { facility, totalFlights = flights.Count, cidsChecked = cidMap.Count, duplicates = dupes }, jsonOpts);
+});
 
 // Serve KML files from repo root
 var repoRoot = FindRepoRoot(app.Environment.ContentRootPath);
@@ -975,98 +995,112 @@ Dictionary<string, AirwayDef> ParseAwyBase(string path)
 Dictionary<string, List<ProcedureDef>> ParseProcedureCsvs(string cycleDir, string type)
 {
     // type = "STAR" or "DP"
+    // Files: {type}_BASE.csv has procedure name + airport, {type}_RTE.csv has fix sequences
+    // Computer codes like "ALWYZ.FRDMM6" → route strings use the part after the dot ("FRDMM6")
     var result = new Dictionary<string, List<ProcedureDef>>(StringComparer.OrdinalIgnoreCase);
-    var prefix = type + "_";
-
-    // Find all matching CSV files in the directory
     if (!Directory.Exists(cycleDir)) return result;
-    var csvFiles = Directory.GetFiles(cycleDir, $"{prefix}*.csv");
-    if (csvFiles.Length == 0) return result;
 
-    // Try to find the route/leg file (contains fix sequences)
-    // Common patterns: STAR_RTE.csv, STAR_SEG.csv, STAR_BASE.csv, DP_RTE.csv, etc.
-    // The "route" or "segment" file has the fix sequence data
-    var routeFile = csvFiles.FirstOrDefault(f =>
-        Path.GetFileName(f).Contains("RTE", StringComparison.OrdinalIgnoreCase) ||
-        Path.GetFileName(f).Contains("SEG", StringComparison.OrdinalIgnoreCase) ||
-        Path.GetFileName(f).Contains("LEG", StringComparison.OrdinalIgnoreCase));
+    var codeCol = type == "STAR" ? "STAR_COMPUTER_CODE" : "DP_COMPUTER_CODE";
 
-    // If no specific route file, try BASE
-    routeFile ??= csvFiles.FirstOrDefault(f =>
-        Path.GetFileName(f).Contains("BASE", StringComparison.OrdinalIgnoreCase));
-
-    // If still nothing, just try the first file
-    routeFile ??= csvFiles[0];
-
-    Console.WriteLine($"[NASR]   Parsing {type} procedures from {Path.GetFileName(routeFile)}");
-
-    using var reader = new StreamReader(routeFile);
-    var headers = ParseCsvLine(reader.ReadLine()!);
-    Console.WriteLine($"[NASR]   {type} headers: {string.Join(", ", headers.Take(20))}");
-
-    // Adaptive column detection — find columns by pattern
-    int FindCol(params string[] patterns) {
-        for (int i = 0; i < headers.Count; i++) {
-            var h = headers[i].Trim().ToUpperInvariant();
-            foreach (var pat in patterns)
-                if (h.Contains(pat)) return i;
+    // Step 1: Parse BASE file to get computer_code → airport mapping
+    var baseFile = Path.Combine(cycleDir, $"{type}_BASE.csv");
+    var codeToAirports = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    if (File.Exists(baseFile))
+    {
+        using var br = new StreamReader(baseFile);
+        var bh = ParseCsvLine(br.ReadLine()!);
+        int iCode = bh.FindIndex(h => h.Trim().Equals(codeCol, StringComparison.OrdinalIgnoreCase));
+        int iApt = bh.FindIndex(h => h.Trim().Equals("SERVED_ARPT", StringComparison.OrdinalIgnoreCase));
+        if (iCode >= 0 && iApt >= 0)
+        {
+            while (br.ReadLine() is { } line)
+            {
+                var f = ParseCsvLine(line);
+                if (f.Count > Math.Max(iCode, iApt))
+                    codeToAirports[f[iCode].Trim()] = f[iApt].Trim().ToUpperInvariant();
+            }
         }
-        return -1;
+        Console.WriteLine($"[NASR]   {type}_BASE: {codeToAirports.Count} procedures");
     }
 
-    var iProcId = FindCol("PROCEDURE_IDENT", "STARDP_NAME", $"{type}_ID", $"{type}_IDENT", "PROC_ID", "RTE_IDENT");
-    var iAirport = FindCol("ARPT_IDENT", "AIRPORT_ID", "ARPT_ID", "APT_ID", "ASSOC_ARPT");
-    var iFix = FindCol("FIX_IDENT", "POINT_IDENT", "NAV_ID", "FIX_ID", "WYPT_IDENT");
-    var iSeq = FindCol("SEQ_NBR", "SEQUENCE", "SEQ_NO", "POINT_SEQ", "SEQ");
-    var iTrans = FindCol("TRANSITION_IDENT", "TRANS_IDENT", "TRANSITION_ID", "TRANS_ID");
-
-    if (iProcId < 0 || iFix < 0)
+    // Step 2: Parse RTE file to get fix sequences per computer code
+    var rteFile = Path.Combine(cycleDir, $"{type}_RTE.csv");
+    if (!File.Exists(rteFile))
     {
-        Console.WriteLine($"[NASR]   Could not find required columns (procId={iProcId}, fix={iFix})");
+        Console.WriteLine($"[NASR]   {type}_RTE.csv not found");
         return result;
     }
 
-    Console.WriteLine($"[NASR]   Columns: procId={iProcId} airport={iAirport} fix={iFix} seq={iSeq} trans={iTrans}");
+    using var reader = new StreamReader(rteFile);
+    var headers = ParseCsvLine(reader.ReadLine()!);
 
-    // Read all rows and group by procedure + airport + transition
-    var rows = new List<(string proc, string airport, string transition, int seq, string fix)>();
+    int iRteCode = headers.FindIndex(h => h.Trim().Equals(codeCol, StringComparison.OrdinalIgnoreCase));
+    int iFix = headers.FindIndex(h => h.Trim().Equals("POINT", StringComparison.OrdinalIgnoreCase));
+    int iSeq = headers.FindIndex(h => h.Trim().Equals("POINT_SEQ", StringComparison.OrdinalIgnoreCase));
+    int iRouteType = headers.FindIndex(h => h.Trim().Equals("ROUTE_PORTION_TYPE", StringComparison.OrdinalIgnoreCase));
+    int iTransCode = headers.FindIndex(h => h.Trim().Equals("TRANSITION_COMPUTER_CODE", StringComparison.OrdinalIgnoreCase));
+
+    if (iRteCode < 0 || iFix < 0)
+    {
+        Console.WriteLine($"[NASR]   Missing columns: {codeCol}={iRteCode}, POINT={iFix}");
+        return result;
+    }
+
+    // Read all rows grouped by computer code
+    var rows = new List<(string code, string routeType, string tranCode, int seq, string fix)>();
     while (reader.ReadLine() is { } line)
     {
         var f = ParseCsvLine(line);
-        if (f.Count <= Math.Max(iProcId, iFix)) continue;
-        var proc = f[iProcId].Trim().ToUpperInvariant();
+        if (f.Count <= Math.Max(iRteCode, iFix)) continue;
+        var code = f[iRteCode].Trim();
         var fix = f[iFix].Trim().ToUpperInvariant();
-        if (string.IsNullOrEmpty(proc) || string.IsNullOrEmpty(fix)) continue;
+        if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(fix)) continue;
 
-        var airport = iAirport >= 0 && iAirport < f.Count ? f[iAirport].Trim().ToUpperInvariant() : "";
-        var transition = iTrans >= 0 && iTrans < f.Count ? f[iTrans].Trim().ToUpperInvariant() : "";
+        var routeType = iRouteType >= 0 && iRouteType < f.Count ? f[iRouteType].Trim().ToUpperInvariant() : "";
+        var tranCode = iTransCode >= 0 && iTransCode < f.Count ? f[iTransCode].Trim() : "";
         var seq = 0;
         if (iSeq >= 0 && iSeq < f.Count) int.TryParse(f[iSeq].Trim(), out seq);
-        rows.Add((proc, airport, transition, seq, fix));
+        rows.Add((code, routeType, tranCode, seq, fix));
     }
 
-    // Group by procedure name + airport, pick the common route (non-transition or longest transition)
-    var grouped = rows.GroupBy(r => (r.proc, r.airport));
+    // Group by computer code and build fix sequences (BODY portion only for main route)
+    var grouped = rows.GroupBy(r => r.code);
     foreach (var g in grouped)
     {
-        var proc = g.Key.proc;
-        var airport = g.Key.airport;
+        var computerCode = g.Key;
+        // Use the BODY route portion as the main fix sequence
+        var bodyFixes = g.Where(r => r.routeType == "BODY" || string.IsNullOrEmpty(r.routeType))
+            .OrderBy(r => r.seq)
+            .Select(r => r.fix)
+            .Where(f => !string.IsNullOrEmpty(f))
+            .Distinct()
+            .ToList();
 
-        // Get transitions
-        var transitions = g.GroupBy(r => r.transition).ToList();
+        if (bodyFixes.Count < 2) continue;
 
-        // Prefer the common route (empty transition), else pick the one with most fixes
-        var bestTrans = transitions.FirstOrDefault(t => string.IsNullOrEmpty(t.Key))
-            ?? transitions.OrderByDescending(t => t.Count()).First();
+        // Extract the procedure identifier from computer code (part after the dot)
+        // e.g., "ALWYZ.FRDMM6" → "FRDMM6", "ACCRA5.ACCRA" → "ACCRA5" (before dot) or "ACCRA" (after dot)
+        var dotIdx = computerCode.IndexOf('.');
+        var afterDot = dotIdx >= 0 ? computerCode[(dotIdx + 1)..].Trim().ToUpperInvariant() : computerCode.Trim().ToUpperInvariant();
+        var beforeDot = dotIdx >= 0 ? computerCode[..dotIdx].Trim().ToUpperInvariant() : computerCode.Trim().ToUpperInvariant();
 
-        var fixes = bestTrans.OrderBy(r => r.seq).Select(r => r.fix)
-            .Where(f => !string.IsNullOrEmpty(f)).Distinct().ToList();
+        // Get airport from BASE file
+        codeToAirports.TryGetValue(computerCode, out var airports);
+        var airport = airports?.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
 
-        if (fixes.Count < 2) continue;
+        // Register under both the "after dot" identifier and the "before dot" identifier
+        // For STARs: "ALWYZ.FRDMM6" → register as "FRDMM6" (used in route strings)
+        // For DPs: "ACCRA5.ACCRA" → register as "ACCRA5" (before dot is the SID name with number)
+        var identifiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(afterDot)) identifiers.Add(afterDot);
+        if (!string.IsNullOrEmpty(beforeDot) && beforeDot != afterDot) identifiers.Add(beforeDot);
 
-        var def = new ProcedureDef(proc, airport, type, fixes);
-        if (!result.ContainsKey(proc)) result[proc] = new List<ProcedureDef>();
-        result[proc].Add(def);
+        foreach (var ident in identifiers)
+        {
+            var def = new ProcedureDef(ident, airport, type, bodyFixes);
+            if (!result.ContainsKey(ident)) result[ident] = new List<ProcedureDef>();
+            result[ident].Add(def);
+        }
     }
 
     return result;
@@ -1367,7 +1401,7 @@ class FlightState
         HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
         DataLinkCode, OtherDataLink,
         Route, FlightRules, STAR, Remarks,
-        Registration, EquipmentQualifier,
+        Registration, EquipmentQualifier, RequestedSpeed,
         CoordinationFix, CoordinationTime,
         ETA, ActualDepartureTime,
         LastMsgSource,

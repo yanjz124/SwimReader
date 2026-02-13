@@ -2064,10 +2064,9 @@ async function showRouteForFlight(gufi, minutes = null, persistent = false) {
 
     const polyline = L.polyline(latlngs, {
         pane: 'routes',
-        color: '#336633',
-        weight: 1.5,
-        opacity: 0.6,
-        dashArray: '8, 4',
+        color: '#cccc44',
+        weight: 2,
+        opacity: 0.8,
         interactive: false
     }).addTo(map);
 
@@ -2080,7 +2079,7 @@ async function showRouteForFlight(gufi, minutes = null, persistent = false) {
             interactive: false,
             icon: L.divIcon({
                 className: '',
-                html: `<span style="color:#336633;font-family:ERAM,Consolas,monospace;font-size:${fontSize}px;text-decoration:underline;">X</span>`,
+                html: `<span style="color:#cccc44;font-family:ERAM,Consolas,monospace;font-size:${fontSize}px;text-decoration:underline;">X</span>`,
                 iconSize: [fontSize, fontSize],
                 iconAnchor: [fontSize / 2, fontSize / 2]
             })
@@ -2344,8 +2343,7 @@ function mcaRender() {
 // Command processor
 // ════════════════════════════════════════════════════════════════════════════
 
-// Find flight by CID or callsign (case-insensitive)
-// CID matching uses only the selected facility's CID (not fallback from other facilities)
+// Find flight by FLID: CID (facility-specific), callsign, or squawk
 function findFlight(id) {
     const needle = id.toUpperCase();
     // Try CID match first — only match against selected facility's CID
@@ -2358,6 +2356,10 @@ function findFlight(id) {
     // Then callsign match
     for (const f of flights.values()) {
         if (f.callsign?.toUpperCase() === needle) return f;
+    }
+    // Then squawk match
+    for (const f of flights.values()) {
+        if (f.squawk === needle) return f;
     }
     return null;
 }
@@ -2448,16 +2450,19 @@ function processCommand(cmd) {
         }
 
         // Parse: first non-verb token might be minutes or /M, rest are FLIDs
+        // Minutes: 1-99 (1-2 digit number). CID: always 3 alphanumeric chars.
         let minutes = 20;  // default
         let flidStart = 1;
         const arg1 = parts[1].toUpperCase();
         if (arg1 === '/M') {
             minutes = 0;  // 0 = max/full route
             flidStart = 2;
-        } else if (/^\d+$/.test(arg1)) {
+        } else if (/^\d{1,2}$/.test(arg1) && parts.length > 2) {
+            // 1-2 digit number with more args — treat as minutes
             minutes = parseInt(arg1);
             flidStart = 2;
         }
+        // 3+ char tokens (including 3-digit CIDs) treated as FLIDs
 
         // Remaining parts are FLIDs — may contain slashes for multiple (QU 30 JBU123/429/AAL924)
         const flidStr = parts.slice(flidStart).join(' ').toUpperCase();

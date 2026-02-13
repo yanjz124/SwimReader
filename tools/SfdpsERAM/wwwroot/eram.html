@@ -1270,14 +1270,20 @@ function connectWs() {
         const msg = JSON.parse(evt.data);
 
         if (msg.type === 'snapshot') {
-            // Fresh start — clear markers but preserve history across reconnects
+            // Fresh start — seed history from server (survives refresh)
             for (const [, m] of markers) map.removeLayer(m);
             markers.clear();
             flights.clear();
             pendingPositions.clear();
+            flightHistory.clear();
             for (const f of msg.data) {
                 flights.set(f.gufi, f);
                 trackFacility(f);
+                if (f.history && f.history.length > 0) {
+                    const hist = f.history.map(h => ({ lat: h.lat, lon: h.lon, sym: h.sym || '\\' }));
+                    while (hist.length > MAX_HISTORY) hist.shift();
+                    flightHistory.set(f.gufi, hist);
+                }
             }
             lastScanTime = performance.now(); // reset scan clock
         } else if (msg.type === 'update') {

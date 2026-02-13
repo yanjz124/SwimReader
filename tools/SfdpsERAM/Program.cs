@@ -204,6 +204,15 @@ app.MapGet("/api/kml/{name}", (string name) =>
     return Results.File(path, "application/vnd.google-earth.kml+xml");
 });
 
+// History symbol: matches client getSymbolChar() logic
+static char GetHistSym(FlightState f)
+{
+    if (!string.IsNullOrEmpty(f.Callsign) && f.ReportedAltitude is <= 23000) return '\u2022'; // •
+    if (!string.IsNullOrEmpty(f.Callsign)) return '\\';  // Correlated Beacon
+    if (!string.IsNullOrEmpty(f.Squawk)) return '/';      // Uncorrelated Beacon
+    return '+';                                             // Primary only
+}
+
 static string FindRepoRoot(string start)
 {
     var dir = new DirectoryInfo(start);
@@ -503,6 +512,14 @@ void ProcessFlight(XElement flight, string rawXml)
                 var parts = locPos.Value.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length == 2 && double.TryParse(parts[0], out var lat) && double.TryParse(parts[1], out var lon))
                 {
+                    // Record old position in history before updating (if moved)
+                    if (state.Latitude.HasValue && state.Longitude.HasValue)
+                    {
+                        var dlat = Math.Abs(state.Latitude.Value - lat);
+                        var dlon = Math.Abs(state.Longitude.Value - lon);
+                        if (dlat > 0.0001 || dlon > 0.0001)
+                            state.AddPosition(state.Latitude.Value, state.Longitude.Value, GetHistSym(state));
+                    }
                     state.Latitude = lat;
                     state.Longitude = lon;
                 }
@@ -723,8 +740,8 @@ string BuildLhSummary(XElement flight)
 
 void SendSnapshot(WsClient client)
 {
-    // Send all current flights as a batch via the client's send queue
-    var summaries = flights.Values.Select(f => f.ToSummary()).ToArray();
+    // Send all current flights as a batch, with position history for initial display
+    var summaries = flights.Values.Select(f => f.ToSummary(includeHistory: true)).ToArray();
     var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("snapshot", summaries), jsonOpts);
     client.Enqueue(json);
 }
@@ -1328,6 +1345,7 @@ record NavPoint(string Ident, double Lat, double Lon);
 record AirwayDef(string Id, string Designation, List<string> Fixes);
 
 record ProcedureDef(string Id, string Airport, string Type, List<string> Fixes); // Type = "STAR" or "DP"
+record PositionRecord(double Lat, double Lon, long Ticks, char Sym);
 
 class NasrData
 {
@@ -1404,6 +1422,24 @@ class FlightState
     public DateTime LastSeen { get; set; }
     public string? LastMsgSource { get; set; }
 
+    // Position history (server-side, survives client refresh)
+    private readonly List<PositionRecord> _posHistory = new();
+    private const int MaxPosHistory = 20;
+
+    public void AddPosition(double lat, double lon, char sym)
+    {
+        lock (_posHistory)
+        {
+            _posHistory.Add(new PositionRecord(lat, lon, DateTime.UtcNow.Ticks, sym));
+            if (_posHistory.Count > MaxPosHistory) _posHistory.RemoveAt(0);
+        }
+    }
+
+    public List<PositionRecord> GetPositionHistory()
+    {
+        lock (_posHistory) { return new(_posHistory); }
+    }
+
     private readonly List<FlightEvent> _events = new();
     private const int MaxEvents = 50;
 
@@ -1416,7 +1452,7 @@ class FlightState
         }
     }
 
-    public object ToSummary() => new
+    public object ToSummary(bool includeHistory = false) => new
     {
         Gufi, Callsign, ComputerId,
         ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
@@ -1434,7 +1470,8 @@ class FlightState
         CoordinationFix, CoordinationTime,
         ETA, ActualDepartureTime,
         LastMsgSource,
-        LastSeen = LastSeen.ToString("HH:mm:ss")
+        LastSeen = LastSeen.ToString("HH:mm:ss"),
+        History = includeHistory ? GetPositionHistory().Select(h => new { h.Lat, h.Lon, Sym = h.Sym.ToString() }).ToArray() : null
     };
 
     public object ToDetail()
@@ -1457,7 +1494,8 @@ class FlightState
             CommunicationCode, DataLinkCode, OtherDataLink, SELCAL,
             NavigationCode, PBNCode, SurveillanceCode,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),
-            Events = events
+            Events = events,
+            History = GetPositionHistory().Select(h => new { h.Lat, h.Lon, Sym = h.Sym.ToString() }).ToArray()
         };
     }
 }

@@ -821,7 +821,7 @@ function extractSec(unitStr) { if (!unitStr) return ''; const p = unitStr.split(
 
 // Get CID for the observed facility (each ARTCC assigns its own CID to a flight)
 function getCid(f) {
-    if (myFacility && f.computerIds && f.computerIds[myFacility]) return f.computerIds[myFacility];
+    if (myFacility) return (f.computerIds && f.computerIds[myFacility]) || '';
     return f.computerId || '';
 }
 
@@ -1902,7 +1902,7 @@ function showFlightDetail(gufi) {
             }
             return parts.join(' | ');
         })()],
-        ['CID', getCid(f) || f.computerId],
+        ['CID', getCid(f) || (myFacility ? '' : f.computerId)],
         ['Operator', f.operator],
         ['A/C Type', f.aircraftType || ''],
         ['Reg', f.registration || ''],
@@ -2332,19 +2332,20 @@ function mcaRender() {
 // Command processor
 // ════════════════════════════════════════════════════════════════════════════
 
-// Find flight by FLID: CID (facility-specific then global), callsign, or squawk
+// Find flight by FLID: CID (facility-specific only), callsign, or squawk
 function findFlight(id) {
     const needle = id.toUpperCase();
-    // Try CID match — facility-specific first (computerIds[myFacility])
+    // CID match — only for selected facility's CID
     if (myFacility) {
         for (const f of flights.values()) {
             const cid = f.computerIds && f.computerIds[myFacility];
             if (cid && cid.toUpperCase() === needle) return f;
         }
-    }
-    // Fallback: match against computerId (last CID from any facility)
-    for (const f of flights.values()) {
-        if (f.computerId && f.computerId.toUpperCase() === needle) return f;
+    } else {
+        // No facility selected — match against computerId (last CID from any facility)
+        for (const f of flights.values()) {
+            if (f.computerId && f.computerId.toUpperCase() === needle) return f;
+        }
     }
     // Then callsign match
     for (const f of flights.values()) {

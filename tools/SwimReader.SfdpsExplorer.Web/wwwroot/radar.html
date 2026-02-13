@@ -299,6 +299,26 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 <label><input type="checkbox" id="chk-boundaries" checked> Boundaries</label>
             </div>
             <div class="ctrl-row">
+                <label>UHI %</label>
+                <input type="range" id="rng-bnd-uhi" min="0" max="100" value="60" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-bnd-uhi" style="min-width:28px; text-align:right; font-size:11px;">60</span>
+            </div>
+            <div class="ctrl-row">
+                <label>HI %</label>
+                <input type="range" id="rng-bnd-hi" min="0" max="100" value="60" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-bnd-hi" style="min-width:28px; text-align:right; font-size:11px;">60</span>
+            </div>
+            <div class="ctrl-row">
+                <label>LO %</label>
+                <input type="range" id="rng-bnd-lo" min="0" max="100" value="60" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-bnd-lo" style="min-width:28px; text-align:right; font-size:11px;">60</span>
+            </div>
+            <div class="ctrl-row">
+                <label>APP %</label>
+                <input type="range" id="rng-bnd-app" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-bnd-app" style="min-width:28px; text-align:right; font-size:11px;">0</span>
+            </div>
+            <div class="ctrl-row">
                 <label><input type="checkbox" id="chk-mapbg" checked> Map Bg</label>
             </div>
             <div class="ctrl-row">
@@ -557,8 +577,18 @@ map.on('move zoom viewreset resize', () => {
 // KML sector boundaries (video maps — grey)
 // ════════════════════════════════════════════════════════════════════════════
 let kmlSectors = [];
-const boundaryLayers = {};
+const boundaryLayers = {};        // keyed by 'ARTCC:category'
 let activeBoundaryArtcc = '';
+const BOUNDARY_CATS = ['Ultra High', 'High Altitude', 'Low Altitude', 'Approach Control'];
+const BOUNDARY_CAT_LABELS = { 'Ultra High': 'UHI', 'High Altitude': 'HI', 'Low Altitude': 'LO', 'Approach Control': 'APP' };
+const BOUNDARY_CAT_SLIDER = { 'Ultra High': 'rng-bnd-uhi', 'High Altitude': 'rng-bnd-hi', 'Low Altitude': 'rng-bnd-lo', 'Approach Control': 'rng-bnd-app' };
+const BOUNDARY_CAT_LABEL = { 'Ultra High': 'lbl-bnd-uhi', 'High Altitude': 'lbl-bnd-hi', 'Low Altitude': 'lbl-bnd-lo', 'Approach Control': 'lbl-bnd-app' };
+let boundaryBrightness = { 'Ultra High': 60, 'High Altitude': 60, 'Low Altitude': 60, 'Approach Control': 0 };
+
+function bndColor(brightness) {
+    const v = Math.round(brightness * 2.55);
+    return `rgb(${v},${v},${v})`;
+}
 
 async function loadKml() {
     try {
@@ -593,9 +623,13 @@ async function loadKml() {
             }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
 
             if (coords.length < 2) continue;
-            kmlSectors.push({ artcc, name, sectorId: parts.length >= 4 ? parts[3] : name, alt: data['ALT'] || '', coords });
+            const catRaw = parts.length >= 3 ? parts[2] : '';
+            const category = catRaw.replace(/\s*\(\d+\)$/, '');   // strip " (17)" count
+            kmlSectors.push({ artcc, name, sectorId: parts.length >= 4 ? parts[3] : name, alt: data['ALT'] || '', category, coords });
         }
-        console.log(`[KML] Loaded ${kmlSectors.length} sectors`);
+        const catCounts = {};
+        for (const s of kmlSectors) catCounts[s.category] = (catCounts[s.category] || 0) + 1;
+        console.log(`[KML] Loaded ${kmlSectors.length} sectors`, catCounts);
         // Clear any boundary layers cached before KML finished (they'd be empty)
         for (const key in boundaryLayers) {
             if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
@@ -606,20 +640,52 @@ async function loadKml() {
 }
 
 function showBoundariesForFacility(artcc) {
-    if (activeBoundaryArtcc && boundaryLayers[activeBoundaryArtcc]) {
-        map.removeLayer(boundaryLayers[activeBoundaryArtcc]);
+    // Remove all layers for the previous ARTCC
+    if (activeBoundaryArtcc) {
+        for (const cat of BOUNDARY_CATS) {
+            const key = `${activeBoundaryArtcc}:${cat}`;
+            if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
+        }
     }
     activeBoundaryArtcc = artcc;
     if (!artcc || !showBoundaries) return;
 
-    if (!boundaryLayers[artcc]) {
-        const group = L.layerGroup();
-        for (const sec of kmlSectors.filter(s => s.artcc === artcc)) {
-            L.polyline(sec.coords, { color: MAP_COLOR, weight: 1, opacity: 0.6, interactive: false }).addTo(group);
+    for (const cat of BOUNDARY_CATS) {
+        const br = boundaryBrightness[cat];
+        if (br <= 0) continue;
+        const key = `${artcc}:${cat}`;
+        if (!boundaryLayers[key]) {
+            const group = L.layerGroup();
+            for (const sec of kmlSectors.filter(s => s.artcc === artcc && s.category === cat)) {
+                L.polyline(sec.coords, { color: bndColor(br), weight: 1, opacity: 1, interactive: false }).addTo(group);
+            }
+            boundaryLayers[key] = group;
         }
-        boundaryLayers[artcc] = group;
+        boundaryLayers[key].addTo(map);
     }
-    boundaryLayers[artcc].addTo(map);
+}
+
+function setBoundaryBrightness(cat, brightness) {
+    boundaryBrightness[cat] = brightness;
+    if (!activeBoundaryArtcc || !showBoundaries) return;
+    const key = `${activeBoundaryArtcc}:${cat}`;
+    if (brightness <= 0) {
+        if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
+        return;
+    }
+    const col = bndColor(brightness);
+    if (!boundaryLayers[key]) {
+        const group = L.layerGroup();
+        for (const sec of kmlSectors.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat)) {
+            L.polyline(sec.coords, { color: col, weight: 1, opacity: 1, interactive: false }).addTo(group);
+        }
+        boundaryLayers[key] = group;
+        boundaryLayers[key].addTo(map);
+    } else {
+        // Update color on existing polylines
+        boundaryLayers[key].eachLayer(l => l.setStyle({ color: col }));
+        if (!map.hasLayer(boundaryLayers[key])) boundaryLayers[key].addTo(map);
+    }
 }
 
 loadKml();
@@ -1007,11 +1073,18 @@ function formatLine3(f, cls) {
         }
     }
 
-    // Completed handoff — show O indicator steady for 60 seconds
+    // Completed handoff — rotate O indicator / groundspeed for 60 seconds (5 cycles of 12s)
     const completed = hoCompletedInfo.get(f.gufi);
     if (completed && flashTime - completed.time < 60000) {
         const suffix = handoffSuffix(completed.receiving, completed.transferring);
-        return `${cid}O${suffix}`;
+        const hoStr = `${cid}O${suffix}`;
+        const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
+        const gsStr = gs ? `${cid} ${gs}` : cid;
+        const padLen = Math.max(hoStr.length, gsStr.length);
+        // 12s per cycle: 6s O indicator, 6s groundspeed
+        const phase = Math.floor((flashTime - completed.time) / 6000) % 2;
+        if (phase === 0) return hoStr.padEnd(padLen);
+        return gsStr.padEnd(padLen);
     }
 
     // Normal: CID + groundspeed
@@ -1485,11 +1558,27 @@ document.getElementById('sel-vector').addEventListener('change', function () {
 document.getElementById('chk-boundaries').addEventListener('change', function () {
     showBoundaries = this.checked;
     if (showBoundaries) showBoundariesForFacility(myFacility);
-    else if (activeBoundaryArtcc && boundaryLayers[activeBoundaryArtcc]) {
-        map.removeLayer(boundaryLayers[activeBoundaryArtcc]);
+    else if (activeBoundaryArtcc) {
+        for (const cat of BOUNDARY_CATS) {
+            const key = `${activeBoundaryArtcc}:${cat}`;
+            if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
+        }
     }
     saveSettingsToUrl();
 });
+
+for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
+    const lblId = BOUNDARY_CAT_LABEL[cat];
+    document.getElementById(id).addEventListener('input', function () {
+        setBoundaryBrightness(cat, parseInt(this.value));
+        document.getElementById(lblId).textContent = this.value;
+    });
+    document.getElementById(id).addEventListener('change', function () {
+        setBoundaryBrightness(cat, parseInt(this.value));
+        document.getElementById(lblId).textContent = this.value;
+        saveSettingsToUrl();
+    });
+}
 
 document.getElementById('chk-mapbg').addEventListener('change', function () {
     showMapBg = this.checked;
@@ -1652,6 +1741,10 @@ function loadSettingsFromUrl() {
     if (params.has('histcount')) MAX_HISTORY = parseInt(params.get('histcount')) || 5;
     if (params.has('vector')) vectorMinutes = parseInt(params.get('vector'));
     if (params.has('boundaries')) showBoundaries = params.get('boundaries') !== '0';
+    if (params.has('bndbr')) {
+        const vals = params.get('bndbr').split(',').map(Number);
+        BOUNDARY_CATS.forEach((cat, i) => { if (!isNaN(vals[i])) boundaryBrightness[cat] = vals[i]; });
+    }
     if (params.has('fontsize')) fontSize = parseInt(params.get('fontsize')) || 10;
     if (params.has('altlow')) altFilterLow = parseInt(params.get('altlow')) || 0;
     if (params.has('althigh')) altFilterHigh = parseInt(params.get('althigh')) || 999;
@@ -1671,6 +1764,10 @@ function loadSettingsFromUrl() {
     document.getElementById('sel-histcount').value = MAX_HISTORY;
     document.getElementById('sel-vector').value = vectorMinutes;
     document.getElementById('chk-boundaries').checked = showBoundaries;
+    for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
+        document.getElementById(id).value = boundaryBrightness[cat];
+        document.getElementById(BOUNDARY_CAT_LABEL[cat]).textContent = boundaryBrightness[cat];
+    }
     document.getElementById('chk-mapbg').checked = showMapBg;
     document.getElementById('sel-fontsize').value = fontSize;
     document.getElementById('inp-alt-low').value = altFilterLow;
@@ -1691,6 +1788,9 @@ function saveSettingsToUrl() {
     if (MAX_HISTORY !== 5) params.set('histcount', MAX_HISTORY);
     if (vectorMinutes !== 1) params.set('vector', vectorMinutes);
     if (!showBoundaries) params.set('boundaries', '0');
+    const brVals = BOUNDARY_CATS.map(c => boundaryBrightness[c]);
+    const defaultBr = [60, 60, 60, 0];
+    if (brVals.join(',') !== defaultBr.join(',')) params.set('bndbr', brVals.join(','));
     if (!showMapBg) params.set('mapbg', '0');
     if (fontSize !== 10) params.set('fontsize', fontSize);
     if (altFilterLow !== 0) params.set('altlow', altFilterLow);

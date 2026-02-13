@@ -1135,9 +1135,9 @@ List<double[]> ResolveRoute(string routeText, string? origin, string? destinatio
         if (apt is not null) { waypoints.Add(new[] { apt.Lat, apt.Lon }); lastPt = apt; }
     }
 
-    // Tokenize: split on spaces, filter out DCT and empty
+    // Tokenize: split on spaces and dots, filter out DCT, "/", and empty tokens
     var tokens = routeText.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries)
-        .Where(t => !t.Equals("DCT", StringComparison.OrdinalIgnoreCase))
+        .Where(t => !t.Equals("DCT", StringComparison.OrdinalIgnoreCase) && t != "/")
         .ToArray();
 
     for (int i = 0; i < tokens.Length; i++)
@@ -1168,8 +1168,22 @@ List<double[]> ResolveRoute(string routeText, string? origin, string? destinatio
         }
         else
         {
+            // Skip tokens that are just the origin/destination (already added)
+            if (token == origin?.ToUpperInvariant() || token == destination?.ToUpperInvariant()) continue;
+
             // Fix/navaid/airport
             var pt = LookupPoint(token, lastPt, nasr);
+
+            // If not found, try stripping radial/distance suffix (e.g., CARNU020034 → CARNU)
+            if (pt is null && token.Length > 5 && char.IsDigit(token[^1]))
+            {
+                // Find where digits start at the end
+                var nameEnd = token.Length;
+                while (nameEnd > 0 && char.IsDigit(token[nameEnd - 1])) nameEnd--;
+                if (nameEnd >= 2 && nameEnd < token.Length)
+                    pt = LookupPoint(token[..nameEnd], lastPt, nasr);
+            }
+
             if (pt is not null)
             {
                 waypoints.Add(new[] { pt.Lat, pt.Lon });

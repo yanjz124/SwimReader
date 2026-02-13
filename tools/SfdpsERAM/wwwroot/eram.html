@@ -2343,15 +2343,19 @@ function mcaRender() {
 // Command processor
 // ════════════════════════════════════════════════════════════════════════════
 
-// Find flight by FLID: CID (facility-specific), callsign, or squawk
+// Find flight by FLID: CID (facility-specific then global), callsign, or squawk
 function findFlight(id) {
     const needle = id.toUpperCase();
-    // Try CID match first — only match against selected facility's CID
+    // Try CID match — facility-specific first (computerIds[myFacility])
     if (myFacility) {
         for (const f of flights.values()) {
             const cid = f.computerIds && f.computerIds[myFacility];
-            if (cid && cid === needle) return f;
+            if (cid && cid.toUpperCase() === needle) return f;
         }
+    }
+    // Fallback: match against computerId (last CID from any facility)
+    for (const f of flights.values()) {
+        if (f.computerId && f.computerId.toUpperCase() === needle) return f;
     }
     // Then callsign match
     for (const f of flights.values()) {

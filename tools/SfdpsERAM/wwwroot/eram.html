@@ -153,6 +153,8 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
 }
 .ac-db.emrg { color: #ff4444; }
+.ac-db.dwell { outline: 1px solid #cccc44; outline-offset: 1px; }
+.ac-db.dwell.emrg { outline-color: #ff4444; }
 /* .ac-db.ho — handoff flash now driven by JS */
 
 /* ── Column 0 (R / VCI) — left of data block ── */
@@ -163,6 +165,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     color: #cccc44;
     text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
 }
+.ac-vci { color: #44cc44; }
 
 /* ── Line 0 (P/A pointout) — above data block ── */
 .ac-line0 {
@@ -416,6 +419,7 @@ let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
 let ldbBrightness = 70;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
 let showMapBg = true;       // tile layer visible
+const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
 const wasOwnOrHo = new Set();  // tracks that were own/ho — keeps FDB sticky when they become other
 const lastVisibleAt = new Map(); // gufi → performance.now() — grace period prevents flicker on facility field changes
@@ -424,6 +428,8 @@ const knownFacilities = new Map();
 const hoCompletedInfo = new Map(); // gufi → { time, receiving, transferring } — track completed handoffs for 60s O display
 const dbPositions = new Map(); // gufi → position number 1-9 (data block placement)
 const ldrLenOverrides = new Map(); // gufi → leader length level (0-3), default 1
+const dwellLocked = new Set();     // GUFIs with persistent dwell emphasis (toggled via Field A click)
+const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indicator) toggled on
 
 // Global flash reference — updated once per 500ms tick so ALL tracks see the same phase
 let flashTime = performance.now();
@@ -924,8 +930,32 @@ function shouldShowR(f, cls) {
 function shouldShowFdb(gufi, cls) {
     // User override takes priority
     if (fdbOverrides.has(gufi)) return fdbOverrides.get(gufi);
+    // Quick Look sectors: force FDB on tracks in QL'd sectors
+    if (quickLookSectors.size > 0) {
+        const f = flights.get(gufi);
+        if (f) {
+            const sec = f.controllingSector || '';
+            if (quickLookSectors.has(sec)) return true;
+        }
+    }
     // Default: own and handoff tracks get FDB, others get LDB
     return cls === 'own' || cls === 'ho' || cls === 'emrg';
+}
+
+// Dwell emphasis helpers — apply/remove box + LDB brightness boost
+function applyDwell(el, gufi) {
+    const dbEl = el.querySelector('.ac-db');
+    if (!dbEl) return;
+    dbEl.classList.add('dwell');
+    const f = flights.get(gufi);
+    if (f && !shouldShowFdb(gufi, classifyTrack(f))) dbEl.style.opacity = '1';
+}
+function removeDwell(el, gufi) {
+    const dbEl = el.querySelector('.ac-db');
+    if (!dbEl) return;
+    dbEl.classList.remove('dwell');
+    const f = flights.get(gufi);
+    if (f && !shouldShowFdb(gufi, classifyTrack(f))) dbEl.style.opacity = String(ldbBrightness / 100);
 }
 
 function buildMarkerHtml(f, cls) {
@@ -969,14 +999,22 @@ function buildMarkerHtml(f, cls) {
         const db = formatDatablock(f, cls);
         const dbCls = isEmrg ? ' emrg' : '';
 
-        // R indicator: child of data block, juts left on line 3
-        let rHtml = '';
+        // Column 0: VCI (line 2) + R indicator (line 3)
+        let col0Html = '';
+        // VCI click target — always present in FDB for toggle area
+        col0Html += `<div class="ac-vci-hit" style="position:absolute; left:${-Math.ceil(CHAR_W * 2.5)}px; top:${Math.round(LINE_H * 0.5)}px; width:${Math.ceil(CHAR_W * 2.5)}px; height:${Math.round(LINE_H * 1.5)}px; pointer-events:auto; cursor:pointer;"></div>`;
+        if (vciActive.has(f.gufi)) {
+            const vciSize = Math.round(LINE_H);
+            col0Html += `<div class="ac-vci" style="position:absolute; left:${-Math.ceil(CHAR_W * 2)}px; top:${Math.round(LINE_H * 0.95) + 1}px; width:${vciSize}px; height:${vciSize}px; pointer-events:none;"><svg viewBox="0 0 16 16" width="${vciSize}" height="${vciSize}"><path d="M3,5 L3,13 L11,13" fill="none" stroke="#44cc44" stroke-width="1.5"/><path d="M5,8 A3,3 0 0,1 8,11" fill="none" stroke="#44cc44" stroke-width="1.5" stroke-linecap="round"/><path d="M5,5.5 A5.5,5.5 0 0,1 10.5,11" fill="none" stroke="#44cc44" stroke-width="1.5" stroke-linecap="round"/></svg></div>`;
+        }
         if (shouldShowR(f, cls)) {
-            rHtml = `<div class="ac-col0" style="position:absolute; left:${-Math.ceil(CHAR_W * 1.5)}px; top:${Math.round(LINE_H * 2)}px;">R</div>`;
+            col0Html += `<div class="ac-col0 ac-r" style="position:absolute; left:${-Math.ceil(CHAR_W * 1.5)}px; top:${Math.round(LINE_H * 2) + 1}px;">R</div>`;
         }
 
-        html += `<div class="ac-db${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift}px;${leftExtra}">${rHtml}${db}</div>`;
+        html += `<div class="ac-db${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift}px;${leftExtra}">${col0Html}${db}</div>`;
     } else if (ldbBrightness > 0) {
+        // VCI clears when track goes to LDB
+        vciActive.delete(f.gufi);
         // Limited Data Block (2 lines) — no leader line, right next to target
         const ldbOp = ldbBrightness / 100;
         const l1 = f.callsign || '???';
@@ -1424,6 +1462,8 @@ function doRender() {
                 if (el._lastHash !== hash) {
                     el.innerHTML = buildMarkerHtml(f, cls);
                     el._lastHash = hash;
+                    // Re-apply dwell emphasis after rebuild
+                    if (dwellLocked.has(gufi) || el._isHovering) applyDwell(el, gufi);
                 }
             }
         } else {
@@ -1436,7 +1476,55 @@ function doRender() {
                 el._lastHash = hash;
                 el.style.pointerEvents = 'auto';
                 el.style.cursor = 'pointer';
-                el.addEventListener('click', () => toggleTrackSelect(gufi));
+                el._isHovering = false;
+                el._gufi = gufi;
+                // Dwell emphasis — hover
+                el.addEventListener('mouseenter', () => {
+                    el._isHovering = true;
+                    applyDwell(el, gufi);
+                });
+                el.addEventListener('mouseleave', () => {
+                    el._isHovering = false;
+                    if (!dwellLocked.has(gufi)) removeDwell(el, gufi);
+                });
+                // Click: VCI hit area → toggle VCI; Field A → dwell lock; elsewhere → existing
+                el.addEventListener('click', (e) => {
+                    // VCI toggle: click on Column 0 hit area
+                    if (e.target.closest('.ac-vci-hit')) {
+                        if (vciActive.has(gufi)) vciActive.delete(gufi);
+                        else vciActive.add(gufi);
+                        el._lastHash = '';
+                        lastRenderTime = 0;
+                        return;
+                    }
+                    const dbEl = el.querySelector('.ac-db');
+                    if (dbEl) {
+                        const rect = dbEl.getBoundingClientRect();
+                        if (e.clientX >= rect.left && e.clientX <= rect.right &&
+                            e.clientY >= rect.top && e.clientY <= rect.top + LINE_H) {
+                            // Click on Field A → toggle dwell lock
+                            if (dwellLocked.has(gufi)) {
+                                dwellLocked.delete(gufi);
+                                if (!el._isHovering) removeDwell(el, gufi);
+                            } else {
+                                dwellLocked.add(gufi);
+                                applyDwell(el, gufi);
+                            }
+                            return;
+                        }
+                    }
+                    toggleTrackSelect(gufi);
+                });
+                // Middle-click on VCI hit area also toggles VCI
+                el.addEventListener('auxclick', (e) => {
+                    if (e.button === 1 && e.target.closest('.ac-vci-hit')) {
+                        e.preventDefault();
+                        if (vciActive.has(gufi)) vciActive.delete(gufi);
+                        else vciActive.add(gufi);
+                        el._lastHash = '';
+                        lastRenderTime = 0;
+                    }
+                });
             }
             markers.set(gufi, m);
         }
@@ -1492,19 +1580,19 @@ setInterval(() => {
         if (!dbEl) continue;
         const cls = classifyTrack(f);
         if (shouldShowFdb(gufi, cls)) {
-            // Preserve R child element when updating text
-            const savedR = dbEl.querySelector('.ac-col0');
+            // Preserve Column 0 children (VCI, R, hit target) when updating text
+            const savedChildren = Array.from(dbEl.querySelectorAll('.ac-col0, .ac-vci-hit, .ac-vci'));
             dbEl.textContent = formatDatablock(f, cls);
-            if (savedR) dbEl.appendChild(savedR);
+            savedChildren.forEach(ch => dbEl.appendChild(ch));
         }
 
-        // Sync R indicator with handoff state — R is a child of the data block
+        // Sync R indicator with handoff state
         const rNow = shouldShowFdb(gufi, cls) && shouldShowR(f, cls);
-        const rEl = dbEl.querySelector('.ac-col0');
+        const rEl = dbEl.querySelector('.ac-r');
         if (rNow && !rEl) {
             const div = document.createElement('div');
-            div.className = 'ac-col0';
-            div.style.cssText = `position:absolute; left:${-Math.ceil(CHAR_W * 1.5)}px; top:${Math.round(LINE_H * 2)}px;`;
+            div.className = 'ac-col0 ac-r';
+            div.style.cssText = `position:absolute; left:${-Math.ceil(CHAR_W * 1.5)}px; top:${Math.round(LINE_H * 2) + 1}px;`;
             div.textContent = 'R';
             dbEl.appendChild(div);
         } else if (!rNow && rEl) {
@@ -1529,6 +1617,7 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     mySectors.clear();
     // Changing facility: revert all tracks to default LDB
     fdbOverrides.clear();
+    quickLookSectors.clear();
     wasOwnOrHo.clear();
     invalidateAllMarkers();
     rebuildSectorCheckboxes();
@@ -1983,6 +2072,33 @@ function processCommand(cmd) {
         return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
     }
 
+    // //<FLID> or // <FLID> — Toggle VCI (Visual Communications Indicator)
+    {
+        let vciFlid = null;
+        if (verb === '//' && parts.length >= 2) vciFlid = parts.slice(1).join('').toUpperCase();
+        else if (verb.startsWith('//') && verb.length > 2) vciFlid = verb.substring(2).toUpperCase();
+        if (vciFlid) {
+            const f = findFlight(vciFlid);
+            if (f) {
+                const cls = classifyTrack(f);
+                if (!shouldShowFdb(f.gufi, cls)) {
+                    return { feedback: [{ type: 'err', text: 'NOT IN FDB' }] };
+                }
+                if (vciActive.has(f.gufi)) vciActive.delete(f.gufi);
+                else vciActive.add(f.gufi);
+                const m4 = markers.get(f.gufi);
+                if (m4) { const el = m4.getElement(); if (el) el._lastHash = ''; }
+                lastRenderTime = 0;
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: 'TOGGLE ON-FREQUENCY' },
+                    { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
+                ]};
+            }
+            return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+        }
+    }
+
     // /<0-3> <FLID> — Set individual leader line length
     if (/^\/[0-3]$/.test(verb) && parts.length >= 2) {
         const level = parseInt(verb.charAt(1));
@@ -2017,6 +2133,21 @@ function processCommand(cmd) {
     if (verb === 'QD') {
         document.getElementById('ra-content').textContent = '';
         return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+    }
+
+    // QL [sector ...] — Quick Look: force FDB on specific sectors; QL alone clears
+    if (verb === 'QL') {
+        const secs = parts.slice(1).map(s => s.toUpperCase());
+        quickLookSectors.clear();
+        secs.forEach(s => quickLookSectors.add(s));
+        invalidateAllMarkers();
+        lastRenderTime = 0;
+        const feedback = [
+            { type: 'ok', text: 'ACCEPT' },
+            { type: 'info', text: 'QUICK LOOK' },
+        ];
+        if (secs.length > 0) feedback.push({ type: 'info', text: secs.join(' ') });
+        return { feedback };
     }
 
     // <FLID> — toggle FDB/LDB (single argument, not a known verb)

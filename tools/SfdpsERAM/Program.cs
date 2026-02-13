@@ -385,13 +385,11 @@ void ProcessFlight(XElement flight, string rawXml)
     var gufi = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "gufi")?.Value;
     if (string.IsNullOrEmpty(gufi))
     {
-        if (Interlocked.Increment(ref _noGufiCount) <= 3)
-            Console.WriteLine($"[DBG] No gufi, children: {string.Join(", ", flight.Elements().Select(e => e.Name.LocalName))}");
+        Interlocked.Increment(ref _noGufiCount);
         return;
     }
 
-    if (Interlocked.Increment(ref _procCount) <= 3)
-        Console.WriteLine($"[DBG] ProcessFlight OK gufi={gufi[..8]}.. flights.Count={flights.Count}");
+    Interlocked.Increment(ref _procCount);
 
     var source = flight.Attribute("source")?.Value ?? "";
     var centre = flight.Attribute("centre")?.Value ?? "";
@@ -467,14 +465,8 @@ void ProcessFlight(XElement flight, string rawXml)
     var cu = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "controllingUnit");
     if (cu is not null)
     {
-        var newFac = cu.Attribute("unitIdentifier")?.Value ?? "";
-        var newSec = cu.Attribute("sectorIdentifier")?.Value ?? "";
-        if (state.ControllingFacility != newFac || state.ControllingSector != newSec)
-        {
-            Console.WriteLine($"[CU] {DateTime.UtcNow:HH:mm:ss.fff} {state.Callsign ?? "?"} gufi={gufi[..Math.Min(8, gufi.Length)]}.. ctrl={state.ControllingFacility}/{state.ControllingSector} -> {newFac}/{newSec} src={source} ho={state.HandoffEvent}");
-        }
-        state.ControllingFacility = newFac;
-        state.ControllingSector = newSec;
+        state.ControllingFacility = cu.Attribute("unitIdentifier")?.Value ?? "";
+        state.ControllingSector = cu.Attribute("sectorIdentifier")?.Value ?? "";
     }
 
     // flightPlan
@@ -569,8 +561,6 @@ void ProcessFlight(XElement flight, string rawXml)
             if (recv is not null) state.HandoffReceiving = FormatUnit(recv);
             if (xfer is not null) state.HandoffTransferring = FormatUnit(xfer);
             if (acpt is not null) state.HandoffAccepting = FormatUnit(acpt);
-            if (!string.IsNullOrEmpty(evt))
-                Console.WriteLine($"[HO] {DateTime.UtcNow:HH:mm:ss.fff} {state.Callsign ?? "?"} gufi={gufi[..Math.Min(8, gufi.Length)]}.. event={evt} recv={state.HandoffReceiving} xfer={state.HandoffTransferring} ctrl={state.ControllingFacility}/{state.ControllingSector}");
         }
     }
 
@@ -668,7 +658,6 @@ void ProcessFlight(XElement flight, string rawXml)
         var recvSec = recvParts.Length > 1 ? recvParts[1] : "";
         if (state.ControllingFacility == recvFac && state.ControllingSector == recvSec)
         {
-            Console.WriteLine($"[HO-DONE] {DateTime.UtcNow:HH:mm:ss.fff} {state.Callsign ?? "?"} gufi={gufi[..Math.Min(8, gufi.Length)]}.. ctrl={state.ControllingFacility}/{state.ControllingSector} matched recv={state.HandoffReceiving}, xfer={state.HandoffTransferring}");
             state.HandoffEvent = "";
             state.HandoffReceiving = "";
             state.HandoffTransferring = "";

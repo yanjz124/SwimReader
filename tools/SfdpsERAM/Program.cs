@@ -171,6 +171,21 @@ app.MapGet("/api/debug/dupe-cids/{facility}", (string facility) =>
     return Results.Json(new { facility, totalFlights = flights.Count, cidsChecked = cidMap.Count, duplicates = dupes }, jsonOpts);
 });
 
+// Debug: search flights by callsign
+app.MapGet("/api/debug/search/{callsign}", (string callsign) =>
+{
+    var needle = callsign.ToUpperInvariant();
+    var matches = flights.Where(kv =>
+        (kv.Value.Callsign?.ToUpperInvariant().Contains(needle) ?? false) ||
+        (kv.Value.ComputerId?.Contains(needle) ?? false))
+        .Select(kv => new {
+            kv.Value.Gufi, kv.Value.Callsign, kv.Value.ComputerId,
+            ComputerIds = new Dictionary<string, string>(kv.Value.ComputerIds),
+            kv.Value.Origin, kv.Value.Destination, kv.Value.Squawk
+        }).Take(20).ToList();
+    return Results.Json(matches, jsonOpts);
+});
+
 // Serve KML files from repo root
 var repoRoot = FindRepoRoot(app.Environment.ContentRootPath);
 

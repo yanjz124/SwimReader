@@ -220,6 +220,7 @@ Defined in `handoff-codes.json`. Default mappings (e.g., ZDC=W, ZNY=N, ZOB=C) wi
 
 ### Sidebar Controls
 - Facility/sector selector (sets scope ownership for handoff display)
+- "Facility only" checkbox — strict filter: only show aircraft reported by selected ARTCC
 - Data block toggle (full/partial/off)
 - History count (0-10 symbols)
 - Velocity vector length (0-10 min)
@@ -228,6 +229,9 @@ Defined in `handoff-codes.json`. Default mappings (e.g., ZDC=W, ZNY=N, ZOB=C) wi
 - Altitude filter (FL low/high)
 - Colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red)
 - 4-second render cycle matching SFDPS ~12s update cadence
+
+### Callsign Deduplication
+When a facility is selected, the same physical aircraft may exist as multiple GUFIs (one per ARTCC tracking it). The render loop deduplicates by callsign — for each callsign, only the GUFI whose controlling/reporting facility matches the selected facility is shown. This prevents stacked duplicate targets. Dedup applies to markers, history symbols, and velocity vectors. When "All" is selected (no facility), no dedup is applied.
 
 ### Rendering Architecture
 - Leaflet markers use `L.divIcon` with custom HTML for position symbol + data block

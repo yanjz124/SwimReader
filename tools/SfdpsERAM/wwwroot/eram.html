@@ -256,6 +256,9 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                     <span style="color:#666; font-size:10px;">Select facility first</span>
                 </div>
             </div>
+            <div class="ctrl-row" style="margin-top:4px;">
+                <label><input type="checkbox" id="chk-facility-only"> Facility only</label>
+            </div>
         </div>
 
         <div class="panel-section">
@@ -401,6 +404,7 @@ let lastScanTime = performance.now();
 
 let myFacility = '';
 let mySectors = new Set();
+let facilityOnly = false;   // when true + facility selected, hide all non-facility aircraft
 let showFdb = true;
 let showHistory = true;
 let vectorMinutes = 1;
@@ -427,6 +431,12 @@ const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indi
 
 // Global flash reference — updated once per 500ms tick so ALL tracks see the same phase
 let flashTime = performance.now();
+
+// Dedup: when a facility is selected, only show one GUFI per callsign (prefer our facility)
+const bestGufiByCallsign = new Map();  // callsign → gufi — rebuilt each render cycle
+function isDedupHidden(gufi, f) {
+    return myFacility && f.callsign && bestGufiByCallsign.get(f.callsign) !== gufi;
+}
 
 // Facility handoff codes — loaded from handoff-codes.json
 // Structure: { default: { FAC: code }, ZDC: { PCT: code }, ... }
@@ -512,6 +522,7 @@ function drawOverlay() {
             const f = flights.get(gufi);
             if (!f || f.latitude == null) continue;
             if (!isVisible(f)) continue;
+            if (isDedupHidden(gufi, f)) continue;
 
             const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
 
@@ -535,6 +546,7 @@ function drawOverlay() {
             if (f.latitude == null || f.longitude == null) continue;
             if (f.trackVelocityX == null || f.trackVelocityY == null) continue;
             if (!isVisible(f)) continue;
+            if (isDedupHidden(gufi, f)) continue;
             if (!bounds.contains([f.latitude, f.longitude])) continue;
 
             const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
@@ -723,6 +735,8 @@ function isVisible(f) {
     // Show if handoff involves our facility
     if (f.handoffReceiving && extractFac(f.handoffReceiving) === myFacility) return true;
     if (f.handoffTransferring && extractFac(f.handoffTransferring) === myFacility) return true;
+    // "Facility only" — strict mode: only show aircraft reported by our facility (above checks)
+    if (facilityOnly) return false;
     // Keep flights visible that were previously own/ho (prevents disappearing during handoff transitions)
     if (wasOwnOrHo.has(f.gufi)) return true;
     // Keep flights visible that have a recent completed handoff involving us
@@ -1448,8 +1462,29 @@ function doRender() {
     const onScreenGufis = new Set();
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
 
+    // Deduplicate: same callsign reported by multiple ARTCCs → keep only the best GUFI.
+    // Priority: (1) controlling/reporting facility matches selected facility, (2) first seen.
+    bestGufiByCallsign.clear();
+    if (myFacility) {
+        for (const [gufi, f] of flights) {
+            if (!f.callsign) continue;
+            const cs = f.callsign;
+            const prev = bestGufiByCallsign.get(cs);
+            if (!prev) { bestGufiByCallsign.set(cs, gufi); continue; }
+            const prevF = flights.get(prev);
+            const prevFac = prevF.controllingFacility || prevF.reportingFacility || '';
+            const curFac = f.controllingFacility || f.reportingFacility || '';
+            // Prefer the one from our facility
+            if (curFac === myFacility && prevFac !== myFacility) {
+                bestGufiByCallsign.set(cs, gufi);
+            }
+        }
+    }
+
     for (const [gufi, f] of flights) {
         if (!isVisible(f)) continue;
+        // Skip duplicate callsigns — only show the best GUFI per callsign
+        if (isDedupHidden(gufi, f)) continue;
         lastVisibleAt.set(gufi, now);  // stamp for grace period
 
         const cls = classifyTrack(f);
@@ -1625,6 +1660,12 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     invalidateAllMarkers();
     rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
+    saveSettingsToUrl();
+});
+
+document.getElementById('chk-facility-only').addEventListener('change', function () {
+    facilityOnly = this.checked;
+    invalidateAllMarkers();
     saveSettingsToUrl();
 });
 
@@ -1841,6 +1882,7 @@ function loadSettingsFromUrl() {
     if (params.has('altlow')) altFilterLow = parseInt(params.get('altlow')) || 0;
     if (params.has('althigh')) altFilterHigh = parseInt(params.get('althigh')) || 999;
     if (params.has('ldb')) ldbBrightness = parseInt(params.get('ldb'));
+    if (params.has('faconly')) facilityOnly = params.get('faconly') === '1';
     if (params.has('mapbg')) showMapBg = params.get('mapbg') !== '0';
 
     // Restore map position/zoom
@@ -1860,6 +1902,7 @@ function loadSettingsFromUrl() {
         document.getElementById(id).value = boundaryBrightness[cat];
         document.getElementById(BOUNDARY_CAT_LABEL[cat]).textContent = boundaryBrightness[cat];
     }
+    document.getElementById('chk-facility-only').checked = facilityOnly;
     document.getElementById('chk-mapbg').checked = showMapBg;
     document.getElementById('sel-fontsize').value = fontSize;
     document.getElementById('inp-alt-low').value = altFilterLow;
@@ -1888,6 +1931,7 @@ function saveSettingsToUrl() {
     if (altFilterLow !== 0) params.set('altlow', altFilterLow);
     if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);
     if (ldbBrightness !== 70) params.set('ldb', ldbBrightness);
+    if (facilityOnly) params.set('faconly', '1');
     // Map position/zoom
     const center = map.getCenter();
     params.set('lat', center.lat.toFixed(4));

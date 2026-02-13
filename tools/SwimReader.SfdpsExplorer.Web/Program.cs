@@ -312,7 +312,12 @@ void ProcessFlight(XElement flight, string rawXml)
         var cs = fid.Attribute("aircraftIdentification")?.Value;
         if (!string.IsNullOrEmpty(cs)) state.Callsign = cs;
         var cid = fid.Attribute("computerId")?.Value;
-        if (!string.IsNullOrEmpty(cid)) state.ComputerId = cid;
+        if (!string.IsNullOrEmpty(cid))
+        {
+            state.ComputerId = cid;
+            // Store CID per reporting facility — each ARTCC assigns its own CID
+            if (!string.IsNullOrEmpty(centre)) state.ComputerIds[centre] = cid;
+        }
     }
 
     // flightStatus
@@ -666,6 +671,7 @@ class FlightState
     public string? FdpsGufi { get; set; }
     public string? Callsign { get; set; }
     public string? ComputerId { get; set; }
+    public ConcurrentDictionary<string, string> ComputerIds { get; } = new();
     public string? Operator { get; set; }
     public string? FlightStatus { get; set; }
     public string? Origin { get; set; }
@@ -736,7 +742,9 @@ class FlightState
 
     public object ToSummary() => new
     {
-        Gufi, Callsign, ComputerId, Operator, FlightStatus,
+        Gufi, Callsign, ComputerId,
+        ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
+        Operator, FlightStatus,
         Origin, Destination, AircraftType, WakeCategory,
         AssignedAltitude, InterimAltitude, ReportedAltitude,
         Latitude, Longitude, GroundSpeed, Squawk,
@@ -759,7 +767,9 @@ class FlightState
         lock (_events) { events = _events.Select(e => (object)e).ToList(); }
         return new
         {
-            Gufi, FdpsGufi, Callsign, ComputerId, Operator, FlightStatus,
+            Gufi, FdpsGufi, Callsign, ComputerId,
+            ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
+            Operator, FlightStatus,
             Origin, Destination, AircraftType, Registration, WakeCategory,
             ModeSCode, EquipmentQualifier, Squawk, FlightRules,
             Route, STAR, Remarks,

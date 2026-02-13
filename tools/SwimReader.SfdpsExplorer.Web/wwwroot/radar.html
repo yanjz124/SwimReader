@@ -64,7 +64,10 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 
 /* ── Map overrides ── */
-.leaflet-container { background: #0a0a0a !important; }
+.leaflet-container {
+    background: #0a0a0a !important;
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='16' y1='8' x2='16' y2='12' stroke='white' stroke-width='1'/%3E%3Cline x1='16' y1='20' x2='16' y2='24' stroke='white' stroke-width='1'/%3E%3Cline x1='8' y1='16' x2='12' y2='16' stroke='white' stroke-width='1'/%3E%3Cline x1='20' y1='16' x2='24' y2='16' stroke='white' stroke-width='1'/%3E%3Crect x='12' y='12' width='8' height='8' fill='none' stroke='white' stroke-width='1'/%3E%3C/svg%3E") 16 16, crosshair !important;
+}
 .leaflet-control-zoom a { background: #222 !important; color: #cccc44 !important; border-color: #444 !important; }
 .leaflet-control-attribution { display: none !important; }
 
@@ -195,6 +198,42 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     z-index: 2;
 }
 .ac-sym-target.emrg { color: #ff4444; }
+
+/* ── MCA (Message Composition Area) ── */
+#mca {
+    position: absolute; z-index: 1000;
+    top: 30px; left: 30px;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    user-select: none;
+}
+#mca.box-dragging { outline: 2px solid #fff; cursor: move; }
+#mca-preview {
+    background: #0a0a0a; border: 1px solid #888; color: #ffffff;
+    padding: 3px 6px; min-width: 400px;
+    font-size: 14px; line-height: 18px; white-space: pre; min-height: 28px;
+    display: flex; align-items: center;
+}
+#mca-feedback {
+    background: #0a0a0a; border: 1px solid #888; border-top: none; color: #ffffff;
+    padding: 3px 6px; min-width: 400px;
+    font-size: 14px; line-height: 18px; white-space: pre; min-height: 68px;
+}
+
+/* ── RA (Response Area) ── */
+#ra {
+    position: absolute; z-index: 1000;
+    bottom: 30px; left: 30px;
+    max-width: calc(100vw - 60px);
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    user-select: none;
+}
+#ra.box-dragging { outline: 2px solid #fff; cursor: move; }
+#ra-content {
+    background: #0a0a0a; border: 1px solid #888; color: #ffffff;
+    padding: 3px 6px; width: 500px; min-height: 100px;
+    max-height: 60vh; overflow-y: auto;
+    font-size: 14px; line-height: 18px; white-space: pre-wrap; word-break: break-all;
+}
 </style>
 </head>
 <body>
@@ -318,6 +357,13 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 
     <div id="map-container">
         <div id="map"></div>
+        <div id="mca">
+            <div id="mca-preview"><span class="mca-cursor">_</span></div>
+            <div id="mca-feedback"></div>
+        </div>
+        <div id="ra">
+            <div id="ra-content"></div>
+        </div>
     </div>
 </div>
 
@@ -356,6 +402,8 @@ const lastVisibleAt = new Map(); // gufi → performance.now() — grace period 
 
 const knownFacilities = new Map();
 const hoCompletedInfo = new Map(); // gufi → { time, receiving, transferring } — track completed handoffs for 60s O display
+const dbPositions = new Map(); // gufi → position number 1-9 (data block placement)
+const ldrLenOverrides = new Map(); // gufi → leader length level (0-3), default 1
 
 // Global flash reference — updated once per 500ms tick so ALL tracks see the same phase
 let flashTime = performance.now();
@@ -394,6 +442,8 @@ function getHandoffCode(facility) {
 const map = L.map('map', {
     center: [39.0, -98.0],
     zoom: 6,
+    dragging: false,       // disable left-click drag — we use right-click pan
+    doubleClickZoom: false, // disable double-click zoom
     zoomControl: true,
     attributionControl: false,
     zoomSnap: 0.1,        // granular zoom (0.1 steps)
@@ -641,6 +691,12 @@ function classifyTrack(f) {
 function extractFac(unitStr) { return unitStr ? unitStr.split('/')[0] : ''; }
 function extractSec(unitStr) { if (!unitStr) return ''; const p = unitStr.split('/'); return p.length > 1 ? p[1] : ''; }
 
+// Get CID for the observed facility (each ARTCC assigns its own CID to a flight)
+function getCid(f) {
+    if (myFacility && f.computerIds && f.computerIds[myFacility]) return f.computerIds[myFacility];
+    return f.computerId || '';
+}
+
 // Handoff event classification — SFDPS sends INITIATION/ACCEPTANCE/UPDATE/EXECUTION
 function hoEventType(evt) {
     if (!evt) return '';
@@ -669,8 +725,64 @@ function hoEventType(evt) {
 
 const LDR_DX = 20;
 const LDR_DY = 0;   // flat horizontal leader line (ERAM default position 5 = right)
+const LDR_LEN = 40; // leader line length
 let CHAR_W = fontSize * 0.625;  // approx char width in ERAM font
 let LINE_H = fontSize * 1.25;   // line-height
+
+// Data block position offsets (numpad layout):
+//   7=NW  8=N   9=NE
+//   4=W   5=def 6=E
+//   1=SW  2=S   3=SE
+function getLeaderOffset(gufi) {
+    const pos = dbPositions.get(gufi);
+    const level = ldrLenOverrides.get(gufi) ?? 1;
+    const len = level * LDR_LEN;
+    if (len === 0) return { dx: 0, dy: 0 };
+    if (!pos || pos === 6) return { dx: len, dy: 0 };            // E (default)
+    const D = len * 0.707; // diagonal distance
+    switch (pos) {
+        case 1: return { dx: -D, dy: D };      // SW
+        case 2: return { dx: 0, dy: len };      // S
+        case 3: return { dx: D, dy: D };        // SE
+        case 4: return { dx: -len, dy: 0 };     // W
+        case 5: return { dx: len, dy: 0 };      // default (E)
+        case 7: return { dx: -D, dy: -D };      // NW
+        case 8: return { dx: 0, dy: -len };     // N
+        case 9: return { dx: D, dy: -D };       // NE
+        default: return { dx: len, dy: 0 };
+    }
+}
+
+// Position data block so the leader line endpoint aligns with the correct edge/line.
+// FDB anchor varies by direction:
+//   N:  left edge, between lines 3-4    NE: left edge, between lines 2-3
+//   E:  left edge, between lines 2-3    SE: left edge, between lines 1-2
+//   S:  left edge, between lines 1-2    SW: right edge, between lines 1-2
+//   W:  right edge, between lines 2-3   NW: right edge, between lines 2-3
+// xShift: 0 = left-aligned (text extends right), -1 = right-aligned (text extends left)
+function getDbAnchor(gufi, numLines) {
+    const pos = dbPositions.get(gufi) || 6;
+    const isLeft = (pos === 1 || pos === 4 || pos === 7);
+
+    if (numLines === 2) {
+        // LDB: anchor between lines 1-2 for all directions
+        return { xShift: isLeft ? -1 : 0, yShift: -LINE_H };
+    }
+
+    // FDB (4 lines): direction-specific anchor
+    switch (pos) {
+        case 8: return { xShift: 0,  yShift: -3 * LINE_H };  // N:  left edge, between 3-4
+        case 9: return { xShift: 0,  yShift: -2 * LINE_H };  // NE: left edge, between 2-3
+        case 5:
+        case 6: return { xShift: 0,  yShift: -2 * LINE_H };  // E:  left edge, between 2-3
+        case 3: return { xShift: 0,  yShift: -LINE_H };       // SE: left edge, between 1-2
+        case 2: return { xShift: 0,  yShift: -LINE_H };       // S:  left edge, between 1-2
+        case 1: return { xShift: -1, yShift: -LINE_H };       // SW: right edge, between 1-2
+        case 4: return { xShift: -1, yShift: -2 * LINE_H };   // W:  right edge, between 2-3
+        case 7: return { xShift: -1, yShift: -2 * LINE_H };   // NW: right edge, between 2-3
+        default: return { xShift: 0, yShift: -2 * LINE_H };
+    }
+}
 
 // Check if flight is in reduced separation area (at or below FL230)
 function isReducedSep(f) {
@@ -764,32 +876,50 @@ function buildMarkerHtml(f, cls) {
     if (!showFdb) return html;
 
     const color = isEmrg ? EMRG_COLOR : TRACK_COLOR;
-    const dbTop = LDR_DY - 7;
+    const ldr = getLeaderOffset(f.gufi);
     const useFdb = shouldShowFdb(f.gufi, cls);
+    const numLines = useFdb ? 4 : 2;
+    const anchor = getDbAnchor(f.gufi, numLines);
+    const isLeftPos = anchor.xShift === -1;
+    const pos = dbPositions.get(f.gufi) || 6;
+    const isVertical = (pos === 2 || pos === 8);
+
+    // Gap from leader endpoint to data block text (R juts left from the block)
+    const dbGap = Math.ceil(CHAR_W * 2);
+
+    // Compute data block CSS position
+    let leftStyle;
+    if (isLeftPos) leftStyle = `right:${-ldr.dx + dbGap}px`;
+    else if (isVertical) leftStyle = `left:${ldr.dx}px`;  // N/S: no horizontal gap
+    else leftStyle = `left:${ldr.dx + dbGap}px`;
+
+    // Left-positioned blocks: fixed min-width to prevent jitter during flash
+    const leftExtra = isLeftPos ? ` min-width:${Math.ceil(CHAR_W * 8)}px;` : '';
 
     if (useFdb) {
-        // Full Data Block (lines 1-4) — full brightness
-        html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${LDR_DX}" y2="${LDR_DY}" stroke="${color}" stroke-width="1"/></svg>`;
-
-        // Column 0: R indicator for tracks not under our control
-        if (shouldShowR(f, cls)) {
-            html += `<div class="ac-col0" style="left:${LDR_DX - CHAR_W * 1.5}px; top:${dbTop + 1 + LINE_H * 2}px;">R</div>`;
-        }
+        // Full Data Block (lines 1-4) — with leader line
+        html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${ldr.dx}" y2="${ldr.dy}" stroke="${color}" stroke-width="1"/></svg>`;
 
         const db = formatDatablock(f, cls);
         const dbCls = isEmrg ? ' emrg' : '';
-        html += `<div class="ac-db${dbCls}" style="left:${LDR_DX}px; top:${dbTop}px;">${db}</div>`;
+
+        // R indicator: child of data block, juts left on line 3
+        let rHtml = '';
+        if (shouldShowR(f, cls)) {
+            rHtml = `<div class="ac-col0" style="position:absolute; left:${-Math.ceil(CHAR_W * 1.5)}px; top:${Math.round(LINE_H * 2)}px;">R</div>`;
+        }
+
+        html += `<div class="ac-db${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift}px;${leftExtra}">${rHtml}${db}</div>`;
     } else if (ldbBrightness > 0) {
-        // Limited Data Block — brightness-controlled
+        // Limited Data Block (2 lines) — no leader line, right next to target
         const ldbOp = ldbBrightness / 100;
-        html += `<svg class="ac-leader" width="1" height="1" overflow="visible" style="opacity:${ldbOp}"><line x1="0" y1="0" x2="${LDR_DX}" y2="${LDR_DY}" stroke="${color}" stroke-width="1"/></svg>`;
         const l1 = f.callsign || '???';
         const alt = f.reportedAltitude ?? f.assignedAltitude;
         const l2 = alt != null ? String(Math.round(alt / 100)).padStart(3, '0') : '';
         const dbCls = isEmrg ? ' emrg' : '';
-        html += `<div class="ac-db${dbCls}" style="left:${LDR_DX}px; top:${dbTop}px; opacity:${ldbOp};">${l1}\n${l2}</div>`;
+        html += `<div class="ac-db${dbCls}" style="left:${Math.ceil(CHAR_W)}px; top:${-LINE_H}px; opacity:${ldbOp};">${l1}\n${l2}</div>`;
     }
-    // ldbBrightness === 0 for LDB → no leader line or data block
+    // ldbBrightness === 0 for LDB → no data block at all
 
     return html;
 }
@@ -842,7 +972,8 @@ function formatAltLine(f) {
 }
 
 function formatLine3(f, cls) {
-    const cid = f.computerId ? String(f.computerId).padStart(3, ' ') : '   ';
+    const cidVal = getCid(f);
+    const cid = cidVal ? String(cidVal).padStart(3, ' ') : '   ';
 
     // Emergency squawks in Field E
     if (f.squawk === '7700') return `${cid} EMRG`;
@@ -851,30 +982,28 @@ function formatLine3(f, cls) {
     if (f.squawk === '7400') return `${cid} LLNK`;
 
     // Active handoff flash in Field E — uses global flashTime so ALL tracks sync
+    // H/O occupies the single-letter identifier position directly after CID (no space)
+    // All flash phases are padded to consistent width to prevent left-positioned block jitter
     const hoEvt = hoEventType(f.handoffEvent);
     if (hoEvt && f.handoffReceiving) {
         const suffix = handoffSuffix(f.handoffReceiving, f.handoffTransferring);
+        const hoStr = `${cid}${hoEvt === 'PROPOSED' ? 'H' : 'O'}${suffix}`;
+        const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
+        const gsStr = gs ? `${cid} ${gs}` : cid;
+        const padLen = Math.max(hoStr.length, gsStr.length);
         if (hoEvt === 'PROPOSED') {
             // Fast blink: 0.5s on/off, alternate H-xx / GS every 6s
             const tick = Math.floor(flashTime / 500) % 24;
             const phase = tick < 12 ? 0 : 1;
             const visible = tick % 2 === 0;
-            if (!visible) return `${cid}`;
-            if (phase === 0) {
-                return `${cid} H${suffix}`;
-            } else {
-                const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
-                return gs ? `${cid}  ${gs}` : `${cid}`;
-            }
+            if (!visible) return cid.padEnd(padLen);
+            if (phase === 0) return hoStr.padEnd(padLen);
+            return gsStr.padEnd(padLen);
         } else {
             // Slow 6-second cycle: 3s O-xx, 3s GS (no rapid on/off flashing)
             const phase = Math.floor(flashTime / 3000) % 2;
-            if (phase === 0) {
-                return `${cid} O${suffix}`;
-            } else {
-                const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
-                return gs ? `${cid}  ${gs}` : `${cid}`;
-            }
+            if (phase === 0) return hoStr.padEnd(padLen);
+            return gsStr.padEnd(padLen);
         }
     }
 
@@ -882,7 +1011,7 @@ function formatLine3(f, cls) {
     const completed = hoCompletedInfo.get(f.gufi);
     if (completed && flashTime - completed.time < 60000) {
         const suffix = handoffSuffix(completed.receiving, completed.transferring);
-        return `${cid} O${suffix}`;
+        return `${cid}O${suffix}`;
     }
 
     // Normal: CID + groundspeed
@@ -1126,7 +1255,9 @@ function flightHash(f, cls) {
     // Include hoCompleted + R state so marker rebuilds when handoff completes
     const hoc = hoCompletedInfo.has(f.gufi) ? 1 : 0;
     const rInd = shouldShowR(f, cls) ? 1 : 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${f.computerId}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}`;
+    const dbPos = dbPositions.get(f.gufi) || 0;
+    const ldrLen = ldrLenOverrides.get(f.gufi) ?? 1;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1288,19 +1419,21 @@ setInterval(() => {
         if (!dbEl) continue;
         const cls = classifyTrack(f);
         if (shouldShowFdb(gufi, cls)) {
+            // Preserve R child element when updating text
+            const savedR = dbEl.querySelector('.ac-col0');
             dbEl.textContent = formatDatablock(f, cls);
+            if (savedR) dbEl.appendChild(savedR);
         }
 
-        // Sync R indicator with handoff state — don't wait for full 2s render cycle
+        // Sync R indicator with handoff state — R is a child of the data block
         const rNow = shouldShowFdb(gufi, cls) && shouldShowR(f, cls);
-        const rEl = el.querySelector('.ac-col0');
+        const rEl = dbEl.querySelector('.ac-col0');
         if (rNow && !rEl) {
-            const dbTop = LDR_DY - 7;
             const div = document.createElement('div');
             div.className = 'ac-col0';
-            div.style.cssText = `left:${LDR_DX - CHAR_W * 1.5}px; top:${dbTop + 1 + LINE_H * 2}px;`;
+            div.style.cssText = `position:absolute; left:${-Math.ceil(CHAR_W * 1.5)}px; top:${Math.round(LINE_H * 2)}px;`;
             div.textContent = 'R';
-            el.appendChild(div);
+            dbEl.appendChild(div);
         } else if (!rNow && rEl) {
             rEl.remove();
         }
@@ -1478,7 +1611,7 @@ function showFlightDetail(gufi) {
             }
             return parts.join(' | ');
         })()],
-        ['CID', f.computerId],
+        ['CID', getCid(f) || f.computerId],
         ['Operator', f.operator],
         ['A/C Type', f.aircraftType || ''],
         ['Reg', f.registration || ''],
@@ -1571,6 +1704,430 @@ function saveSettingsToUrl() {
     const hash = params.toString();
     history.replaceState(null, '', hash ? '#' + hash : window.location.pathname);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Right-click pan (replaces default left-click drag)
+// ════════════════════════════════════════════════════════════════════════════
+const mapEl = document.getElementById('map');
+mapEl.addEventListener('contextmenu', e => e.preventDefault());
+
+let _rightDragging = false;
+let _rightDragStart = null;
+
+mapEl.addEventListener('mousedown', e => {
+    if (e.button === 2) {
+        _rightDragging = true;
+        _rightDragStart = { x: e.clientX, y: e.clientY };
+        mapEl.style.cursor = 'grabbing';
+        e.preventDefault();
+    }
+});
+
+document.addEventListener('mousemove', e => {
+    if (!_rightDragging) return;
+    const dx = e.clientX - _rightDragStart.x;
+    const dy = e.clientY - _rightDragStart.y;
+    map.panBy([-dx, -dy], { animate: false });
+    _rightDragStart = { x: e.clientX, y: e.clientY };
+});
+
+document.addEventListener('mouseup', e => {
+    if (e.button === 2 && _rightDragging) {
+        _rightDragging = false;
+        mapEl.style.cursor = '';
+    }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// MCA (Message Composition Area)
+// ════════════════════════════════════════════════════════════════════════════
+const mca = {
+    text: '',
+    cursor: 0,
+    overstrike: true,   // true = overstrike (_), false = insert (|)
+    feedback: [],       // array of { type: 'ok'|'err'|'info', text: string }
+    lastCommand: '',
+    maxChars: 120,      // max total characters in preview area
+};
+
+function mcaInsertChar(ch) {
+    if (mca.text.length >= mca.maxChars && !mca.overstrike) {
+        mca.feedback = [{ type: 'err', text: 'MESSAGE TOO LONG' }];
+        mcaRender();
+        return;
+    }
+    if (mca.overstrike && mca.cursor < mca.text.length) {
+        mca.text = mca.text.substring(0, mca.cursor) + ch + mca.text.substring(mca.cursor + 1);
+    } else {
+        if (mca.text.length >= mca.maxChars) {
+            mca.feedback = [{ type: 'err', text: 'MESSAGE TOO LONG' }];
+            mcaRender();
+            return;
+        }
+        mca.text = mca.text.substring(0, mca.cursor) + ch + mca.text.substring(mca.cursor);
+    }
+    mca.cursor++;
+    mcaRender();
+}
+
+function mcaBackspace() {
+    if (mca.cursor > 0) {
+        mca.text = mca.text.substring(0, mca.cursor - 1) + mca.text.substring(mca.cursor);
+        mca.cursor--;
+        mcaRender();
+    }
+}
+
+function mcaDelete() {
+    if (mca.cursor < mca.text.length) {
+        mca.text = mca.text.substring(0, mca.cursor) + mca.text.substring(mca.cursor + 1);
+        mcaRender();
+    }
+}
+
+function mcaExecute() {
+    const cmd = mca.text.trim();
+    mca.lastCommand = mca.text;
+    mca.text = '';
+    mca.cursor = 0;
+    if (!cmd) { mcaRender(); return; }
+    const result = processCommand(cmd);
+    mca.feedback = result.feedback || [];
+    mcaRender();
+}
+
+function mcaClear() {
+    mca.text = '';
+    mca.cursor = 0;
+    mca.feedback = [];
+    mcaRender();
+}
+
+function mcaRecall() {
+    mca.text = mca.lastCommand;
+    mca.cursor = mca.text.length;
+    mcaRender();
+}
+
+function mcaRender() {
+    const previewEl = document.getElementById('mca-preview');
+    const feedbackEl = document.getElementById('mca-feedback');
+
+    // Preview: text with blinking cursor
+    const before = esc(mca.text.substring(0, mca.cursor));
+    if (mca.overstrike) {
+        // Overstrike: cursor replaces character at position (or shows _ at end)
+        const after = mca.cursor < mca.text.length ? esc(mca.text.substring(mca.cursor + 1)) : '';
+        previewEl.innerHTML = before + '<span class="mca-cursor">_</span>' + after;
+    } else {
+        // Insert: cursor between characters (thin bar)
+        const after = esc(mca.text.substring(mca.cursor));
+        previewEl.innerHTML = before + '<span class="mca-cursor">|</span>' + after;
+    }
+
+    // Feedback area
+    if (mca.feedback.length === 0) {
+        feedbackEl.innerHTML = '';
+    } else {
+        feedbackEl.innerHTML = mca.feedback.map(f => {
+            if (f.type === 'ok') return '<span style="color:#44cc44;">\u2713</span> ' + esc(f.text);
+            if (f.type === 'err') return '<span style="color:#cc4444;">\u2717</span> ' + esc(f.text);
+            return esc(f.text);
+        }).join('\n');
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Command processor
+// ════════════════════════════════════════════════════════════════════════════
+
+// Find flight by CID or callsign (case-insensitive)
+// CID matching uses only the selected facility's CID (not fallback from other facilities)
+function findFlight(id) {
+    const needle = id.toUpperCase();
+    // Try CID match first — only match against selected facility's CID
+    if (myFacility) {
+        for (const f of flights.values()) {
+            const cid = f.computerIds && f.computerIds[myFacility];
+            if (cid && cid === needle) return f;
+        }
+    }
+    // Then callsign match
+    for (const f of flights.values()) {
+        if (f.callsign?.toUpperCase() === needle) return f;
+    }
+    return null;
+}
+
+function processCommand(cmd) {
+    const parts = cmd.trim().split(/\s+/);
+    const verb = parts[0]?.toUpperCase();
+
+    // <1-9> <FLID> — Position data block (numpad layout)
+    if (/^[1-9]$/.test(verb) && parts.length >= 2) {
+        const pos = parseInt(verb);
+        const flid = parts.slice(1).join('').toUpperCase();
+        const f = findFlight(flid);
+        if (f) {
+            dbPositions.set(f.gufi, pos);
+            // Invalidate marker hash so it rebuilds immediately
+            const m = markers.get(f.gufi);
+            if (m) { const el = m.getElement(); if (el) el._lastHash = ''; }
+            lastRenderTime = 0;
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'OFFSET DATA BLK' },
+                { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
+            ]};
+        }
+        return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+    }
+
+    // /<0-3> <FLID> — Set individual leader line length
+    if (/^\/[0-3]$/.test(verb) && parts.length >= 2) {
+        const level = parseInt(verb.charAt(1));
+        const flid = parts.slice(1).join('').toUpperCase();
+        const f = findFlight(flid);
+        if (f) {
+            ldrLenOverrides.set(f.gufi, level);
+            const m3 = markers.get(f.gufi);
+            if (m3) { const el = m3.getElement(); if (el) el._lastHash = ''; }
+            lastRenderTime = 0;
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `LDR LEN ${level}` },
+                { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
+            ]};
+        }
+        return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+    }
+
+    // QF <callsign> — Query Flight plan → show in RA
+    if (verb === 'QF' && parts.length >= 2) {
+        const cs = parts.slice(1).join('').toUpperCase();
+        const f = findFlight(cs);
+        if (f) {
+            showFlightInRA(f);
+            return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+        }
+        return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+    }
+
+    // QD — clear Response Area
+    if (verb === 'QD') {
+        document.getElementById('ra-content').textContent = '';
+        return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+    }
+
+    // <FLID> — toggle FDB/LDB (single argument, not a known verb)
+    if (parts.length === 1 && verb) {
+        const f = findFlight(verb);
+        if (f) {
+            const cls = classifyTrack(f);
+            const currentlyFdb = shouldShowFdb(f.gufi, cls);
+            // Controlled flights (own/ho) cannot be toggled to LDB
+            if (currentlyFdb && (cls === 'own' || cls === 'ho')) {
+                return { feedback: [
+                    { type: 'err', text: 'USER ACTION NOT ALLOWED ON A\nCONTROLLED FLIGHT' },
+                    { type: 'info', text: `FORCED DATA BLK ${f.callsign}` }
+                ]};
+            }
+            fdbOverrides.set(f.gufi, !currentlyFdb);
+            // Invalidate marker hash so it rebuilds immediately
+            const m2 = markers.get(f.gufi);
+            if (m2) { const el = m2.getElement(); if (el) el._lastHash = ''; }
+            lastRenderTime = 0;
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: currentlyFdb ? 'SUPPRESS DATA BLK' : 'FORCE DATA BLK' },
+                { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
+            ]};
+        }
+    }
+
+    return { feedback: [{ type: 'err', text: 'INVALID ENTRY' }] };
+}
+
+function showFlightInRA(f) {
+    const ra = document.getElementById('ra-content');
+    const now = new Date();
+    const zulu = String(now.getUTCHours()).padStart(2, '0') + String(now.getUTCMinutes()).padStart(2, '0');
+    const cidVal = getCid(f);
+    const cid = cidVal ? String(cidVal).padStart(4, '0') : '????';
+    // Sector display: prefix with ARTCC handoff code if different facility
+    const ctrlFac = f.controllingFacility || '';
+    const ctrlSec = f.controllingSector || '??';
+    const sector = (ctrlFac && myFacility && ctrlFac !== myFacility)
+        ? getHandoffCode(ctrlFac) + ctrlSec
+        : ctrlSec;
+    const cs = f.callsign || '???';
+    const type = f.aircraftType || '????';
+    const equip = f.equipmentQualifier ? '/' + f.equipmentQualifier : '';
+    const bcn = f.squawk || '????';
+    const spd = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(4, ' ') : '    ';
+    const aalt = f.assignedAltitude != null ? String(Math.round(f.assignedAltitude / 100)).padStart(3, '0') : '???';
+    const origin = f.origin || '????';
+    const dest = f.destination || '????';
+    const route = f.route || '';
+    const star = f.star || '';
+    const remarks = f.remarks || '';
+
+    let text = `${zulu}\n`;
+    text += `${cid} ${cs}(${sector}) ${type}${equip}\n`;
+    text += `${bcn} ${spd} ${aalt} ${origin}..\n`;
+    text += `${route}${star ? '.' + star + '.' : ''}\n`;
+    text += `..${dest}\n`;
+    if (remarks) text += `${remarks}`;
+    ra.textContent = text;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Global keyboard capture → MCA
+// ════════════════════════════════════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+    // Don't capture when focused on sidebar form elements
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+
+    // Escape → clear MCA
+    if (e.key === 'Escape') { mcaClear(); e.preventDefault(); return; }
+
+    // Ctrl+R → recall last command
+    if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) { mcaRecall(); e.preventDefault(); return; }
+
+    // Ctrl+Delete → clear RA
+    if (e.ctrlKey && e.key === 'Delete') {
+        document.getElementById('ra-content').textContent = '';
+        e.preventDefault(); return;
+    }
+
+    // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8)
+    const vectorSteps = [0, 1, 2, 4, 8];
+    if (e.key === 'PageUp' && !e.ctrlKey) {
+        const idx = vectorSteps.indexOf(vectorMinutes);
+        const next = idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1];
+        vectorMinutes = next;
+        document.getElementById('sel-vector').value = vectorMinutes;
+        saveSettingsToUrl();
+        e.preventDefault(); return;
+    }
+    if (e.key === 'PageDown' && !e.ctrlKey) {
+        const idx = vectorSteps.indexOf(vectorMinutes);
+        const next = idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0];
+        vectorMinutes = next;
+        document.getElementById('sel-vector').value = vectorMinutes;
+        saveSettingsToUrl();
+        e.preventDefault(); return;
+    }
+
+    // Enter → execute command
+    if (e.key === 'Enter' && !e.ctrlKey) { mcaExecute(); e.preventDefault(); return; }
+
+    // Ctrl+Enter → newline in preview
+    if (e.key === 'Enter' && e.ctrlKey) { mcaInsertChar('\n'); e.preventDefault(); return; }
+
+    // Arrow keys
+    if (e.key === 'ArrowLeft') {
+        if (mca.cursor > 0) mca.cursor--;
+        mcaRender(); e.preventDefault(); return;
+    }
+    if (e.key === 'ArrowRight') {
+        if (mca.cursor < mca.text.length) mca.cursor++;
+        mcaRender(); e.preventDefault(); return;
+    }
+
+    // Home / End / Ctrl+PgUp / Ctrl+PgDn
+    if (e.key === 'Home' || (e.ctrlKey && e.key === 'PageUp')) {
+        mca.cursor = 0; mcaRender(); e.preventDefault(); return;
+    }
+    if (e.key === 'End' || (e.ctrlKey && e.key === 'PageDown')) {
+        mca.cursor = mca.text.length; mcaRender(); e.preventDefault(); return;
+    }
+
+    // Backspace / Delete
+    if (e.key === 'Backspace') { mcaBackspace(); e.preventDefault(); return; }
+    if (e.key === 'Delete') { mcaDelete(); e.preventDefault(); return; }
+
+    // Insert → toggle overstrike/insert mode
+    if (e.key === 'Insert') { mca.overstrike = !mca.overstrike; mcaRender(); e.preventDefault(); return; }
+
+    // Printable characters → type into MCA (uppercase)
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        mcaInsertChar(e.key.toUpperCase());
+        e.preventDefault();
+        return;
+    }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// MCA & RA box drag/drop (click to pick up, click to drop)
+// ════════════════════════════════════════════════════════════════════════════
+let _boxDragging = null;
+let _boxDragOffset = { x: 0, y: 0 };
+
+function saveBoxPosition(el) {
+    const key = 'boxPos_' + el.id;
+    localStorage.setItem(key, JSON.stringify({ left: el.style.left, top: el.style.top }));
+}
+
+function restoreBoxPosition(el) {
+    const key = 'boxPos_' + el.id;
+    const saved = localStorage.getItem(key);
+    if (saved) {
+        try {
+            const pos = JSON.parse(saved);
+            if (pos.left) el.style.left = pos.left;
+            if (pos.top) { el.style.top = pos.top; el.style.bottom = 'auto'; }
+        } catch(e) {}
+    }
+}
+
+function dropBox() {
+    if (!_boxDragging) return;
+    saveBoxPosition(_boxDragging);
+    _boxDragging.classList.remove('box-dragging');
+    _boxDragging = null;
+}
+
+function setupBoxDrag(el) {
+    restoreBoxPosition(el);
+    el.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+
+        if (_boxDragging === el) {
+            // Already dragging this box → drop it
+            dropBox();
+            return;
+        }
+        // Drop any currently dragged box
+        if (_boxDragging) dropBox();
+        // Pick up this box
+        _boxDragging = el;
+        el.classList.add('box-dragging');
+        const rect = el.getBoundingClientRect();
+        _boxDragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    });
+}
+
+document.addEventListener('mousemove', e => {
+    if (!_boxDragging) return;
+    const containerRect = _boxDragging.parentElement.getBoundingClientRect();
+    _boxDragging.style.left = (e.clientX - containerRect.left - _boxDragOffset.x) + 'px';
+    _boxDragging.style.top = (e.clientY - containerRect.top - _boxDragOffset.y) + 'px';
+    _boxDragging.style.bottom = 'auto';
+    _boxDragging.style.right = 'auto';
+});
+
+// Click outside the dragged box → drop it
+document.addEventListener('mousedown', e => {
+    if (_boxDragging && e.button === 0 && !_boxDragging.contains(e.target)) {
+        dropBox();
+    }
+});
+
+setupBoxDrag(document.getElementById('mca'));
+setupBoxDrag(document.getElementById('ra'));
 
 // ════════════════════════════════════════════════════════════════════════════
 // Init

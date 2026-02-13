@@ -1,126 +1,311 @@
 # SwimReader
 
-Real-time FAA SWIM (System Wide Information Management) data processing and ERAM-style radar visualization.
+Real-time FAA SWIM (System Wide Information Management) data platform. Ingests live flight data from multiple FAA data sources via Solace messaging, parses/normalizes it, and serves it through multiple frontends and API services.
+
+## Architecture Overview
+
+```
+                    ┌─────────────────────────────────┐
+                    │     FAA SWIM (Solace Broker)     │
+                    │  STDDS VPN        FDPS VPN       │
+                    │  (TAIS,TDES,      (SFDPS FIXM    │
+                    │   SMES,APDS,       en route       │
+                    │   ISMC)            flight data)   │
+                    └───────┬───────────────┬───────────┘
+                            │               │
+              ┌─────────────▼──┐    ┌───────▼──────────────────┐
+              │  SwimReader     │    │  SfdpsExplorer.Web       │
+              │  Server         │    │  (standalone, self-      │
+              │  (STDDS pipe)   │    │   contained Solace →     │
+              │                 │    │   WebSocket bridge)      │
+              │  SCDS → Parse → │    │                          │
+              │  EventBus →     │    │  Parses FIXM XML inline  │
+              │  Adapters →     │    │  FlightState management  │
+              │  WebSocket      │    │  WebSocket broadcast     │
+              └──┬──────────┬──┘    └──┬────────────────┬──────┘
+                 │          │          │                │
+           ┌─────▼───┐  ┌──▼────┐  ┌──▼─────┐   ┌─────▼──────┐
+           │ DGScope  │  │ Future│  │ ERAM   │   │ Flight     │
+           │ /dstars  │  │ FIDO  │  │ Scope  │   │ Table      │
+           │ clients  │  │ Strips│  │eram.html   │index.html  │
+           │ :5000    │  │ ASDEX │  │ :5001  │   │ :5001      │
+           └──────────┘  │ TDLS  │  └────────┘   └────────────┘
+                         └───────┘
+```
+
+### Data Sources (Parsers)
+- **STDDS** — Terminal automation data (TAIS, TDES, SMES, APDS, ISMC) — parsed via `SwimReader.Parsers`
+- **SFDPS** — En route flight data (FIXM XML) — parsed inline in `SfdpsExplorer.Web/Program.cs`
+- Future: additional SWIM data sources as needed
+
+### Frontends / API Services
+- **ERAM Scope** (`eram.html`) — Leaflet + Canvas radar display with ERAM-style data blocks
+- **Flight Table** (`index.html`) — Tabular real-time flight explorer with filtering, pinning, detail panel
+- **DGScope Server** (`/dstars/{facility}/updates`) — HTTP streaming + WebSocket for DGScope radar clients
+- Future: FIDO, strips, ASDEX, TDLS, etc.
 
 ## Project Structure
 
 ```
 src/
-  SwimReader.Core/          Domain models, events, IEventBus (channel-based)
-  SwimReader.Parsers/       STDDS message parsers (TAIS, TDES, SMES, APDS, ISMC)
-  SwimReader.Scds/          Solace SWIM SCDS connection manager
-  SwimReader.Server/        ASP.NET Core server — DGScope adapter, WebSocket/HTTP streaming
+  SwimReader.Core/            Domain models, events, IEventBus (channel-based fan-out)
+  SwimReader.Parsers/         STDDS XML parsers (TAIS, TDES, SMES, APDS, ISMC)
+  SwimReader.Scds/            Solace SWIM SCDS connection manager (hosted service)
+  SwimReader.Server/          ASP.NET Core server — DGScope adapter, adsb.fi enrichment
+    Adapters/                   DgScopeAdapter, TrackStateManager, Dstars JSON models
+    AdsbFi/                     adsb.fi integration (callsign enrichment, military injection)
+    Controllers/                DstarsController (HTTP stream + WebSocket)
+    Streaming/                  ClientConnectionManager (facility-scoped broadcast)
 tools/
-  SwimReader.SfdpsExplorer/         Console tool — raw SFDPS message capture/display
-  SwimReader.SfdpsExplorer.Web/     Web UI — Leaflet radar display + SFDPS data table
+  SwimReader.SfdpsExplorer/           Console tool — raw SFDPS FIXM message inspection
+  SwimReader.SfdpsExplorer.Web/       Standalone web server — SFDPS → WebSocket → ERAM/table
+    Program.cs                          All server logic: Solace, FIXM parsing, WebSocket, REST
+    wwwroot/
+      eram.html                         ERAM radar scope (single-file: HTML + CSS + JS)
+      index.html                        Flight data table (single-file: HTML + CSS + JS)
+      handoff-codes.json                Facility handoff display code mappings (H/O suffixes)
+      ERAMv110.ttf                      ERAM font for authentic ATC display
+  SwimReader.MessageCapture/          Console tool — captures raw STDDS XML to files
 tests/
-  SwimReader.Core.Tests/
+  SwimReader.Core.Tests/              xUnit tests for core domain
 ```
 
 ## Tech Stack
 
 - .NET 8.0, ASP.NET Core
-- Solace messaging (SolaceSystems.Solclient.Messaging v10.28.3)
-- Leaflet.js + HTML5 Canvas for radar display
-- ERAM font (ERAMv110.ttf) for authentic ATC look
-- WebSocket for real-time browser streaming
-
-## Key Files
-
-### Radar Display (the main UI)
-- `tools/SwimReader.SfdpsExplorer.Web/wwwroot/radar.html` — Single-file ERAM-style radar scope
-  - Leaflet map with dark basemap
-  - Canvas overlay for history symbols + velocity vectors
-  - ERAM full data block (4-line format with Column 0 and Line 0)
-  - WebSocket connection to `/ws` for live flight updates
-
-### Radar Display Features
-- **Position symbol**: Hollow diamond at current track position (all track types)
-- **Track history**: Target symbols drawn dimmer on canvas trail:
-  - `\` correlated beacon (squawk + flight plan)
-  - `/` uncorrelated beacon (squawk, no flight plan)
-  - `+` uncorrelated primary (no squawk)
-  - `◇` flight plan aided track (flight plan, no squawk)
-- **Data block** (ERAM format):
-  - Line 1: Callsign
-  - Line 2: Altitude — `{assigned}{status}{reported}` where status is C (conforming), P (procedural), T (interim), X (no Mode C)
-  - Line 3: CID + Field E (groundspeed, handoff Hxx/Oxx, emergency)
-  - Line 4: Destination ICAO
-  - Column 0: R indicator for non-owned tracks
-- **Sidebar controls**: Facility/sector, data blocks, history count (0-10), vector length, boundaries, font size (8-14px), altitude filter (FL low/high)
-- **Render cycle**: 4s interval via requestAnimationFrame
-
-### Server Pipeline
-- `SwimReader.Scds/` — Connects to Solace SWIM, receives raw STDDS XML
-- `SwimReader.Parsers/` — Parses TAIS/TDES/SMES XML into domain events
-- `SwimReader.Core/Bus/ChannelEventBus.cs` — Fan-out event bus
-- `SwimReader.Server/Adapters/DgScopeAdapter.cs` — Converts events to DGScope JSON format
-- `SwimReader.Server/Adapters/TrackStateManager.cs` — Stable GUID mapping, stale purge (5 min)
-- `SwimReader.Server/Streaming/ClientConnectionManager.cs` — Facility-scoped WebSocket broadcast
-
-### SFDPS Explorer Web (standalone)
-- `tools/SwimReader.SfdpsExplorer.Web/Program.cs` — Self-contained Solace → WebSocket bridge
-  - Directly parses SFDPS FIXM XML (not STDDS)
-  - Manages FlightState objects from SFDPS message types: TH, HZ, OH, FH, HP, HU, AH, HX, CL, LH, NP
-  - Broadcasts to `/ws` as JSON snapshots/updates
-  - Fields: gufi, callsign, assignedAltitude, interimAltitude, reportedAltitude, squawk, trackVelocity, handoff events, controlling facility/sector, etc.
+- Solace messaging (`SolaceSystems.Solclient.Messaging` 10.28.3) — connects to FAA SWIM broker
+- Leaflet.js + HTML5 Canvas — radar map display
+- ERAM font (`ERAMv110.ttf`) — authentic ATC typography
+- WebSocket — real-time browser streaming
+- System.Threading.Channels — async backpressure (bounded, drop-oldest)
+- System.Xml.Linq — STDDS/FIXM XML parsing
+- System.Text.Json — JSON serialization
 
 ## Running
 
-### SFDPS Explorer Web (radar display)
+### SFDPS ERAM (radar display + flight table)
 ```bash
-# Set SWIM credentials as environment variables
+# Set SWIM SFDPS credentials
 set SFDPS_USER=your.email@example.com
 set SFDPS_PASS=your-swim-password
 set SFDPS_QUEUE=your.email@example.com.FDPS.uuid.OUT
 
 cd tools/SwimReader.SfdpsExplorer.Web
 dotnet run
-# Open http://localhost:5001/radar.html
+# ERAM scope:   http://localhost:5001/eram.html
+# Flight table: http://localhost:5001/index.html
 ```
 
-### SwimReader Server (STDDS mode, for DGScope clients)
+### SwimReader Server (STDDS mode, for DGScope)
 ```bash
+# Set SWIM STDDS credentials (via .env file or environment)
+# See .env.example for format
 cd src/SwimReader.Server
 dotnet run
-# DGScope connects to /dstars/{facility}/updates
+# DGScope connects to http://localhost:5000/dstars/{facility}/updates
 ```
 
 ## Environment Variables
 
-| Variable | Description |
+### SFDPS (SfdpsExplorer.Web)
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SFDPS_HOST` | Solace broker URL | `tcps://ems2.swim.faa.gov:55443` |
+| `SFDPS_VPN` | Solace VPN name | `FDPS` |
+| `SFDPS_USER` | SWIM subscription username | (required) |
+| `SFDPS_PASS` | SWIM subscription password | (required) |
+| `SFDPS_QUEUE` | Solace queue name | (required) |
+
+### STDDS (SwimReader.Server)
+Configured via `appsettings.json` section `ScdsConnection` or environment variables:
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SCDSCONNECTION__HOST` | Solace broker URL | `tcps://ems2.swim.faa.gov:55443` |
+| `SCDSCONNECTION__MESSAGEVPN` | Solace VPN | `STDDS` |
+| `SCDSCONNECTION__USERNAME` | SWIM username | (required) |
+| `SCDSCONNECTION__PASSWORD` | SWIM password | (required) |
+| `SCDSCONNECTION__QUEUENAME` | Solace queue | (required) |
+
+Both servers also support a `.env` file in the project or working directory.
+
+## SFDPS Data Pipeline (SfdpsExplorer.Web)
+
+### Message Flow
+```
+Solace FDPS queue → Raw XML → ProcessFlight() → FlightState (ConcurrentDictionary)
+                                                      ↓
+                                              BroadcastUpdate() → WebSocket clients
+                                                      ↓
+                                              eram.html / index.html (browser)
+```
+
+### SFDPS Message Types Handled
+| Source | Description |
+|--------|-------------|
+| `TH` | Track history (position update) |
+| `HZ` | Heartbeat/position update |
+| `OH` | Ownership/handoff update |
+| `FH` | Full flight plan update |
+| `HP` | Handoff proposal |
+| `HU` | Handoff update |
+| `AH` | Assignment handoff |
+| `HX` | Handoff cancel |
+| `CL` | Flight close/cancel |
+| `LH` | Late handoff |
+| `NP` | New position |
+
+### FlightState Fields
+Core fields tracked per flight (by GUFI):
+- Identity: `gufi`, `fdpsGufi`, `callsign`, `computerId`, `computerIds` (per-facility CID map)
+- Flight plan: `origin`, `destination`, `aircraftType`, `route`, `star`, `remarks`, `flightRules`
+- Position: `latitude`, `longitude`, `groundSpeed`, `trackVelocityX/Y`
+- Altitude: `assignedAltitude`, `interimAltitude`, `reportedAltitude`
+- Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`
+- Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
+- Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `equipmentQualifier`
+- Datalink: `dataLinkCode`, `otherDataLink`, `communicationCode`
+- Status: `flightStatus` (ACTIVE, DROPPED, CANCELLED)
+- Event log: last 50 state-change events with timestamps
+
+### API Endpoints (SfdpsExplorer.Web, port 5001)
+| Endpoint | Description |
 |----------|-------------|
-| `SFDPS_HOST` | Solace broker URL (default: `tcps://ems2.swim.faa.gov:55443`) |
-| `SFDPS_VPN` | Solace VPN name (default: `FDPS`) |
-| `SFDPS_USER` | SWIM subscription username |
-| `SFDPS_PASS` | SWIM subscription password |
-| `SFDPS_QUEUE` | Solace queue name for your subscription |
+| `WS /ws` | WebSocket — sends `snapshot`, `update`, `remove`, `stats` messages |
+| `GET /api/flights/{gufi}` | Full flight detail + event log |
+| `GET /api/stats` | Server stats (total messages, rate, flight count) |
+| `GET /api/kml` | List available KML boundary files |
+| `GET /api/kml/{name}` | Serve a specific KML file from repo root |
 
-## Data Flow
+### Handoff Detection Logic
+Server-side in `Program.cs` ProcessFlight():
+1. Handoff events (HP, HU, AH, etc.) set `HandoffEvent`, `HandoffReceiving`, `HandoffTransferring`
+2. On every message, checks if `ControllingFacility/Sector` matches `HandoffReceiving`
+3. When matched → handoff complete → clears all handoff fields
+4. Client-side (eram.html) tracks completed handoffs for 60-second O-indicator rotation
 
+## ERAM Scope Display (`eram.html`)
+
+### Data Block Format (ERAM 4-line)
 ```
-FAA SWIM SCDS (Solace) → FIXM/STDDS XML → Parse → Domain Events → Event Bus → Adapters → WebSocket → Browser
+ R  AAL123            ← Line 1: Callsign (Column 0: R = non-owned track)
+    360C357            ← Line 2: {assigned FL}{status}{reported FL}
+    1234 H33           ← Line 3: CID + Field E (groundspeed OR handoff)
+    DCA                ← Line 4: Destination (FAA LID)
 ```
 
-## Display Architecture Notes
+**Line 2 altitude status codes:**
+- `C` = conforming (reported within ±300ft of assigned)
+- `T` = interim altitude assigned (4th line override)
+- `P` = procedural (no Mode C reported altitude)
+- `X` = no Mode C data at all
 
-- All rendering in radar.html is in a single HTML file (JS + CSS inlined)
-- Leaflet markers use `L.divIcon` with custom HTML for symbols + data blocks
-- Canvas overlay (separate pane, z-index 440) handles history symbols and velocity vectors
-- History symbols use `ctx.fillText()` with ERAM font on the canvas
-- Font size is adjustable at runtime; CHAR_W and LINE_H scale proportionally (ratio: 0.625 and 1.25 of font size)
+**Line 3 Field E (right side after CID):**
+- Normal: groundspeed as 3 digits (e.g., `420`)
+- Handoff proposed: `Hxx` where xx = receiving facility code (flashing)
+- Handoff accepted: `Hxx` (steady)
+- Handoff completed: Rotates between `Oxx` and groundspeed for 60s (5 cycles of 12s)
+- Emergency: `E/sq` where sq = squawk (7500/7600/7700)
+
+### Handoff Facility Codes
+Defined in `handoff-codes.json`. Default mappings (e.g., ZDC=W, ZNY=N, ZOB=C) with per-facility overrides (e.g., when viewed from ZDC, PCT shows as "E").
+
+### Track Symbols
+- `◇` hollow diamond — current position (all track types)
+- `\` — correlated beacon history (squawk + flight plan)
+- `/` — uncorrelated beacon history (squawk, no flight plan)
+- `+` — uncorrelated primary history (no squawk)
+- `◇` — flight plan aided history (flight plan, no squawk)
+
+### Sidebar Controls
+- Facility/sector selector (sets scope ownership for handoff display)
+- Data block toggle (full/partial/off)
+- History count (0-10 symbols)
+- Velocity vector length (0-10 min)
+- Boundary layers: UHI, HI, LO, APP with per-category brightness sliders
+- Font size (8-14px)
+- Altitude filter (FL low/high)
+- Colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red)
+- 4-second render cycle matching SFDPS ~12s update cadence
+
+### Rendering Architecture
+- Leaflet markers use `L.divIcon` with custom HTML for position symbol + data block
+- Canvas overlay (separate pane, z-index 440) draws history symbols + velocity vectors
+- History symbols rendered via `ctx.fillText()` using ERAM font on canvas
+- Font size adjustable at runtime; CHAR_W and LINE_H scale proportionally (0.625 and 1.25 of font size)
 - Leader lines are inline SVGs within the marker div
-- 4-second render cycle matches SFDPS update cadence (~12s per aircraft)
+- URL parameters persist sidebar state (facility, font size, history count, etc.)
+
+## STDDS Data Pipeline (SwimReader.Server)
+
+### Message Flow
+```
+Solace STDDS queue → RawMessageEvent → ChannelEventBus → ParserPipeline
+                                                              ↓
+                                              Domain events (TrackPosition, FlightPlan, etc.)
+                                                              ↓
+                                                     ChannelEventBus
+                                                              ↓
+                                                     DgScopeAdapter
+                                                              ↓
+                                              ClientConnectionManager → DGScope clients
+```
+
+### STDDS Parsers
+| Parser | Service | Produces |
+|--------|---------|----------|
+| `TaisMessageParser` | TAIS | `TrackPositionEvent` + `FlightPlanDataEvent` |
+| `TdesMessageParser` | TDES | `DepartureEvent` or `FlightPlanDataEvent` |
+| `SmesMessageParser` | SMES | `SurfaceMovementEvent` |
+| `ApdsMessageParser` | APDS | Alert/planning events |
+| `IsmcMessageParser` | ISMC | Information service events |
+
+### Domain Events
+All implement `ISwimEvent` (Timestamp, Source):
+- `RawMessageEvent` — pre-parsed XML from SCDS
+- `TrackPositionEvent` — position, altitude, speed, squawk, Mode S, facility
+- `FlightPlanDataEvent` — callsign, airports, route, scratchpads, owner, handoff
+- `DepartureEvent` — gate out, taxi start, takeoff times
+- `SurfaceMovementEvent` — ASDE-X surface tracking
+
+### Key Classes
+- `ChannelEventBus` — bounded channels (10K) per subscriber, drop-oldest backpressure
+- `TrackStateManager` — maps (ModeSCode, TrackNumber, Facility) → stable GUID; 5-min stale purge
+- `ClientConnectionManager` — facility-scoped WebSocket/HTTP stream broadcast
+- `DgScopeAdapter` — converts domain events to Dstars JSON (UpdateType 0/1/2)
+
+### adsb.fi Integration (optional)
+Configured in `appsettings.json` under `AdsbFi`:
+- `CallsignEnrichmentService` — enriches STDDS tracks with callsigns from adsb.fi
+- `MilitaryInjectionService` — polls for military aircraft in configured geofence areas
+- Rate-limited with caching (hex: 5min TTL, geo: 30s TTL)
 
 ## KML Sector Boundaries
 
-Place KML files in the repo root:
-- `AllSectors.kml` — loaded automatically by radar.html via `/api/kml/AllSectors.kml`
-- `AllHighSectors.kml`, `AllLowSectors.kml` — available but not auto-loaded
+Place KML files in the repo root (gitignored, not committed):
+- `AllSectors.kml` — auto-loaded by eram.html via `/api/kml/AllSectors.kml`
+- `AllHighSectors.kml`, `AllLowSectors.kml` — available via API, toggleable in sidebar
+- KML categories parsed from `<name>` tags: UHI (ultra-high), HI (high), LO (low), APP (approach)
 
 ## Important Conventions
 
-- Altitudes in SFDPS data are in feet; displayed as flight levels (hundreds of feet, e.g., 360 = FL360 = 36,000 ft)
+- Altitudes in SFDPS/STDDS are in **feet**; displayed as flight levels (FL360 = 36,000 ft)
 - Altitude filter uses FL notation: Low FL 180, High FL 360 = 18,000-36,000 ft
-- ICAO airport codes are converted to FAA LIDs (KDCA → DCA) in the server adapter
-- Track colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red), `#555555` (boundaries grey)
+- ICAO airport codes converted to FAA LIDs (KDCA → DCA) in server adapter
+- Track colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red), `#555555` (boundary grey)
+- SFDPS data rate: ~240 msg/sec, updating ~4000-7000 active flights at any time
+- Each flight updates roughly every 12 seconds
+- CID (Computer ID) is per-facility — each ARTCC assigns its own; stored in `computerIds` map
+- All frontend rendering is single-file HTML (JS + CSS inlined), no build step or framework
+
+## Building
+
+```bash
+dotnet build SwimReader.sln
+dotnet test
+```
+
+Individual projects:
+```bash
+dotnet build src/SwimReader.Server
+dotnet build tools/SwimReader.SfdpsExplorer.Web
+```

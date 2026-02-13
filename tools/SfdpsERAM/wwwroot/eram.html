@@ -1628,11 +1628,9 @@ function doRender() {
                             if (dwellLocked.has(gufi)) {
                                 dwellLocked.delete(gufi);
                                 if (!el._isHovering) removeDwell(el, gufi);
-                                if (activeRoutes.has(gufi) && selectedGufi !== gufi) removeRoute(gufi);
                             } else {
                                 dwellLocked.add(gufi);
                                 applyDwell(el, gufi);
-                                showRouteForFlight(gufi, null, true);
                             }
                             return;
                         }
@@ -1923,13 +1921,10 @@ function showFlightDetail(gufi) {
     }
     document.getElementById('fd-body').innerHTML = html;
     document.getElementById('flight-detail-section').style.display = 'block';
-    showRouteForFlight(gufi, null, true);
 }
 
 function closeFd() {
-    const oldGufi = selectedGufi;
     selectedGufi = null;
-    if (oldGufi) removeRoute(oldGufi);
     document.getElementById('flight-detail-section').style.display = 'none';
 }
 
@@ -2085,7 +2080,7 @@ async function showRouteForFlight(gufi, minutes = null, persistent = false) {
             interactive: false,
             icon: L.divIcon({
                 className: '',
-                html: `<span style="color:#cccc44;font-family:ERAM,Consolas,monospace;font-size:${fontSize}px;text-decoration:underline;">X</span>`,
+                html: `<div style="color:#cccc44;font-family:ERAM,Consolas,monospace;font-size:${fontSize}px;text-decoration:underline;width:${fontSize}px;height:${fontSize}px;line-height:${fontSize}px;text-align:center;">X</div>`,
                 iconSize: [fontSize, fontSize],
                 iconAnchor: [fontSize / 2, fontSize / 2]
             })
@@ -2102,23 +2097,11 @@ async function showRouteForFlight(gufi, minutes = null, persistent = false) {
     return null;  // success
 }
 
-// Legacy compatibility — clear route for a gufi (used by dwell unlock / closeFd)
-function clearRoute(gufi) {
-    if (gufi) {
-        removeRoute(gufi);
-    } else {
-        // Clear persistent routes only (QU routes auto-expire)
-        for (const [g, r] of activeRoutes) {
-            if (r.time === null) removeRoute(g);
-        }
-    }
-}
-
-// Auto-remove expired QU route displays (30s timeout)
+// Auto-remove expired QU route displays (20s timeout)
 setInterval(() => {
     const now = performance.now();
     for (const [gufi, r] of activeRoutes) {
-        if (r.time !== null && now - r.time >= 30000) {
+        if (r.time !== null && now - r.time >= 20000) {
             removeRoute(gufi);
         }
     }

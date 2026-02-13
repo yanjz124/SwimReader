@@ -9,21 +9,28 @@ using SolaceSystems.Solclient.Messaging;
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
-// Load .env file if present
-var envFile = Path.Combine(AppContext.BaseDirectory, ".env");
-if (!File.Exists(envFile)) envFile = Path.Combine(Directory.GetCurrentDirectory(), ".env");
-if (File.Exists(envFile))
+// Load .env file — search upward from working directory to find repo root .env
 {
-    foreach (var line in File.ReadAllLines(envFile))
+    var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+    while (dir is not null)
     {
-        var trimmed = line.Trim();
-        if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#')) continue;
-        var eq = trimmed.IndexOf('=');
-        if (eq <= 0) continue;
-        var key = trimmed[..eq].Trim();
-        var val = trimmed[(eq + 1)..].Trim();
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
-            Environment.SetEnvironmentVariable(key, val);
+        var envPath = Path.Combine(dir.FullName, ".env");
+        if (File.Exists(envPath))
+        {
+            foreach (var line in File.ReadAllLines(envPath))
+            {
+                var trimmed = line.Trim();
+                if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#')) continue;
+                var eq = trimmed.IndexOf('=');
+                if (eq <= 0) continue;
+                var key = trimmed[..eq].Trim();
+                var val = trimmed[(eq + 1)..].Trim();
+                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
+                    Environment.SetEnvironmentVariable(key, val);
+            }
+            break;
+        }
+        dir = dir.Parent;
     }
 }
 

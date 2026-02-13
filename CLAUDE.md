@@ -14,7 +14,7 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
                     └───────┬───────────────┬───────────┘
                             │               │
               ┌─────────────▼──┐    ┌───────▼──────────────────┐
-              │  SwimReader     │    │  SfdpsExplorer.Web       │
+              │  SwimReader     │    │  SfdpsERAM               │
               │  Server         │    │  (standalone, self-      │
               │  (STDDS pipe)   │    │   contained Solace →     │
               │                 │    │   WebSocket bridge)      │
@@ -35,7 +35,7 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 
 ### Data Sources (Parsers)
 - **STDDS** — Terminal automation data (TAIS, TDES, SMES, APDS, ISMC) — parsed via `SwimReader.Parsers`
-- **SFDPS** — En route flight data (FIXM XML) — parsed inline in `SfdpsExplorer.Web/Program.cs`
+- **SFDPS** — En route flight data (FIXM XML) — parsed inline in `SfdpsERAM/Program.cs`
 - Future: additional SWIM data sources as needed
 
 ### Frontends / API Services
@@ -58,7 +58,7 @@ src/
     Streaming/                  ClientConnectionManager (facility-scoped broadcast)
 tools/
   SwimReader.SfdpsExplorer/           Console tool — raw SFDPS FIXM message inspection
-  SwimReader.SfdpsExplorer.Web/       Standalone web server — SFDPS → WebSocket → ERAM/table
+  SfdpsERAM/                          Standalone web server — SFDPS → WebSocket → ERAM/table
     Program.cs                          All server logic: Solace, FIXM parsing, WebSocket, REST
     wwwroot/
       eram.html                         ERAM radar scope (single-file: HTML + CSS + JS)
@@ -83,14 +83,16 @@ tests/
 
 ## Running
 
+### Setup credentials (one-time)
+```bash
+# Copy .env.example to .env at repo root and fill in your credentials
+cp .env.example .env
+# Edit .env with your SFDPS, STDDS, and optional ADS-B API keys
+```
+
 ### SFDPS ERAM (radar display + flight table)
 ```bash
-# Set SWIM SFDPS credentials
-set SFDPS_USER=your.email@example.com
-set SFDPS_PASS=your-swim-password
-set SFDPS_QUEUE=your.email@example.com.FDPS.uuid.OUT
-
-cd tools/SwimReader.SfdpsExplorer.Web
+cd tools/SfdpsERAM
 dotnet run
 # ERAM scope:   http://localhost:5001/eram.html
 # Flight table: http://localhost:5001/index.html
@@ -98,8 +100,6 @@ dotnet run
 
 ### SwimReader Server (STDDS mode, for DGScope)
 ```bash
-# Set SWIM STDDS credentials (via .env file or environment)
-# See .env.example for format
 cd src/SwimReader.Server
 dotnet run
 # DGScope connects to http://localhost:5000/dstars/{facility}/updates
@@ -107,7 +107,7 @@ dotnet run
 
 ## Environment Variables
 
-### SFDPS (SfdpsExplorer.Web)
+### SFDPS (SfdpsERAM)
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SFDPS_HOST` | Solace broker URL | `tcps://ems2.swim.faa.gov:55443` |
@@ -126,9 +126,9 @@ Configured via `appsettings.json` section `ScdsConnection` or environment variab
 | `SCDSCONNECTION__PASSWORD` | SWIM password | (required) |
 | `SCDSCONNECTION__QUEUENAME` | Solace queue | (required) |
 
-Both servers also support a `.env` file in the project or working directory.
+All services search upward for a `.env` file, so a single `.env` at the repo root covers everything. See `.env.example`.
 
-## SFDPS Data Pipeline (SfdpsExplorer.Web)
+## SFDPS Data Pipeline (SfdpsERAM)
 
 ### Message Flow
 ```
@@ -167,7 +167,7 @@ Core fields tracked per flight (by GUFI):
 - Status: `flightStatus` (ACTIVE, DROPPED, CANCELLED)
 - Event log: last 50 state-change events with timestamps
 
-### API Endpoints (SfdpsExplorer.Web, port 5001)
+### API Endpoints (SfdpsERAM, port 5001)
 | Endpoint | Description |
 |----------|-------------|
 | `WS /ws` | WebSocket — sends `snapshot`, `update`, `remove`, `stats` messages |
@@ -307,5 +307,5 @@ dotnet test
 Individual projects:
 ```bash
 dotnet build src/SwimReader.Server
-dotnet build tools/SwimReader.SfdpsExplorer.Web
+dotnet build tools/SfdpsERAM
 ```

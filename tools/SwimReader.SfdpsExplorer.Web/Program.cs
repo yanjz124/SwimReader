@@ -3,10 +3,29 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Channels;
 using System.Xml.Linq;
 using SolaceSystems.Solclient.Messaging;
 
 // ── Configuration ───────────────────────────────────────────────────────────
+
+// Load .env file if present
+var envFile = Path.Combine(AppContext.BaseDirectory, ".env");
+if (!File.Exists(envFile)) envFile = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+if (File.Exists(envFile))
+{
+    foreach (var line in File.ReadAllLines(envFile))
+    {
+        var trimmed = line.Trim();
+        if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#')) continue;
+        var eq = trimmed.IndexOf('=');
+        if (eq <= 0) continue;
+        var key = trimmed[..eq].Trim();
+        var val = trimmed[(eq + 1)..].Trim();
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key)))
+            Environment.SetEnvironmentVariable(key, val);
+    }
+}
 
 var host = Environment.GetEnvironmentVariable("SFDPS_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
 var vpn = Environment.GetEnvironmentVariable("SFDPS_VPN") ?? "FDPS";
@@ -21,6 +40,7 @@ var clients = new ConcurrentDictionary<string, WsClient>();
 var stats = new GlobalStats();
 long _procCount = 0;
 long _noGufiCount = 0;
+long lastMessageTicks = DateTime.UtcNow.Ticks;
 var jsonOpts = new JsonSerializerOptions
 {
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -47,10 +67,25 @@ app.Map("/ws", async (HttpContext ctx) =>
     var client = new WsClient(ws);
     clients[clientId] = client;
 
+    // Start background send pump — serializes all writes through a single task
+    var sendTask = Task.Run(async () =>
+    {
+        try
+        {
+            await foreach (var data in client.Queue.Reader.ReadAllAsync())
+            {
+                if (ws.State != WebSocketState.Open) break;
+                await ws.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+        catch (WebSocketException) { }
+        catch (OperationCanceledException) { }
+    });
+
     try
     {
         // Send initial snapshot of all flights
-        await SendSnapshot(ws);
+        SendSnapshot(client);
 
         var buf = new byte[4096];
         while (ws.State == WebSocketState.Open)
@@ -60,7 +95,12 @@ app.Map("/ws", async (HttpContext ctx) =>
         }
     }
     catch (WebSocketException) { }
-    finally { clients.TryRemove(clientId, out _); }
+    finally
+    {
+        clients.TryRemove(clientId, out _);
+        client.Queue.Writer.TryComplete();
+        await sendTask;
+    }
 });
 
 // REST API for flight detail (full state + event log)
@@ -111,33 +151,71 @@ var solaceThread = new Thread(() =>
 
     try
     {
-        using var context = ContextFactory.Instance.CreateContext(new ContextProperties(), null);
-        var sessionProps = new SessionProperties
+        while (true)
         {
-            Host = host, VPNName = vpn, UserName = user, Password = pass,
-            ReconnectRetries = 20, SSLValidateCertificate = false
-        };
+            try
+            {
+                using var context = ContextFactory.Instance.CreateContext(new ContextProperties(), null);
+                var sessionProps = new SessionProperties
+                {
+                    Host = host, VPNName = vpn, UserName = user, Password = pass,
+                    ReconnectRetries = 100,
+                    ReconnectRetriesWaitInMsecs = 5000,
+                    SSLValidateCertificate = false
+                };
 
-        using var session = context.CreateSession(sessionProps, null,
-            (_, e) => Console.WriteLine($"[Solace] {e.Event} - {e.Info}"));
+                using var session = context.CreateSession(sessionProps, null,
+                    (_, e) => Console.WriteLine($"[Solace] {e.Event} - {e.Info}"));
 
-        if (session.Connect() != ReturnCode.SOLCLIENT_OK) { solaceReady.SetResult(); return; }
+                var rc = session.Connect();
+                if (rc != ReturnCode.SOLCLIENT_OK)
+                {
+                    Console.Error.WriteLine($"[Solace] Connect returned {rc}, retrying...");
+                    solaceReady.TrySetResult();
+                    Thread.Sleep(10000);
+                    continue;
+                }
 
-        Console.WriteLine("[Solace] Connected to SFDPS");
-        stats.Connected = true;
+                Console.WriteLine("[Solace] Connected to SFDPS");
+                stats.Connected = true;
+                Interlocked.Exchange(ref lastMessageTicks, DateTime.UtcNow.Ticks);
 
-        var solQueue = ContextFactory.Instance.CreateQueue(queue);
-        using var flow = session.CreateFlow(
-            new FlowProperties { AckMode = MessageAckMode.ClientAck }, solQueue, null,
-            (_, msgArgs) => { using var m = msgArgs.Message; ProcessMessage(m); },
-            (_, flowArgs) => Console.WriteLine($"[Flow] {flowArgs.Event} - {flowArgs.Info}"));
+                var solQueue = ContextFactory.Instance.CreateQueue(queue);
+                using var flow = session.CreateFlow(
+                    new FlowProperties { AckMode = MessageAckMode.AutoAck }, solQueue, null,
+                    (_, msgArgs) => { using var m = msgArgs.Message; ProcessMessage(m); },
+                    (_, flowArgs) => Console.WriteLine($"[Flow] {flowArgs.Event} - {flowArgs.Info}"));
 
-        flow.Start();
-        Console.WriteLine("[Solace] Listening on queue");
-        solaceReady.SetResult();
-        Thread.Sleep(Timeout.Infinite);
+                flow.Start();
+                Console.WriteLine("[Solace] Listening on queue");
+                solaceReady.TrySetResult();
+
+                // Self-monitor: poll for stale connection every 10s, reconnect after 90s silence
+                while (true)
+                {
+                    Thread.Sleep(10000);
+                    var silence = (DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastMessageTicks), DateTimeKind.Utc)).TotalSeconds;
+                    if (silence > 90)
+                    {
+                        Console.WriteLine($"[Solace] No messages for {silence:F0}s — connection stale, reconnecting");
+                        break;
+                    }
+                }
+
+                stats.Connected = false;
+                // Explicit disconnect before using-block disposal
+                try { session.Disconnect(); } catch (Exception ex) { Console.WriteLine($"[Solace] Disconnect: {ex.Message}"); }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[Solace] Error: {ex.Message}");
+                solaceReady.TrySetResult();
+            }
+
+            Console.WriteLine("[Solace] Reconnecting in 10 seconds...");
+            Thread.Sleep(10000);
+        }
     }
-    catch (Exception ex) { Console.Error.WriteLine($"[Solace] {ex.Message}"); solaceReady.SetResult(); }
     finally { ContextFactory.Instance.Cleanup(); }
 }) { IsBackground = true, Name = "SolaceReceiver" };
 
@@ -146,7 +224,7 @@ solaceThread.Start();
 // Purge stale flights every 60 seconds
 var purgeTimer = new Timer(_ =>
 {
-    var cutoff = DateTime.UtcNow.AddMinutes(-15);
+    var cutoff = DateTime.UtcNow.AddMinutes(-60);
     foreach (var (gufi, f) in flights)
     {
         if (f.LastSeen < cutoff)
@@ -165,6 +243,14 @@ var statsTimer = new Timer(_ =>
     Broadcast(new WsMsg("stats", stats.Snapshot(fc)));
 }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 
+// Health check — log stale connection warnings
+var healthTimer = new Timer(_ =>
+{
+    var silence = (DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastMessageTicks), DateTimeKind.Utc)).TotalSeconds;
+    if (silence > 60)
+        Console.WriteLine($"[HEALTH] Warning: no messages for {silence:F0}s");
+}, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+
 await solaceReady.Task;
 Console.WriteLine("[Web] Starting on http://localhost:5001");
 app.Run();
@@ -181,6 +267,7 @@ void ProcessMessage(IMessage message)
 
     if (body is null) return;
     stats.IncrementTotal();
+    Interlocked.Exchange(ref lastMessageTicks, DateTime.UtcNow.Ticks);
 
     try
     {
@@ -279,8 +366,14 @@ void ProcessFlight(XElement flight, string rawXml)
     var cu = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "controllingUnit");
     if (cu is not null)
     {
-        state.ControllingFacility = cu.Attribute("unitIdentifier")?.Value ?? "";
-        state.ControllingSector = cu.Attribute("sectorIdentifier")?.Value ?? "";
+        var newFac = cu.Attribute("unitIdentifier")?.Value ?? "";
+        var newSec = cu.Attribute("sectorIdentifier")?.Value ?? "";
+        if (state.ControllingFacility != newFac || state.ControllingSector != newSec)
+        {
+            Console.WriteLine($"[CU] {DateTime.UtcNow:HH:mm:ss.fff} {state.Callsign ?? "?"} gufi={gufi[..Math.Min(8, gufi.Length)]}.. ctrl={state.ControllingFacility}/{state.ControllingSector} -> {newFac}/{newSec} src={source} ho={state.HandoffEvent}");
+        }
+        state.ControllingFacility = newFac;
+        state.ControllingSector = newSec;
     }
 
     // flightPlan
@@ -354,10 +447,15 @@ void ProcessFlight(XElement flight, string rawXml)
             var xfer = ho.Elements().FirstOrDefault(e => e.Name.LocalName == "transferringUnit");
             var acpt = ho.Elements().FirstOrDefault(e => e.Name.LocalName == "acceptingUnit");
 
-            state.HandoffEvent = evt;
+            // Only update handoff event if we got an explicit event type
+            // (SFDPS sometimes sends OH with no event attribute — don't clear state)
+            if (!string.IsNullOrEmpty(evt))
+                state.HandoffEvent = evt;
             if (recv is not null) state.HandoffReceiving = FormatUnit(recv);
             if (xfer is not null) state.HandoffTransferring = FormatUnit(xfer);
             if (acpt is not null) state.HandoffAccepting = FormatUnit(acpt);
+            if (!string.IsNullOrEmpty(evt))
+                Console.WriteLine($"[HO] {DateTime.UtcNow:HH:mm:ss.fff} {state.Callsign ?? "?"} gufi={gufi[..Math.Min(8, gufi.Length)]}.. event={evt} recv={state.HandoffReceiving} xfer={state.HandoffTransferring} ctrl={state.ControllingFacility}/{state.ControllingSector}");
         }
     }
 
@@ -444,6 +542,25 @@ void ProcessFlight(XElement flight, string rawXml)
         Summary = BuildEventSummary(source, flight)
     });
 
+    // Detect handoff completion: controlling unit now matches receiving unit.
+    // Don't require a specific HandoffEvent — handles cases where we missed the
+    // INITIATION/ACCEPTANCE (e.g. server restart mid-handoff). Any time CU matches
+    // recv and handoff fields are populated, the handoff has completed.
+    if (!string.IsNullOrEmpty(state.HandoffReceiving))
+    {
+        var recvParts = state.HandoffReceiving.Split('/');
+        var recvFac = recvParts[0];
+        var recvSec = recvParts.Length > 1 ? recvParts[1] : "";
+        if (state.ControllingFacility == recvFac && state.ControllingSector == recvSec)
+        {
+            Console.WriteLine($"[HO-DONE] {DateTime.UtcNow:HH:mm:ss.fff} {state.Callsign ?? "?"} gufi={gufi[..Math.Min(8, gufi.Length)]}.. ctrl={state.ControllingFacility}/{state.ControllingSector} matched recv={state.HandoffReceiving}, xfer={state.HandoffTransferring}");
+            state.HandoffEvent = "";
+            state.HandoffReceiving = "";
+            state.HandoffTransferring = "";
+            state.HandoffAccepting = "";
+        }
+    }
+
     // Track which facility reports on this flight (for "tracked by")
     if (!string.IsNullOrEmpty(centre)) state.ReportingFacility = centre;
 
@@ -505,13 +622,12 @@ string BuildLhSummary(XElement flight)
     return "Local handoff / interim altitude cleared";
 }
 
-async Task SendSnapshot(WebSocket ws)
+void SendSnapshot(WsClient client)
 {
-    // Send all current flights as a batch
+    // Send all current flights as a batch via the client's send queue
     var summaries = flights.Values.Select(f => f.ToSummary()).ToArray();
     var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("snapshot", summaries), jsonOpts);
-    if (ws.State == WebSocketState.Open)
-        await ws.SendAsync(json, WebSocketMessageType.Text, true, CancellationToken.None);
+    client.Enqueue(json);
 }
 
 void Broadcast(WsMsg msg)
@@ -520,8 +636,7 @@ void Broadcast(WsMsg msg)
     foreach (var (_, client) in clients)
     {
         if (client.Ws.State != WebSocketState.Open) continue;
-        try { _ = client.Ws.SendAsync(json, WebSocketMessageType.Text, true, CancellationToken.None); }
-        catch { }
+        client.Enqueue(json);
     }
 }
 
@@ -532,6 +647,17 @@ record WsMsg(string Type, object Data);
 class WsClient(WebSocket ws)
 {
     public WebSocket Ws { get; } = ws;
+    public Channel<byte[]> Queue { get; } = Channel.CreateBounded<byte[]>(
+        new BoundedChannelOptions(512)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true
+        });
+
+    public void Enqueue(byte[] data)
+    {
+        Queue.Writer.TryWrite(data);
+    }
 }
 
 class FlightState
@@ -619,6 +745,10 @@ class FlightState
         ReportingFacility,
         HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting,
         DataLinkCode, OtherDataLink,
+        Route, FlightRules, STAR, Remarks,
+        Registration, EquipmentQualifier,
+        CoordinationFix, CoordinationTime,
+        ETA, ActualDepartureTime,
         LastMsgSource,
         LastSeen = LastSeen.ToString("HH:mm:ss")
     };

@@ -13,7 +13,16 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 
 /* ── Layout ── */
 #app { display: flex; height: 100vh; }
-#sidebar { width: 260px; min-width: 260px; background: #111; border-right: 1px solid #333; display: flex; flex-direction: column; overflow: hidden; }
+#sidebar-wrapper { display: flex; flex-shrink: 0; position: relative; }
+#sidebar { width: 260px; min-width: 260px; background: #111; border-right: 1px solid #333; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; transition: margin-left 0.2s ease; }
+#sidebar.collapsed { margin-left: -260px; }
+#sidebar-toggle {
+    width: 20px; background: #1a1a1a; border: none; border-right: 1px solid #333;
+    color: #666; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 14px; padding: 0; flex-shrink: 0; z-index: 10;
+    transition: color 0.15s;
+}
+#sidebar-toggle:hover { color: #cccc44; background: #222; }
 #map-container { flex: 1; position: relative; }
 #map { width: 100%; height: 100%; }
 
@@ -33,6 +42,15 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 .ctrl-row select:focus { border-color: #cccc44; }
 .ctrl-row input[type="checkbox"] { accent-color: #cccc44; }
+
+#sector-checkboxes {
+    max-height: 200px; overflow-y: auto; font-size: 11px; color: #aaa;
+    scrollbar-width: thin; scrollbar-color: #444 #1a1a1a;
+}
+#sector-checkboxes::-webkit-scrollbar { width: 6px; }
+#sector-checkboxes::-webkit-scrollbar-track { background: #1a1a1a; }
+#sector-checkboxes::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+#sector-checkboxes::-webkit-scrollbar-thumb:hover { background: #666; }
 
 .traffic-row { font-size: 12px; padding: 2px 0; display: flex; justify-content: space-between; }
 .traffic-row.own { color: #cccc44; }
@@ -63,6 +81,17 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 .ac-sym-corr-bcn.emrg { background: #ff4444; }
 
+/* Reduced Separation: • dot — correlated beacon in reduced separation area (at/below FL230) */
+.ac-sym-reduced-sep {
+    position: absolute;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 16px; font-weight: bold; line-height: 1;
+    color: #cccc44;
+    transform: translate(-50%, -50%);
+    pointer-events: auto; cursor: pointer;
+}
+.ac-sym-reduced-sep.emrg { color: #ff4444; }
+
 /* Uncorrelated Beacon: / forward slash — transponder on, no flight plan */
 .ac-sym-uncorr-bcn {
     position: absolute; width: 2px; height: 12px;
@@ -84,12 +113,16 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .ac-sym-uncorr-pri::after { width: 2px; height: 12px; top: 0; left: 5px; }
 
 /* ── Track position symbols (Table 2 — coasting/no target) ── */
-/* Flight Plan Aided (Flat) Track: hollow diamond */
+/* Flight Plan Aided (Flat) Track: hollow diamond — centered at (0,0) target position */
 .ac-sym-flat-track {
-    position: absolute; width: 7px; height: 7px;
+    position: absolute;
+    top: -4px; left: -4px;
+    width: 8px; height: 8px;
     border: 1.5px solid #cccc44; background: transparent;
-    transform: translate(-4px, -4px) rotate(45deg);
+    transform: rotate(45deg);
+    transform-origin: center;
     pointer-events: auto; cursor: pointer;
+    z-index: 1;
 }
 .ac-sym-flat-track.emrg { border-color: #ff4444; }
 
@@ -103,9 +136,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     pointer-events: auto; cursor: pointer;
 }
 
-/* Handoff flash animation */
-.ho-flash { animation: hoFlash 1s ease-in-out infinite; }
-@keyframes hoFlash { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* Handoff flash — handled by JS content changes in formatLine3() */
 
 /* ── Leader line ── */
 .ac-leader { position: absolute; top: 0; left: 0; pointer-events: none; }
@@ -119,7 +150,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
 }
 .ac-db.emrg { color: #ff4444; }
-.ac-db.ho { animation: hoFlash 1s ease-in-out infinite; }
+/* .ac-db.ho — handoff flash now driven by JS */
 
 /* ── Column 0 (R / VCI) — left of data block ── */
 .ac-col0 {
@@ -140,24 +171,35 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .ac-line0.po-initiated { color: #cccc44; }
 .ac-line0.po-acknowledged { color: #ffffff; }
 
-/* ── Flight detail popup ── */
-#flight-detail {
-    position: absolute; bottom: 10px; left: 270px; z-index: 1000;
-    background: rgba(10,10,10,0.95); border: 1px solid #444; padding: 10px 14px;
-    font-size: 11px; color: #aaa; display: none; min-width: 360px; max-width: 520px;
+/* ── Flight detail (sidebar panel) ── */
+#flight-detail-section { display: none; }
+#flight-detail-section .fd-title { color: #cccc44; font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+#flight-detail-section .fd-row { display: flex; gap: 8px; margin-bottom: 2px; font-size: 11px; }
+#flight-detail-section .fd-label { color: #666; min-width: 60px; flex-shrink: 0; }
+#flight-detail-section .fd-val { color: #cccc44; word-break: break-all; }
+#flight-detail-section .fd-close { cursor: pointer; color: #666; font-size: 14px; }
+#flight-detail-section .fd-close:hover { color: #ff4444; }
+
+/* ── Target symbol at current position (character centered inside diamond) ── */
+/* Uses fixed-size box + text-align/line-height to avoid font-metric centering issues */
+.ac-sym-target {
+    position: absolute;
+    top: -10px; left: -7px;
+    width: 14px; height: 14px;
+    text-align: center; line-height: 14px;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 14px; font-weight: bold;
+    color: #cccc44;
+    pointer-events: none;
+    text-shadow: 0 0 3px rgba(0,0,0,0.9);
+    z-index: 2;
 }
-#flight-detail .fd-title { color: #cccc44; font-size: 13px; margin-bottom: 6px; }
-#flight-detail .fd-row { display: flex; gap: 16px; margin-bottom: 2px; }
-#flight-detail .fd-label { color: #666; min-width: 70px; }
-#flight-detail .fd-val { color: #cccc44; }
-#flight-detail .fd-close {
-    position: absolute; top: 6px; right: 10px; cursor: pointer; color: #666; font-size: 14px;
-}
-#flight-detail .fd-close:hover { color: #ff4444; }
+.ac-sym-target.emrg { color: #ff4444; }
 </style>
 </head>
 <body>
 <div id="app">
+    <div id="sidebar-wrapper">
     <div id="sidebar">
         <div id="sidebar-header">
             <h2>SFDPS RADAR</h2>
@@ -168,21 +210,35 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             <div class="panel-label">YOUR POSITION</div>
             <div class="ctrl-row">
                 <label>Facility</label>
-                <select id="sel-facility"><option value="">-- None --</option></select>
+                <select id="sel-facility">
+                    <option value="">All</option>
+                </select>
             </div>
-            <div class="ctrl-row">
-                <label>Sector</label>
-                <select id="sel-sector"><option value="">-- All --</option></select>
+            <div style="margin-top:4px;">
+                <div class="panel-label" style="margin-bottom:4px;">SECTORS</div>
+                <div id="sector-checkboxes">
+                    <span style="color:#666; font-size:10px;">Select facility first</span>
+                </div>
             </div>
         </div>
 
         <div class="panel-section">
             <div class="panel-label">DISPLAY</div>
             <div class="ctrl-row">
-                <label><input type="checkbox" id="chk-fdb" checked> Data Blocks</label>
+                <label>Vector</label>
+                <select id="sel-vector">
+                    <option value="0">Off</option>
+                    <option value="1" selected>1 min</option>
+                    <option value="2">2 min</option>
+                    <option value="4">4 min</option>
+                    <option value="8">8 min</option>
+                </select>
             </div>
             <div class="ctrl-row">
-                <label><input type="checkbox" id="chk-history" checked> History</label>
+                <label>LDB %</label>
+                <input type="range" id="rng-ldb-brightness" min="0" max="100" value="70"
+                    style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-ldb-brightness" style="min-width:28px; text-align:right; font-size:11px;">70</span>
             </div>
             <div class="ctrl-row">
                 <label>Hist #</label>
@@ -201,17 +257,10 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 </select>
             </div>
             <div class="ctrl-row">
-                <label>Vector</label>
-                <select id="sel-vector">
-                    <option value="0">Off</option>
-                    <option value="1" selected>1 min</option>
-                    <option value="2">2 min</option>
-                    <option value="4">4 min</option>
-                    <option value="8">8 min</option>
-                </select>
+                <label><input type="checkbox" id="chk-boundaries" checked> Boundaries</label>
             </div>
             <div class="ctrl-row">
-                <label><input type="checkbox" id="chk-boundaries" checked> Boundaries</label>
+                <label><input type="checkbox" id="chk-mapbg" checked> Map Bg</label>
             </div>
             <div class="ctrl-row">
                 <label>Font</label>
@@ -250,20 +299,25 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             </div>
         </div>
 
+        <div class="panel-section" id="flight-detail-section">
+            <div class="fd-title">
+                <span id="fd-title"></span>
+                <span class="fd-close" onclick="closeFd()">&times;</span>
+            </div>
+            <div id="fd-body"></div>
+        </div>
+
         <div id="sidebar-footer">
             <span id="stat-rate">0</span> msg/s &middot;
             <span id="stat-flights">0</span> flights &middot;
             <span id="stat-uptime">00:00:00</span>
         </div>
     </div>
+    <button id="sidebar-toggle" title="Toggle sidebar">&#9664;</button>
+    </div>
 
     <div id="map-container">
         <div id="map"></div>
-        <div id="flight-detail">
-            <span class="fd-close" onclick="closeFd()">&times;</span>
-            <div class="fd-title" id="fd-title"></div>
-            <div id="fd-body"></div>
-        </div>
     </div>
 </div>
 
@@ -271,16 +325,19 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 // ════════════════════════════════════════════════════════════════════════════
 // State
 // ════════════════════════════════════════════════════════════════════════════
-const flights = new Map();
+const flights = new Map();          // current displayed state — datablock fields updated instantly
+const pendingPositions = new Map(); // buffered lat/lon awaiting next scan cycle
 const flightHistory = new Map();
 let MAX_HISTORY = 5;
 const TRACK_COLOR = '#cccc44';
 const EMRG_COLOR = '#ff4444';
 const MAP_COLOR = '#555555';
-const RENDER_INTERVAL = 4000;  // 4s render cycle (SFDPS updates ~12s per aircraft)
+const RENDER_INTERVAL = 2000;  // render repaint interval (ms)
+const SCAN_INTERVAL = 12000;   // fixed 12s radar scan cycle
+let lastScanTime = performance.now();
 
 let myFacility = '';
-let mySector = '';
+let mySectors = new Set();
 let showFdb = true;
 let showHistory = true;
 let vectorMinutes = 1;
@@ -291,8 +348,45 @@ let msgRate = 0;
 let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
+let ldbBrightness = 70;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
+let showMapBg = true;       // tile layer visible
+const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
+const wasOwnOrHo = new Set();  // tracks that were own/ho — keeps FDB sticky when they become other
+const lastVisibleAt = new Map(); // gufi → performance.now() — grace period prevents flicker on facility field changes
 
 const knownFacilities = new Map();
+const hoCompletedInfo = new Map(); // gufi → { time, receiving, transferring } — track completed handoffs for 60s O display
+
+// Global flash reference — updated once per 500ms tick so ALL tracks see the same phase
+let flashTime = performance.now();
+
+// Facility handoff codes — loaded from handoff-codes.json
+// Structure: { default: { FAC: code }, ZDC: { PCT: code }, ... }
+let handoffCodesConfig = { default: {} };
+
+async function loadHandoffCodes() {
+    try {
+        const resp = await fetch('/handoff-codes.json');
+        if (!resp.ok) return;
+        handoffCodesConfig = await resp.json();
+        console.log('[HO-Codes] Loaded', Object.keys(handoffCodesConfig.default).length, 'default codes');
+    } catch (e) { console.warn('[HO-Codes]', e); }
+}
+loadHandoffCodes();
+
+// Look up handoff code for a facility, respecting per-scope overrides
+function getHandoffCode(facility) {
+    // Per-scope override first (e.g. ZDC scope sees PCT as "E")
+    if (myFacility && handoffCodesConfig[myFacility]) {
+        const code = handoffCodesConfig[myFacility][facility];
+        if (code) return code;
+    }
+    // Default codes
+    const code = handoffCodesConfig.default?.[facility];
+    if (code) return code;
+    // Fallback: first character of facility ID
+    return facility.charAt(0);
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Map setup
@@ -302,9 +396,12 @@ const map = L.map('map', {
     zoom: 6,
     zoomControl: true,
     attributionControl: false,
+    zoomSnap: 0.1,        // granular zoom (0.1 steps)
+    zoomDelta: 0.1,       // each scroll/click zooms by 0.1
+    wheelPxPerZoomLevel: 200,  // smooth scroll zoom
 });
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
     subdomains: 'abcd', maxZoom: 19, opacity: 0.4
 }).addTo(map);
 
@@ -335,7 +432,7 @@ function drawOverlay() {
 
     // ── History symbols (dimmer target symbols) ──
     if (showHistory) {
-        const histFontSize = Math.max(fontSize, 10);
+        const histFontSize = Math.max(fontSize, 8);  // match data block font, no zoom scaling
         ctx.font = `bold ${histFontSize}px ERAM, Consolas, monospace`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
@@ -353,8 +450,7 @@ function drawOverlay() {
                 const pt = map.latLngToLayerPoint([hist[i].lat, hist[i].lon]);
                 const x = pt.x - topLeft.x;
                 const y = pt.y - topLeft.y;
-                const opacity = 0.10 + (i / hist.length) * 0.30;
-                ctx.globalAlpha = opacity;
+                ctx.globalAlpha = 0.30;  // uniform dim for all history symbols
                 ctx.fillStyle = color;
                 ctx.fillText(hist[i].sym || '\\', x, y);
             }
@@ -390,7 +486,22 @@ function drawOverlay() {
     ctx.globalAlpha = 1;
 }
 
-map.on('move zoom viewreset resize', () => { try { drawOverlay(); } catch(e) { console.error('[Overlay]', e); } });
+// Clear canvas immediately on zoom start to prevent ghost shadows
+map.on('zoomstart', () => {
+    const ctx = overlayCanvas.getContext('2d');
+    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+});
+
+let _overlayRafPending = false;
+map.on('move zoom viewreset resize', () => {
+    if (!_overlayRafPending) {
+        _overlayRafPending = true;
+        requestAnimationFrame(() => {
+            _overlayRafPending = false;
+            try { drawOverlay(); } catch(e) { console.error('[Overlay]', e); }
+        });
+    }
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 // KML sector boundaries (video maps — grey)
@@ -435,6 +546,12 @@ async function loadKml() {
             kmlSectors.push({ artcc, name, sectorId: parts.length >= 4 ? parts[3] : name, alt: data['ALT'] || '', coords });
         }
         console.log(`[KML] Loaded ${kmlSectors.length} sectors`);
+        // Clear any boundary layers cached before KML finished (they'd be empty)
+        for (const key in boundaryLayers) {
+            if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
+            delete boundaryLayers[key];
+        }
+        if (myFacility && showBoundaries) showBoundariesForFacility(myFacility);
     } catch (e) { console.warn('[KML]', e); }
 }
 
@@ -464,7 +581,6 @@ function isEmergency(f) {
     return f.squawk === '7700' || f.squawk === '7600' || f.squawk === '7500';
 }
 
-// When a facility is selected, only show targets reported by/to that ARTCC
 function isVisible(f) {
     if (f.latitude == null || f.longitude == null) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE') return false;
@@ -487,34 +603,54 @@ function isVisible(f) {
     // Show if handoff involves our facility
     if (f.handoffReceiving && extractFac(f.handoffReceiving) === myFacility) return true;
     if (f.handoffTransferring && extractFac(f.handoffTransferring) === myFacility) return true;
+    // Keep flights visible that were previously own/ho (prevents disappearing during handoff transitions)
+    if (wasOwnOrHo.has(f.gufi)) return true;
+    // Keep flights visible that have a recent completed handoff involving us
+    if (hoCompletedInfo.has(f.gufi)) return true;
+    // Grace period: keep recently-visible flights for 120s to prevent flicker on facility field changes
+    const lastVis = lastVisibleAt.get(f.gufi);
+    if (lastVis && performance.now() - lastVis < 120000) return true;
     return false;
 }
 
 function classifyTrack(f) {
     if (isEmergency(f)) return 'emrg';
-    if (!myFacility) return 'own';
+    if (!myFacility) return 'other';
+    // Sectors must be selected to have own/ho tracks — prevents entire ARTCC from being FDB
+    if (mySectors.size === 0) return 'other';
 
     const fac = f.controllingFacility || f.reportingFacility || '';
     const sec = f.controllingSector || '';
-    const hoEvt = (f.handoffEvent || '').toUpperCase();
+    const hoEvt = hoEventType(f.handoffEvent);
 
-    // Active handoff involving our position
-    if (hoEvt && (hoEvt === 'PROPOSED' || hoEvt === 'ACCEPTED' || hoEvt === 'EXECUTING')) {
+    // Active handoff involving our sector(s)
+    if (hoEvt) {
         const recvFac = extractFac(f.handoffReceiving);
         const xferFac = extractFac(f.handoffTransferring);
         const recvSec = extractSec(f.handoffReceiving);
         const xferSec = extractSec(f.handoffTransferring);
-        const recvIsMe = recvFac === myFacility && (!mySector || recvSec === mySector);
-        const xferIsMe = xferFac === myFacility && (!mySector || xferSec === mySector);
+        const recvIsMe = recvFac === myFacility && mySectors.has(recvSec);
+        const xferIsMe = xferFac === myFacility && mySectors.has(xferSec);
         if (recvIsMe || xferIsMe) return 'ho';
     }
 
-    if (fac === myFacility && (!mySector || sec === mySector)) return 'own';
+    if (fac === myFacility && mySectors.has(sec)) return 'own';
     return 'other';
 }
 
 function extractFac(unitStr) { return unitStr ? unitStr.split('/')[0] : ''; }
 function extractSec(unitStr) { if (!unitStr) return ''; const p = unitStr.split('/'); return p.length > 1 ? p[1] : ''; }
+
+// Handoff event classification — SFDPS sends INITIATION/ACCEPTANCE/UPDATE/EXECUTION
+function hoEventType(evt) {
+    if (!evt) return '';
+    const e = evt.toUpperCase();
+    if (e === 'INITIATION' || e.startsWith('PROPOS')) return 'PROPOSED';
+    if (e === 'ACCEPTANCE' || e.startsWith('ACCEPT')) return 'ACCEPTED';
+    if (e === 'UPDATE') return 'PROPOSED';  // UPDATE during active handoff — treat as proposed
+    if (e.startsWith('EXECUT')) return 'EXECUTING';
+    return '';  // CANCELLATION, COMPLETED, etc. — not active
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // ERAM Full Data Block formatting
@@ -532,67 +668,128 @@ function extractSec(unitStr) { if (!unitStr) return ''; const p = unitStr.split(
 //   X=no Mode C, N=no target, B=block alt, /=VFR
 
 const LDR_DX = 20;
-const LDR_DY = -5;
+const LDR_DY = 0;   // flat horizontal leader line (ERAM default position 5 = right)
 let CHAR_W = fontSize * 0.625;  // approx char width in ERAM font
 let LINE_H = fontSize * 1.25;   // line-height
 
-function getSymbolClass(f) {
-    // Table 1 — Target symbols (active surveillance return)
-    // Table 2 — Track position symbols (coasting, no target)
-    const hasBeacon = !!f.squawk;
-    const hasFlightPlan = !!f.callsign;
+// Check if flight is in reduced separation area (at or below FL230)
+function isReducedSep(f) {
+    const alt = f.reportedAltitude ?? f.assignedAltitude;
+    return alt != null && alt <= 23000;
+}
 
-    if (hasBeacon && hasFlightPlan) return 'ac-sym-corr-bcn';    // \ Correlated Beacon
-    if (hasBeacon && !hasFlightPlan) return 'ac-sym-uncorr-bcn';  // / Uncorrelated Beacon
-    if (!hasBeacon && hasFlightPlan) return 'ac-sym-flat-track';   // ◇ Flight Plan Aided Track
-    return 'ac-sym-uncorr-pri';                                    // + Uncorrelated Primary
+function getSymbolClass(f) {
+    // Reduced separation: at or below FL230 → dot
+    if (f.callsign && isReducedSep(f)) return 'ac-sym-reduced-sep';
+    // SFDPS en route flights are virtually all transponder-equipped correlated targets.
+    if (f.callsign) return 'ac-sym-corr-bcn';      // \ Correlated Beacon (most common)
+    if (f.squawk) return 'ac-sym-uncorr-bcn';       // / Uncorrelated Beacon
+    return 'ac-sym-flat-track';                      // ◇ Unknown/no identification
 }
 
 // History symbol character per target type (drawn on canvas)
 function getSymbolChar(f) {
-    const hasBeacon = !!f.squawk;
-    const hasFlightPlan = !!f.callsign;
-    if (hasBeacon && hasFlightPlan) return '\\';  // Correlated Beacon
-    if (hasBeacon && !hasFlightPlan) return '/';   // Uncorrelated Beacon
-    if (!hasBeacon && hasFlightPlan) return '\u25C7'; // ◇ Flat Track
-    return '+';                                       // Uncorrelated Primary
+    // Reduced separation: at or below FL230 → dot
+    if (f.callsign && isReducedSep(f)) return '\u2022';  // • dot
+    if (f.callsign) return '\\';   // Correlated Beacon (most common)
+    if (f.squawk) return '/';      // Uncorrelated Beacon
+    return '\u25C7';               // ◇ Unknown
+}
+
+// Should column 0 "R" indicator show? (track not under our control)
+// R = position does not own the track:
+//   - Outgoing ACCEPTED/completed: we gave it away → R
+//   - Incoming PROPOSED: offered to us but not yet accepted → R
+//   - Incoming ACCEPTED/completed: we accepted, we own it → no R
+//   - Outgoing PROPOSED: we initiated but still own it → no R
+//   - Other tracks not ours at all → R
+function shouldShowR(f, cls) {
+    if (!myFacility || mySectors.size === 0) return false;
+    if (cls === 'emrg') return false;
+
+    // Controlling sector is authoritative — trust what SFDPS says
+    if (cls === 'own') return false;
+    const ctrlFac = f.controllingFacility || '';
+    const ctrlSec = f.controllingSector || '';
+    if (ctrlFac === myFacility && mySectors.has(ctrlSec)) return false;
+
+    // Active handoff involving our sector(s)
+    const hoEvt = hoEventType(f.handoffEvent);
+    if (hoEvt && f.handoffReceiving) {
+        const recvFac = extractFac(f.handoffReceiving);
+        const recvSec = extractSec(f.handoffReceiving);
+        const xferFac = extractFac(f.handoffTransferring);
+        const xferSec = extractSec(f.handoffTransferring);
+        const recvIsMe = recvFac === myFacility && mySectors.has(recvSec);
+        const xferIsMe = xferFac === myFacility && mySectors.has(xferSec);
+
+        if (xferIsMe && hoEvt === 'PROPOSED') return false;  // We initiated, still own it
+        if (xferIsMe && hoEvt === 'ACCEPTED') return true;   // We gave it away
+        if (recvIsMe && hoEvt === 'PROPOSED') return true;    // Incoming, not yet accepted
+        if (recvIsMe && hoEvt === 'ACCEPTED') return false;   // We accepted, we own it
+    }
+
+    // Completed handoff — informational (O display), R follows controlling sector above
+    const completed = hoCompletedInfo.get(f.gufi);
+    if (completed) {
+        const recvIsMe = extractFac(completed.receiving) === myFacility && mySectors.has(extractSec(completed.receiving));
+        if (recvIsMe) return false;  // Incoming completed — we now own it, no R
+        const xferIsMe = extractFac(completed.transferring) === myFacility && mySectors.has(extractSec(completed.transferring));
+        if (xferIsMe) return true;   // Outgoing completed — show R
+    }
+
+    // Default: R for any track we don't own
+    return true;
+}
+
+// Determine if a track should show FDB (full data block) or LDB (limited)
+function shouldShowFdb(gufi, cls) {
+    // User override takes priority
+    if (fdbOverrides.has(gufi)) return fdbOverrides.get(gufi);
+    // Default: own and handoff tracks get FDB, others get LDB
+    return cls === 'own' || cls === 'ho' || cls === 'emrg';
 }
 
 function buildMarkerHtml(f, cls) {
     const isEmrg = cls === 'emrg';
-    const isHo = cls === 'ho';
     const emrgCls = isEmrg ? ' emrg' : '';
-    const hoCls = isHo ? ' ho-flash' : '';
 
-    // Current position always shows hollow diamond; target symbols go to history trail
-    let html = `<div class="ac-sym-flat-track${emrgCls}${hoCls}"></div>`;
+    // Current position: target symbol with diamond overlay
+    const symClass = getSymbolClass(f);
+    const symChar = getSymbolChar(f);
+    // All target symbols get the diamond overlay; the character sits inside it
+    let html = `<div class="ac-sym-target${emrgCls}">${esc(symChar)}</div>`;
+    html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
 
     if (!showFdb) return html;
 
     const color = isEmrg ? EMRG_COLOR : TRACK_COLOR;
     const dbTop = LDR_DY - 7;
+    const useFdb = shouldShowFdb(f.gufi, cls);
 
-    // Leader line: SVG from symbol center (0,0) to data block start
-    html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${LDR_DX}" y2="${LDR_DY}" stroke="${color}" stroke-width="1"/></svg>`;
+    if (useFdb) {
+        // Full Data Block (lines 1-4) — full brightness
+        html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${LDR_DX}" y2="${LDR_DY}" stroke="${color}" stroke-width="1"/></svg>`;
 
-    // Line 0: Point out indicator (P=initiated yellow, A=acknowledged white)
-    // SFDPS doesn't provide pointout data natively; structure ready if added
-    // if (f.pointout) {
-    //     const poChar = f.pointoutAcknowledged ? 'A' : 'P';
-    //     const poCls = f.pointoutAcknowledged ? 'po-acknowledged' : 'po-initiated';
-    //     html += `<div class="ac-line0 ${poCls}" style="left:${LDR_DX}px; top:${dbTop - LINE_H}px;">${poChar}</div>`;
-    // }
+        // Column 0: R indicator for tracks not under our control
+        if (shouldShowR(f, cls)) {
+            html += `<div class="ac-col0" style="left:${LDR_DX - CHAR_W * 1.5}px; top:${dbTop + 1 + LINE_H * 2}px;">R</div>`;
+        }
 
-    // Column 0: R indicator for tracks not under our control (bulges left of data block)
-    // +1 accounts for the 1px top padding on .ac-db
-    if (myFacility && cls === 'other') {
-        html += `<div class="ac-col0" style="left:${LDR_DX - CHAR_W}px; top:${dbTop + 1 + LINE_H * 2}px;">R</div>`;
+        const db = formatDatablock(f, cls);
+        const dbCls = isEmrg ? ' emrg' : '';
+        html += `<div class="ac-db${dbCls}" style="left:${LDR_DX}px; top:${dbTop}px;">${db}</div>`;
+    } else if (ldbBrightness > 0) {
+        // Limited Data Block — brightness-controlled
+        const ldbOp = ldbBrightness / 100;
+        html += `<svg class="ac-leader" width="1" height="1" overflow="visible" style="opacity:${ldbOp}"><line x1="0" y1="0" x2="${LDR_DX}" y2="${LDR_DY}" stroke="${color}" stroke-width="1"/></svg>`;
+        const l1 = f.callsign || '???';
+        const alt = f.reportedAltitude ?? f.assignedAltitude;
+        const l2 = alt != null ? String(Math.round(alt / 100)).padStart(3, '0') : '';
+        const dbCls = isEmrg ? ' emrg' : '';
+        html += `<div class="ac-db${dbCls}" style="left:${LDR_DX}px; top:${dbTop}px; opacity:${ldbOp};">${l1}\n${l2}</div>`;
     }
-
-    // Data block (lines 1-4, CID aligns with callsign — no Column 0 in text)
-    const db = formatDatablock(f, cls);
-    const dbCls = isEmrg ? ' emrg' : (isHo ? ' ho' : '');
-    html += `<div class="ac-db${dbCls}" style="left:${LDR_DX}px; top:${dbTop}px;">${db}</div>`;
+    // ldbBrightness === 0 for LDB → no leader line or data block
 
     return html;
 }
@@ -653,33 +850,59 @@ function formatLine3(f, cls) {
     if (f.squawk === '7500') return `${cid} HIJK`;
     if (f.squawk === '7400') return `${cid} LLNK`;
 
-    // Handoff in Field E (case-insensitive match for SFDPS event values)
-    const hoEvt = (f.handoffEvent || '').toUpperCase();
+    // Active handoff flash in Field E — uses global flashTime so ALL tracks sync
+    const hoEvt = hoEventType(f.handoffEvent);
     if (hoEvt && f.handoffReceiving) {
+        const suffix = handoffSuffix(f.handoffReceiving, f.handoffTransferring);
         if (hoEvt === 'PROPOSED') {
-            // Pending handoff: Hxx (xx = receiving sector)
-            return `${cid} H${extractSectorDisplay(f.handoffReceiving)}`;
-        }
-        if (hoEvt === 'ACCEPTED') {
-            // Accepted handoff: Oxx (xx = receiving sector)
-            return `${cid} O${extractSectorDisplay(f.handoffReceiving)}`;
-        }
-        if (hoEvt === 'COMPLETED' || hoEvt === 'EXECUTING') {
-            // Executing handoff (route transfer): Oxx
-            return `${cid} O${extractSectorDisplay(f.handoffReceiving)}`;
+            // Fast blink: 0.5s on/off, alternate H-xx / GS every 6s
+            const tick = Math.floor(flashTime / 500) % 24;
+            const phase = tick < 12 ? 0 : 1;
+            const visible = tick % 2 === 0;
+            if (!visible) return `${cid}`;
+            if (phase === 0) {
+                return `${cid} H${suffix}`;
+            } else {
+                const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
+                return gs ? `${cid}  ${gs}` : `${cid}`;
+            }
+        } else {
+            // Slow 6-second cycle: 3s O-xx, 3s GS (no rapid on/off flashing)
+            const phase = Math.floor(flashTime / 3000) % 2;
+            if (phase === 0) {
+                return `${cid} O${suffix}`;
+            } else {
+                const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
+                return gs ? `${cid}  ${gs}` : `${cid}`;
+            }
         }
     }
 
-    // Normal: CID + first-char destination + groundspeed
-    const destChar = f.destination ? f.destination.replace(/^K/, '').charAt(0) : '';
+    // Completed handoff — show O indicator steady for 60 seconds
+    const completed = hoCompletedInfo.get(f.gufi);
+    if (completed && flashTime - completed.time < 60000) {
+        const suffix = handoffSuffix(completed.receiving, completed.transferring);
+        return `${cid} O${suffix}`;
+    }
+
+    // Normal: CID + groundspeed
     const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
-    return gs ? `${cid}${destChar}${gs}` : `${cid}`;
+    return gs ? `${cid} ${gs}` : `${cid}`;
 }
 
-function extractSectorDisplay(unitStr) {
-    if (!unitStr) return '??';
-    const parts = unitStr.split('/');
-    return parts.length > 1 ? parts[1].padStart(2, '0') : unitStr.substring(0, 3);
+// Build handoff suffix: intra-facility = -xx, inter-facility = Nxx (handoff code)
+function handoffSuffix(receiving, transferring) {
+    const recvFac = extractFac(receiving);
+    const recvSec = extractSec(receiving);
+    const xferFac = transferring ? extractFac(transferring) : '';
+    if (!recvFac || !recvSec) return `-${(recvSec || '??').padStart(2, '0')}`;
+    // Inter-facility: use handoff code of receiving facility
+    if (xferFac && xferFac !== recvFac) {
+        const code = getHandoffCode(recvFac);
+        return `${code}${recvSec.padStart(2, '0')}`;
+    }
+    // Intra-facility: use dash
+    return `-${recvSec.padStart(2, '0')}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -716,28 +939,91 @@ function connectWs() {
         const msg = JSON.parse(evt.data);
 
         if (msg.type === 'snapshot') {
+            // Fresh start — clear markers but preserve history across reconnects
+            for (const [, m] of markers) map.removeLayer(m);
+            markers.clear();
+            flights.clear();
+            pendingPositions.clear();
             for (const f of msg.data) {
                 flights.set(f.gufi, f);
                 trackFacility(f);
             }
+            lastScanTime = performance.now(); // reset scan clock
         } else if (msg.type === 'update') {
             const f = msg.data;
-            const old = flights.get(f.gufi);
+            trackFacility(f);
 
-            // Record history before overwriting position
-            if (old && old.latitude != null && f.latitude != null) {
-                const dlat = Math.abs(old.latitude - f.latitude);
-                const dlon = Math.abs(old.longitude - f.longitude);
-                if (dlat > 0.0001 || dlon > 0.0001) {
-                    addHistoryPoint(f.gufi, old.latitude, old.longitude, getSymbolChar(old));
+            // Apply datablock fields IMMEDIATELY (handoffs, altitude, callsign, etc.)
+            // Only buffer position (lat/lon) for the 12-second scan cycle
+            const existing = flights.get(f.gufi);
+            if (existing) {
+                // Capture old state BEFORE overwriting
+                const oldHoEvt = hoEventType(existing.handoffEvent);
+                const oldHoRecv = existing.handoffReceiving;
+                const oldHoXfer = existing.handoffTransferring;
+                const oldCuFac = existing.controllingFacility;
+                const oldCuSec = existing.controllingSector;
+
+                // Buffer new position for scan cycle
+                if (f.latitude != null && f.longitude != null) {
+                    pendingPositions.set(f.gufi, { lat: f.latitude, lon: f.longitude });
                 }
+                // Apply all non-position fields instantly
+                for (const key in f) {
+                    if (key === 'latitude' || key === 'longitude') continue;
+                    existing[key] = f[key];
+                }
+
+                // Detect handoff completion via two paths:
+                // 1) HO event cleared by server (HO-DONE) + CU matches recv
+                // 2) CU changed to match recv (covers missed initiation, e.g. server restart)
+                const newHoEvt = hoEventType(existing.handoffEvent);
+                const cuChanged = existing.controllingFacility !== oldCuFac || existing.controllingSector !== oldCuSec;
+                const recv = oldHoRecv || existing.handoffReceiving;
+                if (recv && !hoCompletedInfo.has(f.gufi)) {
+                    const recvFac = extractFac(recv);
+                    const recvSec = extractSec(recv);
+                    const cuMatchesRecv = existing.controllingFacility === recvFac && existing.controllingSector === recvSec;
+                    // Path 1: server cleared handoff fields (event went active→inactive)
+                    // Path 2: CU just changed to match recv
+                    if (cuMatchesRecv && ((!newHoEvt && oldHoEvt) || cuChanged)) {
+                        hoCompletedInfo.set(f.gufi, {
+                            time: performance.now(),
+                            receiving: recv,
+                            transferring: oldHoXfer || existing.handoffTransferring || ''
+                        });
+                    }
+                }
+            } else {
+                // New flight — add fully (including position)
+                flights.set(f.gufi, f);
             }
 
-            flights.set(f.gufi, f);
-            trackFacility(f);
+            // Handoff targeting our sector → immediately set FDB + rebuild marker
+            if (hoEventType(f.handoffEvent)) {
+                const cur = flights.get(f.gufi);
+                if (cur) {
+                    const cls = classifyTrack(cur);
+                    if (cls === 'ho' && !fdbOverrides.has(f.gufi)) {
+                        fdbOverrides.set(f.gufi, true);
+                        // Immediately invalidate marker for instant LDB→FDB transition
+                        const marker = markers.get(f.gufi);
+                        if (marker) {
+                            const el = marker.getElement();
+                            if (el) el._lastHash = '';
+                        }
+                        lastRenderTime = 0;
+                    }
+                }
+            }
         } else if (msg.type === 'remove') {
+            pendingPositions.delete(msg.data.gufi);
             flights.delete(msg.data.gufi);
             flightHistory.delete(msg.data.gufi);
+            fdbOverrides.delete(msg.data.gufi);
+            wasOwnOrHo.delete(msg.data.gufi);
+            hoCompletedInfo.delete(msg.data.gufi);
+            lastVisibleAt.delete(msg.data.gufi);
             const m = markers.get(msg.data.gufi);
             if (m) { map.removeLayer(m); markers.delete(msg.data.gufi); }
         } else if (msg.type === 'stats') {
@@ -758,26 +1044,72 @@ function trackFacility(f) {
     if (sec) knownFacilities.get(fac).add(sec);
 }
 
+let _lastFacilityInDropdown = false;
 function rebuildFacilityDropdown() {
     const sel = document.getElementById('sel-facility');
-    const curVal = sel.value;
-    const facs = [...knownFacilities.keys()].sort();
-    let html = '<option value="">-- None --</option>';
-    for (const fac of facs) {
-        html += `<option value="${esc(fac)}" ${fac === curVal ? 'selected' : ''}>${esc(fac)}</option>`;
-    }
+    const facs = [...knownFacilities.keys()].filter(f => f.startsWith('Z')).sort();
+    let html = '<option value="">All</option>';
+    for (const fac of facs) html += `<option value="${esc(fac)}">${esc(fac)}</option>`;
     sel.innerHTML = html;
+    // Restore selection (myFacility may have been set from URL before facilities were known)
+    sel.value = myFacility || '';
+    // First time our facility appears in the dropdown — trigger boundary display
+    if (myFacility && !_lastFacilityInDropdown && facs.includes(myFacility)) {
+        _lastFacilityInDropdown = true;
+        showBoundariesForFacility(myFacility);
+        rebuildSectorCheckboxes();
+    }
 }
 
-function rebuildSectorDropdown() {
-    const sel = document.getElementById('sel-sector');
-    const curVal = sel.value;
-    const secs = myFacility && knownFacilities.has(myFacility) ? [...knownFacilities.get(myFacility)].sort() : [];
-    let html = '<option value="">-- All --</option>';
-    for (const sec of secs) {
-        html += `<option value="${esc(sec)}" ${sec === curVal ? 'selected' : ''}>${esc(sec)}</option>`;
+function rebuildSectorCheckboxes() {
+    const container = document.getElementById('sector-checkboxes');
+    if (!myFacility) {
+        container.innerHTML = '<span style="color:#666; font-size:10px;">Select facility first</span>';
+        return;
     }
-    sel.innerHTML = html;
+    const secs = knownFacilities.has(myFacility) ? [...knownFacilities.get(myFacility)].sort() : [];
+    if (secs.length === 0) {
+        container.innerHTML = '<span style="color:#666; font-size:10px;">No sectors found yet</span>';
+        return;
+    }
+    let html = '';
+    for (const sec of secs) {
+        const checked = mySectors.has(sec) ? ' checked' : '';
+        html += `<label style="display:block; padding:1px 0; cursor:pointer; color:#aaa;">` +
+            `<input type="checkbox" class="sec-chk" value="${esc(sec)}"${checked} style="accent-color:#cccc44;"> ${esc(sec)}` +
+            `</label>`;
+    }
+    container.innerHTML = html;
+    container.querySelectorAll('.sec-chk').forEach(chk => {
+        chk.addEventListener('change', function () {
+            if (this.checked) {
+                mySectors.add(this.value);
+            } else {
+                mySectors.delete(this.value);
+                // Deactivating a sector: revert all flights associated with that sector to LDB
+                demoteSectorFlights(this.value);
+            }
+            invalidateAllMarkers(); // immediately update R indicators and FDB/LDB
+            saveSettingsToUrl();
+        });
+    });
+}
+
+// When a sector is deactivated, revert all flights that were own/ho for that sector back to LDB
+function demoteSectorFlights(sector) {
+    for (const [gufi, f] of flights) {
+        const fac = f.controllingFacility || f.reportingFacility || '';
+        const sec = f.controllingSector || '';
+        const hoRecvSec = extractSec(f.handoffReceiving);
+        const hoXferSec = extractSec(f.handoffTransferring);
+        // Flight belongs to the deactivated sector if it's controlled by it or in handoff with it
+        if (fac === myFacility && sec === sector ||
+            extractFac(f.handoffReceiving) === myFacility && hoRecvSec === sector ||
+            extractFac(f.handoffTransferring) === myFacility && hoXferSec === sector) {
+            fdbOverrides.delete(gufi);
+            wasOwnOrHo.delete(gufi);
+        }
+    }
 }
 
 function esc(s) {
@@ -785,9 +1117,31 @@ function esc(s) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Change detection — lightweight hash to avoid rebuilding marker HTML
+// ════════════════════════════════════════════════════════════════════════════
+function flightHash(f, cls) {
+    const useFdb = shouldShowFdb(f.gufi, cls);
+    // Flash animation is handled by the 500ms flash timer (data block text only),
+    // so flashKey is NOT in the hash — prevents full marker rebuild every tick.
+    // Include hoCompleted + R state so marker rebuilds when handoff completes
+    const hoc = hoCompletedInfo.has(f.gufi) ? 1 : 0;
+    const rInd = shouldShowR(f, cls) ? 1 : 0;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${f.computerId}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}`;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Render loop — guaranteed to never stop via requestAnimationFrame-first
 // ════════════════════════════════════════════════════════════════════════════
 let lastRenderTime = 0;
+
+// Force all markers to rebuild on next render (invalidate hashes)
+function invalidateAllMarkers() {
+    for (const [, m] of markers) {
+        const el = m.getElement();
+        if (el) el._lastHash = '';
+    }
+    lastRenderTime = 0; // trigger immediate render on next frame
+}
 
 function render() {
     requestAnimationFrame(render);  // ALWAYS schedule next — loop never dies
@@ -803,49 +1157,96 @@ function render() {
     }
 }
 
+function applyScanCycle() {
+    // Apply buffered positions (lat/lon only) — datablock fields were already applied instantly
+    for (const [gufi, pos] of pendingPositions) {
+        const f = flights.get(gufi);
+        if (!f) continue;
+        // Record history from old position
+        if (f.latitude != null) {
+            const dlat = Math.abs(f.latitude - pos.lat);
+            const dlon = Math.abs(f.longitude - pos.lon);
+            if (dlat > 0.0001 || dlon > 0.0001) {
+                addHistoryPoint(gufi, f.latitude, f.longitude, getSymbolChar(f));
+            }
+        }
+        f.latitude = pos.lat;
+        f.longitude = pos.lon;
+    }
+    pendingPositions.clear();
+}
+
 function doRender() {
-    const activeGufis = new Set();
+    // Check if a scan cycle has elapsed
+    const now = performance.now();
+    if (now - lastScanTime >= SCAN_INTERVAL) {
+        applyScanCycle();
+        lastScanTime = now;
+    }
+
+    const mapBounds = map.getBounds();
+    const onScreenGufis = new Set();
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
 
     for (const [gufi, f] of flights) {
         if (!isVisible(f)) continue;
+        lastVisibleAt.set(gufi, now);  // stamp for grace period
 
-        activeGufis.add(gufi);
         const cls = classifyTrack(f);
         counts[cls]++;
 
+        // Sticky FDB: when a track transitions from own/ho to other, keep FDB
+        if (cls === 'own' || cls === 'ho') {
+            wasOwnOrHo.add(gufi);
+        } else if (cls === 'other' && wasOwnOrHo.has(gufi) && !fdbOverrides.has(gufi)) {
+            fdbOverrides.set(gufi, true);
+        }
+
+        // Viewport culling — count all visible flights but only render on-screen ones
+        if (!mapBounds.contains([f.latitude, f.longitude])) continue;
+
+        onScreenGufis.add(gufi);
         const ll = [f.latitude, f.longitude];
-        const html = buildMarkerHtml(f, cls);
+        const hash = flightHash(f, cls);
 
         const existing = markers.get(gufi);
         if (existing) {
             existing.setLatLng(ll);
             const el = existing.getElement();
-            if (el && el._lastHtml !== html) {
-                el.innerHTML = html;
-                el._lastHtml = html;
+            if (el) {
+                // Unhide if previously hidden (flight became visible again)
+                if (el.style.display === 'none') el.style.display = '';
+                // Only rebuild HTML when flight data actually changes
+                if (el._lastHash !== hash) {
+                    el.innerHTML = buildMarkerHtml(f, cls);
+                    el._lastHash = hash;
+                }
             }
         } else {
+            const html = buildMarkerHtml(f, cls);
             const icon = L.divIcon({ className: 'ac-group', html, iconSize: [0, 0], iconAnchor: [0, 0] });
             const m = L.marker(ll, { icon, pane: 'targets', interactive: false });
             m.addTo(map);
             const el = m.getElement();
             if (el) {
-                el._lastHtml = html;
+                el._lastHash = hash;
                 el.style.pointerEvents = 'auto';
                 el.style.cursor = 'pointer';
-                el.addEventListener('click', () => showFlightDetail(gufi));
+                el.addEventListener('click', () => toggleTrackSelect(gufi));
             }
             markers.set(gufi, m);
         }
     }
 
-    // Remove stale markers
+    // Persistent markers: only REMOVE markers for flights that no longer exist (server removed).
+    // All other off-screen/invisible flights just get hidden — no DOM destroy/recreate flicker.
     for (const [gufi, m] of markers) {
-        if (!activeGufis.has(gufi)) {
+        if (!flights.has(gufi)) {
             map.removeLayer(m);
             markers.delete(gufi);
-            flightHistory.delete(gufi);
+        } else if (!onScreenGufis.has(gufi)) {
+            const el = m.getElement();
+            if (el && el.style.display !== 'none') el.style.display = 'none';
         }
     }
 
@@ -861,39 +1262,91 @@ function doRender() {
 
 requestAnimationFrame(render);
 
+// ── Handoff flash timer (500ms) ─────────────────────────────────────────────
+// Updates DATA BLOCK TEXT for tracks in active handoff OR completed handoff (O display).
+// Does NOT rebuild the entire marker — symbol and leader line stay intact.
+setInterval(() => {
+    // Update global flash reference — ALL tracks see the same phase
+    flashTime = performance.now();
+
+    // Cleanup expired hoCompletedInfo entries
+    for (const [gufi, info] of hoCompletedInfo) {
+        if (flashTime - info.time >= 60000) hoCompletedInfo.delete(gufi);
+    }
+
+    for (const [gufi, m] of markers) {
+        const f = flights.get(gufi);
+        if (!f) continue;
+
+        const hasActiveHo = hoEventType(f.handoffEvent) && f.handoffReceiving;
+        const hasCompletedHo = hoCompletedInfo.has(gufi);
+        if (!hasActiveHo && !hasCompletedHo) continue;
+
+        const el = m.getElement();
+        if (!el) continue;
+        const dbEl = el.querySelector('.ac-db');
+        if (!dbEl) continue;
+        const cls = classifyTrack(f);
+        if (shouldShowFdb(gufi, cls)) {
+            dbEl.textContent = formatDatablock(f, cls);
+        }
+
+        // Sync R indicator with handoff state — don't wait for full 2s render cycle
+        const rNow = shouldShowFdb(gufi, cls) && shouldShowR(f, cls);
+        const rEl = el.querySelector('.ac-col0');
+        if (rNow && !rEl) {
+            const dbTop = LDR_DY - 7;
+            const div = document.createElement('div');
+            div.className = 'ac-col0';
+            div.style.cssText = `left:${LDR_DX - CHAR_W * 1.5}px; top:${dbTop + 1 + LINE_H * 2}px;`;
+            div.textContent = 'R';
+            el.appendChild(div);
+        } else if (!rNow && rEl) {
+            rEl.remove();
+        }
+    }
+}, 500);
+
 // ════════════════════════════════════════════════════════════════════════════
 // Sidebar controls
 // ════════════════════════════════════════════════════════════════════════════
+document.getElementById('sidebar-toggle').addEventListener('click', function () {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('collapsed');
+    this.innerHTML = sidebar.classList.contains('collapsed') ? '&#9654;' : '&#9664;';
+    // Let Leaflet recalculate map size after transition
+    setTimeout(() => map.invalidateSize(), 250);
+});
+
 document.getElementById('sel-facility').addEventListener('change', function () {
     myFacility = this.value;
-    mySector = '';
-    document.getElementById('sel-sector').value = '';
-    rebuildSectorDropdown();
+    mySectors.clear();
+    // Changing facility: revert all tracks to default LDB
+    fdbOverrides.clear();
+    wasOwnOrHo.clear();
+    invalidateAllMarkers();
+    rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
-});
-
-document.getElementById('sel-sector').addEventListener('change', function () {
-    mySector = this.value;
-});
-
-document.getElementById('chk-fdb').addEventListener('change', function () {
-    showFdb = this.checked;
-});
-
-document.getElementById('chk-history').addEventListener('change', function () {
-    showHistory = this.checked;
+    saveSettingsToUrl();
 });
 
 document.getElementById('sel-histcount').addEventListener('change', function () {
     MAX_HISTORY = parseInt(this.value);
-    // Trim existing histories to new max
     for (const [, hist] of flightHistory) {
         while (hist.length > MAX_HISTORY) hist.shift();
     }
+    saveSettingsToUrl();
+});
+
+document.getElementById('rng-ldb-brightness').addEventListener('input', function () {
+    ldbBrightness = parseInt(this.value);
+    document.getElementById('lbl-ldb-brightness').textContent = ldbBrightness;
+    saveSettingsToUrl();
 });
 
 document.getElementById('sel-vector').addEventListener('change', function () {
     vectorMinutes = parseInt(this.value);
+    saveSettingsToUrl();
 });
 
 document.getElementById('chk-boundaries').addEventListener('change', function () {
@@ -902,19 +1355,30 @@ document.getElementById('chk-boundaries').addEventListener('change', function ()
     else if (activeBoundaryArtcc && boundaryLayers[activeBoundaryArtcc]) {
         map.removeLayer(boundaryLayers[activeBoundaryArtcc]);
     }
+    saveSettingsToUrl();
+});
+
+document.getElementById('chk-mapbg').addEventListener('change', function () {
+    showMapBg = this.checked;
+    if (showMapBg) tileLayer.addTo(map);
+    else map.removeLayer(tileLayer);
+    saveSettingsToUrl();
 });
 
 document.getElementById('sel-fontsize').addEventListener('change', function () {
     fontSize = parseInt(this.value);
     updateFontSize();
+    saveSettingsToUrl();
 });
 
 document.getElementById('inp-alt-low').addEventListener('change', function () {
     altFilterLow = parseInt(this.value) || 0;
+    saveSettingsToUrl();
 });
 
 document.getElementById('inp-alt-high').addEventListener('change', function () {
     altFilterHigh = parseInt(this.value) || 999;
+    saveSettingsToUrl();
 });
 
 function updateFontSize() {
@@ -937,7 +1401,7 @@ function updateFontSize() {
 
 setInterval(() => {
     rebuildFacilityDropdown();
-    rebuildSectorDropdown();
+    rebuildSectorCheckboxes();
     document.getElementById('stat-flights').textContent = flights.size;
     document.getElementById('stat-rate').textContent = msgRate;
 }, 5000);
@@ -945,13 +1409,34 @@ setInterval(() => {
 // ════════════════════════════════════════════════════════════════════════════
 // Flight detail panel
 // ════════════════════════════════════════════════════════════════════════════
+function toggleTrackSelect(gufi) {
+    const f = flights.get(gufi);
+    if (!f) return;
+    const cls = classifyTrack(f);
+
+    // Own/handoff/emergency tracks: default FDB, clicking does NOT toggle to LDB
+    if (cls === 'own' || cls === 'ho' || cls === 'emrg') {
+        showFlightDetail(gufi);
+        return;
+    }
+
+    // Other tracks: toggle between default LDB and FDB (quick look)
+    if (fdbOverrides.has(gufi)) {
+        fdbOverrides.delete(gufi);  // back to default LDB
+    } else {
+        fdbOverrides.set(gufi, true);  // promote to FDB
+    }
+
+    showFlightDetail(gufi);
+}
+
 function showFlightDetail(gufi) {
     selectedGufi = gufi;
     const f = flights.get(gufi);
     if (!f) return;
 
     document.getElementById('fd-title').textContent =
-        `${f.callsign || '???'}  ${f.aircraftType || ''} ${f.origin || ''}\u2192${f.destination || ''}`;
+        `${f.callsign || '???'}  ${f.aircraftType || ''}`;
 
     const cls = classifyTrack(f);
     const heading = (f.trackVelocityX != null && f.trackVelocityY != null)
@@ -960,7 +1445,10 @@ function showFlightDetail(gufi) {
         ? `${Math.round(Math.sqrt(f.trackVelocityX ** 2 + f.trackVelocityY ** 2))} kt` : '';
 
     const rows = [
+        ['ODP', `${f.origin || ''}\u2192${f.destination || ''}`],
         ['Track', cls === 'own' ? 'OWN' : cls === 'ho' ? 'HANDOFF' : cls === 'emrg' ? 'EMERGENCY' : 'OTHER'],
+        ['Facility', `${f.controllingFacility || f.reportingFacility || ''}`],
+        ['Sector', f.controllingSector || ''],
         ['Squawk', f.squawk],
         ['Assigned', f.assignedAltitude != null ? `FL${Math.round(f.assignedAltitude / 100)}` : ''],
         ['Reported', f.reportedAltitude != null ? `FL${Math.round(f.reportedAltitude / 100)}` : ''],
@@ -968,12 +1456,36 @@ function showFlightDetail(gufi) {
         ['GS', f.groundSpeed != null ? `${Math.round(f.groundSpeed)} kt` : ''],
         ['Heading', heading],
         ['T/V Speed', tvSpd],
-        ['Facility', `${f.controllingFacility || f.reportingFacility || ''} ${f.controllingSector ? '/ ' + f.controllingSector : ''}`],
+        ['Route', f.route || ''],
+        ['Rules', f.flightRules || ''],
+        ['STAR', f.star || ''],
+        ['Coord Fix', f.coordinationFix || ''],
+        ['Coord Time', f.coordinationTime || ''],
+        ['ETD', f.actualDepartureTime || ''],
+        ['ETA', f.eta || ''],
         ['Handoff', f.handoffEvent ? `${f.handoffEvent} ${f.handoffReceiving || ''} \u2190 ${f.handoffTransferring || ''}` : ''],
+        ['HO Debug', (() => {
+            const parts = [];
+            const hoEvt = hoEventType(f.handoffEvent);
+            if (hoEvt) parts.push(`active=${hoEvt}`);
+            if (f.handoffReceiving) parts.push(`recv=${f.handoffReceiving}`);
+            if (f.handoffTransferring) parts.push(`xfer=${f.handoffTransferring}`);
+            if (f.handoffAccepting) parts.push(`accept=${f.handoffAccepting}`);
+            const comp = hoCompletedInfo.get(f.gufi);
+            if (comp) {
+                const secsAgo = Math.round((performance.now() - comp.time) / 1000);
+                parts.push(`completed=${secsAgo}s ago recv=${comp.receiving}`);
+            }
+            return parts.join(' | ');
+        })()],
         ['CID', f.computerId],
         ['Operator', f.operator],
+        ['A/C Type', f.aircraftType || ''],
+        ['Reg', f.registration || ''],
         ['Wake', f.wakeCategory],
+        ['Equip', f.equipmentQualifier || ''],
         ['Datalink', f.dataLinkCode],
+        ['Remarks', f.remarks || ''],
         ['Last msg', f.lastMsgSource],
         ['Last seen', f.lastSeen],
     ];
@@ -984,21 +1496,95 @@ function showFlightDetail(gufi) {
         html += `<div class="fd-row"><span class="fd-label">${label}</span><span class="fd-val">${esc(String(val))}</span></div>`;
     }
     document.getElementById('fd-body').innerHTML = html;
-    document.getElementById('flight-detail').style.display = 'block';
+    document.getElementById('flight-detail-section').style.display = 'block';
 }
 
 function closeFd() {
     selectedGufi = null;
-    document.getElementById('flight-detail').style.display = 'none';
+    document.getElementById('flight-detail-section').style.display = 'none';
 }
 
 setInterval(() => { if (selectedGufi) showFlightDetail(selectedGufi); }, 5000);
 
 // ════════════════════════════════════════════════════════════════════════════
+// URL-based settings persistence
+// ════════════════════════════════════════════════════════════════════════════
+function loadSettingsFromUrl() {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    myFacility = params.get('facility') || '';
+    const sectors = params.get('sectors');
+    mySectors = sectors ? new Set(sectors.split(',').filter(s => s)) : new Set();
+    if (params.has('fdb')) showFdb = params.get('fdb') !== '0';
+    if (params.has('history')) showHistory = params.get('history') !== '0';
+    if (params.has('histcount')) MAX_HISTORY = parseInt(params.get('histcount')) || 5;
+    if (params.has('vector')) vectorMinutes = parseInt(params.get('vector'));
+    if (params.has('boundaries')) showBoundaries = params.get('boundaries') !== '0';
+    if (params.has('fontsize')) fontSize = parseInt(params.get('fontsize')) || 10;
+    if (params.has('altlow')) altFilterLow = parseInt(params.get('altlow')) || 0;
+    if (params.has('althigh')) altFilterHigh = parseInt(params.get('althigh')) || 999;
+    if (params.has('ldb')) ldbBrightness = parseInt(params.get('ldb'));
+    if (params.has('mapbg')) showMapBg = params.get('mapbg') !== '0';
+
+    // Restore map position/zoom
+    if (params.has('lat') && params.has('lng') && params.has('z')) {
+        const lat = parseFloat(params.get('lat'));
+        const lng = parseFloat(params.get('lng'));
+        const z = parseInt(params.get('z'));
+        if (!isNaN(lat) && !isNaN(lng) && !isNaN(z)) map.setView([lat, lng], z);
+    }
+
+    // Apply to UI controls
+    document.getElementById('sel-facility').value = myFacility;
+    document.getElementById('sel-histcount').value = MAX_HISTORY;
+    document.getElementById('sel-vector').value = vectorMinutes;
+    document.getElementById('chk-boundaries').checked = showBoundaries;
+    document.getElementById('chk-mapbg').checked = showMapBg;
+    document.getElementById('sel-fontsize').value = fontSize;
+    document.getElementById('inp-alt-low').value = altFilterLow;
+    document.getElementById('inp-alt-high').value = altFilterHigh;
+    document.getElementById('rng-ldb-brightness').value = ldbBrightness;
+    document.getElementById('lbl-ldb-brightness').textContent = ldbBrightness;
+    updateFontSize();
+    if (!showMapBg) map.removeLayer(tileLayer);
+    showBoundariesForFacility(myFacility);
+}
+
+function saveSettingsToUrl() {
+    const params = new URLSearchParams();
+    if (myFacility) params.set('facility', myFacility);
+    if (mySectors.size) params.set('sectors', [...mySectors].join(','));
+    if (!showFdb) params.set('fdb', '0');
+    if (!showHistory) params.set('history', '0');
+    if (MAX_HISTORY !== 5) params.set('histcount', MAX_HISTORY);
+    if (vectorMinutes !== 1) params.set('vector', vectorMinutes);
+    if (!showBoundaries) params.set('boundaries', '0');
+    if (!showMapBg) params.set('mapbg', '0');
+    if (fontSize !== 10) params.set('fontsize', fontSize);
+    if (altFilterLow !== 0) params.set('altlow', altFilterLow);
+    if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);
+    if (ldbBrightness !== 70) params.set('ldb', ldbBrightness);
+    // Map position/zoom
+    const center = map.getCenter();
+    params.set('lat', center.lat.toFixed(4));
+    params.set('lng', center.lng.toFixed(4));
+    params.set('z', map.getZoom());
+    const hash = params.toString();
+    history.replaceState(null, '', hash ? '#' + hash : window.location.pathname);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Init
 // ════════════════════════════════════════════════════════════════════════════
+loadSettingsFromUrl();
 rebuildFacilityDropdown();
-rebuildSectorDropdown();
+rebuildSectorCheckboxes();
+
+// Save map position/zoom on pan/zoom (debounced)
+let _mapSaveTimer = null;
+map.on('moveend', () => {
+    clearTimeout(_mapSaveTimer);
+    _mapSaveTimer = setTimeout(saveSettingsToUrl, 500);
+});
 </script>
 </body>
 </html>

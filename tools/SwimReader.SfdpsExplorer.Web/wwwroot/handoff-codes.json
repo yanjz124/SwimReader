@@ -1,0 +1,30 @@
+{
+  "_comment": "Facility handoff display codes. 'default' applies to all scopes. Per-facility sections override for that scope's perspective (e.g. PCT='E' when viewed from ZDC).",
+
+  "default": {
+    "ZAB": "A",
+    "ZAU": "G",
+    "ZBW": "B",
+    "ZDC": "W",
+    "ZDV": "D",
+    "ZFW": "F",
+    "ZHU": "H",
+    "ZID": "I",
+    "ZJX": "J",
+    "ZKC": "K",
+    "ZLA": "L",
+    "ZLC": "U",
+    "ZMA": "Z",
+    "ZME": "M",
+    "ZMP": "P",
+    "ZNY": "N",
+    "ZOA": "O",
+    "ZOB": "C",
+    "ZSE": "S",
+    "ZTL": "T"
+  },
+
+  "ZDC": {
+    "PCT": "E"
+  }
+}

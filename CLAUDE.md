@@ -309,3 +309,73 @@ Individual projects:
 dotnet build src/SwimReader.Server
 dotnet build tools/SfdpsERAM
 ```
+
+## Deployment (Raspberry Pi)
+
+### Host
+- **Pi**: `JY@JY1` (Debian 12 bookworm, ARM64, 4 cores, 3.7GB RAM)
+- **SSH**: `ssh JY@JY1` (no password needed)
+- **.NET 8**: installed at `/home/JY/.dotnet`
+- **Repo**: `/home/JY/SwimReader`
+- **Credentials**: `/home/JY/SwimReader/.env` (same format as local `.env`)
+
+### Systemd Services
+| Service | Unit | Port | Working Directory |
+|---------|------|------|-------------------|
+| SfdpsERAM | `sfdps-eram.service` | 5001 | `tools/SfdpsERAM` |
+| SwimReader.Server (STDDS) | `swimreader-stdds.service` | 5000 | `src/SwimReader.Server` |
+
+```bash
+# Check status
+sudo systemctl status sfdps-eram
+sudo systemctl status swimreader-stdds
+
+# Restart
+sudo systemctl restart sfdps-eram
+sudo systemctl restart swimreader-stdds
+
+# Logs
+journalctl -u sfdps-eram -f
+journalctl -u swimreader-stdds -f
+```
+
+### Auto-Deploy
+- **Timer**: `swimreader-deploy.timer` polls `origin/master` every 60 seconds
+- **Script**: `/home/JY/SwimReader/check-deploy.sh` — compares local HEAD vs remote, runs `deploy.sh` if different
+- **Deploy script**: `/home/JY/SwimReader/deploy.sh` — `git pull` → build both projects → restart both services
+- **CI**: GitHub Actions workflow (`.github/workflows/ci.yml`) runs build + test on push/PR to master
+
+```bash
+# Check deploy timer
+systemctl list-timers swimreader-deploy.timer
+
+# View deploy logs
+journalctl -u swimreader-deploy.service --no-pager -n 30
+
+# Manual deploy
+/home/JY/SwimReader/deploy.sh
+```
+
+### Cloudflare Tunnel
+- **Tunnel ID**: `8cab2eab-8319-42c6-9540-1aa288323b86`
+- **Config**: `~/.cloudflared/config.yml`
+- **Service**: `cloudflared.service`
+- **Route**: `swim.vncrcc.org` → `http://127.0.0.1:5001` (SfdpsERAM)
+
+**DNS (manual step in Cloudflare dashboard):**
+- CNAME `swim` → `8cab2eab-8319-42c6-9540-1aa288323b86.cfargotunnel.com` (proxied)
+
+**Public URLs (once DNS is configured):**
+- ERAM scope: `https://swim.vncrcc.org/eram.html`
+- Flight table: `https://swim.vncrcc.org/index.html`
+- Stats API: `https://swim.vncrcc.org/api/stats`
+
+**Not yet exposed externally:**
+- STDDS/DGScope on port 5000 — needs either a reverse proxy or separate tunnel hostname to expose `/dstars` paths
+
+### Sudoers
+JY can restart swim services without password (`/etc/sudoers.d/swimreader`):
+```
+JY ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart sfdps-eram
+JY ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart swimreader-stdds
+```

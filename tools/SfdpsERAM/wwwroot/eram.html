@@ -466,6 +466,41 @@ function getHandoffCode(facility) {
     return facility.charAt(0);
 }
 
+// Destination airport single-letter codes — loaded from destination-codes.json
+// Structure: { ZDC: { A: ["ATL"], B: ["BWI"], ... }, ... }
+// Reverse lookup: destCodeLookup[facility][airport] = letter
+let destCodesConfig = {};
+const destCodeLookup = {};  // facility → { airport → letter }
+
+async function loadDestinationCodes() {
+    try {
+        const resp = await fetch('/destination-codes.json');
+        if (!resp.ok) return;
+        destCodesConfig = await resp.json();
+        // Build reverse lookup: airport → letter for each facility
+        for (const [fac, letters] of Object.entries(destCodesConfig)) {
+            destCodeLookup[fac] = {};
+            for (const [letter, airports] of Object.entries(letters)) {
+                for (const apt of airports) {
+                    destCodeLookup[fac][apt] = letter;
+                }
+            }
+        }
+        const facCount = Object.keys(destCodesConfig).length;
+        console.log('[DestCodes] Loaded destination codes for', facCount, 'facilities');
+    } catch (e) { console.warn('[DestCodes]', e); }
+}
+loadDestinationCodes();
+
+// Look up single-letter destination code for an airport, using selected facility's config
+function getDestinationLetter(dest) {
+    if (!dest || !myFacility) return '';
+    const lookup = destCodeLookup[myFacility];
+    if (!lookup) return '';
+    // Try as-is (FAA LID), then with K prefix stripped (ICAO→LID)
+    return lookup[dest] || lookup[dest.replace(/^K/, '')] || '';
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Map setup
 // ════════════════════════════════════════════════════════════════════════════
@@ -485,10 +520,19 @@ const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{
     subdomains: 'abcd', maxZoom: 19, opacity: 0.4
 }).addTo(map);
 
+map.createPane('routes');
+map.getPane('routes').style.zIndex = 420;
+
 map.createPane('targets');
 map.getPane('targets').style.zIndex = 450;
 
 const markers = new Map();
+
+// QU route display: gufi → { polyline, destMarker, time, minutes }
+// polyline = Leaflet L.polyline, destMarker = L.marker for destination X
+// time = performance.now() when added (auto-remove after 30s for QU commands, null = persistent)
+// minutes = display length in minutes (null = full route)
+const activeRoutes = new Map();
 
 // ════════════════════════════════════════════════════════════════════════════
 // Canvas overlay for history dots + velocity vectors
@@ -540,7 +584,7 @@ function drawOverlay() {
 
     // ── Velocity vectors ──
     if (vectorMinutes > 0) {
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 1.5;
         ctx.globalAlpha = 0.5;
         for (const [gufi, f] of flights) {
             if (f.latitude == null || f.longitude == null) continue;
@@ -1109,24 +1153,38 @@ function formatAltLine(f) {
 function formatLine3(f, cls) {
     const cidVal = getCid(f);
     const cid = cidVal ? String(cidVal).padStart(3, ' ') : '   ';
+    const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
+    const destLetter = getDestinationLetter(f.destination);
+    // Normal Field E: single-letter destination + 3-digit groundspeed, or just groundspeed
+    const gsStr = destLetter && gs ? `${cid}${destLetter}${gs}` : gs ? `${cid} ${gs}` : cid;
 
-    // Emergency squawks in Field E
-    if (f.squawk === '7700') return `${cid} EMRG`;
-    if (f.squawk === '7600') return `${cid} RDOF`;
+    // ── ERAM Field E priority (per specification) ──
+
+    // 1. Special squawk codes (highest priority, static display)
     if (f.squawk === '7500') return `${cid} HIJK`;
+    if (f.squawk === '7600') return `${cid} RDOF`;
+    if (f.squawk === '7700') return `${cid} EMRG`;
+    if (f.squawk === '1276') return `${cid} ADIZ`;
     if (f.squawk === '7400') return `${cid} LLNK`;
+    if (f.squawk === '7777') return `${cid} AFIO`;
 
-    // Active handoff flash in Field E — uses global flashTime so ALL tracks sync
-    // H/O occupies the single-letter identifier position directly after CID (no space)
-    // All flash phases are padded to consistent width to prevent left-positioned block jitter
+    // 2. Active handoff — flash in Field E (uses global flashTime so ALL tracks sync)
+    //    H = proposed, O = accepted/executing, K = forced acceptance (/OK)
+    //    HUNK/OUNK/KUNK = unknown sector variant
     const hoEvt = hoEventType(f.handoffEvent);
     if (hoEvt && f.handoffReceiving) {
-        const suffix = handoffSuffix(f.handoffReceiving, f.handoffTransferring);
-        const hoStr = `${cid}${hoEvt === 'PROPOSED' ? 'H' : 'O'}${suffix}`;
-        const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
-        const gsStr = gs ? `${cid} ${gs}` : cid;
+        const recvSec = extractSec(f.handoffReceiving);
+        const isUnknown = !recvSec;
+        let hoLetter;
+        if (f.handoffForced) hoLetter = 'K';
+        else if (hoEvt === 'PROPOSED') hoLetter = 'H';
+        else hoLetter = 'O';
+
+        const hoStr = isUnknown
+            ? `${cid} ${hoLetter === 'H' ? 'HUNK' : hoLetter === 'K' ? 'KUNK' : 'OUNK'}`
+            : `${cid}${hoLetter}${handoffSuffix(f.handoffReceiving, f.handoffTransferring)}`;
         const padLen = Math.max(hoStr.length, gsStr.length);
-        if (hoEvt === 'PROPOSED') {
+        if (hoEvt === 'PROPOSED' && !f.handoffForced) {
             // Fast blink: 0.5s on/off, alternate H-xx / GS every 6s
             const tick = Math.floor(flashTime / 500) % 24;
             const phase = tick < 12 ? 0 : 1;
@@ -1135,30 +1193,32 @@ function formatLine3(f, cls) {
             if (phase === 0) return hoStr.padEnd(padLen);
             return gsStr.padEnd(padLen);
         } else {
-            // Slow 6-second cycle: 3s O-xx, 3s GS (no rapid on/off flashing)
+            // Slow 6-second cycle: 3s indicator, 3s GS (O/K — no rapid on/off)
             const phase = Math.floor(flashTime / 3000) % 2;
             if (phase === 0) return hoStr.padEnd(padLen);
             return gsStr.padEnd(padLen);
         }
     }
 
-    // Completed handoff — rotate O indicator / groundspeed for 60 seconds (5 cycles of 12s)
+    // 3. Completed handoff — rotate indicator / groundspeed for 60 seconds (5 cycles of 12s)
+    //    Uses K for forced (/OK) completions, O for normal
     const completed = hoCompletedInfo.get(f.gufi);
     if (completed && flashTime - completed.time < 60000) {
-        const suffix = handoffSuffix(completed.receiving, completed.transferring);
-        const hoStr = `${cid}O${suffix}`;
-        const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
-        const gsStr = gs ? `${cid} ${gs}` : cid;
+        const recvSec = extractSec(completed.receiving);
+        const isUnknown = !recvSec;
+        const letter = completed.forced ? 'K' : 'O';
+        const hoStr = isUnknown
+            ? `${cid} ${letter === 'K' ? 'KUNK' : 'OUNK'}`
+            : `${cid}${letter}${handoffSuffix(completed.receiving, completed.transferring)}`;
         const padLen = Math.max(hoStr.length, gsStr.length);
-        // 12s per cycle: 6s O indicator, 6s groundspeed
+        // 12s per cycle: 6s indicator, 6s groundspeed
         const phase = Math.floor((flashTime - completed.time) / 6000) % 2;
         if (phase === 0) return hoStr.padEnd(padLen);
         return gsStr.padEnd(padLen);
     }
 
-    // Normal: CID + groundspeed
-    const gs = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(3, '0') : '';
-    return gs ? `${cid} ${gs}` : `${cid}`;
+    // 4. Normal: destination letter + groundspeed
+    return gsStr;
 }
 
 // Build handoff suffix: intra-facility = -xx, inter-facility = Nxx (handoff code)
@@ -1232,6 +1292,7 @@ function connectWs() {
                 const oldHoEvt = hoEventType(existing.handoffEvent);
                 const oldHoRecv = existing.handoffReceiving;
                 const oldHoXfer = existing.handoffTransferring;
+                const oldHoForced = existing.handoffForced;
                 const oldCuFac = existing.controllingFacility;
                 const oldCuSec = existing.controllingSector;
 
@@ -1261,7 +1322,8 @@ function connectWs() {
                         hoCompletedInfo.set(f.gufi, {
                             time: performance.now(),
                             receiving: recv,
-                            transferring: oldHoXfer || existing.handoffTransferring || ''
+                            transferring: oldHoXfer || existing.handoffTransferring || '',
+                            forced: oldHoForced || existing.handoffForced || false
                         });
                     }
                 }
@@ -1297,6 +1359,7 @@ function connectWs() {
             lastVisibleAt.delete(msg.data.gufi);
             const m = markers.get(msg.data.gufi);
             if (m) { map.removeLayer(m); markers.delete(msg.data.gufi); }
+            removeRoute(msg.data.gufi);
         } else if (msg.type === 'stats') {
             msgRate = msg.data.rate;
         }
@@ -1559,9 +1622,11 @@ function doRender() {
                             if (dwellLocked.has(gufi)) {
                                 dwellLocked.delete(gufi);
                                 if (!el._isHovering) removeDwell(el, gufi);
+                                if (activeRoutes.has(gufi) && selectedGufi !== gufi) removeRoute(gufi);
                             } else {
                                 dwellLocked.add(gufi);
                                 applyDwell(el, gufi);
+                                showRouteForFlight(gufi, null, true);
                             }
                             return;
                         }
@@ -1852,12 +1917,207 @@ function showFlightDetail(gufi) {
     }
     document.getElementById('fd-body').innerHTML = html;
     document.getElementById('flight-detail-section').style.display = 'block';
+    showRouteForFlight(gufi, null, true);
 }
 
 function closeFd() {
+    const oldGufi = selectedGufi;
     selectedGufi = null;
+    if (oldGufi) removeRoute(oldGufi);
     document.getElementById('flight-detail-section').style.display = 'none';
 }
+
+// ── Route line display ──
+// ── QU route display system ──────────────────────────────────────────────
+// Great-circle distance in nautical miles between two lat/lon points
+function gcDistNm(lat1, lon1, lat2, lon2) {
+    const toRad = Math.PI / 180;
+    const dLat = (lat2 - lat1) * toRad;
+    const dLon = (lon2 - lon1) * toRad;
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
+    return 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 3440.065;  // Earth radius in nm
+}
+
+// Find closest segment on route to aircraft position, return { index, frac }
+// index = segment start index, frac = 0-1 fraction along that segment
+function findRouteProgress(waypoints, lat, lon) {
+    let bestDist = Infinity, bestIdx = 0, bestFrac = 0;
+    for (let i = 0; i < waypoints.length - 1; i++) {
+        const [aLat, aLon] = waypoints[i];
+        const [bLat, bLon] = waypoints[i + 1];
+        // Project point onto segment (flat approximation for nearby points)
+        const dx = bLon - aLon, dy = bLat - aLat;
+        const lenSq = dx * dx + dy * dy;
+        let t = lenSq > 0 ? ((lon - aLon) * dx + (lat - aLat) * dy) / lenSq : 0;
+        t = Math.max(0, Math.min(1, t));
+        const pLat = aLat + t * dy, pLon = aLon + t * dx;
+        const d = gcDistNm(lat, lon, pLat, pLon);
+        if (d < bestDist) { bestDist = d; bestIdx = i; bestFrac = t; }
+    }
+    // Also check if aircraft is closest to a waypoint directly
+    for (let i = 0; i < waypoints.length; i++) {
+        const d = gcDistNm(lat, lon, waypoints[i][0], waypoints[i][1]);
+        if (d < bestDist) { bestDist = d; bestIdx = Math.max(0, i - 1); bestFrac = i === 0 ? 0 : 1; }
+    }
+    return { index: bestIdx, frac: bestFrac };
+}
+
+// Trim route from aircraft position forward by maxNm nautical miles
+// Returns { latlngs, reachedDest } — latlngs is array of [lat,lon], reachedDest is bool
+function trimRouteForward(waypoints, startIdx, startFrac, maxNm) {
+    if (waypoints.length < 2) return { latlngs: [], reachedDest: false };
+    const result = [];
+    // Interpolated start point
+    const [aLat, aLon] = waypoints[startIdx];
+    const [bLat, bLon] = waypoints[Math.min(startIdx + 1, waypoints.length - 1)];
+    const sLat = aLat + startFrac * (bLat - aLat);
+    const sLon = aLon + startFrac * (bLon - aLon);
+    result.push([sLat, sLon]);
+
+    if (maxNm === null) {
+        // Full route — add all remaining waypoints
+        for (let i = startIdx + 1; i < waypoints.length; i++) {
+            result.push(waypoints[i]);
+        }
+        return { latlngs: result, reachedDest: true };
+    }
+
+    let remaining = maxNm;
+    // Distance from start point to end of current segment
+    const segRemain = gcDistNm(sLat, sLon, bLat, bLon);
+    if (segRemain >= remaining) {
+        // Trim within this segment
+        const f = remaining / Math.max(segRemain, 0.001);
+        result.push([sLat + f * (bLat - sLat), sLon + f * (bLon - sLon)]);
+        return { latlngs: result, reachedDest: false };
+    }
+    remaining -= segRemain;
+    result.push([bLat, bLon]);
+
+    for (let i = startIdx + 2; i < waypoints.length; i++) {
+        const segDist = gcDistNm(waypoints[i - 1][0], waypoints[i - 1][1],
+            waypoints[i][0], waypoints[i][1]);
+        if (segDist >= remaining) {
+            const f = remaining / Math.max(segDist, 0.001);
+            const pLat = waypoints[i - 1][0] + f * (waypoints[i][0] - waypoints[i - 1][0]);
+            const pLon = waypoints[i - 1][1] + f * (waypoints[i][1] - waypoints[i - 1][1]);
+            result.push([pLat, pLon]);
+            return { latlngs: result, reachedDest: false };
+        }
+        remaining -= segDist;
+        result.push(waypoints[i]);
+    }
+    return { latlngs: result, reachedDest: true };
+}
+
+// Remove a single route display by gufi
+function removeRoute(gufi) {
+    const r = activeRoutes.get(gufi);
+    if (!r) return;
+    if (r.polyline) map.removeLayer(r.polyline);
+    if (r.destMarker) map.removeLayer(r.destMarker);
+    activeRoutes.delete(gufi);
+}
+
+// Clear all route displays
+function clearAllRoutes() {
+    for (const [gufi] of activeRoutes) removeRoute(gufi);
+}
+
+// Show route line for a flight — called by QU command and dwell/detail
+// minutes: number of minutes to show, null = full route, 0 = max
+// persistent: if true, no 30s auto-remove (used by dwell lock / flight detail)
+async function showRouteForFlight(gufi, minutes = null, persistent = false) {
+    const f = flights.get(gufi);
+    if (!f || !f.route) return 'NO ROUTE';
+
+    // Fetch full route waypoints from server
+    let waypoints;
+    try {
+        const resp = await fetch(`/api/route/${encodeURIComponent(gufi)}`);
+        if (!resp.ok) return 'ROUTE RESOLVE FAILED';
+        const data = await resp.json();
+        waypoints = data.waypoints;
+        if (!waypoints || waypoints.length < 2) return 'ROUTE NOT RESOLVED';
+    } catch (e) { return 'ROUTE FETCH ERROR'; }
+
+    // Remove existing route for this flight
+    removeRoute(gufi);
+
+    // Calculate route from aircraft's current position
+    let latlngs, reachedDest;
+    if (f.latitude != null && f.longitude != null && minutes !== null) {
+        // Use filed speed (requestedSpeed / nasAirspeed), fall back to groundSpeed
+        const speed = f.requestedSpeed || f.groundSpeed || 250;
+        const mins = minutes === 0 ? 9999 : (minutes || 20);  // 0 = /M (max), default 20
+        const maxNm = speed * mins / 60;
+        const prog = findRouteProgress(waypoints, f.latitude, f.longitude);
+        ({ latlngs, reachedDest } = trimRouteForward(waypoints, prog.index, prog.frac, maxNm));
+    } else {
+        // No position or full route requested — show entire route
+        latlngs = waypoints;
+        reachedDest = true;
+    }
+
+    if (latlngs.length < 2) return 'ROUTE TOO SHORT';
+
+    const polyline = L.polyline(latlngs, {
+        pane: 'routes',
+        color: '#336633',
+        weight: 1.5,
+        opacity: 0.6,
+        dashArray: '8, 4',
+        interactive: false
+    }).addTo(map);
+
+    // Destination X marker when route reaches destination
+    let destMarker = null;
+    if (reachedDest && latlngs.length >= 2) {
+        const last = latlngs[latlngs.length - 1];
+        destMarker = L.marker(last, {
+            pane: 'routes',
+            interactive: false,
+            icon: L.divIcon({
+                className: '',
+                html: `<span style="color:#336633;font-family:ERAM,Consolas,monospace;font-size:${fontSize}px;text-decoration:underline;">X</span>`,
+                iconSize: [fontSize, fontSize],
+                iconAnchor: [fontSize / 2, fontSize / 2]
+            })
+        }).addTo(map);
+    }
+
+    activeRoutes.set(gufi, {
+        polyline,
+        destMarker,
+        time: persistent ? null : performance.now(),
+        minutes
+    });
+
+    return null;  // success
+}
+
+// Legacy compatibility — clear route for a gufi (used by dwell unlock / closeFd)
+function clearRoute(gufi) {
+    if (gufi) {
+        removeRoute(gufi);
+    } else {
+        // Clear persistent routes only (QU routes auto-expire)
+        for (const [g, r] of activeRoutes) {
+            if (r.time === null) removeRoute(g);
+        }
+    }
+}
+
+// Auto-remove expired QU route displays (30s timeout)
+setInterval(() => {
+    const now = performance.now();
+    for (const [gufi, r] of activeRoutes) {
+        if (r.time !== null && now - r.time >= 30000) {
+            removeRoute(gufi);
+        }
+    }
+}, 1000);
 
 setInterval(() => { if (selectedGufi) showFlightDetail(selectedGufi); }, 5000);
 
@@ -2028,8 +2288,15 @@ function mcaExecute() {
     mca.cursor = 0;
     if (!cmd) { mcaRender(); return; }
     const result = processCommand(cmd);
-    mca.feedback = result.feedback || [];
-    mcaRender();
+    if (result instanceof Promise) {
+        // Async command (e.g., QU) — show pending then update when done
+        mca.feedback = [{ type: 'info', text: 'PROCESSING...' }];
+        mcaRender();
+        result.then(r => { mca.feedback = r.feedback || []; mcaRender(); });
+    } else {
+        mca.feedback = result.feedback || [];
+        mcaRender();
+    }
 }
 
 function mcaClear() {
@@ -2163,6 +2430,95 @@ function processCommand(cmd) {
             ]};
         }
         return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+    }
+
+    // QU [minutes] [FLID...] — Route display
+    // QU alone clears all route lines
+    // QU <FLID> clears route for that flight
+    // QU <minutes> <FLID> shows route for N minutes (default 20, /M = max)
+    // Multiple FLIDs: QU 30 JBU123/429/AAL924
+    if (verb === 'QU') {
+        if (parts.length === 1) {
+            // QU alone — clear all QU route displays
+            clearAllRoutes();
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'ROUTE DISPLAY CLR ALL' }
+            ]};
+        }
+
+        // Parse: first non-verb token might be minutes or /M, rest are FLIDs
+        let minutes = 20;  // default
+        let flidStart = 1;
+        const arg1 = parts[1].toUpperCase();
+        if (arg1 === '/M') {
+            minutes = 0;  // 0 = max/full route
+            flidStart = 2;
+        } else if (/^\d+$/.test(arg1)) {
+            minutes = parseInt(arg1);
+            flidStart = 2;
+        }
+
+        // Remaining parts are FLIDs — may contain slashes for multiple (QU 30 JBU123/429/AAL924)
+        const flidStr = parts.slice(flidStart).join(' ').toUpperCase();
+        if (!flidStr) {
+            // QU <minutes> with no FLID — error
+            return { feedback: [{ type: 'err', text: 'FLID REQUIRED' }] };
+        }
+
+        // Split on / to get individual FLIDs
+        const flids = flidStr.split('/').map(s => s.trim()).filter(s => s);
+
+        // If single FLID with no minutes specified and arg1 is the FLID itself
+        if (flidStart === 1) {
+            // QU <FLID> — if flight has active route, clear it; else show default 20 min
+            if (flids.length === 1) {
+                const f = findFlight(flids[0]);
+                if (!f) return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+                if (activeRoutes.has(f.gufi)) {
+                    removeRoute(f.gufi);
+                    return { feedback: [
+                        { type: 'ok', text: 'ACCEPT' },
+                        { type: 'info', text: 'ROUTE DISPLAY CLR' },
+                        { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
+                    ]};
+                }
+            }
+        }
+
+        // Show route for each FLID
+        const found = [];
+        const notFound = [];
+        for (const flid of flids) {
+            const f = findFlight(flid);
+            if (f) found.push(f);
+            else notFound.push(flid);
+        }
+        if (found.length === 0) {
+            return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+        }
+
+        // Async: fetch routes for all found flights
+        return (async () => {
+            const results = [];
+            for (const f of found) {
+                const err = await showRouteForFlight(f.gufi, minutes, false);
+                results.push({ f, err });
+            }
+            const feedback = [{ type: 'ok', text: 'ACCEPT' }];
+            for (const { f, err } of results) {
+                if (err) {
+                    feedback.push({ type: 'err', text: `${f.callsign}: ${err}` });
+                } else {
+                    const minStr = minutes === 0 ? 'MAX' : `${minutes} MIN`;
+                    feedback.push({ type: 'info', text: `RTE ${minStr} ${f.callsign}/${getCid(f) || '???'}` });
+                }
+            }
+            if (notFound.length > 0) {
+                feedback.push({ type: 'err', text: `NOT FOUND: ${notFound.join(', ')}` });
+            }
+            return { feedback };
+        })();
     }
 
     // QF <callsign> — Query Flight plan → show in RA

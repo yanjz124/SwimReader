@@ -44,6 +44,9 @@ captures/
 *.xml
 !**/*.xsd
 
+## NASR data (downloaded from FAA)
+nasr-data/
+
 ## IDE
 .idea/
 *.swp

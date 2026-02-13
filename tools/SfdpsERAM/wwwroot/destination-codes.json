@@ -1,0 +1,28 @@
+{
+  "ZDC": {
+    "A": ["ATL"],
+    "B": ["BWI"],
+    "C": ["CLT", "AKH", "EQY", "LKR", "UZA"],
+    "D": ["IAD"],
+    "E": ["EWR"],
+    "F": ["FLL"],
+    "G": ["LWB"],
+    "H": ["HPN"],
+    "J": ["JFK", "FRG"],
+    "K": ["TPA"],
+    "L": ["LGA"],
+    "M": ["MIA"],
+    "N": ["ADW"],
+    "P": ["PHL"],
+    "Q": ["PIT"],
+    "R": ["RDU"],
+    "S": ["JQF", "RUQ", "VUJ"],
+    "T": ["TEB", "39N", "47N", "CDW", "LDJ", "MMU", "SMQ"],
+    "U": ["TTN", "3NJ6", "DYL", "LOM", "MQS", "OQN", "PNE", "PTW", "UKT", "N47", "N57"],
+    "V": ["PBI"],
+    "W": ["DCA"],
+    "X": ["BOS"],
+    "Y": ["BDL", "BAF", "CEF", "HFD"],
+    "Z": ["MCO"]
+  }
+}

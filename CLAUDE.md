@@ -63,7 +63,8 @@ tools/
     wwwroot/
       eram.html                         ERAM radar scope (single-file: HTML + CSS + JS)
       index.html                        Flight data table (single-file: HTML + CSS + JS)
-      handoff-codes.json                Facility handoff display code mappings (H/O suffixes)
+      handoff-codes.json                Facility handoff display code mappings (H/O/K suffixes)
+      destination-codes.json            Per-ARTCC single-letter destination airport codes
       ERAMv110.ttf                      ERAM font for authentic ATC display
   SwimReader.MessageCapture/          Console tool — captures raw STDDS XML to files
 tests/
@@ -175,6 +176,8 @@ Core fields tracked per flight (by GUFI):
 | `GET /api/stats` | Server stats (total messages, rate, flight count) |
 | `GET /api/kml` | List available KML boundary files |
 | `GET /api/kml/{name}` | Serve a specific KML file from repo root |
+| `GET /api/route/{gufi}` | Resolved route waypoints (lat/lon) from NASR data |
+| `GET /api/nasr/status` | NASR data load status, counts, effective date |
 
 ### Handoff Detection Logic
 Server-side in `Program.cs` ProcessFlight():
@@ -201,12 +204,20 @@ Server-side in `Program.cs` ProcessFlight():
 - `P` = procedure altitude assigned (not yet available from SFDPS data)
 - `X` = no Mode C data at all
 
-**Line 3 Field E (right side after CID):**
-- Normal: groundspeed as 3 digits (e.g., `420`)
-- Handoff proposed: `Hxx` where xx = receiving facility code (flashing)
-- Handoff accepted: `Hxx` (steady)
-- Handoff completed: Rotates between `Oxx` and groundspeed for 60s (5 cycles of 12s)
-- Emergency: `E/sq` where sq = squawk (7500/7600/7700)
+**Line 3 Field E (right side after CID, in priority order):**
+- `HIJK` = squawk 7500 (hijack)
+- `RDOF` = squawk 7600 (radio failure)
+- `EMRG` = squawk 7700 (emergency)
+- `ADIZ` = squawk 1276 (ADIZ penetration)
+- `LLNK` = squawk 7400 (lost link / UAV)
+- `AFIO` = squawk 7777 (military intercept)
+- `Hxxx` = handoff proposed to sector xxx (flashing H + sector, alternates with GS)
+- `HUNK` = handoff proposed, unknown sector
+- `Oxxx` = handoff accepted by sector xxx (steady O + sector, alternates with GS)
+- `OUNK` = handoff accepted, unknown sector
+- `Kxxx` = handoff forced via /OK to sector xxx (from SFDPS AH message)
+- Completed handoff: rotates O/K indicator with groundspeed for 60s
+- Normal: `{dest_letter}{groundspeed}` (e.g., `W420` where W=DCA destination code)
 
 ### Handoff Facility Codes
 Defined in `handoff-codes.json`. Default mappings (e.g., ZDC=W, ZNY=N, ZOB=C) with per-facility overrides (e.g., when viewed from ZDC, PCT shows as "E").
@@ -240,6 +251,42 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 - Font size adjustable at runtime; CHAR_W and LINE_H scale proportionally (0.625 and 1.25 of font size)
 - Leader lines are inline SVGs within the marker div
 - URL parameters persist sidebar state (facility, font size, history count, etc.)
+
+### MCA Commands (Message Composition Area)
+| Command | Action |
+|---------|--------|
+| `<1-9> <FLID>` | Position data block (numpad layout) |
+| `// <FLID>` | Toggle VCI (Visual Communications Indicator) |
+| `/<0-3> <FLID>` | Set leader line length |
+| `QU [min] <FLID...>` | Route display (default 20 min, `/M` = full route) |
+| `QU <FLID>` | Clear route for flight (toggle) |
+| `QU` | Clear all route displays |
+| `QF <FLID>` | Query flight plan → show in Response Area |
+| `QD` | Clear Response Area |
+| `QL [sector...]` | Quick Look sectors (force FDB); `QL` alone clears |
+| `<FLID>` | Toggle FDB/LDB for flight |
+
+FLIDs can be callsign or CID (CID only matches selected facility).
+
+### NASR Route Resolution
+On startup, SfdpsERAM downloads FAA NASR 28-Day Subscription data and parses:
+- **NAV_BASE.csv** — VOR/VORTAC/NDB navaids (lat/lon by identifier)
+- **FIX_BASE.csv** — Named waypoints/fixes
+- **APT_BASE.csv** — Airports (FAA LID + ICAO)
+- **AWY_BASE.csv** — Airways with ordered fix sequences (AIRWAY_STRING)
+- **STAR_\*.csv / DP_\*.csv** — SID/STAR procedures with fix sequences
+
+Route strings from SFDPS `nasRouteText` are tokenized and resolved:
+- `DCT` tokens skipped (direct-to)
+- Airways (J/V/Q/T + digits) expanded via AIRWAY_STRING fix traversal
+- SID/STAR names matched against procedure database, fix sequences expanded
+- All other tokens looked up as navaid → fix → airport (disambiguated by proximity)
+- Origin/destination airports added from flight plan fields
+
+Data cached in `nasr-data/{AIRAC-date}/`, auto-refreshed every 24 hours.
+
+### Destination Airport Codes
+Per-ARTCC single-letter destination codes in `destination-codes.json`. When a facility is selected, normal Field E shows `{letter}{groundspeed}` (e.g., `W420` where W=DCA). Add more ARTCCs by adding entries to the JSON file.
 
 ## STDDS Data Pipeline (SwimReader.Server)
 

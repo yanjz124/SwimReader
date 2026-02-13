@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using System.Xml.Linq;
 using SolaceSystems.Solclient.Messaging;
@@ -45,6 +47,9 @@ var queue = Environment.GetEnvironmentVariable("SFDPS_QUEUE") ?? "";
 var flights = new ConcurrentDictionary<string, FlightState>();
 var clients = new ConcurrentDictionary<string, WsClient>();
 var stats = new GlobalStats();
+NasrData? nasrData = null;
+var routeCache = new ConcurrentDictionary<string, List<double[]>>();
+var AirwayPattern = new Regex(@"^[JVQTLMNP]\d+$", RegexOptions.Compiled);
 long _procCount = 0;
 long _noGufiCount = 0;
 long lastMessageTicks = DateTime.UtcNow.Ticks;
@@ -119,6 +124,32 @@ app.MapGet("/api/flights/{gufi}", (string gufi) =>
 
 // REST API for stats
 app.MapGet("/api/stats", () => Results.Json(stats.Snapshot(), jsonOpts));
+
+// REST API for resolved route waypoints
+app.MapGet("/api/route/{gufi}", (string gufi) =>
+{
+    if (nasrData is null)
+        return Results.Json(new { waypoints = Array.Empty<double[]>() }, jsonOpts);
+    if (!flights.TryGetValue(gufi, out var f) || string.IsNullOrEmpty(f.Route))
+        return Results.Json(new { waypoints = Array.Empty<double[]>() }, jsonOpts);
+
+    var key = $"{f.Origin}:{f.Destination}:{f.Route}";
+    var wps = routeCache.GetOrAdd(key, _ => ResolveRoute(f.Route, f.Origin, f.Destination, nasrData));
+    return Results.Json(new { waypoints = wps }, jsonOpts);
+});
+
+// REST API for NASR data status
+app.MapGet("/api/nasr/status", () => Results.Json(new
+{
+    loaded = nasrData is not null,
+    effectiveDate = nasrData?.EffectiveDate,
+    navaids = nasrData?.Navaids.Count ?? 0,
+    fixes = nasrData?.Fixes.Count ?? 0,
+    airports = nasrData?.Airports.Count ?? 0,
+    airways = nasrData?.Airways.Count ?? 0,
+    procedures = nasrData?.Procedures.Count ?? 0,
+    cachedRoutes = routeCache.Count
+}, jsonOpts));
 
 // Serve KML files from repo root
 var repoRoot = FindRepoRoot(app.Environment.ContentRootPath);
@@ -257,6 +288,20 @@ var healthTimer = new Timer(_ =>
     if (silence > 60)
         Console.WriteLine($"[HEALTH] Warning: no messages for {silence:F0}s");
 }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+
+// ── NASR data (background download + parse) ─────────────────────────────────
+Task.Run(async () =>
+{
+    try { await LoadNasrData(); }
+    catch (Exception ex) { Console.WriteLine($"[NASR] Error: {ex.Message}"); }
+});
+
+// Check for new NASR cycle every 24 hours
+var nasrTimer = new Timer(async _ =>
+{
+    try { await LoadNasrData(); }
+    catch (Exception ex) { Console.WriteLine($"[NASR] Update check error: {ex.Message}"); }
+}, null, TimeSpan.FromHours(24), TimeSpan.FromHours(24));
 
 await solaceReady.Task;
 Console.WriteLine("[Web] Starting on http://localhost:5001");
@@ -462,7 +507,13 @@ void ProcessFlight(XElement flight, string rawXml)
             // Only update handoff event if we got an explicit event type
             // (SFDPS sometimes sends OH with no event attribute — don't clear state)
             if (!string.IsNullOrEmpty(evt))
+            {
                 state.HandoffEvent = evt;
+                // AH (assumed/assigned handoff) with acceptance = /OK forced track
+                var evtUpper = evt.ToUpperInvariant();
+                state.HandoffForced = source == "AH" &&
+                    (evtUpper.StartsWith("ACCEPT") || evtUpper == "EXECUTION");
+            }
             if (recv is not null) state.HandoffReceiving = FormatUnit(recv);
             if (xfer is not null) state.HandoffTransferring = FormatUnit(xfer);
             if (acpt is not null) state.HandoffAccepting = FormatUnit(acpt);
@@ -570,6 +621,7 @@ void ProcessFlight(XElement flight, string rawXml)
             state.HandoffReceiving = "";
             state.HandoffTransferring = "";
             state.HandoffAccepting = "";
+            state.HandoffForced = false;
         }
     }
 
@@ -652,6 +704,543 @@ void Broadcast(WsMsg msg)
     }
 }
 
+// ── NASR data loading & route resolution ─────────────────────────────────────
+
+async Task LoadNasrData()
+{
+    var nasrDir = Path.Combine(Directory.GetCurrentDirectory(), "nasr-data");
+    Directory.CreateDirectory(nasrDir);
+
+    // Calculate current AIRAC cycle effective date
+    // Reference: 2026-01-22 is a known AIRAC date; cycles are every 28 days
+    var reference = new DateTime(2026, 1, 22, 0, 0, 0, DateTimeKind.Utc);
+    var today = DateTime.UtcNow.Date;
+    var daysSinceRef = (int)(today - reference).TotalDays;
+    var cycleOffset = daysSinceRef >= 0 ? (daysSinceRef / 28) * 28 : ((daysSinceRef / 28) - 1) * 28;
+    var effectiveDate = reference.AddDays(cycleOffset);
+    var dateStr = effectiveDate.ToString("yyyy-MM-dd");
+
+    var cycleDir = Path.Combine(nasrDir, dateStr);
+
+    // Check if already loaded for this cycle
+    if (nasrData?.EffectiveDate == dateStr)
+    {
+        Console.WriteLine($"[NASR] Already loaded cycle {dateStr}");
+        return;
+    }
+
+    // Check for cached CSVs
+    var navFile = Path.Combine(cycleDir, "NAV_BASE.csv");
+    if (!File.Exists(navFile))
+    {
+        Console.WriteLine($"[NASR] Downloading cycle {dateStr}...");
+        await DownloadNasr(effectiveDate, cycleDir);
+    }
+
+    if (!File.Exists(navFile))
+    {
+        Console.WriteLine("[NASR] CSV files not found after download attempt");
+        return;
+    }
+
+    Console.WriteLine($"[NASR] Parsing cycle {dateStr}...");
+    var data = new NasrData { EffectiveDate = dateStr };
+
+    data.Navaids = ParseNavBase(Path.Combine(cycleDir, "NAV_BASE.csv"));
+    Console.WriteLine($"[NASR]   Navaids: {data.Navaids.Count} identifiers");
+
+    data.Fixes = ParseFixBase(Path.Combine(cycleDir, "FIX_BASE.csv"));
+    Console.WriteLine($"[NASR]   Fixes: {data.Fixes.Count} identifiers");
+
+    (data.Airports, data.AirportsIcao) = ParseAptBase(Path.Combine(cycleDir, "APT_BASE.csv"));
+    Console.WriteLine($"[NASR]   Airports: {data.Airports.Count} FAA LIDs, {data.AirportsIcao.Count} ICAO");
+
+    data.Airways = ParseAwyBase(Path.Combine(cycleDir, "AWY_BASE.csv"));
+    Console.WriteLine($"[NASR]   Airways: {data.Airways.Count} routes");
+
+    // Parse SID/STAR procedures (optional — files may not exist)
+    data.Procedures = new Dictionary<string, List<ProcedureDef>>(StringComparer.OrdinalIgnoreCase);
+    try
+    {
+        var stars = ParseProcedureCsvs(cycleDir, "STAR");
+        foreach (var kv in stars) data.Procedures[kv.Key] = kv.Value;
+        Console.WriteLine($"[NASR]   STARs: {stars.Count} procedures");
+    }
+    catch (Exception ex) { Console.WriteLine($"[NASR]   STAR parse skipped: {ex.Message}"); }
+    try
+    {
+        var dps = ParseProcedureCsvs(cycleDir, "DP");
+        foreach (var kv in dps)
+        {
+            if (data.Procedures.ContainsKey(kv.Key))
+                data.Procedures[kv.Key].AddRange(kv.Value);
+            else
+                data.Procedures[kv.Key] = kv.Value;
+        }
+        Console.WriteLine($"[NASR]   DPs (SIDs): {dps.Count} procedures");
+    }
+    catch (Exception ex) { Console.WriteLine($"[NASR]   DP parse skipped: {ex.Message}"); }
+
+    nasrData = data;
+    routeCache.Clear();
+    Console.WriteLine($"[NASR] Loaded successfully — cycle {dateStr}");
+}
+
+async Task DownloadNasr(DateTime effectiveDate, string outputDir)
+{
+    Directory.CreateDirectory(outputDir);
+    var dateUrl = effectiveDate.ToString("yyyy-MM-dd");
+    var url = $"https://nfdc.faa.gov/webContent/28DaySub/28DaySubscription_Effective_{dateUrl}.zip";
+
+    using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+    Console.WriteLine($"[NASR] GET {url}");
+
+    using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+    if (!response.IsSuccessStatusCode)
+    {
+        Console.WriteLine($"[NASR] Download failed: {response.StatusCode}");
+        return;
+    }
+
+    // Stream outer zip to temp file
+    var tempZip = Path.Combine(outputDir, "outer.zip");
+    await using (var fs = File.Create(tempZip))
+        await response.Content.CopyToAsync(fs);
+
+    var size = new FileInfo(tempZip).Length;
+    Console.WriteLine($"[NASR] Downloaded {size / 1024 / 1024}MB, extracting CSV data...");
+
+    // Find and extract the inner CSV zip
+    using var outerZip = ZipFile.OpenRead(tempZip);
+    var csvZipEntry = outerZip.Entries.FirstOrDefault(e =>
+        e.FullName.Contains("CSV_Data/", StringComparison.OrdinalIgnoreCase) &&
+        e.Name.EndsWith("_CSV.zip", StringComparison.OrdinalIgnoreCase));
+
+    if (csvZipEntry is null)
+    {
+        Console.WriteLine("[NASR] Could not find CSV zip inside subscription");
+        File.Delete(tempZip);
+        return;
+    }
+
+    var innerZipPath = Path.Combine(outputDir, "csv.zip");
+    csvZipEntry.ExtractToFile(innerZipPath, overwrite: true);
+
+    // Extract the CSV files we need from the inner zip
+    var needed = new[] { "NAV_BASE.csv", "FIX_BASE.csv", "AWY_BASE.csv", "APT_BASE.csv" };
+    // Also extract STAR and DP procedure files (name patterns: STAR_*.csv, DP_*.csv)
+    using var innerZip = ZipFile.OpenRead(innerZipPath);
+    foreach (var entry in innerZip.Entries)
+    {
+        var name = entry.Name;
+        bool isNeeded = needed.Any(n => name.Equals(n, StringComparison.OrdinalIgnoreCase))
+            || name.StartsWith("STAR_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("DP_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
+        if (isNeeded)
+        {
+            var dest = Path.Combine(outputDir, name);
+            entry.ExtractToFile(dest, overwrite: true);
+            Console.WriteLine($"[NASR]   Extracted {name} ({entry.Length / 1024}KB)");
+        }
+    }
+
+    // Cleanup temp zips
+    File.Delete(tempZip);
+    File.Delete(innerZipPath);
+}
+
+// ── CSV parsers ──
+
+List<string> ParseCsvLine(string line)
+{
+    var fields = new List<string>();
+    var i = 0;
+    while (i < line.Length)
+    {
+        if (line[i] == '"')
+        {
+            var end = line.IndexOf('"', i + 1);
+            if (end < 0) end = line.Length;
+            fields.Add(line[(i + 1)..end]);
+            i = end + 2; // skip closing quote + comma
+        }
+        else
+        {
+            var end = line.IndexOf(',', i);
+            if (end < 0) end = line.Length;
+            fields.Add(line[i..end]);
+            i = end + 1;
+        }
+    }
+    return fields;
+}
+
+int ColIdx(List<string> headers, string name) =>
+    headers.FindIndex(h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+Dictionary<string, List<NavPoint>> ParseNavBase(string path)
+{
+    var result = new Dictionary<string, List<NavPoint>>(StringComparer.OrdinalIgnoreCase);
+    using var reader = new StreamReader(path);
+    var headers = ParseCsvLine(reader.ReadLine()!);
+    int iId = ColIdx(headers, "NAV_ID"), iLat = ColIdx(headers, "LAT_DECIMAL"), iLon = ColIdx(headers, "LONG_DECIMAL");
+    if (iId < 0 || iLat < 0 || iLon < 0) return result;
+
+    while (reader.ReadLine() is { } line)
+    {
+        var f = ParseCsvLine(line);
+        if (f.Count <= Math.Max(iId, Math.Max(iLat, iLon))) continue;
+        if (!double.TryParse(f[iLat], out var lat) || !double.TryParse(f[iLon], out var lon)) continue;
+        var id = f[iId].Trim();
+        if (string.IsNullOrEmpty(id)) continue;
+        if (!result.ContainsKey(id)) result[id] = new List<NavPoint>();
+        result[id].Add(new NavPoint(id, lat, lon));
+    }
+    return result;
+}
+
+Dictionary<string, List<NavPoint>> ParseFixBase(string path)
+{
+    var result = new Dictionary<string, List<NavPoint>>(StringComparer.OrdinalIgnoreCase);
+    using var reader = new StreamReader(path);
+    var headers = ParseCsvLine(reader.ReadLine()!);
+    int iId = ColIdx(headers, "FIX_ID"), iLat = ColIdx(headers, "LAT_DECIMAL"), iLon = ColIdx(headers, "LONG_DECIMAL");
+    if (iId < 0 || iLat < 0 || iLon < 0) return result;
+
+    while (reader.ReadLine() is { } line)
+    {
+        var f = ParseCsvLine(line);
+        if (f.Count <= Math.Max(iId, Math.Max(iLat, iLon))) continue;
+        if (!double.TryParse(f[iLat], out var lat) || !double.TryParse(f[iLon], out var lon)) continue;
+        var id = f[iId].Trim();
+        if (string.IsNullOrEmpty(id)) continue;
+        if (!result.ContainsKey(id)) result[id] = new List<NavPoint>();
+        result[id].Add(new NavPoint(id, lat, lon));
+    }
+    return result;
+}
+
+(Dictionary<string, NavPoint> byLid, Dictionary<string, NavPoint> byIcao) ParseAptBase(string path)
+{
+    var byLid = new Dictionary<string, NavPoint>(StringComparer.OrdinalIgnoreCase);
+    var byIcao = new Dictionary<string, NavPoint>(StringComparer.OrdinalIgnoreCase);
+    using var reader = new StreamReader(path);
+    var headers = ParseCsvLine(reader.ReadLine()!);
+    int iId = ColIdx(headers, "ARPT_ID"), iIcao = ColIdx(headers, "ICAO_ID");
+    int iLat = ColIdx(headers, "LAT_DECIMAL"), iLon = ColIdx(headers, "LONG_DECIMAL");
+    if (iId < 0 || iLat < 0 || iLon < 0) return (byLid, byIcao);
+
+    while (reader.ReadLine() is { } line)
+    {
+        var f = ParseCsvLine(line);
+        if (f.Count <= Math.Max(iId, Math.Max(iLat, iLon))) continue;
+        if (!double.TryParse(f[iLat], out var lat) || !double.TryParse(f[iLon], out var lon)) continue;
+        var lid = f[iId].Trim();
+        if (string.IsNullOrEmpty(lid)) continue;
+        var pt = new NavPoint(lid, lat, lon);
+        byLid.TryAdd(lid, pt);
+        if (iIcao >= 0 && iIcao < f.Count)
+        {
+            var icao = f[iIcao].Trim();
+            if (!string.IsNullOrEmpty(icao)) byIcao.TryAdd(icao, pt);
+        }
+    }
+    return (byLid, byIcao);
+}
+
+Dictionary<string, AirwayDef> ParseAwyBase(string path)
+{
+    var result = new Dictionary<string, AirwayDef>(StringComparer.OrdinalIgnoreCase);
+    using var reader = new StreamReader(path);
+    var headers = ParseCsvLine(reader.ReadLine()!);
+    int iId = ColIdx(headers, "AWY_ID"), iDesig = ColIdx(headers, "AWY_DESIGNATION"), iStr = ColIdx(headers, "AIRWAY_STRING");
+    if (iId < 0 || iStr < 0) return result;
+
+    while (reader.ReadLine() is { } line)
+    {
+        var f = ParseCsvLine(line);
+        if (f.Count <= Math.Max(iId, iStr)) continue;
+        var id = f[iId].Trim();
+        var desig = iDesig >= 0 && iDesig < f.Count ? f[iDesig].Trim() : "";
+        var awyStr = f[iStr].Trim();
+        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(awyStr)) continue;
+        var fixes = awyStr.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+        result.TryAdd(id, new AirwayDef(id, desig, fixes));
+    }
+    return result;
+}
+
+// Parse SID/STAR procedure CSV files — adaptive header detection
+// These files have a route/leg structure with fix sequences per procedure
+Dictionary<string, List<ProcedureDef>> ParseProcedureCsvs(string cycleDir, string type)
+{
+    // type = "STAR" or "DP"
+    var result = new Dictionary<string, List<ProcedureDef>>(StringComparer.OrdinalIgnoreCase);
+    var prefix = type + "_";
+
+    // Find all matching CSV files in the directory
+    if (!Directory.Exists(cycleDir)) return result;
+    var csvFiles = Directory.GetFiles(cycleDir, $"{prefix}*.csv");
+    if (csvFiles.Length == 0) return result;
+
+    // Try to find the route/leg file (contains fix sequences)
+    // Common patterns: STAR_RTE.csv, STAR_SEG.csv, STAR_BASE.csv, DP_RTE.csv, etc.
+    // The "route" or "segment" file has the fix sequence data
+    var routeFile = csvFiles.FirstOrDefault(f =>
+        Path.GetFileName(f).Contains("RTE", StringComparison.OrdinalIgnoreCase) ||
+        Path.GetFileName(f).Contains("SEG", StringComparison.OrdinalIgnoreCase) ||
+        Path.GetFileName(f).Contains("LEG", StringComparison.OrdinalIgnoreCase));
+
+    // If no specific route file, try BASE
+    routeFile ??= csvFiles.FirstOrDefault(f =>
+        Path.GetFileName(f).Contains("BASE", StringComparison.OrdinalIgnoreCase));
+
+    // If still nothing, just try the first file
+    routeFile ??= csvFiles[0];
+
+    Console.WriteLine($"[NASR]   Parsing {type} procedures from {Path.GetFileName(routeFile)}");
+
+    using var reader = new StreamReader(routeFile);
+    var headers = ParseCsvLine(reader.ReadLine()!);
+    Console.WriteLine($"[NASR]   {type} headers: {string.Join(", ", headers.Take(20))}");
+
+    // Adaptive column detection — find columns by pattern
+    int FindCol(params string[] patterns) {
+        for (int i = 0; i < headers.Count; i++) {
+            var h = headers[i].Trim().ToUpperInvariant();
+            foreach (var pat in patterns)
+                if (h.Contains(pat)) return i;
+        }
+        return -1;
+    }
+
+    var iProcId = FindCol("PROCEDURE_IDENT", "STARDP_NAME", $"{type}_ID", $"{type}_IDENT", "PROC_ID", "RTE_IDENT");
+    var iAirport = FindCol("ARPT_IDENT", "AIRPORT_ID", "ARPT_ID", "APT_ID", "ASSOC_ARPT");
+    var iFix = FindCol("FIX_IDENT", "POINT_IDENT", "NAV_ID", "FIX_ID", "WYPT_IDENT");
+    var iSeq = FindCol("SEQ_NBR", "SEQUENCE", "SEQ_NO", "POINT_SEQ", "SEQ");
+    var iTrans = FindCol("TRANSITION_IDENT", "TRANS_IDENT", "TRANSITION_ID", "TRANS_ID");
+
+    if (iProcId < 0 || iFix < 0)
+    {
+        Console.WriteLine($"[NASR]   Could not find required columns (procId={iProcId}, fix={iFix})");
+        return result;
+    }
+
+    Console.WriteLine($"[NASR]   Columns: procId={iProcId} airport={iAirport} fix={iFix} seq={iSeq} trans={iTrans}");
+
+    // Read all rows and group by procedure + airport + transition
+    var rows = new List<(string proc, string airport, string transition, int seq, string fix)>();
+    while (reader.ReadLine() is { } line)
+    {
+        var f = ParseCsvLine(line);
+        if (f.Count <= Math.Max(iProcId, iFix)) continue;
+        var proc = f[iProcId].Trim().ToUpperInvariant();
+        var fix = f[iFix].Trim().ToUpperInvariant();
+        if (string.IsNullOrEmpty(proc) || string.IsNullOrEmpty(fix)) continue;
+
+        var airport = iAirport >= 0 && iAirport < f.Count ? f[iAirport].Trim().ToUpperInvariant() : "";
+        var transition = iTrans >= 0 && iTrans < f.Count ? f[iTrans].Trim().ToUpperInvariant() : "";
+        var seq = 0;
+        if (iSeq >= 0 && iSeq < f.Count) int.TryParse(f[iSeq].Trim(), out seq);
+        rows.Add((proc, airport, transition, seq, fix));
+    }
+
+    // Group by procedure name + airport, pick the common route (non-transition or longest transition)
+    var grouped = rows.GroupBy(r => (r.proc, r.airport));
+    foreach (var g in grouped)
+    {
+        var proc = g.Key.proc;
+        var airport = g.Key.airport;
+
+        // Get transitions
+        var transitions = g.GroupBy(r => r.transition).ToList();
+
+        // Prefer the common route (empty transition), else pick the one with most fixes
+        var bestTrans = transitions.FirstOrDefault(t => string.IsNullOrEmpty(t.Key))
+            ?? transitions.OrderByDescending(t => t.Count()).First();
+
+        var fixes = bestTrans.OrderBy(r => r.seq).Select(r => r.fix)
+            .Where(f => !string.IsNullOrEmpty(f)).Distinct().ToList();
+
+        if (fixes.Count < 2) continue;
+
+        var def = new ProcedureDef(proc, airport, type, fixes);
+        if (!result.ContainsKey(proc)) result[proc] = new List<ProcedureDef>();
+        result[proc].Add(def);
+    }
+
+    return result;
+}
+
+// ── Route resolver ──
+
+List<double[]> ResolveRoute(string routeText, string? origin, string? destination, NasrData nasr)
+{
+    var waypoints = new List<double[]>();
+    NavPoint? lastPt = null;
+
+    // Add origin airport
+    if (!string.IsNullOrEmpty(origin))
+    {
+        var apt = LookupAirport(origin, nasr);
+        if (apt is not null) { waypoints.Add(new[] { apt.Lat, apt.Lon }); lastPt = apt; }
+    }
+
+    // Tokenize: split on spaces, filter out DCT and empty
+    var tokens = routeText.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries)
+        .Where(t => !t.Equals("DCT", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
+
+    for (int i = 0; i < tokens.Length; i++)
+    {
+        var token = tokens[i].ToUpperInvariant();
+
+        // Strip speed/altitude annotations (e.g., FIX/N0450F350)
+        var slash = token.IndexOf('/');
+        if (slash > 0) token = token[..slash];
+
+        if (AirwayPattern.IsMatch(token))
+        {
+            // Airway: resolve intermediate fixes between entry and exit
+            string? exitFix = null;
+            if (i + 1 < tokens.Length)
+            {
+                exitFix = tokens[i + 1].ToUpperInvariant();
+                var es = exitFix.IndexOf('/');
+                if (es > 0) exitFix = exitFix[..es];
+            }
+            var awyPts = ResolveAirway(token, lastPt, exitFix, nasr);
+            foreach (var pt in awyPts)
+            {
+                waypoints.Add(new[] { pt.Lat, pt.Lon });
+                lastPt = pt;
+            }
+            if (exitFix is not null) i++; // skip exit fix (already included)
+        }
+        else
+        {
+            // Fix/navaid/airport
+            var pt = LookupPoint(token, lastPt, nasr);
+            if (pt is not null)
+            {
+                waypoints.Add(new[] { pt.Lat, pt.Lon });
+                lastPt = pt;
+            }
+            else if (nasr.Procedures.TryGetValue(token, out var procs))
+            {
+                // SID/STAR procedure — expand fix sequence
+                // Pick the procedure for the matching airport (origin for SID, destination for STAR)
+                var proc = procs.Count == 1 ? procs[0]
+                    : procs.FirstOrDefault(p =>
+                        (!string.IsNullOrEmpty(origin) && p.Airport.Equals(origin.TrimStart('K'), StringComparison.OrdinalIgnoreCase)) ||
+                        (!string.IsNullOrEmpty(destination) && p.Airport.Equals(destination.TrimStart('K'), StringComparison.OrdinalIgnoreCase)))
+                    ?? procs[0];
+
+                foreach (var fixName in proc.Fixes)
+                {
+                    var fixPt = LookupPoint(fixName, lastPt, nasr);
+                    if (fixPt is not null)
+                    {
+                        waypoints.Add(new[] { fixPt.Lat, fixPt.Lon });
+                        lastPt = fixPt;
+                    }
+                }
+            }
+        }
+    }
+
+    // Add destination airport
+    if (!string.IsNullOrEmpty(destination))
+    {
+        var apt = LookupAirport(destination, nasr);
+        if (apt is not null) waypoints.Add(new[] { apt.Lat, apt.Lon });
+    }
+
+    return waypoints;
+}
+
+NavPoint? LookupAirport(string code, NasrData nasr)
+{
+    // Try ICAO first (KDCA), then FAA LID (DCA), then strip K prefix
+    if (nasr.AirportsIcao.TryGetValue(code, out var apt)) return apt;
+    if (nasr.Airports.TryGetValue(code, out apt)) return apt;
+    if (code.Length == 4 && code.StartsWith("K") && nasr.Airports.TryGetValue(code[1..], out apt)) return apt;
+    return null;
+}
+
+NavPoint? LookupPoint(string ident, NavPoint? near, NasrData nasr)
+{
+    // Collect candidates from navaids, fixes, airports
+    var candidates = new List<NavPoint>();
+    if (nasr.Navaids.TryGetValue(ident, out var navs)) candidates.AddRange(navs);
+    if (nasr.Fixes.TryGetValue(ident, out var fixes)) candidates.AddRange(fixes);
+    if (nasr.Airports.TryGetValue(ident, out var apt)) candidates.Add(apt);
+    if (nasr.AirportsIcao.TryGetValue(ident, out apt)) candidates.Add(apt);
+    // Try stripping K prefix for airports
+    if (ident.Length == 4 && ident.StartsWith("K") && nasr.Airports.TryGetValue(ident[1..], out apt))
+        candidates.Add(apt);
+
+    if (candidates.Count == 0) return null;
+    if (candidates.Count == 1 || near is null) return candidates[0];
+
+    // Disambiguate by proximity to last point
+    return candidates.MinBy(c => DistSq(c.Lat, c.Lon, near.Lat, near.Lon));
+}
+
+List<NavPoint> ResolveAirway(string airwayId, NavPoint? entryPt, string? exitFix, NasrData nasr)
+{
+    if (!nasr.Airways.TryGetValue(airwayId, out var awy)) return new List<NavPoint>();
+
+    var fixList = awy.Fixes;
+    if (fixList.Count == 0) return new List<NavPoint>();
+
+    // Find entry index (closest to entryPt)
+    int entryIdx = 0;
+    if (entryPt is not null)
+    {
+        double bestDist = double.MaxValue;
+        for (int i = 0; i < fixList.Count; i++)
+        {
+            var pt = LookupPoint(fixList[i], null, nasr);
+            if (pt is null) continue;
+            var d = DistSq(pt.Lat, pt.Lon, entryPt.Lat, entryPt.Lon);
+            if (d < bestDist) { bestDist = d; entryIdx = i; }
+        }
+    }
+
+    // Find exit index (by name match)
+    int exitIdx = fixList.Count - 1;
+    if (exitFix is not null)
+    {
+        for (int i = 0; i < fixList.Count; i++)
+        {
+            if (fixList[i].Equals(exitFix, StringComparison.OrdinalIgnoreCase))
+            {
+                exitIdx = i;
+                break;
+            }
+        }
+    }
+
+    // Build waypoint list between entry and exit (inclusive)
+    var result = new List<NavPoint>();
+    int step = entryIdx <= exitIdx ? 1 : -1;
+    for (int i = entryIdx; i != exitIdx + step; i += step)
+    {
+        if (i < 0 || i >= fixList.Count) break;
+        var pt = LookupPoint(fixList[i], result.Count > 0 ? result[^1] : entryPt, nasr);
+        if (pt is not null) result.Add(pt);
+    }
+    return result;
+}
+
+double DistSq(double lat1, double lon1, double lat2, double lon2)
+{
+    var dlat = lat1 - lat2;
+    var dlon = (lon1 - lon2) * Math.Cos(lat1 * Math.PI / 180);
+    return dlat * dlat + dlon * dlon;
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 record WsMsg(string Type, object Data);
@@ -670,6 +1259,22 @@ class WsClient(WebSocket ws)
     {
         Queue.Writer.TryWrite(data);
     }
+}
+
+record NavPoint(string Ident, double Lat, double Lon);
+record AirwayDef(string Id, string Designation, List<string> Fixes);
+
+record ProcedureDef(string Id, string Airport, string Type, List<string> Fixes); // Type = "STAR" or "DP"
+
+class NasrData
+{
+    public Dictionary<string, List<NavPoint>> Navaids { get; set; } = new();
+    public Dictionary<string, List<NavPoint>> Fixes { get; set; } = new();
+    public Dictionary<string, NavPoint> Airports { get; set; } = new();
+    public Dictionary<string, NavPoint> AirportsIcao { get; set; } = new();
+    public Dictionary<string, AirwayDef> Airways { get; set; } = new();
+    public Dictionary<string, List<ProcedureDef>> Procedures { get; set; } = new(); // name → list (may have same name at different airports)
+    public string EffectiveDate { get; set; } = "";
 }
 
 class FlightState
@@ -721,6 +1326,7 @@ class FlightState
     public string? HandoffReceiving { get; set; }
     public string? HandoffTransferring { get; set; }
     public string? HandoffAccepting { get; set; }
+    public bool HandoffForced { get; set; } // true when handoff accepted via /OK (AH message)
 
     // Datalink / CPDLC
     public string? CommunicationCode { get; set; }
@@ -758,7 +1364,7 @@ class FlightState
         TrackVelocityX, TrackVelocityY,
         ControllingFacility, ControllingSector,
         ReportingFacility,
-        HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting,
+        HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
         DataLinkCode, OtherDataLink,
         Route, FlightRules, STAR, Remarks,
         Registration, EquipmentQualifier,
@@ -784,7 +1390,7 @@ class FlightState
             Latitude, Longitude, GroundSpeed, RequestedSpeed,
             ActualDepartureTime, ETA, CoordinationTime, CoordinationFix,
             ReportingFacility, ControllingFacility, ControllingSector,
-            HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting,
+            HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
             CommunicationCode, DataLinkCode, OtherDataLink, SELCAL,
             NavigationCode, PBNCode, SurveillanceCode,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),

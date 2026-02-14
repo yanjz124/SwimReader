@@ -12,8 +12,8 @@
 body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Courier New', monospace; overflow: hidden; height: 100vh; }
 
 /* ── Layout ── */
-#app { display: flex; height: 100vh; }
-#sidebar-wrapper { display: flex; flex-shrink: 0; position: relative; }
+#app { position: relative; height: 100vh; }
+#sidebar-wrapper { display: flex; position: absolute; top: 0; left: 0; bottom: 0; z-index: 500; }
 #sidebar { width: 260px; min-width: 260px; background: #111; border-right: 1px solid #333; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; transition: margin-left 0.2s ease; }
 #sidebar.collapsed { margin-left: -260px; }
 #sidebar-toggle {
@@ -23,7 +23,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     transition: color 0.15s;
 }
 #sidebar-toggle:hover { color: #cccc44; background: #222; }
-#map-container { flex: 1; position: relative; }
+#map-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
 #map { width: 100%; height: 100%; }
 
 /* ── Sidebar ── */
@@ -153,8 +153,13 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
 }
 .ac-db.emrg { color: #ff4444; }
-.ac-db.dwell { outline: 1px solid #cccc44; outline-offset: 1px; }
-.ac-db.dwell.emrg { outline-color: #ff4444; }
+.ac-db.dwell { position: relative; }
+.ac-db.dwell::before {
+    content: ''; position: absolute;
+    left: 1.5ch; top: -1px; right: -2px; bottom: -1px;
+    border: 1px solid #cccc44; pointer-events: none;
+}
+.ac-db.dwell.emrg::before { border-color: #ff4444; }
 /* .ac-db.ho — handoff flash now driven by JS */
 
 /* ── Column 0 (R / VCI) — inline prefix on each data block line ── */
@@ -1018,18 +1023,28 @@ function buildMarkerHtml(f, cls) {
     const isEmrg = cls === 'emrg';
     const emrgCls = isEmrg ? ' emrg' : '';
 
-    // Current position: target symbol with diamond overlay
-    const symClass = getSymbolClass(f);
     const symChar = getSymbolChar(f);
-    // All target symbols get the diamond overlay; the character sits inside it
-    let html = `<div class="ac-sym-target${emrgCls}">${esc(symChar)}</div>`;
-    html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
 
-    if (!showFdb) return html;
+    if (!showFdb) {
+        // Data blocks off — just target symbol + diamond
+        let html = `<div class="ac-sym-target${emrgCls}">${esc(symChar)}</div>`;
+        html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
+        return html;
+    }
+
+    const useFdb = shouldShowFdb(f.gufi, cls);
+
+    // FDB: diamond + symbol; LDB: just the symbol character (no diamond)
+    let html;
+    if (useFdb) {
+        html = `<div class="ac-sym-target${emrgCls}">${esc(symChar)}</div>`;
+        html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
+    } else {
+        html = `<div class="ac-sym-target${emrgCls}">${esc(symChar)}</div>`;
+    }
 
     const color = isEmrg ? EMRG_COLOR : TRACK_COLOR;
     const ldr = getLeaderOffset(f.gufi);
-    const useFdb = shouldShowFdb(f.gufi, cls);
     const numLines = useFdb ? 4 : 2;
     const anchor = getDbAnchor(f.gufi, numLines);
     const isLeftPos = anchor.xShift === -1;
@@ -1102,7 +1117,7 @@ function formatFdbHtml(f, cls) {
 
     // Column 0: inline spans — VCI hit area on lines 1-2, R on line 3
     const col0Hit = '<span class="ac-vci-hit" style="display:inline-block;width:1.5ch;pointer-events:auto;cursor:pointer;">\u00a0</span>';
-    const col0Vci = `<span class="ac-vci-hit ac-vci" style="display:inline-block;width:1.5ch;pointer-events:auto;cursor:pointer;">${VCI_SVG}</span>`;
+    const col0Vci = `<span class="ac-vci-hit ac-vci" style="display:inline-block;width:1.5ch;text-align:center;pointer-events:auto;cursor:pointer;">${VCI_SVG}</span>`;
     const col0R   = '<span class="ac-col0 ac-r" style="display:inline-block;width:1.5ch;text-align:center;">R</span>';
     const col0Sp  = '<span style="display:inline-block;width:1.5ch;">\u00a0</span>';
 
@@ -1715,8 +1730,6 @@ document.getElementById('sidebar-toggle').addEventListener('click', function () 
     const sidebar = document.getElementById('sidebar');
     sidebar.classList.toggle('collapsed');
     this.innerHTML = sidebar.classList.contains('collapsed') ? '&#9654;' : '&#9664;';
-    // Let Leaflet recalculate map size after transition
-    setTimeout(() => map.invalidateSize(), 250);
 });
 
 document.getElementById('sel-facility').addEventListener('change', function () {

@@ -153,13 +153,8 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
 }
 .ac-db.emrg { color: #ff4444; }
-.ac-db.fdb.dwell::before {
-    content: ''; position: absolute;
-    left: 1.5ch; top: -1px;
-    width: calc(100% - 1.5ch + 2px); height: calc(100% + 2px);
-    border: 1px solid #cccc44; pointer-events: none;
-}
-.ac-db.fdb.dwell.emrg::before { border-color: #ff4444; }
+.dwell-border { position: absolute; pointer-events: none; border: 1px solid #cccc44; }
+.emrg .dwell-border { border-color: #ff4444; }
 .ac-db.ldb.dwell { outline: 1px solid #cccc44; outline-offset: 1px; }
 .ac-db.ldb.dwell.emrg { outline-color: #ff4444; }
 /* .ac-db.ho — handoff flash now driven by JS */
@@ -592,7 +587,7 @@ function drawOverlay() {
     // ── Velocity vectors ──
     if (vectorMinutes > 0) {
         ctx.lineWidth = 1.5;
-        ctx.globalAlpha = 0.5;
+        ctx.globalAlpha = 1.0;
         for (const [gufi, f] of flights) {
             if (f.latitude == null || f.longitude == null) continue;
             if (f.trackVelocityX == null || f.trackVelocityY == null) continue;
@@ -1011,6 +1006,16 @@ function applyDwell(el, gufi) {
     const dbEl = el.querySelector('.ac-db');
     if (!dbEl) return;
     dbEl.classList.add('dwell');
+    // FDB: add a real border element sized from actual DOM measurements
+    if (dbEl.classList.contains('fdb') && !dbEl.querySelector('.dwell-border')) {
+        const b = document.createElement('div');
+        b.className = 'dwell-border';
+        const w = dbEl.offsetWidth;
+        const h = dbEl.offsetHeight;
+        const chOff = Math.round(CHAR_W * 1.5); // 1.5 characters offset (past column 0)
+        b.style.cssText = `left:${chOff}px;top:-1px;width:${w - chOff + 2}px;height:${h + 2}px;`;
+        dbEl.appendChild(b);
+    }
     const f = flights.get(gufi);
     if (f && !shouldShowFdb(gufi, classifyTrack(f))) dbEl.style.opacity = '1';
 }
@@ -1018,6 +1023,8 @@ function removeDwell(el, gufi) {
     const dbEl = el.querySelector('.ac-db');
     if (!dbEl) return;
     dbEl.classList.remove('dwell');
+    const b = dbEl.querySelector('.dwell-border');
+    if (b) b.remove();
     const f = flights.get(gufi);
     if (f && !shouldShowFdb(gufi, classifyTrack(f))) dbEl.style.opacity = String(ldbBrightness / 100);
 }

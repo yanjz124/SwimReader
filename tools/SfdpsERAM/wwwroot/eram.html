@@ -747,6 +747,22 @@ function setBoundaryBrightness(cat, brightness) {
     }
 }
 
+function zoomToFacility(artcc) {
+    if (!artcc || kmlSectors.length === 0) return;
+    const sectors = kmlSectors.filter(s => s.artcc === artcc);
+    if (sectors.length === 0) return;
+    let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+    for (const sec of sectors) {
+        for (const [lat, lon] of sec.coords) {
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+            if (lon < minLon) minLon = lon;
+            if (lon > maxLon) maxLon = lon;
+        }
+    }
+    map.fitBounds([[minLat, minLon], [maxLat, maxLon]], { padding: [20, 20] });
+}
+
 loadKml();
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1752,6 +1768,7 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     invalidateAllMarkers();
     rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
+    zoomToFacility(myFacility);
     saveSettingsToUrl();
 });
 

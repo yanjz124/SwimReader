@@ -321,7 +321,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 <span id="lbl-bnd-app" style="min-width:28px; text-align:right; font-size:11px;">0</span>
             </div>
             <div class="ctrl-row">
-                <label><input type="checkbox" id="chk-mapbg" checked> Map Bg</label>
+                <label><input type="checkbox" id="chk-mapbg"> Map Bg</label>
             </div>
             <div class="ctrl-row">
                 <label>Font</label>
@@ -418,7 +418,7 @@ let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
 let ldbBrightness = 70;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
-let showMapBg = true;       // tile layer visible
+let showMapBg = false;      // tile layer hidden by default
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
 const wasOwnOrHo = new Set();  // tracks that were own/ho — keeps FDB sticky when they become other
@@ -520,7 +520,7 @@ const map = L.map('map', {
 
 const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
     subdomains: 'abcd', maxZoom: 19, opacity: 0.4
-}).addTo(map);
+});
 
 map.createPane('routes');
 map.getPane('routes').style.zIndex = 420;
@@ -2154,7 +2154,7 @@ function loadSettingsFromUrl() {
     if (params.has('althigh')) altFilterHigh = parseInt(params.get('althigh')) || 999;
     if (params.has('ldb')) ldbBrightness = parseInt(params.get('ldb'));
     if (params.has('faconly')) facilityOnly = params.get('faconly') === '1';
-    if (params.has('mapbg')) showMapBg = params.get('mapbg') !== '0';
+    if (params.has('mapbg')) showMapBg = params.get('mapbg') === '1';
 
     // Restore map position/zoom
     if (params.has('lat') && params.has('lng') && params.has('z')) {
@@ -2181,7 +2181,7 @@ function loadSettingsFromUrl() {
     document.getElementById('rng-ldb-brightness').value = ldbBrightness;
     document.getElementById('lbl-ldb-brightness').textContent = ldbBrightness;
     updateFontSize();
-    if (!showMapBg) map.removeLayer(tileLayer);
+    if (showMapBg) tileLayer.addTo(map);
     showBoundariesForFacility(myFacility);
 }
 
@@ -2197,7 +2197,7 @@ function saveSettingsToUrl() {
     const brVals = BOUNDARY_CATS.map(c => boundaryBrightness[c]);
     const defaultBr = [60, 60, 60, 0];
     if (brVals.join(',') !== defaultBr.join(',')) params.set('bndbr', brVals.join(','));
-    if (!showMapBg) params.set('mapbg', '0');
+    if (showMapBg) params.set('mapbg', '1');
     if (fontSize !== 10) params.set('fontsize', fontSize);
     if (altFilterLow !== 0) params.set('altlow', altFilterLow);
     if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);

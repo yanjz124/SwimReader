@@ -1028,7 +1028,7 @@ function applyDwell(el, gufi) {
         b.className = 'dwell-border';
         const w = dbEl.offsetWidth;
         const h = dbEl.offsetHeight;
-        const chOff = Math.round(CHAR_W * 1.5); // 1.5 characters offset (past column 0)
+        const chOff = Math.round(CHAR_W * 1.25); // center of gap between column 0 and column 1
         b.style.cssText = `left:${chOff}px;top:-1px;width:${w - chOff + 2}px;height:${h + 2}px;`;
         dbEl.appendChild(b);
     }
@@ -1130,7 +1130,7 @@ function formatDatablock(f, cls) {
 }
 
 // Format FDB with Column 0 inline (VCI, R) — returns HTML
-const VCI_SVG = '<svg viewBox="0 0 16 16" width="1em" height="1em" style="vertical-align:-0.15em;"><path d="M3,5 L3,13 L11,13" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5,8 A3,3 0 0,1 8,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5,5.5 A5.5,5.5 0 0,1 10.5,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+const VCI_SVG = '<svg viewBox="0 0 16 16" width="1.4em" height="1.4em" style="vertical-align:-0.3em;"><path d="M3,5 L3,13 L11,13" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5,8 A3,3 0 0,1 8,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5,5.5 A5.5,5.5 0 0,1 10.5,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 
 function formatFdbHtml(f, cls) {
     const showVci = vciActive.has(f.gufi);

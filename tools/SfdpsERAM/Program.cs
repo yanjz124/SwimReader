@@ -69,6 +69,18 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 app.UseWebSockets();
 
+// Clean URLs: /eram → /eram.html, /table → /index.html
+app.MapGet("/eram", (HttpContext ctx) =>
+{
+    ctx.Response.Redirect("/eram.html", permanent: false);
+    return Task.CompletedTask;
+});
+app.MapGet("/table", (HttpContext ctx) =>
+{
+    ctx.Response.Redirect("/index.html", permanent: false);
+    return Task.CompletedTask;
+});
+
 // WebSocket — streams flight updates to browser
 app.Map("/ws", async (HttpContext ctx) =>
 {

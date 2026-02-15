@@ -153,13 +153,15 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
 }
 .ac-db.emrg { color: #ff4444; }
-.ac-db.dwell { position: relative; }
-.ac-db.dwell::before {
+.ac-db.fdb.dwell::before {
     content: ''; position: absolute;
-    left: 1.5ch; top: -1px; right: -2px; bottom: -1px;
+    left: 1.5ch; top: -1px;
+    width: calc(100% - 1.5ch + 2px); height: calc(100% + 2px);
     border: 1px solid #cccc44; pointer-events: none;
 }
-.ac-db.dwell.emrg::before { border-color: #ff4444; }
+.ac-db.fdb.dwell.emrg::before { border-color: #ff4444; }
+.ac-db.ldb.dwell { outline: 1px solid #cccc44; outline-offset: 1px; }
+.ac-db.ldb.dwell.emrg { outline-color: #ff4444; }
 /* .ac-db.ho — handoff flash now driven by JS */
 
 /* ── Column 0 (R / VCI) — inline prefix on each data block line ── */
@@ -514,7 +516,7 @@ const map = L.map('map', {
     zoom: 6,
     dragging: false,       // disable left-click drag — we use right-click pan
     doubleClickZoom: false, // disable double-click zoom
-    zoomControl: true,
+    zoomControl: false,
     attributionControl: false,
     zoomSnap: 0.1,        // granular zoom (0.1 steps)
     zoomDelta: 0.1,       // each scroll/click zooms by 0.1
@@ -596,6 +598,7 @@ function drawOverlay() {
             if (f.trackVelocityX == null || f.trackVelocityY == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
+            if (!showFdb || !shouldShowFdb(gufi, classifyTrack(f))) continue;
             if (!bounds.contains([f.latitude, f.longitude])) continue;
 
             const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
@@ -1070,7 +1073,7 @@ function buildMarkerHtml(f, cls) {
         const db = formatFdbHtml(f, cls);
         const dbCls = isEmrg ? ' emrg' : '';
 
-        html += `<div class="ac-db${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift}px;${leftExtra}">${db}</div>`;
+        html += `<div class="ac-db fdb${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift}px;${leftExtra}">${db}</div>`;
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
         vciActive.delete(f.gufi);
@@ -1080,7 +1083,7 @@ function buildMarkerHtml(f, cls) {
         const alt = f.reportedAltitude ?? f.assignedAltitude;
         const l2 = alt != null ? String(Math.round(alt / 100)).padStart(3, '0') : '';
         const dbCls = isEmrg ? ' emrg' : '';
-        html += `<div class="ac-db${dbCls}" style="left:${Math.ceil(CHAR_W)}px; top:${-LINE_H}px; opacity:${ldbOp};">${l1}\n${l2}</div>`;
+        html += `<div class="ac-db ldb${dbCls}" style="left:${Math.ceil(CHAR_W)}px; top:${-LINE_H}px; opacity:${ldbOp};">${l1}\n${l2}</div>`;
     }
     // ldbBrightness === 0 for LDB → no data block at all
 
@@ -2348,22 +2351,31 @@ function mcaRender() {
 // Find flight by FLID: CID (facility-specific only), callsign, or squawk
 function findFlight(id) {
     const needle = id.toUpperCase();
-    // CID match — only for selected facility's CID
+    // CID match — only for selected facility's CID; prefer visible/active flights
     if (myFacility) {
-        for (const f of flights.values()) {
+        let fallback = null;
+        for (const [gufi, f] of flights) {
             const cid = f.computerIds && f.computerIds[myFacility];
-            if (cid && cid.toUpperCase() === needle) return f;
+            if (cid && cid.toUpperCase() === needle) {
+                if (isVisible(f) && !isDedupHidden(gufi, f)) return f;
+                if (!fallback) fallback = f;
+            }
         }
+        if (fallback) return fallback;
     } else {
-        // No facility selected — match against computerId (last CID from any facility)
         for (const f of flights.values()) {
             if (f.computerId && f.computerId.toUpperCase() === needle) return f;
         }
     }
-    // Then callsign match
-    for (const f of flights.values()) {
-        if (f.callsign?.toUpperCase() === needle) return f;
+    // Then callsign match — prefer visible
+    let csFallback = null;
+    for (const [gufi, f] of flights) {
+        if (f.callsign?.toUpperCase() === needle) {
+            if (isVisible(f) && !isDedupHidden(gufi, f)) return f;
+            if (!csFallback) csFallback = f;
+        }
     }
+    if (csFallback) return csFallback;
     // Then squawk match
     for (const f of flights.values()) {
         if (f.squawk === needle) return f;

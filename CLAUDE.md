@@ -222,8 +222,14 @@ Server-side in `Program.cs` ProcessFlight():
 ### Handoff Facility Codes
 Defined in `handoff-codes.json`. Default mappings (e.g., ZDC=W, ZNY=N, ZOB=C) with per-facility overrides (e.g., when viewed from ZDC, PCT shows as "E").
 
+### FDB vs LDB Display
+- **FDB (Full Data Block)**: diamond overlay + 4-line data block + leader line + velocity vector
+- **LDB (Limited Data Block)**: symbol character only (no diamond) + 2-line callsign/altitude, no leader or vector
+- **Dwell emphasis**: FDB gets a yellow box border starting after column 0 (`::before` at 1.5ch); LDB gets a full `outline` around the entire block
+- `.ac-db` div carries `fdb` or `ldb` CSS class for targeted styling
+
 ### Track Symbols
-- `◇` hollow diamond — current position (all track types)
+- `◇` hollow diamond — current position (FDB tracks only)
 - `\` — correlated beacon history (squawk + flight plan)
 - `/` — uncorrelated beacon history (squawk, no flight plan)
 - `+` — uncorrelated primary history (no squawk)
@@ -246,7 +252,7 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 
 ### Rendering Architecture
 - Leaflet markers use `L.divIcon` with custom HTML for position symbol + data block
-- Canvas overlay (separate pane, z-index 440) draws history symbols + velocity vectors
+- Canvas overlay (separate pane, z-index 440) draws history symbols + velocity vectors (vectors FDB only)
 - History symbols rendered via `ctx.fillText()` using ERAM font on canvas
 - Font size adjustable at runtime; CHAR_W and LINE_H scale proportionally (0.625 and 1.25 of font size)
 - Leader lines are inline SVGs within the marker div
@@ -266,7 +272,7 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `QL [sector...]` | Quick Look sectors (force FDB); `QL` alone clears |
 | `<FLID>` | Toggle FDB/LDB for flight |
 
-FLIDs can be callsign or CID (CID only matches selected facility).
+FLIDs can be callsign or CID (CID only matches selected facility). When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
 
 ### NASR Route Resolution
 On startup, SfdpsERAM downloads FAA NASR 28-Day Subscription data and parses:

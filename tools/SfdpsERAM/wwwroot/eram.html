@@ -673,7 +673,35 @@ async function loadKml() {
 
             const folderPath = data['FolderPath'] || '';
             const parts = folderPath.split('/');
-            const artcc = parts.length >= 2 ? parts[1] : '';
+            let artcc = parts.length >= 2 ? parts[1] : '';
+            let category = '';
+            let sectorId = name;
+
+            if (artcc) {
+                // Standard format: FolderPath = "xxx/ZDC/High Altitude (17)/sectorId"
+                const catRaw = parts.length >= 3 ? parts[2] : '';
+                category = catRaw.replace(/\s*\(\d+\)$/, '');
+                sectorId = parts.length >= 4 ? parts[3] : name;
+            } else {
+                // Western ARTCCs: no FolderPath, derive from ancestor Folder names
+                // e.g. Folder "ZLA_HIGH_NEW" → artcc=ZLA, category=High Altitude
+                let el = pm.parentElement;
+                while (el) {
+                    const fn = el.tagName === 'Folder' ? (el.querySelector(':scope > name')?.textContent || '') : '';
+                    const m = fn.match(/^(Z[A-Z]{2})[_ ]/);
+                    if (m) {
+                        artcc = m[1];
+                        const upper = fn.toUpperCase();
+                        if (upper.includes('ULTRA')) category = 'Ultra High';
+                        else if (upper.includes('HIGH')) category = 'High Altitude';
+                        else if (upper.includes('LOW')) category = 'Low Altitude';
+                        else if (upper.includes('APPROACH')) category = 'Approach Control';
+                        else category = 'High Altitude';
+                        break;
+                    }
+                    el = el.parentElement;
+                }
+            }
             if (!artcc) continue;
 
             const coords = coordEl.textContent.trim().split(/\s+/).map(c => {
@@ -682,9 +710,7 @@ async function loadKml() {
             }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
 
             if (coords.length < 2) continue;
-            const catRaw = parts.length >= 3 ? parts[2] : '';
-            const category = catRaw.replace(/\s*\(\d+\)$/, '');   // strip " (17)" count
-            kmlSectors.push({ artcc, name, sectorId: parts.length >= 4 ? parts[3] : name, alt: data['ALT'] || '', category, coords });
+            kmlSectors.push({ artcc, name, sectorId, alt: data['ALT'] || '', category, coords });
         }
         const catCounts = {};
         for (const s of kmlSectors) catCounts[s.category] = (catCounts[s.category] || 0) + 1;

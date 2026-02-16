@@ -242,6 +242,8 @@ Defined in `handoff-codes.json`. Default mappings (e.g., ZDC=W, ZNY=N, ZOB=C) wi
 - History count (0-10 symbols)
 - Velocity vector length (0-10 min)
 - Boundary layers: UHI, HI, LO, APP with per-category brightness sliders
+- NASR overlays: HI Awy, LO Awy, VORs (checkboxes)
+- NEXRAD weather radar: NX LVL selector (OFF/3/23/123) + brightness slider (0-100%)
 - Font size (8-14px)
 - Altitude filter (FL low/high)
 - Colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red)
@@ -257,6 +259,17 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 - Font size adjustable at runtime; CHAR_W and LINE_H scale proportionally (0.625 and 1.25 of font size)
 - Leader lines are inline SVGs within the marker div
 - URL parameters persist sidebar state (facility, font size, history count, etc.)
+
+### NEXRAD Weather Radar
+- Data source: Iowa State Mesonet WMS (n0q composite, 5-min updates)
+- Tiles fetched as canvas, pixel colors remapped from NWS palette to ERAM-style:
+  - Moderate (greens/yellows in NWS → solid blue `#0044ff`)
+  - Heavy (oranges/reds → checkered cyan `#00ccff` and black, alternating pixels)
+  - Extreme (dark reds/magentas/purples → solid cyan `#00ccff`)
+- NX LVL: OFF (hidden), 3 (extreme only), 23 (heavy+extreme), 123 (all levels)
+- Brightness slider controls tile layer opacity (0-100%)
+- Custom Leaflet GridLayer in 'nexrad' pane (z-index 250, below boundaries)
+- Auto-refreshes every 5 minutes; CORS-enabled canvas pixel manipulation
 
 ### MCA Commands (Message Composition Area)
 | Command | Action |

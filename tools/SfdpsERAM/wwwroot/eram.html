@@ -822,9 +822,11 @@ function isVisible(f) {
     // No facility selected → show all
     if (!myFacility) return true;
     // Show if controlling/reporting facility matches
+    // In facilityOnly mode, only controllingFacility counts — reportingFacility alternates
+    // between centers on each SFDPS update, causing flicker if used for strict filtering
     const fac = f.controllingFacility || '';
     const rptFac = f.reportingFacility || '';
-    if (fac === myFacility || rptFac === myFacility) return true;
+    if (fac === myFacility || (!facilityOnly && rptFac === myFacility)) return true;
     // Show if handoff involves our facility
     if (f.handoffReceiving && extractFac(f.handoffReceiving) === myFacility) return true;
     if (f.handoffTransferring && extractFac(f.handoffTransferring) === myFacility) return true;

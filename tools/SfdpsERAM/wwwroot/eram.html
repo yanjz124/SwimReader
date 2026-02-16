@@ -70,6 +70,8 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 .leaflet-control-zoom a { background: #222 !important; color: #cccc44 !important; border-color: #444 !important; }
 .leaflet-control-attribution { display: none !important; }
+/* Boundary/overlay lines: lighten blend so brighter line always shows through overlaps */
+.bnd-path { mix-blend-mode: lighten; }
 
 /* ── Aircraft target group ── */
 .ac-group { position: absolute; pointer-events: none; }
@@ -186,7 +188,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 /* Uses fixed-size box + text-align/line-height to avoid font-metric centering issues */
 .ac-sym-target {
     position: absolute;
-    top: -10px; left: -7px;
+    top: -7px; left: -7px;
     width: 14px; height: 14px;
     text-align: center; line-height: 14px;
     font-family: 'ERAM', 'Consolas', monospace;
@@ -825,7 +827,7 @@ function showBoundariesForFacility(artcc) {
         if (!boundaryLayers[key]) {
             const group = L.layerGroup();
             for (const sec of kmlSectors.filter(s => s.artcc === artcc && s.category === cat)) {
-                L.polyline(sec.coords, { color: bndColor(br), weight: 1, opacity: 1, interactive: false }).addTo(group);
+                L.polyline(sec.coords, { color: bndColor(br), weight: 1, opacity: 1, interactive: false, className: 'bnd-path' }).addTo(group);
             }
             boundaryLayers[key] = group;
         }
@@ -845,7 +847,7 @@ function setBoundaryBrightness(cat, brightness) {
     if (!boundaryLayers[key]) {
         const group = L.layerGroup();
         for (const sec of kmlSectors.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat)) {
-            L.polyline(sec.coords, { color: col, weight: 1, opacity: 1, interactive: false }).addTo(group);
+            L.polyline(sec.coords, { color: col, weight: 1, opacity: 1, interactive: false, className: 'bnd-path' }).addTo(group);
         }
         boundaryLayers[key] = group;
         boundaryLayers[key].addTo(map);
@@ -1034,6 +1036,7 @@ function remapNexradTile(canvas, level) {
 }
 
 function createNexradLayer() {
+    const wmsBase = 'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi';
     return L.gridLayer({
         pane: 'nexrad',
         opacity: nexradBrightness / 100,
@@ -1044,15 +1047,24 @@ function createNexradLayer() {
             tile.width = tile.height = 256;
             const ctx = tile.getContext('2d');
             const bbox = tileBbox3857(coords.x, coords.y, coords.z);
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.src = `https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=nexrad-n0q-900913&FORMAT=image/png&TRANSPARENT=true&SRS=EPSG:3857&WIDTH=256&HEIGHT=256&BBOX=${bbox}&_t=${nexradTimestamp}`;
-            img.onload = function () {
-                ctx.drawImage(img, 0, 0);
-                try { remapNexradTile(tile, nexradLevel); } catch (e) { /* CORS fallback: original colors */ }
-                done(null, tile);
-            };
-            img.onerror = function () { done(null, tile); };
+            const url = `${wmsBase}?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=nexrad-n0q-900913&FORMAT=image/png&TRANSPARENT=true&SRS=EPSG:900913&WIDTH=256&HEIGHT=256&BBOX=${bbox}&_t=${nexradTimestamp}`;
+            function loadTile(useCors) {
+                const img = new Image();
+                if (useCors) img.crossOrigin = 'anonymous';
+                img.onload = function () {
+                    ctx.drawImage(img, 0, 0);
+                    if (useCors) {
+                        try { remapNexradTile(tile, nexradLevel); } catch (e) { /* tainted canvas — keep original colors */ }
+                    }
+                    done(null, tile);
+                };
+                img.onerror = function () {
+                    if (useCors) loadTile(false);  // retry without CORS (original NWS colors)
+                    else done(null, tile);
+                };
+                img.src = url;
+            }
+            loadTile(true);
             return tile;
         }
     });

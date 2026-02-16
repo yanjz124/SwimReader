@@ -321,6 +321,11 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 <span id="lbl-bnd-app" style="min-width:28px; text-align:right; font-size:11px;">0</span>
             </div>
             <div class="ctrl-row">
+                <label><input type="checkbox" id="chk-jroutes"> HI Awy</label>
+                <label><input type="checkbox" id="chk-vroutes"> LO Awy</label>
+            </div>
+            <div class="ctrl-row">
+                <label><input type="checkbox" id="chk-vors"> VORs</label>
                 <label><input type="checkbox" id="chk-mapbg"> Map Bg</label>
             </div>
             <div class="ctrl-row">
@@ -641,23 +646,21 @@ function drawOverlay() {
         }
     }
 
-    // ── .FIND highlight — blinking yellow square ──
-    if (findMarker) {
-        const blink = Math.floor(performance.now() / 500) % 2 === 0;
-        if (blink && bounds.contains([findMarker.lat, findMarker.lon])) {
-            const pt = map.latLngToLayerPoint([findMarker.lat, findMarker.lon]);
-            const x = pt.x - topLeft.x;
-            const y = pt.y - topLeft.y;
-            const sz = Math.round(fontSize * 1.2);
-            ctx.globalAlpha = 1.0;
-            ctx.strokeStyle = TRACK_COLOR;
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(x - sz / 2, y - sz - 2, sz, sz);
-            // Label below
-            ctx.globalAlpha = 0.9;
-            ctx.fillStyle = TRACK_COLOR;
-            ctx.fillText(findMarker.ident, x, y + LINE_H);
-        }
+    // ── .FIND highlight — blinking yellow square (full ↔ half bright) ──
+    if (findMarker && bounds.contains([findMarker.lat, findMarker.lon])) {
+        const blinkPhase = Math.floor(performance.now() / 500) % 2 === 0;
+        const pt = map.latLngToLayerPoint([findMarker.lat, findMarker.lon]);
+        const x = pt.x - topLeft.x;
+        const y = pt.y - topLeft.y;
+        const sz = Math.round(fontSize * 0.8);
+        ctx.globalAlpha = blinkPhase ? 1.0 : 0.4;
+        ctx.strokeStyle = TRACK_COLOR;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x - sz / 2, y - sz - 2, sz, sz);
+        // Label below — always full bright
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = TRACK_COLOR;
+        ctx.fillText(findMarker.ident, x, y + LINE_H);
     }
 
     ctx.globalAlpha = 1;
@@ -838,6 +841,75 @@ function zoomToFacility(artcc) {
 }
 
 loadKml();
+
+// ════════════════════════════════════════════════════════════════════════════
+// NASR overlay layers (airways, VORs, SID/STARs)
+// ════════════════════════════════════════════════════════════════════════════
+const nasrLayers = {};    // 'jroutes'|'vroutes'|'vors'|'proc:DCA' → L.layerGroup
+const nasrCache = {};     // same keys → raw API data (cache across toggles)
+const NASR_COLOR = '#666666';
+
+async function toggleNasrLayer(layerKey, url, renderer) {
+    if (nasrLayers[layerKey]) {
+        map.removeLayer(nasrLayers[layerKey]);
+        delete nasrLayers[layerKey];
+        return;
+    }
+    // Fetch data (cached)
+    if (!nasrCache[layerKey]) {
+        try {
+            const resp = await fetch(url);
+            if (!resp.ok) { console.warn(`[NASR] ${layerKey}: ${resp.status}`); return; }
+            nasrCache[layerKey] = await resp.json();
+        } catch (e) { console.warn(`[NASR] ${layerKey}:`, e); return; }
+    }
+    const group = L.layerGroup();
+    renderer(nasrCache[layerKey], group);
+    nasrLayers[layerKey] = group;
+    group.addTo(map);
+}
+
+function renderAirways(data, group) {
+    for (const awy of data) {
+        if (awy.points.length < 2) continue;
+        L.polyline(awy.points, { color: NASR_COLOR, weight: 1, opacity: 0.6, interactive: false }).addTo(group);
+    }
+}
+
+function renderVors(data, group) {
+    for (const vor of data) {
+        L.circleMarker([vor.lat, vor.lon], {
+            radius: 4, color: NASR_COLOR, weight: 1, opacity: 0.7, fill: false, interactive: false
+        }).addTo(group);
+    }
+}
+
+function renderProcedures(data, group) {
+    for (const proc of data) {
+        if (proc.points.length < 2) continue;
+        L.polyline(proc.points, { color: NASR_COLOR, weight: 1, opacity: 0.6, interactive: false }).addTo(group);
+    }
+}
+
+document.getElementById('chk-jroutes').addEventListener('change', function () {
+    toggleNasrLayer('jroutes', '/api/nasr/airways?type=hi', renderAirways);
+});
+document.getElementById('chk-vroutes').addEventListener('change', function () {
+    toggleNasrLayer('vroutes', '/api/nasr/airways?type=lo', renderAirways);
+});
+document.getElementById('chk-vors').addEventListener('change', function () {
+    toggleNasrLayer('vors', '/api/nasr/navaids', renderVors);
+});
+
+// Clear procedure overlay
+function clearProcOverlay() {
+    for (const key of Object.keys(nasrLayers)) {
+        if (key.startsWith('proc:')) {
+            map.removeLayer(nasrLayers[key]);
+            delete nasrLayers[key];
+        }
+    }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Visibility & classification
@@ -2697,6 +2769,41 @@ function processCommand(cmd) {
                 return { feedback: [
                     { type: 'ok', text: 'ACCEPT' },
                     { type: 'info', text: `FIND ${data.ident}` }
+                ]};
+            } catch {
+                return { feedback: [{ type: 'err', text: 'NASR DATA UNAVAILABLE' }] };
+            }
+        })();
+    }
+
+    // .PROC <airport> [STAR|DP] — show SID/STARs for an airport; .PROC alone clears
+    if (verb === '.PROC' || verb === '.P') {
+        if (parts.length < 2) {
+            clearProcOverlay();
+            return { feedback: [{ type: 'ok', text: 'ACCEPT' }, { type: 'info', text: 'CLEAR PROCEDURES' }] };
+        }
+        const apt = parts[1].toUpperCase();
+        const ptype = parts.length >= 3 ? parts[2].toUpperCase() : '';
+        const qp = ptype ? `&type=${ptype}` : '';
+        return (async () => {
+            try {
+                const resp = await fetch(`/api/nasr/procedures?airport=${encodeURIComponent(apt)}${qp}`);
+                if (!resp.ok) return { feedback: [{ type: 'err', text: `NO PROCEDURES FOR ${apt}` }] };
+                const data = await resp.json();
+                if (data.length === 0) return { feedback: [{ type: 'err', text: `NO PROCEDURES FOR ${apt}` }] };
+                clearProcOverlay();
+                const key = `proc:${apt}`;
+                nasrCache[key] = data;
+                const group = L.layerGroup();
+                renderProcedures(data, group);
+                nasrLayers[key] = group;
+                group.addTo(map);
+                const stars = data.filter(p => p.type === 'STAR').length;
+                const dps = data.filter(p => p.type === 'DP').length;
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: `${apt} PROCEDURES` },
+                    { type: 'info', text: `${stars} STAR  ${dps} SID` }
                 ]};
             } catch {
                 return { feedback: [{ type: 'err', text: 'NASR DATA UNAVAILABLE' }] };

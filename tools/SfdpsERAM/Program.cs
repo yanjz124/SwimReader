@@ -180,6 +180,69 @@ app.MapGet("/api/nasr/find/{ident}", (string ident) =>
     return Results.Json(new { ident = pt.Ident, lat = pt.Lat, lon = pt.Lon }, jsonOpts);
 });
 
+// NASR airways — resolved to lat/lon polylines
+app.MapGet("/api/nasr/airways", (string? type) =>
+{
+    if (nasrData is null) return Results.Json(new { error = "NASR data not loaded" }, statusCode: 503);
+    var airways = nasrData.Airways.Values.AsEnumerable();
+    if (!string.IsNullOrEmpty(type))
+    {
+        var t = type.ToUpperInvariant();
+        if (t == "HI" || t == "HIGH")
+            airways = airways.Where(a => a.Id.StartsWith("J", StringComparison.OrdinalIgnoreCase) ||
+                                         a.Id.StartsWith("Q", StringComparison.OrdinalIgnoreCase) ||
+                                         a.Id.StartsWith("T", StringComparison.OrdinalIgnoreCase));
+        else if (t == "LO" || t == "LOW")
+            airways = airways.Where(a => a.Id.StartsWith("V", StringComparison.OrdinalIgnoreCase));
+        else
+            airways = airways.Where(a => a.Id.StartsWith(t, StringComparison.OrdinalIgnoreCase));
+    }
+    var result = airways.Select(a =>
+    {
+        var pts = a.Fixes.Select(f => LookupPoint(f, null, nasrData))
+            .Where(p => p is not null)
+            .Select(p => new[] { p!.Lat, p!.Lon })
+            .ToList();
+        return new { id = a.Id, points = pts };
+    }).Where(a => a.points.Count >= 2).ToList();
+    return Results.Json(result, jsonOpts);
+});
+
+// NASR SID/STAR procedures for an airport
+app.MapGet("/api/nasr/procedures", (string airport, string? type) =>
+{
+    if (nasrData is null) return Results.Json(new { error = "NASR data not loaded" }, statusCode: 503);
+    airport = airport.ToUpperInvariant();
+    // Strip K prefix for ICAO codes
+    var faaId = airport.Length == 4 && airport.StartsWith("K") ? airport[1..] : airport;
+    var procs = nasrData.Procedures.Values.SelectMany(list => list)
+        .Where(p =>
+        {
+            var pApt = p.Airport.Length == 4 && p.Airport.StartsWith("K") ? p.Airport[1..] : p.Airport;
+            return pApt.Equals(faaId, StringComparison.OrdinalIgnoreCase);
+        });
+    if (!string.IsNullOrEmpty(type))
+        procs = procs.Where(p => p.Type.Equals(type, StringComparison.OrdinalIgnoreCase));
+    var result = procs.Select(p =>
+    {
+        var pts = p.Fixes.Select(f => LookupPoint(f, null, nasrData))
+            .Where(pt => pt is not null)
+            .Select(pt => new[] { pt!.Lat, pt!.Lon })
+            .ToList();
+        return new { id = p.Id, airport = p.Airport, type = p.Type, points = pts };
+    }).Where(p => p.points.Count >= 2).ToList();
+    return Results.Json(result, jsonOpts);
+});
+
+// NASR VOR/VORTAC navaids (for plotting circles)
+app.MapGet("/api/nasr/navaids", () =>
+{
+    if (nasrData is null) return Results.Json(new { error = "NASR data not loaded" }, statusCode: 503);
+    // Return first point for each navaid identifier (dedup same-name navaids)
+    var result = nasrData.Navaids.Select(kv => new { id = kv.Key, lat = kv.Value[0].Lat, lon = kv.Value[0].Lon }).ToList();
+    return Results.Json(result, jsonOpts);
+});
+
 // Debug: find duplicate CIDs for a facility
 app.MapGet("/api/debug/dupe-cids/{facility}", (string facility) =>
 {

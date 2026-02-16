@@ -165,6 +165,21 @@ app.MapGet("/api/nasr/status", () => Results.Json(new
     cachedRoutes = routeCache.Count
 }, jsonOpts));
 
+// NASR point lookup (fix/navaid/airport)
+app.MapGet("/api/nasr/find/{ident}", (string ident) =>
+{
+    if (nasrData is null) return Results.Json(new { error = "NASR data not loaded" }, statusCode: 503);
+    ident = ident.ToUpperInvariant();
+    var pt = LookupPoint(ident, null, nasrData);
+    if (pt is null)
+    {
+        // Also try with K prefix for airports
+        pt = LookupAirport(ident, nasrData);
+    }
+    if (pt is null) return Results.Json(new { error = "NOT FOUND" }, statusCode: 404);
+    return Results.Json(new { ident = pt.Ident, lat = pt.Lat, lon = pt.Lon }, jsonOpts);
+});
+
 // Debug: find duplicate CIDs for a facility
 app.MapGet("/api/debug/dupe-cids/{facility}", (string facility) =>
 {

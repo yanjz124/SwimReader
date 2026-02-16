@@ -972,28 +972,18 @@ function clearProcOverlay() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// NEXRAD weather radar overlay (Iowa State Mesonet WMS → ERAM-style colors)
+// NEXRAD weather radar overlay (IEM XYZ tiles → ERAM-style colors)
 // ════════════════════════════════════════════════════════════════════════════
 let nexradLayer = null;
 let nexradLevel = 0;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=all(123)
 let nexradBrightness = 50;
 let nexradTimestamp = Date.now();
-
-function tileBbox3857(x, y, z) {
-    const E = 20037508.342789244;
-    const size = 2 * E / Math.pow(2, z);
-    const x0 = x * size - E;
-    const x1 = x0 + size;
-    const y1 = E - y * size;
-    const y0 = y1 - size;
-    return `${x0},${y0},${x1},${y1}`;
-}
+const NEXRAD_TILE_URL = 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png';
 
 // Classify NWS-palette pixel into ERAM precip category: 0=skip, 1=moderate, 2=heavy, 3=extreme
 function classifyPrecip(r, g, b) {
     const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const chroma = max - min;
+    const chroma = max - Math.min(r, g, b);
     if (max < 15) return 0;
     if (chroma < 20) return max > 200 ? 3 : 0;  // near-white = extreme, near-black = skip
     let hue;
@@ -1036,35 +1026,28 @@ function remapNexradTile(canvas, level) {
 }
 
 function createNexradLayer() {
-    const wmsBase = 'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi';
     return L.gridLayer({
         pane: 'nexrad',
         opacity: nexradBrightness / 100,
         tileSize: 256,
+        maxZoom: 18,
         updateWhenZooming: false,
         createTile: function (coords, done) {
             const tile = document.createElement('canvas');
             tile.width = tile.height = 256;
             const ctx = tile.getContext('2d');
-            const bbox = tileBbox3857(coords.x, coords.y, coords.z);
-            const url = `${wmsBase}?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=nexrad-n0q-900913&FORMAT=image/png&TRANSPARENT=true&SRS=EPSG:900913&WIDTH=256&HEIGHT=256&BBOX=${bbox}&_t=${nexradTimestamp}`;
-            function loadTile(useCors) {
-                const img = new Image();
-                if (useCors) img.crossOrigin = 'anonymous';
-                img.onload = function () {
-                    ctx.drawImage(img, 0, 0);
-                    if (useCors) {
-                        try { remapNexradTile(tile, nexradLevel); } catch (e) { /* tainted canvas — keep original colors */ }
-                    }
-                    done(null, tile);
-                };
-                img.onerror = function () {
-                    if (useCors) loadTile(false);  // retry without CORS (original NWS colors)
-                    else done(null, tile);
-                };
-                img.src = url;
-            }
-            loadTile(true);
+            const url = NEXRAD_TILE_URL
+                .replace('{z}', coords.z).replace('{x}', coords.x).replace('{y}', coords.y)
+                + '?_t=' + nexradTimestamp;
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = function () {
+                ctx.drawImage(img, 0, 0);
+                try { remapNexradTile(tile, nexradLevel); } catch (e) { /* CORS fallback: original NWS colors */ }
+                done(null, tile);
+            };
+            img.onerror = function () { done(null, tile); };
+            img.src = url;
             return tile;
         }
     });

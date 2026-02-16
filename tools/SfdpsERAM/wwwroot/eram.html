@@ -321,12 +321,41 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 <span id="lbl-bnd-app" style="min-width:28px; text-align:right; font-size:11px;">0</span>
             </div>
             <div class="ctrl-row">
-                <label><input type="checkbox" id="chk-jroutes"> HI Awy</label>
-                <label><input type="checkbox" id="chk-vroutes"> LO Awy</label>
+                <label>HI Awy</label>
+                <input type="range" id="rng-jroutes" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-jroutes" style="min-width:28px; text-align:right; font-size:11px;">0</span>
             </div>
             <div class="ctrl-row">
-                <label><input type="checkbox" id="chk-vors"> VORs</label>
+                <label>LO Awy</label>
+                <input type="range" id="rng-vroutes" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-vroutes" style="min-width:28px; text-align:right; font-size:11px;">0</span>
+            </div>
+            <div class="ctrl-row">
+                <label>VORs</label>
+                <input type="range" id="rng-vors" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-vors" style="min-width:28px; text-align:right; font-size:11px;">0</span>
+            </div>
+            <div class="ctrl-row">
+                <label>PROC</label>
+                <input type="range" id="rng-proc" min="0" max="100" value="60" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-proc" style="min-width:28px; text-align:right; font-size:11px;">60</span>
+            </div>
+            <div class="ctrl-row">
                 <label><input type="checkbox" id="chk-mapbg"> Map Bg</label>
+            </div>
+            <div class="ctrl-row">
+                <label>NX LVL</label>
+                <select id="sel-nxlvl">
+                    <option value="0">OFF</option>
+                    <option value="3">3</option>
+                    <option value="23">23</option>
+                    <option value="123">123</option>
+                </select>
+            </div>
+            <div class="ctrl-row">
+                <label>NX %</label>
+                <input type="range" id="rng-nx" min="0" max="100" value="50" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-nx" style="min-width:28px; text-align:right; font-size:11px;">50</span>
             </div>
             <div class="ctrl-row">
                 <label>Font</label>
@@ -552,6 +581,9 @@ const map = L.map('map', {
 const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
     subdomains: 'abcd', maxZoom: 19, opacity: 0.4
 });
+
+map.createPane('nexrad');
+map.getPane('nexrad').style.zIndex = 250;
 
 map.createPane('routes');
 map.getPane('routes').style.zIndex = 420;
@@ -848,57 +880,83 @@ loadKml();
 const nasrLayers = {};    // 'jroutes'|'vroutes'|'vors'|'proc:DCA' → L.layerGroup
 const nasrCache = {};     // same keys → raw API data (cache across toggles)
 const NASR_COLOR = '#666666';
+const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 0, proc: 60 };
 
-async function toggleNasrLayer(layerKey, url, renderer) {
-    if (nasrLayers[layerKey]) {
-        map.removeLayer(nasrLayers[layerKey]);
-        delete nasrLayers[layerKey];
+const nasrLoading = {};   // guard against double-click during async fetch
+async function showNasrLayer(layerKey, url, renderer) {
+    const op = nasrBrightness[layerKey] / 100;
+    if (op <= 0) {
+        if (nasrLayers[layerKey]) { map.removeLayer(nasrLayers[layerKey]); delete nasrLayers[layerKey]; }
         return;
     }
+    // Already showing — just update opacity
+    if (nasrLayers[layerKey]) {
+        nasrLayers[layerKey].eachLayer(l => l.setStyle({ opacity: op }));
+        return;
+    }
+    if (nasrLoading[layerKey]) return;
     // Fetch data (cached)
     if (!nasrCache[layerKey]) {
+        nasrLoading[layerKey] = true;
         try {
             const resp = await fetch(url);
-            if (!resp.ok) { console.warn(`[NASR] ${layerKey}: ${resp.status}`); return; }
+            if (!resp.ok) { console.warn(`[NASR] ${layerKey}: ${resp.status}`); delete nasrLoading[layerKey]; return; }
             nasrCache[layerKey] = await resp.json();
-        } catch (e) { console.warn(`[NASR] ${layerKey}:`, e); return; }
+        } catch (e) { console.warn(`[NASR] ${layerKey}:`, e); delete nasrLoading[layerKey]; return; }
+        delete nasrLoading[layerKey];
     }
     const group = L.layerGroup();
-    renderer(nasrCache[layerKey], group);
+    renderer(nasrCache[layerKey], group, op);
     nasrLayers[layerKey] = group;
     group.addTo(map);
 }
 
-function renderAirways(data, group) {
+function renderAirways(data, group, op) {
     for (const awy of data) {
         if (awy.points.length < 2) continue;
-        L.polyline(awy.points, { color: NASR_COLOR, weight: 1, opacity: 0.6, interactive: false }).addTo(group);
+        L.polyline(awy.points, { color: NASR_COLOR, weight: 1, opacity: op, interactive: false }).addTo(group);
     }
 }
 
-function renderVors(data, group) {
+function renderVors(data, group, op) {
     for (const vor of data) {
         L.circleMarker([vor.lat, vor.lon], {
-            radius: 4, color: NASR_COLOR, weight: 1, opacity: 0.7, fill: false, interactive: false
+            radius: 4, color: NASR_COLOR, weight: 1, opacity: op, fill: false, interactive: false
         }).addTo(group);
     }
 }
 
-function renderProcedures(data, group) {
+function renderProcedures(data, group, op) {
     for (const proc of data) {
         if (proc.points.length < 2) continue;
-        L.polyline(proc.points, { color: NASR_COLOR, weight: 1, opacity: 0.6, interactive: false }).addTo(group);
+        L.polyline(proc.points, { color: NASR_COLOR, weight: 1, opacity: op, interactive: false }).addTo(group);
     }
 }
 
-document.getElementById('chk-jroutes').addEventListener('change', function () {
-    toggleNasrLayer('jroutes', '/api/nasr/airways?type=hi', renderAirways);
-});
-document.getElementById('chk-vroutes').addEventListener('change', function () {
-    toggleNasrLayer('vroutes', '/api/nasr/airways?type=lo', renderAirways);
-});
-document.getElementById('chk-vors').addEventListener('change', function () {
-    toggleNasrLayer('vors', '/api/nasr/navaids', renderVors);
+function setupNasrSlider(sliderId, labelId, layerKey, url, renderer) {
+    document.getElementById(sliderId).addEventListener('input', function () {
+        nasrBrightness[layerKey] = parseInt(this.value);
+        document.getElementById(labelId).textContent = nasrBrightness[layerKey];
+        showNasrLayer(layerKey, url, renderer);
+        saveSettingsToUrl();
+    });
+}
+setupNasrSlider('rng-jroutes', 'lbl-jroutes', 'jroutes', '/api/nasr/airways?type=hi', renderAirways);
+setupNasrSlider('rng-vroutes', 'lbl-vroutes', 'vroutes', '/api/nasr/airways?type=lo', renderAirways);
+setupNasrSlider('rng-vors', 'lbl-vors', 'vors', '/api/nasr/navaids', renderVors);
+
+// Procedure brightness slider — controls opacity of all loaded proc:* layers
+document.getElementById('rng-proc').addEventListener('input', function () {
+    nasrBrightness.proc = parseInt(this.value);
+    document.getElementById('lbl-proc').textContent = nasrBrightness.proc;
+    const op = nasrBrightness.proc / 100;
+    for (const key of Object.keys(nasrLayers)) {
+        if (key.startsWith('proc:')) {
+            if (op <= 0) { map.removeLayer(nasrLayers[key]); delete nasrLayers[key]; }
+            else nasrLayers[key].eachLayer(l => l.setStyle({ opacity: op }));
+        }
+    }
+    saveSettingsToUrl();
 });
 
 // Clear procedure overlay
@@ -910,6 +968,122 @@ function clearProcOverlay() {
         }
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// NEXRAD weather radar overlay (Iowa State Mesonet WMS → ERAM-style colors)
+// ════════════════════════════════════════════════════════════════════════════
+let nexradLayer = null;
+let nexradLevel = 0;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=all(123)
+let nexradBrightness = 50;
+let nexradTimestamp = Date.now();
+
+function tileBbox3857(x, y, z) {
+    const E = 20037508.342789244;
+    const size = 2 * E / Math.pow(2, z);
+    const x0 = x * size - E;
+    const x1 = x0 + size;
+    const y1 = E - y * size;
+    const y0 = y1 - size;
+    return `${x0},${y0},${x1},${y1}`;
+}
+
+// Classify NWS-palette pixel into ERAM precip category: 0=skip, 1=moderate, 2=heavy, 3=extreme
+function classifyPrecip(r, g, b) {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const chroma = max - min;
+    if (max < 15) return 0;
+    if (chroma < 20) return max > 200 ? 3 : 0;  // near-white = extreme, near-black = skip
+    let hue;
+    if (max === r) hue = 60 * (((g - b) / chroma) % 6);
+    else if (max === g) hue = 60 * ((b - r) / chroma + 2);
+    else hue = 60 * ((r - g) / chroma + 4);
+    hue = (hue + 360) % 360;
+    if (hue >= 45 && hue < 270) return 1;  // greens, yellows, blues → moderate
+    if (hue >= 270 && hue < 330) return 3; // magentas, purples → extreme
+    return max > 230 ? 2 : 3;              // bright orange/red → heavy; dark red → extreme
+}
+
+// Remap tile pixels to ERAM colors: moderate=solid blue, heavy=checkered cyan/black, extreme=solid cyan
+function remapNexradTile(canvas, level) {
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, 256, 256);
+    const d = imageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] < 10) continue;
+        const cat = classifyPrecip(d[i], d[i + 1], d[i + 2]);
+        if (cat === 0) { d[i + 3] = 0; continue; }
+        if (level === 1 && cat < 3) { d[i + 3] = 0; continue; }  // extreme only
+        if (level === 2 && cat < 2) { d[i + 3] = 0; continue; }  // heavy + extreme
+        const px = i / 4;
+        const tx = px % 256, ty = Math.floor(px / 256);
+        if (cat === 1) {            // Moderate: solid blue
+            d[i] = 0; d[i + 1] = 68; d[i + 2] = 255;
+        } else if (cat === 2) {     // Heavy: checkered cyan and black
+            if ((tx + ty) % 2 === 0) {
+                d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
+            } else {
+                d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+            }
+        } else {                    // Extreme: solid cyan
+            d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
+        }
+        d[i + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+}
+
+function createNexradLayer() {
+    return L.gridLayer({
+        pane: 'nexrad',
+        opacity: nexradBrightness / 100,
+        tileSize: 256,
+        updateWhenZooming: false,
+        createTile: function (coords, done) {
+            const tile = document.createElement('canvas');
+            tile.width = tile.height = 256;
+            const ctx = tile.getContext('2d');
+            const bbox = tileBbox3857(coords.x, coords.y, coords.z);
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.src = `https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=nexrad-n0q-900913&FORMAT=image/png&TRANSPARENT=true&SRS=EPSG:3857&WIDTH=256&HEIGHT=256&BBOX=${bbox}&_t=${nexradTimestamp}`;
+            img.onload = function () {
+                ctx.drawImage(img, 0, 0);
+                try { remapNexradTile(tile, nexradLevel); } catch (e) { /* CORS fallback: original colors */ }
+                done(null, tile);
+            };
+            img.onerror = function () { done(null, tile); };
+            return tile;
+        }
+    });
+}
+
+function updateNexrad() {
+    if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = null; }
+    if (nexradLevel === 0) return;
+    nexradLayer = createNexradLayer();
+    nexradLayer.addTo(map);
+}
+
+// Auto-refresh radar data every 5 minutes
+setInterval(() => {
+    nexradTimestamp = Date.now();
+    if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = createNexradLayer(); nexradLayer.addTo(map); }
+}, 5 * 60 * 1000);
+
+document.getElementById('sel-nxlvl').addEventListener('change', function () {
+    const v = this.value;
+    nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
+    updateNexrad();
+    saveSettingsToUrl();
+});
+
+document.getElementById('rng-nx').addEventListener('input', function () {
+    nexradBrightness = parseInt(this.value);
+    document.getElementById('lbl-nx').textContent = nexradBrightness;
+    if (nexradLayer) nexradLayer.setOpacity(nexradBrightness / 100);
+    saveSettingsToUrl();
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 // Visibility & classification
@@ -2321,6 +2495,18 @@ function loadSettingsFromUrl() {
     if (params.has('ldb')) ldbBrightness = parseInt(params.get('ldb'));
     if (params.has('faconly')) facilityOnly = params.get('faconly') === '1';
     if (params.has('mapbg')) showMapBg = params.get('mapbg') === '1';
+    if (params.has('nasrbr')) {
+        const vals = params.get('nasrbr').split(',').map(Number);
+        if (!isNaN(vals[0])) nasrBrightness.jroutes = vals[0];
+        if (!isNaN(vals[1])) nasrBrightness.vroutes = vals[1];
+        if (!isNaN(vals[2])) nasrBrightness.vors = vals[2];
+        if (!isNaN(vals[3])) nasrBrightness.proc = vals[3];
+    }
+    if (params.has('nxlvl')) {
+        const v = params.get('nxlvl');
+        nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
+    }
+    if (params.has('nxbr')) nexradBrightness = parseInt(params.get('nxbr'));
 
     // Restore map position/zoom
     if (params.has('lat') && params.has('lng') && params.has('z')) {
@@ -2346,8 +2532,24 @@ function loadSettingsFromUrl() {
     document.getElementById('inp-alt-high').value = altFilterHigh;
     document.getElementById('rng-ldb-brightness').value = ldbBrightness;
     document.getElementById('lbl-ldb-brightness').textContent = ldbBrightness;
+    document.getElementById('rng-jroutes').value = nasrBrightness.jroutes;
+    document.getElementById('lbl-jroutes').textContent = nasrBrightness.jroutes;
+    document.getElementById('rng-vroutes').value = nasrBrightness.vroutes;
+    document.getElementById('lbl-vroutes').textContent = nasrBrightness.vroutes;
+    document.getElementById('rng-vors').value = nasrBrightness.vors;
+    document.getElementById('lbl-vors').textContent = nasrBrightness.vors;
+    document.getElementById('rng-proc').value = nasrBrightness.proc;
+    document.getElementById('lbl-proc').textContent = nasrBrightness.proc;
+    document.getElementById('sel-nxlvl').value = nexradLevel === 3 ? '123' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '0';
+    document.getElementById('rng-nx').value = nexradBrightness;
+    document.getElementById('lbl-nx').textContent = nexradBrightness;
     updateFontSize();
     if (showMapBg) tileLayer.addTo(map);
+    if (nexradLevel > 0) updateNexrad();
+    // Restore NASR overlays if brightness > 0
+    if (nasrBrightness.jroutes > 0) showNasrLayer('jroutes', '/api/nasr/airways?type=hi', renderAirways);
+    if (nasrBrightness.vroutes > 0) showNasrLayer('vroutes', '/api/nasr/airways?type=lo', renderAirways);
+    if (nasrBrightness.vors > 0) showNasrLayer('vors', '/api/nasr/navaids', renderVors);
     showBoundariesForFacility(myFacility);
 }
 
@@ -2369,6 +2571,11 @@ function saveSettingsToUrl() {
     if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);
     if (ldbBrightness !== 70) params.set('ldb', ldbBrightness);
     if (facilityOnly) params.set('faconly', '1');
+    const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.proc];
+    const nasrDefaults = [0, 0, 0, 60];
+    if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
+    if (nexradLevel > 0) params.set('nxlvl', nexradLevel === 3 ? '123' : nexradLevel === 2 ? '23' : '3');
+    if (nexradBrightness !== 50) params.set('nxbr', nexradBrightness);
     // Map position/zoom
     const center = map.getCenter();
     params.set('lat', center.lat.toFixed(4));
@@ -2795,7 +3002,7 @@ function processCommand(cmd) {
                 const key = `proc:${apt}`;
                 nasrCache[key] = data;
                 const group = L.layerGroup();
-                renderProcedures(data, group);
+                renderProcedures(data, group, nasrBrightness.proc / 100);
                 nasrLayers[key] = group;
                 group.addTo(map);
                 const stars = data.filter(p => p.type === 'STAR').length;

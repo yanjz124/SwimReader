@@ -431,6 +431,31 @@ const ldrLenOverrides = new Map(); // gufi → leader length level (0-3), defaul
 const dwellLocked = new Set();     // GUFIs with persistent dwell emphasis (toggled via Field A click)
 const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indicator) toggled on
 
+// .FIND overlay state
+let findMarker = null;   // { ident, lat, lon, time } — active find highlight
+let findTimer = null;    // auto-clear timeout
+let findBlinkRaf = null; // setTimeout ID for blink redraw
+
+function setFindMarker(ident, lat, lon) {
+    clearFindMarker();
+    findMarker = { ident, lat, lon, time: performance.now() };
+    // Auto-clear after 30 seconds
+    findTimer = setTimeout(clearFindMarker, 30000);
+    // Start blink redraw — every 500ms to match blink rate
+    (function blinkLoop() {
+        if (!findMarker) return;
+        drawOverlay();
+        findBlinkRaf = setTimeout(blinkLoop, 500);
+    })();
+}
+
+function clearFindMarker() {
+    findMarker = null;
+    if (findTimer) { clearTimeout(findTimer); findTimer = null; }
+    if (findBlinkRaf) { clearTimeout(findBlinkRaf); findBlinkRaf = null; }
+    drawOverlay();
+}
+
 // Global flash reference — updated once per 500ms tick so ALL tracks see the same phase
 let flashTime = performance.now();
 
@@ -613,6 +638,25 @@ function drawOverlay() {
             ctx.moveTo(startPt.x - topLeft.x, startPt.y - topLeft.y);
             ctx.lineTo(endPt.x - topLeft.x, endPt.y - topLeft.y);
             ctx.stroke();
+        }
+    }
+
+    // ── .FIND highlight — blinking yellow square ──
+    if (findMarker) {
+        const blink = Math.floor(performance.now() / 500) % 2 === 0;
+        if (blink && bounds.contains([findMarker.lat, findMarker.lon])) {
+            const pt = map.latLngToLayerPoint([findMarker.lat, findMarker.lon]);
+            const x = pt.x - topLeft.x;
+            const y = pt.y - topLeft.y;
+            const sz = Math.round(fontSize * 1.2);
+            ctx.globalAlpha = 1.0;
+            ctx.strokeStyle = TRACK_COLOR;
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x - sz / 2, y - sz - 2, sz, sz);
+            // Label below
+            ctx.globalAlpha = 0.9;
+            ctx.fillStyle = TRACK_COLOR;
+            ctx.fillText(findMarker.ident, x, y + LINE_H);
         }
     }
 
@@ -2639,6 +2683,27 @@ function processCommand(cmd) {
         return { feedback };
     }
 
+    // .FIND <ident> — highlight a fix/navaid/airport on the scope
+    if ((verb === '.FIND' || verb === '.F') && parts.length >= 2) {
+        const ident = parts.slice(1).join('').toUpperCase();
+        return (async () => {
+            try {
+                const resp = await fetch(`/api/nasr/find/${encodeURIComponent(ident)}`);
+                if (!resp.ok) {
+                    return { feedback: [{ type: 'err', text: `${ident} NOT FOUND` }] };
+                }
+                const data = await resp.json();
+                setFindMarker(data.ident, data.lat, data.lon);
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: `FIND ${data.ident}` }
+                ]};
+            } catch {
+                return { feedback: [{ type: 'err', text: 'NASR DATA UNAVAILABLE' }] };
+            }
+        })();
+    }
+
     // <FLID> — toggle FDB/LDB (single argument, not a known verb)
     if (parts.length === 1 && verb) {
         const f = findFlight(verb);
@@ -2710,7 +2775,7 @@ document.addEventListener('keydown', e => {
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
 
     // Escape → clear MCA
-    if (e.key === 'Escape') { mcaClear(); e.preventDefault(); return; }
+    if (e.key === 'Escape') { clearFindMarker(); mcaClear(); e.preventDefault(); return; }
 
     // Ctrl+R → recall last command
     if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) { mcaRecall(); e.preventDefault(); return; }

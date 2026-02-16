@@ -512,6 +512,7 @@ const map = L.map('map', {
     dragging: false,       // disable left-click drag — we use right-click pan
     doubleClickZoom: false, // disable double-click zoom
     zoomControl: false,
+    keyboard: false,       // disable numpad/+/- zoom — conflicts with MCA input
     attributionControl: false,
     zoomSnap: 0.1,        // granular zoom (0.1 steps)
     zoomDelta: 0.1,       // each scroll/click zooms by 0.1
@@ -571,13 +572,16 @@ function drawOverlay() {
             if (isDedupHidden(gufi, f)) continue;
 
             const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
+            const isFdb = shouldShowFdb(gufi, classifyTrack(f));
+            const histAlpha = isFdb ? 0.30 : (ldbBrightness / 100) * 0.30;
+            if (histAlpha <= 0) continue;
 
             for (let i = 0; i < hist.length; i++) {
                 if (!bounds.contains([hist[i].lat, hist[i].lon])) continue;
                 const pt = map.latLngToLayerPoint([hist[i].lat, hist[i].lon]);
                 const x = pt.x - topLeft.x;
                 const y = pt.y - topLeft.y;
-                ctx.globalAlpha = 0.30;  // uniform dim for all history symbols
+                ctx.globalAlpha = histAlpha;
                 ctx.fillStyle = color;
                 ctx.fillText(hist[i].sym || '\\', x, y);
             }
@@ -2401,17 +2405,22 @@ function mcaRender() {
 // Find flight by FLID: CID (facility-specific only), callsign, or squawk
 function findFlight(id) {
     const needle = id.toUpperCase();
-    // CID match — only for selected facility's CID; prefer visible/active flights
+    // CID match — only for selected facility's CID
+    // Priority: 1) ACTIVE + visible + not dedup-hidden, 2) ACTIVE, 3) any
     if (myFacility) {
-        let fallback = null;
+        let activeFallback = null;
+        let anyFallback = null;
         for (const [gufi, f] of flights) {
             const cid = f.computerIds && f.computerIds[myFacility];
             if (cid && cid.toUpperCase() === needle) {
-                if (isVisible(f) && !isDedupHidden(gufi, f)) return f;
-                if (!fallback) fallback = f;
+                const active = !f.flightStatus || f.flightStatus === 'ACTIVE';
+                if (active && isVisible(f) && !isDedupHidden(gufi, f)) return f;
+                if (active && !activeFallback) activeFallback = f;
+                if (!anyFallback) anyFallback = f;
             }
         }
-        if (fallback) return fallback;
+        if (activeFallback) return activeFallback;
+        if (anyFallback) return anyFallback;
     } else {
         for (const f of flights.values()) {
             if (f.computerId && f.computerId.toUpperCase() === needle) return f;

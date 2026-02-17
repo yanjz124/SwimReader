@@ -1446,20 +1446,22 @@ function removeDwell(el, gufi) {
 function buildTargetSym(symChar, isEmrg, extraStyle) {
     const c = isEmrg ? '#ff4444' : '#cccc44';
     const st = extraStyle ? extraStyle + ';' : '';
+    // Invisible 16×16 hit area centered at (0,0) so thin symbols are easy to click
+    const hit = `<div style="position:absolute;width:16px;height:16px;left:-8px;top:-8px;pointer-events:auto;cursor:inherit;z-index:2;"></div>`;
     if (symChar === '\\') {
         // Correlated beacon: 2px × 14px line, rotate(-45deg) = backslash \
-        return `<div style="position:absolute;width:2px;height:14px;left:-1px;top:-7px;background:${c};transform:rotate(-45deg);pointer-events:none;z-index:2;${st}"></div>`;
+        return hit + `<div style="position:absolute;width:2px;height:14px;left:-1px;top:-7px;background:${c};transform:rotate(-45deg);pointer-events:none;z-index:2;${st}"></div>`;
     }
     if (symChar === '/') {
         // Uncorrelated beacon: 2px × 14px line, rotate(45deg) = forward slash /
-        return `<div style="position:absolute;width:2px;height:14px;left:-1px;top:-7px;background:${c};transform:rotate(45deg);pointer-events:none;z-index:2;${st}"></div>`;
+        return hit + `<div style="position:absolute;width:2px;height:14px;left:-1px;top:-7px;background:${c};transform:rotate(45deg);pointer-events:none;z-index:2;${st}"></div>`;
     }
     if (symChar === '\u2022') {
         // Reduced separation: 5px filled circle centered at (0,0)
-        return `<div style="position:absolute;width:5px;height:5px;left:-2.5px;top:-2.5px;border-radius:50%;background:${c};pointer-events:none;z-index:2;${st}"></div>`;
+        return hit + `<div style="position:absolute;width:5px;height:5px;left:-2.5px;top:-2.5px;border-radius:50%;background:${c};pointer-events:none;z-index:2;${st}"></div>`;
     }
-    // Unknown (◇): diamond is already drawn by ac-sym-flat-track
-    return '';
+    // Diamond (◇): FDB draws via ac-sym-flat-track; LDB still needs a hit area
+    return hit;
 }
 
 function buildMarkerHtml(f, cls) {
@@ -1511,10 +1513,16 @@ function buildMarkerHtml(f, cls) {
         // Full Data Block (lines 1-4) — with leader line
         const showR = shouldShowR(f, cls);
         const showVci = vciActive.has(f.gufi);
-        // When no R/VCI, extend leader straight through empty column 0 to reach text (E/NE/SE)
+        // Leader extends into col0 area for right-side positions (E/NE/SE)
         let ldrX2 = ldr.dx, ldrY2 = ldr.dy;
-        if (!showR && !showVci && !isLeftPos && !isVertical && ldr.dx !== 0) {
-            ldrX2 += dbGap + Math.round(CHAR_W * 1.5);
+        if (!isLeftPos && !isVertical && ldr.dx !== 0) {
+            if (showR || showVci) {
+                // R/VCI present: end just before the character (left edge of col0)
+                ldrX2 += dbGap;
+            } else {
+                // No R/VCI: extend through empty col0 to reach text
+                ldrX2 += dbGap + Math.round(CHAR_W * 1.5);
+            }
         }
         html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${ldrX2}" y2="${ldrY2}" stroke="${color}" stroke-width="1"/></svg>`;
 
@@ -2094,6 +2102,19 @@ function doRender() {
                 });
                 // Click: VCI hit area → toggle VCI; Field A → dwell lock; MCA has text → insert target ▽; else → toggle
                 el.addEventListener('click', (e) => {
+                    // Target symbol priority: if click is on another target's symbol, redirect
+                    const redirectGufi = findTargetUnderClick(e, gufi);
+                    if (redirectGufi) {
+                        if (mca.text.trim().length > 0) {
+                            e.stopPropagation();
+                            const rf = flights.get(redirectGufi);
+                            const rflid = getFlid(rf);
+                            if (rflid) mcaInsertTarget(rflid);
+                        } else {
+                            toggleTrackSelect(redirectGufi);
+                        }
+                        return;
+                    }
                     // VCI toggle: click on Column 0 hit area
                     if (e.target.closest('.ac-vci-hit')) {
                         if (vciActive.has(gufi)) vciActive.delete(gufi);
@@ -2128,10 +2149,27 @@ function doRender() {
                     }
                     toggleTrackSelect(gufi);
                 });
-                // Middle-click: Field A → QF; VCI → toggle; else → append FLID + execute
+                // Middle-click: Field A → QF; VCI → toggle; MCA content → CID Enter; else → toggle FDB/LDB
                 el.addEventListener('auxclick', (e) => {
                     if (e.button !== 1) return;
                     e.preventDefault();
+                    // Target symbol priority: if click is on another target's symbol, redirect
+                    const redirectGufi = findTargetUnderClick(e, gufi);
+                    if (redirectGufi) {
+                        if (mca.text.trim().length > 0) {
+                            const rf = flights.get(redirectGufi);
+                            const rflid = getFlid(rf);
+                            if (rflid) {
+                                if (mca.text[mca.text.length - 1] !== ' ') mca.text += ' ';
+                                mca.text += rflid;
+                                mca.cursor = mca.text.length;
+                                mcaExecute();
+                            }
+                        } else {
+                            toggleTrackSelect(redirectGufi);
+                        }
+                        return;
+                    }
                     // VCI hit area: toggle VCI
                     if (e.target.closest('.ac-vci-hit')) {
                         if (vciActive.has(gufi)) vciActive.delete(gufi);
@@ -2153,21 +2191,18 @@ function doRender() {
                             return;
                         }
                     }
-                    // Middle-click elsewhere = append FLID + execute (CID Enter)
-                    if (flid) {
-                        if (mca.text.trim().length > 0) {
-                            // Append FLID to existing command and execute
-                            if (mca.text.length > 0 && mca.text[mca.text.length - 1] !== ' ') {
-                                mca.text += ' ';
-                            }
-                            mca.text += flid;
-                            mca.cursor = mca.text.length;
-                        } else {
-                            // No command — execute FLID as implied command
-                            mca.text = flid;
-                            mca.cursor = mca.text.length;
+                    // Middle-click elsewhere:
+                    //   MCA has content → append FLID + execute (CID Enter)
+                    //   MCA empty → toggle FDB/LDB (cycle data block)
+                    if (mca.text.trim().length > 0 && flid) {
+                        if (mca.text.length > 0 && mca.text[mca.text.length - 1] !== ' ') {
+                            mca.text += ' ';
                         }
+                        mca.text += flid;
+                        mca.cursor = mca.text.length;
                         mcaExecute();
+                    } else {
+                        toggleTrackSelect(gufi);
                     }
                 });
             }
@@ -2367,6 +2402,29 @@ setInterval(() => {
 }, 5000);
 
 // ════════════════════════════════════════════════════════════════════════════
+// Click target priority: symbols win over overlapping data blocks
+// ════════════════════════════════════════════════════════════════════════════
+// When a click lands on a data block that overlaps another target's position symbol,
+// redirect the click to the underlying target. Returns the target gufi, or null.
+function findTargetUnderClick(e, currentGufi) {
+    const m = markers.get(currentGufi);
+    if (!m) return null;
+    const mapRect = map.getContainer().getBoundingClientRect();
+    const cx = e.clientX - mapRect.left;
+    const cy = e.clientY - mapRect.top;
+    // If click is near our own symbol center, no redirect needed
+    const myPt = map.latLngToContainerPoint(m.getLatLng());
+    if (Math.hypot(cx - myPt.x, cy - myPt.y) <= 10) return null;
+    // Check if another target's symbol is at the click point
+    for (const [gufi, om] of markers) {
+        if (gufi === currentGufi || !om._icon) continue;
+        const pt = map.latLngToContainerPoint(om.getLatLng());
+        if (Math.abs(cx - pt.x) <= 10 && Math.abs(cy - pt.y) <= 10) return gufi;
+    }
+    return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Flight detail panel
 // ════════════════════════════════════════════════════════════════════════════
 function toggleTrackSelect(gufi) {
@@ -2376,6 +2434,11 @@ function toggleTrackSelect(gufi) {
 
     // Own/handoff/emergency tracks: default FDB, clicking does NOT toggle to LDB
     if (cls === 'own' || cls === 'ho' || cls === 'emrg') {
+        mca.feedback = [
+            { type: 'err', text: 'USER ACTION NOT ALLOWED ON A\nCONTROLLED FLIGHT' },
+            { type: 'info', text: `FORCED DATA BLK ${f.callsign || '???'}` }
+        ];
+        mcaRender();
         showFlightDetail(gufi);
         return;
     }
@@ -2385,6 +2448,18 @@ function toggleTrackSelect(gufi) {
         fdbOverrides.delete(gufi);  // back to default LDB
     } else {
         fdbOverrides.set(gufi, true);  // promote to FDB
+    }
+
+    // Immediately rebuild the marker so the change is instant (don't wait for render cycle)
+    const m = markers.get(gufi);
+    if (m) {
+        const el = m.getElement();
+        if (el) {
+            const newHash = flightHash(f, cls);
+            el.innerHTML = buildMarkerHtml(f, cls);
+            el._lastHash = newHash;
+            if (dwellLocked.has(gufi) || el._isHovering) applyDwell(el, gufi);
+        }
     }
 
     showFlightDetail(gufi);

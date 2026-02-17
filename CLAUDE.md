@@ -201,7 +201,7 @@ Server-side in `Program.cs` ProcessFlight():
 - `T` = interim altitude assigned (from SFDPS interimAltitude)
 - `↑` = climbing to assigned altitude (reported below assigned)
 - `↓` = descending to assigned altitude (reported above assigned)
-- `P` = procedure altitude assigned (not yet available from SFDPS data)
+- `P` = procedure altitude assigned (via QQ P command)
 - `X` = no Mode C data at all
 
 **Line 3 Field E (right side after CID, in priority order):**
@@ -283,6 +283,20 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `QF <FLID>` | Query flight plan → show in Response Area |
 | `QD` | Clear Response Area |
 | `QL [sector...]` | Quick Look sectors (force FDB); `QL` alone clears |
+| `QZ <alt> <FLID>` | Set assigned altitude (e.g. `QZ 350 UAL123`) |
+| `QZ VFR[/<alt>] <FLID>` | Set VFR or VFR-with-altitude; `QZ OTP <FLID>` for on-top |
+| `QZ <floor>B<ceil> <FLID>` | Set block altitude (e.g. `QZ 180B240 UAL123`) |
+| `QQ <alt> <FLID...>` | Set interim altitude; multiple FLIDs: `QQ 110 JBU123/429` |
+| `QQ P<alt> <FLID>` | Set procedure altitude |
+| `QQ L<alt> <FLID>` | Set local interim altitude |
+| `QQ R<alt> <FLID>` | Set interim + reported altitude |
+| `QQ <FLID>` | Clear interim/procedure altitude |
+| `QR <alt> <FLID>` | Set controller-entered reported altitude |
+| `QS <heading> <FLID>` | Set heading (3-digit, 001-360) |
+| `QS /<speed> <FLID>` | Set speed |
+| `QS \`<text> <FLID>` | Set free text (backtick prefix) |
+| `QS * <FLID>` | Clear all HSF data; `*/` = heading only, `/*` = speed only |
+| `QS <FLID>` | Toggle HSF display on line 4 |
 | `<FLID>` | Toggle FDB/LDB for flight |
 
 FLIDs can be callsign or CID (CID only matches selected facility). When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.

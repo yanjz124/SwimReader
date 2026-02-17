@@ -269,6 +269,14 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 </select>
             </div>
             <div class="ctrl-row">
+                <label>Line 4</label>
+                <select id="sel-line4">
+                    <option value="DEST" selected>DEST</option>
+                    <option value="TYPE">TYPE</option>
+                    <option value="OFF">OFF</option>
+                </select>
+            </div>
+            <div class="ctrl-row">
                 <label>LDB %</label>
                 <input type="range" id="rng-ldb-brightness" min="0" max="100" value="70"
                     style="flex:1; accent-color:#cccc44;">
@@ -453,6 +461,7 @@ let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
 let ldbBrightness = 70;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
 let showMapBg = false;      // tile layer hidden by default
+let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
 const wasOwnOrHo = new Set();  // tracks that were own/ho — keeps FDB sticky when they become other
@@ -465,6 +474,16 @@ const ldrLenOverrides = new Map(); // gufi → leader length level (0-3), defaul
 const driActive = new Map();       // gufi → 'J' (standard 5nm) or 'T' (reduced 3nm)
 const dwellLocked = new Set();     // GUFIs with persistent dwell emphasis (toggled via Field A click)
 const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indicator) toggled on
+
+// Controller-entered altitude overrides (QZ/QQ/QR commands)
+// SWIM data has higher priority — when SWIM provides the same field, the local override is cleared
+const localAssignedAlt = new Map();  // gufi → { feet, display } — QZ assigned altitude (display = 'VFR', 'OTP', '350', '180B240')
+const localInterimAlt = new Map();   // gufi → { feet, type } — QQ interim (type: 'I'=interim, 'P'=procedure, 'L'=local)
+const localReportedAlt = new Map();  // gufi → feet — QR controller-entered reported altitude
+
+// HSF (Heading/Speed/Free text) data — QS command
+const hsfData = new Map();     // gufi → { heading, speed, freeText } — controller-entered HSF
+const hsfShowMap = new Set();  // GUFIs currently displaying HSF on line 4 (toggled by ↴ click or QS <FLID>)
 
 // .FIND overlay state
 let findMarker = null;   // { ident, lat, lon, time } — active find highlight
@@ -1565,14 +1584,60 @@ function formatDatablock(f, cls) {
 // Format FDB with Column 0 inline (VCI, R) — returns HTML
 const VCI_SVG = '<svg viewBox="0 0 16 16" width="1.2em" height="1.2em" style="vertical-align:-0.2em;"><path d="M3,5 L3,13 L11,13" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5,8 A3,3 0 0,1 8,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5,5.5 A5.5,5.5 0 0,1 10.5,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 
+function formatLine4(f, hsfCol) {
+    const hsf = hsfData.get(f.gufi);
+    const showHsf = hsfShowMap.has(f.gufi);
+
+    // HSF mode: show heading/speed/free text
+    // Speed positioned so last digit sits under ↴ (at hsfCol), +/- extends one past
+    if (showHsf && hsf) {
+        if (hsf.freeText) return esc(hsf.freeText);
+        const h = hsf.heading || '';
+        const s = hsf.speed || '';
+        if (s) {
+            const hasModifier = /[+-]$/.test(s);
+            // ↴ is at hsfCol; last digit under it, +/- one past
+            const sEnd = hasModifier ? hsfCol + 2 : hsfCol + 1;
+            const sStart = sEnd - s.length;
+            if (h) {
+                const pad = Math.max(1, sStart - h.length);
+                return esc(h + '\u00a0'.repeat(pad) + s);
+            }
+            const pad = Math.max(0, sStart);
+            return esc('\u00a0'.repeat(pad) + s);
+        }
+        return esc(h);
+    }
+
+    // Normal mode: based on line4Mode setting
+    if (line4Mode === 'DEST') return f.destination ? esc(f.destination) : '';
+    if (line4Mode === 'TYPE') {
+        const t = f.aircraftType || '';
+        const eq = f.equipmentQualifier ? '/' + f.equipmentQualifier : '';
+        return t ? esc(t + eq) : '';
+    }
+    return ''; // OFF
+}
+
 function formatFdbHtml(f, cls) {
     const showVci = vciActive.has(f.gufi);
     const showR = shouldShowR(f, cls);
+    const hsf = hsfData.get(f.gufi);
 
     const l1 = esc(f.callsign || '???');
     const l2 = esc(formatAltLine(f));
-    const l3 = esc(formatLine3(f, cls));
-    const l4 = f.destination ? esc(f.destination) : '';
+    const l3text = formatLine3(f, cls);
+    const l3esc = esc(l3text);
+    const l4 = formatLine4(f, l3text.length);
+
+    // ↴ indicator appended directly at end of line 3 (no gap)
+    let l3;
+    if (hsf && (hsf.heading || hsf.speed || hsf.freeText)) {
+        const hsfInd = '<span class="ac-hsf-ind" style="pointer-events:auto;cursor:inherit;">\u21b4</span>';
+        l3 = l3esc + hsfInd;
+    } else {
+        l3 = l3esc;
+    }
 
     // Column 0: inline spans — VCI hit area on lines 1-2, R on line 3
     const col0Hit = '<span class="ac-vci-hit" style="display:inline-block;width:1.5ch;pointer-events:auto;cursor:inherit;">\u00a0</span>';
@@ -1588,13 +1653,25 @@ function formatFdbHtml(f, cls) {
 }
 
 function formatAltLine(f) {
-    const assigned = f.assignedAltitude;
-    const reported = f.reportedAltitude;
-    const interim = f.interimAltitude;
-    const rules = f.flightRules;
+    const localA = localAssignedAlt.get(f.gufi);
+    const localI = localInterimAlt.get(f.gufi);
+    const localR = localReportedAlt.get(f.gufi);
+
+    // SWIM fields take priority; local overrides fill gaps
+    const assigned = f.assignedAltitude ?? (localA ? localA.feet : null);
+    const reported = f.reportedAltitude ?? (localR != null ? localR : null);
+    const interim = f.interimAltitude ?? (localI ? localI.feet : null);
+    const rules = f.flightRules ?? (localA ? localA.rules : null);
+    const isProcedure = !f.interimAltitude && localI && localI.type === 'P';
 
     const afl = assigned != null ? String(Math.round(assigned / 100)).padStart(3, '0') : '';
     const rfl = reported != null ? String(Math.round(reported / 100)).padStart(3, '0') : '';
+
+    // VFR/OTP display from local QZ override
+    if (localA && !f.assignedAltitude && (localA.rules === 'VFR' || localA.rules === 'OTP')) {
+        const prefix = localA.rules === 'OTP' ? 'OTP' : 'VFR';
+        return rfl ? `${prefix}/${rfl}` : prefix;
+    }
 
     // VFR altitude → /indicator: VFR/055 or OTP/218
     if (rules === 'VFR' || rules === 'OTP') {
@@ -1602,10 +1679,16 @@ function formatAltLine(f) {
         return rfl ? `${prefix}/${rfl}` : prefix;
     }
 
-    // Interim altitude → T indicator: {interim}T{reported}
+    // Block altitude display from local QZ override (e.g. 180B240)
+    if (localA && !f.assignedAltitude && localA.block) {
+        return rfl ? `${localA.block}${rfl}` : localA.block;
+    }
+
+    // Interim/procedure altitude → T or P indicator
     if (interim != null) {
         const ifl = String(Math.round(interim / 100)).padStart(3, '0');
-        return rfl ? `${ifl}T${rfl}` : `${ifl}T`;
+        const indicator = isProcedure ? 'P' : 'T';
+        return rfl ? `${ifl}${indicator}${rfl}` : `${ifl}${indicator}`;
     }
 
     if (assigned == null && reported == null) return '';
@@ -1793,6 +1876,11 @@ function connectWs() {
                     existing[key] = f[key];
                 }
 
+                // SWIM data overrides local controller entries
+                if (f.assignedAltitude != null) localAssignedAlt.delete(f.gufi);
+                if (f.interimAltitude != null) localInterimAlt.delete(f.gufi);
+                if (f.reportedAltitude != null) localReportedAlt.delete(f.gufi);
+
                 // Detect handoff completion via two paths:
                 // 1) HO event cleared by server (HO-DONE) + CU matches recv
                 // 2) CU changed to match recv (covers missed initiation, e.g. server restart)
@@ -1960,7 +2048,16 @@ function flightHash(f, cls) {
     const dbPos = dbPositions.get(f.gufi) || 0;
     const ldrLen = ldrLenOverrides.get(f.gufi) ?? 1;
     const vci = vciActive.has(f.gufi) ? 1 : 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}`;
+    const la = localAssignedAlt.get(f.gufi);
+    const li = localInterimAlt.get(f.gufi);
+    const lr = localReportedAlt.get(f.gufi);
+    const laH = la ? `${la.feet}${la.rules||''}${la.block||''}` : '';
+    const liH = li ? `${li.feet}${li.type}` : '';
+    const lrH = lr != null ? lr : '';
+    const hsf = hsfData.get(f.gufi);
+    const hsfH = hsf ? `${hsf.heading||''}${hsf.speed||''}${hsf.freeText||''}` : '';
+    const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2123,6 +2220,14 @@ function doRender() {
                         lastRenderTime = 0;
                         return;
                     }
+                    // HSF indicator toggle: click ↴ to switch line 4 between DEST/TYPE and HSF
+                    if (e.target.closest('.ac-hsf-ind')) {
+                        if (hsfShowMap.has(gufi)) hsfShowMap.delete(gufi);
+                        else hsfShowMap.add(gufi);
+                        el._lastHash = '';
+                        lastRenderTime = 0;
+                        return;
+                    }
                     const dbEl = el.querySelector('.ac-db');
                     if (dbEl) {
                         const rect = dbEl.getBoundingClientRect();
@@ -2174,6 +2279,14 @@ function doRender() {
                     if (e.target.closest('.ac-vci-hit')) {
                         if (vciActive.has(gufi)) vciActive.delete(gufi);
                         else vciActive.add(gufi);
+                        el._lastHash = '';
+                        lastRenderTime = 0;
+                        return;
+                    }
+                    // HSF indicator: toggle HSF display on line 4
+                    if (e.target.closest('.ac-hsf-ind')) {
+                        if (hsfShowMap.has(gufi)) hsfShowMap.delete(gufi);
+                        else hsfShowMap.add(gufi);
                         el._lastHash = '';
                         lastRenderTime = 0;
                         return;
@@ -2311,6 +2424,12 @@ document.getElementById('rng-ldb-brightness').addEventListener('input', function
 
 document.getElementById('sel-vector').addEventListener('change', function () {
     vectorMinutes = parseInt(this.value);
+    saveSettingsToUrl();
+});
+
+document.getElementById('sel-line4').addEventListener('change', function () {
+    line4Mode = this.value;
+    invalidateAllMarkers();
     saveSettingsToUrl();
 });
 
@@ -2769,6 +2888,7 @@ function loadSettingsFromUrl() {
         if (!isNaN(vals[2])) nasrBrightness.vors = vals[2];
         if (!isNaN(vals[3])) nasrBrightness.proc = vals[3];
     }
+    if (params.has('line4')) line4Mode = params.get('line4') || 'DEST';
     if (params.has('nxlvl')) {
         const v = params.get('nxlvl');
         nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
@@ -2794,6 +2914,7 @@ function loadSettingsFromUrl() {
     }
     document.getElementById('chk-facility-only').checked = facilityOnly;
     document.getElementById('chk-mapbg').checked = showMapBg;
+    document.getElementById('sel-line4').value = line4Mode;
     document.getElementById('sel-fontsize').value = fontSize;
     document.getElementById('inp-alt-low').value = altFilterLow;
     document.getElementById('inp-alt-high').value = altFilterHigh;
@@ -2832,6 +2953,7 @@ function saveSettingsToUrl() {
     const brVals = BOUNDARY_CATS.map(c => boundaryBrightness[c]);
     const defaultBr = [60, 60, 60, 0];
     if (brVals.join(',') !== defaultBr.join(',')) params.set('bndbr', brVals.join(','));
+    if (line4Mode !== 'DEST') params.set('line4', line4Mode);
     if (showMapBg) params.set('mapbg', '1');
     // if (document.getElementById('chk-transp-mca').checked) params.set('tmca', '1');
     if (fontSize !== 10) params.set('fontsize', fontSize);
@@ -3036,15 +3158,16 @@ function mcaRender() {
     const previewEl = document.getElementById('mca-preview');
     const feedbackEl = document.getElementById('mca-feedback');
 
-    // Preview: text with blinking cursor
-    const before = esc(mca.text.substring(0, mca.cursor));
+    // Preview: text with blinking cursor (backtick → ⵔ︎ display)
+    const mcaDisp = t => esc(t).replace(/`/g, '\u2D54\uFE0E');
+    const before = mcaDisp(mca.text.substring(0, mca.cursor));
     if (mca.overstrike) {
         // Overstrike: cursor replaces character at position (or shows _ at end)
-        const after = mca.cursor < mca.text.length ? esc(mca.text.substring(mca.cursor + 1)) : '';
+        const after = mca.cursor < mca.text.length ? mcaDisp(mca.text.substring(mca.cursor + 1)) : '';
         previewEl.innerHTML = before + '<span class="mca-cursor">_</span>' + after;
     } else {
         // Insert: cursor between characters (thin bar)
-        const after = esc(mca.text.substring(mca.cursor));
+        const after = mcaDisp(mca.text.substring(mca.cursor));
         previewEl.innerHTML = before + '<span class="mca-cursor">|</span>' + after;
     }
 
@@ -3102,6 +3225,45 @@ function findFlight(id) {
         if (f.squawk === needle) return f;
     }
     return null;
+}
+
+// Parse altitude string (2-3 digit FL) → feet, returns null if invalid
+function parseAltitude(s) {
+    if (!s || !/^\d{2,3}$/.test(s)) return null;
+    return parseInt(s) * 100;
+}
+
+// Resolve multiple FLIDs (split by /) → { found: [flight...], notFound: [string...] }
+function resolveFlids(flids) {
+    const found = [], notFound = [];
+    for (const flid of flids) {
+        const f = findFlight(flid);
+        if (f) found.push(f);
+        else notFound.push(flid);
+    }
+    return { found, notFound };
+}
+
+// Check if a flight is owned by our position (own or handoff to us)
+function isOwnTrack(f) {
+    const cls = classifyTrack(f);
+    return cls === 'own' || cls === 'ho';
+}
+
+// Standard rejection for commands requiring track ownership
+function rejectNotOwned(cmdName, f) {
+    return { feedback: [
+        { type: 'err', text: 'REJECT - NOT YOUR TRACK' },
+        { type: 'info', text: cmdName },
+        { type: 'info', text: `${f.callsign || '???'}/${getCid(f) || '???'}` }
+    ]};
+}
+
+// Invalidate a single marker's hash to force rebuild on next render
+function invalidateMarker(gufi) {
+    const m = markers.get(gufi);
+    if (m) { const el = m.getElement(); if (el) el._lastHash = ''; }
+    lastRenderTime = 0;
 }
 
 function processCommand(cmd) {
@@ -3345,6 +3507,440 @@ function processCommand(cmd) {
             return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
         }
         return { feedback: [{ type: 'err', text: 'INVALID DRI TYPE' }] };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // QZ <altitude> <FLID> — Set assigned (flight plan) altitude
+    // QZ VFR <FLID> | QZ VFR/<alt> <FLID> | QZ OTP <FLID>
+    // QZ <floor>B<ceiling> <FLID> — Block altitude
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'QZ') {
+        if (parts.length < 2) {
+            return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+        }
+
+        const arg1 = parts[1].toUpperCase();
+
+        // QZ VFR <FLID> or QZ VFR/<alt> <FLID> or QZ OTP <FLID>
+        if (arg1 === 'VFR' || arg1.startsWith('VFR/') || arg1 === 'OTP') {
+            let rules, altFeet = null;
+            if (arg1 === 'OTP') {
+                rules = 'OTP';
+            } else if (arg1.startsWith('VFR/')) {
+                rules = 'VFR';
+                const altStr = arg1.substring(4);
+                altFeet = parseAltitude(altStr);
+                if (altFeet == null) return { feedback: [{ type: 'err', text: 'INVALID ALTITUDE' }] };
+            } else {
+                rules = 'VFR';
+            }
+            const flidStr = parts.slice(2).join('').toUpperCase();
+            if (!flidStr) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!isOwnTrack(f)) return rejectNotOwned('ASSIGNED ALT', f);
+            localAssignedAlt.set(f.gufi, { feet: altFeet, rules, block: null });
+            invalidateMarker(f.gufi);
+            const altDisp = altFeet != null ? '/' + String(Math.round(altFeet / 100)).padStart(3, '0') : '';
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'ASSIGNED ALT' },
+                { type: 'info', text: `${f.callsign || '???'}/${rules}${altDisp}` }
+            ]};
+        }
+
+        // QZ <floor>B<ceiling> <FLID> — Block altitude
+        const blockMatch = arg1.match(/^(\d{2,3})B(\d{2,3})$/);
+        if (blockMatch) {
+            const flidStr = parts.slice(2).join('').toUpperCase();
+            if (!flidStr) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!isOwnTrack(f)) return rejectNotOwned('ASSIGNED ALT', f);
+            const floor = parseInt(blockMatch[1]) * 100;
+            const ceil = parseInt(blockMatch[2]) * 100;
+            const blockDisp = blockMatch[1].padStart(3, '0') + 'B' + blockMatch[2].padStart(3, '0');
+            localAssignedAlt.set(f.gufi, { feet: floor, rules: null, block: blockDisp });
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'ASSIGNED ALT' },
+                { type: 'info', text: `${f.callsign || '???'}/${blockDisp}` }
+            ]};
+        }
+
+        // QZ <altitude> <FLID> — Normal assigned altitude
+        const altFeet = parseAltitude(arg1);
+        if (altFeet != null) {
+            const flidStr = parts.slice(2).join('').toUpperCase();
+            if (!flidStr) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!isOwnTrack(f)) return rejectNotOwned('ASSIGNED ALT', f);
+            localAssignedAlt.set(f.gufi, { feet: altFeet, rules: null, block: null });
+            invalidateMarker(f.gufi);
+            const altDisp = String(Math.round(altFeet / 100)).padStart(3, '0');
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'ASSIGNED ALT' },
+                { type: 'info', text: `${f.callsign || '???'}/${altDisp}` }
+            ]};
+        }
+
+        // QZ <FLID> with no altitude — error
+        return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // QQ <altitude> <FLID...> — Set interim altitude
+    // QQ R<alt> <FLID> — Set interim + reported altitude
+    // QQ L<alt> <FLID> — Set local interim altitude
+    // QQ P<alt> <FLID> — Set procedure altitude
+    // QQ <FLID> — Clear interim/procedure altitude
+    // QQ L <FLID> — Clear local interim altitude
+    // Multiple FLIDs: QQ 110 JBU123/429/AAL924
+    // Override: QQ /TT P150 JBU123
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'QQ') {
+        if (parts.length < 2) {
+            return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
+        }
+
+        // Check for /TT override prefix (skip logic checks)
+        let argStart = 1;
+        if (parts[1].toUpperCase() === '/TT' || parts[1] === '///') {
+            argStart = 2;
+            if (parts.length < 3) return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
+        }
+
+        const qqArg1 = parts[argStart].toUpperCase();
+
+        // QQ L <FLID> — Clear local interim altitude (L followed by space then FLID)
+        if (qqArg1 === 'L' && parts.length > argStart + 1) {
+            const qqFlids = parts.slice(argStart + 1).join('').toUpperCase().split('/').filter(s => s);
+            const qqRes = resolveFlids(qqFlids);
+            if (qqRes.found.length === 0) {
+                return { feedback: [
+                    { type: 'err', text: 'REJECT - CID NOT STORED' },
+                    { type: 'info', text: 'INTERIM ALT' },
+                    { type: 'info', text: `QQ ${parts.slice(1).join(' ')}` }
+                ]};
+            }
+            const qqFb = [{ type: 'ok', text: 'ACCEPT' }, { type: 'info', text: 'INTERIM ALT' }];
+            for (const f of qqRes.found) {
+                const li = localInterimAlt.get(f.gufi);
+                if (li && li.type === 'L') {
+                    localInterimAlt.delete(f.gufi);
+                    invalidateMarker(f.gufi);
+                    qqFb.push({ type: 'info', text: `${f.callsign || '???'}/CLR` });
+                } else {
+                    qqFb.push({ type: 'err', text: 'REJECT - NO INTERIM ALTITUDE' });
+                    qqFb.push({ type: 'info', text: `QQ ${getCid(f) || f.callsign || '???'}` });
+                }
+            }
+            return { feedback: qqFb };
+        }
+
+        // Parse altitude prefix: R, L, P, or plain
+        let qqAltPrefix = '';
+        let qqAltArg = qqArg1;
+        if (/^[RLP]\d/.test(qqArg1)) {
+            qqAltPrefix = qqArg1.charAt(0);
+            qqAltArg = qqArg1.substring(1);
+        }
+
+        const qqAltFeet = parseAltitude(qqAltArg);
+        const qqFlidAfter = parts.slice(argStart + 1).join('').toUpperCase();
+
+        // QQ [R|L|P]<altitude> <FLID...> — Set interim/procedure/local altitude
+        if (qqAltFeet != null && qqFlidAfter) {
+            const qqFlids = qqFlidAfter.split('/').filter(s => s);
+            const qqRes = resolveFlids(qqFlids);
+            if (qqRes.found.length === 0) {
+                return { feedback: [
+                    { type: 'err', text: 'REJECT - CID NOT STORED' },
+                    { type: 'info', text: 'INTERIM ALT' },
+                    { type: 'info', text: `QQ ${parts.slice(1).join(' ')}` }
+                ]};
+            }
+            const qqAltDisp = String(Math.round(qqAltFeet / 100)).padStart(3, '0');
+            const qqFb = [];
+            let qqAnyOk = false;
+            for (const f of qqRes.found) {
+                // Ownership check: QQ L (local interim) exempt; all others require ownership
+                if (qqAltPrefix !== 'L' && !isOwnTrack(f)) {
+                    qqFb.push({ type: 'err', text: 'REJECT - NOT YOUR TRACK' });
+                    qqFb.push({ type: 'info', text: `INTERIM ALT ${f.callsign || '???'}` });
+                    continue;
+                }
+                const itype = qqAltPrefix === 'P' ? 'P' : qqAltPrefix === 'L' ? 'L' : 'I';
+                localInterimAlt.set(f.gufi, { feet: qqAltFeet, type: itype });
+                if (qqAltPrefix === 'R') localReportedAlt.set(f.gufi, qqAltFeet);
+                invalidateMarker(f.gufi);
+                qqFb.push({ type: 'info', text: `${f.callsign || '???'}/${qqAltDisp}` });
+                qqAnyOk = true;
+            }
+            if (qqAnyOk) qqFb.unshift({ type: 'ok', text: 'ACCEPT' }, { type: 'info', text: 'INTERIM ALT' });
+            for (const nf of qqRes.notFound) {
+                qqFb.push({ type: 'err', text: 'REJECT - CID NOT STORED' });
+                qqFb.push({ type: 'info', text: `QQ ${nf}` });
+            }
+            return { feedback: qqFb };
+        }
+
+        // QQ P<alt> or QQ R<alt> with no FLID — error (prefixed altitudes require a FLID)
+        if (qqAltFeet != null && qqAltPrefix) {
+            return { feedback: [
+                { type: 'err', text: 'REJECT - CID NOT STORED' },
+                { type: 'info', text: 'INTERIM ALT' },
+                { type: 'info', text: `QQ ${parts.slice(1).join(' ')}` }
+            ]};
+        }
+
+        // QQ <FLID> — Clear interim/procedure altitude
+        // (includes bare numbers like QQ 046 where 046 is a CID, not an altitude)
+        const qqClearStr = parts.slice(argStart).join('').toUpperCase();
+        const qqClearFlids = qqClearStr.split('/').filter(s => s);
+        const qqClearRes = resolveFlids(qqClearFlids);
+        if (qqClearRes.found.length === 0) {
+            return { feedback: [
+                { type: 'err', text: 'REJECT - CID NOT STORED' },
+                { type: 'info', text: 'INTERIM ALT' },
+                { type: 'info', text: `QQ ${parts.slice(1).join(' ')}` }
+            ]};
+        }
+        const qqClearFb = [];
+        let qqClearAnyOk = false;
+        for (const f of qqClearRes.found) {
+            if (!isOwnTrack(f)) {
+                qqClearFb.push({ type: 'err', text: 'REJECT - NOT YOUR TRACK' });
+                qqClearFb.push({ type: 'info', text: `INTERIM ALT ${f.callsign || '???'}` });
+                continue;
+            }
+            const li = localInterimAlt.get(f.gufi);
+            const hasSwimInterim = f.interimAltitude != null;
+            if (li || hasSwimInterim) {
+                localInterimAlt.delete(f.gufi);
+                invalidateMarker(f.gufi);
+                qqClearFb.push({ type: 'info', text: `${f.callsign || '???'}/CLR` });
+                qqClearAnyOk = true;
+            } else {
+                qqClearFb.push({ type: 'err', text: 'REJECT - NO INTERIM ALTITUDE' });
+                qqClearFb.push({ type: 'info', text: 'INTERIM ALT' });
+                qqClearFb.push({ type: 'info', text: `QQ ${getCid(f) || f.callsign || '???'}` });
+            }
+        }
+        if (qqClearAnyOk) qqClearFb.unshift({ type: 'ok', text: 'ACCEPT' }, { type: 'info', text: 'INTERIM ALT' });
+        return { feedback: qqClearFb };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // QR <altitude> <FLID> — Set controller-entered reported altitude (CERA)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'QR') {
+        if (parts.length < 3) {
+            return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
+        }
+        const altFeet = parseAltitude(parts[1].toUpperCase());
+        if (altFeet == null) {
+            return { feedback: [{ type: 'err', text: 'INVALID ALTITUDE' }] };
+        }
+        const flidStr = parts.slice(2).join('').toUpperCase();
+        const f = findFlight(flidStr);
+        if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+        if (!isOwnTrack(f)) return rejectNotOwned('REPORTED ALT', f);
+        localReportedAlt.set(f.gufi, altFeet);
+        invalidateMarker(f.gufi);
+        const altDisp = String(Math.round(altFeet / 100)).padStart(3, '0');
+        return { feedback: [
+            { type: 'ok', text: 'ACCEPT' },
+            { type: 'info', text: 'REPORTED ALT' },
+            { type: 'info', text: `${f.callsign || '???'}/${altDisp}` }
+        ]};
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // QS — Heading/Speed/Free text (HSF) data
+    // QS `<text> <FLID>   — set free text (backtick = ⵔ clear weather symbol)
+    // QS <heading> <FLID>  — set heading (3-digit, 001-360)
+    // QS /<speed> <FLID>   — set speed
+    // QS */ <FLID>         — delete heading
+    // QS /* <FLID>         — delete speed
+    // QS * <FLID>          — delete all HSF
+    // QS <FLID>            — toggle HSF display on line 4
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'QS') {
+        if (parts.length < 2) {
+            return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
+        }
+
+        const qsArg1 = parts[1];
+        const qsArg1Up = qsArg1.toUpperCase();
+
+        // QS * <FLID> — delete all HSF
+        if (qsArg1 === '*' && parts.length >= 3) {
+            const flidStr = parts.slice(2).join('').toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
+            hsfData.delete(f.gufi);
+            hsfShowMap.delete(f.gufi);
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'CLR ALL HSF' },
+                { type: 'info', text: `${f.callsign || '???'}/${getCid(f) || '???'}` }
+            ]};
+        }
+
+        // QS */ <FLID> — delete heading
+        if (qsArg1 === '*/' && parts.length >= 3) {
+            const flidStr = parts.slice(2).join('').toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
+            const hsf = hsfData.get(f.gufi);
+            if (hsf) { hsf.heading = null; if (!hsf.speed && !hsf.freeText) { hsfData.delete(f.gufi); hsfShowMap.delete(f.gufi); } }
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'CLR HEADING' },
+                { type: 'info', text: `${f.callsign || '???'}/${getCid(f) || '???'}` }
+            ]};
+        }
+
+        // QS /* <FLID> — delete speed
+        if (qsArg1 === '/*' && parts.length >= 3) {
+            const flidStr = parts.slice(2).join('').toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
+            const hsf = hsfData.get(f.gufi);
+            if (hsf) { hsf.speed = null; if (!hsf.heading && !hsf.freeText) { hsfData.delete(f.gufi); hsfShowMap.delete(f.gufi); } }
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'CLR SPEED' },
+                { type: 'info', text: `${f.callsign || '???'}/${getCid(f) || '???'}` }
+            ]};
+        }
+
+        // QS `<text> <FLID> — set free text (backtick prefix)
+        if (qsArg1.startsWith('`') && parts.length >= 3) {
+            const text = qsArg1.substring(1) + (parts.length > 3 ? ' ' + parts.slice(2, -1).join(' ') : '');
+            const flidStr = parts[parts.length - 1].toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
+            const hsf = hsfData.get(f.gufi) || {};
+            hsf.freeText = text.toUpperCase();
+            hsf.heading = null;
+            hsf.speed = null;
+            hsfData.set(f.gufi, hsf);
+            hsfShowMap.add(f.gufi);
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'FDB DATA' },
+                { type: 'info', text: `${f.callsign || '???'}/${getCid(f) || '???'}` }
+            ]};
+        }
+
+        // QS /<speed> <FLID> — set speed (/ prefix required)
+        // Speed formats: /S<knots>, /M<mach>, /M<mach>+, /M<mach>-, /<knots>+, /<knots>-
+        if (qsArg1.startsWith('/') && qsArg1.length > 1 && parts.length >= 3) {
+            const spdVal = qsArg1.substring(1).toUpperCase();
+            let qsSpeed = null;
+            // S<knots>
+            const sMatch = /^S(\d{1,4})$/i.exec(spdVal);
+            if (sMatch) qsSpeed = 'S' + sMatch[1];
+            // M<digits>[+/-]
+            if (!qsSpeed) {
+                const mMatch = /^M(\d{1,3})([+-]?)$/i.exec(spdVal);
+                if (mMatch) qsSpeed = 'M' + mMatch[1] + mMatch[2];
+            }
+            // <digits>+/-
+            if (!qsSpeed) {
+                const kMatch = /^(\d{1,4})([+-])$/.exec(spdVal);
+                if (kMatch) qsSpeed = kMatch[1] + kMatch[2];
+            }
+            if (!qsSpeed) return { feedback: [{ type: 'err', text: 'INVALID SPEED FORMAT' }] };
+            const flidStr = parts.slice(2).join('').toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
+            const hsf = hsfData.get(f.gufi) || { heading: null, speed: null, freeText: null };
+            hsf.speed = qsSpeed;
+            hsf.freeText = null;
+            hsfData.set(f.gufi, hsf);
+            hsfShowMap.add(f.gufi);
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: 'FDB DATA' },
+                { type: 'info', text: `${f.callsign || '???'}/${getCid(f) || '???'}` }
+            ]};
+        }
+
+        // QS <heading> <FLID> — set heading
+        // Heading formats: H<degrees 001-360>, <degrees>L, <degrees>R (deviation)
+        if (parts.length >= 3) {
+            const val = qsArg1Up;
+            let qsHeading = null;
+            // H<degrees>
+            const hMatch = /^H(\d{1,3})$/i.exec(val);
+            if (hMatch) {
+                const deg = parseInt(hMatch[1]);
+                if (deg >= 1 && deg <= 360) qsHeading = 'H' + String(deg).padStart(3, '0');
+            }
+            // Heading deviation: <digits>L or <digits>R
+            if (!qsHeading) {
+                const devMatch = /^(\d{1,3})([LR])$/i.exec(val);
+                if (devMatch) {
+                    const deg = parseInt(devMatch[1]);
+                    if (deg >= 1 && deg <= 180) qsHeading = String(deg) + devMatch[2].toUpperCase();
+                }
+            }
+            if (qsHeading) {
+                const flidStr = parts.slice(2).join('').toUpperCase();
+                const f = findFlight(flidStr);
+                if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+                if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
+                const hsf = hsfData.get(f.gufi) || { heading: null, speed: null, freeText: null };
+                hsf.heading = qsHeading;
+                hsf.freeText = null;
+                hsfData.set(f.gufi, hsf);
+                hsfShowMap.add(f.gufi);
+                invalidateMarker(f.gufi);
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: 'FDB DATA' },
+                    { type: 'info', text: `${f.callsign || '???'}/${getCid(f) || '???'}` }
+                ]};
+            }
+            // Invalid heading format if it looks like a heading attempt
+            if (/^H/i.test(val) || /\d[LR]$/i.test(val)) {
+                return { feedback: [{ type: 'err', text: 'INVALID HEADING FORMAT' }] };
+            }
+        }
+
+        // QS <FLID> — toggle HSF display (single argument, not a heading)
+        {
+            const flidStr = parts.slice(1).join('').toUpperCase();
+            const f = findFlight(flidStr);
+            if (f) {
+                if (hsfShowMap.has(f.gufi)) hsfShowMap.delete(f.gufi);
+                else hsfShowMap.add(f.gufi);
+                invalidateMarker(f.gufi);
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: hsfShowMap.has(f.gufi) ? 'SHOW HSF' : 'HIDE HSF' },
+                    { type: 'info', text: `${f.callsign || '???'}/${getCid(f) || '???'}` }
+                ]};
+            }
+        }
+
+        return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
     }
 
     // .FIND <ident> — highlight a fix/navaid/airport on the scope

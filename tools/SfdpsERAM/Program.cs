@@ -649,6 +649,16 @@ void ProcessFlight(XElement flight, string rawXml)
         var bc = enRoute.Descendants().FirstOrDefault(e => e.Name.LocalName == "currentBeaconCode");
         if (bc is not null) state.Squawk = bc.Value;
 
+        // Point-out (PT, HT)
+        var po = enRoute.Elements().FirstOrDefault(e => e.Name.LocalName == "pointout");
+        if (po is not null)
+        {
+            var origUnit = po.Elements().FirstOrDefault(e => e.Name.LocalName == "originatingUnit");
+            var recvUnit = po.Elements().FirstOrDefault(e => e.Name.LocalName == "receivingUnit");
+            if (origUnit is not null) state.PointoutOriginatingUnit = FormatUnit(origUnit);
+            if (recvUnit is not null) state.PointoutReceivingUnit = FormatUnit(recvUnit);
+        }
+
         // Handoff (OH)
         var ho = enRoute.Descendants().FirstOrDefault(e => e.Name.LocalName == "handoff");
         if (ho is not null)
@@ -805,6 +815,14 @@ string BuildEventSummary(string source, XElement flight)
         "CL" => "Flight plan cancellation/clearance",
         "LH" => BuildLhSummary(flight),
         "NP" => "New flight plan",
+        "PT" => BuildPtSummary(flight),
+        "HT" => BuildPtSummary(flight),
+        "DH" => "Departure handoff",
+        "BA" => "Beacon code assignment",
+        "RE" => "Beacon code reassignment",
+        "RH" => "Radar handoff (drop)",
+        "HV" => "Handoff void/complete",
+        "HF" => "Handoff failure",
         _ => $"Message type: {source}"
     };
 }
@@ -835,6 +853,17 @@ string BuildLhSummary(XElement flight)
     if (ia is not null && double.TryParse(ia.Value, out var alt))
         return $"Interim altitude set: {alt:F0} ft";
     return "Local handoff / interim altitude cleared";
+}
+
+string BuildPtSummary(XElement flight)
+{
+    var po = flight.Descendants().FirstOrDefault(e => e.Name.LocalName == "pointout");
+    if (po is null) return "Point-out";
+    var orig = po.Elements().FirstOrDefault(e => e.Name.LocalName == "originatingUnit");
+    var recv = po.Elements().FirstOrDefault(e => e.Name.LocalName == "receivingUnit");
+    if (orig is not null && recv is not null)
+        return $"Point-out: {FormatUnit(orig)} → {FormatUnit(recv)}";
+    return "Point-out";
 }
 
 void SendSnapshot(WsClient client)
@@ -1295,14 +1324,30 @@ List<double[]> ResolveRoute(string routeText, string? origin, string? destinatio
             // Fix/navaid/airport
             var pt = LookupPoint(token, lastPt, nasr);
 
-            // If not found, try stripping radial/distance suffix (e.g., CARNU020034 → CARNU)
-            if (pt is null && token.Length > 5 && char.IsDigit(token[^1]))
+            // If not found, try fix-radial-distance (FRD) format: {navaid}{radial:3}{distance:3}
+            // e.g., SBY217078 = SBY VOR, radial 217°, 78nm
+            if (pt is null && token.Length >= 8 && char.IsDigit(token[^1]))
             {
-                // Find where digits start at the end
                 var nameEnd = token.Length;
                 while (nameEnd > 0 && char.IsDigit(token[nameEnd - 1])) nameEnd--;
-                if (nameEnd >= 2 && nameEnd < token.Length)
-                    pt = LookupPoint(token[..nameEnd], lastPt, nasr);
+                var digits = token[nameEnd..];
+                var baseName = token[..nameEnd];
+                if (digits.Length == 6 && nameEnd >= 2)
+                {
+                    // FRD: 3-digit radial + 3-digit distance
+                    var basePt = LookupPoint(baseName, lastPt, nasr);
+                    if (basePt is not null &&
+                        int.TryParse(digits[..3], out var radial) &&
+                        int.TryParse(digits[3..], out var distNm) &&
+                        radial >= 0 && radial <= 360 && distNm > 0)
+                    {
+                        var (frdLat, frdLon) = ProjectPoint(basePt.Lat, basePt.Lon, radial, distNm);
+                        pt = new NavPoint(token, frdLat, frdLon);
+                    }
+                }
+                // Fallback: strip digits and use base navaid directly
+                if (pt is null && nameEnd >= 2 && nameEnd < token.Length)
+                    pt = LookupPoint(baseName, lastPt, nasr);
             }
 
             if (pt is not null)
@@ -1350,6 +1395,20 @@ NavPoint? LookupAirport(string code, NasrData nasr)
     if (nasr.Airports.TryGetValue(code, out apt)) return apt;
     if (code.Length == 4 && code.StartsWith("K") && nasr.Airports.TryGetValue(code[1..], out apt)) return apt;
     return null;
+}
+
+// Project a point from lat/lon along a bearing for a given distance (great circle)
+(double Lat, double Lon) ProjectPoint(double lat, double lon, double bearingDeg, double distNm)
+{
+    const double R = 3440.065; // Earth radius in nm
+    var d = distNm / R;
+    var brng = bearingDeg * Math.PI / 180;
+    var lat1 = lat * Math.PI / 180;
+    var lon1 = lon * Math.PI / 180;
+    var lat2 = Math.Asin(Math.Sin(lat1) * Math.Cos(d) + Math.Cos(lat1) * Math.Sin(d) * Math.Cos(brng));
+    var lon2 = lon1 + Math.Atan2(Math.Sin(brng) * Math.Sin(d) * Math.Cos(lat1),
+                                  Math.Cos(d) - Math.Sin(lat1) * Math.Sin(lat2));
+    return (lat2 * 180 / Math.PI, lon2 * 180 / Math.PI);
 }
 
 NavPoint? LookupPoint(string ident, NavPoint? near, NasrData nasr)
@@ -1513,6 +1572,10 @@ class FlightState
     public string? HandoffAccepting { get; set; }
     public bool HandoffForced { get; set; } // true when handoff accepted via /OK (AH message)
 
+    // Point-out
+    public string? PointoutOriginatingUnit { get; set; }
+    public string? PointoutReceivingUnit { get; set; }
+
     // Datalink / CPDLC
     public string? CommunicationCode { get; set; }
     public string? DataLinkCode { get; set; }
@@ -1568,6 +1631,7 @@ class FlightState
         ControllingFacility, ControllingSector,
         ReportingFacility,
         HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
+        PointoutOriginatingUnit, PointoutReceivingUnit,
         DataLinkCode, OtherDataLink,
         Route, FlightRules, STAR, Remarks,
         Registration, EquipmentQualifier, RequestedSpeed,
@@ -1595,6 +1659,7 @@ class FlightState
             ActualDepartureTime, ETA, CoordinationTime, CoordinationFix,
             ReportingFacility, ControllingFacility, ControllingSector,
             HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
+            PointoutOriginatingUnit, PointoutReceivingUnit,
             CommunicationCode, DataLinkCode, OtherDataLink, SELCAL,
             NavigationCode, PBNCode, SurveillanceCode,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),

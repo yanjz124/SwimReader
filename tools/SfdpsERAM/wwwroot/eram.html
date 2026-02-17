@@ -165,6 +165,9 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 /* ── Column 0 (R / VCI) — inline prefix on each data block line ── */
 .ac-col0 { color: #cccc44; }
 .ac-vci { color: #44cc44; }
+/* ── Point-out P/A indicator (line 0) ── */
+.ac-po-pending { color: #cccc44; }
+.ac-po-accepted { color: #ffffff; }
 
 /* ── Line 0 (P/A pointout) — above data block ── */
 .ac-line0 {
@@ -484,6 +487,9 @@ const localReportedAlt = new Map();  // gufi → feet — QR controller-entered 
 // HSF (Heading/Speed/Free text) data — QS command
 const hsfData = new Map();     // gufi → { heading, speed, freeText } — controller-entered HSF
 const hsfShowMap = new Set();  // GUFIs currently displaying HSF on line 4 (toggled by ↴ click or QS <FLID>)
+
+// Point-out state
+const pointoutAcked = new Set();  // GUFIs with acknowledged point-outs (P→A)
 
 // .FIND overlay state
 let findMarker = null;   // { ident, lat, lon, time } — active find highlight
@@ -1429,6 +1435,11 @@ function shouldShowFdb(gufi, cls) {
             if (quickLookSectors.has(sec)) return true;
         }
     }
+    // Point-out tracks force FDB
+    {
+        const f = flights.get(gufi);
+        if (f && getPointoutIndicator(f)) return true;
+    }
     // Default: own and handoff tracks get FDB, others get LDB
     return cls === 'own' || cls === 'ho' || cls === 'emrg';
 }
@@ -1645,11 +1656,36 @@ function formatFdbHtml(f, cls) {
     const col0R   = '<span class="ac-col0 ac-r" style="display:inline-block;width:1.5ch;text-align:center;">R</span>';
     const col0Sp  = '<span style="display:inline-block;width:1.5ch;">\u00a0</span>';
 
-    let html = `${col0Hit}${l1}\n`;
+    // Line 0: Point-out P/A indicator (between 2nd and 3rd char position)
+    const poInfo = getPointoutIndicator(f);
+    let html = '';
+    if (poInfo) {
+        html += `${col0Sp}\u00a0<span class="ac-po-${poInfo.cls}">${poInfo.ch}</span>\n`;
+    }
+    html += `${col0Hit}${l1}\n`;
     html += `${showVci ? col0Vci : col0Hit}${l2}\n`;
     html += `${showR ? col0R : col0Sp}${l3}`;
     if (l4) html += `\n${col0Sp}${l4}`;
     return html;
+}
+
+// Determine point-out indicator for a flight.
+// Returns {ch, cls} where ch is 'P' or 'A' and cls is 'pending' or 'accepted', or null.
+function getPointoutIndicator(f) {
+    if (!f.pointoutOriginatingUnit && !f.pointoutReceivingUnit) return null;
+    const selFac = document.getElementById('facility')?.value;
+    if (!selFac) return null;
+
+    const origFac = (f.pointoutOriginatingUnit || '').split('/')[0];
+    const recvFac = (f.pointoutReceivingUnit || '').split('/')[0];
+
+    // Show P if the selected facility is involved in the point-out
+    if (selFac === origFac || selFac === recvFac) {
+        // Check if acknowledged (client-side tracking)
+        if (pointoutAcked.has(f.gufi)) return { ch: 'A', cls: 'accepted' };
+        return { ch: 'P', cls: 'pending' };
+    }
+    return null;
 }
 
 function formatAltLine(f) {
@@ -2413,6 +2449,7 @@ document.getElementById('sel-histcount').addEventListener('change', function () 
     for (const [, hist] of flightHistory) {
         while (hist.length > MAX_HISTORY) hist.shift();
     }
+    invalidateAllMarkers();
     saveSettingsToUrl();
 });
 
@@ -2424,6 +2461,7 @@ document.getElementById('rng-ldb-brightness').addEventListener('input', function
 
 document.getElementById('sel-vector').addEventListener('change', function () {
     vectorMinutes = parseInt(this.value);
+    invalidateAllMarkers();
     saveSettingsToUrl();
 });
 
@@ -2672,8 +2710,11 @@ function gcDistNm(lat1, lon1, lat2, lon2) {
 
 // Find closest segment on route to aircraft position, return { index, frac }
 // index = segment start index, frac = 0-1 fraction along that segment
-function findRouteProgress(waypoints, lat, lon) {
+function findRouteProgress(waypoints, lat, lon, vx, vy) {
+    // vx/vy = trackVelocityX/Y (knots, X=east, Y=north) — used for direction tiebreaking
     let bestDist = Infinity, bestIdx = 0, bestFrac = 0;
+    const hasVel = vx != null && vy != null && (vx !== 0 || vy !== 0);
+
     for (let i = 0; i < waypoints.length - 1; i++) {
         const [aLat, aLon] = waypoints[i];
         const [bLat, bLon] = waypoints[i + 1];
@@ -2683,12 +2724,29 @@ function findRouteProgress(waypoints, lat, lon) {
         let t = lenSq > 0 ? ((lon - aLon) * dx + (lat - aLat) * dy) / lenSq : 0;
         t = Math.max(0, Math.min(1, t));
         const pLat = aLat + t * dy, pLon = aLon + t * dx;
-        const d = gcDistNm(lat, lon, pLat, pLon);
+        let d = gcDistNm(lat, lon, pLat, pLon);
+        // Direction penalty: if aircraft velocity opposes this segment direction, add penalty
+        if (hasVel && lenSq > 0) {
+            // Segment direction (in lon/lat space, similar to vx/vy east/north)
+            const segLen = Math.sqrt(lenSq);
+            const segDx = dx / segLen, segDy = dy / segLen;
+            const velLen = Math.sqrt(vx * vx + vy * vy);
+            const velDx = vx / velLen, velDy = vy / velLen;
+            const dot = segDx * velDx + segDy * velDy;  // -1 to 1
+            if (dot < 0) d += 50;  // 50nm penalty for backwards-facing segments
+        }
         if (d < bestDist) { bestDist = d; bestIdx = i; bestFrac = t; }
     }
-    // Also check if aircraft is closest to a waypoint directly
+    // Also check if aircraft is closest to a waypoint directly (within forward direction)
     for (let i = 0; i < waypoints.length; i++) {
-        const d = gcDistNm(lat, lon, waypoints[i][0], waypoints[i][1]);
+        let d = gcDistNm(lat, lon, waypoints[i][0], waypoints[i][1]);
+        // For waypoint-only check, penalize waypoints that are behind the aircraft
+        if (hasVel && i < waypoints.length - 1) {
+            const toBearing = Math.atan2(waypoints[i][1] - lon, waypoints[i][0] - lat);
+            const velBearing = Math.atan2(vx, vy);
+            const angleDiff = Math.abs(((toBearing - velBearing + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+            if (angleDiff > Math.PI / 2) d += 50;  // behind the aircraft
+        }
         if (d < bestDist) { bestDist = d; bestIdx = Math.max(0, i - 1); bestFrac = i === 0 ? 0 : 1; }
     }
     return { index: bestIdx, frac: bestFrac };
@@ -2783,8 +2841,13 @@ async function showRouteForFlight(gufi, minutes = null, persistent = false) {
         const speed = f.requestedSpeed || f.groundSpeed || 250;
         const mins = minutes === 0 ? 9999 : (minutes || 20);  // 0 = /M (max), default 20
         const maxNm = speed * mins / 60;
-        const prog = findRouteProgress(waypoints, f.latitude, f.longitude);
+        const prog = findRouteProgress(waypoints, f.latitude, f.longitude,
+            f.trackVelocityX, f.trackVelocityY);
         ({ latlngs, reachedDest } = trimRouteForward(waypoints, prog.index, prog.frac, maxNm));
+        // Always start the route line from the aircraft's actual position
+        if (latlngs.length > 0) {
+            latlngs[0] = [f.latitude, f.longitude];
+        }
     } else {
         // No position or full route requested — show entire route
         latlngs = waypoints;
@@ -3943,6 +4006,49 @@ function processCommand(cmd) {
         return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // QP A <FLID>          — acknowledge a pending point out (P→A)
+    // QP <FLID>            — toggle point-out FDB (clear A indicator)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'QP') {
+        if (parts.length < 2) {
+            return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
+        }
+
+        // QP A <FLID> — acknowledge point out
+        if (parts.length >= 3 && parts[1].toUpperCase() === 'A') {
+            const flidStr = parts.slice(2).join('').toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            if (!f.pointoutOriginatingUnit && !f.pointoutReceivingUnit) {
+                return { feedback: [{ type: 'err', text: 'NO POINT OUT' }] };
+            }
+            pointoutAcked.add(f.gufi);
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `PO ACK ${f.callsign || '???'}` }
+            ]};
+        }
+
+        // QP <FLID> — clear point-out indicator (toggle off)
+        {
+            const flidStr = parts.slice(1).join('').toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            // Clear point-out state from client side
+            pointoutAcked.delete(f.gufi);
+            // Clear the server-side point-out fields locally so P disappears
+            f.pointoutOriginatingUnit = null;
+            f.pointoutReceivingUnit = null;
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `PO CLR ${f.callsign || '???'}` }
+            ]};
+        }
+    }
+
     // .FIND <ident> — highlight a fix/navaid/airport on the scope
     if ((verb === '.FIND' || verb === '.F') && parts.length >= 2) {
         const ident = parts.slice(1).join('').toUpperCase();
@@ -4010,6 +4116,13 @@ function processCommand(cmd) {
                 return { feedback: [
                     { type: 'err', text: 'USER ACTION NOT ALLOWED ON A\nCONTROLLED FLIGHT' },
                     { type: 'info', text: `FORCED DATA BLK ${f.callsign}` }
+                ]};
+            }
+            // Point-out tracks cannot be toggled to LDB — use QP <FLID> instead
+            if (currentlyFdb && getPointoutIndicator(f)) {
+                return { feedback: [
+                    { type: 'err', text: 'POINT OUT ACTIVE — USE QP' },
+                    { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
                 ]};
             }
             fdbOverrides.set(f.gufi, !currentlyFdb);

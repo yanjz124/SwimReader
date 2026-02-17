@@ -140,20 +140,53 @@ Solace FDPS queue → Raw XML → ProcessFlight() → FlightState (ConcurrentDic
                                               eram.html / index.html (browser)
 ```
 
-### SFDPS Message Types Handled
-| Source | Description |
-|--------|-------------|
-| `TH` | Track history (position update) |
-| `HZ` | Heartbeat/position update |
-| `OH` | Ownership/handoff update |
-| `FH` | Full flight plan update |
-| `HP` | Handoff proposal |
-| `HU` | Handoff update |
-| `AH` | Assignment handoff |
-| `HX` | Handoff cancel |
-| `CL` | Flight close/cancel |
-| `LH` | Late handoff |
-| `NP` | New position |
+### SFDPS Message Types (source attribute)
+Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026).
+
+**Implemented:**
+| Source | Frequency | Description | Key Data |
+|--------|-----------|-------------|----------|
+| `TH` | ~3247/500 | Track history (batched position updates) | Position, altitude, speed, velocity |
+| `OH` | ~97/500 | Ownership/handoff update | Handoff event (INITIATION/ACCEPTANCE/RETRACTION), receiving/transferring units |
+| `HZ` | ~63/500 | Heartbeat/position update | Position, assigned altitude |
+| `HP` | ~61/500 | Handoff proposal | Initiates handoff to receiving sector |
+| `HX` | ~58/500 | Handoff execution (route transfer) | Route transfer between facilities |
+| `AH` | ~40/500 | Assumed/amended handoff (/OK forced) | Forced handoff acceptance, sets HandoffForced flag |
+| `LH` | ~18/500 | Local handoff / interim altitude event | Sets/clears interim altitude |
+| `FH` | ~15/500 | Full flight plan update | Canonical state snapshot: aircraft desc, route, altitude |
+| `CL` | ~10/500 | Flight plan cancellation/clearance | Flight removal/cleanup |
+| `HU` | ~7/500 | Handoff update | Updates handoff state during transition |
+| `PT` | ~3/500 | **Point-out** | `<pointout>` with `originatingUnit` + `receivingUnit` (inter-facility) |
+| `HT` | ~4/500 | **Handoff transfer with point-out** | `<pointout>` element (intra-facility point-outs) |
+| `NP` | rare | New flight plan | New flight entry |
+
+**Discovered but not yet implemented:**
+| Source | Frequency | Description | Key Data |
+|--------|-----------|-------------|----------|
+| `HF` | ~13/500 | Handoff failure | Minimal — callsign, airports, status only |
+| `RH` | ~3/500 | Radar handoff (drop) | Flight status = DROPPED |
+| `HV` | ~3/500 | Handoff void/complete | Flight status = COMPLETED, actual arrival time |
+| `DH` | ~3/500 | Departure handoff | `<coordination>` element with coordinationTime, coordinationTimeHandling |
+| `BA` | ~1/500 | Beacon code assignment | `<beaconCodeAssignment>` with `currentBeaconCode` |
+| `RE` | ~1/500 | Beacon code reassignment | `<beaconCodeAssignment>` with `currentBeaconCode` + `previousBeaconCode` |
+
+**Handoff event attribute values (on `<handoff>` element):**
+- `INITIATION` — handoff proposed
+- `ACCEPTANCE` — handoff accepted
+- `RETRACTION` — handoff retracted
+- `UPDATE` — handoff state update
+- `FAILURE` — handoff failed
+- `EXECUTION` — route transfer execution (used with AH for /OK)
+
+**Point-out XML structure (PT/HT messages):**
+```xml
+<enRoute>
+    <pointout>
+        <originatingUnit unitIdentifier="ZDV" sectorIdentifier="32"/>
+        <receivingUnit unitIdentifier="ZLC" sectorIdentifier="05"/>
+    </pointout>
+</enRoute>
+```
 
 ### FlightState Fields
 Core fields tracked per flight (by GUFI):
@@ -163,6 +196,7 @@ Core fields tracked per flight (by GUFI):
 - Altitude: `assignedAltitude`, `interimAltitude`, `reportedAltitude`
 - Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`
 - Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
+- Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit`
 - Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `equipmentQualifier`
 - Datalink: `dataLinkCode`, `otherDataLink`, `communicationCode`
 - Status: `flightStatus` (ACTIVE, DROPPED, CANCELLED)
@@ -188,13 +222,15 @@ Server-side in `Program.cs` ProcessFlight():
 
 ## ERAM Scope Display (`eram.html`)
 
-### Data Block Format (ERAM 4-line)
+### Data Block Format (ERAM 5-line with Line 0)
 ```
+  P                    ← Line 0: Point-out indicator (P=pending, A=accepted, between chars 2-3)
  R  AAL123            ← Line 1: Callsign (Column 0: R = non-owned track)
     360C357            ← Line 2: {assigned FL}{status}{reported FL}
     1234 H33           ← Line 3: CID + Field E (groundspeed OR handoff)
     DCA                ← Line 4: Destination (FAA LID)
 ```
+Line 0 only appears when the flight has an active point-out to/from the selected facility.
 
 **Line 2 altitude status codes:**
 - `C` = conforming (reported within ±200ft of assigned)
@@ -297,7 +333,9 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `QS \`<text> <FLID>` | Set free text (backtick prefix) |
 | `QS * <FLID>` | Clear all HSF data; `*/` = heading only, `/*` = speed only |
 | `QS <FLID>` | Toggle HSF display on line 4 |
-| `<FLID>` | Toggle FDB/LDB for flight |
+| `QP A <FLID>` | Acknowledge point-out (P→A indicator) |
+| `QP <FLID>` | Clear point-out indicator / toggle FDB→LDB |
+| `<FLID>` | Toggle FDB/LDB for flight (blocked during active point-out) |
 
 FLIDs can be callsign or CID (CID only matches selected facility). When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
 

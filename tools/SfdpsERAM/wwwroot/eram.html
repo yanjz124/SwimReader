@@ -66,7 +66,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 /* ── Map overrides ── */
 .leaflet-container {
     background: #0a0a0a !important;
-    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='16' y1='8' x2='16' y2='12' stroke='white' stroke-width='1'/%3E%3Cline x1='16' y1='20' x2='16' y2='24' stroke='white' stroke-width='1'/%3E%3Cline x1='8' y1='16' x2='12' y2='16' stroke='white' stroke-width='1'/%3E%3Cline x1='20' y1='16' x2='24' y2='16' stroke='white' stroke-width='1'/%3E%3Crect x='12' y='12' width='8' height='8' fill='none' stroke='white' stroke-width='1'/%3E%3C/svg%3E") 16 16, crosshair !important;
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='16' y1='9' x2='16' y2='12' stroke='white' stroke-width='4.5'/%3E%3Cline x1='16' y1='20' x2='16' y2='23' stroke='white' stroke-width='4.5'/%3E%3Cline x1='9' y1='16' x2='12' y2='16' stroke='white' stroke-width='4.5'/%3E%3Cline x1='20' y1='16' x2='23' y2='16' stroke='white' stroke-width='4.5'/%3E%3Crect x='12' y='12' width='8' height='8' fill='none' stroke='white' stroke-width='1.3'/%3E%3C/svg%3E") 16 16, crosshair !important;
 }
 .leaflet-control-zoom a { background: #222 !important; color: #cccc44 !important; border-color: #444 !important; }
 .leaflet-control-attribution { display: none !important; }
@@ -82,7 +82,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     position: absolute; width: 2px; height: 12px;
     background: #cccc44;
     transform: translate(-1px, -6px) rotate(-45deg);
-    pointer-events: auto; cursor: pointer;
+    pointer-events: auto; cursor: inherit;
 }
 .ac-sym-corr-bcn.emrg { background: #ff4444; }
 
@@ -93,7 +93,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     font-size: 16px; font-weight: bold; line-height: 1;
     color: #cccc44;
     transform: translate(-50%, -50%);
-    pointer-events: auto; cursor: pointer;
+    pointer-events: auto; cursor: inherit;
 }
 .ac-sym-reduced-sep.emrg { color: #ff4444; }
 
@@ -102,14 +102,14 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     position: absolute; width: 2px; height: 12px;
     background: #cccc44;
     transform: translate(-1px, -6px) rotate(45deg);
-    pointer-events: auto; cursor: pointer;
+    pointer-events: auto; cursor: inherit;
 }
 
 /* Uncorrelated Primary: + plus — transponder off/standby */
 .ac-sym-uncorr-pri {
     position: absolute; width: 12px; height: 12px;
     transform: translate(-6px, -6px);
-    pointer-events: auto; cursor: pointer;
+    pointer-events: auto; cursor: inherit;
 }
 .ac-sym-uncorr-pri::before, .ac-sym-uncorr-pri::after {
     content: ''; position: absolute; background: #cccc44;
@@ -127,7 +127,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     border: 1.5px solid #cccc44; background: transparent;
     transform: rotate(45deg);
     transform-origin: center;
-    pointer-events: auto; cursor: pointer;
+    pointer-events: auto; cursor: inherit;
     z-index: 1;
 }
 .ac-sym-flat-track.emrg { border-color: #ff4444; }
@@ -139,7 +139,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     font-size: 14px; font-weight: bold;
     color: #cccc44;
     transform: translate(-5px, -7px);
-    pointer-events: auto; cursor: pointer;
+    pointer-events: auto; cursor: inherit;
 }
 
 /* Handoff flash — handled by JS content changes in formatLine3() */
@@ -149,7 +149,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 
 /* ── Data block ── */
 .ac-db {
-    position: absolute; white-space: pre; pointer-events: auto; cursor: default;
+    position: absolute; white-space: pre; pointer-events: auto; cursor: inherit;
     font-family: 'ERAM', 'Consolas', monospace;
     font-size: 10px; line-height: 12.5px; letter-spacing: 0.5px;
     padding: 1px 2px; color: #cccc44;
@@ -198,13 +198,13 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 #mca-preview {
     background: #0a0a0a; border: 1px solid #888; color: #ffffff;
     padding: 3px 6px; min-width: 400px;
-    font-size: 14px; line-height: 18px; white-space: pre; min-height: 28px;
+    font-size: 14px; font-weight: normal; line-height: 18px; white-space: pre; min-height: 28px;
     display: flex; align-items: center;
 }
 #mca-feedback {
     background: #0a0a0a; border: 1px solid #888; border-top: none; color: #ffffff;
     padding: 3px 6px; min-width: 400px;
-    font-size: 14px; line-height: 18px; white-space: pre; min-height: 68px;
+    font-size: 14px; font-weight: normal; line-height: 18px; white-space: pre; min-height: 68px;
 }
 .transp-mca #mca-preview,
 .transp-mca #mca-feedback { background: transparent; }
@@ -224,6 +224,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     padding: 3px 6px; width: 500px; min-height: 100px;
     max-height: 60vh; overflow-y: auto;
     font-size: 14px; line-height: 18px; white-space: pre-wrap; word-break: break-all;
+    font-weight: normal;
 }
 </style>
 </head>
@@ -461,6 +462,7 @@ const knownFacilities = new Map();
 const hoCompletedInfo = new Map(); // gufi → { time, receiving, transferring } — track completed handoffs for 60s O display
 const dbPositions = new Map(); // gufi → position number 1-9 (data block placement)
 const ldrLenOverrides = new Map(); // gufi → leader length level (0-3), default 1
+const driActive = new Map();       // gufi → 'J' (standard 5nm) or 'T' (reduced 3nm)
 const dwellLocked = new Set();     // GUFIs with persistent dwell emphasis (toggled via Field A click)
 const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indicator) toggled on
 
@@ -608,6 +610,36 @@ overlayCanvas.style.pointerEvents = 'none';
 overlayCanvas.style.zIndex = '440';
 map.getPane('overlayPane').appendChild(overlayCanvas);
 
+// Draw a symbol as canvas geometry at (cx, cy) — same shapes as the HTML target symbols
+const SYM_LINE_LEN = 14;   // length of \ and / lines (px)
+const SYM_LINE_W = 2;      // stroke width
+const SYM_DOT_R = 2.5;     // dot radius for • symbol
+function drawSymbolGeometry(ctx, sym, cx, cy, color) {
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = SYM_LINE_W;
+    const half = SYM_LINE_LEN / 2;
+    if (sym === '\\') {
+        // Backslash: top-left to bottom-right
+        ctx.beginPath();
+        ctx.moveTo(cx - half * 0.707, cy - half * 0.707);
+        ctx.lineTo(cx + half * 0.707, cy + half * 0.707);
+        ctx.stroke();
+    } else if (sym === '/') {
+        // Forward slash: bottom-left to top-right
+        ctx.beginPath();
+        ctx.moveTo(cx - half * 0.707, cy + half * 0.707);
+        ctx.lineTo(cx + half * 0.707, cy - half * 0.707);
+        ctx.stroke();
+    } else if (sym === '\u2022') {
+        // Dot: filled circle
+        ctx.beginPath();
+        ctx.arc(cx, cy, SYM_DOT_R, 0, 2 * Math.PI);
+        ctx.fill();
+    }
+    // ◇ (diamond): history doesn't draw diamond overlay, only the current position marker does
+}
+
 function drawOverlay() {
     const size = map.getSize();
     if (size.x === 0 || size.y === 0) return;
@@ -619,13 +651,8 @@ function drawOverlay() {
 
     const ctx = overlayCanvas.getContext('2d');
 
-    // ── History symbols (dimmer target symbols) ──
+    // ── History symbols (dimmer target symbols — drawn as geometry, not font) ──
     if (showHistory) {
-        const histFontSize = Math.max(fontSize, 8);  // match data block font, no zoom scaling
-        ctx.font = `bold ${histFontSize}px ERAM, Consolas, monospace`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
         for (const [gufi, hist] of flightHistory) {
             if (hist.length === 0) continue;
             const f = flights.get(gufi);
@@ -644,8 +671,7 @@ function drawOverlay() {
                 const x = pt.x - topLeft.x;
                 const y = pt.y - topLeft.y;
                 ctx.globalAlpha = histAlpha;
-                ctx.fillStyle = color;
-                ctx.fillText(hist[i].sym || '\\', x, y);
+                drawSymbolGeometry(ctx, hist[i].sym || '\\', x, y, color);
             }
         }
     }
@@ -675,6 +701,45 @@ function drawOverlay() {
             ctx.moveTo(startPt.x - topLeft.x, startPt.y - topLeft.y);
             ctx.lineTo(endPt.x - topLeft.x, endPt.y - topLeft.y);
             ctx.stroke();
+        }
+    }
+
+    // ── DRI halos (QP command — 5nm standard or 3nm reduced) ──
+    if (driActive.size > 0) {
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 1.0;
+        for (const [gufi, driType] of driActive) {
+            const f = flights.get(gufi);
+            if (!f || f.latitude == null || f.longitude == null) continue;
+            if (!isVisible(f)) continue;
+            if (isDedupHidden(gufi, f)) continue;
+            if (!bounds.contains([f.latitude, f.longitude])) continue;
+
+            const radiusNm = driType === 'T' ? 3 : 5;
+            const radiusDeg = radiusNm / 60; // 1 NM = 1/60 degree latitude
+            const centerPt = map.latLngToLayerPoint([f.latitude, f.longitude]);
+            const edgePt = map.latLngToLayerPoint([f.latitude + radiusDeg, f.longitude]);
+            const radiusPx = Math.abs(centerPt.y - edgePt.y);
+            const cx = centerPt.x - topLeft.x;
+            const cy = centerPt.y - topLeft.y;
+            const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
+            ctx.strokeStyle = color;
+
+            if (driType === 'T') {
+                // Reduced DRI: circle with 4 gaps (at N, E, S, W)
+                const gapAngle = Math.PI / 12; // 15° gap at each cardinal
+                for (let q = 0; q < 4; q++) {
+                    const cardinal = -Math.PI / 2 + q * Math.PI / 2; // N, E, S, W
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radiusPx, cardinal + gapAngle, cardinal + Math.PI / 2 - gapAngle);
+                    ctx.stroke();
+                }
+            } else {
+                // Standard DRI: full circle
+                ctx.beginPath();
+                ctx.arc(cx, cy, radiusPx, 0, 2 * Math.PI);
+                ctx.stroke();
+            }
         }
     }
 
@@ -970,56 +1035,51 @@ function clearProcOverlay() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// NEXRAD weather radar overlay — ERAM-style colors
-// Source: Iowa Environmental Mesonet XYZ tile service (USCOMP N0Q composite)
-// Colors: Moderate=solid blue, Heavy=checkered cyan/black, Extreme=solid cyan
+// NEXRAD weather radar overlay — ERAM-style pixel rendering
+// Source: RainViewer global radar tiles (CORS-enabled, transparent backgrounds)
+// Alpha channel encodes precipitation intensity → classify into ERAM categories:
+//   Moderate (20-40 dBZ) → solid blue #0044ff
+//   Heavy (40-55 dBZ) → checkered cyan #00ccff / black
+//   Extreme (55+ dBZ) → solid cyan #00ccff
 // ════════════════════════════════════════════════════════════════════════════
 let nexradLayer = null;
 let nexradLevel = 0;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=all(123)
 let nexradBrightness = 50;
-let nexradTimestamp = Date.now();
-// Proxied through local server to avoid CORS issues (enables canvas pixel manipulation for ERAM colors)
-const NEXRAD_TILE_URL = '/api/nexrad/tile';
+let rainviewerPath = null;     // Latest radar tile path from RainViewer API
 
-// Classify NWS-palette pixel into ERAM precip category
-// NWS N0Q uses dBZ-mapped colors: greens ~20-35dBZ, yellows ~35-50, reds ~50-65, purples 65+
-// Returns: 0=transparent/skip, 1=moderate, 2=heavy, 3=extreme
-function classifyPrecip(r, g, b) {
-    // Skip near-black / transparent pixels
-    if (r < 10 && g < 10 && b < 10) return 0;
-    // NWS N0Q color ranges (approximate from standard NEXRAD palette):
-    // Greens (20-35 dBZ): moderate
-    if (g > 100 && g > r && g > b) return 1;
-    // Yellows (35-50 dBZ): moderate
-    if (r > 150 && g > 150 && b < 100) return 1;
-    // Oranges (50-55 dBZ): heavy
-    if (r > 200 && g > 100 && g < 180 && b < 80) return 2;
-    // Reds (55-65 dBZ): heavy
-    if (r > 180 && g < 80 && b < 80) return 2;
-    // Dark reds / maroons: heavy
-    if (r > 120 && r < 200 && g < 50 && b < 50) return 2;
-    // Magentas / purples (65+ dBZ): extreme
-    if (r > 150 && b > 100 && g < 100) return 3;
-    // Pinks: extreme
-    if (r > 200 && b > 150 && g < 150) return 3;
-    // White / bright (very high dBZ): extreme
-    if (r > 200 && g > 200 && b > 200) return 3;
-    // Light blues in NWS palette (5-15 dBZ): skip (very light precip)
-    if (b > 150 && r < 100 && g < 150) return 0;
-    // Fallback: if bright enough, classify as moderate
-    if (r + g + b > 200) return 1;
-    return 0;
+// Fetch latest radar timestamp from RainViewer API
+async function refreshRainviewerTimestamp() {
+    try {
+        const resp = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+        const data = await resp.json();
+        const frames = data?.radar?.past;
+        if (frames && frames.length > 0) {
+            rainviewerPath = frames[frames.length - 1].path;
+            console.log('RainViewer radar path:', rainviewerPath);
+        }
+    } catch (e) {
+        console.warn('Failed to fetch RainViewer timestamp:', e);
+    }
 }
 
-// Remap tile pixels to ERAM colors based on NX LVL
+// Remap tile pixels to ERAM colors based on alpha-encoded intensity
+// RainViewer tiles: transparent = no data, alpha = precipitation intensity
+// Alpha thresholds mapped to dBZ categories:
+//   alpha 1-60 → moderate (~10-35 dBZ)
+//   alpha 61-100 → heavy (~35-55 dBZ)
+//   alpha 101+ → extreme (~55+ dBZ)
 function remapNexradTile(canvas, level) {
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, 256, 256);
     const d = imageData.data;
     for (let i = 0; i < d.length; i += 4) {
-        if (d[i + 3] < 10) { d[i + 3] = 0; continue; }  // skip transparent
-        const cat = classifyPrecip(d[i], d[i + 1], d[i + 2]);
-        if (cat === 0) { d[i + 3] = 0; continue; }
+        const a = d[i + 3];
+        if (a < 1) continue;  // transparent = no data
+        // Classify by alpha intensity
+        let cat;
+        if (a <= 60) cat = 1;       // moderate
+        else if (a <= 100) cat = 2;  // heavy
+        else cat = 3;                // extreme
         // NX LVL filtering: 1=extreme only, 2=heavy+extreme, 3=all
         if (level === 1 && cat < 3) { d[i + 3] = 0; continue; }
         if (level === 2 && cat < 2) { d[i + 3] = 0; continue; }
@@ -1045,43 +1105,44 @@ function remapNexradTile(canvas, level) {
 }
 
 function createNexradLayer() {
-    const level = nexradLevel;
-    return L.gridLayer({
+    const path = rainviewerPath;
+    if (!path) {
+        console.warn('NEXRAD: no RainViewer path yet');
+        return null;
+    }
+    console.log('NEXRAD: creating layer with path', path, 'level', nexradLevel);
+    // Use plain L.tileLayer first to confirm tiles render, then switch to canvas for remapping
+    return L.tileLayer(`https://tilecache.rainviewer.com${path}/256/{z}/{x}/{y}/1/0_0.png`, {
         pane: 'nexrad',
         opacity: nexradBrightness / 100,
-        tileSize: 256,
         maxZoom: 16,
         zIndex: 250,
-        createTile: function(coords, done) {
-            const tile = document.createElement('canvas');
-            tile.width = tile.height = 256;
-            const ctx = tile.getContext('2d');
-            // Same-origin proxy — no CORS issues, canvas pixel manipulation works
-            const url = `${NEXRAD_TILE_URL}?z=${coords.z}&x=${coords.x}&y=${coords.y}&_t=${nexradTimestamp}`;
-            const img = new Image();
-            img.onload = function() {
-                ctx.drawImage(img, 0, 0, 256, 256);
-                remapNexradTile(tile, level);
-                done(null, tile);
-            };
-            img.onerror = function() { done(null, tile); };
-            img.src = url;
-            return tile;
-        }
+        tileSize: 256,
     });
 }
 
 function updateNexrad() {
     if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = null; }
     if (nexradLevel === 0) return;
+    if (!rainviewerPath) {
+        // Path not yet available — fetch and retry
+        refreshRainviewerTimestamp().then(() => {
+            if (nexradLevel > 0 && !nexradLayer) {
+                nexradLayer = createNexradLayer();
+                if (nexradLayer) nexradLayer.addTo(map);
+            }
+        });
+        return;
+    }
     nexradLayer = createNexradLayer();
-    nexradLayer.addTo(map);
+    if (nexradLayer) nexradLayer.addTo(map);
 }
 
-// Auto-refresh radar data every 5 minutes
-setInterval(() => {
-    nexradTimestamp = Date.now();
-    if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = createNexradLayer(); nexradLayer.addTo(map); }
+// Fetch initial timestamp, then refresh every 5 minutes
+refreshRainviewerTimestamp().then(() => { if (nexradLevel > 0) updateNexrad(); });
+setInterval(async () => {
+    await refreshRainviewerTimestamp();
+    if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = createNexradLayer(); if (nexradLayer) nexradLayer.addTo(map); }
 }, 5 * 60 * 1000);
 
 document.getElementById('sel-nxlvl').addEventListener('change', function () {
@@ -1220,18 +1281,19 @@ function getLeaderOffset(gufi) {
     const level = ldrLenOverrides.get(gufi) ?? 1;
     const len = level * LDR_LEN;
     if (len === 0) return { dx: 0, dy: 0 };
-    if (!pos || pos === 6) return { dx: len, dy: 0 };            // E (default)
     const D = len * 0.707; // diagonal distance
+    if (!pos || pos === 9) return { dx: D, dy: -D };             // NE (default)
     switch (pos) {
         case 1: return { dx: -D, dy: D };      // SW
         case 2: return { dx: 0, dy: len };      // S
         case 3: return { dx: D, dy: D };        // SE
         case 4: return { dx: -len, dy: 0 };     // W
-        case 5: return { dx: len, dy: 0 };      // default (E)
+        case 5:
+        case 6: return { dx: len, dy: 0 };      // E
         case 7: return { dx: -D, dy: -D };      // NW
         case 8: return { dx: 0, dy: -len };     // N
         case 9: return { dx: D, dy: -D };       // NE
-        default: return { dx: len, dy: 0 };
+        default: return { dx: D, dy: -D };     // NE (default)
     }
 }
 
@@ -1243,7 +1305,7 @@ function getLeaderOffset(gufi) {
 //   W:  right edge, between lines 2-3   NW: right edge, between lines 2-3
 // xShift: 0 = left-aligned (text extends right), -1 = right-aligned (text extends left)
 function getDbAnchor(gufi, numLines) {
-    const pos = dbPositions.get(gufi) || 6;
+    const pos = dbPositions.get(gufi) || 9;
     const isLeft = (pos === 1 || pos === 4 || pos === 7);
 
     if (numLines === 2) {
@@ -1385,12 +1447,12 @@ function buildTargetSym(symChar, isEmrg, extraStyle) {
     const c = isEmrg ? '#ff4444' : '#cccc44';
     const st = extraStyle ? extraStyle + ';' : '';
     if (symChar === '\\') {
-        // Correlated beacon: 2px × 12px line, rotate(-45deg) = backslash \
-        return `<div style="position:absolute;width:2px;height:12px;left:-1px;top:-6px;background:${c};transform:rotate(-45deg);pointer-events:none;z-index:2;${st}"></div>`;
+        // Correlated beacon: 2px × 14px line, rotate(-45deg) = backslash \
+        return `<div style="position:absolute;width:2px;height:14px;left:-1px;top:-7px;background:${c};transform:rotate(-45deg);pointer-events:none;z-index:2;${st}"></div>`;
     }
     if (symChar === '/') {
-        // Uncorrelated beacon: 2px × 12px line, rotate(45deg) = forward slash /
-        return `<div style="position:absolute;width:2px;height:12px;left:-1px;top:-6px;background:${c};transform:rotate(45deg);pointer-events:none;z-index:2;${st}"></div>`;
+        // Uncorrelated beacon: 2px × 14px line, rotate(45deg) = forward slash /
+        return `<div style="position:absolute;width:2px;height:14px;left:-1px;top:-7px;background:${c};transform:rotate(45deg);pointer-events:none;z-index:2;${st}"></div>`;
     }
     if (symChar === '\u2022') {
         // Reduced separation: 5px filled circle centered at (0,0)
@@ -1430,7 +1492,7 @@ function buildMarkerHtml(f, cls) {
     const numLines = useFdb ? 4 : 2;
     const anchor = getDbAnchor(f.gufi, numLines);
     const isLeftPos = anchor.xShift === -1;
-    const pos = dbPositions.get(f.gufi) || 6;
+    const pos = dbPositions.get(f.gufi) || 9;
     const isVertical = (pos === 2 || pos === 8);
 
     // Gap from leader endpoint to data block (Column 0 is inline, provides visual separation)
@@ -1439,7 +1501,7 @@ function buildMarkerHtml(f, cls) {
     // Compute data block CSS position
     let leftStyle;
     if (isLeftPos) leftStyle = `right:${-ldr.dx + dbGap}px`;
-    else if (isVertical) leftStyle = `left:${ldr.dx}px`;  // N/S: no horizontal gap
+    else if (isVertical) leftStyle = `left:${ldr.dx - Math.round(CHAR_W * 1.5) - 2}px`;  // N/S: col0 sits left of leader endpoint
     else leftStyle = `left:${ldr.dx + dbGap}px`;
 
     // Left-positioned blocks: fixed min-width to prevent jitter during flash
@@ -1447,7 +1509,14 @@ function buildMarkerHtml(f, cls) {
 
     if (useFdb) {
         // Full Data Block (lines 1-4) — with leader line
-        html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${ldr.dx}" y2="${ldr.dy}" stroke="${color}" stroke-width="1"/></svg>`;
+        const showR = shouldShowR(f, cls);
+        const showVci = vciActive.has(f.gufi);
+        // When no R/VCI, extend leader straight through empty column 0 to reach text (E/NE/SE)
+        let ldrX2 = ldr.dx, ldrY2 = ldr.dy;
+        if (!showR && !showVci && !isLeftPos && !isVertical && ldr.dx !== 0) {
+            ldrX2 += dbGap + Math.round(CHAR_W * 1.5);
+        }
+        html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${ldrX2}" y2="${ldrY2}" stroke="${color}" stroke-width="1"/></svg>`;
 
         const db = formatFdbHtml(f, cls);
         const dbCls = isEmrg ? ' emrg' : '';
@@ -1498,8 +1567,8 @@ function formatFdbHtml(f, cls) {
     const l4 = f.destination ? esc(f.destination) : '';
 
     // Column 0: inline spans — VCI hit area on lines 1-2, R on line 3
-    const col0Hit = '<span class="ac-vci-hit" style="display:inline-block;width:1.5ch;pointer-events:auto;cursor:pointer;">\u00a0</span>';
-    const col0Vci = `<span class="ac-vci-hit ac-vci" style="display:inline-block;width:1.5ch;text-align:center;pointer-events:auto;cursor:pointer;">${VCI_SVG}</span>`;
+    const col0Hit = '<span class="ac-vci-hit" style="display:inline-block;width:1.5ch;pointer-events:auto;cursor:inherit;">\u00a0</span>';
+    const col0Vci = `<span class="ac-vci-hit ac-vci" style="display:inline-block;width:1.5ch;text-align:center;pointer-events:auto;cursor:inherit;">${VCI_SVG}</span>`;
     const col0R   = '<span class="ac-col0 ac-r" style="display:inline-block;width:1.5ch;text-align:center;">R</span>';
     const col0Sp  = '<span style="display:inline-block;width:1.5ch;">\u00a0</span>';
 
@@ -1759,6 +1828,15 @@ function connectWs() {
                     }
                 }
             }
+
+            // Auto-switch QP T → QP J when aircraft climbs above FL230
+            if (driActive.get(f.gufi) === 'T') {
+                const alt = f.reportedAltitude ?? f.assignedAltitude;
+                if (alt != null && alt > 23000) {
+                    driActive.set(f.gufi, 'J');
+                    lastRenderTime = 0;
+                }
+            }
         } else if (msg.type === 'remove') {
             pendingPositions.delete(msg.data.gufi);
             flights.delete(msg.data.gufi);
@@ -1767,6 +1845,7 @@ function connectWs() {
             wasOwnOrHo.delete(msg.data.gufi);
             hoCompletedInfo.delete(msg.data.gufi);
             lastVisibleAt.delete(msg.data.gufi);
+            driActive.delete(msg.data.gufi);
             const m = markers.get(msg.data.gufi);
             if (m) { map.removeLayer(m); markers.delete(msg.data.gufi); }
             removeRoute(msg.data.gufi);
@@ -2001,7 +2080,7 @@ function doRender() {
             if (el) {
                 el._lastHash = hash;
                 el.style.pointerEvents = 'auto';
-                el.style.cursor = 'pointer';
+                el.style.cursor = 'inherit';
                 el._isHovering = false;
                 el._gufi = gufi;
                 // Dwell emphasis — hover
@@ -2013,7 +2092,7 @@ function doRender() {
                     el._isHovering = false;
                     if (!dwellLocked.has(gufi)) removeDwell(el, gufi);
                 });
-                // Click: VCI hit area → toggle VCI; Field A → dwell lock; elsewhere → existing
+                // Click: VCI hit area → toggle VCI; Field A → dwell lock; MCA has text → insert target ▽; else → toggle
                 el.addEventListener('click', (e) => {
                     // VCI toggle: click on Column 0 hit area
                     if (e.target.closest('.ac-vci-hit')) {
@@ -2039,16 +2118,56 @@ function doRender() {
                             return;
                         }
                     }
+                    // If MCA has content, left-click inserts a ▽ target placeholder
+                    if (mca.text.trim().length > 0) {
+                        e.stopPropagation(); // prevent map click from also firing
+                        const f = flights.get(gufi);
+                        const flid = getFlid(f);
+                        if (flid) mcaInsertTarget(flid);
+                        return;
+                    }
                     toggleTrackSelect(gufi);
                 });
-                // Middle-click on VCI hit area also toggles VCI
+                // Middle-click: Field A → QF; VCI → toggle; else → append FLID + execute
                 el.addEventListener('auxclick', (e) => {
-                    if (e.button === 1 && e.target.closest('.ac-vci-hit')) {
-                        e.preventDefault();
+                    if (e.button !== 1) return;
+                    e.preventDefault();
+                    // VCI hit area: toggle VCI
+                    if (e.target.closest('.ac-vci-hit')) {
                         if (vciActive.has(gufi)) vciActive.delete(gufi);
                         else vciActive.add(gufi);
                         el._lastHash = '';
                         lastRenderTime = 0;
+                        return;
+                    }
+                    const f = flights.get(gufi);
+                    if (!f) return;
+                    const flid = getFlid(f);
+                    // Field A (line 1): middle-click → execute QF
+                    const dbEl = el.querySelector('.ac-db');
+                    if (dbEl) {
+                        const rect = dbEl.getBoundingClientRect();
+                        if (e.clientX >= rect.left && e.clientX <= rect.right &&
+                            e.clientY >= rect.top && e.clientY <= rect.top + LINE_H) {
+                            showFlightInRA(f);
+                            return;
+                        }
+                    }
+                    // Middle-click elsewhere = append FLID + execute (CID Enter)
+                    if (flid) {
+                        if (mca.text.trim().length > 0) {
+                            // Append FLID to existing command and execute
+                            if (mca.text.length > 0 && mca.text[mca.text.length - 1] !== ' ') {
+                                mca.text += ' ';
+                            }
+                            mca.text += flid;
+                            mca.cursor = mca.text.length;
+                        } else {
+                            // No command — execute FLID as implied command
+                            mca.text = flid;
+                            mca.cursor = mca.text.length;
+                        }
+                        mcaExecute();
                     }
                 });
             }
@@ -2488,20 +2607,34 @@ async function showRouteForFlight(gufi, minutes = null, persistent = false) {
         interactive: false
     }).addTo(map);
 
-    // Destination X marker when route reaches destination
+    // Endpoint marker: X at destination, or small solid square at truncated endpoint
     let destMarker = null;
-    if (reachedDest && latlngs.length >= 2) {
+    if (latlngs.length >= 2) {
         const last = latlngs[latlngs.length - 1];
-        destMarker = L.marker(last, {
-            pane: 'routes',
-            interactive: false,
-            icon: L.divIcon({
-                className: '',
-                html: `<div style="color:#cccc44;font-family:ERAM,Consolas,monospace;font-size:${fontSize}px;text-decoration:underline;width:${fontSize}px;height:${fontSize}px;line-height:${fontSize}px;text-align:center;">X</div>`,
-                iconSize: [fontSize, fontSize],
-                iconAnchor: [fontSize / 2, fontSize / 2]
-            })
-        }).addTo(map);
+        if (reachedDest) {
+            destMarker = L.marker(last, {
+                pane: 'routes',
+                interactive: false,
+                icon: L.divIcon({
+                    className: '',
+                    html: `<div style="color:#cccc44;font-family:ERAM,Consolas,monospace;font-size:${fontSize}px;text-decoration:underline;width:${fontSize}px;height:${fontSize}px;line-height:${fontSize}px;text-align:center;">X</div>`,
+                    iconSize: [fontSize, fontSize],
+                    iconAnchor: [fontSize / 2, fontSize / 2]
+                })
+            }).addTo(map);
+        } else {
+            const sz = Math.max(4, Math.round(fontSize * 0.4));
+            destMarker = L.marker(last, {
+                pane: 'routes',
+                interactive: false,
+                icon: L.divIcon({
+                    className: '',
+                    html: `<div style="width:${sz}px;height:${sz}px;background:#cccc44;"></div>`,
+                    iconSize: [sz, sz],
+                    iconAnchor: [sz / 2, sz / 2]
+                })
+            }).addTo(map);
+        }
     }
 
     activeRoutes.set(gufi, {
@@ -2650,6 +2783,8 @@ function saveSettingsToUrl() {
 // ════════════════════════════════════════════════════════════════════════════
 const mapEl = document.getElementById('map');
 mapEl.addEventListener('contextmenu', e => e.preventDefault());
+// Prevent middle-click auto-scroll icon on the map
+mapEl.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); });
 
 let _rightDragging = false;
 let _rightDragStart = null;
@@ -2678,6 +2813,25 @@ document.addEventListener('mouseup', e => {
     }
 });
 
+// Map click: when MCA has content, left-clicking empty map inserts a ▽ location placeholder
+map.on('click', (e) => {
+    if (mca.text.trim().length > 0) {
+        // Format lat/lon as DDMMN/DDDMMW for ERAM-style location entry
+        const lat = e.latlng.lat;
+        const lon = e.latlng.lng;
+        const latDir = lat >= 0 ? 'N' : 'S';
+        const lonDir = lon >= 0 ? 'E' : 'W';
+        const absLat = Math.abs(lat);
+        const absLon = Math.abs(lon);
+        const latDeg = Math.floor(absLat).toString().padStart(2, '0');
+        const latMin = Math.round((absLat % 1) * 60).toString().padStart(2, '0');
+        const lonDeg = Math.floor(absLon).toString().padStart(3, '0');
+        const lonMin = Math.round((absLon % 1) * 60).toString().padStart(2, '0');
+        const locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+        mcaInsertTarget(locStr);
+    }
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 // MCA (Message Composition Area)
 // ════════════════════════════════════════════════════════════════════════════
@@ -2688,7 +2842,16 @@ const mca = {
     feedback: [],       // array of { type: 'ok'|'err'|'info', text: string }
     lastCommand: '',
     maxChars: 120,      // max total characters in preview area
+    targetFlids: [],    // FLIDs/locations for ▽ characters in preview, in insertion order
 };
+
+// Get the best FLID for a flight: CID (if facility selected) or callsign
+function getFlid(f) {
+    if (!f) return '';
+    const cid = getCid(f);
+    if (cid) return cid;
+    return f.callsign || '';
+}
 
 function mcaInsertChar(ch) {
     if (mca.text.length >= mca.maxChars && !mca.overstrike) {
@@ -2710,26 +2873,63 @@ function mcaInsertChar(ch) {
     mcaRender();
 }
 
+// Insert a target/location ▽ into MCA, storing the FLID or location string
+function mcaInsertTarget(flid) {
+    // Add space separator if needed (not at start, and last char isn't space)
+    if (mca.text.length > 0 && mca.cursor > 0 && mca.text[mca.cursor - 1] !== ' ') {
+        mca.text = mca.text.substring(0, mca.cursor) + ' ' + mca.text.substring(mca.cursor);
+        mca.cursor++;
+    }
+    mca.text = mca.text.substring(0, mca.cursor) + '\u25bd' + mca.text.substring(mca.cursor);
+    mca.targetFlids.push(flid);
+    mca.cursor++;
+    mcaRender();
+}
+
 function mcaBackspace() {
     if (mca.cursor > 0) {
+        const ch = mca.text[mca.cursor - 1];
         mca.text = mca.text.substring(0, mca.cursor - 1) + mca.text.substring(mca.cursor);
         mca.cursor--;
+        // Remove the corresponding FLID if a ▽ was deleted
+        if (ch === '\u25bd') {
+            // Count how many ▼ are before (and including) this position to find the right index
+            let idx = 0;
+            for (let i = 0; i < mca.cursor; i++) {
+                if (mca.text[i] === '\u25bd') idx++;
+            }
+            mca.targetFlids.splice(idx, 1);
+        }
         mcaRender();
     }
 }
 
 function mcaDelete() {
     if (mca.cursor < mca.text.length) {
+        const ch = mca.text[mca.cursor];
         mca.text = mca.text.substring(0, mca.cursor) + mca.text.substring(mca.cursor + 1);
+        if (ch === '\u25bd') {
+            let idx = 0;
+            for (let i = 0; i < mca.cursor; i++) {
+                if (mca.text[i] === '\u25bd') idx++;
+            }
+            mca.targetFlids.splice(idx, 1);
+        }
         mcaRender();
     }
 }
 
 function mcaExecute() {
-    const cmd = mca.text.trim();
+    // Resolve ▽ target/location placeholders to actual FLIDs or coordinates
+    let resolved = mca.text;
+    const flids = [...mca.targetFlids];
+    let flidIdx = 0;
+    resolved = resolved.replace(/\u25bd/g, () => flids[flidIdx++] || '');
+    const cmd = resolved.trim();
     mca.lastCommand = mca.text;
     mca.text = '';
     mca.cursor = 0;
+    mca.targetFlids = [];
     if (!cmd) { mcaRender(); return; }
     const result = processCommand(cmd);
     if (result instanceof Promise) {
@@ -2747,6 +2947,7 @@ function mcaClear() {
     mca.text = '';
     mca.cursor = 0;
     mca.feedback = [];
+    mca.targetFlids = [];
     mcaRender();
 }
 
@@ -2909,7 +3110,7 @@ function processCommand(cmd) {
             clearAllRoutes();
             return { feedback: [
                 { type: 'ok', text: 'ACCEPT' },
-                { type: 'info', text: 'ROUTE DISPLAY CLR ALL' }
+                { type: 'info', text: 'ROUTE DISPLAY' }
             ]};
         }
 
@@ -2932,7 +3133,7 @@ function processCommand(cmd) {
         const flidStr = parts.slice(flidStart).join(' ').toUpperCase();
         if (!flidStr) {
             // QU <minutes> with no FLID — error
-            return { feedback: [{ type: 'err', text: 'FLID REQUIRED' }] };
+            return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
         }
 
         // Split on / to get individual FLIDs
@@ -2943,12 +3144,18 @@ function processCommand(cmd) {
             // QU <FLID> — if flight has active route, clear it; else show default 20 min
             if (flids.length === 1) {
                 const f = findFlight(flids[0]);
-                if (!f) return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+                if (!f) {
+                    return { feedback: [
+                        { type: 'err', text: 'REJECT - FLID NOT STORED' },
+                        { type: 'info', text: 'REROUTE' },
+                        { type: 'info', text: cmd }
+                    ]};
+                }
                 if (activeRoutes.has(f.gufi)) {
                     removeRoute(f.gufi);
                     return { feedback: [
                         { type: 'ok', text: 'ACCEPT' },
-                        { type: 'info', text: 'ROUTE DISPLAY CLR' },
+                        { type: 'info', text: 'ROUTE DISPLAY' },
                         { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
                     ]};
                 }
@@ -2964,27 +3171,30 @@ function processCommand(cmd) {
             else notFound.push(flid);
         }
         if (found.length === 0) {
-            return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+            return { feedback: [
+                { type: 'err', text: 'REJECT - FLID NOT STORED' },
+                { type: 'info', text: 'REROUTE' },
+                { type: 'info', text: cmd }
+            ]};
         }
 
         // Async: fetch routes for all found flights
         return (async () => {
-            const results = [];
+            const feedback = [{ type: 'ok', text: 'ACCEPT' }];
             for (const f of found) {
                 const err = await showRouteForFlight(f.gufi, minutes, false);
-                results.push({ f, err });
-            }
-            const feedback = [{ type: 'ok', text: 'ACCEPT' }];
-            for (const { f, err } of results) {
                 if (err) {
                     feedback.push({ type: 'err', text: `${f.callsign}: ${err}` });
                 } else {
-                    const minStr = minutes === 0 ? 'MAX' : `${minutes} MIN`;
-                    feedback.push({ type: 'info', text: `RTE ${minStr} ${f.callsign}/${getCid(f) || '???'}` });
+                    feedback.push({ type: 'info', text: 'ROUTE DISPLAY' });
+                    feedback.push({ type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` });
                 }
             }
             if (notFound.length > 0) {
-                feedback.push({ type: 'err', text: `NOT FOUND: ${notFound.join(', ')}` });
+                for (const nf of notFound) {
+                    feedback.push({ type: 'err', text: `REJECT - FLID NOT STORED` });
+                    feedback.push({ type: 'info', text: `QU ${nf}` });
+                }
             }
             return { feedback };
         })();
@@ -3020,6 +3230,46 @@ function processCommand(cmd) {
         ];
         if (secs.length > 0) feedback.push({ type: 'info', text: secs.join(' ') });
         return { feedback };
+    }
+
+    // QP J <FLID> — toggle standard DRI (5nm halo); QP T <FLID> — toggle reduced DRI (3nm halo)
+    if (verb === 'QP') {
+        if (parts.length < 3) {
+            return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
+        }
+        const driType = parts[1].toUpperCase();
+        if (driType === 'J' || driType === 'T') {
+            const flid = parts.slice(2).join('').toUpperCase();
+            const f = findFlight(flid);
+            if (f) {
+                const cid = getCid(f) || '???';
+                // Reduced DRI (T): only eligible at or below FL230
+                if (driType === 'T') {
+                    const alt = f.reportedAltitude ?? f.assignedAltitude;
+                    if (alt != null && alt > 23000) {
+                        return { feedback: [
+                            { type: 'err', text: `REJECT - ${cid} NOT ELIGIBLE` },
+                            { type: 'err', text: 'FOR REDUCED SEPARATION' },
+                            { type: 'info', text: `REQ/DELETE DRI ${f.callsign}` }
+                        ]};
+                    }
+                }
+                const existing = driActive.get(f.gufi);
+                if (existing === driType) {
+                    driActive.delete(f.gufi);
+                } else {
+                    driActive.set(f.gufi, driType);
+                }
+                lastRenderTime = 0;
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: 'REQ/DELETE DRI' },
+                    { type: 'info', text: `${f.callsign}/${cid}` }
+                ]};
+            }
+            return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+        }
+        return { feedback: [{ type: 'err', text: 'INVALID DRI TYPE' }] };
     }
 
     // .FIND <ident> — highlight a fix/navaid/airport on the scope

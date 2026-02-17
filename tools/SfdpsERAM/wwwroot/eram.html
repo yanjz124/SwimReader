@@ -121,8 +121,9 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 /* Flight Plan Aided (Flat) Track: hollow diamond — centered at (0,0) target position */
 .ac-sym-flat-track {
     position: absolute;
-    top: -4px; left: -4px;
+    box-sizing: border-box;
     width: 8px; height: 8px;
+    left: -4px; top: -4px;
     border: 1.5px solid #cccc44; background: transparent;
     transform: rotate(45deg);
     transform-origin: center;
@@ -184,21 +185,7 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 #flight-detail-section .fd-close { cursor: pointer; color: #666; font-size: 14px; }
 #flight-detail-section .fd-close:hover { color: #ff4444; }
 
-/* ── Target symbol at current position (character centered inside diamond) ── */
-/* Uses fixed-size box + text-align/line-height to avoid font-metric centering issues */
-.ac-sym-target {
-    position: absolute;
-    top: -7px; left: -7px;
-    width: 14px; height: 14px;
-    text-align: center; line-height: 14px;
-    font-family: 'ERAM', 'Consolas', monospace;
-    font-size: 14px; font-weight: bold;
-    color: #cccc44;
-    pointer-events: none;
-    text-shadow: 0 0 3px rgba(0,0,0,0.9);
-    z-index: 2;
-}
-.ac-sym-target.emrg { color: #ff4444; }
+/* ── Target symbols are drawn as inline geometric divs (no font metrics dependency) ── */
 
 /* ── MCA (Message Composition Area) ── */
 #mca {
@@ -219,6 +206,9 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     padding: 3px 6px; min-width: 400px;
     font-size: 14px; line-height: 18px; white-space: pre; min-height: 68px;
 }
+.transp-mca #mca-preview,
+.transp-mca #mca-feedback { background: transparent; }
+.transp-mca #ra-content { background: transparent; }
 
 /* ── RA (Response Area) ── */
 #ra {
@@ -344,6 +334,13 @@ body { background: #0a0a0a; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             </div>
             <div class="ctrl-row">
                 <label><input type="checkbox" id="chk-mapbg"> Map Bg</label>
+            </div>
+            <!-- Transp MCA: reserved for future use
+            <div class="ctrl-row">
+                <label><input type="checkbox" id="chk-transp-mca"> Transp MCA</label>
+            </div> -->
+            <div class="ctrl-row">
+                <button id="btn-fullscreen" style="flex:1; background:#222; color:#cccc44; border:1px solid #444; padding:3px 8px; font-family:inherit; font-size:11px; cursor:pointer;">Fullscreen</button>
             </div>
             <div class="ctrl-row">
                 <label>NX LVL</label>
@@ -586,6 +583,7 @@ const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{
 
 map.createPane('nexrad');
 map.getPane('nexrad').style.zIndex = 250;
+map.getPane('nexrad').style.pointerEvents = 'none';
 
 map.createPane('routes');
 map.getPane('routes').style.zIndex = 420;
@@ -972,52 +970,73 @@ function clearProcOverlay() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// NEXRAD weather radar overlay (IEM XYZ tiles → ERAM-style colors)
+// NEXRAD weather radar overlay — ERAM-style colors
+// Source: Iowa Environmental Mesonet XYZ tile service (USCOMP N0Q composite)
+// Colors: Moderate=solid blue, Heavy=checkered cyan/black, Extreme=solid cyan
 // ════════════════════════════════════════════════════════════════════════════
 let nexradLayer = null;
 let nexradLevel = 0;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=all(123)
 let nexradBrightness = 50;
 let nexradTimestamp = Date.now();
-const NEXRAD_TILE_URL = 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png';
+// Proxied through local server to avoid CORS issues (enables canvas pixel manipulation for ERAM colors)
+const NEXRAD_TILE_URL = '/api/nexrad/tile';
 
-// Classify NWS-palette pixel into ERAM precip category: 0=skip, 1=moderate, 2=heavy, 3=extreme
+// Classify NWS-palette pixel into ERAM precip category
+// NWS N0Q uses dBZ-mapped colors: greens ~20-35dBZ, yellows ~35-50, reds ~50-65, purples 65+
+// Returns: 0=transparent/skip, 1=moderate, 2=heavy, 3=extreme
 function classifyPrecip(r, g, b) {
-    const max = Math.max(r, g, b);
-    const chroma = max - Math.min(r, g, b);
-    if (max < 15) return 0;
-    if (chroma < 20) return max > 200 ? 3 : 0;  // near-white = extreme, near-black = skip
-    let hue;
-    if (max === r) hue = 60 * (((g - b) / chroma) % 6);
-    else if (max === g) hue = 60 * ((b - r) / chroma + 2);
-    else hue = 60 * ((r - g) / chroma + 4);
-    hue = (hue + 360) % 360;
-    if (hue >= 45 && hue < 270) return 1;  // greens, yellows, blues → moderate
-    if (hue >= 270 && hue < 330) return 3; // magentas, purples → extreme
-    return max > 230 ? 2 : 3;              // bright orange/red → heavy; dark red → extreme
+    // Skip near-black / transparent pixels
+    if (r < 10 && g < 10 && b < 10) return 0;
+    // NWS N0Q color ranges (approximate from standard NEXRAD palette):
+    // Greens (20-35 dBZ): moderate
+    if (g > 100 && g > r && g > b) return 1;
+    // Yellows (35-50 dBZ): moderate
+    if (r > 150 && g > 150 && b < 100) return 1;
+    // Oranges (50-55 dBZ): heavy
+    if (r > 200 && g > 100 && g < 180 && b < 80) return 2;
+    // Reds (55-65 dBZ): heavy
+    if (r > 180 && g < 80 && b < 80) return 2;
+    // Dark reds / maroons: heavy
+    if (r > 120 && r < 200 && g < 50 && b < 50) return 2;
+    // Magentas / purples (65+ dBZ): extreme
+    if (r > 150 && b > 100 && g < 100) return 3;
+    // Pinks: extreme
+    if (r > 200 && b > 150 && g < 150) return 3;
+    // White / bright (very high dBZ): extreme
+    if (r > 200 && g > 200 && b > 200) return 3;
+    // Light blues in NWS palette (5-15 dBZ): skip (very light precip)
+    if (b > 150 && r < 100 && g < 150) return 0;
+    // Fallback: if bright enough, classify as moderate
+    if (r + g + b > 200) return 1;
+    return 0;
 }
 
-// Remap tile pixels to ERAM colors: moderate=solid blue, heavy=checkered cyan/black, extreme=solid cyan
+// Remap tile pixels to ERAM colors based on NX LVL
 function remapNexradTile(canvas, level) {
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, 256, 256);
     const d = imageData.data;
     for (let i = 0; i < d.length; i += 4) {
-        if (d[i + 3] < 10) continue;
+        if (d[i + 3] < 10) { d[i + 3] = 0; continue; }  // skip transparent
         const cat = classifyPrecip(d[i], d[i + 1], d[i + 2]);
         if (cat === 0) { d[i + 3] = 0; continue; }
-        if (level === 1 && cat < 3) { d[i + 3] = 0; continue; }  // extreme only
-        if (level === 2 && cat < 2) { d[i + 3] = 0; continue; }  // heavy + extreme
+        // NX LVL filtering: 1=extreme only, 2=heavy+extreme, 3=all
+        if (level === 1 && cat < 3) { d[i + 3] = 0; continue; }
+        if (level === 2 && cat < 2) { d[i + 3] = 0; continue; }
         const px = i / 4;
         const tx = px % 256, ty = Math.floor(px / 256);
-        if (cat === 1) {            // Moderate: solid blue
+        if (cat === 1) {
+            // Moderate: solid blue (#0044ff)
             d[i] = 0; d[i + 1] = 68; d[i + 2] = 255;
-        } else if (cat === 2) {     // Heavy: checkered cyan and black
+        } else if (cat === 2) {
+            // Heavy: checkered cyan (#00ccff) and black
             if ((tx + ty) % 2 === 0) {
                 d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
             } else {
                 d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
             }
-        } else {                    // Extreme: solid cyan
+        } else {
+            // Extreme: solid cyan (#00ccff)
             d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
         }
         d[i + 3] = 255;
@@ -1026,27 +1045,26 @@ function remapNexradTile(canvas, level) {
 }
 
 function createNexradLayer() {
+    const level = nexradLevel;
     return L.gridLayer({
         pane: 'nexrad',
         opacity: nexradBrightness / 100,
         tileSize: 256,
-        maxZoom: 18,
-        updateWhenZooming: false,
-        createTile: function (coords, done) {
+        maxZoom: 16,
+        zIndex: 250,
+        createTile: function(coords, done) {
             const tile = document.createElement('canvas');
             tile.width = tile.height = 256;
             const ctx = tile.getContext('2d');
-            const url = NEXRAD_TILE_URL
-                .replace('{z}', coords.z).replace('{x}', coords.x).replace('{y}', coords.y)
-                + '?_t=' + nexradTimestamp;
+            // Same-origin proxy — no CORS issues, canvas pixel manipulation works
+            const url = `${NEXRAD_TILE_URL}?z=${coords.z}&x=${coords.x}&y=${coords.y}&_t=${nexradTimestamp}`;
             const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.onload = function () {
-                ctx.drawImage(img, 0, 0);
-                try { remapNexradTile(tile, nexradLevel); } catch (e) { /* CORS fallback: original NWS colors */ }
+            img.onload = function() {
+                ctx.drawImage(img, 0, 0, 256, 256);
+                remapNexradTile(tile, level);
                 done(null, tile);
             };
-            img.onerror = function () { done(null, tile); };
+            img.onerror = function() { done(null, tile); };
             img.src = url;
             return tile;
         }
@@ -1362,6 +1380,26 @@ function removeDwell(el, gufi) {
     if (f && !shouldShowFdb(gufi, classifyTrack(f))) dbEl.style.opacity = String(ldbBrightness / 100);
 }
 
+// Build target symbol as pure CSS geometry — no font metrics, pixel-perfect centering at (0,0)
+function buildTargetSym(symChar, isEmrg, extraStyle) {
+    const c = isEmrg ? '#ff4444' : '#cccc44';
+    const st = extraStyle ? extraStyle + ';' : '';
+    if (symChar === '\\') {
+        // Correlated beacon: 2px × 12px line, rotate(-45deg) = backslash \
+        return `<div style="position:absolute;width:2px;height:12px;left:-1px;top:-6px;background:${c};transform:rotate(-45deg);pointer-events:none;z-index:2;${st}"></div>`;
+    }
+    if (symChar === '/') {
+        // Uncorrelated beacon: 2px × 12px line, rotate(45deg) = forward slash /
+        return `<div style="position:absolute;width:2px;height:12px;left:-1px;top:-6px;background:${c};transform:rotate(45deg);pointer-events:none;z-index:2;${st}"></div>`;
+    }
+    if (symChar === '\u2022') {
+        // Reduced separation: 5px filled circle centered at (0,0)
+        return `<div style="position:absolute;width:5px;height:5px;left:-2.5px;top:-2.5px;border-radius:50%;background:${c};pointer-events:none;z-index:2;${st}"></div>`;
+    }
+    // Unknown (◇): diamond is already drawn by ac-sym-flat-track
+    return '';
+}
+
 function buildMarkerHtml(f, cls) {
     const isEmrg = cls === 'emrg';
     const emrgCls = isEmrg ? ' emrg' : '';
@@ -1370,7 +1408,7 @@ function buildMarkerHtml(f, cls) {
 
     if (!showFdb) {
         // Data blocks off — just target symbol + diamond
-        let html = `<div class="ac-sym-target${emrgCls}">${esc(symChar)}</div>`;
+        let html = buildTargetSym(symChar, isEmrg);
         html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
         return html;
     }
@@ -1380,11 +1418,11 @@ function buildMarkerHtml(f, cls) {
     // FDB: diamond + symbol; LDB: just the symbol character (no diamond)
     let html;
     if (useFdb) {
-        html = `<div class="ac-sym-target${emrgCls}">${esc(symChar)}</div>`;
+        html = buildTargetSym(symChar, isEmrg);
         html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
     } else {
         const ldbOp = ldbBrightness / 100;
-        html = `<div class="ac-sym-target${emrgCls}" style="opacity:${ldbOp};">${esc(symChar)}</div>`;
+        html = buildTargetSym(symChar, isEmrg, `opacity:${ldbOp}`);
     }
 
     const color = isEmrg ? EMRG_COLOR : TRACK_COLOR;
@@ -1476,9 +1514,16 @@ function formatAltLine(f) {
     const assigned = f.assignedAltitude;
     const reported = f.reportedAltitude;
     const interim = f.interimAltitude;
+    const rules = f.flightRules;
 
     const afl = assigned != null ? String(Math.round(assigned / 100)).padStart(3, '0') : '';
     const rfl = reported != null ? String(Math.round(reported / 100)).padStart(3, '0') : '';
+
+    // VFR altitude → /indicator: VFR/055 or OTP/218
+    if (rules === 'VFR' || rules === 'OTP') {
+        const prefix = rules === 'OTP' ? 'OTP' : 'VFR';
+        return rfl ? `${prefix}/${rfl}` : prefix;
+    }
 
     // Interim altitude → T indicator: {interim}T{reported}
     if (interim != null) {
@@ -1489,14 +1534,14 @@ function formatAltLine(f) {
     if (assigned == null && reported == null) return '';
     if (assigned == null) return rfl;
 
-    // No Mode C reported → X indicator (assigned but no Mode C)
-    if (reported == null) return `${afl}X`;
+    // No Mode C reported → X indicator: {assigned}XXXX
+    if (reported == null) return `${afl}XXXX`;
 
     const aAlt = Math.round(assigned / 100);
     const rAlt = Math.round(reported / 100);
     const diff = rAlt - aAlt;
 
-    // Conforming (at altitude, within ±2 FL / 200ft) → C, hide Field C: xxxC
+    // Conforming (at altitude, within ±2 FL / 200ft) → C, hide Field C
     if (Math.abs(diff) <= 2) return `${afl}C`;
 
     // Non-conforming: climbing or descending indicators
@@ -2147,6 +2192,20 @@ document.getElementById('chk-mapbg').addEventListener('change', function () {
     saveSettingsToUrl();
 });
 
+// Transp MCA: reserved for future use
+// document.getElementById('chk-transp-mca').addEventListener('change', function () {
+//     document.getElementById('map-container').classList.toggle('transp-mca', this.checked);
+//     saveSettingsToUrl();
+// });
+
+document.getElementById('btn-fullscreen').addEventListener('click', function () {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+        document.exitFullscreen();
+    }
+});
+
 document.getElementById('sel-fontsize').addEventListener('change', function () {
     fontSize = parseInt(this.value);
     updateFontSize();
@@ -2490,6 +2549,11 @@ function loadSettingsFromUrl() {
     if (params.has('ldb')) ldbBrightness = parseInt(params.get('ldb'));
     if (params.has('faconly')) facilityOnly = params.get('faconly') === '1';
     if (params.has('mapbg')) showMapBg = params.get('mapbg') === '1';
+    // Transp MCA: reserved for future use
+    // if (params.has('tmca')) {
+    //     document.getElementById('map-container').classList.toggle('transp-mca', true);
+    //     document.getElementById('chk-transp-mca').checked = true;
+    // }
     if (params.has('nasrbr')) {
         const vals = params.get('nasrbr').split(',').map(Number);
         if (!isNaN(vals[0])) nasrBrightness.jroutes = vals[0];
@@ -2561,6 +2625,7 @@ function saveSettingsToUrl() {
     const defaultBr = [60, 60, 60, 0];
     if (brVals.join(',') !== defaultBr.join(',')) params.set('bndbr', brVals.join(','));
     if (showMapBg) params.set('mapbg', '1');
+    // if (document.getElementById('chk-transp-mca').checked) params.set('tmca', '1');
     if (fontSize !== 10) params.set('fontsize', fontSize);
     if (altFilterLow !== 0) params.set('altlow', altFilterLow);
     if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);

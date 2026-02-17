@@ -279,6 +279,23 @@ app.MapGet("/api/debug/search/{callsign}", (string callsign) =>
 // Serve KML files from repo root
 var repoRoot = FindRepoRoot(app.Environment.ContentRootPath);
 
+// NEXRAD tile proxy — serves IEM tiles from same origin so canvas pixel manipulation works (no CORS)
+var nexradHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+nexradHttp.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader/1.0");
+app.MapGet("/api/nexrad/tile", async (int z, int x, int y) =>
+{
+    try
+    {
+        var url = $"https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png";
+        var bytes = await nexradHttp.GetByteArrayAsync(url);
+        return Results.Bytes(bytes, "image/png");
+    }
+    catch
+    {
+        return Results.StatusCode(502);
+    }
+});
+
 app.MapGet("/api/kml", () =>
 {
     var files = Directory.GetFiles(repoRoot, "*.kml").Select(Path.GetFileName).ToArray();
@@ -548,8 +565,11 @@ void ProcessFlight(XElement flight, string rawXml)
     {
         if (double.TryParse(ia.Value, out var ival)) state.InterimAltitude = ival;
     }
-    // Clear interim if this is a message type that would have it but doesn't (LH cleared)
-    else if (source == "LH") state.InterimAltitude = null;
+    // Clear interim when absent in message types that carry full flight plan state.
+    // FH = full flight plan (canonical state snapshot),
+    // LH = local handoff / interim altitude event,
+    // OH = ownership (handoff completion may clear interim)
+    else if (source is "FH" or "LH" or "OH") state.InterimAltitude = null;
 
     // controllingUnit
     var cu = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "controllingUnit");
@@ -942,38 +962,43 @@ async Task DownloadNasr(DateTime effectiveDate, string outputDir)
     Console.WriteLine($"[NASR] Downloaded {size / 1024 / 1024}MB, extracting CSV data...");
 
     // Find and extract the inner CSV zip
-    using var outerZip = ZipFile.OpenRead(tempZip);
-    var csvZipEntry = outerZip.Entries.FirstOrDefault(e =>
-        e.FullName.Contains("CSV_Data/", StringComparison.OrdinalIgnoreCase) &&
-        e.Name.EndsWith("_CSV.zip", StringComparison.OrdinalIgnoreCase));
-
-    if (csvZipEntry is null)
-    {
-        Console.WriteLine("[NASR] Could not find CSV zip inside subscription");
-        File.Delete(tempZip);
-        return;
-    }
-
     var innerZipPath = Path.Combine(outputDir, "csv.zip");
-    csvZipEntry.ExtractToFile(innerZipPath, overwrite: true);
+    using (var outerZip = ZipFile.OpenRead(tempZip))
+    {
+        var csvZipEntry = outerZip.Entries.FirstOrDefault(e =>
+            e.FullName.Contains("CSV_Data/", StringComparison.OrdinalIgnoreCase) &&
+            e.Name.EndsWith("_CSV.zip", StringComparison.OrdinalIgnoreCase));
+
+        if (csvZipEntry is null)
+        {
+            Console.WriteLine("[NASR] Could not find CSV zip inside subscription");
+            outerZip.Dispose();
+            File.Delete(tempZip);
+            return;
+        }
+
+        csvZipEntry.ExtractToFile(innerZipPath, overwrite: true);
+    } // outerZip closed here — safe to delete
 
     // Extract the CSV files we need from the inner zip
     var needed = new[] { "NAV_BASE.csv", "FIX_BASE.csv", "AWY_BASE.csv", "APT_BASE.csv" };
     // Also extract STAR and DP procedure files (name patterns: STAR_*.csv, DP_*.csv)
-    using var innerZip = ZipFile.OpenRead(innerZipPath);
-    foreach (var entry in innerZip.Entries)
+    using (var innerZip = ZipFile.OpenRead(innerZipPath))
     {
-        var name = entry.Name;
-        bool isNeeded = needed.Any(n => name.Equals(n, StringComparison.OrdinalIgnoreCase))
-            || name.StartsWith("STAR_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)
-            || name.StartsWith("DP_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
-        if (isNeeded)
+        foreach (var entry in innerZip.Entries)
         {
-            var dest = Path.Combine(outputDir, name);
-            entry.ExtractToFile(dest, overwrite: true);
-            Console.WriteLine($"[NASR]   Extracted {name} ({entry.Length / 1024}KB)");
+            var name = entry.Name;
+            bool isNeeded = needed.Any(n => name.Equals(n, StringComparison.OrdinalIgnoreCase))
+                || name.StartsWith("STAR_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("DP_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
+            if (isNeeded)
+            {
+                var dest = Path.Combine(outputDir, name);
+                entry.ExtractToFile(dest, overwrite: true);
+                Console.WriteLine($"[NASR]   Extracted {name} ({entry.Length / 1024}KB)");
+            }
         }
-    }
+    } // innerZip closed here — safe to delete
 
     // Cleanup temp zips
     File.Delete(tempZip);

@@ -507,6 +507,7 @@ let ldbBrightness = 70;     // 0-100, opacity for LDB data blocks (0=hidden, 100
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
+const quickLookDests = new Set();   // QL destinations — force FDB on flights to these airports (e.g. KCLT, KGSO)
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
 const wasOwnOrHo = new Set();  // tracks that were own/ho — keeps FDB sticky when they become other
 const lastVisibleAt = new Map(); // gufi → performance.now() — grace period prevents flicker on facility field changes
@@ -1596,6 +1597,11 @@ function shouldShowFdb(gufi, cls) {
             const sec = f.controllingSector || '';
             if (quickLookSectors.has(sec)) return true;
         }
+    }
+    // Quick Look destinations: force FDB on flights to QL'd airports
+    if (quickLookDests.size > 0) {
+        const f = flights.get(gufi);
+        if (f && f.destination && quickLookDests.has(f.destination.toUpperCase())) return true;
     }
     // Point-out tracks force FDB
     {
@@ -2711,6 +2717,7 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     // Changing facility: revert all tracks to default LDB
     fdbOverrides.clear();
     quickLookSectors.clear();
+    quickLookDests.clear();
     wasOwnOrHo.clear();
     closePointoutMenu();
     invalidateAllMarkers();
@@ -3846,18 +3853,28 @@ function processCommand(cmd) {
         return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
     }
 
-    // QL [sector ...] — Quick Look: force FDB on specific sectors; QL alone clears
+    // QL [sector/dest ...] — Quick Look: force FDB on specific sectors or destinations; QL alone clears all
+    // Sectors are numeric-only (e.g. 32, 05); destinations contain letters (e.g. KCLT, DCA)
     if (verb === 'QL') {
-        const secs = parts.slice(1).map(s => s.toUpperCase());
+        const args = parts.slice(1).map(s => s.toUpperCase());
         quickLookSectors.clear();
-        secs.forEach(s => quickLookSectors.add(s));
+        quickLookDests.clear();
+        for (const a of args) {
+            if (/^\d+$/.test(a)) {
+                quickLookSectors.add(a);
+            } else {
+                // Normalize: strip leading K for ICAO (KCLT→CLT) if 4-char and starts with K
+                const dest = a.length === 4 && a[0] === 'K' ? a.slice(1) : a;
+                quickLookDests.add(dest);
+            }
+        }
         invalidateAllMarkers();
         lastRenderTime = 0;
         const feedback = [
             { type: 'ok', text: 'ACCEPT' },
             { type: 'info', text: 'QUICK LOOK' },
         ];
-        if (secs.length > 0) feedback.push({ type: 'info', text: secs.join(' ') });
+        if (args.length > 0) feedback.push({ type: 'info', text: args.join(' ') });
         return { feedback };
     }
 

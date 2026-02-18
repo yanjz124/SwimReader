@@ -1425,13 +1425,13 @@ function extractSec(unitStr) { if (!unitStr) return ''; const p = unitStr.split(
 // Get CID for the observed facility (each ARTCC assigns its own CID to a flight)
 function getCid(f) {
     if (myFacility && f.computerIds) {
-        // Prefer our facility's CID if the flight is still at our facility
+        // Our facility's CID — only if flight is still at our facility
         const ownCid = f.computerIds[myFacility];
         if (ownCid && (f.controllingFacility === myFacility || f.reportingFacility === myFacility)) return ownCid;
-        // Flight handed off — use controlling facility's CID to avoid stale/recycled CIDs
+        // Flight not at our facility — use controlling facility's CID
         if (f.controllingFacility && f.computerIds[f.controllingFacility]) return f.computerIds[f.controllingFacility];
-        // Fallback to our CID if nothing else available
-        return ownCid || '';
+        // Don't return stale ownCid — may have been recycled to another flight.
+        // Fall through to computerId (most recent CID from any facility).
     }
     return f.computerId || '';
 }

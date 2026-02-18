@@ -2169,6 +2169,14 @@ function applyScanCycle() {
 }
 
 function doRender() {
+    // Apply scan cycle if enough time has elapsed (same 12s cadence as setInterval,
+    // but checked here too so positions apply even if setInterval timing drifts)
+    const now = performance.now();
+    if (pendingPositions.size > 0 && now - lastScanTime >= SCAN_INTERVAL) {
+        applyScanCycle();
+        lastScanTime = now;
+    }
+
     const mapBounds = map.getBounds();
     const onScreenGufis = new Set();
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };

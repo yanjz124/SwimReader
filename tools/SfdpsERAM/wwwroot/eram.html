@@ -529,6 +529,7 @@ const localReportedAlt = new Map();  // gufi → feet — QR controller-entered 
 // HSF (Heading/Speed/Free text) data — QS command (local overrides)
 const hsfData = new Map();     // gufi → { heading, speed, freeText } — local QS overrides
 const hsfShowMap = new Set();  // GUFIs currently displaying HSF on line 4 (toggled by ↴ click or QS <FLID>)
+const hsfClrSuppressed = new Map();  // gufi → {h,s,t} — suppressed server clearance values (after QS * clear)
 
 // Effective HSF: merges server clearance data with local QS overrides (local wins per-field)
 // Server clearanceSpeed may be bare number — normalize: 2-digit → M prefix, 3-digit → S prefix
@@ -2080,6 +2081,17 @@ function connectWs() {
             pendingPositions.clear();
             flightHistory.clear();
             for (const f of msg.data) {
+                // Apply clearance suppression from QS * clears (survives reconnect within session)
+                const sup = hsfClrSuppressed.get(f.gufi);
+                if (sup) {
+                    if (sup.h && (f.clearanceHeading || null) === sup.h) f.clearanceHeading = null;
+                    else if (f.clearanceHeading) sup.h = null;
+                    if (sup.s && (f.clearanceSpeed || null) === sup.s) f.clearanceSpeed = null;
+                    else if (f.clearanceSpeed) sup.s = null;
+                    if (sup.t && (f.clearanceText || null) === sup.t) f.clearanceText = null;
+                    else if (f.clearanceText) sup.t = null;
+                    if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
+                }
                 flights.set(f.gufi, f);
                 trackFacility(f);
                 if (f.history && f.history.length > 0) {
@@ -2124,6 +2136,27 @@ function connectWs() {
                     }
                     pendingPositions.set(f.gufi, { lat: f.latitude, lon: f.longitude });
                 }
+                // Suppress server clearance fields that were manually cleared via QS *
+                // Only re-apply if the server sends genuinely NEW values (different from what we suppressed)
+                const sup = hsfClrSuppressed.get(f.gufi);
+                if (sup) {
+                    let changed = false;
+                    if ('clearanceHeading' in f) {
+                        if ((f.clearanceHeading || null) === sup.h) f.clearanceHeading = null;
+                        else { sup.h = null; changed = true; }
+                    }
+                    if ('clearanceSpeed' in f) {
+                        if ((f.clearanceSpeed || null) === sup.s) f.clearanceSpeed = null;
+                        else { sup.s = null; changed = true; }
+                    }
+                    if ('clearanceText' in f) {
+                        if ((f.clearanceText || null) === sup.t) f.clearanceText = null;
+                        else { sup.t = null; changed = true; }
+                    }
+                    // If all suppressed values have been superseded, remove the entry
+                    if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
+                }
+
                 // Apply all non-position fields instantly
                 for (const key in f) {
                     if (key === 'latitude' || key === 'longitude') continue;
@@ -4209,6 +4242,14 @@ function processCommand(cmd) {
             if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
             hsfData.delete(f.gufi);
             hsfShowMap.delete(f.gufi);
+            // Suppress server clearance data — record what we're hiding so incoming
+            // updates with the SAME values don't re-apply. New/different values will show.
+            hsfClrSuppressed.set(f.gufi, {
+                h: f.clearanceHeading || null, s: f.clearanceSpeed || null, t: f.clearanceText || null
+            });
+            f.clearanceHeading = null;
+            f.clearanceSpeed = null;
+            f.clearanceText = null;
             invalidateMarker(f.gufi);
             return { feedback: [
                 { type: 'ok', text: 'ACCEPT' },
@@ -4225,6 +4266,10 @@ function processCommand(cmd) {
             if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
             const hsf = hsfData.get(f.gufi);
             if (hsf) { hsf.heading = null; if (!hsf.speed && !hsf.freeText) { hsfData.delete(f.gufi); hsfShowMap.delete(f.gufi); } }
+            const sup = hsfClrSuppressed.get(f.gufi) || { h: null, s: null, t: null };
+            sup.h = f.clearanceHeading || null;
+            hsfClrSuppressed.set(f.gufi, sup);
+            f.clearanceHeading = null;
             invalidateMarker(f.gufi);
             return { feedback: [
                 { type: 'ok', text: 'ACCEPT' },
@@ -4241,6 +4286,10 @@ function processCommand(cmd) {
             if (!isOwnTrack(f)) return rejectNotOwned('HSF', f);
             const hsf = hsfData.get(f.gufi);
             if (hsf) { hsf.speed = null; if (!hsf.heading && !hsf.freeText) { hsfData.delete(f.gufi); hsfShowMap.delete(f.gufi); } }
+            const sup2 = hsfClrSuppressed.get(f.gufi) || { h: null, s: null, t: null };
+            sup2.s = f.clearanceSpeed || null;
+            hsfClrSuppressed.set(f.gufi, sup2);
+            f.clearanceSpeed = null;
             invalidateMarker(f.gufi);
             return { feedback: [
                 { type: 'ok', text: 'ACCEPT' },

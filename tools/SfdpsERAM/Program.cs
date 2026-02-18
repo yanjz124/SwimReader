@@ -239,6 +239,67 @@ app.MapGet("/api/nasr/procedures", (string airport, string? type) =>
     return Results.Json(result, jsonOpts);
 });
 
+// Full procedure geometry for map overlay (all body legs + transitions)
+// Searches by airport code OR procedure base name; type filter: STAR or DP
+app.MapGet("/api/nasr/procgeo", (string q, string? type) =>
+{
+    if (nasrData is null) return Results.Json(new { error = "NASR data not loaded" }, statusCode: 503);
+    q = q.Trim().ToUpperInvariant();
+    var faaId = q.Length == 4 && q.StartsWith("K") ? q[1..] : q;
+
+    var matches = new List<ProcedureFullDef>();
+
+    // Try airport match first
+    foreach (var list in nasrData.ProceduresFull.Values)
+        foreach (var p in list)
+        {
+            var pApt = p.Airport.Length == 4 && p.Airport.StartsWith("K") ? p.Airport[1..] : p.Airport;
+            if (pApt.Equals(faaId, StringComparison.OrdinalIgnoreCase))
+                matches.Add(p);
+        }
+
+    // If no airport match, search by procedure name
+    if (matches.Count == 0)
+    {
+        foreach (var kv in nasrData.ProceduresFull)
+        {
+            if (kv.Key.Equals(q, StringComparison.OrdinalIgnoreCase))
+            {
+                matches.AddRange(kv.Value);
+                continue;
+            }
+            // Base name match: strip trailing digits, compare
+            var baseName = System.Text.RegularExpressions.Regex.Replace(kv.Key, @"\d+$", "");
+            if (baseName.Length > 0 && baseName.Equals(q, StringComparison.OrdinalIgnoreCase))
+                matches.AddRange(kv.Value);
+        }
+    }
+
+    if (!string.IsNullOrEmpty(type))
+        matches = matches.Where(p => p.Type.Equals(type, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    // Deduplicate by (Id, Airport) — same procedure registered under multiple keys
+    matches = matches.GroupBy(p => (p.Id, p.Airport)).Select(g => g.First()).ToList();
+
+    var result = matches.Select(p =>
+    {
+        var resolvedLegs = p.Legs.Select(leg =>
+        {
+            NavPoint? lastPt = null;
+            var pts = new List<double[]>();
+            foreach (var fix in leg)
+            {
+                var pt = LookupPoint(fix, lastPt, nasrData);
+                if (pt is not null) { pts.Add(new[] { pt.Lat, pt.Lon }); lastPt = pt; }
+            }
+            return pts;
+        }).Where(pts => pts.Count >= 2).ToList();
+        return new { id = p.Id, airport = p.Airport, type = p.Type, legs = resolvedLegs };
+    }).Where(p => p.legs.Count > 0).ToList();
+
+    return Results.Json(result, jsonOpts);
+});
+
 // NASR VOR/VORTAC navaids (for plotting circles) — excludes NDBs and fan markers
 app.MapGet("/api/nasr/navaids", () =>
 {
@@ -1212,16 +1273,18 @@ async Task LoadNasrData()
 
     // Parse SID/STAR procedures (optional — files may not exist)
     data.Procedures = new Dictionary<string, List<ProcedureDef>>(StringComparer.OrdinalIgnoreCase);
+    data.ProceduresFull = new Dictionary<string, List<ProcedureFullDef>>(StringComparer.OrdinalIgnoreCase);
     try
     {
-        var stars = ParseProcedureCsvs(cycleDir, "STAR");
+        var stars = ParseProcedureCsvs(cycleDir, "STAR", out var starsFull);
         foreach (var kv in stars) data.Procedures[kv.Key] = kv.Value;
-        Console.WriteLine($"[NASR]   STARs: {stars.Count} procedures");
+        foreach (var kv in starsFull) data.ProceduresFull[kv.Key] = kv.Value;
+        Console.WriteLine($"[NASR]   STARs: {stars.Count} procedures ({starsFull.Count} full)");
     }
     catch (Exception ex) { Console.WriteLine($"[NASR]   STAR parse skipped: {ex.Message}"); }
     try
     {
-        var dps = ParseProcedureCsvs(cycleDir, "DP");
+        var dps = ParseProcedureCsvs(cycleDir, "DP", out var dpsFull);
         foreach (var kv in dps)
         {
             if (data.Procedures.ContainsKey(kv.Key))
@@ -1229,7 +1292,14 @@ async Task LoadNasrData()
             else
                 data.Procedures[kv.Key] = kv.Value;
         }
-        Console.WriteLine($"[NASR]   DPs (SIDs): {dps.Count} procedures");
+        foreach (var kv in dpsFull)
+        {
+            if (data.ProceduresFull.ContainsKey(kv.Key))
+                data.ProceduresFull[kv.Key].AddRange(kv.Value);
+            else
+                data.ProceduresFull[kv.Key] = kv.Value;
+        }
+        Console.WriteLine($"[NASR]   DPs (SIDs): {dps.Count} procedures ({dpsFull.Count} full)");
     }
     catch (Exception ex) { Console.WriteLine($"[NASR]   DP parse skipped: {ex.Message}"); }
 
@@ -1431,12 +1501,13 @@ Dictionary<string, AirwayDef> ParseAwyBase(string path)
 
 // Parse SID/STAR procedure CSV files — adaptive header detection
 // These files have a route/leg structure with fix sequences per procedure
-Dictionary<string, List<ProcedureDef>> ParseProcedureCsvs(string cycleDir, string type)
+Dictionary<string, List<ProcedureDef>> ParseProcedureCsvs(string cycleDir, string type, out Dictionary<string, List<ProcedureFullDef>> fullResult)
 {
     // type = "STAR" or "DP"
     // Files: {type}_BASE.csv has procedure name + airport, {type}_RTE.csv has fix sequences
     // Computer codes like "ALWYZ.FRDMM6" → route strings use the part after the dot ("FRDMM6")
     var result = new Dictionary<string, List<ProcedureDef>>(StringComparer.OrdinalIgnoreCase);
+    fullResult = new Dictionary<string, List<ProcedureFullDef>>(StringComparer.OrdinalIgnoreCase);
     if (!Directory.Exists(cycleDir)) return result;
 
     var codeCol = type == "STAR" ? "STAR_COMPUTER_CODE" : "DP_COMPUTER_CODE";
@@ -1478,6 +1549,7 @@ Dictionary<string, List<ProcedureDef>> ParseProcedureCsvs(string cycleDir, strin
     int iSeq = headers.FindIndex(h => h.Trim().Equals("POINT_SEQ", StringComparison.OrdinalIgnoreCase));
     int iRouteType = headers.FindIndex(h => h.Trim().Equals("ROUTE_PORTION_TYPE", StringComparison.OrdinalIgnoreCase));
     int iTransCode = headers.FindIndex(h => h.Trim().Equals("TRANSITION_COMPUTER_CODE", StringComparison.OrdinalIgnoreCase));
+    int iRouteName = headers.FindIndex(h => h.Trim().Equals("ROUTE_NAME", StringComparison.OrdinalIgnoreCase));
 
     if (iRteCode < 0 || iFix < 0)
     {
@@ -1486,7 +1558,7 @@ Dictionary<string, List<ProcedureDef>> ParseProcedureCsvs(string cycleDir, strin
     }
 
     // Read all rows grouped by computer code
-    var rows = new List<(string code, string routeType, string tranCode, int seq, string fix)>();
+    var rows = new List<(string code, string routeType, string routeName, string tranCode, int seq, string fix)>();
     while (reader.ReadLine() is { } line)
     {
         var f = ParseCsvLine(line);
@@ -1496,47 +1568,127 @@ Dictionary<string, List<ProcedureDef>> ParseProcedureCsvs(string cycleDir, strin
         if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(fix)) continue;
 
         var routeType = iRouteType >= 0 && iRouteType < f.Count ? f[iRouteType].Trim().ToUpperInvariant() : "";
+        var routeName = iRouteName >= 0 && iRouteName < f.Count ? f[iRouteName].Trim() : "";
         var tranCode = iTransCode >= 0 && iTransCode < f.Count ? f[iTransCode].Trim() : "";
         var seq = 0;
         if (iSeq >= 0 && iSeq < f.Count) int.TryParse(f[iSeq].Trim(), out seq);
-        rows.Add((code, routeType, tranCode, seq, fix));
+        rows.Add((code, routeType, routeName, tranCode, seq, fix));
     }
 
-    // Group by computer code and build fix sequences (BODY portion only for main route)
+    // Group by computer code and build fix sequences
+    // For BODY portions, extract only the common (non-runway-dependent) fixes:
+    // each ROUTE_NAME is a separate leg (different runway); we keep only fixes shared by ALL legs,
+    // then reverse them to flight direction (stored order is opposite to flight direction)
     var grouped = rows.GroupBy(r => r.code);
     foreach (var g in grouped)
     {
         var computerCode = g.Key;
-        // Use the BODY route portion as the main fix sequence
-        var bodyFixes = g.Where(r => r.routeType == "BODY" || string.IsNullOrEmpty(r.routeType))
-            .OrderBy(r => r.seq)
-            .Select(r => r.fix)
-            .Where(f => !string.IsNullOrEmpty(f))
-            .Distinct()
+        var bodyRows = g.Where(r => r.routeType == "BODY" || string.IsNullOrEmpty(r.routeType)).ToList();
+
+        // Group body rows by ROUTE_NAME to get individual legs
+        var legs = bodyRows
+            .GroupBy(r => r.routeName)
+            .Select(lg => lg.OrderBy(r => r.seq).Select(r => r.fix).Where(f => !string.IsNullOrEmpty(f)).ToList())
+            .Where(leg => leg.Count > 0)
             .ToList();
 
-        if (bodyFixes.Count < 2) continue;
-
-        // Extract the procedure identifier from computer code (part after the dot)
-        // e.g., "ALWYZ.FRDMM6" → "FRDMM6", "ACCRA5.ACCRA" → "ACCRA5" (before dot) or "ACCRA" (after dot)
+        // Extract procedure identifier and airport (needed for both common and full defs)
         var dotIdx = computerCode.IndexOf('.');
         var afterDot = dotIdx >= 0 ? computerCode[(dotIdx + 1)..].Trim().ToUpperInvariant() : computerCode.Trim().ToUpperInvariant();
         var beforeDot = dotIdx >= 0 ? computerCode[..dotIdx].Trim().ToUpperInvariant() : computerCode.Trim().ToUpperInvariant();
-
-        // Get airport from BASE file
         codeToAirports.TryGetValue(computerCode, out var airports);
         var airport = airports?.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
-
-        // Register under both the "after dot" identifier and the "before dot" identifier
-        // For STARs: "ALWYZ.FRDMM6" → register as "FRDMM6" (used in route strings)
-        // For DPs: "ACCRA5.ACCRA" → register as "ACCRA5" (before dot is the SID name with number)
         var identifiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrEmpty(afterDot)) identifiers.Add(afterDot);
         if (!string.IsNullOrEmpty(beforeDot) && beforeDot != afterDot) identifiers.Add(beforeDot);
 
+        // Build full leg data for procedure map overlay (all body legs + transitions)
+        var allLegs = new List<List<string>>();
+        foreach (var leg in legs)
+        {
+            var copy = new List<string>(leg);
+            copy.Reverse(); // Reverse to flight direction
+            if (copy.Count >= 2) allLegs.Add(copy);
+        }
+        var transGroups = g.Where(r => r.routeType == "TRANSITION").GroupBy(r => r.tranCode);
+        foreach (var tg in transGroups)
+        {
+            var tranFixes = tg.OrderBy(r => r.seq).Select(r => r.fix)
+                .Where(f => !string.IsNullOrEmpty(f)).ToList();
+            tranFixes.Reverse();
+            if (tranFixes.Count >= 2) allLegs.Add(tranFixes);
+        }
+        if (allLegs.Count > 0)
+        {
+            // Use the versioned name (with trailing digit) as canonical Id to avoid duplicates
+            var procId = identifiers.FirstOrDefault(id => id.Length > 0 && char.IsDigit(id[^1])) ?? identifiers.First();
+            var fDef = new ProcedureFullDef(procId, airport, type, allLegs);
+            foreach (var ident in identifiers)
+            {
+                if (!fullResult.ContainsKey(ident)) fullResult[ident] = new List<ProcedureFullDef>();
+                fullResult[ident].Add(fDef);
+            }
+        }
+
+        // Build common (non-runway-dependent) body fixes for QU route resolution
+        List<string> bodyFixes;
+        if (legs.Count <= 1)
+        {
+            bodyFixes = (legs.Count == 1 ? legs[0] : bodyRows.OrderBy(r => r.seq).Select(r => r.fix)
+                .Where(f => !string.IsNullOrEmpty(f)).Distinct().ToList());
+            bodyFixes.Reverse();
+        }
+        else
+        {
+            var commonFixes = new HashSet<string>(legs[0], StringComparer.OrdinalIgnoreCase);
+            foreach (var leg in legs.Skip(1))
+                commonFixes.IntersectWith(leg);
+            var shortestLeg = legs.OrderBy(l => l.Count).First();
+            bodyFixes = shortestLeg.Where(f => commonFixes.Contains(f)).ToList();
+            bodyFixes.Reverse();
+        }
+
+        if (bodyFixes.Count < 1) continue;
+
+        // Build transitions for QU route resolution (enroute portions only, not runway legs)
+        // SID transitions: stem → enroute (after body); STAR transitions: enroute → stem (before body)
+        var transitions = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tg in transGroups)
+        {
+            var tranFixes = tg.OrderBy(r => r.seq).Select(r => r.fix)
+                .Where(f => !string.IsNullOrEmpty(f)).ToList();
+            tranFixes.Reverse(); // Reverse to flight direction
+            if (tranFixes.Count < 2) continue;
+
+            // Determine transition name from transition code: the part that ISN'T the procedure name
+            var tc = tg.Key;
+            var tdot = tc.IndexOf('.');
+            string transName;
+            if (tdot >= 0)
+            {
+                var tBefore = tc[..tdot].Trim().ToUpperInvariant();
+                var tAfter = tc[(tdot + 1)..].Trim().ToUpperInvariant();
+                transName = identifiers.Contains(tAfter) ? tBefore
+                    : identifiers.Contains(tBefore) ? tAfter
+                    : tAfter; // default to after-dot
+            }
+            else
+            {
+                transName = tc.Trim().ToUpperInvariant();
+            }
+
+            // Key by the enroute endpoint: SID = last fix, STAR = first fix
+            var endpointKey = type == "DP" ? tranFixes[^1] : tranFixes[0];
+            if (!string.IsNullOrEmpty(endpointKey))
+                transitions[endpointKey] = tranFixes;
+            // Also register by transition name
+            if (!string.IsNullOrEmpty(transName) && !transitions.ContainsKey(transName))
+                transitions[transName] = tranFixes;
+        }
+
         foreach (var ident in identifiers)
         {
-            var def = new ProcedureDef(ident, airport, type, bodyFixes);
+            var def = new ProcedureDef(ident, airport, type, bodyFixes, transitions);
             if (!result.ContainsKey(ident)) result[ident] = new List<ProcedureDef>();
             result[ident].Add(def);
         }
@@ -1631,7 +1783,7 @@ List<double[]> ResolveRoute(string routeText, string? origin, string? destinatio
             }
             else if (nasr.Procedures.TryGetValue(token, out var procs))
             {
-                // SID/STAR procedure — expand fix sequence
+                // SID/STAR procedure — expand fix sequence (common non-runway-dependent portion + transitions)
                 // Pick the procedure for the matching airport (origin for SID, destination for STAR)
                 var proc = procs.Count == 1 ? procs[0]
                     : procs.FirstOrDefault(p =>
@@ -1639,13 +1791,112 @@ List<double[]> ResolveRoute(string routeText, string? origin, string? destinatio
                         (!string.IsNullOrEmpty(destination) && p.Airport.Equals(destination.TrimStart('K'), StringComparison.OrdinalIgnoreCase)))
                     ?? procs[0];
 
-                foreach (var fixName in proc.Fixes)
+                // STAR transitions: if lastPt matches a transition entry, prepend transition fixes before body
+                if (proc.Type == "STAR" && proc.Transitions.Count > 0 && lastPt is not null)
                 {
-                    var fixPt = LookupPoint(fixName, lastPt, nasr);
-                    if (fixPt is not null)
+                    if (proc.Transitions.TryGetValue(lastPt.Ident, out var tranFixes))
                     {
-                        waypoints.Add(new[] { fixPt.Lat, fixPt.Lon });
-                        lastPt = fixPt;
+                        // Transition goes enroute → stem; skip the first fix (already plotted as lastPt)
+                        for (int ti = 1; ti < tranFixes.Count; ti++)
+                        {
+                            var tp = LookupPoint(tranFixes[ti], lastPt, nasr);
+                            if (tp is not null) { waypoints.Add(new[] { tp.Lat, tp.Lon }); lastPt = tp; }
+                        }
+                    }
+                }
+
+                // SID: check if lastPt is already on a transition (aircraft past the stem, e.g., direct-to a transition fix)
+                // Route like "REWET.BOBZY5.BNA" — REWET is on the BNA transition, skip body entirely
+                bool sidTransitionHandled = false;
+                if (proc.Type == "DP" && proc.Transitions.Count > 0 && lastPt is not null && i + 1 < tokens.Length)
+                {
+                    var nextToken = tokens[i + 1].ToUpperInvariant();
+                    var nextSlash = nextToken.IndexOf('/');
+                    if (nextSlash > 0) nextToken = nextToken[..nextSlash];
+                    if (proc.Transitions.TryGetValue(nextToken, out var sidTranFixes))
+                    {
+                        // Check if lastPt is on this transition
+                        int tranSkipIdx = -1;
+                        for (int ti = 0; ti < sidTranFixes.Count; ti++)
+                        {
+                            if (sidTranFixes[ti].Equals(lastPt.Ident, StringComparison.OrdinalIgnoreCase))
+                            { tranSkipIdx = ti + 1; break; }
+                        }
+                        if (tranSkipIdx >= 0)
+                        {
+                            // lastPt is on the transition → skip body, plot remaining transition fixes
+                            for (int ti = tranSkipIdx; ti < sidTranFixes.Count; ti++)
+                            {
+                                var tp = LookupPoint(sidTranFixes[ti], lastPt, nasr);
+                                if (tp is not null) { waypoints.Add(new[] { tp.Lat, tp.Lon }); lastPt = tp; }
+                            }
+                            i++; // skip next token (transition endpoint)
+                            sidTransitionHandled = true;
+                        }
+                    }
+                }
+
+                if (!sidTransitionHandled)
+                {
+                    // Body expansion: skip ahead if lastPt is already on the procedure
+                    int startIdx = 0;
+                    if (lastPt is not null)
+                    {
+                        for (int fi = 0; fi < proc.Fixes.Count; fi++)
+                        {
+                            if (proc.Fixes[fi].Equals(lastPt.Ident, StringComparison.OrdinalIgnoreCase))
+                            {
+                                startIdx = fi + 1;
+                                break;
+                            }
+                        }
+                        // If not found by name, check by proximity (within 1nm)
+                        if (startIdx == 0)
+                        {
+                            double bestDist = double.MaxValue;
+                            int bestIdx = -1;
+                            for (int fi = 0; fi < proc.Fixes.Count; fi++)
+                            {
+                                var fixPt2 = LookupPoint(proc.Fixes[fi], lastPt, nasr);
+                                if (fixPt2 is not null)
+                                {
+                                    var d = HaversineNm(lastPt.Lat, lastPt.Lon, fixPt2.Lat, fixPt2.Lon);
+                                    if (d < bestDist) { bestDist = d; bestIdx = fi; }
+                                }
+                            }
+                            if (bestDist < 1.0 && bestIdx >= 0)
+                                startIdx = bestIdx + 1;
+                        }
+                    }
+
+                    for (int fi = startIdx; fi < proc.Fixes.Count; fi++)
+                    {
+                        var fixPt = LookupPoint(proc.Fixes[fi], lastPt, nasr);
+                        if (fixPt is not null)
+                        {
+                            waypoints.Add(new[] { fixPt.Lat, fixPt.Lon });
+                            lastPt = fixPt;
+                        }
+                    }
+
+                    // SID transitions: after body, append transition fixes to reach enroute
+                    if (proc.Type == "DP" && proc.Transitions.Count > 0 && i + 1 < tokens.Length)
+                    {
+                        var nextToken = tokens[i + 1].ToUpperInvariant();
+                        var nextSlash = nextToken.IndexOf('/');
+                        if (nextSlash > 0) nextToken = nextToken[..nextSlash];
+                        if (proc.Transitions.TryGetValue(nextToken, out var sidTranFixes))
+                        {
+                            // Transition goes stem → enroute; skip fixes already plotted
+                            for (int ti = 0; ti < sidTranFixes.Count; ti++)
+                            {
+                                if (lastPt is not null && sidTranFixes[ti].Equals(lastPt.Ident, StringComparison.OrdinalIgnoreCase))
+                                    continue;
+                                var tp = LookupPoint(sidTranFixes[ti], lastPt, nasr);
+                                if (tp is not null) { waypoints.Add(new[] { tp.Lat, tp.Lon }); lastPt = tp; }
+                            }
+                            i++; // skip the next token (transition endpoint)
+                        }
                     }
                 }
             }
@@ -1669,6 +1920,17 @@ NavPoint? LookupAirport(string code, NasrData nasr)
     if (nasr.Airports.TryGetValue(code, out apt)) return apt;
     if (code.Length == 4 && code.StartsWith("K") && nasr.Airports.TryGetValue(code[1..], out apt)) return apt;
     return null;
+}
+
+double HaversineNm(double lat1, double lon1, double lat2, double lon2)
+{
+    const double R = 3440.065;
+    var dLat = (lat2 - lat1) * Math.PI / 180;
+    var dLon = (lon2 - lon1) * Math.PI / 180;
+    var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
+            Math.Cos(lat1 * Math.PI / 180) * Math.Cos(lat2 * Math.PI / 180) *
+            Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
+    return R * 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
 }
 
 // Project a point from lat/lon along a bearing for a given distance (great circle)
@@ -1781,7 +2043,8 @@ class WsClient(WebSocket ws)
 record NavPoint(string Ident, double Lat, double Lon, string Type = "");
 record AirwayDef(string Id, string Designation, List<string> Fixes);
 
-record ProcedureDef(string Id, string Airport, string Type, List<string> Fixes); // Type = "STAR" or "DP"
+record ProcedureDef(string Id, string Airport, string Type, List<string> Fixes, Dictionary<string, List<string>> Transitions); // Type = "STAR" or "DP"; Transitions keyed by enroute fix name
+record ProcedureFullDef(string Id, string Airport, string Type, List<List<string>> Legs); // All body legs + transitions for map overlay
 record PositionRecord(double Lat, double Lon, long Ticks, char Sym);
 
 class NasrData
@@ -1792,6 +2055,7 @@ class NasrData
     public Dictionary<string, NavPoint> AirportsIcao { get; set; } = new();
     public Dictionary<string, AirwayDef> Airways { get; set; } = new();
     public Dictionary<string, List<ProcedureDef>> Procedures { get; set; } = new(); // name → list (may have same name at different airports)
+    public Dictionary<string, List<ProcedureFullDef>> ProceduresFull { get; set; } = new(); // full legs for map overlay
     public string EffectiveDate { get; set; } = "";
 }
 

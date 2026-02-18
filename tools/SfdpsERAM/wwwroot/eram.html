@@ -435,6 +435,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             <span id="stat-rate">0</span> msg/s &middot;
             <span id="stat-flights">0</span> flights &middot;
             <span id="stat-uptime">00:00:00</span>
+            <br><span id="stat-fp" style="color:#888;font-size:0.85em;"></span>
         </div>
     </div>
     <button id="sidebar-toggle" title="Toggle sidebar">&#9664;</button>
@@ -509,10 +510,17 @@ const hsfData = new Map();     // gufi → { heading, speed, freeText } — loca
 const hsfShowMap = new Set();  // GUFIs currently displaying HSF on line 4 (toggled by ↴ click or QS <FLID>)
 
 // Effective HSF: merges server clearance data with local QS overrides (local wins per-field)
+// Server clearanceSpeed may be bare number — normalize: 2-digit → M prefix, 3-digit → S prefix
+function normalizeSpeed(s) {
+    if (!s) return s;
+    if (/^\d{2}[+-]?$/.test(s)) return 'M' + s;  // e.g. 75 → M75, 78+ → M78+
+    if (/^\d{3}$/.test(s)) return 'S' + s;        // e.g. 250 → S250
+    return s;  // 280+, 250-, M79, S270 etc. pass through
+}
 function getEffectiveHsf(f) {
     const local = hsfData.get(f.gufi);
     const heading = local?.heading ?? f.clearanceHeading ?? null;
-    const speed = local?.speed ?? f.clearanceSpeed ?? null;
+    const speed = local?.speed ?? normalizeSpeed(f.clearanceSpeed) ?? null;
     const freeText = local?.freeText ?? f.clearanceText ?? null;
     if (!heading && !speed && !freeText) return null;
     return { heading, speed, freeText };
@@ -1053,14 +1061,6 @@ function renderVors(data, group, br) {
     }
 }
 
-function renderProcedures(data, group, br) {
-    const col = nasrColor(br);
-    for (const proc of data) {
-        if (proc.points.length < 2) continue;
-        L.polyline(proc.points, { color: col, weight: 1, opacity: 1, interactive: false, className: 'bnd-path' }).addTo(group);
-    }
-}
-
 function setupNasrSlider(sliderId, labelId, layerKey, url, renderer) {
     document.getElementById(sliderId).addEventListener('input', function () {
         nasrBrightness[layerKey] = parseInt(this.value);
@@ -1073,79 +1073,41 @@ setupNasrSlider('rng-jroutes', 'lbl-jroutes', 'jroutes', '/api/nasr/airways?type
 setupNasrSlider('rng-vroutes', 'lbl-vroutes', 'vroutes', '/api/nasr/airways?type=lo', renderAirways);
 setupNasrSlider('rng-vors', 'lbl-vors', 'vors', '/api/nasr/navaids', renderVors);
 
-// Procedure auto-load: when PROC slider > 0 and facility selected, load SID/STARs
-// for that facility's destination airports (from destination-codes.json)
-let procLoadedFacility = null;   // track which facility's procedures are loaded
-let procLoading = false;
+// Procedure overlay — managed via .SID/.STAR/.PROC MCA commands
+// activeProcedures: Map<string, { layer: L.layerGroup, procs: Array, query: string }>
+const activeProcedures = new Map();
 
-async function loadFacilityProcedures() {
-    const br = nasrBrightness.proc;
-    const fac = myFacility;
-    // If slider at 0, remove all proc layers
-    if (br <= 0) {
-        clearProcOverlay();
-        procLoadedFacility = null;
-        return;
-    }
-    // If already loaded for this facility, just update colors
-    if (procLoadedFacility === fac) {
-        for (const key of Object.keys(nasrLayers)) {
-            if (key.startsWith('proc:')) {
-                nasrLayers[key].eachLayer(l => l.setStyle({ color: nasrColor(br) }));
+function renderProcedureLegs(data, group, br) {
+    const col = nasrColor(br);
+    for (const proc of data) {
+        for (const leg of proc.legs) {
+            if (leg.length >= 2) {
+                L.polyline(leg, { color: col, weight: 1, opacity: 1, dashArray: '6 4', interactive: false, className: 'bnd-path' }).addTo(group);
             }
         }
-        return;
     }
-    // Need to load (new facility or first load)
-    if (!fac || procLoading) return;
-    const codes = destCodesConfig[fac];
-    if (!codes) return;
-    // Collect unique 3-letter airport codes (major airports with SID/STAR data)
-    const airports = new Set();
-    for (const list of Object.values(codes)) {
-        for (const apt of list) {
-            if (/^[A-Z]{3}$/i.test(apt)) airports.add(apt.toUpperCase());
-        }
-    }
-    if (airports.size === 0) return;
-    procLoading = true;
-    clearProcOverlay();
-    procLoadedFacility = fac;
-    const col = nasrColor(br);
-    for (const apt of airports) {
-        try {
-            const resp = await fetch(`/api/nasr/procedures?airport=${encodeURIComponent(apt)}`);
-            if (!resp.ok) continue;
-            const data = await resp.json();
-            if (data.length === 0) continue;
-            // Check if facility/brightness changed while we were loading
-            if (myFacility !== fac || nasrBrightness.proc <= 0) { procLoading = false; return; }
-            const key = `proc:${apt}`;
-            nasrCache[key] = data;
-            const group = L.layerGroup();
-            renderProcedures(data, group, nasrBrightness.proc);
-            nasrLayers[key] = group;
-            group.addTo(map);
-        } catch { continue; }
-    }
-    procLoading = false;
 }
 
 document.getElementById('rng-proc').addEventListener('input', function () {
     nasrBrightness.proc = parseInt(this.value);
     document.getElementById('lbl-proc').textContent = nasrBrightness.proc;
-    loadFacilityProcedures();
+    const col = nasrColor(nasrBrightness.proc);
+    for (const [key, entry] of activeProcedures) {
+        if (nasrBrightness.proc <= 0) {
+            if (map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
+        } else {
+            if (!map.hasLayer(entry.layer)) entry.layer.addTo(map);
+            entry.layer.eachLayer(l => l.setStyle({ color: col }));
+        }
+    }
     saveSettingsToUrl();
 });
 
-// Clear procedure overlay
 function clearProcOverlay() {
-    for (const key of Object.keys(nasrLayers)) {
-        if (key.startsWith('proc:')) {
-            map.removeLayer(nasrLayers[key]);
-            delete nasrLayers[key];
-        }
+    for (const [key, entry] of activeProcedures) {
+        if (map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
     }
+    activeProcedures.clear();
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2271,6 +2233,8 @@ function doRender() {
         applyScanCycle();
         lastScanTime = now;
     }
+    // Update QU route lines to follow aircraft positions
+    if (activeRoutes.size > 0) updateActiveRoutes();
 
     const mapBounds = map.getBounds();
     const onScreenGufis = new Set();
@@ -2575,8 +2539,6 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
     zoomToFacility(myFacility);
-    procLoadedFacility = null;  // force reload procedures for new facility
-    loadFacilityProcedures();
     saveSettingsToUrl();
 });
 
@@ -2691,6 +2653,18 @@ setInterval(() => {
     rebuildSectorCheckboxes();
     document.getElementById('stat-flights').textContent = flights.size;
     document.getElementById('stat-rate').textContent = msgRate;
+    // Debug metrics: flight plan coverage
+    let nRoute = 0, nCallsign = 0, nType = 0, nAlt = 0, nPos = 0;
+    for (const [, f] of flights) {
+        if (f.route) nRoute++;
+        if (f.callsign) nCallsign++;
+        if (f.aircraftType) nType++;
+        if (f.assignedAltitude) nAlt++;
+        if (f.latitude != null && f.longitude != null) nPos++;
+    }
+    const t = flights.size || 1;
+    document.getElementById('stat-fp').textContent =
+        `FP: ${nRoute}/${t} rte ${nCallsign}/${t} cs ${nType}/${t} typ ${nAlt}/${t} alt ${nPos}/${t} pos`;
 }, 5000);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3037,10 +3011,35 @@ async function showRouteForFlight(gufi, minutes = null, persistent = false) {
         polyline,
         destMarker,
         time: persistent ? null : performance.now(),
-        minutes
+        minutes,
+        waypoints  // cached for dynamic updates
     });
 
     return null;  // success
+}
+
+// Update active QU routes to follow aircraft position
+function updateActiveRoutes() {
+    for (const [gufi, r] of activeRoutes) {
+        if (!r.waypoints || r.minutes === null) continue; // full route, no trimming
+        const f = flights.get(gufi);
+        if (!f || f.latitude == null || f.longitude == null) continue;
+
+        const speed = f.requestedSpeed || f.groundSpeed || 250;
+        const mins = r.minutes === 0 ? 9999 : (r.minutes || 20);
+        const maxNm = speed * mins / 60;
+        const prog = findRouteProgress(r.waypoints, f.latitude, f.longitude,
+            f.trackVelocityX, f.trackVelocityY);
+        const { latlngs, reachedDest } = trimRouteForward(r.waypoints, prog.index, prog.frac, maxNm);
+        if (latlngs.length > 0) latlngs[0] = [f.latitude, f.longitude];
+        if (latlngs.length < 2) continue;
+
+        r.polyline.setLatLngs(latlngs);
+        // Update endpoint marker position
+        if (r.destMarker) {
+            r.destMarker.setLatLng(latlngs[latlngs.length - 1]);
+        }
+    }
 }
 
 // Auto-remove expired QU route displays (30s timeout)
@@ -3142,7 +3141,6 @@ function loadSettingsFromUrl() {
     if (nasrBrightness.jroutes > 0) showNasrLayer('jroutes', '/api/nasr/airways?type=hi', renderAirways);
     if (nasrBrightness.vroutes > 0) showNasrLayer('vroutes', '/api/nasr/airways?type=lo', renderAirways);
     if (nasrBrightness.vors > 0) showNasrLayer('vors', '/api/nasr/navaids', renderVors);
-    if (nasrBrightness.proc > 0) loadFacilityProcedures();
     showBoundariesForFacility(myFacility);
 }
 
@@ -4212,47 +4210,72 @@ function processCommand(cmd) {
         })();
     }
 
-    // .PROC <airport> [STAR|DP] — show SID/STARs for an airport; .PROC alone clears
-    if (verb === '.PROC' || verb === '.P') {
-        if (parts.length < 2) {
-            clearProcOverlay();
-            procLoadedFacility = null;
-            return { feedback: [{ type: 'ok', text: 'ACCEPT' }, { type: 'info', text: 'CLEAR PROCEDURES' }] };
-        }
-        const apt = parts[1].toUpperCase();
-        const ptype = parts.length >= 3 ? parts[2].toUpperCase() : '';
-        const qp = ptype ? `&type=${ptype}` : '';
-        return (async () => {
-            try {
-                const resp = await fetch(`/api/nasr/procedures?airport=${encodeURIComponent(apt)}${qp}`);
-                if (!resp.ok) return { feedback: [{ type: 'err', text: `NO PROCEDURES FOR ${apt}` }] };
-                const data = await resp.json();
-                if (data.length === 0) return { feedback: [{ type: 'err', text: `NO PROCEDURES FOR ${apt}` }] };
-                clearProcOverlay();
-                procLoadedFacility = '__manual__';  // prevent auto-load from overwriting
-                const key = `proc:${apt}`;
-                nasrCache[key] = data;
-                const group = L.layerGroup();
-                renderProcedures(data, group, nasrBrightness.proc || 60);
-                nasrLayers[key] = group;
-                group.addTo(map);
-                // Ensure PROC slider is visible if it was at 0
-                if (nasrBrightness.proc <= 0) {
-                    nasrBrightness.proc = 60;
-                    document.getElementById('rng-proc').value = 60;
-                    document.getElementById('lbl-proc').textContent = 60;
-                }
-                const stars = data.filter(p => p.type === 'STAR').length;
-                const dps = data.filter(p => p.type === 'DP').length;
-                return { feedback: [
-                    { type: 'ok', text: 'ACCEPT' },
-                    { type: 'info', text: `${apt} PROCEDURES` },
-                    { type: 'info', text: `${stars} STAR  ${dps} SID` }
-                ]};
-            } catch {
-                return { feedback: [{ type: 'err', text: 'NASR DATA UNAVAILABLE' }] };
+    // .SID/.STAR/.PROC — toggle procedure overlays on the map
+    if (verb === '.SID' || verb === '.STAR' || verb === '.PROC') {
+        const apiType = verb === '.SID' ? 'DP' : verb === '.STAR' ? 'STAR' : '';
+        const displayType = verb === '.SID' ? 'SID' : verb === '.STAR' ? 'STAR' : 'PROC';
+        const args = parts.slice(1).map(a => a.toUpperCase());
+
+        // No args: show active procedures in Response Area
+        if (args.length === 0) {
+            const relevant = [...activeProcedures.entries()]
+                .filter(([k]) => displayType === 'PROC' || k.startsWith(displayType + ':'));
+            if (relevant.length === 0) return { feedback: [{ type: 'info', text: `NO ACTIVE ${displayType}` }] };
+            const ra = document.getElementById('ra-content');
+            let text = `ACTIVE ${displayType}\n`;
+            for (const [k, v] of relevant) {
+                const names = v.procs.map(p => `${p.airport}/${p.id}`).join(' ');
+                text += `${k}: ${names}\n`;
             }
+            ra.textContent = text.trimEnd();
+            return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+        }
+
+        // Ensure PROC slider brightness > 0
+        if (nasrBrightness.proc <= 0) {
+            nasrBrightness.proc = 60;
+            document.getElementById('rng-proc').value = 60;
+            document.getElementById('lbl-proc').textContent = 60;
+        }
+
+        return (async () => {
+            const feedback = [];
+            for (const arg of args) {
+                const key = `${displayType}:${arg}`;
+                // Toggle: if already active, remove
+                if (activeProcedures.has(key)) {
+                    const entry = activeProcedures.get(key);
+                    if (map.hasLayer(entry.layer)) map.removeLayer(entry.layer);
+                    activeProcedures.delete(key);
+                    feedback.push({ type: 'info', text: `${key} REMOVED` });
+                    continue;
+                }
+                // Fetch from server
+                try {
+                    const typeParam = apiType ? `&type=${apiType}` : '';
+                    const resp = await fetch(`/api/nasr/procgeo?q=${encodeURIComponent(arg)}${typeParam}`);
+                    if (!resp.ok) { feedback.push({ type: 'err', text: `${arg} NOT FOUND` }); continue; }
+                    const data = await resp.json();
+                    if (!data || data.length === 0) { feedback.push({ type: 'err', text: `${arg} NOT FOUND` }); continue; }
+                    const group = L.layerGroup();
+                    renderProcedureLegs(data, group, nasrBrightness.proc);
+                    group.addTo(map);
+                    activeProcedures.set(key, { layer: group, procs: data, query: arg });
+                    const names = data.map(p => `${p.airport}/${p.id}`).join(' ');
+                    feedback.push({ type: 'info', text: `${key}: ${names}` });
+                } catch {
+                    feedback.push({ type: 'err', text: 'NASR DATA UNAVAILABLE' });
+                }
+            }
+            if (feedback.length === 0) return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+            return { feedback: [{ type: 'ok', text: 'ACCEPT' }, ...feedback] };
         })();
+    }
+
+    // .NOPROC — clear all procedure overlays
+    if (verb === '.NOPROC') {
+        clearProcOverlay();
+        return { feedback: [{ type: 'ok', text: 'ACCEPT' }, { type: 'info', text: 'CLEAR PROCEDURES' }] };
     }
 
     // <FLID> — toggle FDB/LDB (single argument, not a known verb)

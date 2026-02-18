@@ -646,19 +646,64 @@ void ProcessFlight(XElement flight, string rawXml)
         if (!string.IsNullOrEmpty(eta)) state.ETA = eta;
     }
 
-    // assignedAltitude
+    // assignedAltitude — has mutually exclusive sub-types: simple, vfr, vfrPlus, block
     var aa = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "assignedAltitude");
     if (aa is not null)
     {
-        var val = aa.Descendants().FirstOrDefault(e => e.Name.LocalName == "simple")?.Value;
-        if (double.TryParse(val, out var alt)) state.AssignedAltitude = alt;
+        var simple = aa.Descendants().FirstOrDefault(e => e.Name.LocalName == "simple")?.Value;
+        if (double.TryParse(simple, out var alt))
+        {
+            state.AssignedAltitude = alt;
+            state.AssignedVfr = false;
+            state.BlockFloor = null;
+            state.BlockCeiling = null;
+        }
+        else if (aa.Elements().Any(e => e.Name.LocalName == "vfr"))
+        {
+            state.AssignedAltitude = null;
+            state.AssignedVfr = true;
+            state.BlockFloor = null;
+            state.BlockCeiling = null;
+        }
+        else
+        {
+            var vfrPlus = aa.Descendants().FirstOrDefault(e => e.Name.LocalName == "vfrPlus")?.Value;
+            if (double.TryParse(vfrPlus, out var vfpAlt))
+            {
+                state.AssignedAltitude = vfpAlt;
+                state.AssignedVfr = true;
+                state.BlockFloor = null;
+                state.BlockCeiling = null;
+            }
+            else
+            {
+                var block = aa.Elements().FirstOrDefault(e => e.Name.LocalName == "block");
+                if (block is not null)
+                {
+                    var above = block.Descendants().FirstOrDefault(e => e.Name.LocalName == "above")?.Value;
+                    var below = block.Descendants().FirstOrDefault(e => e.Name.LocalName == "below")?.Value;
+                    // FIXM: above = "maintain above" (floor), below = "maintain below" (ceiling)
+                    if (double.TryParse(above, out var floor) && double.TryParse(below, out var ceil))
+                    {
+                        state.AssignedAltitude = floor;
+                        state.AssignedVfr = false;
+                        state.BlockFloor = floor;
+                        state.BlockCeiling = ceil;
+                    }
+                }
+            }
+        }
     }
 
-    // interimAltitude (fourth line!)
+    // interimAltitude — nil="true" means clear
     var ia = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "interimAltitude");
     if (ia is not null)
     {
-        if (double.TryParse(ia.Value, out var ival)) state.InterimAltitude = ival;
+        var isNil = string.Equals(ia.Attribute("nil")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+        if (isNil)
+            state.InterimAltitude = null;
+        else if (double.TryParse(ia.Value, out var ival))
+            state.InterimAltitude = ival;
     }
     // Clear interim when absent in message types that carry full flight plan state.
     // FH = full flight plan (canonical state snapshot),
@@ -978,8 +1023,13 @@ string BuildOhSummary(XElement flight)
 string BuildLhSummary(XElement flight)
 {
     var ia = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "interimAltitude");
-    if (ia is not null && double.TryParse(ia.Value, out var alt))
-        return $"Interim altitude set: {alt:F0} ft";
+    if (ia is not null)
+    {
+        var isNil = string.Equals(ia.Attribute("nil")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+        if (isNil) return "Interim altitude cleared (nil)";
+        if (double.TryParse(ia.Value, out var alt))
+            return $"Interim altitude set: {alt:F0} ft";
+    }
     return "Local handoff / interim altitude cleared";
 }
 
@@ -1673,6 +1723,9 @@ class FlightState
 
     // Altitude
     public double? AssignedAltitude { get; set; }
+    public bool AssignedVfr { get; set; }          // true for <vfr/> or <vfrPlus>
+    public double? BlockFloor { get; set; }        // block altitude lower bound (feet)
+    public double? BlockCeiling { get; set; }      // block altitude upper bound (feet)
     public double? InterimAltitude { get; set; }
     public double? ReportedAltitude { get; set; }
 
@@ -1759,7 +1812,8 @@ class FlightState
         ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
         Operator, FlightStatus,
         Origin, Destination, AircraftType, WakeCategory,
-        AssignedAltitude, InterimAltitude, ReportedAltitude,
+        AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
+        InterimAltitude, ReportedAltitude,
         Latitude, Longitude, GroundSpeed, Squawk,
         TrackVelocityX, TrackVelocityY,
         ControllingFacility, ControllingSector,
@@ -1789,7 +1843,8 @@ class FlightState
             Origin, Destination, AircraftType, Registration, WakeCategory,
             ModeSCode, EquipmentQualifier, Squawk, FlightRules,
             Route, STAR, Remarks,
-            AssignedAltitude, InterimAltitude, ReportedAltitude,
+            AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
+            InterimAltitude, ReportedAltitude,
             Latitude, Longitude, GroundSpeed, RequestedSpeed,
             ActualDepartureTime, ETA, CoordinationTime, CoordinationFix,
             ReportingFacility, ControllingFacility, ControllingSector,

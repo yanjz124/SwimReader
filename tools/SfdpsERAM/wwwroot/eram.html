@@ -1424,7 +1424,15 @@ function extractSec(unitStr) { if (!unitStr) return ''; const p = unitStr.split(
 
 // Get CID for the observed facility (each ARTCC assigns its own CID to a flight)
 function getCid(f) {
-    if (myFacility) return (f.computerIds && f.computerIds[myFacility]) || '';
+    if (myFacility && f.computerIds) {
+        // Prefer our facility's CID if the flight is still at our facility
+        const ownCid = f.computerIds[myFacility];
+        if (ownCid && (f.controllingFacility === myFacility || f.reportingFacility === myFacility)) return ownCid;
+        // Flight handed off — use controlling facility's CID to avoid stale/recycled CIDs
+        if (f.controllingFacility && f.computerIds[f.controllingFacility]) return f.computerIds[f.controllingFacility];
+        // Fallback to our CID if nothing else available
+        return ownCid || '';
+    }
     return f.computerId || '';
 }
 
@@ -3589,20 +3597,30 @@ function mcaRender() {
 // Find flight by FLID: CID (facility-specific only), callsign, or squawk
 function findFlight(id) {
     const needle = id.toUpperCase();
-    // CID match — only for selected facility's CID
-    // Priority: 1) ACTIVE + visible + not dedup-hidden, 2) ACTIVE, 3) any
+    // CID match — matches the CID shown in the FDB (getCid logic)
+    // Priority: 1) own-facility + visible, 2) visible, 3) ACTIVE, 4) any
+    // "Own-facility" = controllingFacility or reportingFacility matches selected.
+    // This prevents recycled CIDs from matching the wrong flight after handoff.
     if (myFacility) {
+        let ownFacMatch = null;   // controlled by our facility + visible
+        let visibleMatch = null;  // visible but not our facility
         let activeFallback = null;
         let anyFallback = null;
         for (const [gufi, f] of flights) {
-            const cid = f.computerIds && f.computerIds[myFacility];
-            if (cid && cid.toUpperCase() === needle) {
+            // Match by displayed CID (same logic as getCid)
+            const displayedCid = getCid(f);
+            if (displayedCid && displayedCid.toUpperCase() === needle) {
                 const active = !f.flightStatus || f.flightStatus === 'ACTIVE';
-                if (active && isVisible(f) && !isDedupHidden(gufi, f)) return f;
-                if (active && !activeFallback) activeFallback = f;
+                const visible = active && isVisible(f) && !isDedupHidden(gufi, f);
+                const ownFac = f.controllingFacility === myFacility || f.reportingFacility === myFacility;
+                if (visible && ownFac && !ownFacMatch) ownFacMatch = f;
+                else if (visible && !visibleMatch) visibleMatch = f;
+                else if (active && !activeFallback) activeFallback = f;
                 if (!anyFallback) anyFallback = f;
             }
         }
+        if (ownFacMatch) return ownFacMatch;
+        if (visibleMatch) return visibleMatch;
         if (activeFallback) return activeFallback;
         if (anyFallback) return anyFallback;
     } else {

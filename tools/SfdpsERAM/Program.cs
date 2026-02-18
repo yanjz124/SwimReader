@@ -62,6 +62,10 @@ var nameValueKeys = new ConcurrentDictionary<string, long>(); // unique nameValu
 // Debug: clearance raw XML log — captures raw XML for any message touching a clearance-bearing flight
 var clearanceLog = new ConcurrentQueue<string>(); // timestamped log entries
 const int MaxClearanceLogEntries = 2000;
+
+// Debug: altitude raw XML log — captures assigned/interim altitude changes
+var altitudeLog = new ConcurrentQueue<string>();
+const int MaxAltitudeLogEntries = 5000;
 var jsonOpts = new JsonSerializerOptions
 {
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -446,6 +450,14 @@ app.MapGet("/api/debug/clearance-log", (int? last) =>
     return Results.Text(string.Join("\n", recent), "text/plain");
 });
 
+app.MapGet("/api/debug/altitude-log", (int? last) =>
+{
+    var entries = altitudeLog.ToArray();
+    var n = last ?? 200;
+    var recent = entries.Length > n ? entries[^n..] : entries;
+    return Results.Text(string.Join("\n", recent), "text/plain");
+});
+
 // Serve KML files from repo root
 var repoRoot = FindRepoRoot(app.Environment.ContentRootPath);
 
@@ -825,7 +837,13 @@ void ProcessFlight(XElement flight, string rawXml)
     }
 
     // assignedAltitude — has mutually exclusive sub-types: simple, vfr, vfrPlus, block
-    var aa = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "assignedAltitude");
+    // HZ (heartbeat) carries reported/Mode-C altitude in this field, NOT the controller-assigned altitude.
+    // Skip HZ to prevent oscillation between Mode-C and actual assigned values.
+    var aa = source != "HZ" ? flight.Elements().FirstOrDefault(e => e.Name.LocalName == "assignedAltitude") : null;
+    var prevAA = state.AssignedAltitude;
+    var prevVfr = state.AssignedVfr;
+    var prevBlkF = state.BlockFloor;
+    var prevBlkC = state.BlockCeiling;
     if (aa is not null)
     {
         var simple = aa.Descendants().FirstOrDefault(e => e.Name.LocalName == "simple")?.Value;
@@ -871,10 +889,21 @@ void ProcessFlight(XElement flight, string rawXml)
                 }
             }
         }
+
+        // Log altitude changes
+        if (state.AssignedAltitude != prevAA || state.AssignedVfr != prevVfr || state.BlockFloor != prevBlkF || state.BlockCeiling != prevBlkC)
+        {
+            var beforeStr = prevVfr ? (prevAA.HasValue ? $"VFR/{prevAA}" : "VFR") : prevBlkF.HasValue ? $"{prevBlkF}B{prevBlkC}" : $"{prevAA?.ToString() ?? "null"}";
+            var afterStr = state.AssignedVfr ? (state.AssignedAltitude.HasValue ? $"VFR/{state.AssignedAltitude}" : "VFR") : state.BlockFloor.HasValue ? $"{state.BlockFloor}B{state.BlockCeiling}" : $"{state.AssignedAltitude?.ToString() ?? "null"}";
+            var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} ctrl={state.ControllingFacility}/{state.ControllingSector} ASSIGNED: {beforeStr} → {afterStr} RAW_XML: {aa.ToString().Replace("\n", " ")}";
+            altitudeLog.Enqueue(logEntry);
+            while (altitudeLog.Count > MaxAltitudeLogEntries) altitudeLog.TryDequeue(out _);
+        }
     }
 
     // interimAltitude — nil="true" means clear
     var ia = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "interimAltitude");
+    var prevIA = state.InterimAltitude;
     if (ia is not null)
     {
         var isNil = string.Equals(ia.Attribute("nil")?.Value, "true", StringComparison.OrdinalIgnoreCase);
@@ -882,12 +911,29 @@ void ProcessFlight(XElement flight, string rawXml)
             state.InterimAltitude = null;
         else if (double.TryParse(ia.Value, out var ival))
             state.InterimAltitude = ival;
+
+        // Log interim changes
+        if (state.InterimAltitude != prevIA)
+        {
+            var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} ctrl={state.ControllingFacility}/{state.ControllingSector} INTERIM: {prevIA?.ToString() ?? "null"} → {state.InterimAltitude?.ToString() ?? "CLEARED(nil)"} RAW_XML: {ia.ToString().Replace("\n", " ")}";
+            altitudeLog.Enqueue(logEntry);
+            while (altitudeLog.Count > MaxAltitudeLogEntries) altitudeLog.TryDequeue(out _);
+        }
     }
     // Clear interim when absent in message types that carry full flight plan state.
     // FH = full flight plan (canonical state snapshot),
     // LH = local handoff / interim altitude event,
     // OH = ownership (handoff completion may clear interim)
-    else if (source is "FH" or "LH" or "OH") state.InterimAltitude = null;
+    else if (source is "FH" or "LH" or "OH")
+    {
+        state.InterimAltitude = null;
+        if (prevIA.HasValue)
+        {
+            var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} ctrl={state.ControllingFacility}/{state.ControllingSector} INTERIM: {prevIA} → CLEARED(absent in {source})";
+            altitudeLog.Enqueue(logEntry);
+            while (altitudeLog.Count > MaxAltitudeLogEntries) altitudeLog.TryDequeue(out _);
+        }
+    }
 
     // controllingUnit
     var cu = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "controllingUnit");

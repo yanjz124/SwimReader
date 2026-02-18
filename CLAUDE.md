@@ -188,6 +188,19 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 </enRoute>
 ```
 
+**Clearance (cleared element) XML structure:**
+```xml
+<enRoute>
+    <cleared clearanceHeading="15R" clearanceSpeed="M75" clearanceText="MEDEVAC"/>
+</enRoute>
+```
+- `NasClearedFlightInformationType` — controller-entered heading, speed, and free text
+- Heading values: numeric (255, 160), runway (15R, 10R, 20L), PH (published), VK, BL, BR, OR, SLO, CTRL, 4-digit (0348, 0405)
+- Speed values: knots (250, 280), Mach (M79, M75), S-prefix (S270, S290), +/- modifiers (280+, M74-)
+- Free text: frequencies (128.35), MEDEVAC, NORDO, route mods (D/SYRAH, STYONRTE, RNV1/54, DR/DPR)
+- SFDPS does **not** send explicit clear signals — values persist until flight drops/purges; values do update (CHANGED events observed)
+- ~2-3% of flights carry clearance data at any time
+
 ### FlightState Fields
 Core fields tracked per flight (by GUFI):
 - Identity: `gufi`, `fdpsGufi`, `callsign`, `computerId`, `computerIds` (per-facility CID map)
@@ -198,6 +211,7 @@ Core fields tracked per flight (by GUFI):
 - Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
 - Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit`
 - Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `equipmentQualifier`
+- Clearance (HSF): `clearanceHeading`, `clearanceSpeed`, `clearanceText`, `fourthAdaptedField`
 - Datalink: `dataLinkCode`, `otherDataLink`, `communicationCode`
 - Status: `flightStatus` (ACTIVE, DROPPED, CANCELLED)
 - Event log: last 50 state-change events with timestamps
@@ -212,6 +226,12 @@ Core fields tracked per flight (by GUFI):
 | `GET /api/kml/{name}` | Serve a specific KML file from repo root |
 | `GET /api/route/{gufi}` | Resolved route waypoints (lat/lon) from NASR data |
 | `GET /api/nasr/status` | NASR data load status, counts, effective date |
+| `GET /api/debug/elements` | XML element discovery — all unique FIXM element paths (filter with `?filter=`) |
+| `GET /api/debug/raw/{source}` | Raw XML sample for a message source type (e.g., TH, FH, OH) |
+| `GET /api/debug/xml-search?q=` | Search raw XML samples for a keyword |
+| `GET /api/debug/namevalue-keys` | All unique `nameValue` keys seen in supplementalData |
+| `GET /api/debug/cpdlc` | CPDLC-capable flights (datalink code contains "J") |
+| `GET /api/debug/clearance` | Flights with clearance data (heading/speed/text) |
 
 ### Handoff Detection Logic
 Server-side in `Program.cs` ProcessFlight():
@@ -338,6 +358,13 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `<FLID>` | Toggle FDB/LDB for flight (blocked during active point-out) |
 
 FLIDs can be callsign or CID (CID only matches selected facility). When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
+
+### HSF (Heading/Speed/Free text) — Line 4
+Line 4 shows controller-assigned heading, speed, and free text data. Two sources merged via `getEffectiveHsf()`:
+1. **Server clearance data** — from SFDPS `cleared` element (`clearanceHeading`, `clearanceSpeed`, `clearanceText`)
+2. **Local QS overrides** — entered via QS commands in the MCA (local wins per-field)
+
+When clearance data exists (from either source), line 3 shows a ↴ indicator. Server clearance data always displays on line 4 without requiring manual toggle; local-only QS data requires toggling via ↴ click or `QS <FLID>`. Free text takes priority (fills line 4); otherwise heading and speed are positioned with speed aligned to the ↴ column.
 
 ### NASR Route Resolution
 On startup, SfdpsERAM downloads FAA NASR 28-Day Subscription data and parses:

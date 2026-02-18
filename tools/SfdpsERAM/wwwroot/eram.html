@@ -507,9 +507,19 @@ const localAssignedAlt = new Map();  // gufi → { feet, display } — QZ assign
 const localInterimAlt = new Map();   // gufi → { feet, type } — QQ interim (type: 'I'=interim, 'P'=procedure, 'L'=local)
 const localReportedAlt = new Map();  // gufi → feet — QR controller-entered reported altitude
 
-// HSF (Heading/Speed/Free text) data — QS command
-const hsfData = new Map();     // gufi → { heading, speed, freeText } — controller-entered HSF
+// HSF (Heading/Speed/Free text) data — QS command (local overrides)
+const hsfData = new Map();     // gufi → { heading, speed, freeText } — local QS overrides
 const hsfShowMap = new Set();  // GUFIs currently displaying HSF on line 4 (toggled by ↴ click or QS <FLID>)
+
+// Effective HSF: merges server clearance data with local QS overrides (local wins per-field)
+function getEffectiveHsf(f) {
+    const local = hsfData.get(f.gufi);
+    const heading = local?.heading ?? f.clearanceHeading ?? null;
+    const speed = local?.speed ?? f.clearanceSpeed ?? null;
+    const freeText = local?.freeText ?? f.clearanceText ?? null;
+    if (!heading && !speed && !freeText) return null;
+    return { heading, speed, freeText };
+}
 
 // Point-out state
 const pointoutAcked = new Set();  // GUFIs with acknowledged point-outs (P→A)
@@ -1619,8 +1629,9 @@ function formatDatablock(f, cls) {
 const VCI_SVG = '<svg viewBox="0 0 16 16" width="1.2em" height="1.2em" style="vertical-align:-0.2em;"><path d="M3,5 L3,13 L11,13" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5,8 A3,3 0 0,1 8,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M5,5.5 A5.5,5.5 0 0,1 10.5,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 
 function formatLine4(f, hsfCol) {
-    const hsf = hsfData.get(f.gufi);
-    const showHsf = hsfShowMap.has(f.gufi);
+    const hsf = getEffectiveHsf(f);
+    const hasServerClr = f.clearanceHeading || f.clearanceSpeed || f.clearanceText;
+    const showHsf = hasServerClr || hsfShowMap.has(f.gufi);
 
     // HSF mode: show heading/speed/free text
     // Speed positioned so last digit sits under ↴ (at hsfCol), +/- extends one past
@@ -1656,7 +1667,7 @@ function formatLine4(f, hsfCol) {
 function formatFdbHtml(f, cls) {
     const showVci = vciActive.has(f.gufi);
     const showR = shouldShowR(f, cls);
-    const hsf = hsfData.get(f.gufi);
+    const hsf = getEffectiveHsf(f);
 
     const l1 = esc(f.callsign || '???');
     const l2 = esc(formatAltLine(f));
@@ -1665,8 +1676,9 @@ function formatFdbHtml(f, cls) {
     const l4 = formatLine4(f, l3text.length);
 
     // ↴ indicator appended directly at end of line 3 (no gap)
+    const hasServerClr = f.clearanceHeading || f.clearanceSpeed || f.clearanceText;
     let l3;
-    if (hsf && (hsf.heading || hsf.speed || hsf.freeText)) {
+    if (hsf && (hasServerClr || hsf.heading || hsf.speed || hsf.freeText)) {
         const hsfInd = '<span class="ac-hsf-ind" style="pointer-events:auto;cursor:inherit;">\u21b4</span>';
         l3 = l3esc + hsfInd;
     } else {
@@ -1907,6 +1919,10 @@ function connectWs() {
                     while (hist.length > MAX_HISTORY) hist.shift();
                     flightHistory.set(f.gufi, hist);
                 }
+                // Auto-show HSF for flights with server clearance data
+                if (f.clearanceHeading || f.clearanceSpeed || f.clearanceText) {
+                    hsfShowMap.add(f.gufi);
+                }
             }
             lastScanTime = performance.now(); // reset scan clock
         } else if (msg.type === 'update') {
@@ -1924,6 +1940,7 @@ function connectWs() {
                 const oldHoForced = existing.handoffForced;
                 const oldCuFac = existing.controllingFacility;
                 const oldCuSec = existing.controllingSector;
+                const hadClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
 
                 // Buffer new position for scan cycle; record history from the position we're replacing
                 if (f.latitude != null && f.longitude != null) {
@@ -1949,6 +1966,13 @@ function connectWs() {
                 if (f.assignedAltitude != null) localAssignedAlt.delete(f.gufi);
                 if (f.interimAltitude != null) localInterimAlt.delete(f.gufi);
                 if (f.reportedAltitude != null) localReportedAlt.delete(f.gufi);
+
+                // Auto-show HSF when server clearance data first arrives (don't re-show if user manually hid)
+                // hadClr was captured before the copy loop above
+                const hasClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
+                if (hasClr && !hadClr) {
+                    hsfShowMap.add(f.gufi);
+                }
 
                 // Detect handoff completion via two paths:
                 // 1) HO event cleared by server (HO-DONE) + CU matches recv
@@ -2123,10 +2147,10 @@ function flightHash(f, cls) {
     const laH = la ? `${la.feet}${la.rules||''}${la.block||''}` : '';
     const liH = li ? `${li.feet}${li.type}` : '';
     const lrH = lr != null ? lr : '';
-    const hsf = hsfData.get(f.gufi);
+    const hsf = getEffectiveHsf(f);
     const hsfH = hsf ? `${hsf.heading||''}${hsf.speed||''}${hsf.freeText||''}` : '';
     const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}`;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

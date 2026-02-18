@@ -53,6 +53,11 @@ var AirwayPattern = new Regex(@"^[JVQTLMNP]\d+$", RegexOptions.Compiled);
 long _procCount = 0;
 long _noGufiCount = 0;
 long lastMessageTicks = DateTime.UtcNow.Ticks;
+
+// XML element discovery — tracks all unique element paths + attribute names seen in FIXM messages
+var xmlElements = new ConcurrentDictionary<string, long>();
+var xmlSampleStore = new ConcurrentDictionary<string, string>(); // source -> last raw XML sample
+var nameValueKeys = new ConcurrentDictionary<string, long>(); // unique nameValue name= values
 var jsonOpts = new JsonSerializerOptions
 {
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -274,6 +279,89 @@ app.MapGet("/api/debug/search/{callsign}", (string callsign) =>
             kv.Value.Origin, kv.Value.Destination, kv.Value.Squawk
         }).Take(20).ToList();
     return Results.Json(matches, jsonOpts);
+});
+
+// Debug: XML element discovery — shows all unique element paths seen in FIXM messages
+app.MapGet("/api/debug/elements", (string? filter) =>
+{
+    var elements = xmlElements.ToArray()
+        .Where(kv => string.IsNullOrEmpty(filter) ||
+            kv.Key.Contains(filter, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(kv => kv.Key)
+        .Select(kv => new { path = kv.Key, count = kv.Value })
+        .ToList();
+    return Results.Json(new { totalPaths = xmlElements.Count, showing = elements.Count, elements }, jsonOpts);
+});
+
+// Debug: raw XML sample for a given message source type
+app.MapGet("/api/debug/raw/{source}", (string source) =>
+{
+    source = source.ToUpperInvariant();
+    if (xmlSampleStore.TryGetValue(source, out var xml))
+        return Results.Content(xml, "application/xml");
+    return Results.NotFound($"No sample for source '{source}'");
+});
+
+// Debug: search raw XML samples for a keyword (e.g., "cpdlc", "dataLink", "authority")
+app.MapGet("/api/debug/xml-search", (string q) =>
+{
+    var results = xmlSampleStore
+        .Where(kv => kv.Value.Contains(q, StringComparison.OrdinalIgnoreCase))
+        .Select(kv => {
+            // Find context around the match
+            var idx = kv.Value.IndexOf(q, StringComparison.OrdinalIgnoreCase);
+            var start = Math.Max(0, idx - 200);
+            var end = Math.Min(kv.Value.Length, idx + q.Length + 200);
+            return new { source = kv.Key, context = kv.Value[start..end] };
+        }).ToList();
+    return Results.Json(new { query = q, sourcesSearched = xmlSampleStore.Count, matches = results }, jsonOpts);
+});
+
+// Debug: all unique nameValue keys seen in supplementalData
+app.MapGet("/api/debug/namevalue-keys", () =>
+{
+    var keys = nameValueKeys.ToArray()
+        .OrderByDescending(kv => kv.Value)
+        .Select(kv => new { key = kv.Key, count = kv.Value })
+        .ToList();
+    return Results.Json(new { totalKeys = keys.Count, keys }, jsonOpts);
+});
+
+// Debug: CPDLC capability summary across all tracked flights
+app.MapGet("/api/debug/cpdlc", () =>
+{
+    var cpdlcFlights = flights.Values
+        .Where(f => !string.IsNullOrEmpty(f.DataLinkCode) && f.DataLinkCode.Contains("J"))
+        .Select(f => new {
+            f.Gufi, f.Callsign, f.AircraftType,
+            f.DataLinkCode, f.OtherDataLink, f.CommunicationCode,
+            f.Origin, f.Destination,
+            f.ControllingFacility, f.ControllingSector,
+            f.FlightStatus
+        })
+        .Take(100).ToList();
+    var total = flights.Count;
+    var jCount = flights.Values.Count(f => !string.IsNullOrEmpty(f.DataLinkCode) && f.DataLinkCode.Contains("J"));
+    var cpdlcXCount = flights.Values.Count(f =>
+        !string.IsNullOrEmpty(f.OtherDataLink) &&
+        f.OtherDataLink.Contains("CPDLC", StringComparison.OrdinalIgnoreCase));
+    return Results.Json(new {
+        totalFlights = total,
+        dataLinkJ = jCount,
+        otherDataLinkCPDLC = cpdlcXCount,
+        sampleFlights = cpdlcFlights
+    }, jsonOpts);
+});
+
+// Debug: flights with clearance data (heading/speed/text)
+app.MapGet("/api/debug/clearance", () =>
+{
+    var clrFlights = flights.Values
+        .Where(f => !string.IsNullOrEmpty(f.ClearanceHeading) || !string.IsNullOrEmpty(f.ClearanceSpeed) || !string.IsNullOrEmpty(f.ClearanceText))
+        .Select(f => new { f.Gufi, f.Callsign, f.ControllingFacility, f.ControllingSector, f.ClearanceHeading, f.ClearanceSpeed, f.ClearanceText, f.Origin, f.Destination })
+        .OrderBy(f => f.ControllingFacility)
+        .ToList();
+    return Results.Json(new { total = flights.Count, withClearance = clrFlights.Count, flights = clrFlights }, jsonOpts);
 });
 
 // Serve KML files from repo root
@@ -502,6 +590,13 @@ void ProcessFlight(XElement flight, string rawXml)
     var centre = flight.Attribute("centre")?.Value ?? "";
     var timestamp = flight.Attribute("timestamp")?.Value;
 
+    // XML element discovery: walk the flight element tree (first 10K messages only to minimize overhead)
+    if (Interlocked.Read(ref _procCount) < 10_000)
+    {
+        WalkElements(flight, "flight", source);
+        xmlSampleStore[source] = rawXml;
+    }
+
     var state = flights.GetOrAdd(gufi, _ => new FlightState { Gufi = gufi });
     state.LastSeen = DateTime.UtcNow;
     state.LastMsgSource = source;
@@ -659,6 +754,18 @@ void ProcessFlight(XElement flight, string rawXml)
             if (recvUnit is not null) state.PointoutReceivingUnit = FormatUnit(recvUnit);
         }
 
+        // Cleared flight information (HF — heading, speed, text assigned by controller)
+        var clr = enRoute.Elements().FirstOrDefault(e => e.Name.LocalName == "cleared");
+        if (clr is not null)
+        {
+            var clrHdg = clr.Attribute("clearanceHeading")?.Value;
+            if (!string.IsNullOrEmpty(clrHdg)) state.ClearanceHeading = clrHdg;
+            var clrSpd = clr.Attribute("clearanceSpeed")?.Value;
+            if (!string.IsNullOrEmpty(clrSpd)) state.ClearanceSpeed = clrSpd;
+            var clrTxt = clr.Attribute("clearanceText")?.Value;
+            if (!string.IsNullOrEmpty(clrTxt)) state.ClearanceText = clrTxt;
+        }
+
         // Handoff (OH)
         var ho = enRoute.Descendants().FirstOrDefault(e => e.Name.LocalName == "handoff");
         if (ho is not null)
@@ -755,7 +862,9 @@ void ProcessFlight(XElement flight, string rawXml)
     {
         var name = nv.Attribute("name")?.Value;
         var val = nv.Attribute("value")?.Value;
+        if (!string.IsNullOrEmpty(name)) nameValueKeys.AddOrUpdate(name, 1, (_, v) => v + 1);
         if (name == "FDPS_GUFI" && !string.IsNullOrEmpty(val)) state.FdpsGufi = val;
+        if (name == "4TH_ADAPTED_FIELD" && !string.IsNullOrEmpty(val)) state.FourthAdaptedField = val;
     }
 
     // Add event to log
@@ -798,6 +907,25 @@ string FormatUnit(XElement unit)
     var id = unit.Attribute("unitIdentifier")?.Value ?? "";
     var sec = unit.Attribute("sectorIdentifier")?.Value ?? "";
     return string.IsNullOrEmpty(sec) ? id : $"{id}/{sec}";
+}
+
+void WalkElements(XElement el, string path, string source)
+{
+    var key = $"{path}";
+    xmlElements.AddOrUpdate(key, 1, (_, v) => v + 1);
+
+    // Also record attributes at this path
+    foreach (var attr in el.Attributes())
+    {
+        var attrKey = $"{path}/@{attr.Name.LocalName}";
+        xmlElements.AddOrUpdate(attrKey, 1, (_, v) => v + 1);
+    }
+
+    foreach (var child in el.Elements())
+    {
+        var childName = child.Name.LocalName;
+        WalkElements(child, $"{path}/{childName}", source);
+    }
 }
 
 string BuildEventSummary(string source, XElement flight)
@@ -1576,6 +1704,12 @@ class FlightState
     public string? PointoutOriginatingUnit { get; set; }
     public string? PointoutReceivingUnit { get; set; }
 
+    // Clearance data (from NasClearedFlightInformationType — heading, speed, text)
+    public string? ClearanceHeading { get; set; }
+    public string? ClearanceSpeed { get; set; }
+    public string? ClearanceText { get; set; }
+    public string? FourthAdaptedField { get; set; }
+
     // Datalink / CPDLC
     public string? CommunicationCode { get; set; }
     public string? DataLinkCode { get; set; }
@@ -1632,6 +1766,7 @@ class FlightState
         ReportingFacility,
         HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
         PointoutOriginatingUnit, PointoutReceivingUnit,
+        ClearanceHeading, ClearanceSpeed, ClearanceText,
         DataLinkCode, OtherDataLink,
         Route, FlightRules, STAR, Remarks,
         Registration, EquipmentQualifier, RequestedSpeed,
@@ -1660,6 +1795,7 @@ class FlightState
             ReportingFacility, ControllingFacility, ControllingSector,
             HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
             PointoutOriginatingUnit, PointoutReceivingUnit,
+            ClearanceHeading, ClearanceSpeed, ClearanceText, FourthAdaptedField,
             CommunicationCode, DataLinkCode, OtherDataLink, SELCAL,
             NavigationCode, PBNCode, SurveillanceCode,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),

@@ -358,8 +358,8 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             </div>
             <div class="ctrl-row">
                 <label>PROC</label>
-                <input type="range" id="rng-proc" min="0" max="100" value="60" style="flex:1; accent-color:#cccc44;">
-                <span id="lbl-proc" style="min-width:28px; text-align:right; font-size:11px;">60</span>
+                <input type="range" id="rng-proc" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-proc" style="min-width:28px; text-align:right; font-size:11px;">0</span>
             </div>
             <div class="ctrl-row">
                 <label><input type="checkbox" id="chk-mapbg"> Map Bg</label>
@@ -999,7 +999,7 @@ loadKml();
 // ════════════════════════════════════════════════════════════════════════════
 const nasrLayers = {};    // 'jroutes'|'vroutes'|'vors'|'proc:DCA' → L.layerGroup
 const nasrCache = {};     // same keys → raw API data (cache across toggles)
-const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 0, proc: 60 };
+const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 0, proc: 0 };
 
 const nasrLoading = {};   // guard against double-click during async fetch
 function nasrColor(brightness) { return bndColor(brightness); }  // same grey ramp as boundaries
@@ -1073,17 +1073,68 @@ setupNasrSlider('rng-jroutes', 'lbl-jroutes', 'jroutes', '/api/nasr/airways?type
 setupNasrSlider('rng-vroutes', 'lbl-vroutes', 'vroutes', '/api/nasr/airways?type=lo', renderAirways);
 setupNasrSlider('rng-vors', 'lbl-vors', 'vors', '/api/nasr/navaids', renderVors);
 
-// Procedure brightness slider — controls color brightness of all loaded proc:* layers
+// Procedure auto-load: when PROC slider > 0 and facility selected, load SID/STARs
+// for that facility's destination airports (from destination-codes.json)
+let procLoadedFacility = null;   // track which facility's procedures are loaded
+let procLoading = false;
+
+async function loadFacilityProcedures() {
+    const br = nasrBrightness.proc;
+    const fac = myFacility;
+    // If slider at 0, remove all proc layers
+    if (br <= 0) {
+        clearProcOverlay();
+        procLoadedFacility = null;
+        return;
+    }
+    // If already loaded for this facility, just update colors
+    if (procLoadedFacility === fac) {
+        for (const key of Object.keys(nasrLayers)) {
+            if (key.startsWith('proc:')) {
+                nasrLayers[key].eachLayer(l => l.setStyle({ color: nasrColor(br) }));
+            }
+        }
+        return;
+    }
+    // Need to load (new facility or first load)
+    if (!fac || procLoading) return;
+    const codes = destCodesConfig[fac];
+    if (!codes) return;
+    // Collect unique 3-letter airport codes (major airports with SID/STAR data)
+    const airports = new Set();
+    for (const list of Object.values(codes)) {
+        for (const apt of list) {
+            if (/^[A-Z]{3}$/i.test(apt)) airports.add(apt.toUpperCase());
+        }
+    }
+    if (airports.size === 0) return;
+    procLoading = true;
+    clearProcOverlay();
+    procLoadedFacility = fac;
+    const col = nasrColor(br);
+    for (const apt of airports) {
+        try {
+            const resp = await fetch(`/api/nasr/procedures?airport=${encodeURIComponent(apt)}`);
+            if (!resp.ok) continue;
+            const data = await resp.json();
+            if (data.length === 0) continue;
+            // Check if facility/brightness changed while we were loading
+            if (myFacility !== fac || nasrBrightness.proc <= 0) { procLoading = false; return; }
+            const key = `proc:${apt}`;
+            nasrCache[key] = data;
+            const group = L.layerGroup();
+            renderProcedures(data, group, nasrBrightness.proc);
+            nasrLayers[key] = group;
+            group.addTo(map);
+        } catch { continue; }
+    }
+    procLoading = false;
+}
+
 document.getElementById('rng-proc').addEventListener('input', function () {
     nasrBrightness.proc = parseInt(this.value);
     document.getElementById('lbl-proc').textContent = nasrBrightness.proc;
-    const br = nasrBrightness.proc;
-    for (const key of Object.keys(nasrLayers)) {
-        if (key.startsWith('proc:')) {
-            if (br <= 0) { map.removeLayer(nasrLayers[key]); delete nasrLayers[key]; }
-            else nasrLayers[key].eachLayer(l => l.setStyle({ color: nasrColor(br) }));
-        }
-    }
+    loadFacilityProcedures();
     saveSettingsToUrl();
 });
 
@@ -1240,7 +1291,10 @@ function isEmergency(f) {
 
 function isVisible(f) {
     if (f.latitude == null || f.longitude == null) return false;
-    if (f.flightStatus && f.flightStatus !== 'ACTIVE') return false;
+    // Allow DROPPED flights if they're the best GUFI for their callsign (handoff transition:
+    // old center dropped the track but new center hasn't sent position yet)
+    if (f.flightStatus === 'CANCELLED') return false;
+    if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
     // FDB tracks are exempt — own, handoff, emergency, user-forced, and quick look tracks always show
@@ -2223,18 +2277,26 @@ function doRender() {
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
 
     // Deduplicate: same callsign reported by multiple ARTCCs → keep only the best GUFI.
-    // Priority: (1) controlling/reporting facility matches selected facility, (2) first seen.
+    // Priority: (1) has position, (2) facility matches, (3) ACTIVE over DROPPED, (4) first seen.
+    // During handoff the old GUFI may be DROPPED with position while the new GUFI is ACTIVE
+    // but has no position yet — we prefer the one with position so the target doesn't vanish.
     bestGufiByCallsign.clear();
     if (myFacility) {
         for (const [gufi, f] of flights) {
             if (!f.callsign) continue;
+            if (f.flightStatus === 'CANCELLED') continue;  // skip cancelled
             const cs = f.callsign;
             const prev = bestGufiByCallsign.get(cs);
             if (!prev) { bestGufiByCallsign.set(cs, gufi); continue; }
             const prevF = flights.get(prev);
+            const prevHasPos = prevF.latitude != null && prevF.longitude != null;
+            const curHasPos = f.latitude != null && f.longitude != null;
+            // Strong preference: has position beats no position
+            if (curHasPos && !prevHasPos) { bestGufiByCallsign.set(cs, gufi); continue; }
+            if (!curHasPos && prevHasPos) continue;
+            // Both have position (or neither): prefer our facility
             const prevFac = prevF.controllingFacility || prevF.reportingFacility || '';
             const curFac = f.controllingFacility || f.reportingFacility || '';
-            // Prefer the one from our facility
             if (curFac === myFacility && prevFac !== myFacility) {
                 bestGufiByCallsign.set(cs, gufi);
             }
@@ -2513,6 +2575,8 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
     zoomToFacility(myFacility);
+    procLoadedFacility = null;  // force reload procedures for new facility
+    loadFacilityProcedures();
     saveSettingsToUrl();
 });
 
@@ -3078,6 +3142,7 @@ function loadSettingsFromUrl() {
     if (nasrBrightness.jroutes > 0) showNasrLayer('jroutes', '/api/nasr/airways?type=hi', renderAirways);
     if (nasrBrightness.vroutes > 0) showNasrLayer('vroutes', '/api/nasr/airways?type=lo', renderAirways);
     if (nasrBrightness.vors > 0) showNasrLayer('vors', '/api/nasr/navaids', renderVors);
+    if (nasrBrightness.proc > 0) loadFacilityProcedures();
     showBoundariesForFacility(myFacility);
 }
 
@@ -3102,7 +3167,7 @@ function saveSettingsToUrl() {
     if (facilityOnly) params.set('faconly', '1');
     if (document.getElementById('chk-mca-kb').checked) params.set('kb', '1');
     const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.proc];
-    const nasrDefaults = [0, 0, 0, 60];
+    const nasrDefaults = [0, 0, 0, 0];
     if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
     if (nexradLevel > 0) params.set('nxlvl', nexradLevel === 3 ? '123' : nexradLevel === 2 ? '23' : '3');
     if (nexradBrightness !== 50) params.set('nxbr', nexradBrightness);
@@ -4151,6 +4216,7 @@ function processCommand(cmd) {
     if (verb === '.PROC' || verb === '.P') {
         if (parts.length < 2) {
             clearProcOverlay();
+            procLoadedFacility = null;
             return { feedback: [{ type: 'ok', text: 'ACCEPT' }, { type: 'info', text: 'CLEAR PROCEDURES' }] };
         }
         const apt = parts[1].toUpperCase();
@@ -4163,12 +4229,19 @@ function processCommand(cmd) {
                 const data = await resp.json();
                 if (data.length === 0) return { feedback: [{ type: 'err', text: `NO PROCEDURES FOR ${apt}` }] };
                 clearProcOverlay();
+                procLoadedFacility = '__manual__';  // prevent auto-load from overwriting
                 const key = `proc:${apt}`;
                 nasrCache[key] = data;
                 const group = L.layerGroup();
-                renderProcedures(data, group, nasrBrightness.proc);
+                renderProcedures(data, group, nasrBrightness.proc || 60);
                 nasrLayers[key] = group;
                 group.addTo(map);
+                // Ensure PROC slider is visible if it was at 0
+                if (nasrBrightness.proc <= 0) {
+                    nasrBrightness.proc = 60;
+                    document.getElementById('rng-proc').value = 60;
+                    document.getElementById('lbl-proc').textContent = 60;
+                }
                 const stars = data.filter(p => p.type === 'STAR').length;
                 const dps = data.filter(p => p.type === 'DP').length;
                 return { feedback: [

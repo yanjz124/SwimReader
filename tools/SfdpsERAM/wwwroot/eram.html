@@ -1762,7 +1762,6 @@ function formatAltLine(f) {
     const assigned = f.assignedAltitude ?? (localA ? localA.feet : null);
     const reported = f.reportedAltitude ?? (localR != null ? localR : null);
     const interim = f.interimAltitude ?? (localI ? localI.feet : null);
-    const isProcedure = !f.interimAltitude && localI && localI.type === 'P';
 
     const afl = assigned != null ? String(Math.round(assigned / 100)).padStart(3, '0') : '';
     const rfl = reported != null ? String(Math.round(reported / 100)).padStart(3, '0') : '';
@@ -1788,10 +1787,11 @@ function formatAltLine(f) {
         return rfl ? `${localA.block}${rfl}` : localA.block;
     }
 
-    // Interim/procedure altitude → T or P indicator
+    // Interim/procedure/local altitude → T, P, or L indicator
     if (interim != null) {
         const ifl = String(Math.round(interim / 100)).padStart(3, '0');
-        const indicator = isProcedure ? 'P' : 'T';
+        const localType = !f.interimAltitude && localI ? localI.type : null;
+        const indicator = localType === 'P' ? 'P' : localType === 'L' ? 'L' : 'T';
         return rfl ? `${ifl}${indicator}${rfl}` : `${ifl}${indicator}`;
     }
 

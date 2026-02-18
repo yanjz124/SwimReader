@@ -58,6 +58,10 @@ long lastMessageTicks = DateTime.UtcNow.Ticks;
 var xmlElements = new ConcurrentDictionary<string, long>();
 var xmlSampleStore = new ConcurrentDictionary<string, string>(); // source -> last raw XML sample
 var nameValueKeys = new ConcurrentDictionary<string, long>(); // unique nameValue name= values
+
+// Debug: clearance raw XML log — captures raw XML for any message touching a clearance-bearing flight
+var clearanceLog = new ConcurrentQueue<string>(); // timestamped log entries
+const int MaxClearanceLogEntries = 2000;
 var jsonOpts = new JsonSerializerOptions
 {
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -431,6 +435,15 @@ app.MapGet("/api/debug/clearance", () =>
         .OrderBy(f => f.ControllingFacility)
         .ToList();
     return Results.Json(new { total = flights.Count, withClearance = clrFlights.Count, flights = clrFlights }, jsonOpts);
+});
+
+// Debug: clearance raw XML log — shows raw SFDPS XML for clearance-related events
+app.MapGet("/api/debug/clearance-log", (int? last) =>
+{
+    var entries = clearanceLog.ToArray();
+    var n = last ?? 100;
+    var recent = entries.Length > n ? entries[^n..] : entries;
+    return Results.Text(string.Join("\n", recent), "text/plain");
 });
 
 // Serve KML files from repo root
@@ -967,14 +980,38 @@ void ProcessFlight(XElement flight, string rawXml)
 
         // Cleared flight information (HF — heading, speed, text assigned by controller)
         var clr = enRoute.Elements().FirstOrDefault(e => e.Name.LocalName == "cleared");
+        var hadClearance = !string.IsNullOrEmpty(state.ClearanceHeading) || !string.IsNullOrEmpty(state.ClearanceSpeed) || !string.IsNullOrEmpty(state.ClearanceText);
         if (clr is not null)
         {
+            // <cleared> element is authoritative — present attributes are set, absent attributes are cleared.
+            // e.g. <cleared clearanceSpeed="270"/> means heading & text have been removed by controller.
             var clrHdg = clr.Attribute("clearanceHeading")?.Value;
-            if (!string.IsNullOrEmpty(clrHdg)) state.ClearanceHeading = clrHdg;
             var clrSpd = clr.Attribute("clearanceSpeed")?.Value;
-            if (!string.IsNullOrEmpty(clrSpd)) state.ClearanceSpeed = clrSpd;
             var clrTxt = clr.Attribute("clearanceText")?.Value;
-            if (!string.IsNullOrEmpty(clrTxt)) state.ClearanceText = clrTxt;
+
+            // Log raw XML for debugging (before applying changes)
+            var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} ctrl={state.ControllingFacility}/{state.ControllingSector} " +
+                $"BEFORE: H={state.ClearanceHeading ?? "-"} S={state.ClearanceSpeed ?? "-"} T={state.ClearanceText ?? "-"} " +
+                $"RAW_ATTRS: H=\"{clrHdg ?? "(null)"}\" S=\"{clrSpd ?? "(null)"}\" T=\"{clrTxt ?? "(null)"}\" " +
+                $"RAW_XML: {clr.ToString()}";
+            clearanceLog.Enqueue(logEntry);
+            while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
+
+            // Apply: set present values, clear absent ones.
+            // Use "" (not null) for cleared fields so JSON serializer includes them
+            // in updates — WhenWritingNull skips null, but "" propagates to clients.
+            state.ClearanceHeading = string.IsNullOrEmpty(clrHdg) ? (hadClearance ? "" : null) : clrHdg;
+            state.ClearanceSpeed = string.IsNullOrEmpty(clrSpd) ? (hadClearance ? "" : null) : clrSpd;
+            state.ClearanceText = string.IsNullOrEmpty(clrTxt) ? (hadClearance ? "" : null) : clrTxt;
+        }
+        else if (hadClearance)
+        {
+            // Flight HAS clearance data but this message has NO <cleared> element — log to see what source types arrive
+            var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} " +
+                $"HAS_CLR(H={state.ClearanceHeading ?? "-"} S={state.ClearanceSpeed ?? "-"} T={state.ClearanceText ?? "-"}) " +
+                $"NO_CLEARED_ELEM enRoute_children=[{string.Join(",", enRoute.Elements().Select(e => e.Name.LocalName))}]";
+            clearanceLog.Enqueue(logEntry);
+            while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
         }
 
         // Handoff (OH)

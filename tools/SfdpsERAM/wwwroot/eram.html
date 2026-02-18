@@ -20,9 +20,15 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     width: 20px; background: #1a1a1a; border: none; border-right: 1px solid #333;
     color: #666; cursor: pointer; display: flex; align-items: center; justify-content: center;
     font-size: 14px; padding: 0; flex-shrink: 0; z-index: 10;
-    transition: color 0.15s;
+    transition: color 0.15s, height 0.2s, border-radius 0.2s, margin-top 0.2s;
 }
 #sidebar-toggle:hover { color: #cccc44; background: #222; }
+#sidebar.collapsed ~ #sidebar-toggle {
+    height: 36px; align-self: flex-start; margin-top: 8px;
+    border-radius: 0 4px 4px 0; border: 1px solid #333; border-left: none;
+    opacity: 0.5;
+}
+#sidebar.collapsed ~ #sidebar-toggle:hover { opacity: 1; }
 #map-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
 #map { width: 100%; height: 100%; }
 
@@ -208,6 +214,17 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     background: #000000; border: 1px solid #888; border-top: none; color: #ffffff;
     padding: 3px 6px; min-width: 400px;
     font-size: 14px; font-weight: normal; line-height: 18px; white-space: pre; min-height: 68px;
+}
+#mca-kb-btn {
+    position: absolute; top: 0; right: -28px;
+    width: 24px; height: 24px; padding: 0;
+    background: rgba(50,50,50,0.6); border: 1px solid #555; border-radius: 3px;
+    color: #888; font-size: 16px; line-height: 22px; text-align: center;
+    cursor: pointer; opacity: 0.5; transition: opacity 0.2s;
+}
+#mca-kb-btn:hover, #mca-kb-btn:active { opacity: 1; color: #ccc; }
+#mca-mobile-input {
+    position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0;
 }
 .transp-mca #mca-preview,
 .transp-mca #mca-feedback { background: transparent; }
@@ -427,6 +444,8 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
         <div id="mca">
             <div id="mca-preview"><span class="mca-cursor">_</span></div>
             <div id="mca-feedback"></div>
+            <button id="mca-kb-btn" title="Open keyboard" aria-label="Open keyboard">&#9000;&#xFE0E;</button>
+            <input id="mca-mobile-input" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">
         </div>
         <div id="ra">
             <div id="ra-content"></div>
@@ -4182,10 +4201,24 @@ function showFlightInRA(f) {
 // ════════════════════════════════════════════════════════════════════════════
 // Global keyboard capture → MCA
 // ════════════════════════════════════════════════════════════════════════════
+// ── Mobile keyboard bridge ──
+const mcaMobileInput = document.getElementById('mca-mobile-input');
+document.getElementById('mca-kb-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    mcaMobileInput.value = '';
+    mcaMobileInput.focus();
+});
+mcaMobileInput.addEventListener('input', () => {
+    const val = mcaMobileInput.value.toUpperCase();
+    mcaMobileInput.value = '';
+    for (const ch of val) mcaInsertChar(ch);
+});
+
 document.addEventListener('keydown', e => {
-    // Don't capture when focused on sidebar form elements
-    const tag = document.activeElement?.tagName;
-    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    // Don't capture when focused on sidebar form elements (but allow our mobile input)
+    const ae = document.activeElement;
+    const tag = ae?.tagName;
+    if ((tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') && ae !== mcaMobileInput) return;
 
     // Escape → clear MCA
     if (e.key === 'Escape') { clearFindMarker(); mcaClear(); e.preventDefault(); return; }

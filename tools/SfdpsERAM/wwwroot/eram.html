@@ -1732,25 +1732,28 @@ function formatAltLine(f) {
     const assigned = f.assignedAltitude ?? (localA ? localA.feet : null);
     const reported = f.reportedAltitude ?? (localR != null ? localR : null);
     const interim = f.interimAltitude ?? (localI ? localI.feet : null);
-    const rules = f.flightRules ?? (localA ? localA.rules : null);
     const isProcedure = !f.interimAltitude && localI && localI.type === 'P';
 
     const afl = assigned != null ? String(Math.round(assigned / 100)).padStart(3, '0') : '';
     const rfl = reported != null ? String(Math.round(reported / 100)).padStart(3, '0') : '';
 
-    // VFR/OTP display from local QZ override
-    if (localA && !f.assignedAltitude && (localA.rules === 'VFR' || localA.rules === 'OTP')) {
-        const prefix = localA.rules === 'OTP' ? 'OTP' : 'VFR';
+    // VFR/OTP display — server assignedVfr or local QZ override
+    const isVfr = f.assignedVfr || (!f.assignedAltitude && localA && (localA.rules === 'VFR' || localA.rules === 'OTP'));
+    if (isVfr) {
+        const localRules = localA ? localA.rules : null;
+        const prefix = localRules === 'OTP' ? 'OTP' : 'VFR';
+        // VFR with altitude (vfrPlus) → VFR/055; VFR without → just VFR
+        if (afl) return rfl ? `${prefix}/${rfl}` : `${prefix}/${afl}`;
         return rfl ? `${prefix}/${rfl}` : prefix;
     }
 
-    // VFR altitude → /indicator: VFR/055 or OTP/218
-    if (rules === 'VFR' || rules === 'OTP') {
-        const prefix = rules === 'OTP' ? 'OTP' : 'VFR';
-        return rfl ? `${prefix}/${rfl}` : prefix;
+    // Block altitude — server blockFloor/blockCeiling or local QZ override
+    if (f.blockFloor != null && f.blockCeiling != null) {
+        const floor = String(Math.round(f.blockFloor / 100)).padStart(3, '0');
+        const ceil = String(Math.round(f.blockCeiling / 100)).padStart(3, '0');
+        const blockDisp = `${floor}B${ceil}`;
+        return rfl ? `${blockDisp}${rfl}` : blockDisp;
     }
-
-    // Block altitude display from local QZ override (e.g. 180B240)
     if (localA && !f.assignedAltitude && localA.block) {
         return rfl ? `${localA.block}${rfl}` : localA.block;
     }
@@ -2150,7 +2153,7 @@ function flightHash(f, cls) {
     const hsf = getEffectiveHsf(f);
     const hsfH = hsf ? `${hsf.heading||''}${hsf.speed||''}${hsf.freeText||''}` : '';
     const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}`;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2708,7 +2711,11 @@ function showFlightDetail(gufi) {
         ['Facility', `${f.controllingFacility || f.reportingFacility || ''}`],
         ['Sector', f.controllingSector || ''],
         ['Squawk', f.squawk],
-        ['Assigned', f.assignedAltitude != null ? `FL${Math.round(f.assignedAltitude / 100)}` : ''],
+        ['Assigned', f.blockFloor != null && f.blockCeiling != null
+            ? `FL${Math.round(f.blockFloor / 100)}B${Math.round(f.blockCeiling / 100)}`
+            : f.assignedVfr
+                ? (f.assignedAltitude != null ? `VFR/FL${Math.round(f.assignedAltitude / 100)}` : 'VFR')
+                : f.assignedAltitude != null ? `FL${Math.round(f.assignedAltitude / 100)}` : ''],
         ['Reported', f.reportedAltitude != null ? `FL${Math.round(f.reportedAltitude / 100)}` : ''],
         ['Interim', f.interimAltitude != null ? `FL${Math.round(f.interimAltitude / 100)}` : ''],
         ['GS', f.groundSpeed != null ? `${Math.round(f.groundSpeed)} kt` : ''],
@@ -4229,7 +4236,11 @@ function showFlightInRA(f) {
     const equip = f.equipmentQualifier ? '/' + f.equipmentQualifier : '';
     const bcn = f.squawk || '????';
     const spd = f.groundSpeed != null ? String(Math.round(f.groundSpeed)).padStart(4, ' ') : '    ';
-    const aalt = f.assignedAltitude != null ? String(Math.round(f.assignedAltitude / 100)).padStart(3, '0') : '???';
+    const aalt = f.blockFloor != null && f.blockCeiling != null
+        ? `${String(Math.round(f.blockFloor / 100)).padStart(3, '0')}B${String(Math.round(f.blockCeiling / 100)).padStart(3, '0')}`
+        : f.assignedVfr
+            ? (f.assignedAltitude != null ? `VFR/${String(Math.round(f.assignedAltitude / 100)).padStart(3, '0')}` : 'VFR')
+            : f.assignedAltitude != null ? String(Math.round(f.assignedAltitude / 100)).padStart(3, '0') : '???';
     const origin = f.origin || '????';
     const dest = f.destination || '????';
     const route = f.route || '';

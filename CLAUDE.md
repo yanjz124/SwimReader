@@ -152,7 +152,7 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 | `HP` | ~61/500 | Handoff proposal | Initiates handoff to receiving sector |
 | `HX` | ~58/500 | Handoff execution (route transfer) | Route transfer between facilities |
 | `AH` | ~40/500 | Assumed/amended handoff (/OK forced) | Forced handoff acceptance, sets HandoffForced flag |
-| `LH` | ~18/500 | Local handoff / interim altitude event | Sets/clears interim altitude |
+| `LH` | ~18/500 | Local handoff / interim altitude event | Sets/clears interim altitude (`@nil="true"` = clear) |
 | `FH` | ~15/500 | Full flight plan update | Canonical state snapshot: aircraft desc, route, altitude |
 | `CL` | ~10/500 | Flight plan cancellation/clearance | Flight removal/cleanup |
 | `HU` | ~7/500 | Handoff update | Updates handoff state during transition |
@@ -206,7 +206,7 @@ Core fields tracked per flight (by GUFI):
 - Identity: `gufi`, `fdpsGufi`, `callsign`, `computerId`, `computerIds` (per-facility CID map)
 - Flight plan: `origin`, `destination`, `aircraftType`, `route`, `star`, `remarks`, `flightRules`
 - Position: `latitude`, `longitude`, `groundSpeed`, `trackVelocityX/Y`
-- Altitude: `assignedAltitude`, `interimAltitude`, `reportedAltitude`
+- Altitude: `assignedAltitude`, `assignedVfr`, `blockFloor`, `blockCeiling`, `interimAltitude`, `reportedAltitude`
 - Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`
 - Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
 - Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit`
@@ -252,13 +252,22 @@ Server-side in `Program.cs` ProcessFlight():
 ```
 Line 0 only appears when the flight has an active point-out to/from the selected facility.
 
-**Line 2 altitude status codes:**
-- `C` = conforming (reported within ±200ft of assigned)
-- `T` = interim altitude assigned (from SFDPS interimAltitude)
-- `↑` = climbing to assigned altitude (reported below assigned)
-- `↓` = descending to assigned altitude (reported above assigned)
-- `P` = procedure altitude assigned (via QQ P command)
-- `X` = no Mode C data at all
+**Line 2 altitude display formats:**
+- `{afl}C` = conforming (reported within ±200ft of assigned)
+- `{ifl}T{rfl}` = interim altitude assigned (from SFDPS interimAltitude)
+- `{afl}↑{rfl}` = climbing to assigned altitude (reported below assigned)
+- `{afl}↓{rfl}` = descending to assigned altitude (reported above assigned)
+- `{ifl}P{rfl}` = procedure altitude assigned (via QQ P command, local only)
+- `{afl}XXXX` = no Mode C data at all
+- `VFR` or `VFR/{rfl}` = VFR assigned altitude (from SFDPS `<vfr/>`)
+- `VFR/{afl}` = VFR-on-top with altitude (from SFDPS `<vfrPlus>`)
+- `{floor}B{ceil}` = block altitude (from SFDPS `<block>`, e.g. `180B240`)
+
+**SFDPS `assignedAltitude` sub-types:**
+- `<simple>` (98.5%) — numeric altitude in feet
+- `<vfr/>` (0.3%) — VFR flag, no altitude value
+- `<vfrPlus>` (1.2%) — VFR-on-top with altitude
+- `<block><above>/<below>` (0.04%) — block altitude range; `above` = floor, `below` = ceiling
 
 **Line 3 Field E (right side after CID, in priority order):**
 - `HIJK` = squawk 7500 (hijack)

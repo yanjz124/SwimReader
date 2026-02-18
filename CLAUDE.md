@@ -255,14 +255,21 @@ Server-side in `Program.cs` ProcessFlight():
 ```
 Line 0 only appears when the flight has an active point-out to/from the selected facility. Point-out data from SFDPS expires after 3 minutes (server-side) since SFDPS sends no explicit clear/acceptance signals.
 
-**Point-out indicator behavior:**
-- `P` (yellow) = pending point-out, click opens pop-up menu
-- `A` (white) = acknowledged point-out (client-side only via QP A or menu click)
-- Click `A` = clears indicator entirely
-- Dwell box excludes Line 0; FDB→LDB toggle is blocked during active point-out
-- Pop-up menu: shows sector number, draggable by title bar; receiver can acknowledge, originator can clear
-- Originator sees receiving sector in yellow (pending) / white (acked)
-- Receiver sees originating sector in cyan (pending) / white (acked)
+**Point-out indicator behavior (per ERAM spec):**
+- `P` (yellow) = pending point-out for both originator and receiver
+- `A` (white) = acknowledged point-out (originator side)
+- Point-out indicator requires sector-level match (selected sector must be orig or recv sector)
+- No sector selected = no point-outs shown
+- Dwell box excludes Line 0; FDB→LDB toggle is blocked during active point-out (`<FLID>` → use `QP <FLID>`)
+- Client-side 3-minute timeout: point-outs auto-expire if user doesn't interact
+- **Pop-up menu** (click P or A on line 0): shows `P [sector]`, draggable by title bar
+  - Closed by left/middle clicking title bar or X; also closed on map pan/zoom
+  - **Originator menu**: receiving sector in yellow with yellow box (pending) → white unboxed (acked)
+    - Click pending sector → simulate remote ack (P→A on line 0, menu stays open showing white)
+    - Click acked sector → clear point-out, close menu
+  - **Receiver menu**: initiating sector in cyan with cyan box (pending) → white unboxed (acked)
+    - Click sector → acknowledge PO (MCA: "ACCEPT — ACKNOWLEDGE PO"), P removed from line 0, menu closes
+    - Receiver `A` on line 0 (if somehow present) → click removes indicator
 
 **Line 2 altitude display formats:**
 - `{afl}C` = conforming (reported within ±200ft of assigned)
@@ -374,8 +381,8 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `QS \`<text> <FLID>` | Set free text (backtick prefix) |
 | `QS * <FLID>` | Clear all HSF data; `*/` = heading only, `/*` = speed only |
 | `QS <FLID>` | Toggle HSF display on line 4 |
-| `QP A <FLID>` | Acknowledge point-out (P→A indicator) |
-| `QP <FLID>` | Clear point-out indicator / toggle FDB→LDB |
+| `QP A <FLID>` | Acknowledge point-out (receiver: removes P; originator: P→A) |
+| `QP <FLID>` | Clear point-out indicator entirely |
 | `<FLID>` | Toggle FDB/LDB for flight (blocked during active point-out) |
 
 FLIDs can be callsign or CID (CID only matches selected facility). When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
@@ -384,6 +391,8 @@ FLIDs can be callsign or CID (CID only matches selected facility). When multiple
 Line 4 shows controller-assigned heading, speed, and free text data. Two sources merged via `getEffectiveHsf()`:
 1. **Server clearance data** — from SFDPS `cleared` element (`clearanceHeading`, `clearanceSpeed`, `clearanceText`)
 2. **Local QS overrides** — entered via QS commands in the MCA (local wins per-field)
+
+Display normalization: 3-digit numeric headings get `H` prefix (255→H255), speeds get `S`/`M` prefix. Runway headings (15R), codes (PH, VK) pass through unchanged.
 
 When clearance data exists (from either source), line 3 shows a ↴ indicator. Server clearance data always displays on line 4 without requiring manual toggle; local-only QS data requires toggling via ↴ click or `QS <FLID>`. Free text takes priority (fills line 4); otherwise heading and speed are positioned with speed aligned to the ↴ column.
 

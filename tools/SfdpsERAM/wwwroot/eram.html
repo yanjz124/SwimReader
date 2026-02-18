@@ -537,9 +537,14 @@ function normalizeSpeed(s) {
     if (/^\d{3}$/.test(s)) return 'S' + s;        // e.g. 250 → S250
     return s;  // 280+, 250-, M79, S270 etc. pass through
 }
+function normalizeHeading(h) {
+    if (!h) return h;
+    if (/^\d{3}$/.test(h)) return 'H' + h;  // e.g. 255 → H255
+    return h;  // 15R, PH, VK etc. pass through
+}
 function getEffectiveHsf(f) {
     const local = hsfData.get(f.gufi);
-    const heading = local?.heading ?? f.clearanceHeading ?? null;
+    const heading = normalizeHeading(local?.heading ?? f.clearanceHeading ?? null);
     const speed = local?.speed ?? normalizeSpeed(f.clearanceSpeed) ?? null;
     const freeText = local?.freeText ?? f.clearanceText ?? null;
     if (!heading && !speed && !freeText) return null;
@@ -548,7 +553,42 @@ function getEffectiveHsf(f) {
 
 // Point-out state
 const pointoutAcked = new Set();  // GUFIs with acknowledged point-outs (P→A)
+const pointoutFirstSeen = new Map();  // GUFI → timestamp (ms) when PO first appeared on client
+const PO_CLIENT_TIMEOUT = 3 * 60 * 1000;  // 3 minutes
 let pointoutMenuGufi = null;       // GUFI of flight whose point-out menu is open
+
+function updatePointoutMenuBody(f, poInfo) {
+    const body = document.getElementById('po-menu-body');
+    const acked = pointoutAcked.has(f.gufi);
+    // Determine which sector to show and its styling
+    let sectorId, pColor, sectorCls;
+    if (poInfo.role === 'originator') {
+        // Originator sees receiving sector(s)
+        sectorId = poInfo.recvSector || '??';
+        if (acked) {
+            // Remote acknowledged: white P, white unboxed sector
+            pColor = '#fff';
+            sectorCls = 'po-acked';
+        } else {
+            // Pending: yellow P, yellow boxed sector
+            pColor = '#cccc44';
+            sectorCls = 'po-orig-pending';
+        }
+    } else {
+        // Receiver sees initiating sector(s)
+        sectorId = poInfo.origSector || '??';
+        if (acked) {
+            // Already acknowledged: white P, white unboxed sector
+            pColor = '#fff';
+            sectorCls = 'po-acked';
+        } else {
+            // Pending: cyan P, cyan boxed sector
+            pColor = '#00cccc';
+            sectorCls = 'po-recv-pending';
+        }
+    }
+    body.innerHTML = `<div class="po-sector-row" data-gufi="${f.gufi}" data-role="${poInfo.role}"><span style="color:${pColor}">P</span> <span class="po-sector-box ${sectorCls}">${sectorId}</span></div>`;
+}
 
 function openPointoutMenu(f, poInfo, clientX, clientY) {
     closePointoutMenu();
@@ -556,23 +596,11 @@ function openPointoutMenu(f, poInfo, clientX, clientY) {
     const menu = document.getElementById('po-menu');
     document.getElementById('po-menu-callsign').textContent = f.callsign || '???';
 
-    // Originator: show receiving sectors; Receiver: show originating sectors
-    const isOrig = poInfo.role === 'originator';
-    const sectorId = isOrig ? poInfo.recvSector : poInfo.origSector;
-    const acked = pointoutAcked.has(f.gufi);
-
-    let boxCls;
-    if (acked) boxCls = 'po-acked';
-    else if (isOrig) boxCls = 'po-orig-pending';
-    else boxCls = 'po-recv-pending';
-
-    const bodyEl = document.getElementById('po-menu-body');
-    bodyEl.innerHTML = `<div class="po-sector-row" data-gufi="${f.gufi}" data-role="${poInfo.role}"><span style="color:#cccc44;">P</span> <span class="po-sector-box ${boxCls}">${sectorId || '??'}</span></div>`;
+    updatePointoutMenuBody(f, poInfo);
 
     // Position to the right of the data block
     const container = document.getElementById('map-container');
     const cRect = container.getBoundingClientRect();
-    // Find the marker's data block element to position to its right
     const gufi = f.gufi;
     const marker = markers.get(gufi);
     let menuLeft = clientX - cRect.left + 10;
@@ -904,6 +932,7 @@ map.on('zoomstart', () => {
 
 let _overlayRafPending = false;
 map.on('move zoom viewreset resize', () => {
+    closePointoutMenu();
     if (!_overlayRafPending) {
         _overlayRafPending = true;
         requestAnimationFrame(() => {
@@ -1812,17 +1841,35 @@ function formatFdbHtml(f, cls) {
 // Determine point-out indicator for a flight.
 // Returns {ch, cls, role, origSector, recvSector, origFac, recvFac} or null.
 function getPointoutIndicator(f) {
-    if (!f.pointoutOriginatingUnit && !f.pointoutReceivingUnit) return null;
-    if (!myFacility) return null;
+    if (!f.pointoutOriginatingUnit && !f.pointoutReceivingUnit) {
+        pointoutFirstSeen.delete(f.gufi);
+        return null;
+    }
+    if (!myFacility || mySectors.size === 0) return null;
 
     const origFac = (f.pointoutOriginatingUnit || '').split('/')[0];
     const recvFac = (f.pointoutReceivingUnit || '').split('/')[0];
     const origSector = (f.pointoutOriginatingUnit || '').split('/')[1] || '';
     const recvSector = (f.pointoutReceivingUnit || '').split('/')[1] || '';
 
-    // Show P if the selected facility is involved in the point-out
-    if (myFacility === origFac || myFacility === recvFac) {
-        const role = myFacility === origFac ? 'originator' : 'receiver';
+    // Show P only if a selected sector is the originator or receiver
+    const isOrig = myFacility === origFac && mySectors.has(origSector);
+    const isRecv = myFacility === recvFac && mySectors.has(recvSector);
+    if (isOrig || isRecv) {
+        // Client-side 3-minute timeout: auto-expire if user hasn't interacted
+        const now = Date.now();
+        if (!pointoutFirstSeen.has(f.gufi)) {
+            pointoutFirstSeen.set(f.gufi, now);
+        } else if (now - pointoutFirstSeen.get(f.gufi) > PO_CLIENT_TIMEOUT) {
+            // Expired — clear point-out data silently
+            f.pointoutOriginatingUnit = null;
+            f.pointoutReceivingUnit = null;
+            pointoutAcked.delete(f.gufi);
+            pointoutFirstSeen.delete(f.gufi);
+            if (pointoutMenuGufi === f.gufi) closePointoutMenu();
+            return null;
+        }
+        const role = isOrig ? 'originator' : 'receiver';
         const acked = pointoutAcked.has(f.gufi);
         return { ch: acked ? 'A' : 'P', cls: acked ? 'accepted' : 'pending',
                  role, origSector, recvSector, origFac, recvFac };
@@ -2424,20 +2471,22 @@ function doRender() {
                         }
                         return;
                     }
-                    // Point-out Line 0: P → open menu, A → clear indicator
+                    // Point-out Line 0: P/A → open menu (or remove for receiver A)
                     if (e.target.closest('.ac-po-line0')) {
                         const pf = flights.get(gufi);
                         if (pf) {
                             const poInfo = getPointoutIndicator(pf);
                             if (poInfo) {
-                                if (poInfo.cls === 'pending') {
-                                    openPointoutMenu(pf, poInfo, e.clientX, e.clientY);
-                                } else {
+                                if (poInfo.cls === 'accepted' && poInfo.role === 'receiver') {
+                                    // Receiver clicking A → remove indicator
                                     pointoutAcked.delete(pf.gufi);
                                     pf.pointoutOriginatingUnit = null;
                                     pf.pointoutReceivingUnit = null;
                                     closePointoutMenu();
                                     invalidateMarker(pf.gufi);
+                                } else {
+                                    // P (either role) or A (originator) → open menu
+                                    openPointoutMenu(pf, poInfo, e.clientX, e.clientY);
                                 }
                             }
                         }
@@ -2518,20 +2567,20 @@ function doRender() {
                         toggleTrackSelect(gufi);
                         return;
                     }
-                    // Point-out Line 0: P → open menu, A → clear indicator
+                    // Point-out Line 0: P/A → open menu (or remove for receiver A)
                     if (e.target.closest('.ac-po-line0')) {
                         const pf = flights.get(gufi);
                         if (pf) {
                             const poInfo = getPointoutIndicator(pf);
                             if (poInfo) {
-                                if (poInfo.cls === 'pending') {
-                                    openPointoutMenu(pf, poInfo, e.clientX, e.clientY);
-                                } else {
+                                if (poInfo.cls === 'accepted' && poInfo.role === 'receiver') {
                                     pointoutAcked.delete(pf.gufi);
                                     pf.pointoutOriginatingUnit = null;
                                     pf.pointoutReceivingUnit = null;
                                     closePointoutMenu();
                                     invalidateMarker(pf.gufi);
+                                } else {
+                                    openPointoutMenu(pf, poInfo, e.clientX, e.clientY);
                                 }
                             }
                         }
@@ -4300,15 +4349,24 @@ function processCommand(cmd) {
             const flidStr = parts.slice(2).join('').toUpperCase();
             const f = findFlight(flidStr);
             if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
-            if (!f.pointoutOriginatingUnit && !f.pointoutReceivingUnit) {
+            const poInfo = getPointoutIndicator(f);
+            if (!poInfo) {
                 return { feedback: [{ type: 'err', text: 'NO POINT OUT' }] };
             }
-            pointoutAcked.add(f.gufi);
+            if (poInfo.role === 'receiver') {
+                // Receiver QP A: acknowledge → P removed (single sector = all acked)
+                f.pointoutOriginatingUnit = null;
+                f.pointoutReceivingUnit = null;
+                pointoutAcked.delete(f.gufi);
+            } else {
+                // Originator QP A: simulate remote ack → P becomes A
+                pointoutAcked.add(f.gufi);
+            }
             closePointoutMenu();
             invalidateMarker(f.gufi);
             return { feedback: [
-                { type: 'ok', text: 'ACCEPT' },
-                { type: 'info', text: `PO ACK ${f.callsign || '???'}` }
+                { type: 'ok', text: 'ACCEPT \u2014 ACKNOWLEDGE PO' },
+                { type: 'info', text: f.callsign || '???' }
             ]};
         }
 
@@ -4688,14 +4746,21 @@ setupBoxDrag(document.getElementById('mca'));
 setupBoxDrag(document.getElementById('ra'));
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
 
-// Point-out menu: close button
+// Point-out menu: close button (left + middle click)
 document.getElementById('po-menu-close').addEventListener('click', (e) => {
     e.stopPropagation();
     closePointoutMenu();
 });
+document.getElementById('po-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closePointoutMenu(); }
+});
+// Point-out menu: middle-click title bar → close menu
+document.getElementById('po-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closePointoutMenu(); }
+});
 
-// Point-out menu: sector row click
-document.getElementById('po-menu-body').addEventListener('click', (e) => {
+// Point-out menu: sector row click handler (shared for left + middle click)
+function handlePoSectorClick(e) {
     const row = e.target.closest('.po-sector-row');
     if (!row) return;
     e.stopPropagation();
@@ -4706,18 +4771,44 @@ document.getElementById('po-menu-body').addEventListener('click', (e) => {
     const isAcked = pointoutAcked.has(gufi);
 
     if (role === 'receiver' && !isAcked) {
-        // Acknowledge the point-out
-        pointoutAcked.add(gufi);
+        // Acknowledge the point-out → P removed from line 0, menu closes
+        // Since we only have one originating sector per PO, acking it = acking all
+        f.pointoutOriginatingUnit = null;
+        f.pointoutReceivingUnit = null;
+        pointoutAcked.delete(gufi);
         invalidateMarker(gufi);
         closePointoutMenu();
+        mca.feedback = [
+            { type: 'ok', text: 'ACCEPT \u2014 ACKNOWLEDGE PO' },
+            { type: 'info', text: f.callsign || '???' }
+        ];
+        mcaRender();
+    } else if (role === 'receiver' && isAcked) {
+        // Already acked → remove from display, clear PO
+        f.pointoutOriginatingUnit = null;
+        f.pointoutReceivingUnit = null;
+        pointoutAcked.delete(gufi);
+        invalidateMarker(gufi);
+        closePointoutMenu();
+    } else if (role === 'originator' && !isAcked) {
+        // Originator clicks pending sector → simulate remote ack (P→A on line 0)
+        pointoutAcked.add(gufi);
+        invalidateMarker(gufi);
+        // Update menu in place (stays open, now shows white/unboxed)
+        const poInfo = getPointoutIndicator(f);
+        if (poInfo) updatePointoutMenuBody(f, poInfo);
     } else if (role === 'originator' && isAcked) {
-        // Remove acknowledged sector → clear point-out
+        // Originator clicks acked sector → clear PO, close menu
         pointoutAcked.delete(gufi);
         f.pointoutOriginatingUnit = null;
         f.pointoutReceivingUnit = null;
         invalidateMarker(gufi);
         closePointoutMenu();
     }
+}
+document.getElementById('po-menu-body').addEventListener('click', handlePoSectorClick);
+document.getElementById('po-menu-body').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); handlePoSectorClick(e); }
 });
 
 // ════════════════════════════════════════════════════════════════════════════

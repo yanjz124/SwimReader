@@ -174,16 +174,28 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 /* ── Point-out P/A indicator (line 0) ── */
 .ac-po-pending { color: #cccc44; }
 .ac-po-accepted { color: #ffffff; }
-
-/* ── Line 0 (P/A pointout) — above data block ── */
-.ac-line0 {
-    position: absolute; white-space: pre; pointer-events: none;
-    font-family: 'ERAM', 'Consolas', monospace;
-    font-size: 10px; line-height: 12.5px; letter-spacing: 0.5px;
-    text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
+/* ── Point-out pop-up menu ── */
+#po-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
+    user-select: none; background: #000; border: 1px solid #888;
 }
-.ac-line0.po-initiated { color: #cccc44; }
-.ac-line0.po-acknowledged { color: #ffffff; }
+#po-menu.box-dragging { outline: 2px solid #fff; cursor: move; }
+#po-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 2px 6px; border-bottom: 1px solid #555; background: #222; cursor: move;
+}
+#po-menu-callsign { color: #fff; }
+.po-menu-divider { width: 1px; align-self: stretch; background: #555; margin: 0 4px; }
+#po-menu-close { color: #fff; cursor: pointer; padding: 0 4px; }
+#po-menu-close:hover { color: #ff4444; }
+#po-menu-body { padding: 3px 6px; }
+.po-sector-row { padding: 2px 0; cursor: pointer; white-space: pre; }
+.po-sector-box { display: inline-block; padding: 0 3px; border: 1px solid; }
+.po-orig-pending { color: #cccc44; border-color: #cccc44; }
+.po-recv-pending { color: #00cccc; border-color: #00cccc; }
+.po-acked { color: #fff; border-color: transparent; }
 
 /* ── Flight detail (sidebar panel) ── */
 #flight-detail-section { display: none; }
@@ -452,6 +464,14 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
         <div id="ra">
             <div id="ra-content"></div>
         </div>
+        <div id="po-menu" style="display:none;">
+            <div id="po-menu-title">
+                <span id="po-menu-callsign"></span>
+                <span class="po-menu-divider"></span>
+                <span id="po-menu-close">X</span>
+            </div>
+            <div id="po-menu-body"></div>
+        </div>
     </div>
 </div>
 
@@ -528,6 +548,56 @@ function getEffectiveHsf(f) {
 
 // Point-out state
 const pointoutAcked = new Set();  // GUFIs with acknowledged point-outs (P→A)
+let pointoutMenuGufi = null;       // GUFI of flight whose point-out menu is open
+
+function openPointoutMenu(f, poInfo, clientX, clientY) {
+    closePointoutMenu();
+    pointoutMenuGufi = f.gufi;
+    const menu = document.getElementById('po-menu');
+    document.getElementById('po-menu-callsign').textContent = f.callsign || '???';
+
+    // Originator: show receiving sectors; Receiver: show originating sectors
+    const isOrig = poInfo.role === 'originator';
+    const sectorId = isOrig ? poInfo.recvSector : poInfo.origSector;
+    const acked = pointoutAcked.has(f.gufi);
+
+    let boxCls;
+    if (acked) boxCls = 'po-acked';
+    else if (isOrig) boxCls = 'po-orig-pending';
+    else boxCls = 'po-recv-pending';
+
+    const bodyEl = document.getElementById('po-menu-body');
+    bodyEl.innerHTML = `<div class="po-sector-row" data-gufi="${f.gufi}" data-role="${poInfo.role}"><span style="color:#cccc44;">P</span> <span class="po-sector-box ${boxCls}">${sectorId || '??'}</span></div>`;
+
+    // Position to the right of the data block
+    const container = document.getElementById('map-container');
+    const cRect = container.getBoundingClientRect();
+    // Find the marker's data block element to position to its right
+    const gufi = f.gufi;
+    const marker = markers.get(gufi);
+    let menuLeft = clientX - cRect.left + 10;
+    let menuTop = clientY - cRect.top - 10;
+    if (marker) {
+        const mEl = marker.getElement();
+        const dbEl = mEl?.querySelector('.ac-db');
+        if (dbEl) {
+            const dbRect = dbEl.getBoundingClientRect();
+            menuLeft = dbRect.right - cRect.left + 6;
+            menuTop = dbRect.top - cRect.top;
+        }
+    }
+    menu.style.left = menuLeft + 'px';
+    menu.style.top = menuTop + 'px';
+    menu.style.bottom = 'auto';
+    menu.style.right = 'auto';
+    menu.style.display = 'block';
+    requestAnimationFrame(() => clampBox(menu));
+}
+
+function closePointoutMenu() {
+    pointoutMenuGufi = null;
+    document.getElementById('po-menu').style.display = 'none';
+}
 
 // .FIND overlay state
 let findMarker = null;   // { ident, lat, lon, time } — active find highlight
@@ -1519,7 +1589,12 @@ function applyDwell(el, gufi) {
         const w = dbEl.offsetWidth;
         const h = dbEl.offsetHeight;
         const chOff = Math.round(CHAR_W * 2.2); // past column 0 + VCI, scales with font size
-        b.style.cssText = `left:${chOff}px;top:-1px;width:${w - chOff + 2}px;height:${h + 2}px;`;
+        // If Line 0 (point-out indicator) is present, exclude it from the dwell border
+        const f0 = flights.get(gufi);
+        const hasLine0 = f0 && getPointoutIndicator(f0);
+        const topOff = hasLine0 ? Math.round(LINE_H) - 1 : -1;
+        const heightAdj = hasLine0 ? Math.round(LINE_H) : 0;
+        b.style.cssText = `left:${chOff}px;top:${topOff}px;width:${w - chOff + 2}px;height:${h - heightAdj + 2}px;`;
         dbEl.appendChild(b);
     }
     const f = flights.get(gufi);
@@ -1621,8 +1696,9 @@ function buildMarkerHtml(f, cls) {
 
         const db = formatFdbHtml(f, cls);
         const dbCls = isEmrg ? ' emrg' : '';
-
-        html += `<div class="ac-db fdb${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift}px;${leftExtra}">${db}</div>`;
+        // Line 0 (point-out indicator) adds height — shift div up so Lines 1-4 stay anchored
+        const poOffset = getPointoutIndicator(f) ? -LINE_H : 0;
+        html += `<div class="ac-db fdb${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift + poOffset}px;${leftExtra}">${db}</div>`;
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
         vciActive.delete(f.gufi);
@@ -1724,7 +1800,7 @@ function formatFdbHtml(f, cls) {
     const poInfo = getPointoutIndicator(f);
     let html = '';
     if (poInfo) {
-        html += `${col0Sp}\u00a0<span class="ac-po-${poInfo.cls}">${poInfo.ch}</span>\n`;
+        html += `<span class="ac-po-line0" style="pointer-events:auto;cursor:pointer;">${col0Sp}\u00a0\u00a0<span class="ac-po-${poInfo.cls}">${poInfo.ch}</span></span>\n`;
     }
     html += `${col0Hit}${l1}\n`;
     html += `${showVci ? col0Vci : col0Hit}${l2}\n`;
@@ -1734,20 +1810,22 @@ function formatFdbHtml(f, cls) {
 }
 
 // Determine point-out indicator for a flight.
-// Returns {ch, cls} where ch is 'P' or 'A' and cls is 'pending' or 'accepted', or null.
+// Returns {ch, cls, role, origSector, recvSector, origFac, recvFac} or null.
 function getPointoutIndicator(f) {
     if (!f.pointoutOriginatingUnit && !f.pointoutReceivingUnit) return null;
-    const selFac = document.getElementById('facility')?.value;
-    if (!selFac) return null;
+    if (!myFacility) return null;
 
     const origFac = (f.pointoutOriginatingUnit || '').split('/')[0];
     const recvFac = (f.pointoutReceivingUnit || '').split('/')[0];
+    const origSector = (f.pointoutOriginatingUnit || '').split('/')[1] || '';
+    const recvSector = (f.pointoutReceivingUnit || '').split('/')[1] || '';
 
     // Show P if the selected facility is involved in the point-out
-    if (selFac === origFac || selFac === recvFac) {
-        // Check if acknowledged (client-side tracking)
-        if (pointoutAcked.has(f.gufi)) return { ch: 'A', cls: 'accepted' };
-        return { ch: 'P', cls: 'pending' };
+    if (myFacility === origFac || myFacility === recvFac) {
+        const role = myFacility === origFac ? 'originator' : 'receiver';
+        const acked = pointoutAcked.has(f.gufi);
+        return { ch: acked ? 'A' : 'P', cls: acked ? 'accepted' : 'pending',
+                 role, origSector, recvSector, origFac, recvFac };
     }
     return null;
 }
@@ -2182,7 +2260,8 @@ function flightHash(f, cls) {
     const hsf = getEffectiveHsf(f);
     const hsfH = hsf ? `${hsf.heading||''}${hsf.speed||''}${hsf.freeText||''}` : '';
     const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}`;
+    const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2225,6 +2304,11 @@ function applyScanCycle() {
 }
 
 function doRender() {
+    // Auto-close point-out menu if the flight no longer has an indicator
+    if (pointoutMenuGufi) {
+        const pmf = flights.get(pointoutMenuGufi);
+        if (!pmf || !getPointoutIndicator(pmf)) closePointoutMenu();
+    }
     // Apply scan cycle if enough time has elapsed (same 12s cadence as setInterval,
     // but checked here too so positions apply even if setInterval timing drifts)
     const now = performance.now();
@@ -2340,6 +2424,25 @@ function doRender() {
                         }
                         return;
                     }
+                    // Point-out Line 0: P → open menu, A → clear indicator
+                    if (e.target.closest('.ac-po-line0')) {
+                        const pf = flights.get(gufi);
+                        if (pf) {
+                            const poInfo = getPointoutIndicator(pf);
+                            if (poInfo) {
+                                if (poInfo.cls === 'pending') {
+                                    openPointoutMenu(pf, poInfo, e.clientX, e.clientY);
+                                } else {
+                                    pointoutAcked.delete(pf.gufi);
+                                    pf.pointoutOriginatingUnit = null;
+                                    pf.pointoutReceivingUnit = null;
+                                    closePointoutMenu();
+                                    invalidateMarker(pf.gufi);
+                                }
+                            }
+                        }
+                        return;
+                    }
                     // VCI toggle: click on Column 0 hit area
                     if (e.target.closest('.ac-vci-hit')) {
                         if (vciActive.has(gufi)) vciActive.delete(gufi);
@@ -2359,8 +2462,12 @@ function doRender() {
                     const dbEl = el.querySelector('.ac-db');
                     if (dbEl) {
                         const rect = dbEl.getBoundingClientRect();
+                        // Offset Field A detection when Line 0 (point-out) is present
+                        const lf = flights.get(gufi);
+                        const hasL0 = lf && getPointoutIndicator(lf);
+                        const fieldATop = rect.top + (hasL0 ? LINE_H : 0);
                         if (e.clientX >= rect.left && e.clientX <= rect.right &&
-                            e.clientY >= rect.top && e.clientY <= rect.top + LINE_H) {
+                            e.clientY >= fieldATop && e.clientY <= fieldATop + LINE_H) {
                             // Click on Field A → toggle dwell lock
                             if (dwellLocked.has(gufi)) {
                                 dwellLocked.delete(gufi);
@@ -2411,6 +2518,25 @@ function doRender() {
                         toggleTrackSelect(gufi);
                         return;
                     }
+                    // Point-out Line 0: P → open menu, A → clear indicator
+                    if (e.target.closest('.ac-po-line0')) {
+                        const pf = flights.get(gufi);
+                        if (pf) {
+                            const poInfo = getPointoutIndicator(pf);
+                            if (poInfo) {
+                                if (poInfo.cls === 'pending') {
+                                    openPointoutMenu(pf, poInfo, e.clientX, e.clientY);
+                                } else {
+                                    pointoutAcked.delete(pf.gufi);
+                                    pf.pointoutOriginatingUnit = null;
+                                    pf.pointoutReceivingUnit = null;
+                                    closePointoutMenu();
+                                    invalidateMarker(pf.gufi);
+                                }
+                            }
+                        }
+                        return;
+                    }
                     // VCI hit area: toggle VCI
                     if (e.target.closest('.ac-vci-hit')) {
                         if (vciActive.has(gufi)) vciActive.delete(gufi);
@@ -2434,8 +2560,11 @@ function doRender() {
                     const dbEl = el.querySelector('.ac-db');
                     if (dbEl) {
                         const rect = dbEl.getBoundingClientRect();
+                        // Offset Field A detection when Line 0 (point-out) is present
+                        const hasL0 = f && getPointoutIndicator(f);
+                        const fieldATop = rect.top + (hasL0 ? LINE_H : 0);
                         if (e.clientX >= rect.left && e.clientX <= rect.right &&
-                            e.clientY >= rect.top && e.clientY <= rect.top + LINE_H) {
+                            e.clientY >= fieldATop && e.clientY <= fieldATop + LINE_H) {
                             showFlightInRA(f);
                             return;
                         }
@@ -2534,6 +2663,7 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     fdbOverrides.clear();
     quickLookSectors.clear();
     wasOwnOrHo.clear();
+    closePointoutMenu();
     invalidateAllMarkers();
     rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
@@ -2640,7 +2770,7 @@ function updateFontSize() {
         document.head.appendChild(styleEl);
     }
     styleEl.textContent = `
-        .ac-db, .ac-line0 {
+        .ac-db {
             font-size: ${fontSize}px !important;
             line-height: ${LINE_H}px !important;
         }
@@ -2702,6 +2832,17 @@ function toggleTrackSelect(gufi) {
         mca.feedback = [
             { type: 'err', text: 'USER ACTION NOT ALLOWED ON A\nCONTROLLED FLIGHT' },
             { type: 'info', text: `FORCED DATA BLK ${f.callsign || '???'}` }
+        ];
+        mcaRender();
+        showFlightDetail(gufi);
+        return;
+    }
+
+    // Point-out active: cannot toggle to LDB — use QP command
+    if (getPointoutIndicator(f)) {
+        mca.feedback = [
+            { type: 'err', text: 'POINT OUT ACTIVE \u2014 USE QP' },
+            { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
         ];
         mcaRender();
         showFlightDetail(gufi);
@@ -4163,6 +4304,7 @@ function processCommand(cmd) {
                 return { feedback: [{ type: 'err', text: 'NO POINT OUT' }] };
             }
             pointoutAcked.add(f.gufi);
+            closePointoutMenu();
             invalidateMarker(f.gufi);
             return { feedback: [
                 { type: 'ok', text: 'ACCEPT' },
@@ -4180,6 +4322,7 @@ function processCommand(cmd) {
             // Clear the server-side point-out fields locally so P disappears
             f.pointoutOriginatingUnit = null;
             f.pointoutReceivingUnit = null;
+            closePointoutMenu();
             invalidateMarker(f.gufi);
             return { feedback: [
                 { type: 'ok', text: 'ACCEPT' },
@@ -4490,9 +4633,9 @@ function dropBox() {
     _boxDragging = null;
 }
 
-function setupBoxDrag(el) {
+function setupBoxDrag(el, handleEl) {
     restoreBoxPosition(el);
-    el.addEventListener('mousedown', e => {
+    (handleEl || el).addEventListener('mousedown', e => {
         if (e.button !== 0) return;
         e.stopPropagation();
 
@@ -4537,10 +4680,45 @@ document.addEventListener('mousedown', e => {
 window.addEventListener('resize', () => {
     clampBox(document.getElementById('mca'));
     clampBox(document.getElementById('ra'));
+    const poMenu = document.getElementById('po-menu');
+    if (poMenu.style.display !== 'none') clampBox(poMenu);
 });
 
 setupBoxDrag(document.getElementById('mca'));
 setupBoxDrag(document.getElementById('ra'));
+setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
+
+// Point-out menu: close button
+document.getElementById('po-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closePointoutMenu();
+});
+
+// Point-out menu: sector row click
+document.getElementById('po-menu-body').addEventListener('click', (e) => {
+    const row = e.target.closest('.po-sector-row');
+    if (!row) return;
+    e.stopPropagation();
+    const gufi = row.dataset.gufi;
+    const role = row.dataset.role;
+    const f = flights.get(gufi);
+    if (!f) return;
+    const isAcked = pointoutAcked.has(gufi);
+
+    if (role === 'receiver' && !isAcked) {
+        // Acknowledge the point-out
+        pointoutAcked.add(gufi);
+        invalidateMarker(gufi);
+        closePointoutMenu();
+    } else if (role === 'originator' && isAcked) {
+        // Remove acknowledged sector → clear point-out
+        pointoutAcked.delete(gufi);
+        f.pointoutOriginatingUnit = null;
+        f.pointoutReceivingUnit = null;
+        invalidateMarker(gufi);
+        closePointoutMenu();
+    }
+});
 
 // ════════════════════════════════════════════════════════════════════════════
 // Init

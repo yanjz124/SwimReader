@@ -657,12 +657,22 @@ var cacheTimer = new Timer(_ => SaveFlightCache(), null, TimeSpan.FromMinutes(5)
 var purgeTimer = new Timer(_ =>
 {
     var cutoff = DateTime.UtcNow.AddMinutes(-60);
+    var poCutoff = DateTime.UtcNow.AddMinutes(-3);
     foreach (var (gufi, f) in flights)
     {
         if (f.LastSeen < cutoff)
         {
             flights.TryRemove(gufi, out FlightState? _);
             Broadcast(new WsMsg("remove", new { gufi }));
+        }
+        // Expire point-out data after 3 minutes (SFDPS doesn't send clear signals)
+        // Also clear legacy data with no timestamp (e.g. from cache before this fix)
+        else if ((f.PointoutOriginatingUnit is not null || f.PointoutReceivingUnit is not null)
+                 && (!f.PointoutTimestamp.HasValue || f.PointoutTimestamp.Value < poCutoff))
+        {
+            f.PointoutOriginatingUnit = null;
+            f.PointoutReceivingUnit = null;
+            f.PointoutTimestamp = null;
         }
     }
 }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
@@ -952,6 +962,7 @@ void ProcessFlight(XElement flight, string rawXml)
             var recvUnit = po.Elements().FirstOrDefault(e => e.Name.LocalName == "receivingUnit");
             if (origUnit is not null) state.PointoutOriginatingUnit = FormatUnit(origUnit);
             if (recvUnit is not null) state.PointoutReceivingUnit = FormatUnit(recvUnit);
+            state.PointoutTimestamp = DateTime.UtcNow;
         }
 
         // Cleared flight information (HF — heading, speed, text assigned by controller)
@@ -2116,6 +2127,7 @@ class FlightState
     // Point-out
     public string? PointoutOriginatingUnit { get; set; }
     public string? PointoutReceivingUnit { get; set; }
+    public DateTime? PointoutTimestamp { get; set; }
 
     // Clearance data (from NasClearedFlightInformationType — heading, speed, text)
     public string? ClearanceHeading { get; set; }

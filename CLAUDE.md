@@ -212,7 +212,7 @@ Core fields tracked per flight (by GUFI):
 - Altitude: `assignedAltitude`, `assignedVfr`, `blockFloor`, `blockCeiling`, `interimAltitude`, `reportedAltitude`
 - Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`
 - Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
-- Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit`
+- Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit` (expire after 3 min via `PointoutTimestamp`)
 - Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `equipmentQualifier`
 - Clearance (HSF): `clearanceHeading`, `clearanceSpeed`, `clearanceText`, `fourthAdaptedField`
 - Datalink: `dataLinkCode`, `otherDataLink`, `communicationCode`
@@ -253,7 +253,16 @@ Server-side in `Program.cs` ProcessFlight():
     1234 H33           ← Line 3: CID + Field E (groundspeed OR handoff)
     DCA                ← Line 4: Destination (FAA LID)
 ```
-Line 0 only appears when the flight has an active point-out to/from the selected facility.
+Line 0 only appears when the flight has an active point-out to/from the selected facility. Point-out data from SFDPS expires after 3 minutes (server-side) since SFDPS sends no explicit clear/acceptance signals.
+
+**Point-out indicator behavior:**
+- `P` (yellow) = pending point-out, click opens pop-up menu
+- `A` (white) = acknowledged point-out (client-side only via QP A or menu click)
+- Click `A` = clears indicator entirely
+- Dwell box excludes Line 0; FDB→LDB toggle is blocked during active point-out
+- Pop-up menu: shows sector number, draggable by title bar; receiver can acknowledge, originator can clear
+- Originator sees receiving sector in yellow (pending) / white (acked)
+- Receiver sees originating sector in cyan (pending) / white (acked)
 
 **Line 2 altitude display formats:**
 - `{afl}C` = conforming (reported within ±200ft of assigned)

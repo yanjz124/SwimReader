@@ -1925,8 +1925,18 @@ function connectWs() {
                 const oldCuFac = existing.controllingFacility;
                 const oldCuSec = existing.controllingSector;
 
-                // Buffer new position for scan cycle
+                // Buffer new position for scan cycle; record history from the position we're replacing
                 if (f.latitude != null && f.longitude != null) {
+                    const prev = pendingPositions.get(f.gufi);
+                    const oldLat = prev ? prev.lat : existing.latitude;
+                    const oldLon = prev ? prev.lon : existing.longitude;
+                    if (oldLat != null && oldLon != null) {
+                        const dlat = Math.abs(oldLat - f.latitude);
+                        const dlon = Math.abs(oldLon - f.longitude);
+                        if (dlat > 0.0001 || dlon > 0.0001) {
+                            addHistoryPoint(f.gufi, oldLat, oldLon, getSymbolChar(existing));
+                        }
+                    }
                     pendingPositions.set(f.gufi, { lat: f.latitude, lon: f.longitude });
                 }
                 // Apply all non-position fields instantly
@@ -2148,18 +2158,10 @@ function render() {
 }
 
 function applyScanCycle() {
-    // Apply buffered positions (lat/lon only) — datablock fields were already applied instantly
+    // Apply buffered positions (lat/lon only) — history was already recorded at WS message time
     for (const [gufi, pos] of pendingPositions) {
         const f = flights.get(gufi);
         if (!f) continue;
-        // Record history from old position
-        if (f.latitude != null) {
-            const dlat = Math.abs(f.latitude - pos.lat);
-            const dlon = Math.abs(f.longitude - pos.lon);
-            if (dlat > 0.0001 || dlon > 0.0001) {
-                addHistoryPoint(gufi, f.latitude, f.longitude, getSymbolChar(f));
-            }
-        }
         f.latitude = pos.lat;
         f.longitude = pos.lon;
     }
@@ -2167,13 +2169,6 @@ function applyScanCycle() {
 }
 
 function doRender() {
-    // Check if a scan cycle has elapsed
-    const now = performance.now();
-    if (now - lastScanTime >= SCAN_INTERVAL) {
-        applyScanCycle();
-        lastScanTime = now;
-    }
-
     const mapBounds = map.getBounds();
     const onScreenGufis = new Set();
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
@@ -2410,6 +2405,12 @@ function doRender() {
 }
 
 requestAnimationFrame(render);
+
+// ── Scan cycle — runs on setInterval so it fires even when tab is backgrounded ──
+setInterval(() => {
+    applyScanCycle();
+    lastScanTime = performance.now();
+}, SCAN_INTERVAL);
 
 // ── Handoff flash timer (500ms) ─────────────────────────────────────────────
 // Updates DATA BLOCK TEXT for tracks in active handoff OR completed handoff (O display).

@@ -221,8 +221,11 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     background: rgba(50,50,50,0.6); border: 1px solid #555; border-radius: 3px;
     color: #888; font-size: 16px; line-height: 22px; text-align: center;
     cursor: pointer; opacity: 0.5; transition: opacity 0.2s;
+    display: none;
 }
 #mca-kb-btn:hover, #mca-kb-btn:active { opacity: 1; color: #ccc; }
+@media (pointer: coarse) { #mca-kb-btn { display: block; } }
+#mca.show-kb #mca-kb-btn { display: block; }
 #mca-mobile-input {
     position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0;
 }
@@ -363,6 +366,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             </div>
             <div class="ctrl-row">
                 <label><input type="checkbox" id="chk-mapbg"> Map Bg</label>
+                <label style="margin-left:12px;"><input type="checkbox" id="chk-mca-kb"> KB</label>
             </div>
             <!-- Transp MCA: reserved for future use
             <div class="ctrl-row">
@@ -2527,6 +2531,11 @@ document.getElementById('chk-mapbg').addEventListener('change', function () {
     saveSettingsToUrl();
 });
 
+document.getElementById('chk-mca-kb').addEventListener('change', function () {
+    document.getElementById('mca').classList.toggle('show-kb', this.checked);
+    saveSettingsToUrl();
+});
+
 // Transp MCA: reserved for future use
 // document.getElementById('chk-transp-mca').addEventListener('change', function () {
 //     document.getElementById('map-container').classList.toggle('transp-mca', this.checked);
@@ -2963,6 +2972,10 @@ function loadSettingsFromUrl() {
     if (params.has('ldb')) ldbBrightness = parseInt(params.get('ldb'));
     if (params.has('faconly')) facilityOnly = params.get('faconly') === '1';
     if (params.has('mapbg')) showMapBg = params.get('mapbg') === '1';
+    if (params.has('kb')) {
+        document.getElementById('chk-mca-kb').checked = true;
+        document.getElementById('mca').classList.add('show-kb');
+    }
     // Transp MCA: reserved for future use
     // if (params.has('tmca')) {
     //     document.getElementById('map-container').classList.toggle('transp-mca', true);
@@ -3048,6 +3061,7 @@ function saveSettingsToUrl() {
     if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);
     if (ldbBrightness !== 70) params.set('ldb', ldbBrightness);
     if (facilityOnly) params.set('faconly', '1');
+    if (document.getElementById('chk-mca-kb').checked) params.set('kb', '1');
     const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.proc];
     const nasrDefaults = [0, 0, 0, 60];
     if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));

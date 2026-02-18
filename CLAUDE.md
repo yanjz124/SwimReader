@@ -151,7 +151,7 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 |--------|-----------|-------------|----------|
 | `TH` | ~3247/500 | Track history (batched position updates) | Position, altitude, speed, velocity |
 | `OH` | ~97/500 | Ownership/handoff update | Handoff event (INITIATION/ACCEPTANCE/RETRACTION), receiving/transferring units |
-| `HZ` | ~63/500 | Heartbeat/position update | Position, assigned altitude |
+| `HZ` | ~63/500 | Heartbeat/position update | Position only (`assignedAltitude` = Mode C, **skipped**) |
 | `HP` | ~61/500 | Handoff proposal | Initiates handoff to receiving sector |
 | `HX` | ~58/500 | Handoff execution (route transfer) | Route transfer between facilities |
 | `AH` | ~40/500 | Assumed/amended handoff (/OK forced) | Forced handoff acceptance, sets HandoffForced flag |
@@ -201,7 +201,7 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 - Heading values: numeric (255, 160), runway (15R, 10R, 20L), PH (published), VK, BL, BR, OR, SLO, CTRL, 4-digit (0348, 0405)
 - Speed values: knots (250, 280), Mach (M79, M75), S-prefix (S270, S290), +/- modifiers (280+, M74-)
 - Free text: frequencies (128.35), MEDEVAC, NORDO, route mods (D/SYRAH, STYONRTE, RNV1/54, DR/DPR)
-- SFDPS does **not** send explicit clear signals — values persist until flight drops/purges; values do update (CHANGED events observed)
+- SFDPS clears clearance data by sending a `<cleared>` element with empty/absent attributes. `ProcessFlight()` treats the presence of `<cleared>` as authoritative — any attribute not present is cleared to null
 - ~2-3% of flights carry clearance data at any time
 
 ### FlightState Fields
@@ -215,6 +215,7 @@ Core fields tracked per flight (by GUFI):
 - Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit` (expire after 3 min via `PointoutTimestamp`)
 - Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `equipmentQualifier`
 - Clearance (HSF): `clearanceHeading`, `clearanceSpeed`, `clearanceText`, `fourthAdaptedField`
+- TMI: `tmiIds` (traffic management initiative IDs — ground stops, slot times, etc.)
 - Datalink: `dataLinkCode`, `otherDataLink`, `communicationCode`
 - Status: `flightStatus` (ACTIVE, DROPPED, CANCELLED)
 - Event log: last 50 state-change events with timestamps
@@ -287,6 +288,11 @@ Line 0 only appears when the flight has an active point-out to/from the selected
 - `<vfr/>` (0.3%) — VFR flag, no altitude value
 - `<vfrPlus>` (1.2%) — VFR-on-top with altitude
 - `<block><above>/<below>` (0.04%) — block altitude range; `above` = floor, `below` = ceiling
+
+**HZ `assignedAltitude` = Mode C (radar-reported altitude), NOT controller-assigned.**
+HZ heartbeat messages carry the current Mode C reading in the `assignedAltitude` XML field. This causes altitude oscillation if not skipped (e.g., FL240 assigned → 13300 Mode C → FL240 restored by TH). `ProcessFlight()` skips `assignedAltitude` from HZ messages to prevent this.
+
+**Interim altitude** has no sub-types in SFDPS — only `<interimAltitude uom="FEET">value</interimAltitude>`. Procedural/temp/local distinctions (QQ P, QQ L, QQ R) are local ERAM concepts not reflected in the SFDPS feed. Interim is set exclusively by LH messages, cleared by OH (~92%) and FH (~8%) when the element is absent. The `@nil="true"` clear path exists in code but is never observed in practice.
 
 **Line 3 Field E (right side after CID, in priority order):**
 - `HIJK` = squawk 7500 (hijack)
@@ -475,7 +481,7 @@ Place KML files in the repo root (gitignored, not committed):
 - Track colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red), `#555555` (boundary grey)
 - SFDPS data rate: ~240 msg/sec, updating ~4000-7000 active flights at any time
 - Each flight updates roughly every 12 seconds
-- CID (Computer ID) is per-facility — each ARTCC assigns its own; stored in `computerIds` map
+- CID (Computer ID) is per-facility — each ARTCC assigns its own; stored in `computerIds` map. `getCid()` only returns the selected facility's CID; foreign facility CIDs are never shown (matches real ERAM behavior)
 - All frontend rendering is single-file HTML (JS + CSS inlined), no build step or framework
 
 ## Building

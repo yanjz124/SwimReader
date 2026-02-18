@@ -1660,8 +1660,7 @@ const VCI_SVG = '<svg viewBox="0 0 16 16" width="1.2em" height="1.2em" style="ve
 
 function formatLine4(f, hsfCol) {
     const hsf = getEffectiveHsf(f);
-    const hasServerClr = f.clearanceHeading || f.clearanceSpeed || f.clearanceText;
-    const showHsf = hasServerClr || hsfShowMap.has(f.gufi);
+    const showHsf = hsfShowMap.has(f.gufi);
 
     // HSF mode: show heading/speed/free text
     // Speed positioned so last digit sits under ↴ (at hsfCol), +/- extends one past

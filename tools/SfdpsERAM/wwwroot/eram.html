@@ -322,9 +322,6 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 </select>
             </div>
             <div class="ctrl-row">
-                <label><input type="checkbox" id="chk-boundaries" checked> Boundaries</label>
-            </div>
-            <div class="ctrl-row">
                 <label>UHI %</label>
                 <input type="range" id="rng-bnd-uhi" min="0" max="100" value="60" style="flex:1; accent-color:#cccc44;">
                 <span id="lbl-bnd-uhi" style="min-width:28px; text-align:right; font-size:11px;">60</span>
@@ -478,7 +475,7 @@ let facilityOnly = false;   // when true + facility selected, hide all non-facil
 let showFdb = true;
 let showHistory = true;
 let vectorMinutes = 1;
-let showBoundaries = true;
+// showBoundaries removed — boundaries always on, controlled by brightness sliders
 let selectedGufi = null;
 let wsConnected = false;
 let msgRate = 0;
@@ -926,7 +923,7 @@ async function loadKml() {
             if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
             delete boundaryLayers[key];
         }
-        if (myFacility && showBoundaries) showBoundariesForFacility(myFacility);
+        if (myFacility) showBoundariesForFacility(myFacility);
     } catch (e) { console.warn('[KML]', e); }
 }
 
@@ -939,7 +936,7 @@ function showBoundariesForFacility(artcc) {
         }
     }
     activeBoundaryArtcc = artcc;
-    if (!artcc || !showBoundaries) return;
+    if (!artcc) return;
 
     for (const cat of BOUNDARY_CATS) {
         const br = boundaryBrightness[cat];
@@ -958,7 +955,7 @@ function showBoundariesForFacility(artcc) {
 
 function setBoundaryBrightness(cat, brightness) {
     boundaryBrightness[cat] = brightness;
-    if (!activeBoundaryArtcc || !showBoundaries) return;
+    if (!activeBoundaryArtcc) return;
     const key = `${activeBoundaryArtcc}:${cat}`;
     if (brightness <= 0) {
         if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
@@ -1002,19 +999,21 @@ loadKml();
 // ════════════════════════════════════════════════════════════════════════════
 const nasrLayers = {};    // 'jroutes'|'vroutes'|'vors'|'proc:DCA' → L.layerGroup
 const nasrCache = {};     // same keys → raw API data (cache across toggles)
-const NASR_COLOR = '#666666';
 const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 0, proc: 60 };
 
 const nasrLoading = {};   // guard against double-click during async fetch
+function nasrColor(brightness) { return bndColor(brightness); }  // same grey ramp as boundaries
+
 async function showNasrLayer(layerKey, url, renderer) {
-    const op = nasrBrightness[layerKey] / 100;
-    if (op <= 0) {
+    const br = nasrBrightness[layerKey];
+    if (br <= 0) {
         if (nasrLayers[layerKey]) { map.removeLayer(nasrLayers[layerKey]); delete nasrLayers[layerKey]; }
         return;
     }
-    // Already showing — just update opacity
+    // Already showing — just update color
     if (nasrLayers[layerKey]) {
-        nasrLayers[layerKey].eachLayer(l => l.setStyle({ opacity: op }));
+        const col = nasrColor(br);
+        nasrLayers[layerKey].eachLayer(l => l.setStyle({ color: col }));
         return;
     }
     if (nasrLoading[layerKey]) return;
@@ -1028,31 +1027,37 @@ async function showNasrLayer(layerKey, url, renderer) {
         } catch (e) { console.warn(`[NASR] ${layerKey}:`, e); delete nasrLoading[layerKey]; return; }
         delete nasrLoading[layerKey];
     }
+    // Re-check brightness after async fetch (slider may have changed to 0)
+    const finalBr = nasrBrightness[layerKey];
+    if (finalBr <= 0) return;
     const group = L.layerGroup();
-    renderer(nasrCache[layerKey], group, op);
+    renderer(nasrCache[layerKey], group, finalBr);
     nasrLayers[layerKey] = group;
     group.addTo(map);
 }
 
-function renderAirways(data, group, op) {
+function renderAirways(data, group, br) {
+    const col = nasrColor(br);
     for (const awy of data) {
         if (awy.points.length < 2) continue;
-        L.polyline(awy.points, { color: NASR_COLOR, weight: 1, opacity: op, interactive: false }).addTo(group);
+        L.polyline(awy.points, { color: col, weight: 1, opacity: 1, interactive: false, className: 'bnd-path' }).addTo(group);
     }
 }
 
-function renderVors(data, group, op) {
+function renderVors(data, group, br) {
+    const col = nasrColor(br);
     for (const vor of data) {
         L.circleMarker([vor.lat, vor.lon], {
-            radius: 4, color: NASR_COLOR, weight: 1, opacity: op, fill: false, interactive: false
+            radius: 4, color: col, weight: 1, opacity: 1, fill: false, interactive: false, className: 'bnd-path'
         }).addTo(group);
     }
 }
 
-function renderProcedures(data, group, op) {
+function renderProcedures(data, group, br) {
+    const col = nasrColor(br);
     for (const proc of data) {
         if (proc.points.length < 2) continue;
-        L.polyline(proc.points, { color: NASR_COLOR, weight: 1, opacity: op, interactive: false }).addTo(group);
+        L.polyline(proc.points, { color: col, weight: 1, opacity: 1, interactive: false, className: 'bnd-path' }).addTo(group);
     }
 }
 
@@ -1068,15 +1073,15 @@ setupNasrSlider('rng-jroutes', 'lbl-jroutes', 'jroutes', '/api/nasr/airways?type
 setupNasrSlider('rng-vroutes', 'lbl-vroutes', 'vroutes', '/api/nasr/airways?type=lo', renderAirways);
 setupNasrSlider('rng-vors', 'lbl-vors', 'vors', '/api/nasr/navaids', renderVors);
 
-// Procedure brightness slider — controls opacity of all loaded proc:* layers
+// Procedure brightness slider — controls color brightness of all loaded proc:* layers
 document.getElementById('rng-proc').addEventListener('input', function () {
     nasrBrightness.proc = parseInt(this.value);
     document.getElementById('lbl-proc').textContent = nasrBrightness.proc;
-    const op = nasrBrightness.proc / 100;
+    const br = nasrBrightness.proc;
     for (const key of Object.keys(nasrLayers)) {
         if (key.startsWith('proc:')) {
-            if (op <= 0) { map.removeLayer(nasrLayers[key]); delete nasrLayers[key]; }
-            else nasrLayers[key].eachLayer(l => l.setStyle({ opacity: op }));
+            if (br <= 0) { map.removeLayer(nasrLayers[key]); delete nasrLayers[key]; }
+            else nasrLayers[key].eachLayer(l => l.setStyle({ color: nasrColor(br) }));
         }
     }
     saveSettingsToUrl();
@@ -1093,114 +1098,123 @@ function clearProcOverlay() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// NEXRAD weather radar overlay — ERAM-style pixel rendering
-// Source: RainViewer global radar tiles (CORS-enabled, transparent backgrounds)
-// Alpha channel encodes precipitation intensity → classify into ERAM categories:
-//   Moderate (20-40 dBZ) → solid blue #0044ff
-//   Heavy (40-55 dBZ) → checkered cyan #00ccff / black
-//   Extreme (55+ dBZ) → solid cyan #00ccff
+// MRMS weather radar overlay — ERAM-style pixel rendering
+// Source: NOAA nowCOAST WMS (MRMS base reflectivity composite)
+// https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows
+// Updates every ~4 minutes, CORS-enabled, transparent PNG tiles
+// NWS standard radar colors → parsed on canvas → remapped to ERAM categories:
+//   Moderate (20-40 dBZ, NWS greens/yellows) → solid blue #0044ff
+//   Heavy (40-55 dBZ, NWS oranges/reds) → checkered cyan #00ccff / black
+//   Extreme (55+ dBZ, NWS dark reds/magentas) → solid cyan #00ccff
 // ════════════════════════════════════════════════════════════════════════════
 let nexradLayer = null;
 let nexradLevel = 0;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=all(123)
 let nexradBrightness = 50;
-let rainviewerPath = null;     // Latest radar tile path from RainViewer API
+const MRMS_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows';
 
-// Fetch latest radar timestamp from RainViewer API
-async function refreshRainviewerTimestamp() {
-    try {
-        const resp = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-        const data = await resp.json();
-        const frames = data?.radar?.past;
-        if (frames && frames.length > 0) {
-            rainviewerPath = frames[frames.length - 1].path;
-            console.log('RainViewer radar path:', rainviewerPath);
-        }
-    } catch (e) {
-        console.warn('Failed to fetch RainViewer timestamp:', e);
+// Classify NWS radar pixel to ERAM NEXRAD level (0=none, 1=moderate, 2=heavy, 3=extreme)
+// NWS palette: cyan/blue (<20 dBZ) → green (20-35) → yellow (35-45) → orange/red (45+)
+// ERAM mapping: green→blue, yellow→checkered, red→cyan
+function classifyNwsPixel(r, g, b, a) {
+    if (a < 128) return 0;                              // filter anti-aliased edges
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    if (max < 30) return 0;
+    const delta = max - min;
+    if (delta < 15) return 0;                            // filter greys/unsaturated
+    // Compute hue 0-360
+    let h;
+    if (max === r) h = 60 * (((g - b) / delta) % 6);
+    else if (max === g) h = 60 * ((b - r) / delta + 2);
+    else h = 60 * ((r - g) / delta + 4);
+    if (h < 0) h += 360;
+    // Cyan through blue (190-270): moderate (ERAM blue)
+    if (h >= 190 && h <= 270) return 1;
+    // Light cyan (150-190): moderate (fill transition between green and blue)
+    if (h >= 150 && h < 190) return 1;
+    // Green (80-150): split by brightness — bright green = moderate, dark green = heavy
+    if (h >= 80 && h < 150) {
+        return (max / 255) > 0.85 ? 1 : 2;             // bright green ~20-22 dBZ moderate, dark green ~23-35 dBZ heavy
     }
+    // Yellow/gold (75-80): heavy (checkered cyan/black)
+    if (h >= 75 && h < 80) return 2;
+    // Orange/yellow (15-75) / red / magenta: extreme (solid cyan)
+    return 3;
 }
 
-// Remap tile pixels to ERAM colors based on alpha-encoded intensity
-// RainViewer tiles: transparent = no data, alpha = precipitation intensity
-// Alpha thresholds mapped to dBZ categories:
-//   alpha 1-60 → moderate (~10-35 dBZ)
-//   alpha 61-100 → heavy (~35-55 dBZ)
-//   alpha 101+ → extreme (~55+ dBZ)
-function remapNexradTile(canvas, level) {
-    const ctx = canvas.getContext('2d');
-    const imageData = ctx.getImageData(0, 0, 256, 256);
-    const d = imageData.data;
-    for (let i = 0; i < d.length; i += 4) {
-        const a = d[i + 3];
-        if (a < 1) continue;  // transparent = no data
-        // Classify by alpha intensity
-        let cat;
-        if (a <= 60) cat = 1;       // moderate
-        else if (a <= 100) cat = 2;  // heavy
-        else cat = 3;                // extreme
-        // NX LVL filtering: 1=extreme only, 2=heavy+extreme, 3=all
-        if (level === 1 && cat < 3) { d[i + 3] = 0; continue; }
-        if (level === 2 && cat < 2) { d[i + 3] = 0; continue; }
-        const px = i / 4;
-        const tx = px % 256, ty = Math.floor(px / 256);
-        if (cat === 1) {
-            // Moderate: solid blue (#0044ff)
-            d[i] = 0; d[i + 1] = 68; d[i + 2] = 255;
-        } else if (cat === 2) {
-            // Heavy: checkered cyan (#00ccff) and black
-            if ((tx + ty) % 2 === 0) {
-                d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
-            } else {
-                d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+const MrmsEramLayer = L.GridLayer.extend({
+    createTile: function (coords, done) {
+        const tile = document.createElement('canvas');
+        tile.width = tile.height = 256;
+        const ctx = tile.getContext('2d');
+        const level = this.options.nxLevel || 3;
+        // Build WMS GetMap URL
+        const bounds = this._tileCoordsToBounds(coords);
+        const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+        const bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
+        const url = `${MRMS_WMS_URL}?service=WMS&version=1.1.1&request=GetMap` +
+            `&layers=conus_base_reflectivity_mosaic&srs=EPSG:4326` +
+            `&bbox=${bbox}&width=256&height=256&format=image/png&transparent=true`;
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            ctx.drawImage(img, 0, 0, 256, 256);
+            // Remap NWS colors to ERAM categories
+            const imageData = ctx.getImageData(0, 0, 256, 256);
+            const d = imageData.data;
+            for (let i = 0; i < d.length; i += 4) {
+                const cat = classifyNwsPixel(d[i], d[i + 1], d[i + 2], d[i + 3]);
+                if (cat === 0) { d[i + 3] = 0; continue; }
+                // NX LVL filtering: 1=extreme only, 2=heavy+extreme, 3=all
+                if (level === 1 && cat < 3) { d[i + 3] = 0; continue; }
+                if (level === 2 && cat < 2) { d[i + 3] = 0; continue; }
+                const px = i / 4;
+                const tx = px % 256, ty = Math.floor(px / 256);
+                if (cat === 1) {
+                    // Moderate: solid blue (#0044ff)
+                    d[i] = 0; d[i + 1] = 68; d[i + 2] = 255;
+                } else if (cat === 2) {
+                    // Heavy: checkered cyan (#00ccff) and black
+                    if ((Math.floor(tx / 4) + Math.floor(ty / 4)) % 2 === 0) {
+                        d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
+                    } else {
+                        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+                    }
+                } else {
+                    // Extreme: solid cyan (#00ccff)
+                    d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
+                }
+                d[i + 3] = 255;
             }
-        } else {
-            // Extreme: solid cyan (#00ccff)
-            d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
-        }
-        d[i + 3] = 255;
+            ctx.putImageData(imageData, 0, 0);
+            done(null, tile);
+        };
+        img.onerror = () => done(null, tile);  // blank tile on error
+        img.src = url;
+        return tile;
     }
-    ctx.putImageData(imageData, 0, 0);
-}
+});
 
 function createNexradLayer() {
-    const path = rainviewerPath;
-    if (!path) {
-        console.warn('NEXRAD: no RainViewer path yet');
-        return null;
-    }
-    console.log('NEXRAD: creating layer with path', path, 'level', nexradLevel);
-    // Use plain L.tileLayer first to confirm tiles render, then switch to canvas for remapping
-    return L.tileLayer(`https://tilecache.rainviewer.com${path}/256/{z}/{x}/{y}/1/0_0.png`, {
+    return new MrmsEramLayer({
         pane: 'nexrad',
         opacity: nexradBrightness / 100,
         maxZoom: 16,
-        zIndex: 250,
         tileSize: 256,
+        nxLevel: nexradLevel,
     });
 }
 
 function updateNexrad() {
     if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = null; }
     if (nexradLevel === 0) return;
-    if (!rainviewerPath) {
-        // Path not yet available — fetch and retry
-        refreshRainviewerTimestamp().then(() => {
-            if (nexradLevel > 0 && !nexradLayer) {
-                nexradLayer = createNexradLayer();
-                if (nexradLayer) nexradLayer.addTo(map);
-            }
-        });
-        return;
-    }
     nexradLayer = createNexradLayer();
-    if (nexradLayer) nexradLayer.addTo(map);
+    nexradLayer.addTo(map);
 }
 
-// Fetch initial timestamp, then refresh every 5 minutes
-refreshRainviewerTimestamp().then(() => { if (nexradLevel > 0) updateNexrad(); });
-setInterval(async () => {
-    await refreshRainviewerTimestamp();
-    if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = createNexradLayer(); if (nexradLayer) nexradLayer.addTo(map); }
+// Auto-refresh every 5 minutes (nowCOAST updates every ~4 min)
+if (nexradLevel > 0) updateNexrad();
+setInterval(() => {
+    if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = createNexradLayer(); nexradLayer.addTo(map); }
 }, 5 * 60 * 1000);
 
 document.getElementById('sel-nxlvl').addEventListener('change', function () {
@@ -2535,18 +2549,6 @@ document.getElementById('sel-line4').addEventListener('change', function () {
     saveSettingsToUrl();
 });
 
-document.getElementById('chk-boundaries').addEventListener('change', function () {
-    showBoundaries = this.checked;
-    if (showBoundaries) showBoundariesForFacility(myFacility);
-    else if (activeBoundaryArtcc) {
-        for (const cat of BOUNDARY_CATS) {
-            const key = `${activeBoundaryArtcc}:${cat}`;
-            if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
-        }
-    }
-    saveSettingsToUrl();
-});
-
 for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
     const lblId = BOUNDARY_CAT_LABEL[cat];
     document.getElementById(id).addEventListener('input', function () {
@@ -3001,7 +3003,6 @@ function loadSettingsFromUrl() {
     if (params.has('history')) showHistory = params.get('history') !== '0';
     if (params.has('histcount')) MAX_HISTORY = parseInt(params.get('histcount')) || 5;
     if (params.has('vector')) vectorMinutes = parseInt(params.get('vector'));
-    if (params.has('boundaries')) showBoundaries = params.get('boundaries') !== '0';
     if (params.has('bndbr')) {
         const vals = params.get('bndbr').split(',').map(Number);
         BOUNDARY_CATS.forEach((cat, i) => { if (!isNaN(vals[i])) boundaryBrightness[cat] = vals[i]; });
@@ -3047,7 +3048,6 @@ function loadSettingsFromUrl() {
     document.getElementById('sel-facility').value = myFacility;
     document.getElementById('sel-histcount').value = MAX_HISTORY;
     document.getElementById('sel-vector').value = vectorMinutes;
-    document.getElementById('chk-boundaries').checked = showBoundaries;
     for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
         document.getElementById(id).value = boundaryBrightness[cat];
         document.getElementById(BOUNDARY_CAT_LABEL[cat]).textContent = boundaryBrightness[cat];
@@ -3089,7 +3089,6 @@ function saveSettingsToUrl() {
     if (!showHistory) params.set('history', '0');
     if (MAX_HISTORY !== 5) params.set('histcount', MAX_HISTORY);
     if (vectorMinutes !== 1) params.set('vector', vectorMinutes);
-    if (!showBoundaries) params.set('boundaries', '0');
     const brVals = BOUNDARY_CATS.map(c => boundaryBrightness[c]);
     const defaultBr = [60, 60, 60, 0];
     if (brVals.join(',') !== defaultBr.join(',')) params.set('bndbr', brVals.join(','));
@@ -4167,7 +4166,7 @@ function processCommand(cmd) {
                 const key = `proc:${apt}`;
                 nasrCache[key] = data;
                 const group = L.layerGroup();
-                renderProcedures(data, group, nasrBrightness.proc / 100);
+                renderProcedures(data, group, nasrBrightness.proc);
                 nasrLayers[key] = group;
                 group.addTo(map);
                 const stars = data.filter(p => p.type === 'STAR').length;

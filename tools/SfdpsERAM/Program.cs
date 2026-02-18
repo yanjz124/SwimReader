@@ -239,12 +239,20 @@ app.MapGet("/api/nasr/procedures", (string airport, string? type) =>
     return Results.Json(result, jsonOpts);
 });
 
-// NASR VOR/VORTAC navaids (for plotting circles)
+// NASR VOR/VORTAC navaids (for plotting circles) — excludes NDBs and fan markers
 app.MapGet("/api/nasr/navaids", () =>
 {
     if (nasrData is null) return Results.Json(new { error = "NASR data not loaded" }, statusCode: 503);
-    // Return first point for each navaid identifier (dedup same-name navaids)
-    var result = nasrData.Navaids.Select(kv => new { id = kv.Key, lat = kv.Value[0].Lat, lon = kv.Value[0].Lon }).ToList();
+    // Return first non-NDB point for each navaid identifier (dedup same-name navaids)
+    var result = nasrData.Navaids
+        .Where(kv => kv.Value.Any(n => !n.Type.Contains("NDB", StringComparison.OrdinalIgnoreCase)
+                                    && !n.Type.Equals("FAN MARKER", StringComparison.OrdinalIgnoreCase)))
+        .Select(kv =>
+        {
+            var nav = kv.Value.First(n => !n.Type.Contains("NDB", StringComparison.OrdinalIgnoreCase)
+                                       && !n.Type.Equals("FAN MARKER", StringComparison.OrdinalIgnoreCase));
+            return new { id = kv.Key, lat = nav.Lat, lon = nav.Lon };
+        }).ToList();
     return Results.Json(result, jsonOpts);
 });
 
@@ -1247,6 +1255,7 @@ Dictionary<string, List<NavPoint>> ParseNavBase(string path)
     using var reader = new StreamReader(path);
     var headers = ParseCsvLine(reader.ReadLine()!);
     int iId = ColIdx(headers, "NAV_ID"), iLat = ColIdx(headers, "LAT_DECIMAL"), iLon = ColIdx(headers, "LONG_DECIMAL");
+    int iType = ColIdx(headers, "NAV_TYPE");
     if (iId < 0 || iLat < 0 || iLon < 0) return result;
 
     while (reader.ReadLine() is { } line)
@@ -1256,8 +1265,9 @@ Dictionary<string, List<NavPoint>> ParseNavBase(string path)
         if (!double.TryParse(f[iLat], out var lat) || !double.TryParse(f[iLon], out var lon)) continue;
         var id = f[iId].Trim();
         if (string.IsNullOrEmpty(id)) continue;
+        var type = (iType >= 0 && iType < f.Count) ? f[iType].Trim() : "";
         if (!result.ContainsKey(id)) result[id] = new List<NavPoint>();
-        result[id].Add(new NavPoint(id, lat, lon));
+        result[id].Add(new NavPoint(id, lat, lon, type));
     }
     return result;
 }
@@ -1682,7 +1692,7 @@ class WsClient(WebSocket ws)
     }
 }
 
-record NavPoint(string Ident, double Lat, double Lon);
+record NavPoint(string Ident, double Lat, double Lon, string Type = "");
 record AirwayDef(string Id, string Designation, List<string> Fixes);
 
 record ProcedureDef(string Id, string Airport, string Type, List<string> Fixes); // Type = "STAR" or "DP"

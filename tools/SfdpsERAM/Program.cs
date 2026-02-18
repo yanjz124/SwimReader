@@ -1159,6 +1159,7 @@ void ProcessFlight(XElement flight, string rawXml)
         if (!string.IsNullOrEmpty(name)) nameValueKeys.AddOrUpdate(name, 1, (_, v) => v + 1);
         if (name == "FDPS_GUFI" && !string.IsNullOrEmpty(val)) state.FdpsGufi = val;
         if (name == "4TH_ADAPTED_FIELD" && !string.IsNullOrEmpty(val)) state.FourthAdaptedField = val;
+        if (name == "TMI_IDS" && !string.IsNullOrEmpty(val)) state.TmiIds = val;
     }
 
     // Add event to log
@@ -2218,6 +2219,9 @@ class FlightState
     public string? ClearanceText { get; set; }
     public string? FourthAdaptedField { get; set; }
 
+    // Traffic Management Initiatives
+    public string? TmiIds { get; set; }
+
     // Datalink / CPDLC
     public string? CommunicationCode { get; set; }
     public string? DataLinkCode { get; set; }
@@ -2298,6 +2302,7 @@ class FlightState
         PointoutOriginatingUnit = PointoutOriginatingUnit, PointoutReceivingUnit = PointoutReceivingUnit,
         ClearanceHeading = ClearanceHeading, ClearanceSpeed = ClearanceSpeed,
         ClearanceText = ClearanceText, FourthAdaptedField = FourthAdaptedField,
+        TmiIds = TmiIds,
         CommunicationCode = CommunicationCode, DataLinkCode = DataLinkCode,
         OtherDataLink = OtherDataLink, SELCAL = SELCAL,
         NavigationCode = NavigationCode, PBNCode = PBNCode, SurveillanceCode = SurveillanceCode,
@@ -2334,6 +2339,7 @@ class FlightState
             PointoutOriginatingUnit = s.PointoutOriginatingUnit, PointoutReceivingUnit = s.PointoutReceivingUnit,
             ClearanceHeading = s.ClearanceHeading, ClearanceSpeed = s.ClearanceSpeed,
             ClearanceText = s.ClearanceText, FourthAdaptedField = s.FourthAdaptedField,
+            TmiIds = s.TmiIds,
             CommunicationCode = s.CommunicationCode, DataLinkCode = s.DataLinkCode,
             OtherDataLink = s.OtherDataLink, SELCAL = s.SELCAL,
             NavigationCode = s.NavigationCode, PBNCode = s.PBNCode, SurveillanceCode = s.SurveillanceCode,
@@ -2392,7 +2398,7 @@ class FlightState
             ReportingFacility, ControllingFacility, ControllingSector,
             HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
             PointoutOriginatingUnit, PointoutReceivingUnit,
-            ClearanceHeading, ClearanceSpeed, ClearanceText, FourthAdaptedField,
+            ClearanceHeading, ClearanceSpeed, ClearanceText, FourthAdaptedField, TmiIds,
             CommunicationCode, DataLinkCode, OtherDataLink, SELCAL,
             NavigationCode, PBNCode, SurveillanceCode,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),
@@ -2461,6 +2467,7 @@ class FlightSnapshot
     public string? ClearanceSpeed { get; set; }
     public string? ClearanceText { get; set; }
     public string? FourthAdaptedField { get; set; }
+    public string? TmiIds { get; set; }
     public string? CommunicationCode { get; set; }
     public string? DataLinkCode { get; set; }
     public string? OtherDataLink { get; set; }

@@ -67,6 +67,9 @@ tools/
       destination-codes.json            Per-ARTCC single-letter destination airport codes
       ERAMv110.ttf                      ERAM font for authentic ATC display
   SwimReader.MessageCapture/          Console tool — captures raw STDDS XML to files
+deploy/
+  deploy.sh                           Smart deploy — only restarts on backend changes
+  check-deploy.sh                     Git polling script for auto-deploy timer
 tests/
   SwimReader.Core.Tests/              xUnit tests for core domain
 ```
@@ -473,8 +476,8 @@ dotnet build tools/SfdpsERAM
 ## Deployment (Raspberry Pi)
 
 ### Host
-- **Pi**: `JY@JY1` (Debian 12 bookworm, ARM64, 4 cores, 3.7GB RAM)
-- **SSH**: `ssh JY@JY1` (no password needed)
+- **Pi**: `JY@JY5` (Debian 12 bookworm, ARM64, 4 cores, 3.7GB RAM)
+- **SSH**: `ssh JY@JY5` (no password needed)
 - **.NET 8**: installed at `/home/JY/.dotnet`
 - **Repo**: `/home/JY/SwimReader`
 - **Credentials**: `/home/JY/SwimReader/.env` (same format as local `.env`)
@@ -499,10 +502,10 @@ journalctl -u sfdps-eram -f
 journalctl -u swimreader-stdds -f
 ```
 
-### Auto-Deploy
+### Auto-Deploy (Smart)
 - **Timer**: `swimreader-deploy.timer` polls `origin/master` every 60 seconds
-- **Script**: `/home/JY/SwimReader/check-deploy.sh` — compares local HEAD vs remote, runs `deploy.sh` if different
-- **Deploy script**: `/home/JY/SwimReader/deploy.sh` — `git pull` → build both projects → restart both services
+- **Scripts**: `deploy/check-deploy.sh` (git poll) and `deploy/deploy.sh` (smart deploy) — in repo, auto-updated via git
+- **Smart restart**: Only restarts services when `.cs`/`.csproj` files change. Frontend-only changes (`wwwroot/`) take effect immediately without restart (ASP.NET serves static files from disk).
 - **CI**: GitHub Actions workflow (`.github/workflows/ci.yml`) runs build + test on push/PR to master
 
 ```bash
@@ -513,8 +516,11 @@ systemctl list-timers swimreader-deploy.timer
 journalctl -u swimreader-deploy.service --no-pager -n 30
 
 # Manual deploy
-/home/JY/SwimReader/deploy.sh
+/home/JY/SwimReader/deploy/deploy.sh
 ```
+
+### Flight State Cache
+On shutdown (SIGTERM) and every 5 minutes, all flight data is serialized to `flight-cache/flights.json`. On startup, the cache is loaded before Solace connects, so flights survive restarts with no data loss. Cache older than 60 minutes is discarded (matches purge timer).
 
 ### Cloudflare Tunnel
 - **Tunnel ID**: `8cab2eab-8319-42c6-9540-1aa288323b86`

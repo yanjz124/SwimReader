@@ -504,7 +504,93 @@ var solaceThread = new Thread(() =>
     finally { ContextFactory.Instance.Cleanup(); }
 }) { IsBackground = true, Name = "SolaceReceiver" };
 
+// ── Flight state cache (persist across restarts) ─────────────────────────────
+
+var cacheDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-cache");
+var cacheJsonOpts = new JsonSerializerOptions
+{
+    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+};
+
+void SaveFlightCache()
+{
+    try
+    {
+        Directory.CreateDirectory(cacheDir);
+        var cache = new FlightCache
+        {
+            SavedAt = DateTime.UtcNow,
+            Flights = flights.Values
+                .Where(f => f.FlightStatus != "CANCELLED")
+                .Select(f => f.ToSnapshot())
+                .ToList()
+        };
+        var tmpPath = Path.Combine(cacheDir, "flights.json.tmp");
+        var finalPath = Path.Combine(cacheDir, "flights.json");
+        using (var fs = File.Create(tmpPath))
+            JsonSerializer.Serialize(fs, cache, cacheJsonOpts);
+        File.Move(tmpPath, finalPath, overwrite: true);
+        Console.WriteLine($"[Cache] Saved {cache.Flights.Count} flights ({new FileInfo(finalPath).Length / 1024}KB)");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[Cache] Save error: {ex.Message}");
+    }
+}
+
+void LoadFlightCache()
+{
+    try
+    {
+        var cachePath = Path.Combine(cacheDir, "flights.json");
+        if (!File.Exists(cachePath))
+        {
+            Console.WriteLine("[Cache] No cached flight data found");
+            return;
+        }
+        var ageMinutes = (DateTime.UtcNow - File.GetLastWriteTimeUtc(cachePath)).TotalMinutes;
+        if (ageMinutes > 60)
+        {
+            Console.WriteLine($"[Cache] Cache is {ageMinutes:F0} min old, skipping (stale)");
+            return;
+        }
+        using var fs = File.OpenRead(cachePath);
+        var cache = JsonSerializer.Deserialize<FlightCache>(fs, cacheJsonOpts);
+        if (cache?.Flights is null || cache.Flights.Count == 0)
+        {
+            Console.WriteLine("[Cache] Cache file empty");
+            return;
+        }
+        int loaded = 0;
+        foreach (var snapshot in cache.Flights)
+        {
+            if (string.IsNullOrEmpty(snapshot.Gufi)) continue;
+            flights[snapshot.Gufi] = FlightState.FromSnapshot(snapshot);
+            loaded++;
+        }
+        Console.WriteLine($"[Cache] Restored {loaded} flights (saved {ageMinutes:F0} min ago)");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[Cache] Load error: {ex.Message}");
+    }
+}
+
+LoadFlightCache();
+
+// Save flight cache on graceful shutdown (SIGTERM from systemd)
+var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+lifetime.ApplicationStopping.Register(() =>
+{
+    Console.WriteLine("[Cache] Shutdown — saving flight state...");
+    SaveFlightCache();
+});
+
 solaceThread.Start();
+
+// Save flight cache periodically (every 5 minutes)
+var cacheTimer = new Timer(_ => SaveFlightCache(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 
 // Purge stale flights every 60 seconds
 var purgeTimer = new Timer(_ =>
@@ -1816,6 +1902,93 @@ class FlightState
         }
     }
 
+    public List<FlightEvent> GetEvents()
+    {
+        lock (_events) { return new(_events); }
+    }
+
+    public void RestorePosition(PositionRecord rec)
+    {
+        lock (_posHistory) { _posHistory.Add(rec); }
+    }
+
+    public FlightSnapshot ToSnapshot() => new()
+    {
+        Gufi = Gufi, FdpsGufi = FdpsGufi, Callsign = Callsign,
+        ComputerId = ComputerId,
+        ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
+        Operator = Operator, FlightStatus = FlightStatus,
+        Origin = Origin, Destination = Destination, AircraftType = AircraftType,
+        Registration = Registration, WakeCategory = WakeCategory,
+        ModeSCode = ModeSCode, EquipmentQualifier = EquipmentQualifier,
+        Squawk = Squawk, FlightRules = FlightRules,
+        Route = Route, STAR = STAR, Remarks = Remarks,
+        AssignedAltitude = AssignedAltitude, AssignedVfr = AssignedVfr,
+        BlockFloor = BlockFloor, BlockCeiling = BlockCeiling,
+        InterimAltitude = InterimAltitude, ReportedAltitude = ReportedAltitude,
+        Latitude = Latitude, Longitude = Longitude,
+        GroundSpeed = GroundSpeed, RequestedSpeed = RequestedSpeed,
+        TrackVelocityX = TrackVelocityX, TrackVelocityY = TrackVelocityY,
+        ActualDepartureTime = ActualDepartureTime, ETA = ETA,
+        CoordinationTime = CoordinationTime, CoordinationFix = CoordinationFix,
+        ReportingFacility = ReportingFacility,
+        ControllingFacility = ControllingFacility, ControllingSector = ControllingSector,
+        HandoffEvent = HandoffEvent, HandoffReceiving = HandoffReceiving,
+        HandoffTransferring = HandoffTransferring, HandoffAccepting = HandoffAccepting,
+        HandoffForced = HandoffForced,
+        PointoutOriginatingUnit = PointoutOriginatingUnit, PointoutReceivingUnit = PointoutReceivingUnit,
+        ClearanceHeading = ClearanceHeading, ClearanceSpeed = ClearanceSpeed,
+        ClearanceText = ClearanceText, FourthAdaptedField = FourthAdaptedField,
+        CommunicationCode = CommunicationCode, DataLinkCode = DataLinkCode,
+        OtherDataLink = OtherDataLink, SELCAL = SELCAL,
+        NavigationCode = NavigationCode, PBNCode = PBNCode, SurveillanceCode = SurveillanceCode,
+        LastSeen = LastSeen, LastMsgSource = LastMsgSource,
+        PosHistory = GetPositionHistory(),
+        Events = GetEvents()
+    };
+
+    public static FlightState FromSnapshot(FlightSnapshot s)
+    {
+        var f = new FlightState
+        {
+            Gufi = s.Gufi, FdpsGufi = s.FdpsGufi, Callsign = s.Callsign,
+            ComputerId = s.ComputerId,
+            Operator = s.Operator, FlightStatus = s.FlightStatus,
+            Origin = s.Origin, Destination = s.Destination, AircraftType = s.AircraftType,
+            Registration = s.Registration, WakeCategory = s.WakeCategory,
+            ModeSCode = s.ModeSCode, EquipmentQualifier = s.EquipmentQualifier,
+            Squawk = s.Squawk, FlightRules = s.FlightRules,
+            Route = s.Route, STAR = s.STAR, Remarks = s.Remarks,
+            AssignedAltitude = s.AssignedAltitude, AssignedVfr = s.AssignedVfr,
+            BlockFloor = s.BlockFloor, BlockCeiling = s.BlockCeiling,
+            InterimAltitude = s.InterimAltitude, ReportedAltitude = s.ReportedAltitude,
+            Latitude = s.Latitude, Longitude = s.Longitude,
+            GroundSpeed = s.GroundSpeed, RequestedSpeed = s.RequestedSpeed,
+            TrackVelocityX = s.TrackVelocityX, TrackVelocityY = s.TrackVelocityY,
+            ActualDepartureTime = s.ActualDepartureTime, ETA = s.ETA,
+            CoordinationTime = s.CoordinationTime, CoordinationFix = s.CoordinationFix,
+            ReportingFacility = s.ReportingFacility,
+            ControllingFacility = s.ControllingFacility, ControllingSector = s.ControllingSector,
+            HandoffEvent = s.HandoffEvent, HandoffReceiving = s.HandoffReceiving,
+            HandoffTransferring = s.HandoffTransferring, HandoffAccepting = s.HandoffAccepting,
+            HandoffForced = s.HandoffForced,
+            PointoutOriginatingUnit = s.PointoutOriginatingUnit, PointoutReceivingUnit = s.PointoutReceivingUnit,
+            ClearanceHeading = s.ClearanceHeading, ClearanceSpeed = s.ClearanceSpeed,
+            ClearanceText = s.ClearanceText, FourthAdaptedField = s.FourthAdaptedField,
+            CommunicationCode = s.CommunicationCode, DataLinkCode = s.DataLinkCode,
+            OtherDataLink = s.OtherDataLink, SELCAL = s.SELCAL,
+            NavigationCode = s.NavigationCode, PBNCode = s.PBNCode, SurveillanceCode = s.SurveillanceCode,
+            LastSeen = s.LastSeen, LastMsgSource = s.LastMsgSource
+        };
+        if (s.ComputerIds is not null)
+            foreach (var kv in s.ComputerIds) f.ComputerIds[kv.Key] = kv.Value;
+        if (s.PosHistory is not null)
+            foreach (var p in s.PosHistory) f.RestorePosition(p);
+        if (s.Events is not null)
+            foreach (var e in s.Events) f.AddEvent(e);
+        return f;
+    }
+
     public object ToSummary(bool includeHistory = false) => new
     {
         Gufi, Callsign, ComputerId,
@@ -1876,6 +2049,76 @@ class FlightEvent
     public string Source { get; set; } = "";
     public string Centre { get; set; } = "";
     public string Summary { get; set; } = "";
+}
+
+class FlightSnapshot
+{
+    public string Gufi { get; set; } = "";
+    public string? FdpsGufi { get; set; }
+    public string? Callsign { get; set; }
+    public string? ComputerId { get; set; }
+    public Dictionary<string, string>? ComputerIds { get; set; }
+    public string? Operator { get; set; }
+    public string? FlightStatus { get; set; }
+    public string? Origin { get; set; }
+    public string? Destination { get; set; }
+    public string? AircraftType { get; set; }
+    public string? Registration { get; set; }
+    public string? WakeCategory { get; set; }
+    public string? ModeSCode { get; set; }
+    public string? EquipmentQualifier { get; set; }
+    public string? Squawk { get; set; }
+    public string? FlightRules { get; set; }
+    public string? Route { get; set; }
+    public string? STAR { get; set; }
+    public string? Remarks { get; set; }
+    public double? AssignedAltitude { get; set; }
+    public bool AssignedVfr { get; set; }
+    public double? BlockFloor { get; set; }
+    public double? BlockCeiling { get; set; }
+    public double? InterimAltitude { get; set; }
+    public double? ReportedAltitude { get; set; }
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    public double? GroundSpeed { get; set; }
+    public double? RequestedSpeed { get; set; }
+    public double? TrackVelocityX { get; set; }
+    public double? TrackVelocityY { get; set; }
+    public string? ActualDepartureTime { get; set; }
+    public string? ETA { get; set; }
+    public string? CoordinationTime { get; set; }
+    public string? CoordinationFix { get; set; }
+    public string? ReportingFacility { get; set; }
+    public string? ControllingFacility { get; set; }
+    public string? ControllingSector { get; set; }
+    public string? HandoffEvent { get; set; }
+    public string? HandoffReceiving { get; set; }
+    public string? HandoffTransferring { get; set; }
+    public string? HandoffAccepting { get; set; }
+    public bool HandoffForced { get; set; }
+    public string? PointoutOriginatingUnit { get; set; }
+    public string? PointoutReceivingUnit { get; set; }
+    public string? ClearanceHeading { get; set; }
+    public string? ClearanceSpeed { get; set; }
+    public string? ClearanceText { get; set; }
+    public string? FourthAdaptedField { get; set; }
+    public string? CommunicationCode { get; set; }
+    public string? DataLinkCode { get; set; }
+    public string? OtherDataLink { get; set; }
+    public string? SELCAL { get; set; }
+    public string? NavigationCode { get; set; }
+    public string? PBNCode { get; set; }
+    public string? SurveillanceCode { get; set; }
+    public DateTime LastSeen { get; set; }
+    public string? LastMsgSource { get; set; }
+    public List<PositionRecord>? PosHistory { get; set; }
+    public List<FlightEvent>? Events { get; set; }
+}
+
+class FlightCache
+{
+    public DateTime SavedAt { get; set; }
+    public List<FlightSnapshot> Flights { get; set; } = new();
 }
 
 class GlobalStats

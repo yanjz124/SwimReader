@@ -47,6 +47,9 @@ captures/
 ## NASR data (downloaded from FAA)
 nasr-data/
 
+## Flight state cache (persisted across restarts)
+flight-cache/
+
 ## IDE
 .idea/
 *.swp

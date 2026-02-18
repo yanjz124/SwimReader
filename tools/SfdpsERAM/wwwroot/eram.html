@@ -3863,9 +3863,9 @@ function processCommand(cmd) {
             if (/^\d+$/.test(a)) {
                 quickLookSectors.add(a);
             } else {
-                // Normalize: strip leading K for ICAO (KCLT→CLT) if 4-char and starts with K
-                const dest = a.length === 4 && a[0] === 'K' ? a.slice(1) : a;
-                quickLookDests.add(dest);
+                // SFDPS stores ICAO (KDCA); accept both KDCA and DCA
+                quickLookDests.add(a);
+                if (a.length === 3) quickLookDests.add('K' + a);
             }
         }
         invalidateAllMarkers();

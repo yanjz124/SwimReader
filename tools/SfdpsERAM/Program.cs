@@ -59,6 +59,12 @@ var xmlElements = new ConcurrentDictionary<string, long>();
 var xmlSampleStore = new ConcurrentDictionary<string, string>(); // source -> last raw XML sample
 var nameValueKeys = new ConcurrentDictionary<string, long>(); // unique nameValue name= values
 
+// Broadcast batching — position updates every 12s, flight plan updates every 2s
+var _positionDirty = new ConcurrentDictionary<string, byte>();   // GUFIs with position changes
+var _flightPlanDirty = new ConcurrentDictionary<string, byte>(); // GUFIs with flight plan changes
+// Position-only message sources (batched at 12s)
+var _positionSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TH", "HZ" };
+
 // Debug: clearance raw XML log — captures raw XML for any message touching a clearance-bearing flight
 var clearanceLog = new ConcurrentQueue<string>(); // timestamped log entries
 const int MaxClearanceLogEntries = 2000;
@@ -732,6 +738,10 @@ var nasrTimer = new Timer(async _ =>
     catch (Exception ex) { Console.WriteLine($"[NASR] Update check error: {ex.Message}"); }
 }, null, TimeSpan.FromHours(24), TimeSpan.FromHours(24));
 
+// Batch broadcast timers — flush dirty flights to all connected clients
+var fpBatchTimer = new Timer(_ => FlushDirtyBatch(_flightPlanDirty), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+var posBatchTimer = new Timer(_ => FlushDirtyBatch(_positionDirty), null, TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(12));
+
 await solaceReady.Task;
 Console.WriteLine("[Web] Starting on http://localhost:5001");
 app.Run();
@@ -988,6 +998,7 @@ void ProcessFlight(XElement flight, string rawXml)
                     }
                     state.Latitude = lat;
                     state.Longitude = lon;
+                    state.LastPositionTime = DateTime.UtcNow;
                 }
             }
             var altEl = pos.Elements().FirstOrDefault(e => e.Name.LocalName == "altitude");
@@ -1193,8 +1204,14 @@ void ProcessFlight(XElement flight, string rawXml)
     // Track which facility reports on this flight (for "tracked by")
     if (!string.IsNullOrEmpty(centre)) state.ReportingFacility = centre;
 
-    // Broadcast update to clients
-    Broadcast(new WsMsg("update", state.ToSummary()));
+    // Mark flight dirty for batched broadcast (position-only sources → 12s batch, others → 2s batch)
+    if (_positionSources.Contains(source))
+        _positionDirty.TryAdd(gufi, 0);
+    else
+    {
+        _flightPlanDirty.TryAdd(gufi, 0);
+        _positionDirty.TryRemove(gufi, out _); // promote to fast batch if already queued
+    }
 }
 
 string FormatUnit(XElement unit)
@@ -1310,6 +1327,23 @@ void Broadcast(WsMsg msg)
         if (client.Ws.State != WebSocketState.Open) continue;
         client.Enqueue(json);
     }
+}
+
+void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
+{
+    if (dirtySet.IsEmpty || clients.IsEmpty) return;
+    // Drain the dirty set atomically
+    var gufis = dirtySet.Keys.ToArray();
+    foreach (var g in gufis) dirtySet.TryRemove(g, out _);
+
+    var summaries = new List<object>(gufis.Length);
+    foreach (var gufi in gufis)
+    {
+        if (flights.TryGetValue(gufi, out var f))
+            summaries.Add(f.ToSummary());
+    }
+    if (summaries.Count == 0) return;
+    Broadcast(new WsMsg("batch", summaries));
 }
 
 // ── NASR data loading & route resolution ─────────────────────────────────────
@@ -2233,6 +2267,7 @@ class FlightState
 
     // Meta
     public DateTime LastSeen { get; set; }
+    public DateTime LastPositionTime { get; set; }
     public string? LastMsgSource { get; set; }
 
     // Position history (server-side, survives client refresh)
@@ -2376,6 +2411,7 @@ class FlightState
         ETA, ActualDepartureTime,
         LastMsgSource,
         LastSeen = LastSeen.ToString("HH:mm:ss"),
+        PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
         History = includeHistory ? HistoryWithAge() : null
     };
 

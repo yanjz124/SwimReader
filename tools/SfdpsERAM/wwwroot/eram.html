@@ -1368,10 +1368,10 @@ function isEmergency(f) {
 function isVisible(f) {
     if (f.latitude == null || f.longitude == null) return false;
     // Allow DROPPED flights briefly — 1 minute grace for handoff transitions where
-    // old center drops the track but new center hasn't sent position yet
+    // old center drops the track but new center hasn't sent position yet.
+    // Uses server-side posAge (seconds since last position) — immune to snapshot resets.
     if (f.flightStatus === 'CANCELLED') return false;
-    if (f.flightStatus === 'DROPPED' && f._clientLastUpdate
-        && performance.now() - f._clientLastUpdate > 60000) return false;
+    if (f.flightStatus === 'DROPPED' && f.posAge != null && f.posAge > 60) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
@@ -1544,7 +1544,9 @@ function isReducedSep(f) {
 }
 
 function isCoasting(f) {
-    return f._clientLastUpdate && performance.now() - f._clientLastUpdate > SCAN_INTERVAL * 2;
+    // Use server-side posAge (seconds since last position update) — immune to WebSocket message drops
+    if (f.posAge != null) return f.posAge > (SCAN_INTERVAL / 1000) * 2;
+    return false;
 }
 
 function getSymbolClass(f) {
@@ -1892,6 +1894,15 @@ function getPointoutIndicator(f) {
         pointoutFirstSeen.delete(f.gufi);
         return null;
     }
+    // DROPPED flights should not show point-outs — clear the data
+    if (f.flightStatus === 'DROPPED') {
+        f.pointoutOriginatingUnit = null;
+        f.pointoutReceivingUnit = null;
+        pointoutAcked.delete(f.gufi);
+        pointoutFirstSeen.delete(f.gufi);
+        if (pointoutMenuGufi === f.gufi) closePointoutMenu();
+        return null;
+    }
     if (!myFacility || mySectors.size === 0) return null;
 
     const origFac = (f.pointoutOriginatingUnit || '').split('/')[0];
@@ -2086,6 +2097,123 @@ function addHistoryPoint(gufi, lat, lon, sym) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Flight update processing (shared by 'update' and 'batch' message types)
+// ════════════════════════════════════════════════════════════════════════════
+function processFlightUpdate(f) {
+    trackFacility(f);
+
+    const existing = flights.get(f.gufi);
+    if (existing) {
+        existing._clientLastUpdate = performance.now();
+        // Capture old state BEFORE overwriting
+        const oldHoEvt = hoEventType(existing.handoffEvent);
+        const oldHoRecv = existing.handoffReceiving;
+        const oldHoXfer = existing.handoffTransferring;
+        const oldHoForced = existing.handoffForced;
+        const oldCuFac = existing.controllingFacility;
+        const oldCuSec = existing.controllingSector;
+        const hadClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
+
+        // Buffer new position for scan cycle; record history from the position we're replacing
+        if (f.latitude != null && f.longitude != null) {
+            const prev = pendingPositions.get(f.gufi);
+            const oldLat = prev ? prev.lat : existing.latitude;
+            const oldLon = prev ? prev.lon : existing.longitude;
+            if (oldLat != null && oldLon != null) {
+                const dlat = Math.abs(oldLat - f.latitude);
+                const dlon = Math.abs(oldLon - f.longitude);
+                if (dlat > 0.0001 || dlon > 0.0001) {
+                    addHistoryPoint(f.gufi, oldLat, oldLon, getSymbolChar(existing));
+                }
+            }
+            pendingPositions.set(f.gufi, { lat: f.latitude, lon: f.longitude });
+        }
+        // Suppress server clearance fields that were manually cleared via QS *
+        const sup = hsfClrSuppressed.get(f.gufi);
+        if (sup) {
+            if ('clearanceHeading' in f) {
+                if ((f.clearanceHeading || null) === sup.h) f.clearanceHeading = null;
+                else sup.h = null;
+            }
+            if ('clearanceSpeed' in f) {
+                if ((f.clearanceSpeed || null) === sup.s) f.clearanceSpeed = null;
+                else sup.s = null;
+            }
+            if ('clearanceText' in f) {
+                if ((f.clearanceText || null) === sup.t) f.clearanceText = null;
+                else sup.t = null;
+            }
+            if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
+        }
+
+        // Apply all non-position fields instantly
+        for (const key in f) {
+            if (key === 'latitude' || key === 'longitude') continue;
+            existing[key] = f[key];
+        }
+
+        // SWIM data overrides local controller entries
+        if (f.assignedAltitude != null) localAssignedAlt.delete(f.gufi);
+        if (f.interimAltitude != null) localInterimAlt.delete(f.gufi);
+        if (f.reportedAltitude != null) localReportedAlt.delete(f.gufi);
+
+        // Auto-show HSF when server clearance data first arrives
+        const hasClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
+        if (hasClr && !hadClr) hsfShowMap.add(f.gufi);
+
+        // Detect handoff completion via two paths:
+        // 1) HO event cleared by server (HO-DONE) + CU matches recv
+        // 2) CU changed to match recv (covers missed initiation)
+        const newHoEvt = hoEventType(existing.handoffEvent);
+        const cuChanged = existing.controllingFacility !== oldCuFac || existing.controllingSector !== oldCuSec;
+        const recv = oldHoRecv || existing.handoffReceiving;
+        if (recv && !hoCompletedInfo.has(f.gufi)) {
+            const recvFac = extractFac(recv);
+            const recvSec = extractSec(recv);
+            const cuMatchesRecv = existing.controllingFacility === recvFac && existing.controllingSector === recvSec;
+            if (cuMatchesRecv && ((!newHoEvt && oldHoEvt) || cuChanged)) {
+                hoCompletedInfo.set(f.gufi, {
+                    time: performance.now(),
+                    receiving: recv,
+                    transferring: oldHoXfer || existing.handoffTransferring || '',
+                    forced: oldHoForced || existing.handoffForced || false
+                });
+            }
+        }
+    } else {
+        // New flight — add fully (including position)
+        f._clientLastUpdate = performance.now();
+        flights.set(f.gufi, f);
+    }
+
+    // Handoff targeting our sector → immediately set FDB + rebuild marker
+    if (hoEventType(f.handoffEvent)) {
+        const cur = flights.get(f.gufi);
+        if (cur) {
+            const cls = classifyTrack(cur);
+            if (cls === 'ho' && !fdbOverrides.has(f.gufi)) {
+                fdbOverrides.set(f.gufi, true);
+                const marker = markers.get(f.gufi);
+                if (marker) {
+                    const el = marker.getElement();
+                    if (el) el._lastHash = '';
+                }
+                lastRenderTime = 0;
+            }
+        }
+    }
+
+    // Auto-switch QP T → QP J when aircraft climbs above FL230
+    if (driActive.get(f.gufi) === 'T') {
+        const alt = f.reportedAltitude ?? f.assignedAltitude;
+        if (alt != null && alt > 23000) {
+            driActive.set(f.gufi, 'J');
+            lastRenderTime = 0;
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // WebSocket
 // ════════════════════════════════════════════════════════════════════════════
 function connectWs() {
@@ -2146,128 +2274,11 @@ function connectWs() {
             }
             lastScanTime = performance.now(); // reset scan clock
         } else if (msg.type === 'update') {
-            const f = msg.data;
-            trackFacility(f);
-
-            // Apply datablock fields IMMEDIATELY (handoffs, altitude, callsign, etc.)
-            // Only buffer position (lat/lon) for the 12-second scan cycle
-            const existing = flights.get(f.gufi);
-            if (existing) {
-                existing._clientLastUpdate = performance.now();
-                // Capture old state BEFORE overwriting
-                const oldHoEvt = hoEventType(existing.handoffEvent);
-                const oldHoRecv = existing.handoffReceiving;
-                const oldHoXfer = existing.handoffTransferring;
-                const oldHoForced = existing.handoffForced;
-                const oldCuFac = existing.controllingFacility;
-                const oldCuSec = existing.controllingSector;
-                const hadClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
-
-                // Buffer new position for scan cycle; record history from the position we're replacing
-                if (f.latitude != null && f.longitude != null) {
-                    const prev = pendingPositions.get(f.gufi);
-                    const oldLat = prev ? prev.lat : existing.latitude;
-                    const oldLon = prev ? prev.lon : existing.longitude;
-                    if (oldLat != null && oldLon != null) {
-                        const dlat = Math.abs(oldLat - f.latitude);
-                        const dlon = Math.abs(oldLon - f.longitude);
-                        if (dlat > 0.0001 || dlon > 0.0001) {
-                            addHistoryPoint(f.gufi, oldLat, oldLon, getSymbolChar(existing));
-                        }
-                    }
-                    pendingPositions.set(f.gufi, { lat: f.latitude, lon: f.longitude });
-                }
-                // Suppress server clearance fields that were manually cleared via QS *
-                // Only re-apply if the server sends genuinely NEW values (different from what we suppressed)
-                const sup = hsfClrSuppressed.get(f.gufi);
-                if (sup) {
-                    let changed = false;
-                    if ('clearanceHeading' in f) {
-                        if ((f.clearanceHeading || null) === sup.h) f.clearanceHeading = null;
-                        else { sup.h = null; changed = true; }
-                    }
-                    if ('clearanceSpeed' in f) {
-                        if ((f.clearanceSpeed || null) === sup.s) f.clearanceSpeed = null;
-                        else { sup.s = null; changed = true; }
-                    }
-                    if ('clearanceText' in f) {
-                        if ((f.clearanceText || null) === sup.t) f.clearanceText = null;
-                        else { sup.t = null; changed = true; }
-                    }
-                    // If all suppressed values have been superseded, remove the entry
-                    if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
-                }
-
-                // Apply all non-position fields instantly
-                for (const key in f) {
-                    if (key === 'latitude' || key === 'longitude') continue;
-                    existing[key] = f[key];
-                }
-
-                // SWIM data overrides local controller entries
-                if (f.assignedAltitude != null) localAssignedAlt.delete(f.gufi);
-                if (f.interimAltitude != null) localInterimAlt.delete(f.gufi);
-                if (f.reportedAltitude != null) localReportedAlt.delete(f.gufi);
-
-                // Auto-show HSF when server clearance data first arrives (don't re-show if user manually hid)
-                // hadClr was captured before the copy loop above
-                const hasClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
-                if (hasClr && !hadClr) {
-                    hsfShowMap.add(f.gufi);
-                }
-
-                // Detect handoff completion via two paths:
-                // 1) HO event cleared by server (HO-DONE) + CU matches recv
-                // 2) CU changed to match recv (covers missed initiation, e.g. server restart)
-                const newHoEvt = hoEventType(existing.handoffEvent);
-                const cuChanged = existing.controllingFacility !== oldCuFac || existing.controllingSector !== oldCuSec;
-                const recv = oldHoRecv || existing.handoffReceiving;
-                if (recv && !hoCompletedInfo.has(f.gufi)) {
-                    const recvFac = extractFac(recv);
-                    const recvSec = extractSec(recv);
-                    const cuMatchesRecv = existing.controllingFacility === recvFac && existing.controllingSector === recvSec;
-                    // Path 1: server cleared handoff fields (event went active→inactive)
-                    // Path 2: CU just changed to match recv
-                    if (cuMatchesRecv && ((!newHoEvt && oldHoEvt) || cuChanged)) {
-                        hoCompletedInfo.set(f.gufi, {
-                            time: performance.now(),
-                            receiving: recv,
-                            transferring: oldHoXfer || existing.handoffTransferring || '',
-                            forced: oldHoForced || existing.handoffForced || false
-                        });
-                    }
-                }
-            } else {
-                // New flight — add fully (including position)
-                f._clientLastUpdate = performance.now();
-                flights.set(f.gufi, f);
-            }
-
-            // Handoff targeting our sector → immediately set FDB + rebuild marker
-            if (hoEventType(f.handoffEvent)) {
-                const cur = flights.get(f.gufi);
-                if (cur) {
-                    const cls = classifyTrack(cur);
-                    if (cls === 'ho' && !fdbOverrides.has(f.gufi)) {
-                        fdbOverrides.set(f.gufi, true);
-                        // Immediately invalidate marker for instant LDB→FDB transition
-                        const marker = markers.get(f.gufi);
-                        if (marker) {
-                            const el = marker.getElement();
-                            if (el) el._lastHash = '';
-                        }
-                        lastRenderTime = 0;
-                    }
-                }
-            }
-
-            // Auto-switch QP T → QP J when aircraft climbs above FL230
-            if (driActive.get(f.gufi) === 'T') {
-                const alt = f.reportedAltitude ?? f.assignedAltitude;
-                if (alt != null && alt > 23000) {
-                    driActive.set(f.gufi, 'J');
-                    lastRenderTime = 0;
-                }
+            processFlightUpdate(msg.data);
+        } else if (msg.type === 'batch') {
+            // Batched updates — array of flight summaries
+            for (const f of msg.data) {
+                processFlightUpdate(f);
             }
         } else if (msg.type === 'remove') {
             pendingPositions.delete(msg.data.gufi);
@@ -2395,7 +2406,7 @@ function flightHash(f, cls) {
     const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
     const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
     const coast = isCoasting(f) ? 1 : 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}`;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -296,8 +296,8 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             <div class="ctrl-row">
                 <label>Vector</label>
                 <select id="sel-vector">
-                    <option value="0">Off</option>
-                    <option value="1" selected>1 min</option>
+                    <option value="0" selected>Off</option>
+                    <option value="1">1 min</option>
                     <option value="2">2 min</option>
                     <option value="4">4 min</option>
                     <option value="8">8 min</option>
@@ -313,9 +313,9 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             </div>
             <div class="ctrl-row">
                 <label>LDB %</label>
-                <input type="range" id="rng-ldb-brightness" min="0" max="100" value="70"
+                <input type="range" id="rng-ldb-brightness" min="0" max="100" value="30"
                     style="flex:1; accent-color:#cccc44;">
-                <span id="lbl-ldb-brightness" style="min-width:28px; text-align:right; font-size:11px;">70</span>
+                <span id="lbl-ldb-brightness" style="min-width:28px; text-align:right; font-size:11px;">30</span>
             </div>
             <div class="ctrl-row">
                 <label>Hist #</label>
@@ -350,8 +350,8 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             </div>
             <div class="ctrl-row">
                 <label>APP %</label>
-                <input type="range" id="rng-bnd-app" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
-                <span id="lbl-bnd-app" style="min-width:28px; text-align:right; font-size:11px;">0</span>
+                <input type="range" id="rng-bnd-app" min="0" max="100" value="30" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-bnd-app" style="min-width:28px; text-align:right; font-size:11px;">30</span>
             </div>
             <div class="ctrl-row">
                 <label>HI Awy</label>
@@ -365,8 +365,13 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             </div>
             <div class="ctrl-row">
                 <label>VORs</label>
-                <input type="range" id="rng-vors" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
-                <span id="lbl-vors" style="min-width:28px; text-align:right; font-size:11px;">0</span>
+                <input type="range" id="rng-vors" min="0" max="100" value="15" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-vors" style="min-width:28px; text-align:right; font-size:11px;">15</span>
+            </div>
+            <div class="ctrl-row">
+                <label>APTs</label>
+                <input type="range" id="rng-airports" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-airports" style="min-width:28px; text-align:right; font-size:11px;">0</span>
             </div>
             <div class="ctrl-row">
                 <label>PROC</label>
@@ -390,13 +395,13 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                     <option value="0">OFF</option>
                     <option value="3">3</option>
                     <option value="23">23</option>
-                    <option value="123">123</option>
+                    <option value="123" selected>123</option>
                 </select>
             </div>
             <div class="ctrl-row">
                 <label>NX %</label>
-                <input type="range" id="rng-nx" min="0" max="100" value="50" style="flex:1; accent-color:#cccc44;">
-                <span id="lbl-nx" style="min-width:28px; text-align:right; font-size:11px;">50</span>
+                <input type="range" id="rng-nx" min="0" max="100" value="30" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-nx" style="min-width:28px; text-align:right; font-size:11px;">30</span>
             </div>
             <div class="ctrl-row">
                 <label>Font</label>
@@ -494,7 +499,7 @@ let mySectors = new Set();
 let facilityOnly = false;   // when true + facility selected, hide all non-facility aircraft
 let showFdb = true;
 let showHistory = true;
-let vectorMinutes = 1;
+let vectorMinutes = 0;
 // showBoundaries removed — boundaries always on, controlled by brightness sliders
 let selectedGufi = null;
 let wsConnected = false;
@@ -502,7 +507,7 @@ let msgRate = 0;
 let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
-let ldbBrightness = 70;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
+let ldbBrightness = 30;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
@@ -922,6 +927,50 @@ function drawOverlay() {
         }
     }
 
+    // ── Airport overlay (NASR) ──
+    if (airportOverlayData && nasrBrightness.airports > 0) {
+        const aptCol = nasrColor(nasrBrightness.airports);
+        ctx.strokeStyle = aptCol;
+        ctx.fillStyle = aptCol;
+        ctx.lineWidth = 1;
+        ctx.font = `${Math.round(fontSize * 0.75)}px 'ERAM', Consolas, monospace`;
+        ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
+        ctx.globalAlpha = nasrBrightness.airports / 100;
+
+        for (const apt of airportOverlayData) {
+            if (!bounds.contains([apt.lat, apt.lon])) continue;
+            const pt = map.latLngToLayerPoint([apt.lat, apt.lon]);
+            const x = pt.x - topLeft.x;
+            const y = pt.y - topLeft.y;
+
+            if (apt.cls === 'B') {
+                // Class B: hollow square 7×7
+                ctx.strokeRect(x - 3.5, y - 3.5, 7, 7);
+            } else if (apt.cls === 'C') {
+                // Class C: smaller hollow square 5×5
+                ctx.strokeRect(x - 2.5, y - 2.5, 5, 5);
+            } else if (apt.cls === 'D') {
+                // Class D: small hollow circle r=3
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, Math.PI * 2);
+                ctx.stroke();
+            } else {
+                // Class E/G: L-shape (top + left sides only)
+                ctx.beginPath();
+                ctx.moveTo(x - 2.5, y + 2.5);
+                ctx.lineTo(x - 2.5, y - 2.5);
+                ctx.lineTo(x + 2.5, y - 2.5);
+                ctx.stroke();
+            }
+
+            // ICAO label: top-left of text at symbol center
+            ctx.fillText(apt.icao || apt.lid, x, y);
+        }
+        ctx.globalAlpha = 1;
+        ctx.textBaseline = 'alphabetic';
+    }
+
     // ── .FIND highlight — blinking yellow square (full ↔ half bright) ──
     if (findMarker && bounds.contains([findMarker.lat, findMarker.lon])) {
         const blinkPhase = Math.floor(performance.now() / 500) % 2 === 0;
@@ -970,7 +1019,7 @@ const BOUNDARY_CATS = ['Ultra High', 'High Altitude', 'Low Altitude', 'Approach 
 const BOUNDARY_CAT_LABELS = { 'Ultra High': 'UHI', 'High Altitude': 'HI', 'Low Altitude': 'LO', 'Approach Control': 'APP' };
 const BOUNDARY_CAT_SLIDER = { 'Ultra High': 'rng-bnd-uhi', 'High Altitude': 'rng-bnd-hi', 'Low Altitude': 'rng-bnd-lo', 'Approach Control': 'rng-bnd-app' };
 const BOUNDARY_CAT_LABEL = { 'Ultra High': 'lbl-bnd-uhi', 'High Altitude': 'lbl-bnd-hi', 'Low Altitude': 'lbl-bnd-lo', 'Approach Control': 'lbl-bnd-app' };
-let boundaryBrightness = { 'Ultra High': 60, 'High Altitude': 60, 'Low Altitude': 60, 'Approach Control': 0 };
+let boundaryBrightness = { 'Ultra High': 60, 'High Altitude': 60, 'Low Altitude': 60, 'Approach Control': 30 };
 
 function bndColor(brightness) {
     const v = Math.round(brightness * 2.55);
@@ -1126,7 +1175,8 @@ loadKml();
 // ════════════════════════════════════════════════════════════════════════════
 const nasrLayers = {};    // 'jroutes'|'vroutes'|'vors'|'proc:DCA' → L.layerGroup
 const nasrCache = {};     // same keys → raw API data (cache across toggles)
-const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 0, proc: 0 };
+const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 15, airports: 0, proc: 0 };
+let airportOverlayData = null; // cached from /api/nasr/airports
 
 const nasrLoading = {};   // guard against double-click during async fetch
 function nasrColor(brightness) { return bndColor(brightness); }  // same grey ramp as boundaries
@@ -1192,6 +1242,20 @@ setupNasrSlider('rng-jroutes', 'lbl-jroutes', 'jroutes', '/api/nasr/airways?type
 setupNasrSlider('rng-vroutes', 'lbl-vroutes', 'vroutes', '/api/nasr/airways?type=lo', renderAirways);
 setupNasrSlider('rng-vors', 'lbl-vors', 'vors', '/api/nasr/navaids', renderVors);
 
+// Airport overlay — drawn on canvas in drawOverlay()
+document.getElementById('rng-airports').addEventListener('input', async function () {
+    nasrBrightness.airports = parseInt(this.value);
+    document.getElementById('lbl-airports').textContent = nasrBrightness.airports;
+    if (nasrBrightness.airports > 0 && !airportOverlayData) {
+        try {
+            const resp = await fetch('/api/nasr/airports');
+            if (resp.ok) airportOverlayData = await resp.json();
+        } catch (e) { console.warn('[NASR] airports:', e); }
+    }
+    drawOverlay();
+    saveSettingsToUrl();
+});
+
 // Procedure overlay — managed via .SID/.STAR/.PROC MCA commands
 // activeProcedures: Map<string, { layer: L.layerGroup, procs: Array, query: string }>
 const activeProcedures = new Map();
@@ -1240,8 +1304,8 @@ function clearProcOverlay() {
 //   Extreme (55+ dBZ, NWS dark reds/magentas) → solid cyan #00ccff
 // ════════════════════════════════════════════════════════════════════════════
 let nexradLayer = null;
-let nexradLevel = 0;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=all(123)
-let nexradBrightness = 50;
+let nexradLevel = 3;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=all(123)
+let nexradBrightness = 30;
 const MRMS_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows';
 
 // Classify NWS radar pixel to ERAM NEXRAD level (0=none, 1=moderate, 2=heavy, 3=extreme)
@@ -3491,7 +3555,8 @@ function loadSettingsFromUrl() {
         if (!isNaN(vals[0])) nasrBrightness.jroutes = vals[0];
         if (!isNaN(vals[1])) nasrBrightness.vroutes = vals[1];
         if (!isNaN(vals[2])) nasrBrightness.vors = vals[2];
-        if (!isNaN(vals[3])) nasrBrightness.proc = vals[3];
+        if (!isNaN(vals[3])) nasrBrightness.airports = vals[3];
+        if (!isNaN(vals[4])) nasrBrightness.proc = vals[4];
     }
     if (params.has('line4')) line4Mode = params.get('line4') || 'DEST';
     if (params.has('nxlvl')) {
@@ -3530,6 +3595,8 @@ function loadSettingsFromUrl() {
     document.getElementById('lbl-vroutes').textContent = nasrBrightness.vroutes;
     document.getElementById('rng-vors').value = nasrBrightness.vors;
     document.getElementById('lbl-vors').textContent = nasrBrightness.vors;
+    document.getElementById('rng-airports').value = nasrBrightness.airports;
+    document.getElementById('lbl-airports').textContent = nasrBrightness.airports;
     document.getElementById('rng-proc').value = nasrBrightness.proc;
     document.getElementById('lbl-proc').textContent = nasrBrightness.proc;
     document.getElementById('sel-nxlvl').value = nexradLevel === 3 ? '123' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '0';
@@ -3542,6 +3609,9 @@ function loadSettingsFromUrl() {
     if (nasrBrightness.jroutes > 0) showNasrLayer('jroutes', '/api/nasr/airways?type=hi', renderAirways);
     if (nasrBrightness.vroutes > 0) showNasrLayer('vroutes', '/api/nasr/airways?type=lo', renderAirways);
     if (nasrBrightness.vors > 0) showNasrLayer('vors', '/api/nasr/navaids', renderVors);
+    if (nasrBrightness.airports > 0 && !airportOverlayData) {
+        fetch('/api/nasr/airports').then(r => r.ok ? r.json() : null).then(d => { if (d) { airportOverlayData = d; drawOverlay(); } });
+    }
     showBoundariesForFacility(myFacility);
 }
 
@@ -3552,9 +3622,9 @@ function saveSettingsToUrl() {
     if (!showFdb) params.set('fdb', '0');
     if (!showHistory) params.set('history', '0');
     if (MAX_HISTORY !== 5) params.set('histcount', MAX_HISTORY);
-    if (vectorMinutes !== 1) params.set('vector', vectorMinutes);
+    if (vectorMinutes !== 0) params.set('vector', vectorMinutes);
     const brVals = BOUNDARY_CATS.map(c => boundaryBrightness[c]);
-    const defaultBr = [60, 60, 60, 0];
+    const defaultBr = [60, 60, 60, 30];
     if (brVals.join(',') !== defaultBr.join(',')) params.set('bndbr', brVals.join(','));
     if (line4Mode !== 'DEST') params.set('line4', line4Mode);
     if (showMapBg) params.set('mapbg', '1');
@@ -3562,14 +3632,14 @@ function saveSettingsToUrl() {
     if (fontSize !== 10) params.set('fontsize', fontSize);
     if (altFilterLow !== 0) params.set('altlow', altFilterLow);
     if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);
-    if (ldbBrightness !== 70) params.set('ldb', ldbBrightness);
+    if (ldbBrightness !== 30) params.set('ldb', ldbBrightness);
     if (facilityOnly) params.set('faconly', '1');
     if (document.getElementById('chk-mca-kb').checked) params.set('kb', '1');
-    const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.proc];
-    const nasrDefaults = [0, 0, 0, 0];
+    const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.airports, nasrBrightness.proc];
+    const nasrDefaults = [0, 0, 15, 0, 0];
     if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
-    if (nexradLevel > 0) params.set('nxlvl', nexradLevel === 3 ? '123' : nexradLevel === 2 ? '23' : '3');
-    if (nexradBrightness !== 50) params.set('nxbr', nexradBrightness);
+    if (nexradLevel !== 3) params.set('nxlvl', nexradLevel === 0 ? '0' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '123');
+    if (nexradBrightness !== 30) params.set('nxbr', nexradBrightness);
     // Map position/zoom
     const center = map.getCenter();
     params.set('lat', center.lat.toFixed(4));

@@ -973,11 +973,11 @@ void ProcessFlight(XElement flight, string rawXml)
             while (altitudeLog.Count > MaxAltitudeLogEntries) altitudeLog.TryDequeue(out _);
         }
     }
-    // Clear interim when absent in message types that carry full flight plan state.
-    // FH = full flight plan (canonical state snapshot),
-    // LH = local handoff / interim altitude event,
-    // OH = ownership (handoff completion may clear interim)
-    else if (source is "FH" or "LH" or "OH")
+    // Clear interim only when absent in LH (the dedicated interim altitude message type).
+    // OH/FH omit the element because interim isn't their concern — absence means "no change".
+    // Previously OH/FH also cleared here, but that was masked by WhenWritingNull dropping the
+    // null from JSON. Now that nulls transmit, only LH should clear.
+    else if (source is "LH")
     {
         state.InterimAltitude = null;
         if (prevIA.HasValue)

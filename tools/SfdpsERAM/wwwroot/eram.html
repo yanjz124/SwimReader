@@ -5149,11 +5149,23 @@ function showFlightInRA(f) {
     const star = f.star || '';
     const remarks = f.remarks || '';
 
+    // Build route line: route + STAR, append destination if not already present
+    let routeStr = route;
+    if (star) routeStr += (routeStr ? '.' : '') + star;
+    const destUp = dest.toUpperCase();
+    // Check if route already ends with destination (dot-separated or space-separated)
+    const routeUp = routeStr.toUpperCase();
+    const endsWithDest = routeUp.endsWith(destUp) || routeUp.endsWith('.' + destUp) || routeUp.endsWith(' ' + destUp);
+    if (routeStr && !endsWithDest) {
+        routeStr += '.' + dest;
+    } else if (!routeStr) {
+        routeStr = dest;
+    }
+
     let text = `${zulu}\n`;
     text += `${cid} ${cs}(${sector}) ${type}${equip}\n`;
     text += `${bcn} ${spd} ${aalt} ${origin}..\n`;
-    text += `${route}${star ? '.' + star + '.' : ''}\n`;
-    text += `..${dest}\n`;
+    text += `${routeStr}\n`;
     if (remarks) text += `${remarks}`;
     ra.textContent = text;
 }

@@ -1361,8 +1361,8 @@ const MRMS_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/observations/weather_r
 
 // Classify NWS radar pixel to ERAM NEXRAD level (0=none, 1=moderate, 2=heavy, 3=extreme)
 // NOAA MRMS palette: cyan/blue (5-15 dBZ) → green (20-30) → yellow/gold (35-40) → orange (45) → red (50+) → magenta (65+)
-// ERAM mapping: cyan/green → blue (moderate), yellow/orange → checkered (heavy), red/magenta → cyan (extreme)
-// Tile scaling creates interpolated colors at dBZ boundaries; thresholds tuned to match CRC display.
+// ERAM mapping uses hue + brightness: bright greens = moderate, dark greens + yellows = heavy.
+// Tuned to match CRC NEXRAD display (heavy covers most precipitation cores).
 function classifyNwsPixel(r, g, b, a) {
     if (a < 128) return 0;                              // filter anti-aliased edges
     const max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -1375,12 +1375,15 @@ function classifyNwsPixel(r, g, b, a) {
     else if (max === g) h = 60 * ((b - r) / delta + 2);
     else h = 60 * ((r - g) / delta + 4);
     if (h < 0) h += 360;
-    // Green through blue (110-270): moderate — true greens + cyans + blues (5-30 dBZ)
-    if (h >= 110 && h <= 270) return 1;
-    // Yellow-green through orange (20-110): heavy — lime, yellow, gold, orange (30-50 dBZ)
-    if (h >= 20 && h < 110) return 2;
-    // Red, magenta, purple (<20 or >270): extreme — reds, dark reds, magentas (50+ dBZ)
-    return 3;
+    // Red, magenta, purple (<20 or >270): extreme — 50+ dBZ
+    if (h < 20 || h > 270) return 3;
+    // Blue/cyan (180-270): always moderate — 5-15 dBZ
+    if (h >= 180) return 1;
+    // Green range (110-180): split by brightness
+    // Bright greens (20-25 dBZ, max>=180) = moderate; dark greens (28-30 dBZ) = heavy
+    if (h >= 110) return max >= 180 ? 1 : 2;
+    // Yellow-green through orange (20-110): heavy — 30-50 dBZ
+    return 2;
 }
 
 const MrmsEramLayer = L.GridLayer.extend({

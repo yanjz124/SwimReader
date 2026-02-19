@@ -1486,10 +1486,10 @@ function isVisible(f) {
     if (f.flightStatus === 'ACTIVE' && f.posAge != null && f.posAge > 600) return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
-    // FDB tracks are exempt — own, handoff, emergency, user-forced, and quick look tracks always show
+    // Exempt: FDB tracks, and any track the user explicitly toggled (fdbOverrides entry)
     if (altFilterLow > 0 || altFilterHigh < 999) {
         const cls = classifyTrack(f);
-        if (!shouldShowFdb(f.gufi, cls)) {
+        if (!shouldShowFdb(f.gufi, cls) && !fdbOverrides.has(f.gufi)) {
             const alt = f.reportedAltitude;
             if (alt != null) {
                 const fl = Math.round(alt / 100);

@@ -1545,8 +1545,9 @@ function isReducedSep(f) {
 
 function isCoasting(f) {
     // Use server-side posAge (seconds since last position update) — immune to WebSocket message drops
+    // Coast only if: ACTIVE, posAge between 36s and 5min (stale cache data beyond 5min is not coast)
     // Threshold: 3 scan cycles (36s) accounts for SFDPS ~12s + 12s batch delay + jitter
-    if (f.posAge != null) return f.posAge > (SCAN_INTERVAL / 1000) * 3;
+    if (f.posAge != null && f.flightStatus === 'ACTIVE' && f.posAge > 36 && f.posAge < 300) return true;
     return false;
 }
 

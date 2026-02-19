@@ -2,6 +2,10 @@
 
 Real-time FAA SWIM (System Wide Information Management) data platform. Ingests live flight data from multiple FAA data sources via Solace messaging, parses/normalizes it, and serves it through multiple frontends and API services.
 
+## IMPORTANT: ERAM Reference Documentation
+
+**Before implementing any ERAM display feature, command, or behavior, ALWAYS read `docs/crc-eram-reference.md` first.** This is the authoritative CRC/vNAS ERAM specification with screenshots. It covers targets, tracks, data blocks, commands, toolbars, NEXRAD, GeoMaps, and all display elements. Images are saved locally in `docs/img/eram/`. This reference should be consulted even after context resets or memory loss — the file is always available in the repository.
+
 ## Architecture Overview
 
 ```

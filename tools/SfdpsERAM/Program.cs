@@ -328,6 +328,12 @@ app.MapGet("/api/nasr/navaids", () =>
     return Results.Json(result, jsonOpts);
 });
 
+app.MapGet("/api/nasr/airports", () =>
+{
+    if (nasrData is null) return Results.Json(new { error = "NASR data not loaded" }, statusCode: 503);
+    return Results.Json(nasrData.AirportOverlay, jsonOpts);
+});
+
 // Debug: find duplicate CIDs for a facility
 app.MapGet("/api/debug/dupe-cids/{facility}", (string facility) =>
 {
@@ -1432,8 +1438,8 @@ async Task LoadNasrData()
     data.Fixes = ParseFixBase(Path.Combine(cycleDir, "FIX_BASE.csv"));
     Console.WriteLine($"[NASR]   Fixes: {data.Fixes.Count} identifiers");
 
-    (data.Airports, data.AirportsIcao) = ParseAptBase(Path.Combine(cycleDir, "APT_BASE.csv"));
-    Console.WriteLine($"[NASR]   Airports: {data.Airports.Count} FAA LIDs, {data.AirportsIcao.Count} ICAO");
+    (data.Airports, data.AirportsIcao, data.AirportOverlay) = ParseAptBase(Path.Combine(cycleDir, "APT_BASE.csv"));
+    Console.WriteLine($"[NASR]   Airports: {data.Airports.Count} FAA LIDs, {data.AirportsIcao.Count} ICAO, {data.AirportOverlay.Count} overlay (B/C/D/E)");
 
     data.Airways = ParseAwyBase(Path.Combine(cycleDir, "AWY_BASE.csv"));
     Console.WriteLine($"[NASR]   Airways: {data.Airways.Count} routes");
@@ -1616,15 +1622,19 @@ Dictionary<string, List<NavPoint>> ParseFixBase(string path)
     return result;
 }
 
-(Dictionary<string, NavPoint> byLid, Dictionary<string, NavPoint> byIcao) ParseAptBase(string path)
+(Dictionary<string, NavPoint> byLid, Dictionary<string, NavPoint> byIcao, List<AirportOverlayPoint> overlay) ParseAptBase(string path)
 {
     var byLid = new Dictionary<string, NavPoint>(StringComparer.OrdinalIgnoreCase);
     var byIcao = new Dictionary<string, NavPoint>(StringComparer.OrdinalIgnoreCase);
+    var overlay = new List<AirportOverlayPoint>();
     using var reader = new StreamReader(path);
     var headers = ParseCsvLine(reader.ReadLine()!);
     int iId = ColIdx(headers, "ARPT_ID"), iIcao = ColIdx(headers, "ICAO_ID");
     int iLat = ColIdx(headers, "LAT_DECIMAL"), iLon = ColIdx(headers, "LONG_DECIMAL");
-    if (iId < 0 || iLat < 0 || iLon < 0) return (byLid, byIcao);
+    int iSiteType = ColIdx(headers, "SITE_TYPE_CODE"), iUse = ColIdx(headers, "FACILITY_USE_CODE");
+    int iStatus = ColIdx(headers, "ARPT_STATUS"), iTwr = ColIdx(headers, "TWR_TYPE_CODE");
+    int iFar139 = ColIdx(headers, "FAR_139_TYPE_CODE");
+    if (iId < 0 || iLat < 0 || iLon < 0) return (byLid, byIcao, overlay);
 
     while (reader.ReadLine() is { } line)
     {
@@ -1635,13 +1645,42 @@ Dictionary<string, List<NavPoint>> ParseFixBase(string path)
         if (string.IsNullOrEmpty(lid)) continue;
         var pt = new NavPoint(lid, lat, lon);
         byLid.TryAdd(lid, pt);
+        var icao = "";
         if (iIcao >= 0 && iIcao < f.Count)
         {
-            var icao = f[iIcao].Trim();
+            icao = f[iIcao].Trim();
             if (!string.IsNullOrEmpty(icao)) byIcao.TryAdd(icao, pt);
         }
+
+        // Build airport overlay: public-use operational airports only
+        var siteType = iSiteType >= 0 && iSiteType < f.Count ? f[iSiteType].Trim() : "";
+        var use = iUse >= 0 && iUse < f.Count ? f[iUse].Trim() : "";
+        var status = iStatus >= 0 && iStatus < f.Count ? f[iStatus].Trim() : "";
+        if (siteType.Equals("A", StringComparison.OrdinalIgnoreCase) &&
+            use.Equals("PU", StringComparison.OrdinalIgnoreCase) &&
+            status.Equals("O", StringComparison.OrdinalIgnoreCase))
+        {
+            var twr = iTwr >= 0 && iTwr < f.Count ? f[iTwr].Trim() : "";
+            var far139 = iFar139 >= 0 && iFar139 < f.Count ? f[iFar139].Trim() : "";
+
+            // Derive airspace class from tower type + FAR 139 certification
+            string cls;
+            if (far139.StartsWith("I E", StringComparison.OrdinalIgnoreCase))
+                cls = "B";
+            else if (twr.Contains("TRACON", StringComparison.OrdinalIgnoreCase) ||
+                     twr.Contains("RAPCON", StringComparison.OrdinalIgnoreCase) ||
+                     twr.Contains("RATCF", StringComparison.OrdinalIgnoreCase) ||
+                     twr.Contains("A/C", StringComparison.OrdinalIgnoreCase))
+                cls = "C";
+            else if (twr.StartsWith("ATCT", StringComparison.OrdinalIgnoreCase))
+                cls = "D";
+            else
+                cls = "E";
+
+            overlay.Add(new AirportOverlayPoint(lid, icao, lat, lon, cls));
+        }
     }
-    return (byLid, byIcao);
+    return (byLid, byIcao, overlay);
 }
 
 Dictionary<string, AirwayDef> ParseAwyBase(string path)
@@ -2208,6 +2247,7 @@ class WsClient(WebSocket ws)
 }
 
 record NavPoint(string Ident, double Lat, double Lon, string Type = "");
+record AirportOverlayPoint(string Lid, string Icao, double Lat, double Lon, string Cls);
 record AirwayDef(string Id, string Designation, List<string> Fixes);
 
 record ProcedureDef(string Id, string Airport, string Type, List<string> Fixes, Dictionary<string, List<string>> Transitions); // Type = "STAR" or "DP"; Transitions keyed by enroute fix name
@@ -2223,6 +2263,7 @@ class NasrData
     public Dictionary<string, AirwayDef> Airways { get; set; } = new();
     public Dictionary<string, List<ProcedureDef>> Procedures { get; set; } = new(); // name → list (may have same name at different airports)
     public Dictionary<string, List<ProcedureFullDef>> ProceduresFull { get; set; } = new(); // full legs for map overlay
+    public List<AirportOverlayPoint> AirportOverlay { get; set; } = new(); // public airports with derived airspace class
     public string EffectiveDate { get; set; } = "";
 }
 

@@ -1360,8 +1360,8 @@ let nexradBrightness = 30;
 const MRMS_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows';
 
 // Classify NWS radar pixel to ERAM NEXRAD level (0=none, 1=moderate, 2=heavy, 3=extreme)
-// NWS palette: cyan/blue (<20 dBZ) → green (20-35) → yellow (35-45) → orange/red (45+)
-// ERAM mapping: green→blue, yellow→checkered, red→cyan
+// NOAA MRMS palette: cyan/blue (5-15 dBZ) → green (20-30) → yellow/gold (35-40) → orange (45) → red (50+) → magenta (65+)
+// ERAM mapping: cyan/green → blue (moderate), yellow/orange → checkered (heavy), red/magenta → cyan (extreme)
 function classifyNwsPixel(r, g, b, a) {
     if (a < 128) return 0;                              // filter anti-aliased edges
     const max = Math.max(r, g, b), min = Math.min(r, g, b);
@@ -1374,17 +1374,11 @@ function classifyNwsPixel(r, g, b, a) {
     else if (max === g) h = 60 * ((b - r) / delta + 2);
     else h = 60 * ((r - g) / delta + 4);
     if (h < 0) h += 360;
-    // Cyan through blue (190-270): moderate (ERAM blue)
-    if (h >= 190 && h <= 270) return 1;
-    // Light cyan (150-190): moderate (fill transition between green and blue)
-    if (h >= 150 && h < 190) return 1;
-    // Green (80-150): split by brightness — bright green = moderate, dark green = heavy
-    if (h >= 80 && h < 150) {
-        return (max / 255) > 0.85 ? 1 : 2;             // bright green ~20-22 dBZ moderate, dark green ~23-35 dBZ heavy
-    }
-    // Yellow/gold (75-80): heavy (checkered cyan/black)
-    if (h >= 75 && h < 80) return 2;
-    // Orange/yellow (15-75) / red / magenta: extreme (solid cyan)
+    // Green through blue (80-270): moderate — all greens + cyans + blues (5-35 dBZ)
+    if (h >= 80 && h <= 270) return 1;
+    // Yellow through orange (25-80): heavy — yellows, golds, oranges (35-50 dBZ)
+    if (h >= 25 && h < 80) return 2;
+    // Red, magenta, purple (<25 or >270): extreme — reds, dark reds, magentas (50+ dBZ)
     return 3;
 }
 
@@ -4264,11 +4258,13 @@ function processCommand(cmd) {
         }
         const station = parts.slice(2).join('').toUpperCase();
         if (!station) return { feedback: [{ type: 'err', text: 'WR R REQUIRES STATION ID' }] };
-        // Prepend K if 3-letter US ID (e.g. DCA → KDCA)
         const icao = station.length === 3 ? 'K' + station : station;
         return (async () => {
             try {
-                const resp = await fetch(`https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(icao)}`);
+                const resp = await fetch(`/api/metar/${encodeURIComponent(station)}`);
+                if (resp.status === 404) {
+                    return { feedback: [{ type: 'err', text: `NO METAR FOR ${icao}` }] };
+                }
                 if (!resp.ok) {
                     return { feedback: [{ type: 'err', text: `WX REQ FAILED (${resp.status})` }] };
                 }
@@ -4421,19 +4417,23 @@ function processCommand(cmd) {
         return { feedback };
     }
 
-    // QP J <FLID> — toggle standard DRI (5nm halo); QP T <FLID> — toggle reduced DRI (3nm halo)
+    // QP J <FLID>          — toggle standard DRI (5nm halo)
+    // QP T <FLID>          — toggle reduced DRI (3nm halo)
+    // QP A [sector] <FLID> — acknowledge a pending point out (P→A)
+    // QP <FLID>            — clear point-out + FDB→LDB
     if (verb === 'QP') {
-        if (parts.length < 3) {
+        if (parts.length < 2) {
             return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
         }
-        const driType = parts[1].toUpperCase();
-        if (driType === 'J' || driType === 'T') {
+        const sub = parts[1].toUpperCase();
+
+        // DRI: QP J / QP T
+        if ((sub === 'J' || sub === 'T') && parts.length >= 3) {
             const flid = parts.slice(2).join('').toUpperCase();
             const f = findFlight(flid);
             if (f) {
                 const cid = getCid(f) || '???';
-                // Reduced DRI (T): only eligible at or below FL230
-                if (driType === 'T') {
+                if (sub === 'T') {
                     const alt = f.reportedAltitude ?? f.assignedAltitude;
                     if (alt != null && alt > 23000) {
                         return { feedback: [
@@ -4444,10 +4444,10 @@ function processCommand(cmd) {
                     }
                 }
                 const existing = driActive.get(f.gufi);
-                if (existing === driType) {
+                if (existing === sub) {
                     driActive.delete(f.gufi);
                 } else {
-                    driActive.set(f.gufi, driType);
+                    driActive.set(f.gufi, sub);
                 }
                 lastRenderTime = 0;
                 return { feedback: [
@@ -4458,7 +4458,51 @@ function processCommand(cmd) {
             }
             return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
         }
-        return { feedback: [{ type: 'err', text: 'INVALID DRI TYPE' }] };
+
+        // Point-out acknowledge: QP A [sector] <FLID>
+        if (sub === 'A' && parts.length >= 3) {
+            const flidStr = parts[parts.length - 1].toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            const poInfo = getPointoutIndicator(f);
+            if (!poInfo) {
+                return { feedback: [{ type: 'err', text: 'NO POINT OUT' }] };
+            }
+            if (poInfo.role === 'receiver') {
+                f.pointoutOriginatingUnit = null;
+                f.pointoutReceivingUnit = null;
+                pointoutAcked.delete(f.gufi);
+            } else {
+                pointoutAcked.add(f.gufi);
+            }
+            closePointoutMenu();
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT \u2014 ACKNOWLEDGE PO' },
+                { type: 'info', text: f.callsign || '???' }
+            ]};
+        }
+
+        // Clear point-out + FDB→LDB: QP <FLID>
+        {
+            const flidStr = parts.slice(1).join('').toUpperCase();
+            const f = findFlight(flidStr);
+            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
+            pointoutAcked.delete(f.gufi);
+            f.pointoutOriginatingUnit = null;
+            f.pointoutReceivingUnit = null;
+            pointoutFirstSeen.delete(f.gufi);
+            closePointoutMenu();
+            const cls = classifyTrack(f);
+            if (cls !== 'own' && cls !== 'ho' && cls !== 'emrg') {
+                fdbOverrides.set(f.gufi, false);
+            }
+            invalidateMarker(f.gufi);
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `PO CLR ${f.callsign || '???'}` }
+            ]};
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -4917,65 +4961,7 @@ function processCommand(cmd) {
         return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // QP A [sector] <FLID> — acknowledge a pending point out (P→A)
-    // QP <FLID>            — clear point-out + FDB→LDB
-    // ═══════════════════════════════════════════════════════════════════════
-    if (verb === 'QP') {
-        if (parts.length < 2) {
-            return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
-        }
-
-        // QP A [sector] <FLID> — acknowledge point out (sector is optional, ignored for single-sector POs)
-        if (parts.length >= 3 && parts[1].toUpperCase() === 'A') {
-            // FLID is always the last token; middle tokens are sector IDs (ignored)
-            const flidStr = parts[parts.length - 1].toUpperCase();
-            const f = findFlight(flidStr);
-            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
-            const poInfo = getPointoutIndicator(f);
-            if (!poInfo) {
-                return { feedback: [{ type: 'err', text: 'NO POINT OUT' }] };
-            }
-            if (poInfo.role === 'receiver') {
-                // Receiver QP A: acknowledge → P removed (single sector = all acked)
-                f.pointoutOriginatingUnit = null;
-                f.pointoutReceivingUnit = null;
-                pointoutAcked.delete(f.gufi);
-            } else {
-                // Originator QP A: simulate remote ack → P becomes A
-                pointoutAcked.add(f.gufi);
-            }
-            closePointoutMenu();
-            invalidateMarker(f.gufi);
-            return { feedback: [
-                { type: 'ok', text: 'ACCEPT \u2014 ACKNOWLEDGE PO' },
-                { type: 'info', text: f.callsign || '???' }
-            ]};
-        }
-
-        // QP <FLID> — clear point-out and change FDB→LDB (CRC spec)
-        {
-            const flidStr = parts.slice(1).join('').toUpperCase();
-            const f = findFlight(flidStr);
-            if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
-            // Clear point-out state from client side
-            pointoutAcked.delete(f.gufi);
-            f.pointoutOriginatingUnit = null;
-            f.pointoutReceivingUnit = null;
-            pointoutFirstSeen.delete(f.gufi);
-            closePointoutMenu();
-            // FDB→LDB per CRC: "QP <FLID> must be used to change FDB to LDB"
-            const cls = classifyTrack(f);
-            if (cls !== 'own' && cls !== 'ho' && cls !== 'emrg') {
-                fdbOverrides.set(f.gufi, false);
-            }
-            invalidateMarker(f.gufi);
-            return { feedback: [
-                { type: 'ok', text: 'ACCEPT' },
-                { type: 'info', text: `PO CLR ${f.callsign || '???'}` }
-            ]};
-        }
-    }
+    // (QP handler consolidated above with DRI + point-out + clear)
 
     // ═══════════════════════════════════════════════════════════════════════
     // QX <FLID>            — drop a track from display (instant timeout)

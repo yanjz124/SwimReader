@@ -204,6 +204,32 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 - SFDPS clears clearance data by sending a `<cleared>` element with empty/absent attributes. `ProcessFlight()` treats the presence of `<cleared>` as authoritative — any attribute not present is cleared to null
 - ~2-3% of flights carry clearance data at any time
 
+### Primary Targets / Uncorrelated Tracks
+SFDPS does **not** contain true primary-only radar returns. Every SFDPS message requires a GUFI and carries an `aircraftIdentification` (callsign). Uncorrelated radar blips that ERAM cannot associate with a flight record are never published to SFDPS — the correlation happens inside ERAM's sensor processing before SFDPS sees the data.
+
+However, SFDPS does contain **~136 "pseudo-primary" controller-created tracks** with position and callsign but no flight plan (no origin/destination/aircraft type):
+
+| Callsign | Description |
+|----------|-------------|
+| `TFC` | Controller-tagged uncorrelated traffic — radar target manually associated with callsign "TFC" |
+| `BLOCK`/`BLK030`/`BLK050` | Airspace block reservations or training scenarios |
+| `JUMP` | Skydiving operations (low altitude, VFR) |
+| `BALLOON` | Weather/science balloons (very low ground speed, squawk assigned) |
+| `AAA`, `DUKKY`, etc. | Generic placeholders or fix-named reference markers |
+| N-numbers (no FP) | VFR aircraft correlated by controller via beacon code, no flight plan filed |
+| Military patterns | Gov/mil tracks without civilian flight plan (e.g., `P1460`, `MCI4413`) |
+
+**Data completeness (typical snapshot, ~42K flights):**
+- 86% have position (radar track); 14% are flight-plan-only (PROPOSED, not yet departed)
+- 5% of positioned flights have no aircraft type (only received TH messages, never FH)
+- 11% of positioned flights have no squawk (beacon code comes from FH/BA messages)
+- 0% have position without callsign — SFDPS never publishes without `aircraftIdentification`
+
+**Where true primary targets exist** (not in SFDPS):
+- **STDDS/STARS** — terminal radar data from TRACONs carries track-level data including uncorrelated targets
+- **ASDE-X** — surface movement radar captures all targets regardless of transponder status
+- **Raw radar feeds** — internal to STARS/ERAM facilities, not published through SWIM
+
 ### FlightState Fields
 Core fields tracked per flight (by GUFI):
 - Identity: `gufi`, `fdpsGufi`, `callsign`, `computerId`, `computerIds` (per-facility CID map)

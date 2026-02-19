@@ -800,13 +800,13 @@ function drawSymbolGeometry(ctx, sym, cx, cy, color) {
         ctx.arc(cx, cy, SYM_DOT_R, 0, 2 * Math.PI);
         ctx.fill();
     } else if (sym === '#') {
-        // Coast track: # as 2 horizontal + 2 vertical lines
-        const sz = half * 0.707, g = sz * 0.3;
+        // Coast track: # — 2 horizontal lines + 2 slanted vertical lines (like /)
+        const sz = half * 0.85, g = sz * 0.4, slant = sz * 0.2;
         ctx.beginPath();
         ctx.moveTo(cx - sz, cy - g); ctx.lineTo(cx + sz, cy - g);
         ctx.moveTo(cx - sz, cy + g); ctx.lineTo(cx + sz, cy + g);
-        ctx.moveTo(cx - g, cy - sz); ctx.lineTo(cx - g, cy + sz);
-        ctx.moveTo(cx + g, cy - sz); ctx.lineTo(cx + g, cy + sz);
+        ctx.moveTo(cx - g + slant, cy - sz); ctx.lineTo(cx - g - slant, cy + sz);
+        ctx.moveTo(cx + g + slant, cy - sz); ctx.lineTo(cx + g - slant, cy + sz);
         ctx.stroke();
     }
     // ◇ (diamond): history doesn't draw diamond overlay, only the current position marker does
@@ -1693,13 +1693,13 @@ function buildTargetSym(symChar, isEmrg, extraStyle) {
         return hit + `<div style="position:absolute;width:5px;height:5px;left:-2.5px;top:-2.5px;border-radius:50%;background:${c};pointer-events:none;z-index:2;${st}"></div>`;
     }
     if (symChar === '#') {
-        // Coast track: # as 2 horizontal + 2 vertical lines
-        const sz = 12, g = 3, w = 2;
+        // Coast track: # — 2 horizontal lines + 2 slanted vertical lines (like /)
+        const sz = 14, g = 5, w = 2, slant = 3;
         return hit + `<div style="position:absolute;pointer-events:none;z-index:2;${st}">`
             + `<div style="position:absolute;width:${sz}px;height:${w}px;left:${-sz/2}px;top:${-g/2 - w/2}px;background:${c}"></div>`
             + `<div style="position:absolute;width:${sz}px;height:${w}px;left:${-sz/2}px;top:${g/2 - w/2}px;background:${c}"></div>`
-            + `<div style="position:absolute;width:${w}px;height:${sz}px;left:${-g/2 - w/2}px;top:${-sz/2}px;background:${c}"></div>`
-            + `<div style="position:absolute;width:${w}px;height:${sz}px;left:${g/2 - w/2}px;top:${-sz/2}px;background:${c}"></div>`
+            + `<div style="position:absolute;width:${w}px;height:${sz}px;left:${-g/2 - w/2}px;top:${-sz/2}px;background:${c};transform:skewX(-15deg)"></div>`
+            + `<div style="position:absolute;width:${w}px;height:${sz}px;left:${g/2 - w/2}px;top:${-sz/2}px;background:${c};transform:skewX(-15deg)"></div>`
             + `</div>`;
     }
     // Diamond (◇): FDB draws via ac-sym-flat-track; LDB still needs a hit area

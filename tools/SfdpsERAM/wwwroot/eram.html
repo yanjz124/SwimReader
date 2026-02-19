@@ -374,6 +374,11 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 <span id="lbl-airports" style="min-width:28px; text-align:right; font-size:11px;">0</span>
             </div>
             <div class="ctrl-row">
+                <label>CL</label>
+                <input type="range" id="rng-centerlines" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
+                <span id="lbl-centerlines" style="min-width:28px; text-align:right; font-size:11px;">0</span>
+            </div>
+            <div class="ctrl-row">
                 <label>PROC</label>
                 <input type="range" id="rng-proc" min="0" max="100" value="0" style="flex:1; accent-color:#cccc44;">
                 <span id="lbl-proc" style="min-width:28px; text-align:right; font-size:11px;">0</span>
@@ -526,10 +531,10 @@ const dwellLocked = new Set();     // GUFIs with persistent dwell emphasis (togg
 const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indicator) toggled on
 
 // Controller-entered altitude overrides (QZ/QQ/QR commands)
-// SWIM data has higher priority — when SWIM provides the same field, the local override is cleared
-const localAssignedAlt = new Map();  // gufi → { feet, display } — QZ assigned altitude (display = 'VFR', 'OTP', '350', '180B240')
-const localInterimAlt = new Map();   // gufi → { feet, type } — QQ interim (type: 'I'=interim, 'P'=procedure, 'L'=local)
-const localReportedAlt = new Map();  // gufi → feet — QR controller-entered reported altitude
+// Local wins when present; SWIM clears local override only when it sends a genuinely NEW different value
+const localAssignedAlt = new Map();  // gufi → { feet, rules, block, serverVal } — QZ assigned altitude
+const localInterimAlt = new Map();   // gufi → { feet, type, serverVal } — QQ interim (type: 'I'|'P'|'L')
+const localReportedAlt = new Map();  // gufi → { feet, serverVal } — QR controller-entered reported altitude
 
 // HSF (Heading/Speed/Free text) data — QS command (local overrides)
 const hsfData = new Map();     // gufi → { heading, speed, freeText } — local QS overrides
@@ -971,6 +976,38 @@ function drawOverlay() {
         ctx.textBaseline = 'alphabetic';
     }
 
+    // ── ILS/LOC/LDA centerlines — dashed lines from threshold, 15 NM ──
+    if (centerlineData && nasrBrightness.centerlines > 0) {
+        const clCol = nasrColor(nasrBrightness.centerlines);
+        ctx.strokeStyle = clCol;
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = nasrBrightness.centerlines / 100;
+
+        for (const cl of centerlineData) {
+            // Quick bounds check: skip if both endpoints off-screen
+            const clBounds = L.latLngBounds([cl.lat1, cl.lon1], [cl.lat2, cl.lon2]);
+            if (!bounds.intersects(clBounds)) continue;
+
+            const p1 = map.latLngToLayerPoint([cl.lat1, cl.lon1]);
+            const p2 = map.latLngToLayerPoint([cl.lat2, cl.lon2]);
+            const x1 = p1.x - topLeft.x, y1 = p1.y - topLeft.y;
+            const x2 = p2.x - topLeft.x, y2 = p2.y - topLeft.y;
+
+            // Compute 1 NM in pixels (total line = 15 NM)
+            const dx = x2 - x1, dy = y2 - y1;
+            const totalPx = Math.sqrt(dx * dx + dy * dy);
+            const nmPx = totalPx / 15;
+
+            ctx.setLineDash([nmPx, nmPx]);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+    }
+
     // ── .FIND highlight — blinking yellow square (full ↔ half bright) ──
     if (findMarker && bounds.contains([findMarker.lat, findMarker.lon])) {
         const blinkPhase = Math.floor(performance.now() / 500) % 2 === 0;
@@ -1175,8 +1212,9 @@ loadKml();
 // ════════════════════════════════════════════════════════════════════════════
 const nasrLayers = {};    // 'jroutes'|'vroutes'|'vors'|'proc:DCA' → L.layerGroup
 const nasrCache = {};     // same keys → raw API data (cache across toggles)
-const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 15, airports: 0, proc: 0 };
+const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 15, airports: 0, centerlines: 0, proc: 0 };
 let airportOverlayData = null; // cached from /api/nasr/airports
+let centerlineData = null;     // cached from /api/nasr/centerlines
 
 const nasrLoading = {};   // guard against double-click during async fetch
 function nasrColor(brightness) { return bndColor(brightness); }  // same grey ramp as boundaries
@@ -1251,6 +1289,19 @@ document.getElementById('rng-airports').addEventListener('input', async function
             const resp = await fetch('/api/nasr/airports');
             if (resp.ok) airportOverlayData = await resp.json();
         } catch (e) { console.warn('[NASR] airports:', e); }
+    }
+    drawOverlay();
+    saveSettingsToUrl();
+});
+
+document.getElementById('rng-centerlines').addEventListener('input', async function () {
+    nasrBrightness.centerlines = parseInt(this.value);
+    document.getElementById('lbl-centerlines').textContent = nasrBrightness.centerlines;
+    if (nasrBrightness.centerlines > 0 && !centerlineData) {
+        try {
+            const resp = await fetch('/api/nasr/centerlines');
+            if (resp.ok) centerlineData = await resp.json();
+        } catch (e) { console.warn('[NASR] centerlines:', e); }
     }
     drawOverlay();
     saveSettingsToUrl();
@@ -2012,16 +2063,17 @@ function formatAltLine(f) {
     const localI = localInterimAlt.get(f.gufi);
     const localR = localReportedAlt.get(f.gufi);
 
-    // SWIM fields take priority; local overrides fill gaps
-    const assigned = f.assignedAltitude ?? (localA ? localA.feet : null);
-    const reported = f.reportedAltitude ?? (localR != null ? localR : null);
-    const interim = f.interimAltitude ?? (localI ? localI.feet : null);
+    // Local controller overrides win when present; server fills gaps
+    // Server auto-clears local overrides only when it sends genuinely new values
+    const assigned = localA ? localA.feet : (f.assignedAltitude ?? null);
+    const reported = localR ? localR.feet : (f.reportedAltitude ?? null);
+    const interim = localI ? localI.feet : (f.interimAltitude ?? null);
 
     const afl = assigned != null ? String(Math.round(assigned / 100)).padStart(3, '0') : '';
     const rfl = reported != null ? String(Math.round(reported / 100)).padStart(3, '0') : '';
 
-    // VFR/OTP display — server assignedVfr or local QZ override
-    const isVfr = f.assignedVfr || (!f.assignedAltitude && localA && (localA.rules === 'VFR' || localA.rules === 'OTP'));
+    // VFR/OTP display — local QZ override wins, then server assignedVfr
+    const isVfr = (localA && (localA.rules === 'VFR' || localA.rules === 'OTP')) || (!localA && f.assignedVfr);
     if (isVfr) {
         const localRules = localA ? localA.rules : null;
         const prefix = localRules === 'OTP' ? 'OTP' : 'VFR';
@@ -2030,21 +2082,21 @@ function formatAltLine(f) {
         return rfl ? `${prefix}/${rfl}` : prefix;
     }
 
-    // Block altitude — server blockFloor/blockCeiling or local QZ override
-    if (f.blockFloor != null && f.blockCeiling != null) {
+    // Block altitude — local QZ override wins, then server blockFloor/blockCeiling
+    if (localA && localA.block) {
+        return rfl ? `${localA.block}${rfl}` : localA.block;
+    }
+    if (!localA && f.blockFloor != null && f.blockCeiling != null) {
         const floor = String(Math.round(f.blockFloor / 100)).padStart(3, '0');
         const ceil = String(Math.round(f.blockCeiling / 100)).padStart(3, '0');
         const blockDisp = `${floor}B${ceil}`;
         return rfl ? `${blockDisp}${rfl}` : blockDisp;
     }
-    if (localA && !f.assignedAltitude && localA.block) {
-        return rfl ? `${localA.block}${rfl}` : localA.block;
-    }
 
     // Interim/procedure/local altitude → T, P, or L indicator
     if (interim != null) {
         const ifl = String(Math.round(interim / 100)).padStart(3, '0');
-        const localType = !f.interimAltitude && localI ? localI.type : null;
+        const localType = localI ? localI.type : null;
         const indicator = localType === 'P' ? 'P' : localType === 'L' ? 'L' : 'T';
         return rfl ? `${ifl}${indicator}${rfl}` : `${ifl}${indicator}`;
     }
@@ -2230,10 +2282,20 @@ function processFlightUpdate(f) {
             existing[key] = f[key];
         }
 
-        // SWIM data overrides local controller entries
-        if (f.assignedAltitude != null) localAssignedAlt.delete(f.gufi);
-        if (f.interimAltitude != null) localInterimAlt.delete(f.gufi);
-        if (f.reportedAltitude != null) localReportedAlt.delete(f.gufi);
+        // SWIM data overrides local controller entries ONLY when genuinely new
+        // (stale repeats of the same value don't clear local overrides)
+        if (f.assignedAltitude != null) {
+            const la = localAssignedAlt.get(f.gufi);
+            if (la && f.assignedAltitude !== la.serverVal) localAssignedAlt.delete(f.gufi);
+        }
+        if (f.interimAltitude != null) {
+            const li = localInterimAlt.get(f.gufi);
+            if (li && f.interimAltitude !== li.serverVal) localInterimAlt.delete(f.gufi);
+        }
+        if (f.reportedAltitude != null) {
+            const lr = localReportedAlt.get(f.gufi);
+            if (lr && f.reportedAltitude !== lr.serverVal) localReportedAlt.delete(f.gufi);
+        }
 
         // Auto-show HSF when server clearance data first arrives
         const hasClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
@@ -2476,7 +2538,7 @@ function flightHash(f, cls) {
     const lr = localReportedAlt.get(f.gufi);
     const laH = la ? `${la.feet}${la.rules||''}${la.block||''}` : '';
     const liH = li ? `${li.feet}${li.type}` : '';
-    const lrH = lr != null ? lr : '';
+    const lrH = lr ? lr.feet : '';
     const hsf = getEffectiveHsf(f);
     const hsfH = hsf ? `${hsf.heading||''}${hsf.speed||''}${hsf.freeText||''}` : '';
     const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
@@ -3556,7 +3618,8 @@ function loadSettingsFromUrl() {
         if (!isNaN(vals[1])) nasrBrightness.vroutes = vals[1];
         if (!isNaN(vals[2])) nasrBrightness.vors = vals[2];
         if (!isNaN(vals[3])) nasrBrightness.airports = vals[3];
-        if (!isNaN(vals[4])) nasrBrightness.proc = vals[4];
+        if (!isNaN(vals[4])) nasrBrightness.centerlines = vals[4];
+        if (!isNaN(vals[5])) nasrBrightness.proc = vals[5];
     }
     if (params.has('line4')) line4Mode = params.get('line4') || 'DEST';
     if (params.has('nxlvl')) {
@@ -3597,6 +3660,8 @@ function loadSettingsFromUrl() {
     document.getElementById('lbl-vors').textContent = nasrBrightness.vors;
     document.getElementById('rng-airports').value = nasrBrightness.airports;
     document.getElementById('lbl-airports').textContent = nasrBrightness.airports;
+    document.getElementById('rng-centerlines').value = nasrBrightness.centerlines;
+    document.getElementById('lbl-centerlines').textContent = nasrBrightness.centerlines;
     document.getElementById('rng-proc').value = nasrBrightness.proc;
     document.getElementById('lbl-proc').textContent = nasrBrightness.proc;
     document.getElementById('sel-nxlvl').value = nexradLevel === 3 ? '123' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '0';
@@ -3611,6 +3676,9 @@ function loadSettingsFromUrl() {
     if (nasrBrightness.vors > 0) showNasrLayer('vors', '/api/nasr/navaids', renderVors);
     if (nasrBrightness.airports > 0 && !airportOverlayData) {
         fetch('/api/nasr/airports').then(r => r.ok ? r.json() : null).then(d => { if (d) { airportOverlayData = d; drawOverlay(); } });
+    }
+    if (nasrBrightness.centerlines > 0 && !centerlineData) {
+        fetch('/api/nasr/centerlines').then(r => r.ok ? r.json() : null).then(d => { if (d) { centerlineData = d; drawOverlay(); } });
     }
     showBoundariesForFacility(myFacility);
 }
@@ -3635,8 +3703,8 @@ function saveSettingsToUrl() {
     if (ldbBrightness !== 30) params.set('ldb', ldbBrightness);
     if (facilityOnly) params.set('faconly', '1');
     if (document.getElementById('chk-mca-kb').checked) params.set('kb', '1');
-    const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.airports, nasrBrightness.proc];
-    const nasrDefaults = [0, 0, 15, 0, 0];
+    const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.airports, nasrBrightness.centerlines, nasrBrightness.proc];
+    const nasrDefaults = [0, 0, 15, 0, 0, 0];
     if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
     if (nexradLevel !== 3) params.set('nxlvl', nexradLevel === 0 ? '0' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '123');
     if (nexradBrightness !== 30) params.set('nxbr', nexradBrightness);
@@ -4423,7 +4491,7 @@ function processCommand(cmd) {
             const f = findFlight(flidStr);
             if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
             if (!isOwnTrack(f)) return rejectNotOwned('ASSIGNED ALT', f);
-            localAssignedAlt.set(f.gufi, { feet: altFeet, rules, block: null });
+            localAssignedAlt.set(f.gufi, { feet: altFeet, rules, block: null, serverVal: f.assignedAltitude ?? null });
             invalidateMarker(f.gufi);
             const altDisp = altFeet != null ? '/' + String(Math.round(altFeet / 100)).padStart(3, '0') : '';
             return { feedback: [
@@ -4444,7 +4512,7 @@ function processCommand(cmd) {
             const floor = parseInt(blockMatch[1]) * 100;
             const ceil = parseInt(blockMatch[2]) * 100;
             const blockDisp = blockMatch[1].padStart(3, '0') + 'B' + blockMatch[2].padStart(3, '0');
-            localAssignedAlt.set(f.gufi, { feet: floor, rules: null, block: blockDisp });
+            localAssignedAlt.set(f.gufi, { feet: floor, rules: null, block: blockDisp, serverVal: f.assignedAltitude ?? null });
             invalidateMarker(f.gufi);
             return { feedback: [
                 { type: 'ok', text: 'ACCEPT' },
@@ -4461,7 +4529,7 @@ function processCommand(cmd) {
             const f = findFlight(flidStr);
             if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
             if (!isOwnTrack(f)) return rejectNotOwned('ASSIGNED ALT', f);
-            localAssignedAlt.set(f.gufi, { feet: altFeet, rules: null, block: null });
+            localAssignedAlt.set(f.gufi, { feet: altFeet, rules: null, block: null, serverVal: f.assignedAltitude ?? null });
             invalidateMarker(f.gufi);
             const altDisp = String(Math.round(altFeet / 100)).padStart(3, '0');
             return { feedback: [
@@ -4558,8 +4626,8 @@ function processCommand(cmd) {
                     continue;
                 }
                 const itype = qqAltPrefix === 'P' ? 'P' : qqAltPrefix === 'L' ? 'L' : 'I';
-                localInterimAlt.set(f.gufi, { feet: qqAltFeet, type: itype });
-                if (qqAltPrefix === 'R') localReportedAlt.set(f.gufi, qqAltFeet);
+                localInterimAlt.set(f.gufi, { feet: qqAltFeet, type: itype, serverVal: f.interimAltitude ?? null });
+                if (qqAltPrefix === 'R') localReportedAlt.set(f.gufi, { feet: qqAltFeet, serverVal: f.reportedAltitude ?? null });
                 invalidateMarker(f.gufi);
                 qqFb.push({ type: 'info', text: `${f.callsign || '???'}/${qqAltDisp}` });
                 qqAnyOk = true;
@@ -4633,7 +4701,7 @@ function processCommand(cmd) {
         const f = findFlight(flidStr);
         if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
         if (!isOwnTrack(f)) return rejectNotOwned('REPORTED ALT', f);
-        localReportedAlt.set(f.gufi, altFeet);
+        localReportedAlt.set(f.gufi, { feet: altFeet, serverVal: f.reportedAltitude ?? null });
         invalidateMarker(f.gufi);
         const altDisp = String(Math.round(altFeet / 100)).padStart(3, '0');
         return { feedback: [

@@ -334,6 +334,12 @@ app.MapGet("/api/nasr/airports", () =>
     return Results.Json(nasrData.AirportOverlay, jsonOpts);
 });
 
+app.MapGet("/api/nasr/centerlines", () =>
+{
+    if (nasrData is null) return Results.Json(new { error = "NASR data not loaded" }, statusCode: 503);
+    return Results.Json(nasrData.Centerlines, jsonOpts);
+});
+
 // Debug: find duplicate CIDs for a facility
 app.MapGet("/api/debug/dupe-cids/{facility}", (string facility) =>
 {
@@ -1415,9 +1421,10 @@ async Task LoadNasrData()
         return;
     }
 
-    // Check for cached CSVs
+    // Check for cached CSVs (re-download if new files like ILS_BASE.csv are missing)
     var navFile = Path.Combine(cycleDir, "NAV_BASE.csv");
-    if (!File.Exists(navFile))
+    var ilsFile = Path.Combine(cycleDir, "ILS_BASE.csv");
+    if (!File.Exists(navFile) || !File.Exists(ilsFile))
     {
         Console.WriteLine($"[NASR] Downloading cycle {dateStr}...");
         await DownloadNasr(effectiveDate, cycleDir);
@@ -1476,6 +1483,14 @@ async Task LoadNasrData()
     }
     catch (Exception ex) { Console.WriteLine($"[NASR]   DP parse skipped: {ex.Message}"); }
 
+    // Parse ILS/LOC/LDA centerlines (optional)
+    try
+    {
+        data.Centerlines = ParseIlsCenterlines(Path.Combine(cycleDir, "ILS_BASE.csv"));
+        Console.WriteLine($"[NASR]   Centerlines: {data.Centerlines.Count} ILS/LOC/LDA approaches");
+    }
+    catch (Exception ex) { Console.WriteLine($"[NASR]   ILS parse skipped: {ex.Message}"); }
+
     nasrData = data;
     routeCache.Clear();
     Console.WriteLine($"[NASR] Loaded successfully — cycle {dateStr}");
@@ -1525,8 +1540,8 @@ async Task DownloadNasr(DateTime effectiveDate, string outputDir)
     } // outerZip closed here — safe to delete
 
     // Extract the CSV files we need from the inner zip
-    var needed = new[] { "NAV_BASE.csv", "FIX_BASE.csv", "AWY_BASE.csv", "APT_BASE.csv" };
-    // Also extract STAR and DP procedure files (name patterns: STAR_*.csv, DP_*.csv)
+    var needed = new[] { "NAV_BASE.csv", "FIX_BASE.csv", "AWY_BASE.csv", "APT_BASE.csv", "ILS_BASE.csv" };
+    // Also extract STAR, DP, and ILS procedure files
     using (var innerZip = ZipFile.OpenRead(innerZipPath))
     {
         foreach (var entry in innerZip.Entries)
@@ -1534,7 +1549,8 @@ async Task DownloadNasr(DateTime effectiveDate, string outputDir)
             var name = entry.Name;
             bool isNeeded = needed.Any(n => name.Equals(n, StringComparison.OrdinalIgnoreCase))
                 || name.StartsWith("STAR_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)
-                || name.StartsWith("DP_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
+                || name.StartsWith("DP_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("ILS_", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".csv", StringComparison.OrdinalIgnoreCase);
             if (isNeeded)
             {
                 var dest = Path.Combine(outputDir, name);
@@ -1681,6 +1697,113 @@ Dictionary<string, List<NavPoint>> ParseFixBase(string path)
         }
     }
     return (byLid, byIcao, overlay);
+}
+
+// Great-circle destination point from a given lat/lon, bearing (degrees), and distance (NM)
+static (double lat, double lon) DestPoint(double lat, double lon, double brngDeg, double distNm)
+{
+    const double R = 3440.065; // earth radius in NM
+    double d = distNm / R;
+    double lat1 = lat * Math.PI / 180, lon1 = lon * Math.PI / 180, brng = brngDeg * Math.PI / 180;
+    double lat2 = Math.Asin(Math.Sin(lat1) * Math.Cos(d) + Math.Cos(lat1) * Math.Sin(d) * Math.Cos(brng));
+    double lon2 = lon1 + Math.Atan2(Math.Sin(brng) * Math.Sin(d) * Math.Cos(lat1),
+                                     Math.Cos(d) - Math.Sin(lat1) * Math.Sin(lat2));
+    return (lat2 * 180 / Math.PI, lon2 * 180 / Math.PI);
+}
+
+List<CenterlinePoint> ParseIlsCenterlines(string path)
+{
+    var result = new List<CenterlinePoint>();
+    if (!File.Exists(path)) return result;
+
+    using var reader = new StreamReader(path);
+    var headers = ParseCsvLine(reader.ReadLine()!);
+
+    int iApt = ColIdx(headers, "ARPT_ID");
+    if (iApt < 0) iApt = ColIdx(headers, "FACILITY_SITE_NO"); // fallback
+    int iRwy = ColIdx(headers, "RWY_END_ID");
+    if (iRwy < 0) iRwy = ColIdx(headers, "RWY_ID");
+
+    // System type — try multiple column names
+    int iType = ColIdx(headers, "SYSTEM_TYPE");
+    if (iType < 0) iType = ColIdx(headers, "ILS_COMP_TYPE_CODE");
+    if (iType < 0) iType = ColIdx(headers, "ILS_TYPE");
+    if (iType < 0) iType = ColIdx(headers, "SYSTEM_TYPE_CODE");
+
+    int iLat = ColIdx(headers, "LAT_DECIMAL");
+    int iLon = ColIdx(headers, "LONG_DECIMAL");
+
+    // Approach bearing — try multiple column names
+    int iBrg = ColIdx(headers, "LOC_BEARING");
+    if (iBrg < 0) iBrg = ColIdx(headers, "APCH_BEAR");
+    if (iBrg < 0) iBrg = ColIdx(headers, "MAG_BRG");
+    if (iBrg < 0) iBrg = ColIdx(headers, "ILS_MAG_BRG");
+
+    int iVar = ColIdx(headers, "MAG_VARN");
+    if (iVar < 0) iVar = ColIdx(headers, "MAG_VAR");
+    int iVarH = ColIdx(headers, "MAG_VARN_HEMIS");
+    if (iVarH < 0) iVarH = ColIdx(headers, "MAG_HEMIS");
+
+    int iLen = ColIdx(headers, "RWY_LEN");
+    if (iLen < 0) iLen = ColIdx(headers, "RWY_LENGTH");
+
+    // Log discovered columns for debugging
+    Console.WriteLine($"[NASR]   ILS columns: apt={iApt} rwy={iRwy} type={iType} lat={iLat} lon={iLon} brg={iBrg} var={iVar} varH={iVarH} len={iLen}");
+
+    if (iApt < 0 || iLat < 0 || iLon < 0 || iBrg < 0) {
+        Console.WriteLine("[NASR]   ILS_BASE.csv: missing required columns, skipping centerlines");
+        Console.WriteLine($"[NASR]   Headers: {string.Join(", ", headers.Take(30))}");
+        return result;
+    }
+
+    while (reader.ReadLine() is { } line)
+    {
+        var f = ParseCsvLine(line);
+        var maxIdx = Math.Max(iApt, Math.Max(iLat, Math.Max(iLon, iBrg)));
+        if (f.Count <= maxIdx) continue;
+
+        // Filter: ILS, LOC, LDA, SDF types only
+        if (iType >= 0 && iType < f.Count)
+        {
+            var sysType = f[iType].Trim().ToUpperInvariant();
+            if (!sysType.Contains("ILS") && !sysType.Contains("LOC") &&
+                !sysType.Contains("LDA") && !sysType.Contains("SDF") &&
+                !sysType.StartsWith("LS") && !sysType.StartsWith("LO"))
+                continue;
+        }
+
+        if (!double.TryParse(f[iLat], out var locLat) || !double.TryParse(f[iLon], out var locLon)) continue;
+        if (!double.TryParse(f[iBrg], out var magBrg)) continue;
+
+        // Magnetic variation → true bearing
+        double magVar = 0;
+        if (iVar >= 0 && iVar < f.Count && double.TryParse(f[iVar], out var mv))
+        {
+            var hemis = iVarH >= 0 && iVarH < f.Count ? f[iVarH].Trim().ToUpperInvariant() : "W";
+            magVar = hemis == "E" ? mv : -mv;
+        }
+        double trueBrg = magBrg + magVar;
+
+        // Runway length (feet) → NM; default to ~7000ft if missing
+        double rwyLenFt = 7000;
+        if (iLen >= 0 && iLen < f.Count && double.TryParse(f[iLen], out var lenFt) && lenFt > 0)
+            rwyLenFt = lenFt;
+        double rwyLenNm = rwyLenFt / 6076.12;
+
+        // Reverse bearing = direction from localizer toward threshold (and beyond)
+        double reverseBrg = trueBrg + 180;
+
+        // Compute threshold (approx: localizer position + rwy length along reverse bearing)
+        var threshold = DestPoint(locLat, locLon, reverseBrg, rwyLenNm);
+        // Compute 15 NM endpoint from threshold
+        var farPoint = DestPoint(threshold.lat, threshold.lon, reverseBrg, 15.0);
+
+        var aptId = f[iApt].Trim();
+        var rwyId = iRwy >= 0 && iRwy < f.Count ? f[iRwy].Trim() : "";
+
+        result.Add(new CenterlinePoint(threshold.lat, threshold.lon, farPoint.lat, farPoint.lon, aptId, rwyId));
+    }
+    return result;
 }
 
 Dictionary<string, AirwayDef> ParseAwyBase(string path)
@@ -2248,6 +2371,7 @@ class WsClient(WebSocket ws)
 
 record NavPoint(string Ident, double Lat, double Lon, string Type = "");
 record AirportOverlayPoint(string Lid, string Icao, double Lat, double Lon, string Cls);
+record CenterlinePoint(double Lat1, double Lon1, double Lat2, double Lon2, string Apt, string Rwy);
 record AirwayDef(string Id, string Designation, List<string> Fixes);
 
 record ProcedureDef(string Id, string Airport, string Type, List<string> Fixes, Dictionary<string, List<string>> Transitions); // Type = "STAR" or "DP"; Transitions keyed by enroute fix name
@@ -2264,6 +2388,7 @@ class NasrData
     public Dictionary<string, List<ProcedureDef>> Procedures { get; set; } = new(); // name → list (may have same name at different airports)
     public Dictionary<string, List<ProcedureFullDef>> ProceduresFull { get; set; } = new(); // full legs for map overlay
     public List<AirportOverlayPoint> AirportOverlay { get; set; } = new(); // public airports with derived airspace class
+    public List<CenterlinePoint> Centerlines { get; set; } = new(); // ILS/LOC/LDA approach centerlines
     public string EffectiveDate { get; set; } = "";
 }
 

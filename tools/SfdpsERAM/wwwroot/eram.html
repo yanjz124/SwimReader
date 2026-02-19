@@ -2114,11 +2114,10 @@ function processFlightUpdate(f) {
         const oldCuSec = existing.controllingSector;
         const hadClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
 
-        // Buffer new position for scan cycle; record history from the position we're replacing
+        // Record history from old position before applying new one
         if (f.latitude != null && f.longitude != null) {
-            const prev = pendingPositions.get(f.gufi);
-            const oldLat = prev ? prev.lat : existing.latitude;
-            const oldLon = prev ? prev.lon : existing.longitude;
+            const oldLat = existing.latitude;
+            const oldLon = existing.longitude;
             if (oldLat != null && oldLon != null) {
                 const dlat = Math.abs(oldLat - f.latitude);
                 const dlon = Math.abs(oldLon - f.longitude);
@@ -2126,7 +2125,6 @@ function processFlightUpdate(f) {
                     addHistoryPoint(f.gufi, oldLat, oldLon, getSymbolChar(existing));
                 }
             }
-            pendingPositions.set(f.gufi, { lat: f.latitude, lon: f.longitude });
         }
         // Suppress server clearance fields that were manually cleared via QS *
         const sup = hsfClrSuppressed.get(f.gufi);
@@ -2146,9 +2144,8 @@ function processFlightUpdate(f) {
             if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
         }
 
-        // Apply all non-position fields instantly
+        // Apply all fields directly (positions are already batched server-side at 12s)
         for (const key in f) {
-            if (key === 'latitude' || key === 'longitude') continue;
             existing[key] = f[key];
         }
 

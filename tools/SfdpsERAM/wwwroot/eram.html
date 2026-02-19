@@ -2075,7 +2075,10 @@ function formatLine3(f, cls) {
         return gsStr.padEnd(padLen);
     }
 
-    // 4. Normal: destination letter + groundspeed
+    // 4. Coast track → CST in Field E (per CRC spec)
+    if (isCoasting(f)) return `${cid} CST`;
+
+    // 5. Normal: destination letter + groundspeed
     return gsStr;
 }
 
@@ -3847,10 +3850,15 @@ function findFlight(id) {
         }
     }
     if (csFallback) return csFallback;
-    // Then squawk match
-    for (const f of flights.values()) {
-        if (f.squawk === needle) return f;
+    // Then squawk (beacon code) match — prefer visible, per CRC "beacon codes are FLIDs"
+    let sqFallback = null;
+    for (const [gufi, f] of flights) {
+        if (f.squawk === needle) {
+            if (isVisible(f) && !isDedupHidden(gufi, f)) return f;
+            if (!sqFallback) sqFallback = f;
+        }
     }
+    if (sqFallback) return sqFallback;
     return null;
 }
 
@@ -3896,6 +3904,27 @@ function invalidateMarker(gufi) {
 function processCommand(cmd) {
     const parts = cmd.trim().split(/\s+/);
     const verb = parts[0]?.toUpperCase();
+
+    // <1-9>/<0-3> <FLID> — Combined position + leader length (CRC spec)
+    if (/^[1-9]\/[0-3]$/.test(verb) && parts.length >= 2) {
+        const pos = parseInt(verb.charAt(0));
+        const level = parseInt(verb.charAt(2));
+        const flid = parts.slice(1).join('').toUpperCase();
+        const f = findFlight(flid);
+        if (f) {
+            dbPositions.set(f.gufi, pos);
+            ldrLenOverrides.set(f.gufi, level);
+            const m = markers.get(f.gufi);
+            if (m) { const el = m.getElement(); if (el) el._lastHash = ''; }
+            lastRenderTime = 0;
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `OFFSET DATA BLK LDR ${level}` },
+                { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
+            ]};
+        }
+        return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
+    }
 
     // <1-9> <FLID> — Position data block (numpad layout)
     if (/^[1-9]$/.test(verb) && parts.length >= 2) {
@@ -5072,6 +5101,25 @@ document.addEventListener('keydown', e => {
 
     // Insert → toggle overstrike/insert mode
     if (e.key === 'Insert') { mca.overstrike = !mca.overstrike; mcaRender(); e.preventDefault(); return; }
+
+    // F-key shortcuts: initiate commands in MCA (CRC spec)
+    const fKeyMap = {
+        'F1':  'QF ', 'F2':  'QP ', 'F4': 'QX ', 'F5': 'QZ ',
+        'F6':  'QU ', 'F7':  'QL ', 'F8': 'QQ ', 'F9': 'QB '
+    };
+    const fKeyShiftMap = {
+        'F2': 'QD ', 'F7': 'WR ', 'F8': 'QR '
+    };
+    if (e.shiftKey && fKeyShiftMap[e.key]) {
+        mcaClear();
+        for (const ch of fKeyShiftMap[e.key]) mcaInsertChar(ch);
+        e.preventDefault(); return;
+    }
+    if (!e.shiftKey && !e.ctrlKey && fKeyMap[e.key]) {
+        mcaClear();
+        for (const ch of fKeyMap[e.key]) mcaInsertChar(ch);
+        e.preventDefault(); return;
+    }
 
     // Printable characters → type into MCA (uppercase)
     if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {

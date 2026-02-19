@@ -337,6 +337,7 @@ HZ heartbeat messages carry the current Mode C reading in the `assignedAltitude`
 - `OUNK` = handoff accepted, unknown sector
 - `Kxxx` = handoff forced via /OK to sector xxx (from SFDPS AH message)
 - Completed handoff: rotates O/K indicator with groundspeed for 60s
+- `CST` = coast track (no position update for >24s)
 - Normal: `{dest_letter}{groundspeed}` (e.g., `W420` where W=DCA destination code)
 
 ### Handoff Facility Codes
@@ -416,6 +417,7 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | Command | Action |
 |---------|--------|
 | `<1-9> <FLID>` | Position data block (numpad layout) |
+| `<1-9>/<0-3> <FLID>` | Position data block AND set leader length in one command |
 | `// <FLID>` | Toggle VCI (Visual Communications Indicator) |
 | `/<0-3> <FLID>` | Set leader line length |
 | `QU [min] <FLID...>` | Route display (default 20 min, `/M` = full route) |
@@ -447,7 +449,9 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `LC <fix>/<time> <track>` | Required speed to reach fix at HHMM zulu time |
 | `<FLID>` | Toggle FDB/LDB for flight (blocked during active point-out) |
 
-FLIDs can be callsign or CID (CID only matches selected facility). When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
+FLIDs can be callsign, CID, or squawk (beacon code). Per CRC spec: "Aircraft IDs, assigned beacon codes, and CIDs are all FLIDs." Resolution priority: CID (facility-matched) > callsign > squawk, preferring visible flights. When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
+
+**F-key shortcuts:** F1=QF, F2=QP, F4=QX, F5=QZ, F6=QU, F7=QL, F8=QQ, F9=QB; Shift+F2=QD, Shift+F7=WR, Shift+F8=QR. Each clears MCA and inserts the command prefix.
 
 ### Track Suppression
 Middle-clicking a non-owned track's target symbol cycles: LDB → FDB → hidden. `QX <FLID>` is a one-way drop (same as timeout). Hidden tracks are cleared on facility change or page refresh. Per CRC spec, middle-clicking a target or map location with an MCA command pending appends the FLID/location and immediately executes (equivalent to left-click + Enter). Left-clicking a target or map location with MCA content inserts a FLID/location placeholder without executing. Locations for LA/LB/LC can be entered by clicking a target (inserts FLID), clicking the map (inserts lat/lon), or typing a callsign/CID/fix/navaid/airport.

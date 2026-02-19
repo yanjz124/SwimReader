@@ -59,11 +59,8 @@ var xmlElements = new ConcurrentDictionary<string, long>();
 var xmlSampleStore = new ConcurrentDictionary<string, string>(); // source -> last raw XML sample
 var nameValueKeys = new ConcurrentDictionary<string, long>(); // unique nameValue name= values
 
-// Broadcast batching — position updates every 12s, flight plan updates every 2s
-var _positionDirty = new ConcurrentDictionary<string, byte>();   // GUFIs with position changes
-var _flightPlanDirty = new ConcurrentDictionary<string, byte>(); // GUFIs with flight plan changes
-// Position-only message sources (batched at 12s)
-var _positionSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "TH", "HZ" };
+// Broadcast batching — all updates batched every 1 second, client owns the 12s scan cycle
+var _dirty = new ConcurrentDictionary<string, byte>(); // GUFIs with any changes
 
 // Debug: clearance raw XML log — captures raw XML for any message touching a clearance-bearing flight
 var clearanceLog = new ConcurrentQueue<string>(); // timestamped log entries
@@ -752,8 +749,7 @@ var nasrTimer = new Timer(async _ =>
 }, null, TimeSpan.FromHours(24), TimeSpan.FromHours(24));
 
 // Batch broadcast timers — flush dirty flights to all connected clients
-var fpBatchTimer = new Timer(_ => FlushDirtyBatch(_flightPlanDirty), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
-var posBatchTimer = new Timer(_ => FlushDirtyBatch(_positionDirty), null, TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(12));
+var batchTimer = new Timer(_ => FlushDirtyBatch(_dirty), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
 await solaceReady.Task;
 Console.WriteLine("[Web] Starting on http://localhost:5001");
@@ -1217,14 +1213,8 @@ void ProcessFlight(XElement flight, string rawXml)
     // Track which facility reports on this flight (for "tracked by")
     if (!string.IsNullOrEmpty(centre)) state.ReportingFacility = centre;
 
-    // Mark flight dirty for batched broadcast (position-only sources → 12s batch, others → 2s batch)
-    if (_positionSources.Contains(source))
-        _positionDirty.TryAdd(gufi, 0);
-    else
-    {
-        _flightPlanDirty.TryAdd(gufi, 0);
-        _positionDirty.TryRemove(gufi, out _); // promote to fast batch if already queued
-    }
+    // Mark flight dirty for batched broadcast (all updates batched every 1s)
+    _dirty.TryAdd(gufi, 0);
 }
 
 string FormatUnit(XElement unit)

@@ -1545,9 +1545,8 @@ function isReducedSep(f) {
 
 function isCoasting(f) {
     // Use server-side posAge (seconds since last position update) — immune to WebSocket message drops
-    // Coast only if: ACTIVE, posAge between 36s and 5min (stale cache data beyond 5min is not coast)
-    // Threshold: 3 scan cycles (36s) accounts for SFDPS ~12s + 12s batch delay + jitter
-    if (f.posAge != null && f.flightStatus === 'ACTIVE' && f.posAge > 36 && f.posAge < 300) return true;
+    // Coast only if: ACTIVE, posAge 26-300s (2 missed SFDPS cycles + 1s batch + jitter; >5min = stale cache)
+    if (f.posAge != null && f.flightStatus === 'ACTIVE' && f.posAge > 26 && f.posAge < 300) return true;
     return false;
 }
 
@@ -2116,10 +2115,11 @@ function processFlightUpdate(f) {
         const oldCuSec = existing.controllingSector;
         const hadClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
 
-        // Record history from old position before applying new one
+        // Buffer position for 12s scan cycle; record history from the position we're replacing
         if (f.latitude != null && f.longitude != null) {
-            const oldLat = existing.latitude;
-            const oldLon = existing.longitude;
+            const prev = pendingPositions.get(f.gufi);
+            const oldLat = prev ? prev.lat : existing.latitude;
+            const oldLon = prev ? prev.lon : existing.longitude;
             if (oldLat != null && oldLon != null) {
                 const dlat = Math.abs(oldLat - f.latitude);
                 const dlon = Math.abs(oldLon - f.longitude);
@@ -2127,6 +2127,7 @@ function processFlightUpdate(f) {
                     addHistoryPoint(f.gufi, oldLat, oldLon, getSymbolChar(existing));
                 }
             }
+            pendingPositions.set(f.gufi, { lat: f.latitude, lon: f.longitude });
         }
         // Suppress server clearance fields that were manually cleared via QS *
         const sup = hsfClrSuppressed.get(f.gufi);
@@ -2146,8 +2147,9 @@ function processFlightUpdate(f) {
             if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
         }
 
-        // Apply all fields directly (positions are already batched server-side at 12s)
+        // Apply all non-position fields instantly; lat/lon buffered for scan cycle
         for (const key in f) {
+            if (key === 'latitude' || key === 'longitude') continue;
             existing[key] = f[key];
         }
 

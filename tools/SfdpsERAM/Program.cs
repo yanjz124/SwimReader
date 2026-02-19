@@ -2376,8 +2376,17 @@ class FlightState
         ETA, ActualDepartureTime,
         LastMsgSource,
         LastSeen = LastSeen.ToString("HH:mm:ss"),
-        History = includeHistory ? GetPositionHistory().Select(h => new { h.Lat, h.Lon, Sym = h.Sym.ToString() }).ToArray() : null
+        History = includeHistory ? HistoryWithAge() : null
     };
+
+    private object[] HistoryWithAge()
+    {
+        var nowTicks = DateTime.UtcNow.Ticks;
+        return GetPositionHistory().Select(h => new {
+            h.Lat, h.Lon, Sym = h.Sym.ToString(),
+            Age = (int)((nowTicks - h.Ticks) / TimeSpan.TicksPerSecond)
+        }).ToArray();
+    }
 
     public object ToDetail()
     {
@@ -2403,7 +2412,7 @@ class FlightState
             NavigationCode, PBNCode, SurveillanceCode,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),
             Events = events,
-            History = GetPositionHistory().Select(h => new { h.Lat, h.Lon, Sym = h.Sym.ToString() }).ToArray()
+            History = HistoryWithAge()
         };
     }
 }

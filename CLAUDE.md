@@ -319,11 +319,32 @@ Defined in `handoff-codes.json`. Default mappings (e.g., ZDC=W, ZNY=N, ZOB=C) wi
 - `.ac-db` div carries `fdb` or `ldb` CSS class for targeted styling
 
 ### Track Symbols
-- `◇` hollow diamond — current position (FDB tracks only)
-- `\` — correlated beacon history (squawk + flight plan)
-- `/` — uncorrelated beacon history (squawk, no flight plan)
-- `+` — uncorrelated primary history (no squawk)
-- `◇` — flight plan aided history (flight plan, no squawk)
+- `◇` hollow diamond — current position (FDB tracks only, not shown for coast tracks)
+- `\` — correlated beacon (squawk + flight plan)
+- `/` — uncorrelated beacon (squawk, no flight plan)
+- `+` — uncorrelated primary (no squawk)
+- `◇` — flight plan aided (flight plan, no squawk)
+- `#` — coast track (no position update for >2 scan cycles / 24s)
+- `•` — reduced separation (at or below FL230)
+
+### Coast Track Behavior
+When a flight misses at least one radar refresh (no position update for >24 seconds), it enters coast mode:
+- Position symbol changes to `#` (hash) — rendered as CSS geometry (2H + 2V lines)
+- Diamond overlay is hidden (no radar return = no diamond)
+- Velocity vector is hidden (stale velocity data)
+- Data block stays visible (FDB/LDB as normal)
+- History dots continue to decay normally (time-based)
+- Recovery: any new position update immediately exits coast mode
+
+### Time-Based History Decay
+History symbols age out based on wall-clock time, like real radar:
+- Each history point carries a timestamp (`performance.now()` when recorded)
+- Render cutoff: `MAX_HISTORY × SCAN_INTERVAL` (e.g., history count 5 × 12s = 60s window)
+- Points older than the cutoff are not drawn, regardless of count
+- Server snapshots include `Age` (seconds since position) so history reconstructs properly on refresh
+
+### DROPPED Flight Grace Period
+DROPPED flights remain visible for 1 minute after the last update, then disappear from the scope. This handles handoff transitions where the old center drops the track before the new center sends position. Server retains flight data for 60 minutes for API queries and event logs.
 
 ### Sidebar Controls
 - Facility/sector selector (sets scope ownership for handoff display)
@@ -345,7 +366,7 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 ### Rendering Architecture
 - Leaflet markers use `L.divIcon` with custom HTML for position symbol + data block
 - Canvas overlay (separate pane, z-index 440) draws history symbols + velocity vectors (vectors FDB only)
-- History symbols rendered via `ctx.fillText()` using ERAM font on canvas
+- History symbols rendered via `drawSymbolGeometry()` on canvas (CSS geometry, not font)
 - Font size adjustable at runtime; CHAR_W and LINE_H scale proportionally (0.625 and 1.25 of font size)
 - Leader lines are inline SVGs within the marker div
 - URL parameters persist sidebar state (facility, font size, history count, etc.)
@@ -547,13 +568,13 @@ journalctl -u swimreader-deploy.service --no-pager -n 30
 On shutdown (SIGTERM) and every 5 minutes, all flight data is serialized to `flight-cache/flights.json`. On startup, the cache is loaded before Solace connects, so flights survive restarts with no data loss. Cache older than 60 minutes is discarded (matches purge timer).
 
 ### Cloudflare Tunnel
-- **Tunnel ID**: `8cab2eab-8319-42c6-9540-1aa288323b86`
+- **Tunnel ID**: `07b88be3-c0eb-423b-97d4-57bde0bb21da`
 - **Config**: `~/.cloudflared/config.yml`
 - **Service**: `cloudflared.service`
 - **Route**: `swim.vncrcc.org` → `http://127.0.0.1:5001` (SfdpsERAM)
 
 **DNS (manual step in Cloudflare dashboard):**
-- CNAME `swim` → `8cab2eab-8319-42c6-9540-1aa288323b86.cfargotunnel.com` (proxied)
+- CNAME `swim` → `07b88be3-c0eb-423b-97d4-57bde0bb21da.cfargotunnel.com` (proxied)
 
 **Public URLs (once DNS is configured):**
 - ERAM scope: `https://swim.vncrcc.org/eram.html`

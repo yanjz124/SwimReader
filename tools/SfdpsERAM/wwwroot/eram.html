@@ -799,6 +799,15 @@ function drawSymbolGeometry(ctx, sym, cx, cy, color) {
         ctx.beginPath();
         ctx.arc(cx, cy, SYM_DOT_R, 0, 2 * Math.PI);
         ctx.fill();
+    } else if (sym === '#') {
+        // Coast track: # as 2 horizontal + 2 vertical lines
+        const sz = half * 0.707, g = sz * 0.3;
+        ctx.beginPath();
+        ctx.moveTo(cx - sz, cy - g); ctx.lineTo(cx + sz, cy - g);
+        ctx.moveTo(cx - sz, cy + g); ctx.lineTo(cx + sz, cy + g);
+        ctx.moveTo(cx - g, cy - sz); ctx.lineTo(cx - g, cy + sz);
+        ctx.moveTo(cx + g, cy - sz); ctx.lineTo(cx + g, cy + sz);
+        ctx.stroke();
     }
     // ◇ (diamond): history doesn't draw diamond overlay, only the current position marker does
 }
@@ -816,6 +825,8 @@ function drawOverlay() {
 
     // ── History symbols (dimmer target symbols — drawn as geometry, not font) ──
     if (showHistory) {
+        const histNow = performance.now();
+        const histCutoff = histNow - (MAX_HISTORY * SCAN_INTERVAL);
         for (const [gufi, hist] of flightHistory) {
             if (hist.length === 0) continue;
             const f = flights.get(gufi);
@@ -829,6 +840,7 @@ function drawOverlay() {
             if (histAlpha <= 0) continue;
 
             for (let i = 0; i < hist.length; i++) {
+                if (hist[i].time && hist[i].time < histCutoff) continue;
                 if (!bounds.contains([hist[i].lat, hist[i].lon])) continue;
                 const pt = map.latLngToLayerPoint([hist[i].lat, hist[i].lon]);
                 const x = pt.x - topLeft.x;
@@ -848,6 +860,7 @@ function drawOverlay() {
             if (f.trackVelocityX == null || f.trackVelocityY == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
+            if (isCoasting(f)) continue;  // no velocity vector for coast tracks
             if (!showFdb || !shouldShowFdb(gufi, classifyTrack(f))) continue;
             if (!bounds.contains([f.latitude, f.longitude])) continue;
 
@@ -1354,9 +1367,11 @@ function isEmergency(f) {
 
 function isVisible(f) {
     if (f.latitude == null || f.longitude == null) return false;
-    // Allow DROPPED flights if they're the best GUFI for their callsign (handoff transition:
-    // old center dropped the track but new center hasn't sent position yet)
+    // Allow DROPPED flights briefly — 1 minute grace for handoff transitions where
+    // old center drops the track but new center hasn't sent position yet
     if (f.flightStatus === 'CANCELLED') return false;
+    if (f.flightStatus === 'DROPPED' && f._clientLastUpdate
+        && performance.now() - f._clientLastUpdate > 60000) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
@@ -1528,7 +1543,13 @@ function isReducedSep(f) {
     return alt != null && alt <= 23000;
 }
 
+function isCoasting(f) {
+    return f._clientLastUpdate && performance.now() - f._clientLastUpdate > SCAN_INTERVAL * 2;
+}
+
 function getSymbolClass(f) {
+    // Coast: no position update for >2 scan cycles
+    if (isCoasting(f)) return 'ac-sym-coast';
     // Reduced separation: at or below FL230 → dot
     if (f.callsign && isReducedSep(f)) return 'ac-sym-reduced-sep';
     // SFDPS en route flights are virtually all transponder-equipped correlated targets.
@@ -1539,6 +1560,8 @@ function getSymbolClass(f) {
 
 // History symbol character per target type (drawn on canvas)
 function getSymbolChar(f) {
+    // Coast: no position update for >2 scan cycles
+    if (isCoasting(f)) return '#';
     // Reduced separation: at or below FL230 → dot
     if (f.callsign && isReducedSep(f)) return '\u2022';  // • dot
     if (f.callsign) return '\\';   // Correlated Beacon (most common)
@@ -1669,6 +1692,16 @@ function buildTargetSym(symChar, isEmrg, extraStyle) {
         // Reduced separation: 5px filled circle centered at (0,0)
         return hit + `<div style="position:absolute;width:5px;height:5px;left:-2.5px;top:-2.5px;border-radius:50%;background:${c};pointer-events:none;z-index:2;${st}"></div>`;
     }
+    if (symChar === '#') {
+        // Coast track: # as 2 horizontal + 2 vertical lines
+        const sz = 12, g = 3, w = 2;
+        return hit + `<div style="position:absolute;pointer-events:none;z-index:2;${st}">`
+            + `<div style="position:absolute;width:${sz}px;height:${w}px;left:${-sz/2}px;top:${-g/2 - w/2}px;background:${c}"></div>`
+            + `<div style="position:absolute;width:${sz}px;height:${w}px;left:${-sz/2}px;top:${g/2 - w/2}px;background:${c}"></div>`
+            + `<div style="position:absolute;width:${w}px;height:${sz}px;left:${-g/2 - w/2}px;top:${-sz/2}px;background:${c}"></div>`
+            + `<div style="position:absolute;width:${w}px;height:${sz}px;left:${g/2 - w/2}px;top:${-sz/2}px;background:${c}"></div>`
+            + `</div>`;
+    }
     // Diamond (◇): FDB draws via ac-sym-flat-track; LDB still needs a hit area
     return hit;
 }
@@ -1679,20 +1712,22 @@ function buildMarkerHtml(f, cls) {
 
     const symChar = getSymbolChar(f);
 
+    const coast = symChar === '#';
+
     if (!showFdb) {
-        // Data blocks off — just target symbol + diamond
+        // Data blocks off — just target symbol + diamond (no diamond for coast tracks)
         let html = buildTargetSym(symChar, isEmrg);
-        html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
+        if (!coast) html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
         return html;
     }
 
     const useFdb = shouldShowFdb(f.gufi, cls);
 
-    // FDB: diamond + symbol; LDB: just the symbol character (no diamond)
+    // FDB: diamond + symbol; LDB: just the symbol character (no diamond for coast tracks)
     let html;
     if (useFdb) {
         html = buildTargetSym(symChar, isEmrg);
-        html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
+        if (!coast) html += `<div class="ac-sym-flat-track${emrgCls}"></div>`;
     } else {
         const ldbOp = ldbBrightness / 100;
         html = buildTargetSym(symChar, isEmrg, `opacity:${ldbOp}`);
@@ -2046,7 +2081,7 @@ function handoffSuffix(receiving, transferring) {
 function addHistoryPoint(gufi, lat, lon, sym) {
     if (!flightHistory.has(gufi)) flightHistory.set(gufi, []);
     const hist = flightHistory.get(gufi);
-    hist.push({ lat, lon, sym: sym || '\\' });
+    hist.push({ lat, lon, sym: sym || '\\', time: performance.now() });
     if (hist.length > MAX_HISTORY) hist.shift();
 }
 
@@ -2092,10 +2127,15 @@ function connectWs() {
                     else if (f.clearanceText) sup.t = null;
                     if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
                 }
+                f._clientLastUpdate = performance.now();
                 flights.set(f.gufi, f);
                 trackFacility(f);
                 if (f.history && f.history.length > 0) {
-                    const hist = f.history.map(h => ({ lat: h.lat, lon: h.lon, sym: h.sym || '\\' }));
+                    const now = performance.now();
+                    const hist = f.history.map(h => ({
+                        lat: h.lat, lon: h.lon, sym: h.sym || '\\',
+                        time: now - ((h.age || 0) * 1000)
+                    }));
                     while (hist.length > MAX_HISTORY) hist.shift();
                     flightHistory.set(f.gufi, hist);
                 }
@@ -2113,6 +2153,7 @@ function connectWs() {
             // Only buffer position (lat/lon) for the 12-second scan cycle
             const existing = flights.get(f.gufi);
             if (existing) {
+                existing._clientLastUpdate = performance.now();
                 // Capture old state BEFORE overwriting
                 const oldHoEvt = hoEventType(existing.handoffEvent);
                 const oldHoRecv = existing.handoffReceiving;
@@ -2198,6 +2239,7 @@ function connectWs() {
                 }
             } else {
                 // New flight — add fully (including position)
+                f._clientLastUpdate = performance.now();
                 flights.set(f.gufi, f);
             }
 
@@ -2352,7 +2394,8 @@ function flightHash(f, cls) {
     const hsfH = hsf ? `${hsf.heading||''}${hsf.speed||''}${hsf.freeText||''}` : '';
     const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
     const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}`;
+    const coast = isCoasting(f) ? 1 : 0;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

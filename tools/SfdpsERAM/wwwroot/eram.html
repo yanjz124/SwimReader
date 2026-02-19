@@ -3127,22 +3127,21 @@ function toggleTrackSelect(gufi) {
         return;
     }
 
-    // Other tracks: cycle LDB → FDB → hidden
+    // Other tracks: toggle LDB ↔ FDB (use QX to explicitly drop/hide)
     if (manuallyHidden.has(gufi)) {
-        // Currently hidden → restore to default LDB
+        // Currently hidden (via QX) → restore to FDB
         manuallyHidden.delete(gufi);
-        fdbOverrides.delete(gufi);
-    } else if (fdbOverrides.has(gufi)) {
-        // Currently FDB → hide
-        fdbOverrides.delete(gufi);
-        wasOwnOrHo.delete(gufi);
-        manuallyHidden.add(gufi);
-        const m = markers.get(gufi);
-        if (m) { const el = m.getElement(); if (el) el.style.display = 'none'; }
-        return;
-    } else {
-        // Currently LDB (default) → promote to FDB
         fdbOverrides.set(gufi, true);
+    } else {
+        const currentlyFdb = shouldShowFdb(gufi, cls);
+        if (currentlyFdb) {
+            // FDB → LDB
+            fdbOverrides.delete(gufi);
+            wasOwnOrHo.delete(gufi);
+        } else {
+            // LDB → FDB
+            fdbOverrides.set(gufi, true);
+        }
     }
 
     // Immediately rebuild the marker so the change is instant (don't wait for render cycle)

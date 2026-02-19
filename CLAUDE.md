@@ -470,7 +470,7 @@ FLIDs can be callsign, CID, or squawk (beacon code). Per CRC spec: "Aircraft IDs
 **F-key shortcuts:** F1=QF, F2=QP, F4=QX, F5=QZ, F6=QU, F7=QL, F8=QQ, F9=QB; Shift+F2=QD, Shift+F7=WR, Shift+F8=QR. Each clears MCA and inserts the command prefix.
 
 ### Track Suppression
-Middle-clicking a non-owned track's target symbol cycles: LDB → FDB → hidden. `QX <FLID>` is a one-way drop (same as timeout). Hidden tracks are cleared on facility change or page refresh. Per CRC spec, middle-clicking a target or map location with an MCA command pending appends the FLID/location and immediately executes (equivalent to left-click + Enter). Left-clicking a target or map location with MCA content inserts a FLID/location placeholder without executing. Locations for LA/LB/LC can be entered by clicking a target (inserts FLID), clicking the map (inserts lat/lon), or typing a callsign/CID/fix/navaid/airport.
+Middle-clicking a non-owned track's target symbol toggles: LDB ↔ FDB. `QX <FLID>` is a one-way drop (same as timeout). Hidden tracks (via QX) are cleared on facility change or page refresh. Per CRC spec, middle-clicking a target or map location with an MCA command pending appends the FLID/location and immediately executes (equivalent to left-click + Enter). Left-clicking a target or map location with MCA content inserts a FLID/location placeholder without executing. Locations for LA/LB/LC can be entered by clicking a target (inserts FLID), clicking the map (inserts lat/lon), or typing a callsign/CID/fix/navaid/airport.
 
 ### HSF (Heading/Speed/Free text) — Line 4
 Line 4 shows controller-assigned heading, speed, and free text data. Two sources merged via `getEffectiveHsf()`:

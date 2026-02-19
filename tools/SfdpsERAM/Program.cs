@@ -506,6 +506,22 @@ app.MapGet("/api/nexrad/tile", async (int z, int x, int y) =>
     }
 });
 
+app.MapGet("/api/metar/{station}", async (string station) =>
+{
+    station = station.ToUpperInvariant();
+    if (station.Length == 3) station = "K" + station;
+    using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+    try
+    {
+        var resp = await http.GetAsync($"https://aviationweather.gov/api/data/metar?ids={Uri.EscapeDataString(station)}");
+        if (!resp.IsSuccessStatusCode) return Results.StatusCode((int)resp.StatusCode);
+        var text = (await resp.Content.ReadAsStringAsync()).Trim();
+        if (string.IsNullOrEmpty(text)) return Results.NotFound();
+        return Results.Text(text);
+    }
+    catch { return Results.StatusCode(502); }
+});
+
 app.MapGet("/api/kml", () =>
 {
     var files = Directory.GetFiles(repoRoot, "*.kml").Select(Path.GetFileName).ToArray();
@@ -1741,7 +1757,8 @@ List<CenterlinePoint> ParseIlsCenterlines(string path)
 
     int iVar = ColIdx(headers, "MAG_VARN");
     if (iVar < 0) iVar = ColIdx(headers, "MAG_VAR");
-    int iVarH = ColIdx(headers, "MAG_VARN_HEMIS");
+    int iVarH = ColIdx(headers, "MAG_VAR_HEMIS");
+    if (iVarH < 0) iVarH = ColIdx(headers, "MAG_VARN_HEMIS");
     if (iVarH < 0) iVarH = ColIdx(headers, "MAG_HEMIS");
 
     int iLen = ColIdx(headers, "RWY_LEN");
@@ -1762,14 +1779,13 @@ List<CenterlinePoint> ParseIlsCenterlines(string path)
         var maxIdx = Math.Max(iApt, Math.Max(iLat, Math.Max(iLon, iBrg)));
         if (f.Count <= maxIdx) continue;
 
-        // Filter: ILS, LOC, LDA, SDF types only
+        // All records in ILS_BASE.csv are ILS/LOC/LDA/SDF approaches
+        // System type codes: LS=ILS, LD=ILS/DME, LC=LOC, LE=LDA/DME, LG=LDA/GS, LA=LDA, SF=SDF, SD=SDF/DME, DD=DME
+        // Skip DD (DME-only, no localizer component)
         if (iType >= 0 && iType < f.Count)
         {
             var sysType = f[iType].Trim().ToUpperInvariant();
-            if (!sysType.Contains("ILS") && !sysType.Contains("LOC") &&
-                !sysType.Contains("LDA") && !sysType.Contains("SDF") &&
-                !sysType.StartsWith("LS") && !sysType.StartsWith("LO"))
-                continue;
+            if (sysType == "DD") continue;
         }
 
         if (!double.TryParse(f[iLat], out var locLat) || !double.TryParse(f[iLon], out var locLon)) continue;

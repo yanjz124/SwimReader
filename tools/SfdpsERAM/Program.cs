@@ -411,6 +411,19 @@ app.MapGet("/api/debug/namevalue-keys", () =>
 });
 
 // Debug: CPDLC capability summary across all tracked flights
+app.MapGet("/api/debug/posage", () =>
+{
+    var withPos = flights.Values.Where(f => f.Latitude.HasValue).ToList();
+    var nullPosTime = withPos.Count(f => f.LastPositionTime == default);
+    var buckets = withPos.Where(f => f.LastPositionTime != default)
+        .GroupBy(f => {
+            var age = (int)(DateTime.UtcNow - f.LastPositionTime).TotalSeconds;
+            return age switch { < 15 => "0-14s", < 30 => "15-29s", < 60 => "30-59s", < 300 => "1-5m", _ => ">5m" };
+        })
+        .ToDictionary(g => g.Key, g => g.Count());
+    return Results.Json(new { total = withPos.Count, nullLastPositionTime = nullPosTime, buckets });
+});
+
 app.MapGet("/api/debug/cpdlc", () =>
 {
     var cpdlcFlights = flights.Values

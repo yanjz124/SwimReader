@@ -1112,11 +1112,9 @@ void ProcessFlight(XElement flight, string rawXml)
             while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
 
             // Apply: set present values, clear absent ones.
-            // Use "" (not null) for cleared fields so JSON serializer includes them
-            // in updates — WhenWritingNull skips null, but "" propagates to clients.
-            state.ClearanceHeading = string.IsNullOrEmpty(clrHdg) ? (hadClearance ? "" : null) : clrHdg;
-            state.ClearanceSpeed = string.IsNullOrEmpty(clrSpd) ? (hadClearance ? "" : null) : clrSpd;
-            state.ClearanceText = string.IsNullOrEmpty(clrTxt) ? (hadClearance ? "" : null) : clrTxt;
+            state.ClearanceHeading = string.IsNullOrEmpty(clrHdg) ? null : clrHdg;
+            state.ClearanceSpeed = string.IsNullOrEmpty(clrSpd) ? null : clrSpd;
+            state.ClearanceText = string.IsNullOrEmpty(clrTxt) ? null : clrTxt;
         }
         else if (hadClearance)
         {

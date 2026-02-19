@@ -3217,9 +3217,12 @@ function toggleTrackSelect(gufi) {
     } else {
         const currentlyFdb = shouldShowFdb(gufi, cls);
         if (currentlyFdb) {
-            // FDB → LDB
+            // FDB → LDB: also clear dwell emphasis
             fdbOverrides.delete(gufi);
             wasOwnOrHo.delete(gufi);
+            dwellLocked.delete(gufi);
+            const mel = markers.get(gufi)?.getElement();
+            if (mel) removeDwell(mel, gufi);
         } else {
             // LDB → FDB
             fdbOverrides.set(gufi, true);
@@ -5188,6 +5191,12 @@ function processCommand(cmd) {
                 ]};
             }
             fdbOverrides.set(f.gufi, !currentlyFdb);
+            // FDB → LDB: clear dwell emphasis
+            if (currentlyFdb) {
+                dwellLocked.delete(f.gufi);
+                const mel = markers.get(f.gufi)?.getElement();
+                if (mel) removeDwell(mel, f.gufi);
+            }
             // Invalidate marker hash so it rebuilds immediately
             const m2 = markers.get(f.gufi);
             if (m2) { const el = m2.getElement(); if (el) el._lastHash = ''; }

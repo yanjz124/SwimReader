@@ -509,6 +509,7 @@ const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in the
 const quickLookDests = new Set();   // QL destinations — force FDB on flights to these airports (e.g. KCLT, KGSO)
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
 const wasOwnOrHo = new Set();  // tracks that were own/ho — keeps FDB sticky when they become other
+const manuallyHidden = new Set(); // GUFIs user explicitly hid via middle-click cycle or QX command
 const lastVisibleAt = new Map(); // gufi → performance.now() — grace period prevents flicker on facility field changes
 
 const knownFacilities = new Map();
@@ -832,6 +833,7 @@ function drawOverlay() {
             if (!f || f.latitude == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
+            if (manuallyHidden.has(gufi)) continue;
 
             const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
             const isFdb = shouldShowFdb(gufi, classifyTrack(f));
@@ -859,6 +861,7 @@ function drawOverlay() {
             if (f.trackVelocityX == null || f.trackVelocityY == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
+            if (manuallyHidden.has(gufi)) continue;
             if (isCoasting(f)) continue;  // no velocity vector for coast tracks
             if (!showFdb || !shouldShowFdb(gufi, classifyTrack(f))) continue;
             if (!bounds.contains([f.latitude, f.longitude])) continue;
@@ -888,6 +891,7 @@ function drawOverlay() {
             if (!f || f.latitude == null || f.longitude == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
+            if (manuallyHidden.has(gufi)) continue;
             if (!bounds.contains([f.latitude, f.longitude])) continue;
 
             const radiusNm = driType === 'T' ? 3 : 5;
@@ -1065,8 +1069,9 @@ function showBoundariesForFacility(artcc) {
         const key = `${artcc}:${cat}`;
         if (!boundaryLayers[key]) {
             const group = L.layerGroup();
+            const dash = cat === 'Approach Control' ? '12 4' : '24 4';
             for (const sec of kmlSectors.filter(s => s.artcc === artcc && s.category === cat)) {
-                L.polyline(sec.coords, { color: bndColor(br), weight: 1, opacity: 1, interactive: false, className: 'bnd-path' }).addTo(group);
+                L.polyline(sec.coords, { color: bndColor(br), weight: 1, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
             }
             boundaryLayers[key] = group;
         }
@@ -1085,8 +1090,9 @@ function setBoundaryBrightness(cat, brightness) {
     const col = bndColor(brightness);
     if (!boundaryLayers[key]) {
         const group = L.layerGroup();
+        const dash = cat === 'Approach Control' ? '12 4' : '24 4';
         for (const sec of kmlSectors.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat)) {
-            L.polyline(sec.coords, { color: col, weight: 1, opacity: 1, interactive: false, className: 'bnd-path' }).addTo(group);
+            L.polyline(sec.coords, { color: col, weight: 1, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
         }
         boundaryLayers[key] = group;
         boundaryLayers[key].addTo(map);
@@ -2282,6 +2288,7 @@ function connectWs() {
             flightHistory.delete(msg.data.gufi);
             fdbOverrides.delete(msg.data.gufi);
             wasOwnOrHo.delete(msg.data.gufi);
+            manuallyHidden.delete(msg.data.gufi);
             hoCompletedInfo.delete(msg.data.gufi);
             lastVisibleAt.delete(msg.data.gufi);
             driActive.delete(msg.data.gufi);
@@ -2478,6 +2485,8 @@ function doRender() {
         if (!isVisible(f)) continue;
         // Skip duplicate callsigns — only show the best GUFI per callsign
         if (isDedupHidden(gufi, f)) continue;
+        // Skip manually hidden flights (middle-click cycle or QX command)
+        if (manuallyHidden.has(gufi)) continue;
         lastVisibleAt.set(gufi, now);  // stamp for grace period
 
         const cls = classifyTrack(f);
@@ -2784,6 +2793,7 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     quickLookSectors.clear();
     quickLookDests.clear();
     wasOwnOrHo.clear();
+    manuallyHidden.clear();
     closePointoutMenu();
     invalidateAllMarkers();
     rebuildSectorCheckboxes();
@@ -2970,11 +2980,22 @@ function toggleTrackSelect(gufi) {
         return;
     }
 
-    // Other tracks: toggle between default LDB and FDB (quick look)
-    if (fdbOverrides.has(gufi)) {
-        fdbOverrides.delete(gufi);  // back to default LDB
+    // Other tracks: cycle LDB → FDB → hidden
+    if (manuallyHidden.has(gufi)) {
+        // Currently hidden → restore to default LDB
+        manuallyHidden.delete(gufi);
+        fdbOverrides.delete(gufi);
+    } else if (fdbOverrides.has(gufi)) {
+        // Currently FDB → hide
+        fdbOverrides.delete(gufi);
+        wasOwnOrHo.delete(gufi);
+        manuallyHidden.add(gufi);
+        const m = markers.get(gufi);
+        if (m) { const el = m.getElement(); if (el) el.style.display = 'none'; }
+        return;
     } else {
-        fdbOverrides.set(gufi, true);  // promote to FDB
+        // Currently LDB (default) → promote to FDB
+        fdbOverrides.set(gufi, true);
     }
 
     // Immediately rebuild the marker so the change is instant (don't wait for render cycle)
@@ -2982,6 +3003,7 @@ function toggleTrackSelect(gufi) {
     if (m) {
         const el = m.getElement();
         if (el) {
+            if (el.style.display === 'none') el.style.display = '';
             const newHash = flightHash(f, cls);
             el.innerHTML = buildMarkerHtml(f, cls);
             el._lastHash = newHash;
@@ -3080,6 +3102,100 @@ function gcDistNm(lat1, lon1, lat2, lon2) {
     const a = Math.sin(dLat / 2) ** 2 +
         Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.sin(dLon / 2) ** 2;
     return 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 3440.065;  // Earth radius in nm
+}
+
+// Initial true bearing (degrees 0-360) from point 1 to point 2
+function gcBearing(lat1, lon1, lat2, lon2) {
+    const toRad = Math.PI / 180;
+    const dLon = (lon2 - lon1) * toRad;
+    const y = Math.sin(dLon) * Math.cos(lat2 * toRad);
+    const x = Math.cos(lat1 * toRad) * Math.sin(lat2 * toRad) -
+              Math.sin(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.cos(dLon);
+    return (Math.atan2(y, x) / toRad + 360) % 360;
+}
+
+// Magnetic declination for CONUS (2025 epoch, bilinear interpolation)
+// Returns degrees (positive = east, negative = west)
+const _magVarGrid = {
+    lats: [25, 30, 35, 40, 45, 50],
+    lons: [-125, -115, -105, -95, -85, -75, -65],
+    // Rows = lat (25→50), cols = lon (-125→-65)
+    data: [
+        [11, 9, 5, 1, -4, -8, -13],
+        [12, 10, 6, 1, -5, -10, -15],
+        [13, 11, 7, 2, -5, -11, -16],
+        [14, 12, 8, 3, -6, -12, -17],
+        [15, 14, 9, 3, -7, -14, -18],
+        [17, 16, 11, 4, -8, -16, -20],
+    ]
+};
+function magDeclination(lat, lon) {
+    const g = _magVarGrid;
+    // Clamp to grid bounds
+    const clat = Math.max(g.lats[0], Math.min(g.lats[g.lats.length - 1], lat));
+    const clon = Math.max(g.lons[0], Math.min(g.lons[g.lons.length - 1], lon));
+    // Find grid cell
+    let li = 0, lj = 0;
+    for (let i = 0; i < g.lats.length - 1; i++) { if (clat >= g.lats[i]) li = i; }
+    for (let j = 0; j < g.lons.length - 1; j++) { if (clon >= g.lons[j]) lj = j; }
+    // Bilinear interpolation
+    const tLat = (clat - g.lats[li]) / (g.lats[li + 1] - g.lats[li]);
+    const tLon = (clon - g.lons[lj]) / (g.lons[lj + 1] - g.lons[lj]);
+    const v00 = g.data[li][lj], v10 = g.data[li + 1][lj];
+    const v01 = g.data[li][lj + 1], v11 = g.data[li + 1][lj + 1];
+    return v00 * (1 - tLat) * (1 - tLon) + v10 * tLat * (1 - tLon) +
+           v01 * (1 - tLat) * tLon + v11 * tLat * tLon;
+}
+
+// Resolve a location string to { lat, lon, gs, isTrack, name }
+// Accepts: FLID (callsign/CID), DDMMN/DDDMMW lat/lon, or fix/navaid/airport
+async function resolveLocation(loc) {
+    // Try as DDMMN/DDDMMW lat/lon first
+    const llMatch = loc.match(/^(\d{2,4})([NS])\/(\d{3,5})([EW])$/i);
+    if (llMatch) {
+        const rawLat = llMatch[1], latDir = llMatch[2].toUpperCase();
+        const rawLon = llMatch[3], lonDir = llMatch[4].toUpperCase();
+        let lat, lon;
+        if (rawLat.length <= 2) lat = parseInt(rawLat);
+        else { lat = parseInt(rawLat.substring(0, rawLat.length - 2)) + parseInt(rawLat.substring(rawLat.length - 2)) / 60; }
+        if (rawLon.length <= 3) lon = parseInt(rawLon);
+        else { lon = parseInt(rawLon.substring(0, rawLon.length - 2)) + parseInt(rawLon.substring(rawLon.length - 2)) / 60; }
+        if (latDir === 'S') lat = -lat;
+        if (lonDir === 'W') lon = -lon;
+        return { lat, lon, gs: null, isTrack: false, name: loc };
+    }
+    // Try as track (callsign/CID)
+    const f = findFlight(loc);
+    if (f && f.latitude != null && f.longitude != null) {
+        return { lat: f.latitude, lon: f.longitude, gs: f.groundSpeed, isTrack: true, name: f.callsign || loc };
+    }
+    // Try as fix/navaid/airport via NASR
+    try {
+        const resp = await fetch(`/api/nasr/find/${encodeURIComponent(loc)}`);
+        if (resp.ok) {
+            const data = await resp.json();
+            return { lat: data.lat, lon: data.lon, gs: null, isTrack: false, name: data.ident };
+        }
+    } catch {}
+    return null;
+}
+
+// Format bearing/distance/time for RA display
+function formatRangeResult(dist, bearing, useMag, fromLat, fromLon, speed, name1, name2) {
+    let brg = bearing;
+    let brgLabel = 'T';
+    if (useMag) {
+        brg = (bearing - magDeclination(fromLat, fromLon) + 360) % 360;
+        brgLabel = 'M';
+    }
+    let text = `${name1} - ${name2}\n`;
+    text += `${String(Math.round(brg)).padStart(3, '0')}${brgLabel}  ${dist.toFixed(1)} NM`;
+    if (speed != null && speed > 0) {
+        const hours = dist / speed;
+        const min = Math.round(hours * 60);
+        text += `  GS${Math.round(speed)}  ${min < 60 ? min + ' MIN' : Math.floor(hours) + ':' + String(min % 60).padStart(2, '0')}`;
+    }
+    return text;
 }
 
 // Find closest segment on route to aircraft position, return { index, frac }
@@ -3928,6 +4044,147 @@ function processCommand(cmd) {
         return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // WR R <station>        — weather request: display METAR in Response Area
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'WR') {
+        if (parts.length < 3 || parts[1].toUpperCase() !== 'R') {
+            return { feedback: [{ type: 'err', text: 'FORMAT: WR R <STATION>' }] };
+        }
+        const station = parts.slice(2).join('').toUpperCase();
+        if (!station) return { feedback: [{ type: 'err', text: 'WR R REQUIRES STATION ID' }] };
+        // Prepend K if 3-letter US ID (e.g. DCA → KDCA)
+        const icao = station.length === 3 ? 'K' + station : station;
+        return (async () => {
+            try {
+                const resp = await fetch(`https://aviationweather.gov/api/data/metar?ids=${encodeURIComponent(icao)}`);
+                if (!resp.ok) {
+                    return { feedback: [{ type: 'err', text: `WX REQ FAILED (${resp.status})` }] };
+                }
+                const text = (await resp.text()).trim();
+                if (!text) {
+                    return { feedback: [{ type: 'err', text: `NO METAR FOR ${icao}` }] };
+                }
+                const ra = document.getElementById('ra-content');
+                ra.textContent = text;
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: `METAR ${icao}` }
+                ]};
+            } catch {
+                return { feedback: [{ type: 'err', text: 'WX REQ FAILED' }] };
+            }
+        })();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LA <loc1> <loc2> [/<speed>|T/<speed>|T]  — range/bearing between two locations
+    // LB <fix> <loc> | LB <fix>/<speed> <track> — range/bearing from fix to location
+    // LC <fix>/<time> <track>                   — speed adjustment to reach fix at time
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'LA' || verb === 'LB' || verb === 'LC') {
+        const ra = document.getElementById('ra-content');
+        return (async () => {
+            try {
+                if (verb === 'LA') {
+                    // LA <loc1> <loc2> [/<speed> | T/<speed> | T]
+                    if (parts.length < 3) return { feedback: [{ type: 'err', text: 'LA REQUIRES 2 LOCATIONS' }] };
+                    const loc1Str = parts[1].toUpperCase();
+                    const loc2Str = parts[2].toUpperCase();
+                    // Optional 3rd param: /<speed>, T/<speed>, or T
+                    let overrideSpeed = null, useTrueBearing = false;
+                    if (parts.length >= 4) {
+                        const opt = parts[3].toUpperCase();
+                        if (opt === 'T') {
+                            useTrueBearing = true;
+                        } else if (opt.startsWith('T/')) {
+                            useTrueBearing = true;
+                            overrideSpeed = parseInt(opt.substring(2));
+                        } else if (opt.startsWith('/')) {
+                            overrideSpeed = parseInt(opt.substring(1));
+                        }
+                    }
+
+                    const loc1 = await resolveLocation(loc1Str);
+                    const loc2 = await resolveLocation(loc2Str);
+                    if (!loc1) return { feedback: [{ type: 'err', text: `${loc1Str} NOT FOUND` }] };
+                    if (!loc2) return { feedback: [{ type: 'err', text: `${loc2Str} NOT FOUND` }] };
+
+                    const dist = gcDistNm(loc1.lat, loc1.lon, loc2.lat, loc2.lon);
+                    const trueBrg = gcBearing(loc1.lat, loc1.lon, loc2.lat, loc2.lon);
+                    const speed = overrideSpeed || (loc1.isTrack ? loc1.gs : null);
+                    ra.textContent = formatRangeResult(dist, trueBrg, !useTrueBearing, loc1.lat, loc1.lon, speed, loc1.name, loc2.name);
+                    return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+                }
+
+                if (verb === 'LB') {
+                    // LB <fix>[/<speed>] <loc|track>
+                    if (parts.length < 3) return { feedback: [{ type: 'err', text: 'LB REQUIRES FIX AND LOCATION' }] };
+                    let fixStr = parts[1].toUpperCase();
+                    const loc2Str = parts[2].toUpperCase();
+                    let overrideSpeed = null;
+                    // Check for /<speed> appended to fix
+                    const slashIdx = fixStr.indexOf('/');
+                    if (slashIdx > 0) {
+                        overrideSpeed = parseInt(fixStr.substring(slashIdx + 1));
+                        fixStr = fixStr.substring(0, slashIdx);
+                    }
+
+                    const fix = await resolveLocation(fixStr);
+                    const loc2 = await resolveLocation(loc2Str);
+                    if (!fix) return { feedback: [{ type: 'err', text: `${fixStr} NOT FOUND` }] };
+                    if (!loc2) return { feedback: [{ type: 'err', text: `${loc2Str} NOT FOUND` }] };
+
+                    const dist = gcDistNm(fix.lat, fix.lon, loc2.lat, loc2.lon);
+                    const trueBrg = gcBearing(fix.lat, fix.lon, loc2.lat, loc2.lon);
+                    const speed = overrideSpeed || (loc2.isTrack ? loc2.gs : null);
+                    ra.textContent = formatRangeResult(dist, trueBrg, true, fix.lat, fix.lon, speed, fix.name, loc2.name);
+                    return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+                }
+
+                if (verb === 'LC') {
+                    // LC <fix>/<time> <track>
+                    if (parts.length < 3) return { feedback: [{ type: 'err', text: 'LC REQUIRES FIX/TIME AND TRACK' }] };
+                    let fixStr = parts[1].toUpperCase();
+                    const trackStr = parts[2].toUpperCase();
+                    const slashIdx = fixStr.indexOf('/');
+                    if (slashIdx <= 0) return { feedback: [{ type: 'err', text: 'FORMAT: LC <FIX>/<TIME> <TRACK>' }] };
+                    const timeStr = fixStr.substring(slashIdx + 1);
+                    fixStr = fixStr.substring(0, slashIdx);
+                    // Parse time as HHMM zulu
+                    if (!/^\d{4}$/.test(timeStr)) return { feedback: [{ type: 'err', text: `INVALID TIME ${timeStr}` }] };
+                    const tgtHours = parseInt(timeStr.substring(0, 2));
+                    const tgtMinutes = parseInt(timeStr.substring(2, 4));
+
+                    const fix = await resolveLocation(fixStr);
+                    const track = await resolveLocation(trackStr);
+                    if (!fix) return { feedback: [{ type: 'err', text: `${fixStr} NOT FOUND` }] };
+                    if (!track || !track.isTrack) return { feedback: [{ type: 'err', text: `${trackStr} NOT A TRACK` }] };
+
+                    const dist = gcDistNm(track.lat, track.lon, fix.lat, fix.lon);
+                    const trueBrg = gcBearing(track.lat, track.lon, fix.lat, fix.lon);
+                    // Time until target time
+                    const now = new Date();
+                    const nowMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+                    let tgtMin = tgtHours * 60 + tgtMinutes;
+                    if (tgtMin <= nowMin) tgtMin += 1440; // next day
+                    const minutesLeft = tgtMin - nowMin;
+                    if (minutesLeft <= 0) return { feedback: [{ type: 'err', text: 'TIME ALREADY PASSED' }] };
+                    const reqSpeed = Math.round(dist / (minutesLeft / 60));
+                    const magBrg = (trueBrg - magDeclination(track.lat, track.lon) + 360) % 360;
+                    let text = `${track.name} - ${fix.name}\n`;
+                    text += `${String(Math.round(magBrg)).padStart(3, '0')}M  ${dist.toFixed(1)} NM\n`;
+                    text += `REQ SPD ${reqSpeed} KT  AT ${timeStr}Z (${minutesLeft} MIN)`;
+                    if (track.gs != null) text += `\nCUR GS${Math.round(track.gs)}  ADJ ${reqSpeed - Math.round(track.gs) >= 0 ? '+' : ''}${reqSpeed - Math.round(track.gs)}`;
+                    ra.textContent = text;
+                    return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+                }
+            } catch {
+                return { feedback: [{ type: 'err', text: 'RANGE CALC FAILED' }] };
+            }
+        })();
+    }
+
     // QL [sector/dest ...] — Quick Look: force FDB on specific sectors or destinations; QL alone clears all
     // Sectors are numeric-only (e.g. 32, 05); destinations contain letters (e.g. KCLT, DCA)
     if (verb === 'QL') {
@@ -4497,6 +4754,25 @@ function processCommand(cmd) {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // QX <FLID>            — drop a track from display (instant timeout)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'QX') {
+        if (parts.length < 2) return { feedback: [{ type: 'err', text: 'QX REQUIRES FLID' }] };
+        const flid = parts.slice(1).join('').toUpperCase();
+        const f = findFlight(flid);
+        if (!f) return { feedback: [{ type: 'err', text: `${flid} NOT FOUND` }] };
+        manuallyHidden.add(f.gufi);
+        wasOwnOrHo.delete(f.gufi);
+        fdbOverrides.delete(f.gufi);
+        const m = markers.get(f.gufi);
+        if (m) { const el = m.getElement(); if (el) el.style.display = 'none'; }
+        return { feedback: [
+            { type: 'ok', text: 'ACCEPT' },
+            { type: 'info', text: `DROP ${f.callsign || '???'}` }
+        ]};
+    }
+
     // .FIND <ident> — highlight a fix/navaid/airport on the scope
     if ((verb === '.FIND' || verb === '.F') && parts.length >= 2) {
         const ident = parts.slice(1).join('').toUpperCase();
@@ -4590,6 +4866,17 @@ function processCommand(cmd) {
     if (parts.length === 1 && verb) {
         const f = findFlight(verb);
         if (f) {
+            // If manually hidden, restore it first
+            if (manuallyHidden.has(f.gufi)) {
+                manuallyHidden.delete(f.gufi);
+                fdbOverrides.set(f.gufi, true);
+                invalidateMarker(f.gufi);
+                lastRenderTime = 0;
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: `RESTORE ${f.callsign || '???'}` }
+                ]};
+            }
             const cls = classifyTrack(f);
             const currentlyFdb = shouldShowFdb(f.gufi, cls);
             // Controlled flights (own/ho) cannot be toggled to LDB

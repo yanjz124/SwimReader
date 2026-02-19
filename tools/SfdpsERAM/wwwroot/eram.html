@@ -5191,10 +5191,12 @@ function showFlightInRA(f) {
     let routeStr = route;
     if (star) routeStr += (routeStr ? '.' : '') + star;
     const destUp = dest.toUpperCase();
-    // Check if route already ends with destination (dot-separated or space-separated)
+    // Check if route already contains destination near the end
+    // Handles: ...KCHO, ...KCHO/2025, ..KCHO (with time/ETA suffixes)
     const routeUp = routeStr.toUpperCase();
-    const endsWithDest = routeUp.endsWith(destUp) || routeUp.endsWith('.' + destUp) || routeUp.endsWith(' ' + destUp);
-    if (routeStr && !endsWithDest) {
+    const lastToken = routeUp.split(/[.\s]/).filter(Boolean).pop() || '';
+    const containsDest = lastToken === destUp || lastToken.startsWith(destUp + '/');
+    if (routeStr && !containsDest) {
         routeStr += '.' + dest;
     } else if (!routeStr) {
         routeStr = dest;

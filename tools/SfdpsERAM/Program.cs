@@ -1316,8 +1316,23 @@ string BuildPtSummary(XElement flight)
 
 void SendSnapshot(WsClient client)
 {
-    // Send all current flights as a batch, with position history for initial display
-    var summaries = flights.Values.Select(f => f.ToSummary(includeHistory: true)).ToArray();
+    // Only send flights that would be visible on the scope — skip stale/position-less flights.
+    // This reduces the snapshot from ~88MB (all 44K flights) to a few MB (active flights only).
+    var now = DateTime.UtcNow;
+    var summaries = flights.Values
+        .Where(f =>
+        {
+            if (!f.Latitude.HasValue || !f.Longitude.HasValue) return false;
+            if (f.FlightStatus == "CANCELLED") return false;
+            var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
+            if (f.FlightStatus == "DROPPED" && posAge > 60) return false;
+            if (f.FlightStatus == "ACTIVE" && posAge > 600) return false;
+            if (f.FlightStatus is not null and not "ACTIVE" and not "DROPPED") return false;
+            return true;
+        })
+        .Select(f => f.ToSummary(includeHistory: true))
+        .ToArray();
+    Console.WriteLine($"[WS] Snapshot: {summaries.Length} visible flights (of {flights.Count} total)");
     var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("snapshot", summaries), jsonOpts);
     client.Enqueue(json);
 }
@@ -1342,7 +1357,8 @@ void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
     var summaries = new List<object>(gufis.Length);
     foreach (var gufi in gufis)
     {
-        if (flights.TryGetValue(gufi, out var f))
+        // Skip flights without position — client can't display them
+        if (flights.TryGetValue(gufi, out var f) && f.Latitude.HasValue)
             summaries.Add(f.ToSummary());
     }
     if (summaries.Count == 0) return;

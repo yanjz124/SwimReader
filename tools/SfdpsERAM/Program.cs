@@ -751,6 +751,11 @@ var nasrTimer = new Timer(async _ =>
 // Batch broadcast timers — flush dirty flights to all connected clients
 var batchTimer = new Timer(_ => FlushDirtyBatch(_dirty), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
+// Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
+// so timers silently stop firing. Registering a shutdown callback keeps them reachable.
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer };
+app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
+
 await solaceReady.Task;
 Console.WriteLine("[Web] Starting on http://localhost:5001");
 app.Run();

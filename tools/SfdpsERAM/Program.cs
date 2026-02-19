@@ -71,8 +71,9 @@ var altitudeLog = new ConcurrentQueue<string>();
 const int MaxAltitudeLogEntries = 5000;
 var jsonOpts = new JsonSerializerOptions
 {
-    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    // Note: WhenWritingNull removed — null values must be transmitted so clients can
+    // detect cleared fields (e.g., interimAltitude null after OH/FH clears it)
 };
 
 // ── ASP.NET Core setup ──────────────────────────────────────────────────────

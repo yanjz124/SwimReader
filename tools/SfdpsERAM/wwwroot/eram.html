@@ -2278,15 +2278,15 @@ function processFlightUpdate(f) {
 
         // SWIM data overrides local controller entries ONLY when genuinely new
         // (stale repeats of the same value don't clear local overrides)
-        if (f.assignedAltitude != null) {
+        if ('assignedAltitude' in f) {
             const la = localAssignedAlt.get(f.gufi);
             if (la && f.assignedAltitude !== la.serverVal) localAssignedAlt.delete(f.gufi);
         }
-        if (f.interimAltitude != null) {
+        if ('interimAltitude' in f) {
             const li = localInterimAlt.get(f.gufi);
             if (li && f.interimAltitude !== li.serverVal) localInterimAlt.delete(f.gufi);
         }
-        if (f.reportedAltitude != null) {
+        if ('reportedAltitude' in f) {
             const lr = localReportedAlt.get(f.gufi);
             if (lr && f.reportedAltitude !== lr.serverVal) localReportedAlt.delete(f.gufi);
         }

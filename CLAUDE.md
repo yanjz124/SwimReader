@@ -293,14 +293,14 @@ Line 0 only appears when the flight has an active point-out to/from the selected
 - No sector selected = no point-outs shown
 - Dwell box excludes Line 0; FDB→LDB toggle is blocked during active point-out (`<FLID>` → use `QP <FLID>`)
 - Client-side 3-minute timeout: point-outs auto-expire if user doesn't interact
-- **Pop-up menu** (click P or A on line 0): shows `P [sector]`, draggable by title bar
+- **Click P on line 0** → opens pop-up menu showing sector(s); **Click A on line 0** → removes A indicator from FDB
+- **Pop-up menu**: shows `P [sector]`, draggable by title bar
   - Closed by left/middle clicking title bar or X; also closed on map pan/zoom
   - **Originator menu**: receiving sector in yellow with yellow box (pending) → white unboxed (acked)
     - Click pending sector → simulate remote ack (P→A on line 0, menu stays open showing white)
     - Click acked sector → clear point-out, close menu
   - **Receiver menu**: initiating sector in cyan with cyan box (pending) → white unboxed (acked)
     - Click sector → acknowledge PO (MCA: "ACCEPT — ACKNOWLEDGE PO"), P removed from line 0, menu closes
-    - Receiver `A` on line 0 (if somehow present) → click removes indicator
 
 **Line 2 altitude display formats:**
 - `{afl}C` = conforming (reported within ±200ft of assigned)
@@ -438,8 +438,8 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `QS \`<text> <FLID>` | Set free text (backtick prefix) |
 | `QS * <FLID>` | Clear all HSF data; `*/` = heading only, `/*` = speed only |
 | `QS <FLID>` | Toggle HSF display on line 4 |
-| `QP A <FLID>` | Acknowledge point-out (receiver: removes P; originator: P→A) |
-| `QP <FLID>` | Clear point-out indicator entirely |
+| `QP A [sector] <FLID>` | Acknowledge point-out (receiver: removes P; originator: P→A) |
+| `QP <FLID>` | Clear point-out indicator + FDB→LDB |
 | `QX <FLID>` | Drop a track from display (instant timeout — one-way, no restore) |
 | `WR R <station>` | Display METAR for station in Response Area (e.g. `WR R DCA` or `WR R KDCA`) |
 | `LA <loc1> <loc2> [/<spd>\|T/<spd>\|T]` | Range/bearing between two locations; T = true bearing |
@@ -450,7 +450,7 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 FLIDs can be callsign or CID (CID only matches selected facility). When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
 
 ### Track Suppression
-Middle-clicking a non-owned track cycles: LDB → FDB → hidden. `QX <FLID>` is a one-way drop (same as timeout). Hidden tracks are cleared on facility change or page refresh. Locations for LA/LB/LC can be entered by left-clicking a target (inserts FLID), left-clicking the map (inserts lat/lon), or typing a callsign/CID/fix/navaid/airport.
+Middle-clicking a non-owned track's target symbol cycles: LDB → FDB → hidden. `QX <FLID>` is a one-way drop (same as timeout). Hidden tracks are cleared on facility change or page refresh. Per CRC spec, middle-clicking a target or map location with an MCA command pending appends the FLID/location and immediately executes (equivalent to left-click + Enter). Left-clicking a target or map location with MCA content inserts a FLID/location placeholder without executing. Locations for LA/LB/LC can be entered by clicking a target (inserts FLID), clicking the map (inserts lat/lon), or typing a callsign/CID/fix/navaid/airport.
 
 ### HSF (Heading/Speed/Free text) — Line 4
 Line 4 shows controller-assigned heading, speed, and free text data. Two sources merged via `getEffectiveHsf()`:

@@ -2557,21 +2557,21 @@ function doRender() {
                         }
                         return;
                     }
-                    // Point-out Line 0: P/A → open menu (or remove for receiver A)
+                    // Point-out Line 0: P → open menu; A → remove indicator (CRC spec)
                     if (e.target.closest('.ac-po-line0')) {
                         const pf = flights.get(gufi);
                         if (pf) {
                             const poInfo = getPointoutIndicator(pf);
                             if (poInfo) {
-                                if (poInfo.cls === 'accepted' && poInfo.role === 'receiver') {
-                                    // Receiver clicking A → remove indicator
+                                if (poInfo.cls === 'accepted') {
+                                    // Click A (originator) → remove indicator from FDB
                                     pointoutAcked.delete(pf.gufi);
                                     pf.pointoutOriginatingUnit = null;
                                     pf.pointoutReceivingUnit = null;
                                     closePointoutMenu();
                                     invalidateMarker(pf.gufi);
                                 } else {
-                                    // P (either role) or A (originator) → open menu
+                                    // Click P (either role) → open pop-up menu
                                     openPointoutMenu(pf, poInfo, e.clientX, e.clientY);
                                 }
                             }
@@ -2650,22 +2650,36 @@ function doRender() {
                     const onTarget = Math.abs(e.clientX - markerPos.x - mapEl.getBoundingClientRect().left) <= 8
                                   && Math.abs(e.clientY - markerPos.y - mapEl.getBoundingClientRect().top) <= 8;
                     if (onTarget) {
-                        toggleTrackSelect(gufi);
+                        // MCA has content → middle-click target = append FLID + execute (CRC spec)
+                        if (mca.text.trim().length > 0) {
+                            const tf = flights.get(gufi);
+                            const tflid = getFlid(tf);
+                            if (tflid) {
+                                if (mca.text[mca.text.length - 1] !== ' ') mca.text += ' ';
+                                mca.text += tflid;
+                                mca.cursor = mca.text.length;
+                                mcaExecute();
+                            }
+                        } else {
+                            toggleTrackSelect(gufi);
+                        }
                         return;
                     }
-                    // Point-out Line 0: P/A → open menu (or remove for receiver A)
+                    // Point-out Line 0: P → open menu; A → remove indicator (CRC spec)
                     if (e.target.closest('.ac-po-line0')) {
                         const pf = flights.get(gufi);
                         if (pf) {
                             const poInfo = getPointoutIndicator(pf);
                             if (poInfo) {
-                                if (poInfo.cls === 'accepted' && poInfo.role === 'receiver') {
+                                if (poInfo.cls === 'accepted') {
+                                    // Click A (originator) → remove indicator from FDB
                                     pointoutAcked.delete(pf.gufi);
                                     pf.pointoutOriginatingUnit = null;
                                     pf.pointoutReceivingUnit = null;
                                     closePointoutMenu();
                                     invalidateMarker(pf.gufi);
                                 } else {
+                                    // Click P (either role) → open pop-up menu
                                     openPointoutMenu(pf, poInfo, e.clientX, e.clientY);
                                 }
                             }
@@ -3607,6 +3621,29 @@ map.on('click', (e) => {
         const locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
         mcaInsertTarget(locStr);
     }
+});
+
+// Map middle-click: when MCA has content, insert location + execute immediately (CRC spec)
+mapEl.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    if (mca.text.trim().length === 0) return;
+    e.preventDefault();
+    const pt = map.containerPointToLatLng([e.clientX - mapEl.getBoundingClientRect().left,
+                                           e.clientY - mapEl.getBoundingClientRect().top]);
+    const lat = pt.lat, lon = pt.lng;
+    const latDir = lat >= 0 ? 'N' : 'S';
+    const lonDir = lon >= 0 ? 'E' : 'W';
+    const absLat = Math.abs(lat);
+    const absLon = Math.abs(lon);
+    const latDeg = Math.floor(absLat).toString().padStart(2, '0');
+    const latMin = Math.round((absLat % 1) * 60).toString().padStart(2, '0');
+    const lonDeg = Math.floor(absLon).toString().padStart(3, '0');
+    const lonMin = Math.round((absLon % 1) * 60).toString().padStart(2, '0');
+    const locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+    if (mca.text[mca.text.length - 1] !== ' ') mca.text += ' ';
+    mca.text += locStr;
+    mca.cursor = mca.text.length;
+    mcaExecute();
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -4701,17 +4738,18 @@ function processCommand(cmd) {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // QP A <FLID>          — acknowledge a pending point out (P→A)
-    // QP <FLID>            — toggle point-out FDB (clear A indicator)
+    // QP A [sector] <FLID> — acknowledge a pending point out (P→A)
+    // QP <FLID>            — clear point-out + FDB→LDB
     // ═══════════════════════════════════════════════════════════════════════
     if (verb === 'QP') {
         if (parts.length < 2) {
             return { feedback: [{ type: 'err', text: 'MESSAGE TOO SHORT' }] };
         }
 
-        // QP A <FLID> — acknowledge point out
+        // QP A [sector] <FLID> — acknowledge point out (sector is optional, ignored for single-sector POs)
         if (parts.length >= 3 && parts[1].toUpperCase() === 'A') {
-            const flidStr = parts.slice(2).join('').toUpperCase();
+            // FLID is always the last token; middle tokens are sector IDs (ignored)
+            const flidStr = parts[parts.length - 1].toUpperCase();
             const f = findFlight(flidStr);
             if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
             const poInfo = getPointoutIndicator(f);
@@ -4735,17 +4773,22 @@ function processCommand(cmd) {
             ]};
         }
 
-        // QP <FLID> — clear point-out indicator (toggle off)
+        // QP <FLID> — clear point-out and change FDB→LDB (CRC spec)
         {
             const flidStr = parts.slice(1).join('').toUpperCase();
             const f = findFlight(flidStr);
             if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
             // Clear point-out state from client side
             pointoutAcked.delete(f.gufi);
-            // Clear the server-side point-out fields locally so P disappears
             f.pointoutOriginatingUnit = null;
             f.pointoutReceivingUnit = null;
+            pointoutFirstSeen.delete(f.gufi);
             closePointoutMenu();
+            // FDB→LDB per CRC: "QP <FLID> must be used to change FDB to LDB"
+            const cls = classifyTrack(f);
+            if (cls !== 'own' && cls !== 'ho' && cls !== 'emrg') {
+                fdbOverrides.set(f.gufi, false);
+            }
             invalidateMarker(f.gufi);
             return { feedback: [
                 { type: 'ok', text: 'ACCEPT' },

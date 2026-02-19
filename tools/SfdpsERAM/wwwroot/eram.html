@@ -843,6 +843,7 @@ function drawOverlay() {
             if (!f || f.latitude == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
+            if (isCidRecycled(gufi, f)) continue;
             if (manuallyHidden.has(gufi)) continue;
 
             const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
@@ -871,6 +872,7 @@ function drawOverlay() {
             if (f.trackVelocityX == null || f.trackVelocityY == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
+            if (isCidRecycled(gufi, f)) continue;
             if (manuallyHidden.has(gufi)) continue;
             if (isCoasting(f)) continue;  // no velocity vector for coast tracks
             if (!showFdb || !shouldShowFdb(gufi, classifyTrack(f))) continue;
@@ -1661,6 +1663,35 @@ function isCoasting(f) {
     return false;
 }
 
+// Check if this flight's CID has been recycled to a different, fresher flight.
+// Built lazily on first call per render frame, then cached.
+const _cidOwnerCache = new Map();  // "facility/cid" → gufi of freshest owner
+let _cidCacheFrame = 0;
+function _buildCidCache() {
+    _cidOwnerCache.clear();
+    if (!myFacility) return;
+    for (const [gufi, f] of flights) {
+        const cid = f.computerIds?.[myFacility];
+        if (!cid) continue;
+        const prev = _cidOwnerCache.get(cid);
+        if (!prev) { _cidOwnerCache.set(cid, gufi); continue; }
+        const prevF = flights.get(prev);
+        if ((f.posAge ?? 0) < (prevF?.posAge ?? 0)) _cidOwnerCache.set(cid, gufi);
+    }
+}
+function isCidRecycled(gufi, f) {
+    if (!myFacility) return false;
+    const cid = f.computerIds?.[myFacility];
+    if (!cid) return false;
+    // Rebuild cache once per render frame
+    if (_cidCacheFrame !== renderFrameCount) {
+        _cidCacheFrame = renderFrameCount;
+        _buildCidCache();
+    }
+    const owner = _cidOwnerCache.get(cid);
+    return owner != null && owner !== gufi;
+}
+
 function getSymbolClass(f) {
     // Coast: no position update for >2 scan cycles
     if (isCoasting(f)) return 'ac-sym-coast';
@@ -2071,15 +2102,24 @@ function formatAltLine(f) {
         return rfl ? `${prefix}/${rfl}` : prefix;
     }
 
-    // Block altitude — local QZ override wins, then server blockFloor/blockCeiling
+    // Block altitude (per CRC spec):
+    //   Within block (±200ft): {floor}B{ceil} — conforming, hide Mode C
+    //   Outside block: {floor}B{reported} — ceiling replaced by actual position
     if (localA && localA.block) {
-        return rfl ? `${localA.block}${rfl}` : localA.block;
+        if (reported != null && localA.floorFeet != null && localA.ceilFeet != null
+            && reported >= localA.floorFeet - 200 && reported <= localA.ceilFeet + 200)
+            return localA.block;
+        // Outside block: show floor + B + reported
+        const localFloor = localA.block.split('B')[0];
+        return rfl ? `${localFloor}B${rfl}` : localA.block;
     }
     if (!localA && f.blockFloor != null && f.blockCeiling != null) {
         const floor = String(Math.round(f.blockFloor / 100)).padStart(3, '0');
         const ceil = String(Math.round(f.blockCeiling / 100)).padStart(3, '0');
-        const blockDisp = `${floor}B${ceil}`;
-        return rfl ? `${blockDisp}${rfl}` : blockDisp;
+        if (reported != null && reported >= f.blockFloor - 200 && reported <= f.blockCeiling + 200)
+            return `${floor}B${ceil}`;
+        // Outside block: show floor + B + reported
+        return rfl ? `${floor}B${rfl}` : `${floor}B${ceil}`;
     }
 
     // Interim/procedure/local altitude → T, P, or L indicator
@@ -2587,6 +2627,7 @@ function flightHash(f, cls) {
 // Render loop — guaranteed to never stop via requestAnimationFrame-first
 // ════════════════════════════════════════════════════════════════════════════
 let lastRenderTime = 0;
+let renderFrameCount = 0;
 
 // Force all markers to rebuild on next render (invalidate hashes)
 function invalidateAllMarkers() {
@@ -2617,6 +2658,7 @@ function doRender() {
         const pmf = flights.get(pointoutMenuGufi);
         if (!pmf || !getPointoutIndicator(pmf)) closePointoutMenu();
     }
+    renderFrameCount++;
     const now = performance.now();
     // Update QU route lines to follow aircraft positions
     if (activeRoutes.size > 0) updateActiveRoutes();
@@ -2656,6 +2698,8 @@ function doRender() {
         if (!isVisible(f)) continue;
         // Skip duplicate callsigns — only show the best GUFI per callsign
         if (isDedupHidden(gufi, f)) continue;
+        // Skip flights whose CID has been recycled to another active flight
+        if (isCidRecycled(gufi, f)) continue;
         // Skip manually hidden flights (middle-click cycle or QX command)
         if (manuallyHidden.has(gufi)) continue;
         lastVisibleAt.set(gufi, now);  // stamp for grace period
@@ -4004,7 +4048,7 @@ function findFlight(id) {
             const displayedCid = getCid(f);
             if (displayedCid && displayedCid.toUpperCase() === needle) {
                 const active = !f.flightStatus || f.flightStatus === 'ACTIVE';
-                const visible = active && isVisible(f) && !isDedupHidden(gufi, f);
+                const visible = active && isVisible(f) && !isDedupHidden(gufi, f) && !isCidRecycled(gufi, f);
                 const ownFac = f.controllingFacility === myFacility || f.reportingFacility === myFacility;
                 if (visible && ownFac && !ownFacMatch) ownFacMatch = f;
                 else if (visible && !visibleMatch) visibleMatch = f;

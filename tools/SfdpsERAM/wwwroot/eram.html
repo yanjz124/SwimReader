@@ -2078,7 +2078,13 @@ function formatLine3(f, cls) {
     // 4. Coast track → CST in Field E (per CRC spec)
     if (isCoasting(f)) return `${cid} CST`;
 
-    // 5. Normal: destination letter + groundspeed
+    // 5. Beacon code mismatch (per CRC spec: #### if received differs from assigned, NONE if no received)
+    if (f.assignedSquawk) {
+        if (!f.squawk) return `${cid} NONE`;
+        if (f.squawk !== f.assignedSquawk) return `${cid} ${f.squawk}`;
+    }
+
+    // 6. Normal: destination letter + groundspeed
     return gsStr;
 }
 
@@ -2412,7 +2418,7 @@ function flightHash(f, cls) {
     const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
     const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
     const coast = isCoasting(f) ? 1 : 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}`;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3050,7 +3056,8 @@ function showFlightDetail(gufi) {
         ['Track', cls === 'own' ? 'OWN' : cls === 'ho' ? 'HANDOFF' : cls === 'emrg' ? 'EMERGENCY' : 'OTHER'],
         ['Facility', `${f.controllingFacility || f.reportingFacility || ''}`],
         ['Sector', f.controllingSector || ''],
-        ['Squawk', f.squawk],
+        ['Squawk', f.assignedSquawk && f.squawk !== f.assignedSquawk
+            ? `${f.squawk || 'NONE'} (asgn ${f.assignedSquawk})` : f.squawk],
         ['Assigned', f.blockFloor != null && f.blockCeiling != null
             ? `FL${Math.round(f.blockFloor / 100)}B${Math.round(f.blockCeiling / 100)}`
             : f.assignedVfr

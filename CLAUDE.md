@@ -166,6 +166,8 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 | `PT` | ~3/500 | **Point-out** | `<pointout>` with `originatingUnit` + `receivingUnit` (inter-facility) |
 | `HT` | ~4/500 | **Handoff transfer with point-out** | `<pointout>` element (intra-facility point-outs) |
 | `NP` | rare | New flight plan | New flight entry |
+| `BA` | ~1/500 | Beacon code assignment | `<beaconCodeAssignment>` with assigned beacon code |
+| `RE` | ~1/500 | Beacon code reassignment | `<beaconCodeAssignment>` with assigned + previous beacon code |
 
 **Discovered but not yet implemented:**
 | Source | Frequency | Description | Key Data |
@@ -174,8 +176,6 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 | `RH` | ~3/500 | Radar handoff (drop) | Flight status = DROPPED |
 | `HV` | ~3/500 | Handoff void/complete | Flight status = COMPLETED, actual arrival time |
 | `DH` | ~3/500 | Departure handoff | `<coordination>` element with coordinationTime, coordinationTimeHandling |
-| `BA` | ~1/500 | Beacon code assignment | `<beaconCodeAssignment>` with `currentBeaconCode` |
-| `RE` | ~1/500 | Beacon code reassignment | `<beaconCodeAssignment>` with `currentBeaconCode` + `previousBeaconCode` |
 
 **Handoff event attribute values (on `<handoff>` element):**
 - `INITIATION` — handoff proposed
@@ -207,6 +207,20 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 - Free text: frequencies (128.35), MEDEVAC, NORDO, route mods (D/SYRAH, STYONRTE, RNV1/54, DR/DPR)
 - SFDPS clears clearance data by sending a `<cleared>` element with empty/absent attributes. `ProcessFlight()` treats the presence of `<cleared>` as authoritative — any attribute not present is cleared to null
 - ~2-3% of flights carry clearance data at any time
+
+**Beacon code assignment (BA/RE messages) XML structure:**
+```xml
+<enRoute>
+    <beaconCodeAssignment>
+        <currentBeaconCode>4523</currentBeaconCode>
+        <!-- RE messages also include: -->
+        <previousBeaconCode>1200</previousBeaconCode>
+    </beaconCodeAssignment>
+</enRoute>
+```
+- BA/RE messages set `assignedSquawk` (controller-assigned code) and `squawk` (current code)
+- Other messages that carry `<currentBeaconCode>` outside `<beaconCodeAssignment>` only update `squawk` (received/current)
+- Field E shows `####` (received code) when squawk differs from assignedSquawk, `NONE` when no squawk received
 
 ### Primary Targets / Uncorrelated Tracks
 SFDPS does **not** contain true primary-only radar returns. Every SFDPS message requires a GUFI and carries an `aircraftIdentification` (callsign). Uncorrelated radar blips that ERAM cannot associate with a flight record are never published to SFDPS — the correlation happens inside ERAM's sensor processing before SFDPS sees the data.
@@ -243,7 +257,7 @@ Core fields tracked per flight (by GUFI):
 - Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`
 - Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
 - Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit` (expire after 3 min via `PointoutTimestamp`)
-- Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `equipmentQualifier`
+- Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `assignedSquawk`, `equipmentQualifier`
 - Clearance (HSF): `clearanceHeading`, `clearanceSpeed`, `clearanceText`, `fourthAdaptedField`
 - TMI: `tmiIds` (traffic management initiative IDs — ground stops, slot times, etc.)
 - Datalink: `dataLinkCode`, `otherDataLink`, `communicationCode`
@@ -338,6 +352,8 @@ HZ heartbeat messages carry the current Mode C reading in the `assignedAltitude`
 - `Kxxx` = handoff forced via /OK to sector xxx (from SFDPS AH message)
 - Completed handoff: rotates O/K indicator with groundspeed for 60s
 - `CST` = coast track (no position update for >24s)
+- `####` = received beacon code differs from assigned (shows actual received code)
+- `NONE` = no beacon code received but track has an assigned code
 - Normal: `{dest_letter}{groundspeed}` (e.g., `W420` where W=DCA destination code)
 
 ### Handoff Facility Codes

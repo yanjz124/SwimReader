@@ -2378,7 +2378,8 @@ class FlightState
             CommunicationCode = s.CommunicationCode, DataLinkCode = s.DataLinkCode,
             OtherDataLink = s.OtherDataLink, SELCAL = s.SELCAL,
             NavigationCode = s.NavigationCode, PBNCode = s.PBNCode, SurveillanceCode = s.SurveillanceCode,
-            LastSeen = s.LastSeen, LastMsgSource = s.LastMsgSource
+            LastSeen = s.LastSeen, LastMsgSource = s.LastMsgSource,
+            LastPositionTime = s.Latitude.HasValue ? s.LastSeen : default
         };
         if (s.ComputerIds is not null)
             foreach (var kv in s.ComputerIds) f.ComputerIds[kv.Key] = kv.Value;

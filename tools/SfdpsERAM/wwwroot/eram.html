@@ -1371,7 +1371,7 @@ function isVisible(f) {
     // old center drops the track but new center hasn't sent position yet.
     // Uses server-side posAge (seconds since last position) — immune to snapshot resets.
     if (f.flightStatus === 'CANCELLED') return false;
-    if (f.flightStatus === 'DROPPED' && f.posAge != null && f.posAge > 60) return false;
+    if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
@@ -1545,7 +1545,8 @@ function isReducedSep(f) {
 
 function isCoasting(f) {
     // Use server-side posAge (seconds since last position update) — immune to WebSocket message drops
-    if (f.posAge != null) return f.posAge > (SCAN_INTERVAL / 1000) * 2;
+    // Threshold: 3 scan cycles (36s) accounts for SFDPS ~12s + 12s batch delay + jitter
+    if (f.posAge != null) return f.posAge > (SCAN_INTERVAL / 1000) * 3;
     return false;
 }
 

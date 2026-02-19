@@ -1069,7 +1069,7 @@ function showBoundariesForFacility(artcc) {
         const key = `${artcc}:${cat}`;
         if (!boundaryLayers[key]) {
             const group = L.layerGroup();
-            const dash = cat === 'Approach Control' ? '12 4' : '24 4';
+            const dash = cat === 'Approach Control' ? '8 4' : '16 8';
             for (const sec of kmlSectors.filter(s => s.artcc === artcc && s.category === cat)) {
                 L.polyline(sec.coords, { color: bndColor(br), weight: 1, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
             }
@@ -1090,7 +1090,7 @@ function setBoundaryBrightness(cat, brightness) {
     const col = bndColor(brightness);
     if (!boundaryLayers[key]) {
         const group = L.layerGroup();
-        const dash = cat === 'Approach Control' ? '12 4' : '24 4';
+        const dash = cat === 'Approach Control' ? '8 4' : '16 8';
         for (const sec of kmlSectors.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat)) {
             L.polyline(sec.coords, { color: col, weight: 1, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
         }

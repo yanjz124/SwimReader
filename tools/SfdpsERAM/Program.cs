@@ -1375,7 +1375,7 @@ void SendSnapshot(WsClient client)
             if (f.FlightStatus == "CANCELLED") return false;
             var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
             if (f.FlightStatus == "DROPPED" && posAge > 60) return false;
-            if (f.FlightStatus == "ACTIVE" && posAge > 600) return false;
+            if (f.FlightStatus == "ACTIVE" && posAge > 60) return false;
             if (f.FlightStatus is not null and not "ACTIVE" and not "DROPPED") return false;
             return true;
         })

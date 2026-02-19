@@ -1482,8 +1482,8 @@ function isVisible(f) {
     if (f.flightStatus === 'CANCELLED') return false;
     if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
-    // Hide stale ACTIVE flights — no position update for >10 minutes means SFDPS lost the track
-    if (f.flightStatus === 'ACTIVE' && f.posAge != null && f.posAge > 600) return false;
+    // Hide stale ACTIVE flights — no position update for >60s means track is lost
+    if (f.flightStatus === 'ACTIVE' && f.posAge != null && f.posAge > 60) return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
     // Exempt: FDB tracks, and any track the user explicitly toggled (fdbOverrides entry)

@@ -480,15 +480,14 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 // State
 // ════════════════════════════════════════════════════════════════════════════
 const flights = new Map();          // current displayed state — datablock fields updated instantly
-const pendingPositions = new Map(); // buffered lat/lon awaiting next scan cycle
+// Position updates applied immediately — history dots use time-based decay for scan simulation
 const flightHistory = new Map();
 let MAX_HISTORY = 5;
 const TRACK_COLOR = '#cccc44';
 const EMRG_COLOR = '#ff4444';
 const MAP_COLOR = '#555555';
 const RENDER_INTERVAL = 2000;  // render repaint interval (ms)
-const SCAN_INTERVAL = 12000;   // fixed 12s radar scan cycle
-let lastScanTime = performance.now();
+const SCAN_INTERVAL = 12000;   // SFDPS update cadence (used for history decay cutoff)
 
 let myFacility = '';
 let mySectors = new Set();
@@ -1373,6 +1372,8 @@ function isVisible(f) {
     if (f.flightStatus === 'CANCELLED') return false;
     if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
+    // Hide stale ACTIVE flights — no position update for >10 minutes means SFDPS lost the track
+    if (f.flightStatus === 'ACTIVE' && f.posAge != null && f.posAge > 600) return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
     // FDB tracks are exempt — own, handoff, emergency, user-forced, and quick look tracks always show
@@ -1545,8 +1546,8 @@ function isReducedSep(f) {
 
 function isCoasting(f) {
     // Use server-side posAge (seconds since last position update) — immune to WebSocket message drops
-    // Coast only if: ACTIVE, posAge 26-300s (2 missed SFDPS cycles + 1s batch + jitter; >5min = stale cache)
-    if (f.posAge != null && f.flightStatus === 'ACTIVE' && f.posAge > 26 && f.posAge < 300) return true;
+    // Coast if: ACTIVE flight with no position update for >26s (2 SFDPS cycles + 1s batch + jitter)
+    if (f.posAge != null && f.flightStatus === 'ACTIVE' && f.posAge > 26) return true;
     return false;
 }
 
@@ -2115,11 +2116,10 @@ function processFlightUpdate(f) {
         const oldCuSec = existing.controllingSector;
         const hadClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
 
-        // Buffer position for 12s scan cycle; record history from the position we're replacing
+        // Record history from old position, then apply new position immediately
         if (f.latitude != null && f.longitude != null) {
-            const prev = pendingPositions.get(f.gufi);
-            const oldLat = prev ? prev.lat : existing.latitude;
-            const oldLon = prev ? prev.lon : existing.longitude;
+            const oldLat = existing.latitude;
+            const oldLon = existing.longitude;
             if (oldLat != null && oldLon != null) {
                 const dlat = Math.abs(oldLat - f.latitude);
                 const dlon = Math.abs(oldLon - f.longitude);
@@ -2127,7 +2127,6 @@ function processFlightUpdate(f) {
                     addHistoryPoint(f.gufi, oldLat, oldLon, getSymbolChar(existing));
                 }
             }
-            pendingPositions.set(f.gufi, { lat: f.latitude, lon: f.longitude });
         }
         // Suppress server clearance fields that were manually cleared via QS *
         const sup = hsfClrSuppressed.get(f.gufi);
@@ -2147,9 +2146,8 @@ function processFlightUpdate(f) {
             if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
         }
 
-        // Apply all non-position fields instantly; lat/lon buffered for scan cycle
+        // Apply all fields including position
         for (const key in f) {
-            if (key === 'latitude' || key === 'longitude') continue;
             existing[key] = f[key];
         }
 
@@ -2242,7 +2240,6 @@ function connectWs() {
             for (const [, m] of markers) map.removeLayer(m);
             markers.clear();
             flights.clear();
-            pendingPositions.clear();
             flightHistory.clear();
             for (const f of msg.data) {
                 // Apply clearance suppression from QS * clears (survives reconnect within session)
@@ -2273,7 +2270,6 @@ function connectWs() {
                     hsfShowMap.add(f.gufi);
                 }
             }
-            lastScanTime = performance.now(); // reset scan clock
         } else if (msg.type === 'update') {
             processFlightUpdate(msg.data);
         } else if (msg.type === 'batch') {
@@ -2282,7 +2278,6 @@ function connectWs() {
                 processFlightUpdate(f);
             }
         } else if (msg.type === 'remove') {
-            pendingPositions.delete(msg.data.gufi);
             flights.delete(msg.data.gufi);
             flightHistory.delete(msg.data.gufi);
             fdbOverrides.delete(msg.data.gufi);
@@ -2438,30 +2433,13 @@ function render() {
     }
 }
 
-function applyScanCycle() {
-    // Apply buffered positions (lat/lon only) — history was already recorded at WS message time
-    for (const [gufi, pos] of pendingPositions) {
-        const f = flights.get(gufi);
-        if (!f) continue;
-        f.latitude = pos.lat;
-        f.longitude = pos.lon;
-    }
-    pendingPositions.clear();
-}
-
 function doRender() {
     // Auto-close point-out menu if the flight no longer has an indicator
     if (pointoutMenuGufi) {
         const pmf = flights.get(pointoutMenuGufi);
         if (!pmf || !getPointoutIndicator(pmf)) closePointoutMenu();
     }
-    // Apply scan cycle if enough time has elapsed (same 12s cadence as setInterval,
-    // but checked here too so positions apply even if setInterval timing drifts)
     const now = performance.now();
-    if (pendingPositions.size > 0 && now - lastScanTime >= SCAN_INTERVAL) {
-        applyScanCycle();
-        lastScanTime = now;
-    }
     // Update QU route lines to follow aircraft positions
     if (activeRoutes.size > 0) updateActiveRoutes();
 
@@ -2756,12 +2734,6 @@ function doRender() {
 }
 
 requestAnimationFrame(render);
-
-// ── Scan cycle — runs on setInterval so it fires even when tab is backgrounded ──
-setInterval(() => {
-    applyScanCycle();
-    lastScanTime = performance.now();
-}, SCAN_INTERVAL);
 
 // ── Handoff flash timer (500ms) ─────────────────────────────────────────────
 // Updates DATA BLOCK TEXT for tracks in active handoff OR completed handoff (O display).

@@ -974,12 +974,9 @@ void ProcessFlight(XElement flight, string rawXml)
             Console.WriteLine($"[INTERIM] {source} {state.Callsign}/{state.Gufi?[..8]} {prevIA?.ToString() ?? "null"} → {state.InterimAltitude?.ToString() ?? "CLEARED"}");
         }
     }
-    // Clear interim when absent in LH (the dedicated interim altitude message type)
-    // or OH with ACCEPTANCE (handoff complete = interim no longer relevant).
-    // OH/FH without handoff acceptance omit the element because interim isn't their concern.
-    else if (source is "LH" || (source is "OH" && string.Equals(
-        flight.Descendants().FirstOrDefault(e => e.Name.LocalName == "handoff")?.Attribute("event")?.Value,
-        "ACCEPTANCE", StringComparison.OrdinalIgnoreCase)))
+    // Clear interim only when absent in LH (the dedicated interim altitude message type).
+    // Interim survives handoffs — OH/FH omit the element because interim isn't their concern.
+    else if (source is "LH")
     {
         state.InterimAltitude = null;
         if (prevIA.HasValue)

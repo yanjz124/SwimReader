@@ -1369,8 +1369,8 @@ function classifyNwsPixel(r, g, b, a) {
     if (max < 30) return 0;
     const delta = max - min;
     if (delta < 15) return 0;                            // filter greys/unsaturated
-    // Blue/cyan or green dominant: moderate — up to ~35 dBZ
-    if ((b > r && b >= g) || (g > r * 1.5 && g >= b)) return 1;
+    // Blue/cyan dominant or bright greens: moderate
+    if ((b > r && b >= g) || (g > r * 2.5 && g >= b)) return 1;
     // Red strongly dominant over green: extreme — 50+ dBZ
     if (r > g * 2.5) return 3;
     // Everything else (yellows, oranges, orange-reds): heavy

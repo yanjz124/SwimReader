@@ -1034,9 +1034,23 @@ void ProcessFlight(XElement flight, string rawXml)
             }
         }
 
-        // Beacon code
-        var bc = enRoute.Descendants().FirstOrDefault(e => e.Name.LocalName == "currentBeaconCode");
-        if (bc is not null) state.Squawk = bc.Value;
+        // Beacon code — BA/RE messages carry <beaconCodeAssignment> (assigned code);
+        // other messages carry <currentBeaconCode> directly (received/current code)
+        var bca = enRoute.Elements().FirstOrDefault(e => e.Name.LocalName == "beaconCodeAssignment");
+        if (bca is not null)
+        {
+            var bcAssigned = bca.Elements().FirstOrDefault(e => e.Name.LocalName == "currentBeaconCode");
+            if (bcAssigned is not null)
+            {
+                state.AssignedSquawk = bcAssigned.Value;
+                state.Squawk = bcAssigned.Value; // Assignment also sets current
+            }
+        }
+        else
+        {
+            var bc = enRoute.Descendants().FirstOrDefault(e => e.Name.LocalName == "currentBeaconCode");
+            if (bc is not null) state.Squawk = bc.Value;
+        }
 
         // Point-out (PT, HT)
         var po = enRoute.Elements().FirstOrDefault(e => e.Name.LocalName == "pointout");
@@ -2228,7 +2242,8 @@ class FlightState
     public string? WakeCategory { get; set; }
     public string? ModeSCode { get; set; }
     public string? EquipmentQualifier { get; set; }
-    public string? Squawk { get; set; }
+    public string? Squawk { get; set; }            // Current/received beacon code
+    public string? AssignedSquawk { get; set; }     // Controller-assigned beacon code (from BA/RE messages)
     public string? FlightRules { get; set; }
     public string? Route { get; set; }
     public string? STAR { get; set; }
@@ -2343,7 +2358,7 @@ class FlightState
         Origin = Origin, Destination = Destination, AircraftType = AircraftType,
         Registration = Registration, WakeCategory = WakeCategory,
         ModeSCode = ModeSCode, EquipmentQualifier = EquipmentQualifier,
-        Squawk = Squawk, FlightRules = FlightRules,
+        Squawk = Squawk, AssignedSquawk = AssignedSquawk, FlightRules = FlightRules,
         Route = Route, STAR = STAR, Remarks = Remarks,
         AssignedAltitude = AssignedAltitude, AssignedVfr = AssignedVfr,
         BlockFloor = BlockFloor, BlockCeiling = BlockCeiling,
@@ -2380,7 +2395,7 @@ class FlightState
             Origin = s.Origin, Destination = s.Destination, AircraftType = s.AircraftType,
             Registration = s.Registration, WakeCategory = s.WakeCategory,
             ModeSCode = s.ModeSCode, EquipmentQualifier = s.EquipmentQualifier,
-            Squawk = s.Squawk, FlightRules = s.FlightRules,
+            Squawk = s.Squawk, AssignedSquawk = s.AssignedSquawk, FlightRules = s.FlightRules,
             Route = s.Route, STAR = s.STAR, Remarks = s.Remarks,
             AssignedAltitude = s.AssignedAltitude, AssignedVfr = s.AssignedVfr,
             BlockFloor = s.BlockFloor, BlockCeiling = s.BlockCeiling,
@@ -2422,7 +2437,7 @@ class FlightState
         Origin, Destination, AircraftType, WakeCategory,
         AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
         InterimAltitude, ReportedAltitude,
-        Latitude, Longitude, GroundSpeed, Squawk,
+        Latitude, Longitude, GroundSpeed, Squawk, AssignedSquawk,
         TrackVelocityX, TrackVelocityY,
         ControllingFacility, ControllingSector,
         ReportingFacility,
@@ -2459,7 +2474,7 @@ class FlightState
             ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
             Operator, FlightStatus,
             Origin, Destination, AircraftType, Registration, WakeCategory,
-            ModeSCode, EquipmentQualifier, Squawk, FlightRules,
+            ModeSCode, EquipmentQualifier, Squawk, AssignedSquawk, FlightRules,
             Route, STAR, Remarks,
             AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
             InterimAltitude, ReportedAltitude,
@@ -2503,6 +2518,7 @@ class FlightSnapshot
     public string? ModeSCode { get; set; }
     public string? EquipmentQualifier { get; set; }
     public string? Squawk { get; set; }
+    public string? AssignedSquawk { get; set; }
     public string? FlightRules { get; set; }
     public string? Route { get; set; }
     public string? STAR { get; set; }

@@ -4672,7 +4672,13 @@ function processCommand(cmd) {
             const li = localInterimAlt.get(f.gufi);
             const hasSwimInterim = f.interimAltitude != null;
             if (li || hasSwimInterim) {
-                localInterimAlt.delete(f.gufi);
+                // Set null sentinel to suppress stale server interim (local wins = null = no interim)
+                // Auto-clear will remove this when server sends genuinely new data
+                if (hasSwimInterim) {
+                    localInterimAlt.set(f.gufi, { feet: null, type: null, serverVal: f.interimAltitude });
+                } else {
+                    localInterimAlt.delete(f.gufi);
+                }
                 invalidateMarker(f.gufi);
                 qqClearFb.push({ type: 'info', text: `${f.callsign || '???'}/CLR` });
                 qqClearAnyOk = true;

@@ -378,7 +378,7 @@ DROPPED flights remain visible for 1 minute after the last update, then disappea
 - Data block toggle (full/partial/off)
 - History count (0-10 symbols)
 - Velocity vector length (0-10 min)
-- Boundary layers: UHI, HI, LO, APP with per-category brightness sliders
+- Boundary layers: UHI, HI, LO, APP with per-category brightness sliders (UHI/HI/LO = long dashes `24 4`, APP = shorter dashes `12 4`)
 - NASR overlays: HI Awy, LO Awy, VORs (checkboxes)
 - NEXRAD weather radar: NX LVL selector (OFF/3/23/123) + brightness slider (0-100%)
 - Font size (8-14px)
@@ -436,9 +436,17 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `QS <FLID>` | Toggle HSF display on line 4 |
 | `QP A <FLID>` | Acknowledge point-out (receiver: removes P; originator: P→A) |
 | `QP <FLID>` | Clear point-out indicator entirely |
+| `QX <FLID>` | Drop a track from display (instant timeout — one-way, no restore) |
+| `WR R <station>` | Display METAR for station in Response Area (e.g. `WR R DCA` or `WR R KDCA`) |
+| `LA <loc1> <loc2> [/<spd>\|T/<spd>\|T]` | Range/bearing between two locations; T = true bearing |
+| `LB <fix>[/<spd>] <loc>` | Range/bearing from fix to location |
+| `LC <fix>/<time> <track>` | Required speed to reach fix at HHMM zulu time |
 | `<FLID>` | Toggle FDB/LDB for flight (blocked during active point-out) |
 
 FLIDs can be callsign or CID (CID only matches selected facility). When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
+
+### Track Suppression
+Middle-clicking a non-owned track cycles: LDB → FDB → hidden. `QX <FLID>` is a one-way drop (same as timeout). Hidden tracks are cleared on facility change or page refresh. Locations for LA/LB/LC can be entered by left-clicking a target (inserts FLID), left-clicking the map (inserts lat/lon), or typing a callsign/CID/fix/navaid/airport.
 
 ### HSF (Heading/Speed/Free text) — Line 4
 Line 4 shows controller-assigned heading, speed, and free text data. Two sources merged via `getEffectiveHsf()`:

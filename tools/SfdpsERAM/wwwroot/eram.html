@@ -2103,17 +2103,23 @@ function formatAltLine(f) {
     // Conforming (at altitude, within ±2 FL / 200ft) → C, hide Field C
     if (Math.abs(diff) <= 2) return `${afl}C`;
 
-    // Non-conforming: use vertical rate to distinguish ↑↓ (moving toward) vs +- (deviation)
-    const vr = f._vertRate || 0;
-    if (diff < 0) {
-        // Reported below assigned
-        if (vr > 0) return `${afl}\u2191${rfl}`;  // ↑ climbing to assigned
-        return `${afl}-${rfl}`;  // - descended below assigned
-    } else {
-        // Reported above assigned
-        if (vr < 0) return `${afl}\u2193${rfl}`;  // ↓ descending to assigned
-        return `${afl}+${rfl}`;  // + climbed above assigned
+    // Non-conforming: track initial side to distinguish ↑↓ (on course) vs +- (overshoot)
+    // _altInitialSide records whether reported was above (+1) or below (-1) assigned
+    // when the aircraft first became non-conforming (or when assigned altitude changed).
+    // Same side as initial → ↑ or ↓ (still en route); crossed to opposite side → + or - (overshot).
+    const initSide = f._altInitialSide || 0;
+    if (initSide < 0) {
+        // Started below assigned (was climbing)
+        if (diff < 0) return `${afl}\u2191${rfl}`;  // ↑ still below, climbing to assigned
+        return `${afl}+${rfl}`;  // + overshot above assigned
+    } else if (initSide > 0) {
+        // Started above assigned (was descending)
+        if (diff > 0) return `${afl}\u2193${rfl}`;  // ↓ still above, descending to assigned
+        return `${afl}-${rfl}`;  // - overshot below assigned
     }
+    // No initial side recorded yet — fall back to current position
+    if (diff < 0) return `${afl}\u2191${rfl}`;
+    return `${afl}\u2193${rfl}`;
 }
 
 function formatLine3(f, cls) {
@@ -2239,9 +2245,15 @@ function processFlightUpdate(f) {
         const oldCuSec = existing.controllingSector;
         const hadClr = existing.clearanceHeading || existing.clearanceSpeed || existing.clearanceText;
 
-        // Track vertical rate for altitude status indicators (↑↓ vs +-)
+        // Track vertical rate for altitude status indicators
         if (f.reportedAltitude != null && existing.reportedAltitude != null) {
             existing._vertRate = f.reportedAltitude - existing.reportedAltitude;
+        }
+
+        // Track initial side for altitude status indicators (↑↓ vs +-)
+        // Reset when assigned altitude changes (new clearance = new intent)
+        if ('assignedAltitude' in f && f.assignedAltitude !== existing.assignedAltitude) {
+            existing._altInitialSide = 0;
         }
 
         // Record history from old position, then apply new position immediately
@@ -2277,6 +2289,19 @@ function processFlightUpdate(f) {
         // Apply all fields including position
         for (const key in f) {
             existing[key] = f[key];
+        }
+
+        // Set initial side for altitude indicators after merge (when we have both values)
+        // _altInitialSide: -1 = started below assigned (climbing), +1 = started above (descending)
+        if (existing.assignedAltitude != null && existing.reportedAltitude != null) {
+            const aAlt = Math.round(existing.assignedAltitude / 100);
+            const rAlt = Math.round(existing.reportedAltitude / 100);
+            const d = rAlt - aAlt;
+            if (Math.abs(d) <= 2) {
+                existing._altInitialSide = 0;  // Conforming — clear
+            } else if (!existing._altInitialSide) {
+                existing._altInitialSide = d < 0 ? -1 : 1;  // First non-conforming — record side
+            }
         }
 
         // SWIM data overrides local controller entries ONLY when genuinely new
@@ -2320,6 +2345,12 @@ function processFlightUpdate(f) {
     } else {
         // New flight — add fully (including position)
         f._clientLastUpdate = performance.now();
+        if (f.assignedAltitude != null && f.reportedAltitude != null) {
+            const aAlt = Math.round(f.assignedAltitude / 100);
+            const rAlt = Math.round(f.reportedAltitude / 100);
+            const d = rAlt - aAlt;
+            f._altInitialSide = Math.abs(d) <= 2 ? 0 : (d < 0 ? -1 : 1);
+        }
         flights.set(f.gufi, f);
     }
 
@@ -2392,6 +2423,13 @@ function connectWs() {
                     if (!sup.h && !sup.s && !sup.t) hsfClrSuppressed.delete(f.gufi);
                 }
                 f._clientLastUpdate = performance.now();
+                // Initialize altitude initial side for snapshot flights
+                if (f.assignedAltitude != null && f.reportedAltitude != null) {
+                    const aAlt = Math.round(f.assignedAltitude / 100);
+                    const rAlt = Math.round(f.reportedAltitude / 100);
+                    const d = rAlt - aAlt;
+                    f._altInitialSide = Math.abs(d) <= 2 ? 0 : (d < 0 ? -1 : 1);
+                }
                 flights.set(f.gufi, f);
                 trackFacility(f);
                 if (f.history && f.history.length > 0) {
@@ -2541,8 +2579,8 @@ function flightHash(f, cls) {
     const hsfS = hsfShowMap.has(f.gufi) ? 1 : 0;
     const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
     const coast = isCoasting(f) ? 1 : 0;
-    const vr = f._vertRate || 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${vr > 0 ? 1 : vr < 0 ? -1 : 0}`;
+    const ais = f._altInitialSide || 0;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

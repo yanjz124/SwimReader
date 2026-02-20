@@ -80,7 +80,7 @@ body {
 /* Column header */
 .col-header {
     display: grid;
-    grid-template-columns: 100px 55px 50px 50px 70px 50px 30px 80px 55px 30px;
+    grid-template-columns: 100px 55px 50px 50px 70px 50px 30px 80px 55px 30px 30px;
     gap: 8px;
     padding: 6px 16px;
     font-size: 10px;
@@ -100,7 +100,7 @@ body {
 /* Flight row (collapsed) */
 .flight-row {
     display: grid;
-    grid-template-columns: 100px 55px 50px 50px 70px 50px 30px 80px 55px 30px;
+    grid-template-columns: 100px 55px 50px 50px 70px 50px 30px 80px 55px 30px 30px;
     gap: 8px;
     padding: 6px 16px;
     font-size: 13px;
@@ -118,6 +118,9 @@ body {
 .flight-row .rules { color: #888; margin-left: 8px; }
 .flight-row .sector { color: #5588ff; }
 .flight-row .sqk { color: #888; }
+.flight-row .dl { font-size: 11px; }
+.flight-row .dl.yes { color: #44aa44; }
+.flight-row .dl.no { color: #333; }
 .flight-row .st { width: 8px; height: 8px; border-radius: 50%; margin-top: 3px; }
 .flight-row .st.active { background: #44aa44; }
 .flight-row .st.dropped { background: #ff4444; }
@@ -236,6 +239,7 @@ body {
         <span data-col="flightRules">FR</span>
         <span data-col="controllingFacility">SECTOR</span>
         <span data-col="squawk">SQK</span>
+        <span data-col="dataLinkCode">DL</span>
         <span>ST</span>
     </div>
     <div id="rows"></div>
@@ -387,6 +391,7 @@ function getSortValue(f, col) {
         case 'flightRules': return f.flightRules || '';
         case 'controllingFacility': return (f.controllingFacility || '') + (f.controllingSector || '');
         case 'squawk': return f.squawk || '';
+        case 'dataLinkCode': return f.dataLinkCode && f.dataLinkCode.includes('J') ? 0 : 1;
         default: return '';
     }
 }
@@ -411,6 +416,7 @@ function renderRow(f, isExpanded) {
         <span class="rules">${rules}</span>
         <span class="sector">${sector}</span>
         <span class="sqk">${f.squawk || ''}</span>
+        <span class="dl ${f.dataLinkCode && f.dataLinkCode.includes('J') ? 'yes' : 'no'}">${f.dataLinkCode && f.dataLinkCode.includes('J') ? 'J' : ''}</span>
         <span class="st ${stCls}"></span>
     </div>`;
 }

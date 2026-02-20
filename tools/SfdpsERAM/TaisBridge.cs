@@ -44,24 +44,24 @@ class TaisBridge
 
             if (root.Name.LocalName != "TATrackAndFlightPlan") return;
 
-            var facility = root.Element("src")?.Value;
+            var facility = ElVal(root, "src");
             if (facility is null) return;
 
             var facilityTracks = _state.GetOrAdd(facility,
                 _ => new ConcurrentDictionary<string, TaisTrack>());
 
-            foreach (var record in root.Elements("record"))
+            foreach (var record in Els(root, "record"))
             {
-                var trackEl = record.Element("track");
+                var trackEl = El(record, "track");
                 if (trackEl is null) continue;
 
-                var trackNum = trackEl.Element("trackNum")?.Value;
+                var trackNum = ElVal(trackEl, "trackNum");
                 if (trackNum is null) continue;
 
                 // Parse position
-                if (!double.TryParse(trackEl.Element("lat")?.Value,
+                if (!double.TryParse(ElVal(trackEl, "lat"),
                     NumberStyles.Float, CultureInfo.InvariantCulture, out var lat)) continue;
-                if (!double.TryParse(trackEl.Element("lon")?.Value,
+                if (!double.TryParse(ElVal(trackEl, "lon"),
                     NumberStyles.Float, CultureInfo.InvariantCulture, out var lon)) continue;
 
                 var track = facilityTracks.GetOrAdd(trackNum,
@@ -73,19 +73,19 @@ class TaisBridge
                 track.LastSeen = DateTime.UtcNow;
 
                 // Track fields
-                track.ReportedSquawk = trackEl.Element("reportedBeaconCode")?.Value ?? track.ReportedSquawk;
-                track.AltitudeFeet = ParseInt(trackEl.Element("reportedAltitude")?.Value) ?? track.AltitudeFeet;
-                track.VerticalRateFpm = ParseInt(trackEl.Element("vVert")?.Value) ?? track.VerticalRateFpm;
-                track.IsFrozen = trackEl.Element("frozen")?.Value == "1";
-                track.IsPseudo = trackEl.Element("pseudo")?.Value == "1";
+                track.ReportedSquawk = ElVal(trackEl, "reportedBeaconCode") ?? track.ReportedSquawk;
+                track.AltitudeFeet = ParseInt(ElVal(trackEl, "reportedAltitude")) ?? track.AltitudeFeet;
+                track.VerticalRateFpm = ParseInt(ElVal(trackEl, "vVert")) ?? track.VerticalRateFpm;
+                track.IsFrozen = ElVal(trackEl, "frozen") == "1";
+                track.IsPseudo = ElVal(trackEl, "pseudo") == "1";
 
                 // Mode S hex code
-                var acAddr = trackEl.Element("acAddress")?.Value;
+                var acAddr = ElVal(trackEl, "acAddress");
                 if (acAddr is not null && acAddr != "000000") track.ModeSCode = acAddr;
 
                 // Compute ground speed/track from vx/vy
-                if (int.TryParse(trackEl.Element("vx")?.Value, out var vx) &&
-                    int.TryParse(trackEl.Element("vy")?.Value, out var vy))
+                if (int.TryParse(ElVal(trackEl, "vx"), out var vx) &&
+                    int.TryParse(ElVal(trackEl, "vy"), out var vy))
                 {
                     var speedRaw = Math.Sqrt(vx * vx + vy * vy);
                     track.GroundSpeedKnots = (int)Math.Round(speedRaw);
@@ -98,31 +98,31 @@ class TaisBridge
                 }
 
                 // Flight plan fields (only present in some records)
-                var fp = record.Element("flightPlan");
+                var fp = El(record, "flightPlan");
                 if (fp is not null)
                 {
-                    track.Callsign = fp.Element("acid")?.Value ?? track.Callsign;
-                    track.AircraftType = fp.Element("acType")?.Value ?? track.AircraftType;
-                    track.FlightRules = fp.Element("flightRules")?.Value ?? track.FlightRules;
-                    track.EntryFix = fp.Element("entryFix")?.Value ?? track.EntryFix;
-                    track.ExitFix = fp.Element("exitFix")?.Value ?? track.ExitFix;
-                    track.AssignedSquawk = fp.Element("assignedBeaconCode")?.Value ?? track.AssignedSquawk;
-                    track.RequestedAltitude = ParseInt(fp.Element("requestedAltitude")?.Value) ?? track.RequestedAltitude;
-                    track.Runway = NullIfEmpty(fp.Element("runway")?.Value) ?? track.Runway;
-                    track.Scratchpad1 = NullIfEmpty(fp.Element("scratchPad1")?.Value) ?? track.Scratchpad1;
-                    track.Scratchpad2 = NullIfEmpty(fp.Element("scratchPad2")?.Value) ?? track.Scratchpad2;
-                    track.Owner = NullIfUnassigned(fp.Element("cps")?.Value) ?? track.Owner;
-                    track.WakeCategory = NullIfEmpty(fp.Element("category")?.Value) ?? track.WakeCategory;
-                    track.EquipmentSuffix = NullIfUnavailable(fp.Element("eqptSuffix")?.Value) ?? track.EquipmentSuffix;
-                    track.PendingHandoff = NullIfEmpty(fp.Element("pendingHandoff")?.Value) ?? track.PendingHandoff;
+                    track.Callsign = ElVal(fp, "acid") ?? track.Callsign;
+                    track.AircraftType = ElVal(fp, "acType") ?? track.AircraftType;
+                    track.FlightRules = ElVal(fp, "flightRules") ?? track.FlightRules;
+                    track.EntryFix = ElVal(fp, "entryFix") ?? track.EntryFix;
+                    track.ExitFix = ElVal(fp, "exitFix") ?? track.ExitFix;
+                    track.AssignedSquawk = ElVal(fp, "assignedBeaconCode") ?? track.AssignedSquawk;
+                    track.RequestedAltitude = ParseInt(ElVal(fp, "requestedAltitude")) ?? track.RequestedAltitude;
+                    track.Runway = NullIfEmpty(ElVal(fp, "runway")) ?? track.Runway;
+                    track.Scratchpad1 = NullIfEmpty(ElVal(fp, "scratchPad1")) ?? track.Scratchpad1;
+                    track.Scratchpad2 = NullIfEmpty(ElVal(fp, "scratchPad2")) ?? track.Scratchpad2;
+                    track.Owner = NullIfUnassigned(ElVal(fp, "cps")) ?? track.Owner;
+                    track.WakeCategory = NullIfEmpty(ElVal(fp, "category")) ?? track.WakeCategory;
+                    track.EquipmentSuffix = NullIfUnavailable(ElVal(fp, "eqptSuffix")) ?? track.EquipmentSuffix;
+                    track.PendingHandoff = NullIfEmpty(ElVal(fp, "pendingHandoff")) ?? track.PendingHandoff;
                 }
 
                 // Enhanced data (origin/destination airports)
-                var enhanced = record.Element("enhancedData");
+                var enhanced = El(record, "enhancedData");
                 if (enhanced is not null)
                 {
-                    track.Origin = enhanced.Element("departureAirport")?.Value ?? track.Origin;
-                    track.Destination = enhanced.Element("destinationAirport")?.Value ?? track.Destination;
+                    track.Origin = ElVal(enhanced, "departureAirport") ?? track.Origin;
+                    track.Destination = ElVal(enhanced, "destinationAirport") ?? track.Destination;
                 }
             }
 
@@ -140,6 +140,18 @@ class TaisBridge
     private static string? NullIfEmpty(string? v) => string.IsNullOrWhiteSpace(v) ? null : v;
     private static string? NullIfUnavailable(string? v) => v is null or "unavailable" ? null : v;
     private static string? NullIfUnassigned(string? v) => v is null or "unassigned" ? null : v;
+
+    /// <summary>Namespace-agnostic element lookup by local name.</summary>
+    private static XElement? El(XElement parent, string localName) =>
+        parent.Elements().FirstOrDefault(e => e.Name.LocalName == localName);
+
+    /// <summary>Namespace-agnostic element value lookup.</summary>
+    private static string? ElVal(XElement parent, string localName) =>
+        El(parent, localName)?.Value;
+
+    /// <summary>Namespace-agnostic enumeration of child elements by local name.</summary>
+    private static IEnumerable<XElement> Els(XElement parent, string localName) =>
+        parent.Elements().Where(e => e.Name.LocalName == localName);
 
     // ── Timer callbacks ────────────────────────────────────────────────────────
 
@@ -214,7 +226,7 @@ class TaisBridge
         _state
             .Where(kv => !kv.Value.IsEmpty)
             .Select(kv => new { facility = kv.Key, trackCount = kv.Value.Count })
-            .OrderByDescending(x => x.trackCount)
+            .OrderBy(x => x.facility)
             .ToArray();
 
     /// <summary>Full snapshot for one facility.</summary>

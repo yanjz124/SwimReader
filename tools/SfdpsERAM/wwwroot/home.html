@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>swim.vncrcc.org</title>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    background: #000;
+    color: #ccc;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ── Header ───────────────────────────────────────────────── */
+header {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+}
+header h1 {
+    font-size: 16px;
+    color: #cccc44;
+    font-weight: normal;
+    letter-spacing: 3px;
+}
+header .sub {
+    font-size: 11px;
+    color: #555;
+    letter-spacing: 1px;
+}
+.status-bar {
+    margin-left: auto;
+    display: flex;
+    gap: 16px;
+    font-size: 11px;
+    color: #666;
+}
+.status-bar .stat b { color: #aaa; font-weight: normal; }
+.status-bar .live { color: #44aa44; }
+
+/* ── Main layout ──────────────────────────────────────────── */
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── Left nav ─────────────────────────────────────────────── */
+.nav {
+    width: 240px;
+    min-width: 240px;
+    border-right: 1px solid #333;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+.nav-section {
+    padding: 6px 14px 2px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #1a1a1a;
+}
+.nav-item {
+    display: block;
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid #111;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.1s;
+}
+.nav-item:hover { background: #111; }
+.nav-item.selected { background: #0a1a0a; border-left: 2px solid #44aa44; }
+.nav-item .title {
+    font-size: 14px;
+    color: #fff;
+    letter-spacing: 1px;
+}
+.nav-item .desc {
+    font-size: 11px;
+    color: #555;
+    margin-top: 2px;
+}
+.nav-item .count {
+    font-size: 11px;
+    color: #44aa44;
+    margin-top: 2px;
+}
+
+/* ── Right panel ──────────────────────────────────────────── */
+.panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px 32px;
+}
+.panel h2 {
+    font-size: 18px;
+    color: #cccc44;
+    font-weight: normal;
+    letter-spacing: 2px;
+    margin-bottom: 6px;
+}
+.panel .source {
+    font-size: 11px;
+    color: #555;
+    margin-bottom: 16px;
+    letter-spacing: 1px;
+}
+.panel .description {
+    font-size: 13px;
+    color: #888;
+    line-height: 1.6;
+    margin-bottom: 20px;
+    max-width: 640px;
+}
+.panel .open-btn {
+    display: inline-block;
+    padding: 8px 20px;
+    background: #111;
+    border: 1px solid #444;
+    color: #cccc44;
+    text-decoration: none;
+    font-family: inherit;
+    font-size: 13px;
+    letter-spacing: 1px;
+    transition: border-color 0.15s, background 0.15s;
+    margin-bottom: 24px;
+}
+.panel .open-btn:hover { border-color: #cccc44; background: #1a1a0a; }
+
+.field-grid {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 4px 12px;
+    font-size: 12px;
+    margin-bottom: 16px;
+    max-width: 500px;
+}
+.field-grid .lbl { color: #555; }
+.field-grid .val { color: #aaa; }
+.field-grid .val.hl { color: #39d2c0; }
+
+.welcome {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: #333;
+    font-size: 13px;
+    text-align: center;
+    gap: 8px;
+}
+.welcome .big {
+    font-size: 28px;
+    color: #cccc44;
+    letter-spacing: 4px;
+}
+</style>
+</head>
+<body>
+
+<header>
+    <h1>SWIM</h1>
+    <span class="sub">SYSTEM WIDE INFORMATION MANAGEMENT</span>
+    <div class="status-bar">
+        <span class="stat" id="sfdpsStat">SFDPS: <b>--</b></span>
+        <span class="stat" id="stddsStat">STDDS: <b>--</b></span>
+        <span class="stat" id="connStat"></span>
+    </div>
+</header>
+
+<div class="main">
+    <div class="nav" id="nav">
+        <div class="nav-section">EN ROUTE (SFDPS)</div>
+        <a class="nav-item" data-key="eram" href="/eram">
+            <div class="title">ERAM SCOPE</div>
+            <div class="desc">Radar display with data blocks</div>
+            <div class="count" id="eramCount"></div>
+        </a>
+        <a class="nav-item" data-key="table" href="/table">
+            <div class="title">FLIGHT TABLE</div>
+            <div class="desc">Tabular flight explorer</div>
+        </a>
+        <a class="nav-item" data-key="fdio" href="/fdio">
+            <div class="title">FDIO</div>
+            <div class="desc">Flight plan viewer / EDST</div>
+        </a>
+
+        <div class="nav-section">TERMINAL (STDDS)</div>
+        <a class="nav-item" data-key="tais" href="/tais">
+            <div class="title">TAIS</div>
+            <div class="desc">STARS terminal radar tracks</div>
+            <div class="count" id="taisCount"></div>
+        </a>
+        <a class="nav-item" data-key="asdex" href="/asdex">
+            <div class="title">ASDE-X</div>
+            <div class="desc">Airport surface surveillance</div>
+            <div class="count" id="asdexCount"></div>
+        </a>
+        <a class="nav-item" data-key="tdls" href="/tdls">
+            <div class="title">TDLS</div>
+            <div class="desc">CPDLC clearances / departures</div>
+            <div class="count" id="tdlsCount"></div>
+        </a>
+    </div>
+
+    <div class="panel" id="panel">
+        <div class="welcome">
+            <div class="big">SWIM</div>
+            <div>FAA System Wide Information Management</div>
+            <div style="color:#444; margin-top: 12px;">Select a service to view details</div>
+        </div>
+    </div>
+</div>
+
+<script>
+const panelEl = document.getElementById('panel');
+const navItems = document.querySelectorAll('.nav-item');
+let stats = {};
+
+// ── Nav hover → show detail in right panel ────────────────────
+const pages = {
+    eram: {
+        title: 'ERAM SCOPE',
+        source: 'SFDPS — FDPS VPN — FIXM XML',
+        desc: 'Full radar scope display with ERAM-style data blocks, history symbols, and velocity vectors. Shows en route flight data from all 20 ARTCCs in real-time. Includes handoff indicators, point-outs, altitude conformance, coast tracks, and MCA commands.',
+        href: '/eram',
+        fields: [
+            ['Data Source', 'SFDPS (FIXM en route)'],
+            ['Update Rate', '~240 msg/sec'],
+            ['Coverage', 'All 20 ARTCCs (CONUS)'],
+            ['Features', 'Data blocks, history, vectors, NEXRAD, boundaries'],
+        ]
+    },
+    table: {
+        title: 'FLIGHT TABLE',
+        source: 'SFDPS — FDPS VPN — FIXM XML',
+        desc: 'Tabular real-time flight explorer with filtering by facility, sector, and search. Pinnable flights, detail panel with full flight plan and event log. Same data as ERAM scope in a spreadsheet view.',
+        href: '/table',
+        fields: [
+            ['Data Source', 'SFDPS (FIXM en route)'],
+            ['Features', 'Sort, filter, pin, detail panel, event log'],
+        ]
+    },
+    fdio: {
+        title: 'FDIO',
+        source: 'SFDPS — FDPS VPN — FIXM XML',
+        desc: 'Flight Data Input/Output viewer. Searchable accordion rows showing flight plans with full detail and ATC revision history. Filter by status, facility, and flight rules.',
+        href: '/fdio',
+        fields: [
+            ['Data Source', 'SFDPS (FIXM en route)'],
+            ['Features', 'Search, sort, expand, revision history'],
+        ]
+    },
+    tais: {
+        title: 'TAIS — Terminal Automation',
+        source: 'STDDS — STDDS VPN — STARS XML',
+        desc: 'Terminal radar tracks with flight plan data from STARS TRACONs. Shows callsign, aircraft type, origin/destination, altitude, squawk, runway, scratchpads, and controller ownership per facility.',
+        href: '/tais',
+        fields: [
+            ['Data Source', 'TAIS (STARS terminal)'],
+            ['Coverage', 'All STARS TRACONs'],
+            ['Features', 'Per-facility tracks, search, frozen filter'],
+        ]
+    },
+    asdex: {
+        title: 'ASDE-X — Surface Surveillance',
+        source: 'STDDS — STDDS VPN — SMES XML',
+        desc: 'Airport surface movement radar. Live Leaflet map showing aircraft and vehicle positions on taxiways and runways. Updates every second from ASDE-X sensors at ~40 major airports.',
+        href: '/asdex',
+        fields: [
+            ['Data Source', 'SMES (ASDE-X surface)'],
+            ['Update Rate', '~1 sec'],
+            ['Coverage', '~40 airports'],
+            ['Features', 'Live map, target types, data blocks'],
+        ]
+    },
+    tdls: {
+        title: 'TDLS — Clearance Delivery',
+        source: 'STDDS — STDDS VPN — TDES XML',
+        desc: 'Tower Data Link Services. Shows CPDLC pre-departure clearances (PDC/DCL) and tower departure events (gate, taxi, takeoff times) per airport.',
+        href: '/tdls',
+        fields: [
+            ['Data Source', 'TDES (CPDLC/departure)'],
+            ['Features', 'Per-airport messages, CPDLC body, departure timeline'],
+        ]
+    },
+};
+
+navItems.forEach(item => {
+    item.addEventListener('mouseenter', () => {
+        const key = item.dataset.key;
+        showPanel(key);
+        navItems.forEach(n => n.classList.remove('selected'));
+        item.classList.add('selected');
+    });
+    // Prevent default nav on click, open in same tab
+    item.addEventListener('click', (e) => {
+        // Allow normal navigation
+    });
+});
+
+function showPanel(key) {
+    const p = pages[key];
+    if (!p) return;
+
+    const fieldsHtml = p.fields.map(([lbl, val]) =>
+        `<span class="lbl">${lbl}</span><span class="val">${val}</span>`
+    ).join('');
+
+    panelEl.innerHTML = `
+        <h2>${p.title}</h2>
+        <div class="source">${p.source}</div>
+        <div class="description">${p.desc}</div>
+        <a class="open-btn" href="${p.href}">OPEN</a>
+        <div class="field-grid">${fieldsHtml}</div>
+    `;
+}
+
+// ── Live stats polling ────────────────────────────────────────
+async function refreshStats() {
+    try {
+        // SFDPS stats
+        const sr = await fetch('/api/stats');
+        if (sr.ok) {
+            const s = await sr.json();
+            document.getElementById('sfdpsStat').innerHTML =
+                `SFDPS: <b>${(s.flights || 0).toLocaleString()} flights</b>  <b>${(s.rate || 0).toFixed(0)}/s</b>`;
+            document.getElementById('eramCount').textContent =
+                `${(s.flights || 0).toLocaleString()} flights`;
+            document.getElementById('connStat').className = 'stat live';
+            document.getElementById('connStat').textContent = 'LIVE';
+        }
+    } catch {}
+
+    try {
+        // ASDE-X stats
+        const ar = await fetch('/api/asdex');
+        if (ar.ok) {
+            const airports = await ar.json();
+            const totalTracks = airports.reduce((s, a) => s + a.count, 0);
+            document.getElementById('asdexCount').textContent =
+                `${airports.length} airports  ${totalTracks} tracks`;
+        }
+    } catch {}
+
+    try {
+        // TAIS stats
+        const tr = await fetch('/api/tais');
+        if (tr.ok) {
+            const facilities = await tr.json();
+            const totalTracks = facilities.reduce((s, f) => s + f.trackCount, 0);
+            document.getElementById('taisCount').textContent =
+                `${facilities.length} facilities  ${totalTracks} tracks`;
+        }
+    } catch {}
+
+    try {
+        // TDLS stats
+        const dr = await fetch('/api/tdls');
+        if (dr.ok) {
+            const airports = await dr.json();
+            const totalMsg = airports.reduce((s, a) => s + a.messageCount, 0);
+            document.getElementById('tdlsCount').textContent =
+                `${airports.length} airports  ${totalMsg} messages`;
+            const stddsTracks = document.getElementById('asdexCount').textContent;
+            document.getElementById('stddsStat').innerHTML =
+                `STDDS: <b>${stddsTracks || 'connecting...'}</b>`;
+        }
+    } catch {}
+}
+
+refreshStats();
+setInterval(refreshStats, 10000);
+</script>
+</body>
+</html>

@@ -271,13 +271,13 @@ let   centeredOnce = false;
 const DB_ORDERS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const DB_POS = {
     N:  { wl: -5,  wt: -38, lx: 9,  ly: -12 },
-    NE: { wl: 23,  wt: -15, lx: 23, ly: -5 },
-    E:  { wl: 23,  wt: 1,   lx: 23, ly: 9 },
-    SE: { wl: 23,  wt: 20,  lx: 23, ly: 23 },
+    NE: { wl: 23,  wt: -21, lx: 23, ly: -5 },
+    E:  { wl: 23,  wt: -7,  lx: 23, ly: 9 },
+    SE: { wl: 23,  wt: 7,   lx: 23, ly: 23 },
     S:  { wl: -5,  wt: 28,  lx: 9,  ly: 26 },
-    SW: { wl: -80, wt: 20,  lx: -5, ly: 23 },
-    W:  { wl: -80, wt: 1,   lx: -5, ly: 9 },
-    NW: { wl: -80, wt: -15, lx: -5, ly: -5 },
+    SW: { wl: -80, wt: 7,   lx: -5, ly: 23 },
+    W:  { wl: -80, wt: -7,  lx: -5, ly: 9 },
+    NW: { wl: -80, wt: -21, lx: -5, ly: -5 },
 };
 const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
 const hiddenDbs = new Set();  // trackIds with hidden data blocks

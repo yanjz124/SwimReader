@@ -45,6 +45,11 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 .ac-icon svg.sym {
     display: block;
     overflow: visible;
+    pointer-events: auto;
+    cursor: none;
+}
+.ac-icon svg.sym:hover {
+    filter: drop-shadow(0 0 4px rgba(255,255,255,0.8)) drop-shadow(0 0 8px rgba(255,255,255,0.4));
 }
 .ac-icon .ldr {
     position: absolute; left: 0; top: 0;
@@ -63,7 +68,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     pointer-events: auto;
     cursor: none;
 }
-.db-line2 { color: #00aa00; }
+.db-line2 { color: #00cc00; }
 
 /* hide Leaflet attribution noise */
 .leaflet-control-attribution { display: none; }
@@ -72,6 +77,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 #map { cursor: none !important; }
 .leaflet-container { cursor: none !important; }
 .leaflet-grab, .leaflet-dragging { cursor: none !important; }
+.leaflet-marker-icon { cursor: none !important; }
 #crosshair {
     position: fixed; pointer-events: none; z-index: 9999; display: none;
 }
@@ -249,6 +255,7 @@ const DB_POS = {
     NW: { wl: -80, wt: -15, lx: -5, ly: -5 },
 };
 const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
+const hiddenDbs = new Set();  // trackIds with hidden data blocks
 
 // ── Data block drag (snap to 8 compass positions) ──────────────────────────
 let dragTid = null, dragOrigin = null;
@@ -296,6 +303,22 @@ document.addEventListener('mousemove', e => {
 });
 
 document.addEventListener('mouseup', () => { dragTid = null; dragOrigin = null; });
+
+// ── Left-click target to toggle data block ──────────────────────────────────
+document.addEventListener('click', e => {
+    const sym = e.target.closest('svg.sym');
+    if (!sym) return;
+    const icon = sym.closest('.ac-icon[data-tid]');
+    if (!icon) return;
+    const tid = icon.dataset.tid;
+    if (hiddenDbs.has(tid)) hiddenDbs.delete(tid);
+    else hiddenDbs.add(tid);
+    const hidden = hiddenDbs.has(tid);
+    const wrap = icon.querySelector('.db-wrap');
+    const ldr = icon.querySelector('.ldr');
+    if (wrap) wrap.style.display = hidden ? 'none' : '';
+    if (ldr) ldr.style.display = hidden ? 'none' : '';
+});
 
 const connEl  = document.getElementById('conn');
 const cntEl   = document.getElementById('track-count');
@@ -363,14 +386,15 @@ function makeIcon(t) {
 
     const posKey = dbPositions[t.trackId] || 'NE';
     const pos = DB_POS[posKey];
-    const ldrHtml = cs ? `<svg class="ldr" width="18" height="18" viewBox="0 0 18 18" style="position:absolute;left:0;top:0;overflow:visible">
+    const hideStyle = hiddenDbs.has(t.trackId) ? ';display:none' : '';
+    const ldrHtml = cs ? `<svg class="ldr" width="18" height="18" viewBox="0 0 18 18" style="position:absolute;left:0;top:0;overflow:visible${hideStyle}">
             <line x1="9" y1="9" x2="${pos.lx}" y2="${pos.ly}" stroke="#00cc00" stroke-width="0.5" opacity="0.6"/>
         </svg>` : '';
 
     const html = `<div class="ac-icon" data-tid="${t.trackId}">
         <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block">${symHtml}</svg>
         ${ldrHtml}
-        <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px">${dbHtml}</div>
+        <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px${hideStyle}">${dbHtml}</div>
     </div>`;
 
     return L.divIcon({ className: '', html, iconSize: [200, 18], iconAnchor: [9, 9] });

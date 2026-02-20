@@ -10,7 +10,7 @@
 @font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #393939; overflow: hidden; height: 100vh; }
-#map { width: 100%; height: 100vh; background: #393939; }
+#map { width: 100%; height: 100vh; background: #393939; transform-origin: center center; }
 
 /* ── Status bar ── */
 #statusbar {
@@ -25,6 +25,16 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 #conn { color: #ff4444; }
 #conn.ok { color: #44aa44; }
 #conn.waiting { color: #aaaa44; }
+#statusbar label { color: #666; margin-right: -10px; }
+#statusbar input[type=number] {
+    width: 40px; background: #222; border: 1px solid #444; color: #ccc;
+    font-family: inherit; font-size: 10px; text-align: center; padding: 1px 2px;
+}
+#statusbar button {
+    background: #222; border: 1px solid #444; color: #ccc;
+    font-family: inherit; font-size: 10px; padding: 1px 6px; cursor: pointer;
+}
+#statusbar button:hover { border-color: #888; }
 
 /* ── Target icons — rendered as Leaflet divIcons ── */
 .ac-icon {
@@ -48,13 +58,13 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 }
 .db {
     font-family: 'ERAM', 'Consolas', monospace;
-    font-size: 10px; line-height: 13px;
-    color: #cccc44;
+    font-size: 13px; line-height: 16px;
+    color: #00cc00;
     white-space: nowrap;
     background: rgba(0,0,0,0.45);
     padding: 0 2px;
 }
-.db-line2 { color: #aaa; }
+.db-line2 { color: #00aa00; }
 
 /* hide Leaflet attribution noise */
 .leaflet-control-attribution { display: none; }
@@ -67,8 +77,8 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     position: fixed; pointer-events: none; z-index: 9999; display: none;
 }
 #crosshair .ch { position: absolute; background: #fff; }
-#crosshair .h { width: 31px; height: 1px; left: -15px; top: 0; }
-#crosshair .v { width: 1px; height: 31px; left: 0; top: -15px; }
+#crosshair .h { width: 21px; height: 2px; left: -10px; top: -1px; }
+#crosshair .v { width: 2px; height: 21px; left: -1px; top: -10px; }
 </style>
 </head>
 <body>
@@ -79,6 +89,9 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     <span id="track-count">0 tracks</span>
     <span id="conn">CONNECTING</span>
     <span style="flex:1"></span>
+    <label>ROT</label>
+    <input type="number" id="rot" min="0" max="360" value="360" step="1">
+    <button id="dn-toggle">NIGHT</button>
     <a href="/asdex">◂ DIRECTORY</a>
 </div>
 
@@ -92,6 +105,44 @@ document.addEventListener('mousemove', e => {
 });
 document.addEventListener('mouseleave', () => { ch.style.display = 'none'; });
 
+// ── Map rotation ────────────────────────────────────────────────────────────
+let mapRotation = 0; // degrees, 360=north-up
+const rotInput = document.getElementById('rot');
+function applyRotation(deg) {
+    mapRotation = ((deg % 360) + 360) % 360;
+    // 360 = north-up (no rotation). Rotation = -(360 - value) = value - 360
+    const cssAngle = mapRotation === 360 ? 0 : -mapRotation;
+    document.getElementById('map').style.transform = `rotate(${cssAngle}deg)`;
+    // Counter-rotate data blocks so text stays upright
+    document.querySelectorAll('.db').forEach(el => {
+        el.style.transform = `rotate(${-cssAngle}deg)`;
+    });
+}
+rotInput.addEventListener('input', () => applyRotation(parseInt(rotInput.value) || 360));
+
+// ── Day/Night toggle ────────────────────────────────────────────────────────
+const dnBtn = document.getElementById('dn-toggle');
+dnBtn.addEventListener('click', () => {
+    isNightMode = !isNightMode;
+    asdexColors = isNightMode ? ASDEX_NIGHT : ASDEX_DAY;
+    dnBtn.textContent = isNightMode ? 'NIGHT' : 'DAY';
+    // Restyle surface polygons
+    const bg = asdexColors.bg;
+    document.getElementById('map').style.background = bg;
+    document.body.style.background = bg;
+    if (surfaceLayer) {
+        surfaceLayer.setStyle(feature => {
+            const sfc = (feature.properties && feature.properties.asdex) || 'structure';
+            return {
+                fillColor: asdexColors[sfc] || asdexColors.structure,
+                fillOpacity: 1,
+                color: asdexColors[sfc] || asdexColors.structure,
+                weight: 0.5, opacity: 1
+            };
+        });
+    }
+});
+
 // ── Airport from URL ─────────────────────────────────────────────────────────
 const pathParts = window.location.pathname.split('/').filter(Boolean);
 const AIRPORT = (pathParts[pathParts.length - 1] || 'UNKN').toUpperCase();
@@ -103,6 +154,8 @@ const map = L.map('map', {
     center: [38.85, -77.04],
     zoom: 14,
     zoomControl: true,
+    zoomSnap: 0.25,
+    zoomDelta: 0.25,
     attributionControl: false,
     dragging: false
 });
@@ -145,14 +198,16 @@ const ASDEX_DAY = {
     apron:     'rgb(73,73,73)',
     structure: 'rgb(100,100,100)'
 };
-const asdexColors = ASDEX_NIGHT;
+let asdexColors = ASDEX_NIGHT;
+let isNightMode = true;
+let surfaceLayer = null;
 
 // ── Load airport surface GeoJSON ────────────────────────────────────────────
 let surfaceLoaded = false;
 fetch(`/asdex/maps/${AIRPORT}.geojson`)
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(geojson => {
-        const layer = L.geoJSON(geojson, {
+        surfaceLayer = L.geoJSON(geojson, {
             style: feature => {
                 const sfc = (feature.properties && feature.properties.asdex) || 'structure';
                 return {
@@ -165,7 +220,7 @@ fetch(`/asdex/maps/${AIRPORT}.geojson`)
             },
             interactive: false
         }).addTo(map);
-        map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+        map.fitBounds(surfaceLayer.getBounds(), { padding: [20, 20] });
         surfaceLoaded = true;
         centeredOnce = true;
     })
@@ -228,26 +283,28 @@ function makeIcon(t) {
         symHtml = `<g transform="rotate(${hdg})">${'<path d="' + PLANE_PATH + '" fill="' + fill + '" fill-opacity="0.95"/>'}</g>`;
     }
 
-    // Data block
-    const cs  = t.callsign || t.squawk || '????';
-    const alt = t.altFt != null ? Math.round(t.altFt / 100).toString().padStart(3, '0') : 'XXX';
+    // Data block — skip for targets with no callsign and no squawk
+    const cs  = t.callsign || t.squawk || '';
+    const alt = t.altFt != null ? Math.round(t.altFt / 100).toString().padStart(3, '0') : '';
     const spd = t.spdKts != null ? Math.round(t.spdKts / 10).toString().padStart(2, '0') : '';
     const typ = t.acType || '';
 
     let dbHtml = '';
-    if (cat !== 'unknown' && cat !== 'vehicle') {
-        dbHtml = `<div class="db">
-            <div class="db-line1">${cs} ${alt}</div>
-            <div class="db-line2">${typ}${typ && spd ? ' ' : ''}${spd}</div>
-        </div>`;
-    } else {
-        dbHtml = `<div class="db"><div class="db-line1">${cs}</div></div>`;
+    if (cs) {
+        if (cat !== 'unknown' && cat !== 'vehicle') {
+            dbHtml = `<div class="db">
+                <div class="db-line1">${cs}${alt ? ' ' + alt : ''}</div>
+                <div class="db-line2">${typ}${typ && spd ? ' ' : ''}${spd}</div>
+            </div>`;
+        } else {
+            dbHtml = `<div class="db"><div class="db-line1">${cs}</div></div>`;
+        }
     }
 
     const html = `<div class="ac-icon">
         <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block">${symHtml}</svg>
         <svg class="ldr" width="18" height="18" viewBox="0 0 18 18" style="position:absolute;left:0;top:0;overflow:visible">
-            <line x1="9" y1="9" x2="23" y2="-5" stroke="#cccc44" stroke-width="0.5" opacity="0.5"/>
+            <line x1="9" y1="9" x2="23" y2="-5" stroke="#fff" stroke-width="0.5" opacity="0.5"/>
         </svg>
         <div class="db-wrap">${dbHtml}</div>
     </div>`;

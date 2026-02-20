@@ -71,6 +71,19 @@ header .stats { font-size: 11px; color: #888; margin-left: auto; }
 }
 .ac-item.flash { animation: flash 0.6s ease-out; }
 @keyframes flash { 0% { background: #2a2a00; } 100% { background: transparent; } }
+.ac-item.historical .callsign { color: #777; }
+.ac-item.historical .meta { color: #444; }
+.ac-item.historical .ts { color: #555; }
+.ac-item.historical .badge { color: #555; }
+.ac-divider {
+    padding: 4px 12px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #333;
+    border-top: 1px solid #333;
+    background: #0a0a0a;
+}
 
 /* ── Right panel: message detail ────────────────────────────── */
 .detail {
@@ -257,12 +270,23 @@ function renderAcList(flashIds) {
     const totalMsg = sorted.reduce((s, a) => s + a.messageCount, 0);
     statsEl.textContent = `${sorted.length} acft  •  ${totalMsg} msg`;
 
+    const now = Date.now();
+    const HISTORY_MS = 2 * 60 * 60 * 1000; // 2 hours
+    let dividerInserted = false;
+
     acListEl.innerHTML = sorted.map(ac => {
         const sel = ac.aircraftId === selectedAc ? ' selected' : '';
         const flash = flashIds && flashIds.has(ac.aircraftId) ? ' flash' : '';
         const dest = ac.destination ? ` → ${ac.destination.replace(/^K/, '')}` : '';
         const ts = ac.lastSeen ? fmtTime(ac.lastSeen) : '';
-        return `<div class="ac-item${sel}${flash}" data-id="${ac.aircraftId}">
+        const age = ac.lastSeen ? now - new Date(ac.lastSeen).getTime() : Infinity;
+        const hist = age > HISTORY_MS ? ' historical' : '';
+        let prefix = '';
+        if (hist && !dividerInserted) {
+            dividerInserted = true;
+            prefix = `<div class="ac-divider">HISTORICAL</div>`;
+        }
+        return `${prefix}<div class="ac-item${sel}${flash}${hist}" data-id="${ac.aircraftId}">
             <div class="callsign">${ac.aircraftId}<span class="badge">${ac.messageCount}</span></div>
             <div class="meta">${ac.acType || ''}${dest}</div>
             <div class="ts">${ts}</div>
@@ -347,32 +371,17 @@ function renderDepart(m) {
 }
 
 // ── CPDLC body parser ──────────────────────────────────────────
-// dataBody contains numbered sub-messages like:
-// "005 AAL2469 KDFW ... PILOT RESPONSE - ROGER 002 CPDLC DCL DISPATCH MSG..."
-// Numbers are 3-digit sequences at the start or preceded by space
+// Each dataBody starts with a 3-digit sequence number (e.g. "001 ...", "005 ...")
+// The sequence number is only at the very beginning — not mid-text.
 function parseCpdlcBody(body) {
     if (!body) return [{ text: body, isPilot: false }];
 
-    const parts = [];
-    // Split on 3-digit message sequence numbers
-    const regex = /(?:^|\s)(\d{3})\s/g;
-    let matches = [];
-    let m;
-    while ((m = regex.exec(body)) !== null) {
-        matches.push({ index: m.index, seqStart: m.index + (m[0].startsWith(' ') ? 1 : 0), num: m[1], contentStart: m.index + m[0].length });
-    }
-
-    if (matches.length === 0) return [{ text: body.trim(), isPilot: false }];
-
-    for (let i = 0; i < matches.length; i++) {
-        const start = matches[i].contentStart;
-        const end = i + 1 < matches.length ? matches[i + 1].seqStart : body.length;
-        const text = body.substring(start, end).trim();
-        const isPilot = /PILOT\s+RESPONSE/i.test(text);
-        parts.push({ num: matches[i].num, text, isPilot });
-    }
-
-    return parts;
+    // Strip leading sequence number if present
+    const seqMatch = body.match(/^(\d{3})\s/);
+    const num = seqMatch ? seqMatch[1] : null;
+    const text = seqMatch ? body.substring(seqMatch[0].length).trim() : body.trim();
+    const isPilot = /PILOT\s+RESPONSE/i.test(text);
+    return [{ num, text, isPilot }];
 }
 
 function renderSubMsg(sub) {

@@ -100,7 +100,48 @@ var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVp
 var tdls = new TdlsBridge(jsonOpts);
 // TAIS bridge — receives forwarded TAIS messages from ASDEX bridge (shared Solace session)
 var tais = new TaisBridge(jsonOpts);
-asdex.OnOtherMessage = (topic, body) => { tdls.ProcessMessage(topic, body); tais.ProcessMessage(topic, body); };
+
+// STDDS message telemetry — in-memory counters only, no disk I/O
+// Key: "TOPIC_PREFIX/ROOT_ELEMENT" → count (e.g. "TAIS/TATrackAndFlightPlan" → 12345)
+var stddsMessageCounts = new ConcurrentDictionary<string, long>();
+// Keep one small XML sample per key (first seen only, capped at 2KB)
+var stddsSamples = new ConcurrentDictionary<string, string>();
+
+asdex.OnOtherMessage = (topic, body) =>
+{
+    tdls.ProcessMessage(topic, body);
+    tais.ProcessMessage(topic, body);
+
+    // Lightweight telemetry: extract topic prefix + root element name
+    var slash = topic.IndexOf('/');
+    var prefix = slash > 0 ? topic[..slash] : topic;
+    string rootName = "?";
+    try
+    {
+        // Fast root element extraction — find first '<' after XML declaration
+        var lt = body.IndexOf('<');
+        while (lt >= 0 && lt < body.Length - 1 && body[lt + 1] == '?')
+            lt = body.IndexOf('<', lt + 1);
+        if (lt >= 0)
+        {
+            var end = lt + 1;
+            while (end < body.Length && body[end] != ' ' && body[end] != '>' && body[end] != '/' && body[end] != '\n')
+                end++;
+            rootName = body[(lt + 1)..end];
+            // Strip namespace prefix if present (e.g. "ns2:TATrackAndFlightPlan" → "TATrackAndFlightPlan")
+            var colon = rootName.IndexOf(':');
+            if (colon >= 0) rootName = rootName[(colon + 1)..];
+        }
+    }
+    catch { /* best-effort */ }
+
+    var key = $"{prefix}/{rootName}";
+    stddsMessageCounts.AddOrUpdate(key, 1, (_, v) => v + 1);
+
+    // Store first sample (truncated to 2KB)
+    if (!stddsSamples.ContainsKey(key))
+        stddsSamples.TryAdd(key, body.Length > 2048 ? body[..2048] + "\n... (truncated)" : body);
+};
 
 // ── ASP.NET Core setup ──────────────────────────────────────────────────────
 
@@ -688,6 +729,26 @@ app.MapGet("/api/debug/altitude-log", (int? last) =>
     var n = last ?? 200;
     var recent = entries.Length > n ? entries[^n..] : entries;
     return Results.Text(string.Join("\n", recent), "text/plain");
+});
+
+// Debug: STDDS message telemetry — all topic/root-element combinations received from STDDS
+app.MapGet("/api/debug/stdds", () =>
+{
+    var entries = stddsMessageCounts
+        .Select(kv => new { key = kv.Key, count = kv.Value })
+        .OrderByDescending(x => x.count)
+        .ToList();
+    return Results.Json(new { totalKeys = entries.Count, messages = entries }, jsonOpts);
+});
+
+// Debug: STDDS sample XML — first message seen for each topic/root-element key
+app.MapGet("/api/debug/stdds/{key}", (string key) =>
+{
+    // key is URL-encoded, e.g. "TAIS/TAStatus" or "APDS/someRoot"
+    key = Uri.UnescapeDataString(key);
+    if (stddsSamples.TryGetValue(key, out var sample))
+        return Results.Text(sample, "application/xml");
+    return Results.NotFound();
 });
 
 // Serve KML files from repo root

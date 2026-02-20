@@ -751,7 +751,7 @@ The client-side parser splits on 3-digit sequence numbers and identifies pilot r
 | Timer | Interval | Action |
 |---|---|---|
 | `FlushDirty` | 1s | Send new messages to WebSocket clients |
-| `PurgeStale` | 60s | Remove aircraft not seen in 2 hours |
+| `PurgeStale` | 60s | No-op — all aircraft and messages retained indefinitely |
 
 ## STDDS Data Pipeline (SwimReader.Server)
 

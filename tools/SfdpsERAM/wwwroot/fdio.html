@@ -372,7 +372,8 @@ function matchesSearch(f, q) {
         || (f.squawk || '').includes(q)
         || (f.route || '').toUpperCase().includes(q)
         || (f.controllingFacility || '').includes(q)
-        || (f.registration || '').toUpperCase().includes(q);
+        || (f.registration || '').toUpperCase().includes(q)
+        || (f.remarks || '').toUpperCase().includes(q);
 }
 
 function getSortValue(f, col) {

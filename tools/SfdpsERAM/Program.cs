@@ -42,6 +42,13 @@ var user = Environment.GetEnvironmentVariable("SFDPS_USER") ?? "";
 var pass = Environment.GetEnvironmentVariable("SFDPS_PASS") ?? "";
 var queue = Environment.GetEnvironmentVariable("SFDPS_QUEUE") ?? "";
 
+// STDDS credentials (ASDE-X / SMES)
+var stddsUser  = Environment.GetEnvironmentVariable("SCDSCONNECTION__USERNAME") ?? "";
+var stddsPass  = Environment.GetEnvironmentVariable("SCDSCONNECTION__PASSWORD") ?? "";
+var stddsQueue = Environment.GetEnvironmentVariable("SCDSCONNECTION__QUEUENAME") ?? "";
+var stddsHost  = Environment.GetEnvironmentVariable("SCDSCONNECTION__HOST") ?? "tcps://ems2.swim.faa.gov:55443";
+var stddsVpn   = Environment.GetEnvironmentVariable("SCDSCONNECTION__MESSAGEVPN") ?? "STDDS";
+
 // ── Shared state ────────────────────────────────────────────────────────────
 
 var flights = new ConcurrentDictionary<string, FlightState>();
@@ -96,6 +103,56 @@ app.MapGet("/table", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "index.html"));
+});
+app.MapGet("/asdex", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex.html"));
+});
+// Register /asdex/ws/{airport} before /asdex/{airport} so the literal "ws" segment wins
+app.Map("/asdex/ws/{airport}", async (HttpContext ctx, string airport) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+    airport = airport.ToUpperInvariant();
+    using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+    var client = new WsClient(ws);
+
+    var sendTask = Task.Run(async () =>
+    {
+        try
+        {
+            await foreach (var data in client.Queue.Reader.ReadAllAsync())
+            {
+                if (ws.State != WebSocketState.Open) break;
+                await ws.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+        catch (WebSocketException) { }
+        catch (OperationCanceledException) { }
+    });
+
+    var clientId = asdex.AddClient(airport, client);
+    try
+    {
+        var buf = new byte[4096];
+        while (ws.State == WebSocketState.Open)
+        {
+            var result = await ws.ReceiveAsync(buf, CancellationToken.None);
+            if (result.MessageType == WebSocketMessageType.Close) break;
+        }
+    }
+    catch (WebSocketException) { }
+    finally
+    {
+        asdex.RemoveClient(airport, clientId);
+        client.Queue.Writer.TryComplete();
+        await sendTask;
+    }
+});
+app.MapGet("/asdex/{airport}", async (HttpContext ctx, string airport) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex-airport.html"));
 });
 
 // WebSocket — streams flight updates to browser
@@ -538,6 +595,13 @@ app.MapGet("/api/kml/{name}", (string name) =>
     return Results.File(path, "application/vnd.google-earth.kml+xml");
 });
 
+// ASDEX directory — list of airports with track counts and centroids
+app.MapGet("/api/asdex", () => Results.Json(asdex.GetDirectory(), jsonOpts));
+
+// ASDEX airport snapshot — all current tracks for one airport
+app.MapGet("/api/asdex/{airport}", (string airport) =>
+    Results.Json(asdex.GetSnapshot(airport.ToUpperInvariant()), jsonOpts));
+
 // History symbol: matches client getSymbolChar() logic
 static char GetHistSym(FlightState f)
 {
@@ -555,16 +619,24 @@ static string FindRepoRoot(string start)
     return dir?.FullName ?? start;
 }
 
+// ── Solace SDK init (once, shared by all connections) ───────────────────────
+
+{
+    var cfp = new ContextFactoryProperties { SolClientLogLevel = SolLogLevel.Warning };
+    cfp.LogToConsoleError();
+    ContextFactory.Instance.Init(cfp);
+}
+
+// ── ASDEX bridge (STDDS/SMES) ────────────────────────────────────────────────
+
+var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVpn, jsonOpts);
+
 // ── Solace connection (background) ──────────────────────────────────────────
 
 var solaceReady = new TaskCompletionSource();
 
 var solaceThread = new Thread(() =>
 {
-    var cfp = new ContextFactoryProperties { SolClientLogLevel = SolLogLevel.Warning };
-    cfp.LogToConsoleError();
-    ContextFactory.Instance.Init(cfp);
-
     try
     {
         while (true)
@@ -719,6 +791,7 @@ lifetime.ApplicationStopping.Register(() =>
 });
 
 solaceThread.Start();
+asdex.Start();
 
 // Save flight cache periodically (every 5 minutes)
 var cacheTimer = new Timer(_ => SaveFlightCache(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
@@ -780,9 +853,13 @@ var nasrTimer = new Timer(async _ =>
 // Batch broadcast timers — flush dirty flights to all connected clients
 var batchTimer = new Timer(_ => FlushDirtyBatch(_dirty), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
+// ASDEX: flush dirty airports every 1s, purge stale tracks every 10s
+var asdexBatchTimer = new Timer(_ => asdex.FlushDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+var asdexPurgeTimer = new Timer(_ => asdex.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
 
 await solaceReady.Task;

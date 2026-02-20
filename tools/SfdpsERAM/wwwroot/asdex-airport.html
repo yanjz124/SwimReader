@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASDE-X</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; overflow: hidden; height: 100vh; }
+#map { width: 100%; height: 100vh; }
+
+/* ── Status bar ── */
+#statusbar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 600;
+    background: #111; border-top: 1px solid #333;
+    display: flex; align-items: center; gap: 16px; padding: 4px 12px;
+    font-family: 'ERAM', 'Consolas', monospace; font-size: 10px; color: #888;
+}
+#statusbar a { color: #444; text-decoration: none; }
+#statusbar a:hover { color: #888; }
+#statusbar .airport-id { color: #cccc44; font-size: 13px; letter-spacing: 2px; }
+#conn { color: #ff4444; }
+#conn.ok { color: #44aa44; }
+#conn.waiting { color: #aaaa44; }
+
+/* ── Target icons — rendered as Leaflet divIcons ── */
+.ac-icon {
+    position: relative;
+    overflow: visible;
+    pointer-events: none;
+}
+.ac-icon svg.sym {
+    display: block;
+    overflow: visible;
+}
+.ac-icon .ldr {
+    position: absolute; left: 0; top: 0;
+    overflow: visible; pointer-events: none;
+}
+.ac-icon .db-wrap {
+    position: absolute;
+    /* NE offset: right of and above the target center */
+    left: 23px; top: -15px;
+    pointer-events: none;
+}
+.db {
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 10px; line-height: 13px;
+    color: #cccc44;
+    white-space: nowrap;
+    background: rgba(0,0,0,0.45);
+    padding: 0 2px;
+}
+.db-line2 { color: #aaa; }
+
+/* hide Leaflet attribution noise */
+.leaflet-control-attribution { display: none; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="statusbar">
+    <span class="airport-id" id="airport-id">—</span>
+    <span id="track-count">0 tracks</span>
+    <span id="conn">CONNECTING</span>
+    <span style="flex:1"></span>
+    <a href="/asdex">◂ DIRECTORY</a>
+</div>
+
+<script>
+// ── Airport from URL ─────────────────────────────────────────────────────────
+const pathParts = window.location.pathname.split('/').filter(Boolean);
+const AIRPORT = (pathParts[pathParts.length - 1] || 'UNKN').toUpperCase();
+document.getElementById('airport-id').textContent = AIRPORT;
+document.title = 'ASDE-X ' + AIRPORT;
+
+// ── Leaflet map ──────────────────────────────────────────────────────────────
+const map = L.map('map', {
+    center: [38.85, -77.04],   // will be overridden by snapshot centroid
+    zoom: 14,
+    zoomControl: true,
+    attributionControl: false
+});
+
+// CartoDB Dark tiles — genuine dark map, no CSS hack needed
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd', maxZoom: 20
+}).addTo(map);
+
+// ── State ────────────────────────────────────────────────────────────────────
+const markers  = {};   // trackId → L.marker
+const hashes   = {};   // trackId → hash string for change detection
+let   trackCount = 0;
+let   centeredOnce = false;
+
+const connEl  = document.getElementById('conn');
+const cntEl   = document.getElementById('track-count');
+
+// ── Heavy-type detection (client-side from ICAO type code) ───────────────────
+const HEAVY_PREFIXES = ['B74','B77','B78','A33','A34','A35','A38','A30',
+                        'A22','C17','C5M','IL7','AN1','DC8','L101'];
+const B757_CODES     = ['B752','B753','B757'];
+
+function targetCategory(t) {
+    // unknown = no callsign/squawk, OR tgtType explicitly unknown
+    if (t.tgtType === 'unknown') return 'unknown';
+    if (t.tgtType === 'vehicle') return 'vehicle';
+    if (!t.callsign && !t.squawk) return 'unknown';
+    if (t.acType) {
+        const ac = t.acType.toUpperCase();
+        if (B757_CODES.includes(ac)) return 'heavy';
+        for (const pfx of HEAVY_PREFIXES) if (ac.startsWith(pfx)) return 'heavy';
+    }
+    return 'aircraft';
+}
+
+// ── SVG path for airplane (pointing up = heading 0°) ─────────────────────────
+// Fuselage + swept wings + V-tail. ViewBox centered on 0,0, nose at top.
+const PLANE_PATH = 'M 0 -8 L 1.5 -3 L 7.5 1.5 L 2 2.5 L 2 5.5 L 3.5 7 L 0 6.5 L -3.5 7 L -2 5.5 L -2 2.5 L -7.5 1.5 L -1.5 -3 Z';
+// Kite diamond (unknown): tall narrow, taller than wide
+const DIAMOND_PATH = 'M 0 -9 L 4.5 0 L 0 9 L -4.5 0 Z';
+// Vehicle: small square
+const VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z';
+
+function makeIcon(t) {
+    const cat = targetCategory(t);
+    const hdg = t.hdg ?? 0;
+
+    let fill, symHtml;
+    if (cat === 'unknown') {
+        fill = '#00ffff';
+        symHtml = `<path d="${DIAMOND_PATH}" fill="${fill}" fill-opacity="0.9"/>`;
+    } else if (cat === 'vehicle') {
+        fill = '#00cccc';
+        symHtml = `<path d="${VEHICLE_PATH}" fill="${fill}" fill-opacity="0.75"/>`;
+    } else {
+        fill = cat === 'heavy' ? '#ff8c00' : '#ffffff';
+        // rotate inline via SVG transform (faster than CSS for many markers)
+        symHtml = `<g transform="rotate(${hdg})">${'<path d="' + PLANE_PATH + '" fill="' + fill + '" fill-opacity="0.95"/>'}</g>`;
+    }
+
+    // Data block
+    const cs  = t.callsign || t.squawk || '????';
+    const alt = t.altFt != null ? Math.round(t.altFt / 100).toString().padStart(3, '0') : 'XXX';
+    const spd = t.spdKts != null ? Math.round(t.spdKts / 10).toString().padStart(2, '0') : '';
+    const typ = t.acType || '';
+
+    let dbHtml = '';
+    if (cat !== 'unknown' && cat !== 'vehicle') {
+        dbHtml = `<div class="db">
+            <div class="db-line1">${cs} ${alt}</div>
+            <div class="db-line2">${typ}${typ && spd ? ' ' : ''}${spd}</div>
+        </div>`;
+    } else {
+        dbHtml = `<div class="db"><div class="db-line1">${cs}</div></div>`;
+    }
+
+    const html = `<div class="ac-icon">
+        <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block">${symHtml}</svg>
+        <svg class="ldr" width="18" height="18" viewBox="0 0 18 18" style="position:absolute;left:0;top:0;overflow:visible">
+            <line x1="9" y1="9" x2="23" y2="-5" stroke="#cccc44" stroke-width="0.5" opacity="0.5"/>
+        </svg>
+        <div class="db-wrap">${dbHtml}</div>
+    </div>`;
+
+    return L.divIcon({ className: '', html, iconSize: [200, 18], iconAnchor: [9, 9] });
+}
+
+function trackHash(t) {
+    return `${t.lat?.toFixed(5)},${t.lon?.toFixed(5)},${t.callsign||''},${t.altFt||0},${t.spdKts||0},${t.hdg?.toFixed(0)||0},${t.tgtType||''},${t.acType||''}`;
+}
+
+// ── Apply one track update ───────────────────────────────────────────────────
+function applyTrack(t) {
+    if (t.lat == null || t.lon == null) return;
+    const ll  = [t.lat, t.lon];
+    const h   = trackHash(t);
+    const tid = t.trackId;
+
+    if (!markers[tid]) {
+        markers[tid] = L.marker(ll, { icon: makeIcon(t), zIndexOffset: 0 }).addTo(map);
+    } else {
+        markers[tid].setLatLng(ll);
+        if (hashes[tid] !== h) {
+            markers[tid].setIcon(makeIcon(t));
+        }
+    }
+    hashes[tid] = h;
+}
+
+function removeTrack(trackId) {
+    if (markers[trackId]) { map.removeLayer(markers[trackId]); delete markers[trackId]; }
+    delete hashes[trackId];
+}
+
+function updateCount() {
+    trackCount = Object.keys(markers).length;
+    cntEl.textContent = trackCount + ' track' + (trackCount !== 1 ? 's' : '');
+}
+
+// ── Center map on track centroid ─────────────────────────────────────────────
+function centerOnTracks(tracks) {
+    if (!tracks.length || centeredOnce) return;
+    const lat = tracks.reduce((s, t) => s + t.lat, 0) / tracks.length;
+    const lon = tracks.reduce((s, t) => s + t.lon, 0) / tracks.length;
+    map.setView([lat, lon], 14);
+    centeredOnce = true;
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+let ws = null;
+let wsRetryTimer = null;
+
+function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url   = `${proto}//${location.host}/asdex/ws/${AIRPORT}`;
+    ws = new WebSocket(url);
+    connEl.textContent = 'CONNECTING';
+    connEl.className   = 'waiting';
+
+    ws.onopen = () => {
+        connEl.textContent = 'LIVE';
+        connEl.className   = 'ok';
+        if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
+    };
+
+    ws.onmessage = ev => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+
+        if (msg.type === 'snapshot') {
+            // Remove stale markers not in snapshot
+            const incoming = new Set((msg.data.tracks || []).map(t => t.trackId));
+            for (const tid of Object.keys(markers)) {
+                if (!incoming.has(tid)) removeTrack(tid);
+            }
+            for (const t of (msg.data.tracks || [])) applyTrack(t);
+            centerOnTracks(msg.data.tracks || []);
+            updateCount();
+
+        } else if (msg.type === 'batch') {
+            for (const t of (msg.data || [])) applyTrack(t);
+            updateCount();
+
+        } else if (msg.type === 'remove') {
+            removeTrack(msg.data.trackId);
+            updateCount();
+        }
+    };
+
+    ws.onclose = () => {
+        connEl.textContent = 'DISCONNECTED';
+        connEl.className   = '';
+        wsRetryTimer = setTimeout(connect, 5000);
+    };
+
+    ws.onerror = () => { ws.close(); };
+}
+
+connect();
+</script>
+</body>
+</html>

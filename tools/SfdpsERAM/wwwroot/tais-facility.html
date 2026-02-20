@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAIS | swim.vncrcc.org</title>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    background: #000;
+    color: #ccc;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ── Top bar ──────────────────────────────────────────────── */
+.topbar {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+}
+.topbar .back { color: #888; text-decoration: none; font-size: 12px; }
+.topbar .back:hover { color: #fff; }
+.topbar h1 { font-size: 15px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+.status { font-size: 11px; color: #666; }
+.status.ok { color: #44aa44; }
+.stats { font-size: 11px; color: #888; margin-left: auto; }
+
+/* ── Filter bar ───────────────────────────────────────────── */
+.filterbar {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 6px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.search-box {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 2px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #ccc;
+    width: 320px;
+    outline: none;
+}
+.search-box:focus { border-color: #cccc44; }
+.search-box::placeholder { color: #555; }
+.result-count { font-size: 11px; color: #555; margin-left: 8px; }
+
+/* ── Track list ──────────────────────────────────────────── */
+.track-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+/* Column header */
+.col-header {
+    display: grid;
+    grid-template-columns: 90px 50px 50px 50px 55px 40px 50px 45px 55px 55px;
+    gap: 8px;
+    padding: 6px 16px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #222;
+    background: #050505;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    cursor: pointer;
+    user-select: none;
+}
+.col-header span:hover { color: #cccc44; }
+.col-header .sorted { color: #cccc44; }
+
+/* Track row (collapsed) */
+.track-row {
+    display: grid;
+    grid-template-columns: 90px 50px 50px 50px 55px 40px 50px 45px 55px 55px;
+    gap: 8px;
+    padding: 6px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid #111;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.track-row:hover { background: #0a0a0a; }
+.track-row.expanded { background: #0a0f0a; border-left: 2px solid #44aa44; }
+.track-row .cs { color: #fff; }
+.track-row .cs.noplan { color: #888; }
+.track-row .dep, .track-row .arr { color: #888; }
+.track-row .alt { color: #39d2c0; }
+.track-row .gs { color: #aaa; }
+.track-row .sqk { color: #888; }
+.track-row .rwy { color: #aaa; }
+.track-row .sp { color: #888; }
+.track-row .own { color: #5588ff; }
+.track-row .frozen { color: #ff4444; }
+.track-row .pseudo { color: #cccc44; }
+
+/* Expanded detail */
+.track-detail {
+    background: #050505;
+    border-bottom: 1px solid #222;
+    border-left: 2px solid #44aa44;
+    padding: 12px 16px 12px 28px;
+    display: none;
+}
+.track-detail.open { display: block; }
+
+.detail-section {
+    margin-bottom: 10px;
+}
+.detail-section h4 {
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid #1a1a1a;
+    padding-bottom: 3px;
+}
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 4px 16px;
+    font-size: 12px;
+}
+.detail-grid .f { display: flex; gap: 8px; }
+.detail-grid .lbl { color: #555; min-width: 90px; }
+.detail-grid .val { color: #ccc; }
+.detail-grid .val.hl { color: #39d2c0; }
+.detail-grid .val.warn { color: #ff8844; }
+.detail-grid .val.accent { color: #5588ff; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+    <a class="back" href="/tais">◀ TAIS</a>
+    <h1 id="title">TAIS</h1>
+    <span class="status" id="status">connecting...</span>
+    <div class="stats" id="stats"></div>
+</div>
+
+<div class="filterbar">
+    <input type="text" class="search-box" id="search" placeholder="Search callsign, squawk, type, airport, owner, scratchpad...">
+    <span class="result-count" id="resultCount"></span>
+</div>
+
+<div class="track-list" id="trackList">
+    <div class="col-header" id="colHeader">
+        <span data-col="callsign" class="sorted">CALLSIGN</span>
+        <span data-col="acType">TYPE</span>
+        <span data-col="origin">DEP</span>
+        <span data-col="dest">ARR</span>
+        <span data-col="altFt">ALT</span>
+        <span data-col="gs">GS</span>
+        <span data-col="reportedSqk">SQK</span>
+        <span data-col="runway">RWY</span>
+        <span data-col="sp1">SP1</span>
+        <span data-col="owner">OWN</span>
+    </div>
+    <div id="rows"></div>
+</div>
+
+<script>
+const FACILITY = location.pathname.split('/').pop().toUpperCase();
+document.getElementById('title').textContent = `TAIS  ${FACILITY}`;
+document.title = `TAIS ${FACILITY} | swim.vncrcc.org`;
+
+let tracks = []; // array of track objects from server
+let sortCol = 'callsign';
+let sortAsc = true;
+let expandedTrack = null;
+let searchTerm = '';
+
+const statusEl = document.getElementById('status');
+const statsEl  = document.getElementById('stats');
+const rowsEl   = document.getElementById('rows');
+const searchEl = document.getElementById('search');
+const resultEl = document.getElementById('resultCount');
+
+// ── WebSocket ──────────────────────────────────────────────────
+let ws = null;
+function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/tais/ws/${FACILITY.toLowerCase()}`);
+
+    ws.onopen = () => {
+        statusEl.textContent = 'LIVE';
+        statusEl.className = 'status ok';
+    };
+
+    ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'snapshot') {
+            tracks = msg.data.tracks || [];
+            render();
+        } else if (msg.type === 'batch') {
+            tracks = msg.data || [];
+            render();
+        } else if (msg.type === 'remove') {
+            const r = msg.data;
+            tracks = tracks.filter(t => t.trackNum !== r.trackNum);
+            render();
+        }
+    };
+
+    ws.onclose = () => {
+        statusEl.textContent = 'DISCONNECTED';
+        statusEl.className = 'status';
+        setTimeout(connect, 5000);
+    };
+
+    ws.onerror = () => ws.close();
+}
+
+// ── Search ────────────────────────────────────────────────────
+searchEl.addEventListener('input', () => {
+    searchTerm = searchEl.value.trim().toUpperCase();
+    render();
+});
+
+function matchesSearch(t) {
+    if (!searchTerm) return true;
+    const fields = [
+        t.callsign, t.acType, t.origin, t.dest,
+        t.reportedSqk, t.assignedSqk, t.owner, t.sp1, t.sp2,
+        t.trackNum, t.runway, t.entryFix, t.exitFix, t.modeS
+    ];
+    return fields.some(f => f && f.toUpperCase().includes(searchTerm));
+}
+
+// ── Sorting ───────────────────────────────────────────────────
+document.getElementById('colHeader').addEventListener('click', (e) => {
+    const col = e.target.dataset.col;
+    if (!col) return;
+    if (sortCol === col) { sortAsc = !sortAsc; }
+    else { sortCol = col; sortAsc = true; }
+    document.querySelectorAll('.col-header span').forEach(s => s.classList.remove('sorted'));
+    e.target.classList.add('sorted');
+    render();
+});
+
+function getSortValue(t, col) {
+    switch (col) {
+        case 'callsign': return t.callsign || t.trackNum || '';
+        case 'acType':   return t.acType || '';
+        case 'origin':   return t.origin || '';
+        case 'dest':     return t.dest || '';
+        case 'altFt':    return t.altFt ?? -1;
+        case 'gs':       return t.gs ?? -1;
+        case 'reportedSqk': return t.reportedSqk || '';
+        case 'runway':   return t.runway || '';
+        case 'sp1':      return t.sp1 || '';
+        case 'owner':    return t.owner || '';
+        default:         return '';
+    }
+}
+
+function cmpSort(a, b) {
+    let va = getSortValue(a, sortCol);
+    let vb = getSortValue(b, sortCol);
+    if (typeof va === 'number' && typeof vb === 'number') {
+        return sortAsc ? va - vb : vb - va;
+    }
+    va = String(va); vb = String(vb);
+    return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+}
+
+// ── Render ────────────────────────────────────────────────────
+function render() {
+    const filtered = tracks.filter(matchesSearch);
+    filtered.sort(cmpSort);
+
+    statsEl.textContent = `${tracks.length} tracks`;
+    resultEl.textContent = searchTerm ? `${filtered.length} / ${tracks.length}` : '';
+
+    const html = filtered.map(t => {
+        const isExpanded = expandedTrack === t.trackNum;
+        const cs = t.callsign || `#${t.trackNum}`;
+        const csClass = t.callsign ? 'cs' : 'cs noplan';
+        const alt = fmtAlt(t.altFt);
+        const gs = t.gs != null ? t.gs : '';
+
+        let flags = '';
+        if (t.frozen) flags += ' <span class="frozen">FRZ</span>';
+        if (t.pseudo) flags += ' <span class="pseudo">PSE</span>';
+
+        return `<div class="track-row${isExpanded ? ' expanded' : ''}" data-tn="${t.trackNum}">
+            <span class="${csClass}">${esc(cs)}${flags}</span>
+            <span>${esc(t.acType || '')}</span>
+            <span class="dep">${esc(fmtApt(t.origin))}</span>
+            <span class="arr">${esc(fmtApt(t.dest))}</span>
+            <span class="alt">${alt}</span>
+            <span class="gs">${gs}</span>
+            <span class="sqk">${esc(t.reportedSqk || '')}</span>
+            <span class="rwy">${esc(t.runway || '')}</span>
+            <span class="sp">${esc(t.sp1 || '')}</span>
+            <span class="own">${esc(t.owner || '')}</span>
+        </div>
+        <div class="track-detail${isExpanded ? ' open' : ''}" data-tn="${t.trackNum}">
+            ${isExpanded ? renderDetail(t) : ''}
+        </div>`;
+    }).join('');
+
+    rowsEl.innerHTML = html;
+
+    rowsEl.querySelectorAll('.track-row').forEach(el => {
+        el.addEventListener('click', () => {
+            const tn = el.dataset.tn;
+            expandedTrack = expandedTrack === tn ? null : tn;
+            render();
+        });
+    });
+}
+
+function renderDetail(t) {
+    const fields1 = [
+        ['Callsign', t.callsign, ''],
+        ['Track #', t.trackNum, ''],
+        ['Type', t.acType, ''],
+        ['Wake', t.wake, ''],
+        ['Equipment', t.equip, ''],
+        ['Rules', fmtRules(t.rules), ''],
+    ];
+    const fields2 = [
+        ['Origin', t.origin, ''],
+        ['Destination', t.dest, ''],
+        ['Entry Fix', t.entryFix, ''],
+        ['Exit Fix', t.exitFix, ''],
+        ['Runway', t.runway, ''],
+    ];
+    const fields3 = [
+        ['Assigned SQK', t.assignedSqk, ''],
+        ['Reported SQK', t.reportedSqk, ''],
+        ['Req Altitude', t.reqAlt != null ? t.reqAlt.toLocaleString() + ' ft' : null, ''],
+        ['Scratchpad 1', t.sp1, ''],
+        ['Scratchpad 2', t.sp2, ''],
+        ['Owner (CPS)', t.owner, 'accent'],
+        ['Pending H/O', t.handoff, 'warn'],
+    ];
+    const fields4 = [
+        ['Latitude', t.lat != null ? t.lat.toFixed(4) : null, ''],
+        ['Longitude', t.lon != null ? t.lon.toFixed(4) : null, ''],
+        ['Altitude', t.altFt != null ? t.altFt.toLocaleString() + ' ft' : null, 'hl'],
+        ['Ground Speed', t.gs != null ? t.gs + ' kts' : null, ''],
+        ['Track', t.trk != null ? t.trk + '°' : null, ''],
+        ['Vert Rate', t.vs != null ? (t.vs >= 0 ? '+' : '') + t.vs + ' fpm' : null, ''],
+        ['Mode S', t.modeS, ''],
+        ['Frozen', t.frozen ? 'YES' : 'No', t.frozen ? 'warn' : ''],
+        ['Pseudo', t.pseudo ? 'YES' : 'No', t.pseudo ? 'warn' : ''],
+        ['Age', t.ageSec != null ? t.ageSec + 's' : null, ''],
+    ];
+
+    return `
+    <div class="detail-section">
+        <h4>IDENTITY</h4>
+        <div class="detail-grid">${renderFields(fields1)}</div>
+    </div>
+    <div class="detail-section">
+        <h4>ROUTE</h4>
+        <div class="detail-grid">${renderFields(fields2)}</div>
+    </div>
+    <div class="detail-section">
+        <h4>FLIGHT PLAN</h4>
+        <div class="detail-grid">${renderFields(fields3)}</div>
+    </div>
+    <div class="detail-section">
+        <h4>TRACK / POSITION</h4>
+        <div class="detail-grid">${renderFields(fields4)}</div>
+    </div>`;
+}
+
+function renderFields(fields) {
+    return fields
+        .filter(([, v]) => v != null && v !== '')
+        .map(([label, value, cls]) =>
+            `<div class="f"><span class="lbl">${label}</span><span class="val${cls ? ' ' + cls : ''}">${esc(String(value))}</span></div>`
+        ).join('');
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+function fmtAlt(ft) {
+    if (ft == null) return '';
+    if (ft >= 18000) return 'FL' + Math.round(ft / 100);
+    return ft.toLocaleString();
+}
+
+function fmtApt(code) {
+    if (!code) return '';
+    return code.replace(/^K/, '');
+}
+
+function fmtRules(r) {
+    if (r === 'IFR') return 'IFR';
+    if (r === 'VFR') return 'VFR';
+    return r || '';
+}
+
+function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Init ──────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>

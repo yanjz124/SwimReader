@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAIS | swim.vncrcc.org</title>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #000;
+    color: #fff;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    min-height: 100vh;
+}
+header {
+    background: #000;
+    border-bottom: 1px solid #333;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+header h1 { font-size: 15px; letter-spacing: 2px; color: #fff; font-weight: normal; }
+#status { font-size: 11px; color: #666; }
+#status.ok { color: #44aa44; }
+#count-bar { font-size: 11px; color: #888; padding: 8px 20px 4px; }
+#grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    padding: 12px 20px 20px;
+}
+.card {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 2px;
+    padding: 14px 12px 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+.card:hover { border-color: #fff; background: #1a1a1a; }
+.card-id {
+    font-size: 22px;
+    letter-spacing: 2px;
+    color: #cccc44;
+    line-height: 1;
+}
+.card-counts {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #aaa;
+}
+.card-counts .num {
+    font-size: 20px;
+    color: #fff;
+    display: block;
+    line-height: 1.1;
+}
+.empty { color: #444; padding: 20px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+    <h1>TAIS TERMINAL AUTOMATION</h1>
+    <div id="status">loading...</div>
+</header>
+<div id="count-bar"></div>
+<div id="grid"><div class="empty">Loading facilities...</div></div>
+
+<script>
+const statusEl = document.getElementById('status');
+const countBar = document.getElementById('count-bar');
+const grid     = document.getElementById('grid');
+
+async function refresh() {
+    try {
+        const r = await fetch('/api/tais');
+        if (!r.ok) throw new Error(r.status);
+        const facilities = await r.json();
+
+        statusEl.textContent = 'LIVE';
+        statusEl.className = 'ok';
+
+        if (!facilities.length) {
+            countBar.textContent = '';
+            grid.innerHTML = '<div class="empty">No TAIS facilities active — waiting for STDDS data</div>';
+            return;
+        }
+
+        const totalTracks = facilities.reduce((s, f) => s + f.trackCount, 0);
+        countBar.textContent = `${facilities.length} facilities  •  ${totalTracks} tracks`;
+
+        grid.innerHTML = facilities.map(f => {
+            const href = '/tais/' + f.facility.toLowerCase();
+            return `<a class="card" href="${href}">
+                <div class="card-id">${f.facility}</div>
+                <div class="card-counts">
+                    <div><span class="num">${f.trackCount}</span>TRACKS</div>
+                </div>
+            </a>`;
+        }).join('');
+    } catch (e) {
+        statusEl.textContent = 'ERROR';
+        statusEl.className = '';
+    }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

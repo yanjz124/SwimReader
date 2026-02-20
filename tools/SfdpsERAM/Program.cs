@@ -95,7 +95,9 @@ var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVp
 
 // TDLS bridge — receives forwarded TDES messages from ASDEX bridge (shared Solace session)
 var tdls = new TdlsBridge(jsonOpts);
-asdex.OnOtherMessage = (topic, body) => tdls.ProcessMessage(topic, body);
+// TAIS bridge — receives forwarded TAIS messages from ASDEX bridge (shared Solace session)
+var tais = new TaisBridge(jsonOpts);
+asdex.OnOtherMessage = (topic, body) => { tdls.ProcessMessage(topic, body); tais.ProcessMessage(topic, body); };
 
 // ── ASP.NET Core setup ──────────────────────────────────────────────────────
 
@@ -220,6 +222,57 @@ app.MapGet("/tdls/{airport}", async (HttpContext ctx, string airport) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls-airport.html"));
+});
+
+// TAIS routes — literal /tais/ws/{facility} before parameter /tais/{facility}
+app.MapGet("/tais", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais.html"));
+});
+app.Map("/tais/ws/{facility}", async (HttpContext ctx, string facility) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+    facility = facility.ToUpperInvariant();
+    using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+    var client = new WsClient(ws);
+
+    var sendTask = Task.Run(async () =>
+    {
+        try
+        {
+            await foreach (var data in client.Queue.Reader.ReadAllAsync())
+            {
+                if (ws.State != WebSocketState.Open) break;
+                await ws.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+        catch (WebSocketException) { }
+        catch (OperationCanceledException) { }
+    });
+
+    var clientId = tais.AddClient(facility, client);
+    try
+    {
+        var buf = new byte[4096];
+        while (ws.State == WebSocketState.Open)
+        {
+            var result = await ws.ReceiveAsync(buf, CancellationToken.None);
+            if (result.MessageType == WebSocketMessageType.Close) break;
+        }
+    }
+    catch (WebSocketException) { }
+    finally
+    {
+        tais.RemoveClient(facility, clientId);
+        client.Queue.Writer.TryComplete();
+        await sendTask;
+    }
+});
+app.MapGet("/tais/{facility}", async (HttpContext ctx, string facility) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais-facility.html"));
 });
 
 app.MapGet("/fdio", async (HttpContext ctx) =>
@@ -682,6 +735,11 @@ app.MapGet("/api/tdls/{airport}", (string airport) =>
 app.MapGet("/api/tdls/{airport}/{aircraftId}", (string airport, string aircraftId) =>
     Results.Json(tdls.GetAircraftMessages(airport.ToUpperInvariant(), aircraftId.ToUpperInvariant()), jsonOpts));
 
+// TAIS directory and facility detail
+app.MapGet("/api/tais", () => Results.Json(tais.GetDirectory(), jsonOpts));
+app.MapGet("/api/tais/{facility}", (string facility) =>
+    Results.Json(tais.GetSnapshot(facility.ToUpperInvariant()), jsonOpts));
+
 // History symbol: matches client getSymbolChar() logic
 static char GetHistSym(FlightState f)
 {
@@ -928,10 +986,12 @@ var asdexPurgeTimer = new Timer(_ => asdex.PurgeStaleTracks(), null, TimeSpan.Fr
 // TDLS: flush new messages every 1s, purge stale aircraft every 60s
 var tdlsFlushTimer = new Timer(_ => tdls.FlushDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 var tdlsPurgeTimer = new Timer(_ => tdls.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+var taisFlushTimer = new Timer(_ => tais.FlushDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+var taisPurgeTimer = new Timer(_ => tais.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
 
 await solaceReady.Task;

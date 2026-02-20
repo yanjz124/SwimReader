@@ -34,9 +34,14 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
            │ DGScope  │  │ Future│  │ ERAM   │   │ Flight     │
            │ /dstars  │  │ FIDO  │  │ Scope  │   │ Table      │
            │ clients  │  │ Strips│  │eram.html   │index.html  │
-           │ :5000    │  │ ASDEX │  │ :5001  │   │ :5001      │
-           └──────────┘  │ TDLS  │  └────────┘   └────────────┘
-                         └───────┘
+           │ :5000    │  │ TDLS  │  │ :5001  │   │ :5001      │
+           └──────────┘  └───────┘  ├────────┤   └────────────┘
+                                    │ ASDE-X │
+                                    │ Direc- │
+                                    │ tory + │
+                                    │ Scope  │
+                                    │ :5001  │
+                                    └────────┘
 ```
 
 ### Data Sources (Parsers)
@@ -48,7 +53,9 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 - **ERAM Scope** (`eram.html`) — Leaflet + Canvas radar display with ERAM-style data blocks
 - **Flight Table** (`index.html`) — Tabular real-time flight explorer with filtering, pinning, detail panel
 - **DGScope Server** (`/dstars/{facility}/updates`) — HTTP streaming + WebSocket for DGScope radar clients
-- Future: FIDO, strips, ASDEX, TDLS, etc.
+- **ASDE-X Directory** (`/asdex`) — Airport grid with live track counts, click-through to scope
+- **ASDE-X Scope** (`/asdex/{airport}`) — Leaflet map with live surface targets, data blocks, 1s updates
+- Future: FIDO, strips, TDLS, etc.
 
 ## Project Structure
 
@@ -64,11 +71,14 @@ src/
     Streaming/                  ClientConnectionManager (facility-scoped broadcast)
 tools/
   SwimReader.SfdpsExplorer/           Console tool — raw SFDPS FIXM message inspection
-  SfdpsERAM/                          Standalone web server — SFDPS → WebSocket → ERAM/table
-    Program.cs                          All server logic: Solace, FIXM parsing, WebSocket, REST
+  SfdpsERAM/                          Standalone web server — SFDPS+STDDS → WebSocket → ERAM/ASDE-X
+    Program.cs                          All server logic: Solace (FDPS+STDDS), FIXM parsing, WebSocket, REST
+    AsdexBridge.cs                      STDDS/SMES ingestion, AsdexTrack state, WS broadcast (ASDE-X)
     wwwroot/
       eram.html                         ERAM radar scope (single-file: HTML + CSS + JS)
       index.html                        Flight data table (single-file: HTML + CSS + JS)
+      asdex.html                        ASDE-X airport directory (single-file: HTML + CSS + JS)
+      asdex-airport.html                ASDE-X airport scope / Leaflet map (single-file: HTML + CSS + JS)
       handoff-codes.json                Facility handoff display code mappings (H/O/K suffixes)
       destination-codes.json            Per-ARTCC single-letter destination airport codes
       ERAMv110.ttf                      ERAM font for authentic ATC display
@@ -126,8 +136,8 @@ dotnet run
 | `SFDPS_PASS` | SWIM subscription password | (required) |
 | `SFDPS_QUEUE` | Solace queue name | (required) |
 
-### STDDS (SwimReader.Server)
-Configured via `appsettings.json` section `ScdsConnection` or environment variables:
+### STDDS (SwimReader.Server AND SfdpsERAM)
+Both services read these variables. SwimReader.Server also accepts them via `appsettings.json` section `ScdsConnection`.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SCDSCONNECTION__HOST` | Solace broker URL | `tcps://ems2.swim.faa.gov:55443` |
@@ -135,6 +145,8 @@ Configured via `appsettings.json` section `ScdsConnection` or environment variab
 | `SCDSCONNECTION__USERNAME` | SWIM username | (required) |
 | `SCDSCONNECTION__PASSWORD` | SWIM password | (required) |
 | `SCDSCONNECTION__QUEUENAME` | Solace queue | (required) |
+
+**Note:** SfdpsERAM uses `SCDSCONNECTION__*` vars for its `AsdexBridge` STDDS connection (separate Solace session from the FDPS session). If `SCDSCONNECTION__USERNAME` is empty, ASDE-X is silently disabled.
 
 All services search upward for a `.env` file, so a single `.env` at the repo root covers everything. See `.env.example`.
 
@@ -282,6 +294,9 @@ Core fields tracked per flight (by GUFI):
 | `GET /api/debug/namevalue-keys` | All unique `nameValue` keys seen in supplementalData |
 | `GET /api/debug/cpdlc` | CPDLC-capable flights (datalink code contains "J") |
 | `GET /api/debug/clearance` | Flights with clearance data (heading/speed/text) |
+| `GET /api/asdex` | Airport directory — `[{airport, count, lat, lon}]` sorted by track count |
+| `GET /api/asdex/{airport}` | Full snapshot for one airport — `{airport, tracks:[...]}` |
+| `WS /asdex/ws/{airport}` | WebSocket — sends `snapshot`, `batch`, `remove` messages (see ASDE-X section) |
 
 ### Handoff Detection Logic
 Server-side in `Program.cs` ProcessFlight():
@@ -503,6 +518,152 @@ Data cached in `nasr-data/{AIRAC-date}/`, auto-refreshed every 24 hours.
 ### Destination Airport Codes
 Per-ARTCC single-letter destination codes in `destination-codes.json`. When a facility is selected, normal Field E shows `{letter}{groundspeed}` (e.g., `W420` where W=DCA). Add more ARTCCs by adding entries to the JSON file.
 
+## ASDE-X Display (SfdpsERAM)
+
+The ASDE-X feature adds live airport surface traffic to SfdpsERAM. It connects a second Solace session to STDDS (SMES topics), maintains per-airport track state, and broadcasts real-time updates to browser clients via WebSocket.
+
+### Architecture
+
+```
+STDDS Solace queue → topic filter (SMES/*) → ProcessSmes() → AsdexTrack.MergeFrom()
+                                                                     ↓
+                                                         _dirty set (per airport)
+                                                                     ↓
+                          ┌──────────┐         AsdexBridge.FlushDirty() (1s timer)
+                          │ /asdex   │◀────────── batch WS message → WsClient queue
+                          │ /asdex/  │
+                          │ {airport}│         AsdexBridge.PurgeStaleTracks() (10s timer)
+                          └──────────┘◀────────── remove WS message → WsClient queue
+```
+
+**Key class:** `AsdexBridge` in `tools/SfdpsERAM/AsdexBridge.cs` — fully self-contained; Program.cs creates one instance and calls `Start()` plus the two timer callbacks.
+
+### AsdexBridge Internals
+
+```csharp
+class AsdexBridge {
+    // airport → trackId → AsdexTrack
+    ConcurrentDictionary<string, ConcurrentDictionary<string, AsdexTrack>> _state;
+    // airport → clientId → WsClient
+    ConcurrentDictionary<string, ConcurrentDictionary<string, WsClient>> _clients;
+    // airports modified since last FlushDirty()
+    ConcurrentDictionary<string, byte> _dirty;
+}
+```
+
+- `Start()` — launches background `StddsReceiver` thread with 90s silence watchdog + auto-reconnect
+- `FlushDirty()` — called every 1s; sends `{type:"batch", data:[...tracks]}` to all clients of dirty airports
+- `PurgeStaleTracks()` — called every 10s; removes tracks not seen in 45s, sends `{type:"remove", data:{airport,trackId}}` to clients
+- `AddClient(airport, wsClient)` — registers client, sends immediate full `snapshot`, returns clientId
+- `RemoveClient(airport, clientId)` — unregisters client
+- `GetDirectory()` — returns `[{airport, count, lat, lon}]` sorted by track count
+- `GetSnapshot(airport)` — returns `{airport, tracks:[...]}`
+
+### AsdexTrack
+
+```csharp
+class AsdexTrack {
+    string Airport, TrackId;
+    string? Callsign, Squawk, AircraftType, TargetType;  // "aircraft"/"vehicle"/"unknown"
+    double Latitude, Longitude;
+    double? AltitudeFeet, HeadingDegrees;
+    int? SpeedKts;
+    string? EramGufi;
+    DateTime LastSeen;
+    void MergeFrom(double lat, double lon, string? callsign, string? squawk,
+                   string? acType, string? tgtType, double? alt, int? speed,
+                   double? heading, string? eramGufi);  // only overwrites non-null
+    object ToJson();  // trackId, callsign, squawk, acType, tgtType, lat, lon,
+                      // altFt, spdKts, hdg, eramGufi, ageSec
+}
+```
+
+**Merge semantics:** Position (lat/lon) always updated. All other fields only overwrite when incoming value is non-null. This handles partial `positionReport full="false"` updates that carry only position without identity.
+
+### WebSocket Protocol (`/asdex/ws/{airport}`)
+
+All messages are JSON. `{airport}` in the URL is case-insensitive (normalized to uppercase).
+
+| Message type | Direction | Shape |
+|---|---|---|
+| `snapshot` | server → client | `{type:"snapshot", data:{airport, tracks:[...AsdexTrack.ToJson()]}}` |
+| `batch` | server → client | `{type:"batch", data:[...AsdexTrack.ToJson()]}` — all current tracks for dirty airports |
+| `remove` | server → client | `{type:"remove", data:{airport, trackId}}` — track purged (45s timeout) |
+
+- `snapshot` sent immediately on WebSocket connect (no waiting for next dirty flush)
+- `batch` sent every 1s for airports with any position update; contains ALL current tracks (not just changed ones)
+- Client reconnects every 5s on disconnect
+
+**Route registration order matters:** `/asdex/ws/{airport}` must be registered in Program.cs BEFORE `/asdex/{airport}` so ASP.NET Core's literal-over-parameter preference gives "ws" to the WebSocket handler.
+
+### Solace SDK Init (critical)
+
+`ContextFactory.Instance.Init()` must be called exactly once before any Solace session is created. It is called at top-level in Program.cs before both the FDPS thread and AsdexBridge.Start(), so there is no race condition. The Init block was deliberately moved out of the solaceThread lambda when AsdexBridge was added.
+
+### Target Rendering (`asdex-airport.html`)
+
+Uses Leaflet `L.divIcon` with inline SVG. The icon size is `[200, 18]`, `iconAnchor: [9, 9]` (center of 18×18 symbol).
+
+**Target categories (function `targetCategory(t)`):**
+1. `unknown` — `tgtType === 'unknown'` OR no callsign and no squawk
+2. `vehicle` — `tgtType === 'vehicle'`
+3. `heavy` — has callsign, aircraft type matches heavy prefixes or B757 codes
+4. `aircraft` — everything else with a callsign
+
+**SVG paths (viewBox -9 -9 18 18, nose/top at 0,0):**
+```javascript
+// Aircraft (nose up = heading 0°/north)
+PLANE_PATH = 'M 0 -8 L 1.5 -3 L 7.5 1.5 L 2 2.5 L 2 5.5 L 3.5 7 L 0 6.5 L -3.5 7 L -2 5.5 L -2 2.5 L -7.5 1.5 L -1.5 -3 Z'
+// Unknown (kite diamond)
+DIAMOND_PATH = 'M 0 -9 L 4.5 0 L 0 9 L -4.5 0 Z'
+// Vehicle (square)
+VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z'
+```
+
+**Colors:**
+- Aircraft: white `#ffffff`
+- Heavy/B757: orange `#ff8c00`
+- Unknown: cyan `#00ffff`
+- Vehicle: cyan `#00cccc` at 75% opacity
+
+**Rotation:** Aircraft SVG is rotated via `<g transform="rotate(${hdg})">` inline — not CSS, so it works across all browsers and doesn't require marker re-creation.
+
+**Heavy type detection (client-side, ICAO type code):**
+```javascript
+const HEAVY_PREFIXES = ['B74','B77','B78','A33','A34','A35','A38','A30',
+                        'A22','C17','C5M','IL7','AN1','DC8','L101'];
+const B757_CODES = ['B752','B753','B757'];
+```
+
+**Data block (`.db` div, NE offset from target center):**
+- Line 1 (`.db-line1`, ERAM yellow): `{callsign || squawk || '????'}  {altFt/100 padded to 3 digits}`
+- Line 2 (`.db-line2`, grey `#aaa`): `{acType}  {spdKts/10 padded to 2 digits}`
+- Omitted for `unknown` and `vehicle` targets (only line 1 with callsign/squawk)
+
+**Leader line:** Fixed-offset SVG line from target center to NE data block corner (x1=9,y1=9 → x2=23,y2=-5), `#cccc44` at 50% opacity.
+
+**Change detection:** `trackHash(t)` hashes `lat, lon, callsign, altFt, spdKts, hdg, tgtType, acType`. Only calls `setIcon()` (expensive) when hash changes; otherwise just `setLatLng()`.
+
+**Auto-center:** On first snapshot, map centers on centroid of all tracks. Subsequent updates do not reposition the map.
+
+### Directory Page (`asdex.html`)
+
+- Polls `GET /api/asdex` every 5 seconds
+- CSS grid of airport cards, sorted by track count descending
+- Each card: ICAO code (22px, `#cccc44`), known airport name lookup, track count
+- Click → `/asdex/{icao.toLowerCase()}`
+- `AIRPORT_NAMES` dict for ~41 known airports; unknown airports show blank name
+- ERAM dark style: `#111` background, `#cccc44` text, ERAM font
+
+### Track Purge Timing
+
+| Timer | Interval | Action |
+|---|---|---|
+| `FlushDirty` | 1s | Broadcast all tracks for dirty airports |
+| `PurgeStaleTracks` | 10s | Remove tracks with `LastSeen > 45s ago`, notify clients |
+
+Client-side purge: none implemented (server handles it authoritatively via `remove` messages).
+
 ## STDDS Data Pipeline (SwimReader.Server)
 
 ### Message Flow
@@ -701,6 +862,9 @@ On shutdown (SIGTERM) and every 5 minutes, all flight data is serialized to `fli
 - ERAM scope: `https://swim.vncrcc.org/eram.html`
 - Flight table: `https://swim.vncrcc.org/index.html`
 - Stats API: `https://swim.vncrcc.org/api/stats`
+- ASDE-X directory: `https://swim.vncrcc.org/asdex`
+- ASDE-X scope: `https://swim.vncrcc.org/asdex/{airport}` (e.g., `/asdex/kdca`)
+- ASDE-X API: `https://swim.vncrcc.org/api/asdex`
 
 **Not yet exposed externally:**
 - STDDS/DGScope on port 5000 — needs either a reverse proxy or separate tunnel hostname to expose `/dstars` paths

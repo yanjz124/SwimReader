@@ -347,6 +347,8 @@ function targetCategory(t) {
     if (t.tgtType === 'unknown') return 'unknown';
     if (t.tgtType === 'vehicle') return 'vehicle';
     if (!t.callsign && !t.squawk) return 'unknown';
+    // RECAT wake category A-E = heavy (orange)
+    if (t.wake && 'ABCDE'.includes(t.wake.toUpperCase())) return 'heavy';
     if (t.acType) {
         const ac = t.acType.toUpperCase();
         if (B757_CODES.includes(ac)) return 'heavy';
@@ -416,7 +418,7 @@ function makeIcon(t) {
 }
 
 function trackHash(t) {
-    return `${t.lat?.toFixed(5)},${t.lon?.toFixed(5)},${t.callsign||''},${t.altFt||0},${t.spdKts||0},${t.hdg?.toFixed(0)||0},${t.tgtType||''},${t.acType||''}`;
+    return `${t.lat?.toFixed(5)},${t.lon?.toFixed(5)},${t.callsign||''},${t.altFt||0},${t.spdKts||0},${t.hdg?.toFixed(0)||0},${t.tgtType||''},${t.acType||''},${t.wake||''}`;
 }
 
 // ── Apply one track update ───────────────────────────────────────────────────

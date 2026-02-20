@@ -2,9 +2,11 @@
 
 Real-time FAA SWIM (System Wide Information Management) data platform. Ingests live flight data from multiple FAA data sources via Solace messaging, parses/normalizes it, and serves it through multiple frontends and API services.
 
-## IMPORTANT: ERAM Reference Documentation
+## IMPORTANT: Reference Documentation
 
 **Before implementing any ERAM display feature, command, or behavior, ALWAYS read `docs/crc-eram-reference.md` first.** This is the authoritative CRC/vNAS ERAM specification with screenshots. It covers targets, tracks, data blocks, commands, toolbars, NEXRAD, GeoMaps, and all display elements. Images are saved locally in `docs/img/eram/`. This reference should be consulted even after context resets or memory loss — the file is always available in the repository.
+
+**Before implementing any ASDE-X display feature, command, or behavior, ALWAYS read `docs/crc-asdex-reference.md` first.** This is the authoritative CRC/vNAS ASDE-X specification with screenshots. It covers targets, data blocks, safety logic, display control bar, commands, and all ASDE-X display elements. Images are saved locally in `docs/img/asdex/`.
 
 ## Architecture Overview
 
@@ -531,7 +533,68 @@ All implement `ISwimEvent` (Timestamp, Source):
 - `TrackPositionEvent` — position, altitude, speed, squawk, Mode S, facility
 - `FlightPlanDataEvent` — callsign, airports, route, scratchpads, owner, handoff
 - `DepartureEvent` — gate out, taxi start, takeoff times
-- `SurfaceMovementEvent` — ASDE-X surface tracking
+- `SurfaceMovementEvent` — ASDE-X surface tracking (Airport, TrackId, Callsign, Squawk, AircraftType, TargetType, Position, AltitudeFeet, GroundSpeedKnots, HeadingDegrees, EramGufi, IsFull)
+
+### SMES Data Pipeline (ASDE-X)
+
+SMES publishes surface movement data from ASDE-X sensors at ~35 major US airports.
+
+**Topic structure:** `SMES/all/false/{type}/{airport}/{tracon}`
+| Type | Description | Root element |
+|------|-------------|--------------|
+| `AT` | All-targets batch | `<asdexMsg>` with `<positionReport>` |
+| `AD` | ADS-B delta update | `<asdexMsg>` with `<adsbReport>` |
+| `SE` | Surface event (subset) | `<asdexMsg>` with `<positionReport>` |
+| `SH` | Safety logic hold bar | `<SafetyLogicHoldBar>` (ignored) |
+
+**`<positionReport full="true">` fields (full reports):**
+```xml
+<positionReport full="true">
+  <seqNum>224</seqNum>
+  <time>2026-02-19T23:28:58.000Z</time>
+  <track>238</track>           <!-- ASDE-X track number = TrackId -->
+  <stid>121633</stid>
+  <flightId>
+    <aircraftId>UAL521</aircraftId>   <!-- callsign -->
+    <mode3ACode>3112</mode3ACode>     <!-- squawk -->
+  </flightId>
+  <flightInfo>
+    <tgtType>aircraft</tgtType>       <!-- aircraft / vehicle / unknown -->
+    <acType>B738</acType>
+    <wake>F</wake>
+  </flightInfo>
+  <position>
+    <latitude>29.97787</latitude>
+    <longitude>-95.17029</longitude>
+    <altitude>1943.75</altitude>      <!-- feet MSL -->
+  </position>
+  <movement>
+    <speed>197</speed>                <!-- knots -->
+    <heading>270.25</heading>         <!-- degrees true, float precision -->
+  </movement>
+  <enhancedData>
+    <eramGufi>KH757045K8</eramGufi>   <!-- links to SFDPS flight -->
+  </enhancedData>
+</positionReport>
+```
+
+**`<positionReport full="false">`** — only changed fields present; identity fields absent.
+
+**`<adsbReport>` (AD messages)** — lighter ADS-B-specific updates; uses `<lat>`/`<lon>` (not `<latitude>`/`<longitude>`):
+```xml
+<adsbReport full="false">
+  <report><basicReport>
+    <time>...</time>
+    <track>3425</track>
+    <position><lat>38.84765</lat><lon>-77.0418</lon></position>
+    <velocity><x>0.0</x><y>1.0</y></velocity>
+  </basicReport></report>
+  <enhancedData><eramGufi>KW783715SH</eramGufi></enhancedData>
+</adsbReport>
+```
+
+**Active ASDE-X airports (observed in SWIM):**
+KATL, KBDL, KBOS, KBWI, KCLE, KCLT, KCVG, KDCA, KDEN, KDFW, KDTW, KEWR, KFLL, KHOU, KIAH, KJFK, KLAS, KLAX, KMCO, KMEM, KMIA, KMKE, KMDW, KMSP, KMSY, KORD, KPDX, KPHL, KPHX, KPIT, KPVD, KSAN, KSDF, KSEA, KSFO, KSLC, KSNA, KSTL, KTPA, PANC, PHNL
 
 ### Key Classes
 - `ChannelEventBus` — bounded channels (10K) per subscriber, drop-oldest backpressure

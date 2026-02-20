@@ -117,6 +117,7 @@ async function refresh() {
             return;
         }
 
+        airports.sort((a, b) => a.airport.localeCompare(b.airport));
         const total = airports.reduce((s, a) => s + a.count, 0);
         countBar.textContent = `${airports.length} airports  •  ${total} tracks`;
 

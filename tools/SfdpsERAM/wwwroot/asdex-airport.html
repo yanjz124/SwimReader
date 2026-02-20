@@ -9,8 +9,8 @@
 <style>
 @font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #000; overflow: hidden; height: 100vh; }
-#map { width: 100%; height: 100vh; }
+body { background: #393939; overflow: hidden; height: 100vh; }
+#map { width: 100%; height: 100vh; background: #393939; }
 
 /* ── Status bar ── */
 #statusbar {
@@ -79,16 +79,57 @@ document.title = 'ASDE-X ' + AIRPORT;
 
 // ── Leaflet map ──────────────────────────────────────────────────────────────
 const map = L.map('map', {
-    center: [38.85, -77.04],   // will be overridden by snapshot centroid
+    center: [38.85, -77.04],   // will be overridden by surface map bounds
     zoom: 14,
     zoomControl: true,
     attributionControl: false
 });
 
-// CartoDB Dark tiles — genuine dark map, no CSS hack needed
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    subdomains: 'abcd', maxZoom: 20
-}).addTo(map);
+// ── ASDEX surface colors (vNAS spec) ────────────────────────────────────────
+const ASDEX_NIGHT = {
+    bg:        '#393939',
+    runway:    'rgb(0,0,0)',
+    taxiway:   'rgb(17,39,80)',
+    apron:     'rgb(18,55,97)',
+    structure: 'rgb(34,63,103)'
+};
+const ASDEX_DAY = {
+    bg:        '#005C73',
+    runway:    'rgb(0,0,0)',
+    taxiway:   'rgb(47,47,47)',
+    apron:     'rgb(73,73,73)',
+    structure: 'rgb(100,100,100)'
+};
+const asdexColors = ASDEX_NIGHT;
+
+// ── Load airport surface GeoJSON ────────────────────────────────────────────
+let surfaceLoaded = false;
+fetch(`/asdex/maps/${AIRPORT}.geojson`)
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(geojson => {
+        const layer = L.geoJSON(geojson, {
+            style: feature => {
+                const sfc = (feature.properties && feature.properties.asdex) || 'structure';
+                return {
+                    fillColor: asdexColors[sfc] || asdexColors.structure,
+                    fillOpacity: 1,
+                    color: asdexColors[sfc] || asdexColors.structure,
+                    weight: 0.5,
+                    opacity: 1
+                };
+            },
+            interactive: false
+        }).addTo(map);
+        map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+        surfaceLoaded = true;
+        centeredOnce = true;
+    })
+    .catch(() => {
+        // No surface map — fall back to CartoDB dark tiles
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            subdomains: 'abcd', maxZoom: 20
+        }).addTo(map);
+    });
 
 // ── State ────────────────────────────────────────────────────────────────────
 const markers  = {};   // trackId → L.marker

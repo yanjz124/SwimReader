@@ -111,6 +111,13 @@ contentTypes.Mappings[".geojson"] = "application/geo+json";
 app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = contentTypes });
 app.UseWebSockets();
 
+// Home page
+app.MapGet("/", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "home.html"));
+});
+
 // Clean URLs: /eram → eram.html, /table → index.html (serve directly, no redirect)
 app.MapGet("/eram", async (HttpContext ctx) =>
 {

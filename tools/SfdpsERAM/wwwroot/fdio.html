@@ -80,7 +80,7 @@ body {
 /* Column header */
 .col-header {
     display: grid;
-    grid-template-columns: 100px 55px 50px 50px 70px 35px 80px 55px 30px;
+    grid-template-columns: 100px 55px 50px 50px 70px 50px 18px 80px 55px 80px 30px;
     gap: 8px;
     padding: 6px 16px;
     font-size: 10px;
@@ -100,7 +100,7 @@ body {
 /* Flight row (collapsed) */
 .flight-row {
     display: grid;
-    grid-template-columns: 100px 55px 50px 50px 70px 35px 80px 55px 30px;
+    grid-template-columns: 100px 55px 50px 50px 70px 50px 18px 80px 55px 80px 30px;
     gap: 8px;
     padding: 6px 16px;
     font-size: 13px;
@@ -114,8 +114,10 @@ body {
 .flight-row .dep, .flight-row .arr { color: #888; }
 .flight-row .alt { color: #39d2c0; }
 .flight-row .alt.vfr { color: #cccc44; }
+.flight-row .int { color: #ff8844; }
 .flight-row .rules { color: #888; }
 .flight-row .sector { color: #5588ff; }
+.flight-row .hs { color: #888; font-size: 11px; }
 .flight-row .sqk { color: #888; }
 .flight-row .st { width: 8px; height: 8px; border-radius: 50%; margin-top: 3px; }
 .flight-row .st.active { background: #44aa44; }
@@ -231,9 +233,11 @@ body {
         <span data-col="origin">DEP</span>
         <span data-col="destination">ARR</span>
         <span data-col="assignedAltitude">ALT</span>
-        <span data-col="flightRules">RULES</span>
+        <span data-col="interimAltitude">INT</span>
+        <span data-col="flightRules">FR</span>
         <span data-col="controllingFacility">SECTOR</span>
         <span data-col="squawk">SQK</span>
+        <span data-col="clearanceHeading">HDG/SPD</span>
         <span>ST</span>
     </div>
     <div id="rows"></div>
@@ -380,9 +384,11 @@ function getSortValue(f, col) {
         case 'origin': return f.origin || '';
         case 'destination': return f.destination || '';
         case 'assignedAltitude': return f.assignedAltitude || 0;
+        case 'interimAltitude': return f.interimAltitude || 0;
         case 'flightRules': return f.flightRules || '';
         case 'controllingFacility': return (f.controllingFacility || '') + (f.controllingSector || '');
         case 'squawk': return f.squawk || '';
+        case 'clearanceHeading': return f.clearanceHeading || '';
         default: return '';
     }
 }
@@ -391,9 +397,12 @@ function renderRow(f, isExpanded) {
     const exp = isExpanded ? ' expanded' : '';
     const alt = fmtAlt(f);
     const altCls = f.assignedVfr ? ' vfr' : '';
+    const intAlt = f.interimAltitude ? `FL${Math.round(f.interimAltitude / 100)}` : '';
+    const rules = f.flightRules === 'IFR' ? 'I' : f.flightRules === 'VFR' ? 'V' : (f.flightRules || '');
     const sector = f.controllingFacility
         ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '')
         : '';
+    const hs = fmtHdgSpd(f);
     const stCls = (f.flightStatus || '').toLowerCase();
     return `<div class="flight-row${exp}" data-gufi="${f.gufi}">
         <span class="cs">${f.callsign || '????'}</span>
@@ -401,9 +410,11 @@ function renderRow(f, isExpanded) {
         <span class="dep">${f.origin || ''}</span>
         <span class="arr">${f.destination || ''}</span>
         <span class="alt${altCls}">${alt}</span>
-        <span class="rules">${f.flightRules || ''}</span>
+        <span class="int">${intAlt}</span>
+        <span class="rules">${rules}</span>
         <span class="sector">${sector}</span>
         <span class="sqk">${f.squawk || ''}</span>
+        <span class="hs">${hs}</span>
         <span class="st ${stCls}"></span>
     </div>`;
 }
@@ -421,6 +432,20 @@ function fmtAlt(f) {
         return f.assignedAltitude >= 18000 ? `FL${fl}` : `${Math.round(f.assignedAltitude)}`;
     }
     return '';
+}
+
+function fmtCids(d) {
+    if (d.computerIds && Object.keys(d.computerIds).length > 0) {
+        return Object.entries(d.computerIds).map(([fac, cid]) => `${fac}/${cid}`).join('  ');
+    }
+    return d.computerId || null;
+}
+
+function fmtHdgSpd(f) {
+    const parts = [];
+    if (f.clearanceHeading) parts.push('H' + f.clearanceHeading);
+    if (f.clearanceSpeed) parts.push(f.clearanceSpeed);
+    return parts.join(' ');
 }
 
 function renderDetail(gufi) {
@@ -454,7 +479,7 @@ function renderFlightPlan(d) {
         ['Mode S', d.modeSCode],
         ['Equipment', d.equipmentQualifier],
         ['Data Link', d.dataLinkCode, d.dataLinkCode?.includes('J') ? 'accent' : null],
-        ['CID', d.computerId],
+        ['CID', fmtCids(d)],
         ['Dep Time', d.actualDepartureTime ? fmtTime(d.actualDepartureTime) : null],
         ['ETA', d.eta ? fmtTime(d.eta) : null],
         ['Clearance Hdg', d.clearanceHeading],
@@ -491,7 +516,13 @@ function renderEventLog(d) {
         return '<div class="detail-section"><h4>REVISION HISTORY</h4><div class="loading">No events</div></div>';
     }
 
-    const rows = d.events.slice().reverse().map(e => {
+    // Filter out TH/HZ (position-only updates) — not useful for flight plan history
+    const filtered = d.events.filter(e => e.source !== 'TH' && e.source !== 'HZ');
+    if (filtered.length === 0) {
+        return '<div class="detail-section"><h4>REVISION HISTORY</h4><div class="loading">No revision events</div></div>';
+    }
+
+    const rows = filtered.slice().reverse().map(e => {
         const srcLc = (e.source || '').toLowerCase();
         return `<div class="event-row">
             <span class="ev-time">${fmtTime(e.time)}</span>
@@ -501,7 +532,7 @@ function renderEventLog(d) {
         </div>`;
     }).join('');
 
-    return `<div class="detail-section"><h4>REVISION HISTORY (${d.events.length} events)</h4><div class="event-log">${rows}</div></div>`;
+    return `<div class="detail-section"><h4>REVISION HISTORY (${filtered.length} events)</h4><div class="event-log">${rows}</div></div>`;
 }
 
 // ── Expand / collapse ────────────────────────────────────────

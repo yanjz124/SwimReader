@@ -122,7 +122,7 @@ async function refresh() {
         airports.sort((a, b) => a.airport.localeCompare(b.airport));
         const totalAc = airports.reduce((s, a) => s + a.aircraftCount, 0);
         const totalMsg = airports.reduce((s, a) => s + a.messageCount, 0);
-        countBar.textContent = `${airports.length} airports  •  ${totalAc} aircraft  •  ${totalMsg} messages`;
+        countBar.textContent = `${airports.length} airports  •  ${totalAc} acft  •  ${totalMsg} msg`;
 
         grid.innerHTML = airports.map(a => {
             const icao = a.airport;
@@ -132,8 +132,8 @@ async function refresh() {
                 <div class="card-icao">${icao}</div>
                 <div class="card-name">${name}</div>
                 <div class="card-counts">
-                    <div><span class="num">${a.aircraftCount}</span>AIRCRAFT</div>
-                    <div><span class="num">${a.messageCount}</span>MESSAGES</div>
+                    <div><span class="num">${a.aircraftCount}</span>ACFT</div>
+                    <div><span class="num">${a.messageCount}</span>MSG</div>
                 </div>
             </a>`;
         }).join('');

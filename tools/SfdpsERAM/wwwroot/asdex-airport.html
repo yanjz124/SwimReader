@@ -343,9 +343,9 @@ function targetCategory(t) {
 
 // ── SVG path for airplane (pointing up = heading 0°) ─────────────────────────
 // Fuselage + swept wings + V-tail. ViewBox centered on 0,0, nose at top.
-const PLANE_PATH = 'M 0 -8 L 1.5 -3 L 7.5 1.5 L 2 2.5 L 2 5.5 L 3.5 7 L 0 6.5 L -3.5 7 L -2 5.5 L -2 2.5 L -7.5 1.5 L -1.5 -3 Z';
-// Kite diamond (unknown): tall narrow, taller than wide
-const DIAMOND_PATH = 'M 0 -9 L 4.5 0 L 0 9 L -4.5 0 Z';
+const PLANE_PATH = 'M 0 -8 L 1.3 -5 L 1.3 -1 L 8 2 L 7.5 3 L 1.8 1.5 L 1.8 5 L 4 7 L 0 6 L -4 7 L -1.8 5 L -1.8 1.5 L -7.5 3 L -8 2 L -1.3 -1 L -1.3 -5 Z';
+// Kite shape (unknown): widest above center, long bottom — matches CRC reference
+const DIAMOND_PATH = 'M 0 -7 L 5 -1 L 0 9 L -5 -1 Z';
 // Vehicle: small square
 const VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z';
 
@@ -373,8 +373,8 @@ function makeIcon(t) {
     const typ = t.acType || '';
 
     let dbHtml = '';
-    if (cs) {
-        if (cat !== 'unknown' && cat !== 'vehicle') {
+    if (cs && cat !== 'unknown') {
+        if (cat !== 'vehicle') {
             dbHtml = `<div class="db">
                 <div class="db-line1">${cs}${alt ? ' ' + alt : ''}</div>
                 <div class="db-line2">${typ}${typ && spd ? ' ' : ''}${spd}</div>

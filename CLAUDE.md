@@ -55,7 +55,9 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 - **ASDE-X Scope** (`/asdex/{airport}`) — Leaflet map with live surface targets, data blocks, 1s updates
 - **TDLS Directory** (`/tdls`) — Airport grid with CPDLC clearance/departure message counts
 - **TDLS Detail** (`/tdls/{airport}`) — Aircraft list + CPDLC message history with timestamps
-- **FDIO** (`/fdio`) — Flight plan viewer with searchable accordion rows, expandable detail + ATC revision history
+- **FDIO** (`/fdio`) — Two-panel flight plan viewer: left table + right detail panel with Flight Plan and Events tabs, raw XML viewing
+- **TAIS Directory** (`/tais`) — Facility grid with live track counts, click-through to detail
+- **TAIS Detail** (`/tais/{facility}`) — Terminal radar track table with search, sort, frozen filter, expandable detail
 - Future: strips, etc.
 
 ## Project Structure
@@ -287,7 +289,8 @@ Core fields tracked per flight (by GUFI):
 | Endpoint | Description |
 |----------|-------------|
 | `WS /ws` | WebSocket — sends `snapshot`, `update`, `remove`, `stats` messages |
-| `GET /api/flights/{gufi}` | Full flight detail + event log |
+| `GET /api/flights/{gufi}` | Full flight detail + all events (with `index` and `hasXml` per event) |
+| `GET /api/event-xml/{index}/{gufi}` | Raw FIXM XML for a specific event (lazy-loaded by FDIO) |
 | `GET /api/stats` | Server stats (total messages, rate, flight count) |
 | `GET /api/kml` | List available KML boundary files |
 | `GET /api/kml/{name}` | Serve a specific KML file from repo root |
@@ -306,7 +309,12 @@ Core fields tracked per flight (by GUFI):
 | `GET /api/tdls/{airport}` | Full TDLS snapshot — `{airport, aircraft:[...with messages]}` |
 | `GET /api/tdls/{airport}/{id}` | Single aircraft message history |
 | `WS /tdls/ws/{airport}` | WebSocket — sends `snapshot`, `new` messages (see TDLS section) |
-| `GET /fdio` | FDIO flight plan viewer page (reuses `/ws` WebSocket + `/api/flights/{gufi}` for detail) |
+| `GET /api/tais` | TAIS directory — `[{facility, trackCount}]` sorted alphabetically |
+| `GET /api/tais/{facility}` | Full TAIS snapshot — `{facility, tracks:[...]}` |
+| `WS /tais/ws/{facility}` | WebSocket — sends `snapshot`, `batch`, `remove` messages |
+| `GET /api/history?q=&date=` | Search flight history JSONL files by callsign/origin/dest (max 100 results) |
+| `GET /api/history/dates` | List available history dates with file sizes |
+| `GET /fdio` | FDIO two-panel flight plan viewer (reuses `/ws` WebSocket + `/api/flights/{gufi}` + `/api/event-xml/`) |
 
 ### Handoff Detection Logic
 Server-side in `Program.cs` ProcessFlight():
@@ -759,22 +767,30 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 
 ## FDIO Display (SfdpsERAM)
 
-The FDIO (Flight Data Input/Output) page provides a searchable, accordion-style flight plan viewer. It reuses the existing SFDPS WebSocket and REST infrastructure — no new server endpoints.
+The FDIO (Flight Data Input/Output) page provides a two-panel flight data explorer. Left panel: sortable, filterable flight table. Right panel: detail view with two tabs (Flight Plan and Events). Reuses the existing SFDPS WebSocket and REST infrastructure.
 
 ### Architecture
 - **Data source**: existing `/ws` WebSocket (snapshot + batch + remove + stats)
-- **Detail/events**: on-demand `GET /api/flights/{gufi}` when row is expanded
+- **Detail/events**: on-demand `GET /api/flights/{gufi}` when flight is selected (auto-refreshes every 3s)
+- **Raw XML**: on-demand `GET /api/event-xml/{eventIndex}/{gufi}` for viewing FIXM XML per event
 - **No deduplication**: all GUFIs shown, even duplicate callsigns from different ARTCCs
 
 ### Page Layout (`fdio.html`)
 - **Top bar**: FDIO title, connection status, flight count + message rate
-- **Filter bar**: search box (callsign/CID/airport/type/squawk/route), status filter (Active default), facility dropdown, flight rules filter
-- **Flight list**: sortable column headers, one row per GUFI
-- **Collapsed row**: callsign, type, dep, arr, altitude (FL/VFR/block), rules, sector, squawk, status dot
-- **Expanded row** (click to toggle): flight plan detail grid + revision history (event log newest-first)
+- **Filter bar**: search box (callsign/CID/airport/type/squawk/route/remarks), status filter, facility dropdown, flight rules filter
+- **Left panel**: sortable flight table — callsign, type, dep, arr, altitude, interim, rules, sector, squawk, DL (CPDLC), status
+- **Right panel** (440px, collapsed by default): opens on flight click
+  - **FLIGHT PLAN tab**: organized sections — Identity, Flight Plan, Route, Altitude, Position, Ownership, Beacon, Clearance, Datalink, Times, TMI/Navigation
+  - **EVENTS tab**: all SWIM events newest-first, TH/HZ grouped into collapsed "N position updates" markers, click non-TH event to expand and view syntax-highlighted raw XML (lazy-loaded)
+
+### Event Storage
+- **FlightEvent** has `RawXml` property (`[JsonIgnore]` — excluded from cache/WS serialization)
+- Raw XML stored for all non-TH/HZ events (TH = 65% of traffic; skipping saves ~175MB RAM)
+- **`_allEvents`**: unbounded list per flight (all events since first seen), alongside the existing `_events` ring buffer (50 max)
+- **ToDetail()** returns full `_allEvents` with `index` and `hasXml` fields
 
 ### Event Log Enhancement
-`BuildEventSummary()` for FH (flight plan update) messages now generates enriched summaries including aircraft type, origin-destination, altitude, and STAR — e.g., `"FP: B738 KDFW-KJFK FL360 LENDY6"` instead of generic `"Flight plan update"`. Other event types (OH, LH, PT, BA, etc.) are unchanged.
+`BuildEventSummary()` for FH (flight plan update) messages generates enriched summaries including aircraft type, origin-destination, altitude, and STAR — e.g., `"FP: B738 KDFW-KJFK FL360 LENDY6"`.
 
 ### Event Source Color Coding
 | Source | Color | Description |
@@ -782,8 +798,18 @@ The FDIO (Flight Data Input/Output) page provides a searchable, accordion-style 
 | FH | white | Flight plan update (enriched summary) |
 | OH/HP/AH/HU/HX | blue | Handoff events |
 | LH | orange | Interim altitude |
-| TH/HZ | dim grey | Position updates (low priority) |
+| PT/HT | purple | Point-out events |
+| CL | red | Cancellation/clearance |
+| TH/HZ | dim grey | Position updates (grouped in UI) |
 | BA/RE | grey | Beacon code events |
+
+### Flight History Persistence
+When flights are purged from memory (>60 min stale), their complete state + all event summaries are saved to disk:
+- **Path**: `flight-history/YYYY-MM-DD.jsonl` (one JSON line per flight)
+- **Content**: gufi, callsign, origin, destination, aircraftType, all event summaries (no raw XML on disk)
+- **Budget**: 14 GB max (2 GB headroom from 16 GB Pi budget), ~49 MB/day, ~320 days retention
+- **Cleanup**: hourly timer deletes oldest daily files when total exceeds budget
+- **APIs**: `GET /api/history?q=&date=` (search), `GET /api/history/dates` (list available dates)
 
 ## STDDS Data Pipeline (SwimReader.Server)
 

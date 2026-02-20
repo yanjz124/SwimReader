@@ -83,6 +83,9 @@ var jsonOpts = new JsonSerializerOptions
     // detect cleared fields (e.g., interimAltitude null after OH/FH clears it)
 };
 
+// Flight history directory (declared early so route lambdas can capture it)
+var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
+
 // Initialize Solace SDK (once, before any thread or connection is created)
 {
     var cfp = new ContextFactoryProperties { SolClientLogLevel = SolLogLevel.Warning };
@@ -332,6 +335,16 @@ app.Map("/ws", async (HttpContext ctx) =>
         client.Queue.Writer.TryComplete();
         await sendTask;
     }
+});
+
+// REST API for event raw XML (must be before catch-all route)
+app.MapGet("/api/event-xml/{eventIndex}/{*gufi}", (int eventIndex, string gufi) =>
+{
+    if (!flights.TryGetValue(gufi, out var f)) return Results.NotFound();
+    var evt = f.GetEvent(eventIndex);
+    if (evt is null) return Results.NotFound();
+    if (evt.RawXml is null) return Results.Json(new { xml = (string?)null }, jsonOpts);
+    return Results.Json(new { xml = evt.RawXml }, jsonOpts);
 });
 
 // REST API for flight detail (full state + event log)
@@ -747,6 +760,45 @@ app.MapGet("/api/tais", () => Results.Json(tais.GetDirectory(), jsonOpts));
 app.MapGet("/api/tais/{facility}", (string facility) =>
     Results.Json(tais.GetSnapshot(facility.ToUpperInvariant()), jsonOpts));
 
+// Flight history search and retrieval
+app.MapGet("/api/history", (string? q, string? date) =>
+{
+    var dir = historyDir;
+    if (!Directory.Exists(dir)) return Results.Json(Array.Empty<object>(), jsonOpts);
+    var query = (q ?? "").Trim().ToUpperInvariant();
+    if (query.Length == 0) return Results.Json(Array.Empty<object>(), jsonOpts);
+
+    // Pick file: specific date or today
+    var datePart = date ?? DateTime.UtcNow.ToString("yyyy-MM-dd");
+    var filePath = Path.Combine(dir, $"{datePart}.jsonl");
+    if (!File.Exists(filePath)) return Results.Json(Array.Empty<object>(), jsonOpts);
+
+    var results = new List<JsonElement>();
+    foreach (var line in File.ReadLines(filePath))
+    {
+        if (string.IsNullOrWhiteSpace(line)) continue;
+        if (line.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            results.Add(JsonSerializer.Deserialize<JsonElement>(line));
+            if (results.Count >= 100) break;
+        }
+    }
+    return Results.Json(results, jsonOpts);
+});
+
+app.MapGet("/api/history/dates", () =>
+{
+    if (!Directory.Exists(historyDir)) return Results.Json(Array.Empty<object>(), jsonOpts);
+    var files = Directory.GetFiles(historyDir, "*.jsonl")
+        .Select(f => new {
+            date = Path.GetFileNameWithoutExtension(f),
+            sizeMb = Math.Round(new FileInfo(f).Length / 1024.0 / 1024.0, 1)
+        })
+        .OrderByDescending(x => x.date)
+        .ToArray();
+    return Results.Json(files, jsonOpts);
+});
+
 // History symbol: matches client getSymbolChar() logic
 static char GetHistSym(FlightState f)
 {
@@ -915,6 +967,73 @@ void LoadFlightCache()
 
 LoadFlightCache();
 
+// ── Flight history persistence (save purged flights to daily JSONL files) ─────
+const long MaxHistoryBytes = 14L * 1024 * 1024 * 1024; // 14 GB (2 GB headroom from 16 GB budget)
+var historyJsonOpts = new JsonSerializerOptions
+{
+    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+};
+
+void SaveFlightHistory(FlightState f)
+{
+    try
+    {
+        Directory.CreateDirectory(historyDir);
+        var datePart = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var filePath = Path.Combine(historyDir, $"{datePart}.jsonl");
+        var record = new
+        {
+            f.Gufi, f.FdpsGufi, f.Callsign, f.ComputerId, f.Operator, f.FlightStatus,
+            f.Origin, f.Destination, f.AircraftType, f.Registration, f.WakeCategory,
+            f.ModeSCode, f.EquipmentQualifier, f.Squawk, f.AssignedSquawk, f.FlightRules,
+            f.Route, f.STAR, f.Remarks,
+            f.AssignedAltitude, f.AssignedVfr, f.BlockFloor, f.BlockCeiling,
+            f.InterimAltitude, f.ReportedAltitude,
+            f.Latitude, f.Longitude, f.GroundSpeed,
+            f.ControllingFacility, f.ControllingSector, f.ReportingFacility,
+            f.DataLinkCode, f.CommunicationCode,
+            LastSeen = f.LastSeen.ToString("o"),
+            Events = f.GetAllEvents().Select(e => new { e.Time, e.Source, e.Centre, e.Summary }).ToArray()
+        };
+        var line = JsonSerializer.Serialize(record, historyJsonOpts);
+        lock (historyDir) // serialize writes to same file
+        {
+            File.AppendAllText(filePath, line + "\n");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[History] Save error for {f.Gufi}: {ex.Message}");
+    }
+}
+
+void CleanupHistory()
+{
+    try
+    {
+        if (!Directory.Exists(historyDir)) return;
+        var files = Directory.GetFiles(historyDir, "*.jsonl").OrderBy(f => f).ToList();
+        long total = files.Sum(f => new FileInfo(f).Length);
+        while (total > MaxHistoryBytes && files.Count > 1)
+        {
+            var oldest = files[0];
+            var size = new FileInfo(oldest).Length;
+            File.Delete(oldest);
+            Console.WriteLine($"[History] Deleted {Path.GetFileName(oldest)} ({size / 1024 / 1024}MB) to stay under budget");
+            files.RemoveAt(0);
+            total -= size;
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[History] Cleanup error: {ex.Message}");
+    }
+}
+
+// Run cleanup on startup
+CleanupHistory();
+
 // Save flight cache on graceful shutdown (SIGTERM from systemd)
 var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
 lifetime.ApplicationStopping.Register(() =>
@@ -940,6 +1059,8 @@ var purgeTimer = new Timer(_ =>
         {
             flights.TryRemove(gufi, out FlightState? _);
             Broadcast(new WsMsg("remove", new { gufi }));
+            // Persist to daily history file before discarding
+            Task.Run(() => SaveFlightHistory(f));
         }
         // Expire point-out data after 3 minutes (SFDPS doesn't send clear signals)
         // Also clear legacy data with no timestamp (e.g. from cache before this fix)
@@ -995,10 +1116,11 @@ var tdlsFlushTimer = new Timer(_ => tdls.FlushDirty(), null, TimeSpan.FromSecond
 var tdlsPurgeTimer = new Timer(_ => tdls.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 var taisFlushTimer = new Timer(_ => tais.FlushDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 var taisPurgeTimer = new Timer(_ => tais.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, historyCleanupTimer };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
 
 await solaceReady.Task;
@@ -1447,13 +1569,14 @@ void ProcessFlight(XElement flight, string rawXml)
         if (name == "TMI_IDS" && !string.IsNullOrEmpty(val)) state.TmiIds = val;
     }
 
-    // Add event to log
+    // Add event to log (store raw XML for non-TH/HZ to save memory; TH=65% of traffic)
     state.AddEvent(new FlightEvent
     {
         Time = timestamp ?? DateTime.UtcNow.ToString("o"),
         Source = source,
         Centre = centre,
-        Summary = BuildEventSummary(source, flight)
+        Summary = BuildEventSummary(source, flight),
+        RawXml = source is not "TH" and not "HZ" ? rawXml : null
     });
 
     // Detect handoff completion: controlling unit now matches receiving unit.
@@ -2756,6 +2879,7 @@ class FlightState
     }
 
     private readonly List<FlightEvent> _events = new();
+    private readonly List<FlightEvent> _allEvents = new();
     private const int MaxEvents = 50;
 
     public void AddEvent(FlightEvent e)
@@ -2765,12 +2889,28 @@ class FlightState
             _events.Add(e);
             if (_events.Count > MaxEvents) _events.RemoveAt(0);
         }
+        lock (_allEvents) { _allEvents.Add(e); }
     }
 
     public List<FlightEvent> GetEvents()
     {
         lock (_events) { return new(_events); }
     }
+
+    public List<FlightEvent> GetAllEvents()
+    {
+        lock (_allEvents) { return new(_allEvents); }
+    }
+
+    public FlightEvent? GetEvent(int index)
+    {
+        lock (_allEvents)
+        {
+            return index >= 0 && index < _allEvents.Count ? _allEvents[index] : null;
+        }
+    }
+
+    public int AllEventCount { get { lock (_allEvents) { return _allEvents.Count; } } }
 
     public void RestorePosition(PositionRecord rec)
     {
@@ -2894,8 +3034,15 @@ class FlightState
 
     public object ToDetail()
     {
-        List<object> events;
-        lock (_events) { events = _events.Select(e => (object)e).ToList(); }
+        List<object> allEvents;
+        lock (_allEvents)
+        {
+            allEvents = _allEvents.Select((e, i) => (object)new
+            {
+                index = i, e.Time, e.Source, e.Centre, e.Summary,
+                hasXml = e.RawXml is not null
+            }).ToList();
+        }
         return new
         {
             Gufi, FdpsGufi, Callsign, ComputerId,
@@ -2915,7 +3062,7 @@ class FlightState
             CommunicationCode, DataLinkCode, OtherDataLink, SELCAL,
             NavigationCode, PBNCode, SurveillanceCode,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),
-            Events = events,
+            Events = allEvents,
             History = HistoryWithAge()
         };
     }
@@ -2927,6 +3074,8 @@ class FlightEvent
     public string Source { get; set; } = "";
     public string Centre { get; set; } = "";
     public string Summary { get; set; } = "";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? RawXml { get; set; }
 }
 
 class FlightSnapshot

@@ -29,6 +29,9 @@ class AsdexBridge
     // airports modified since last FlushDirty() call
     private readonly ConcurrentDictionary<string, byte> _dirty = new();
 
+    /// <summary>Callback for non-SMES messages (topic, xmlBody). Set before Start().</summary>
+    public Action<string, string>? OnOtherMessage { get; set; }
+
     public AsdexBridge(string user, string pass, string queue, string host, string vpn,
         JsonSerializerOptions jsonOpts)
     {
@@ -86,9 +89,20 @@ class AsdexBridge
                     {
                         using var m = msgArgs.Message;
                         var topic = m.Destination?.Name ?? "";
-                        if (!topic.StartsWith("SMES/", StringComparison.OrdinalIgnoreCase)) return;
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
-                        ProcessSmes(m);
+                        if (topic.StartsWith("SMES/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ProcessSmes(m);
+                        }
+                        else if (OnOtherMessage is not null)
+                        {
+                            string? body = null;
+                            if (m.BinaryAttachment is { Length: > 0 })
+                                body = Encoding.UTF8.GetString(m.BinaryAttachment);
+                            else if (m.XmlContent is { Length: > 0 })
+                                body = Encoding.UTF8.GetString(m.XmlContent);
+                            if (body is not null) OnOtherMessage(topic, body);
+                        }
                     },
                     (_, flowArgs) => Console.WriteLine($"[STDDS Flow] {flowArgs.Event} - {flowArgs.Info}"));
 
@@ -103,7 +117,7 @@ class AsdexBridge
                         new DateTime(Interlocked.Read(ref lastMsgTicks), DateTimeKind.Utc)).TotalSeconds;
                     if (silence > 90)
                     {
-                        Console.WriteLine($"[STDDS] No SMES messages for {silence:F0}s — reconnecting");
+                        Console.WriteLine($"[STDDS] No messages for {silence:F0}s — reconnecting");
                         break;
                     }
                 }

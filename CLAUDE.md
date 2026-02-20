@@ -34,12 +34,10 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
            │ DGScope  │  │ Future│  │ ERAM   │   │ Flight     │
            │ /dstars  │  │ FIDO  │  │ Scope  │   │ Table      │
            │ clients  │  │ Strips│  │eram.html   │index.html  │
-           │ :5000    │  │ TDLS  │  │ :5001  │   │ :5001      │
+           │ :5000    │  │       │  │ :5001  │   │ :5001      │
            └──────────┘  └───────┘  ├────────┤   └────────────┘
                                     │ ASDE-X │
-                                    │ Direc- │
-                                    │ tory + │
-                                    │ Scope  │
+                                    │ TDLS   │
                                     │ :5001  │
                                     └────────┘
 ```
@@ -55,7 +53,9 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 - **DGScope Server** (`/dstars/{facility}/updates`) — HTTP streaming + WebSocket for DGScope radar clients
 - **ASDE-X Directory** (`/asdex`) — Airport grid with live track counts, click-through to scope
 - **ASDE-X Scope** (`/asdex/{airport}`) — Leaflet map with live surface targets, data blocks, 1s updates
-- Future: FIDO, strips, TDLS, etc.
+- **TDLS Directory** (`/tdls`) — Airport grid with CPDLC clearance/departure message counts
+- **TDLS Detail** (`/tdls/{airport}`) — Aircraft list + CPDLC message history with timestamps
+- Future: FIDO, strips, etc.
 
 ## Project Structure
 
@@ -74,11 +74,14 @@ tools/
   SfdpsERAM/                          Standalone web server — SFDPS+STDDS → WebSocket → ERAM/ASDE-X
     Program.cs                          All server logic: Solace (FDPS+STDDS), FIXM parsing, WebSocket, REST
     AsdexBridge.cs                      STDDS/SMES ingestion, AsdexTrack state, WS broadcast (ASDE-X)
+    TdlsBridge.cs                       STDDS/TDES ingestion, CPDLC + departure state, WS broadcast (TDLS)
     wwwroot/
       eram.html                         ERAM radar scope (single-file: HTML + CSS + JS)
       index.html                        Flight data table (single-file: HTML + CSS + JS)
       asdex.html                        ASDE-X airport directory (single-file: HTML + CSS + JS)
       asdex-airport.html                ASDE-X airport scope / Leaflet map (single-file: HTML + CSS + JS)
+      tdls.html                         TDLS clearance directory (single-file: HTML + CSS + JS)
+      tdls-airport.html                 TDLS airport detail — aircraft list + CPDLC messages
       handoff-codes.json                Facility handoff display code mappings (H/O/K suffixes)
       destination-codes.json            Per-ARTCC single-letter destination airport codes
       ERAMv110.ttf                      ERAM font for authentic ATC display
@@ -297,6 +300,10 @@ Core fields tracked per flight (by GUFI):
 | `GET /api/asdex` | Airport directory — `[{airport, count, lat, lon}]` sorted by track count |
 | `GET /api/asdex/{airport}` | Full snapshot for one airport — `{airport, tracks:[...]}` |
 | `WS /asdex/ws/{airport}` | WebSocket — sends `snapshot`, `batch`, `remove` messages (see ASDE-X section) |
+| `GET /api/tdls` | TDLS directory — `[{airport, aircraftCount, messageCount}]` sorted by message count |
+| `GET /api/tdls/{airport}` | Full TDLS snapshot — `{airport, aircraft:[...with messages]}` |
+| `GET /api/tdls/{airport}/{id}` | Single aircraft message history |
+| `WS /tdls/ws/{airport}` | WebSocket — sends `snapshot`, `new` messages (see TDLS section) |
 
 ### Handoff Detection Logic
 Server-side in `Program.cs` ProcessFlight():
@@ -664,6 +671,83 @@ const B757_CODES = ['B752','B753','B757'];
 
 Client-side purge: none implemented (server handles it authoritatively via `remove` messages).
 
+## TDLS Display (SfdpsERAM)
+
+The TDLS feature displays CPDLC (Controller-Pilot Data Link Communications) clearances and tower departure events from the TDES (Tower Departure Event Service) STDDS feed. It shares the STDDS Solace session with AsdexBridge via the `OnOtherMessage` callback — Solace queues deliver each message to one consumer, so a shared session is required.
+
+### Architecture
+
+```
+STDDS Solace queue → AsdexBridge (SMES/* → ASDE-X processing)
+                   → OnOtherMessage callback (non-SMES topics)
+                         ↓
+                   TdlsBridge (TDES/* → TDLS processing)
+                         ↓
+               ┌─ TDLSCSPMessage → CPDLC clearance (PDC/DCL)
+               ├─ TowerDepartureEventMessage → gate/taxi/takeoff
+               └─ DATISData → ignored (airport-level, not per-aircraft)
+                         ↓
+                   _pending bag (per airport)
+                         ↓
+               FlushDirty() (1s timer) → "new" WS message → clients
+```
+
+### Key Class: `TdlsBridge` (`tools/SfdpsERAM/TdlsBridge.cs`)
+
+**State:** `ConcurrentDictionary<string, ConcurrentDictionary<string, TdlsAircraft>>` — airport → aircraftId → aircraft with message list.
+
+**Data models:**
+- `TdlsMessage` — one CPDLC or departure event: type, time, airport, aircraftId, beaconCode, aircraftType, CID, destination, dataHeader/dataBody (CPDLC), gate/runway/OOOI times (departure), eramGufi
+- `TdlsAircraft` — per-aircraft container: aircraftId, latest acType/destination/beacon, ordered message list, lastSeen timestamp
+
+### TDES Message Types
+
+| Root Element | Type | Key Fields |
+|---|---|---|
+| `TDLSCSPMessage` | `CPDLC` | time (MMddyyyyHHmmss), airportID, aircraftID, dataHeader, dataBody (clearance text), enhancedData |
+| `TowerDepartureEventMessage` | `DEPART` | eventTime (ISO), departureAirport, aircraftID, parkingGate, clearanceDeliveryTime, taxiStartTime, takeoffTime, takeoffRunway |
+| `DATISData` | — | Ignored (D-ATIS is airport-level, not per-aircraft) |
+
+### CPDLC `dataBody` Format
+
+The dataBody contains numbered sub-messages (3-digit sequence numbers):
+```
+005 AAL2469 KDFW /AN N894NN PILOT RESPONSE - ROGER 002 CPDLC DCL DISPATCH MSG -
+NOT TO BE USED AS A CLEARANCE AAL2469 KDFW B738/L P0311 /AN N894NN 406 FL370
+CLEARED TO KJAX AIRPORT FORCK3 THEN AS FILED CLIMB VIA SID DEP FREQ SEE SID
+KDFW.FORCK3.FORCK..HAWES..WINAP..KT15M..MGM..DUCHY.OHDEA2.KJAX
+```
+The client-side parser splits on 3-digit sequence numbers and identifies pilot responses vs clearance text.
+
+### WebSocket Protocol (`/tdls/ws/{airport}`)
+
+| Message type | Direction | Shape |
+|---|---|---|
+| `snapshot` | server → client | `{type:"snapshot", data:{airport, aircraft:[...TdlsAircraft.ToJson()]}}` |
+| `new` | server → client | `{type:"new", data:[...TdlsMessage.ToJson()]}` — new messages since last flush |
+
+### Frontend Pages
+
+**`tdls.html`** — Directory page at `/tdls`:
+- Polls `GET /api/tdls` every 5s
+- Airport cards with aircraft count and message count
+- Click → `/tdls/{airport}`
+
+**`tdls-airport.html`** — Airport detail at `/tdls/{airport}`:
+- Two-panel layout: aircraft list (left) + message history (right)
+- Aircraft sorted by most recent message; flash animation on new messages
+- CPDLC messages: parsed sub-messages with pilot responses (green) and clearance text (white)
+- Departure events: gate, runway, OOOI timeline (CLR → TAXI → T/O)
+- WebSocket real-time updates, 5s reconnect on disconnect
+- Black background, white text, ERAM monospace font
+
+### Timers
+
+| Timer | Interval | Action |
+|---|---|---|
+| `FlushDirty` | 1s | Send new messages to WebSocket clients |
+| `PurgeStale` | 60s | Remove aircraft not seen in 2 hours |
+
 ## STDDS Data Pipeline (SwimReader.Server)
 
 ### Message Flow
@@ -865,6 +949,9 @@ On shutdown (SIGTERM) and every 5 minutes, all flight data is serialized to `fli
 - ASDE-X directory: `https://swim.vncrcc.org/asdex`
 - ASDE-X scope: `https://swim.vncrcc.org/asdex/{airport}` (e.g., `/asdex/kdca`)
 - ASDE-X API: `https://swim.vncrcc.org/api/asdex`
+- TDLS directory: `https://swim.vncrcc.org/tdls`
+- TDLS airport: `https://swim.vncrcc.org/tdls/{airport}` (e.g., `/tdls/kord`)
+- TDLS API: `https://swim.vncrcc.org/api/tdls`
 
 **Not yet exposed externally:**
 - STDDS/DGScope on port 5000 — needs either a reverse proxy or separate tunnel hostname to expose `/dstars` paths

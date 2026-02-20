@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TDLS | swim.vncrcc.org</title>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #000;
+    color: #fff;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    min-height: 100vh;
+}
+header {
+    background: #000;
+    border-bottom: 1px solid #333;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+header h1 { font-size: 15px; letter-spacing: 2px; color: #fff; font-weight: normal; }
+#status { font-size: 11px; color: #666; }
+#status.ok { color: #44aa44; }
+#count-bar { font-size: 11px; color: #888; padding: 8px 20px 4px; }
+#grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+    padding: 12px 20px 20px;
+}
+.card {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 2px;
+    padding: 14px 12px 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+}
+.card:hover {
+    border-color: #fff;
+    background: #1a1a1a;
+}
+.card-icao {
+    font-size: 22px;
+    letter-spacing: 2px;
+    color: #fff;
+    line-height: 1;
+}
+.card-name {
+    font-size: 10px;
+    color: #666;
+    margin-top: 4px;
+    letter-spacing: 0.5px;
+    min-height: 14px;
+}
+.card-counts {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #aaa;
+    display: flex;
+    gap: 16px;
+}
+.card-counts .num {
+    font-size: 20px;
+    color: #fff;
+    display: block;
+    line-height: 1.1;
+}
+.empty { color: #444; padding: 20px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+    <h1>TDLS CLEARANCE DIRECTORY</h1>
+    <div id="status">loading...</div>
+</header>
+<div id="count-bar"></div>
+<div id="grid"><div class="empty">Loading airports...</div></div>
+
+<script>
+const AIRPORT_NAMES = {
+    KATL:'ATLANTA',KBDL:'BRADLEY',KBOS:'BOSTON',KBWI:'BALTIMORE',
+    KCLE:'CLEVELAND',KCLT:'CHARLOTTE',KCVG:'CINCINNATI',KDCA:'WASHINGTON REAGAN',
+    KDEN:'DENVER',KDFW:'DALLAS FT WORTH',KDTW:'DETROIT',KEWR:'NEWARK',
+    KFLL:'FT LAUDERDALE',KHOU:'HOUSTON HOBBY',KIAH:'HOUSTON INTL',
+    KJFK:'NEW YORK JFK',KLAS:'LAS VEGAS',KLAX:'LOS ANGELES',
+    KMCO:'ORLANDO',KMEM:'MEMPHIS',KMIA:'MIAMI',KMKE:'MILWAUKEE',
+    KMDW:'CHICAGO MIDWAY',KMSP:'MINNEAPOLIS',KMSY:'NEW ORLEANS',
+    KORD:'CHICAGO O\'HARE',KPDX:'PORTLAND',KPHL:'PHILADELPHIA',
+    KPHX:'PHOENIX',KPIT:'PITTSBURGH',KPVD:'PROVIDENCE',
+    KSAN:'SAN DIEGO',KSDF:'LOUISVILLE',KSEA:'SEATTLE',KSFO:'SAN FRANCISCO',
+    KSLC:'SALT LAKE CITY',KSNA:'ORANGE COUNTY',KSTL:'ST LOUIS',
+    KTPA:'TAMPA',PANC:'ANCHORAGE',PHNL:'HONOLULU',
+    KADW:'ANDREWS AFB',
+};
+
+const statusEl = document.getElementById('status');
+const countBar = document.getElementById('count-bar');
+const grid     = document.getElementById('grid');
+
+async function refresh() {
+    try {
+        const r = await fetch('/api/tdls');
+        if (!r.ok) throw new Error(r.status);
+        const airports = await r.json();
+
+        statusEl.textContent = 'LIVE';
+        statusEl.className = 'ok';
+
+        if (!airports.length) {
+            countBar.textContent = '';
+            grid.innerHTML = '<div class="empty">No TDLS airports active — waiting for CPDLC clearances</div>';
+            return;
+        }
+
+        airports.sort((a, b) => a.airport.localeCompare(b.airport));
+        const totalAc = airports.reduce((s, a) => s + a.aircraftCount, 0);
+        const totalMsg = airports.reduce((s, a) => s + a.messageCount, 0);
+        countBar.textContent = `${airports.length} airports  •  ${totalAc} aircraft  •  ${totalMsg} messages`;
+
+        grid.innerHTML = airports.map(a => {
+            const icao = a.airport;
+            const name = AIRPORT_NAMES[icao] || '';
+            const href = '/tdls/' + icao.toLowerCase();
+            return `<a class="card" href="${href}">
+                <div class="card-icao">${icao}</div>
+                <div class="card-name">${name}</div>
+                <div class="card-counts">
+                    <div><span class="num">${a.aircraftCount}</span>AIRCRAFT</div>
+                    <div><span class="num">${a.messageCount}</span>MESSAGES</div>
+                </div>
+            </a>`;
+        }).join('');
+    } catch (e) {
+        statusEl.textContent = 'ERROR';
+        statusEl.className = '';
+    }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

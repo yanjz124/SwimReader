@@ -93,6 +93,10 @@ var jsonOpts = new JsonSerializerOptions
 // ASDEX bridge — created here so routes below can reference it
 var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVpn, jsonOpts);
 
+// TDLS bridge — receives forwarded TDES messages from ASDEX bridge (shared Solace session)
+var tdls = new TdlsBridge(jsonOpts);
+asdex.OnOtherMessage = (topic, body) => tdls.ProcessMessage(topic, body);
+
 // ── ASP.NET Core setup ──────────────────────────────────────────────────────
 
 var builder = WebApplication.CreateBuilder(args);
@@ -165,6 +169,57 @@ app.MapGet("/asdex/{airport}", async (HttpContext ctx, string airport) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex-airport.html"));
+});
+
+// TDLS routes — /tdls/ws/{airport} before /tdls/{airport} (literal wins)
+app.MapGet("/tdls", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls.html"));
+});
+app.Map("/tdls/ws/{airport}", async (HttpContext ctx, string airport) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+    airport = airport.ToUpperInvariant();
+    using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+    var client = new WsClient(ws);
+
+    var sendTask = Task.Run(async () =>
+    {
+        try
+        {
+            await foreach (var data in client.Queue.Reader.ReadAllAsync())
+            {
+                if (ws.State != WebSocketState.Open) break;
+                await ws.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+        catch (WebSocketException) { }
+        catch (OperationCanceledException) { }
+    });
+
+    var clientId = tdls.AddClient(airport, client);
+    try
+    {
+        var buf = new byte[4096];
+        while (ws.State == WebSocketState.Open)
+        {
+            var result = await ws.ReceiveAsync(buf, CancellationToken.None);
+            if (result.MessageType == WebSocketMessageType.Close) break;
+        }
+    }
+    catch (WebSocketException) { }
+    finally
+    {
+        tdls.RemoveClient(airport, clientId);
+        client.Queue.Writer.TryComplete();
+        await sendTask;
+    }
+});
+app.MapGet("/tdls/{airport}", async (HttpContext ctx, string airport) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls-airport.html"));
 });
 
 // WebSocket — streams flight updates to browser
@@ -614,6 +669,13 @@ app.MapGet("/api/asdex", () => Results.Json(asdex.GetDirectory(), jsonOpts));
 app.MapGet("/api/asdex/{airport}", (string airport) =>
     Results.Json(asdex.GetSnapshot(airport.ToUpperInvariant()), jsonOpts));
 
+// TDLS directory and detail
+app.MapGet("/api/tdls", () => Results.Json(tdls.GetDirectory(), jsonOpts));
+app.MapGet("/api/tdls/{airport}", (string airport) =>
+    Results.Json(tdls.GetAirport(airport.ToUpperInvariant()), jsonOpts));
+app.MapGet("/api/tdls/{airport}/{aircraftId}", (string airport, string aircraftId) =>
+    Results.Json(tdls.GetAircraftMessages(airport.ToUpperInvariant(), aircraftId.ToUpperInvariant()), jsonOpts));
+
 // History symbol: matches client getSymbolChar() logic
 static char GetHistSym(FlightState f)
 {
@@ -857,9 +919,13 @@ var batchTimer = new Timer(_ => FlushDirtyBatch(_dirty), null, TimeSpan.FromSeco
 var asdexBatchTimer = new Timer(_ => asdex.FlushDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 var asdexPurgeTimer = new Timer(_ => asdex.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 
+// TDLS: flush new messages every 1s, purge stale aircraft every 60s
+var tdlsFlushTimer = new Timer(_ => tdls.FlushDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+var tdlsPurgeTimer = new Timer(_ => tdls.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
 
 await solaceReady.Task;

@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TDLS | swim.vncrcc.org</title>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #000;
+    color: #fff;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+header {
+    background: #000;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-shrink: 0;
+}
+header .back { color: #888; text-decoration: none; font-size: 12px; }
+header .back:hover { color: #fff; }
+header h1 { font-size: 15px; letter-spacing: 2px; font-weight: normal; }
+header .stats { font-size: 11px; color: #888; margin-left: auto; }
+#status { font-size: 11px; color: #666; margin-left: 12px; }
+#status.ok { color: #44aa44; }
+
+/* ── Main layout ────────────────────────────────────────────── */
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── Left panel: aircraft list ──────────────────────────────── */
+.ac-list {
+    width: 200px;
+    min-width: 200px;
+    border-right: 1px solid #333;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+.ac-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #1a1a1a;
+    transition: background 0.1s;
+}
+.ac-item:hover { background: #1a1a1a; }
+.ac-item.selected { background: #1a2a1a; border-left: 2px solid #44aa44; }
+.ac-item .callsign { font-size: 13px; color: #fff; }
+.ac-item .meta { font-size: 10px; color: #666; margin-top: 2px; }
+.ac-item .badge {
+    display: inline-block;
+    font-size: 9px;
+    color: #888;
+    background: #1a1a1a;
+    padding: 1px 4px;
+    border-radius: 2px;
+    margin-left: 6px;
+}
+.ac-item.flash { animation: flash 0.6s ease-out; }
+@keyframes flash { 0% { background: #2a2a00; } 100% { background: transparent; } }
+
+/* ── Right panel: message detail ────────────────────────────── */
+.detail {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+}
+.detail .empty { color: #444; font-size: 12px; padding-top: 40px; text-align: center; }
+
+.msg-card {
+    margin-bottom: 20px;
+    border: 1px solid #222;
+    background: #0a0a0a;
+    border-radius: 2px;
+}
+.msg-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #222;
+    font-size: 11px;
+}
+.msg-time { color: #44aa44; }
+.msg-type { color: #888; }
+.msg-type.cpdlc { color: #5588ff; }
+.msg-type.depart { color: #ff8844; }
+.msg-meta {
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #888;
+    border-bottom: 1px solid #1a1a1a;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+}
+.msg-meta span { color: #aaa; }
+.msg-body {
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #ddd;
+}
+.msg-body .sub-msg {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #1a1a1a;
+}
+.msg-body .sub-msg:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.msg-body .sub-num { color: #666; }
+.msg-body .pilot-response { color: #44aa44; }
+.msg-body .clearance { color: #fff; }
+
+/* Departure card */
+.depart-grid {
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px 16px;
+    font-size: 11px;
+}
+.depart-grid .label { color: #666; font-size: 10px; }
+.depart-grid .value { color: #fff; margin-top: 1px; }
+.depart-timeline {
+    padding: 8px 12px;
+    border-top: 1px solid #1a1a1a;
+    font-size: 11px;
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+.depart-timeline .step { color: #888; }
+.depart-timeline .step .t { color: #ff8844; }
+</style>
+</head>
+<body>
+
+<header>
+    <a class="back" href="/tdls">◀ TDLS</a>
+    <h1 id="airport-title">TDLS</h1>
+    <div class="stats" id="stats"></div>
+    <div id="status">connecting...</div>
+</header>
+
+<div class="main">
+    <div class="ac-list" id="ac-list"></div>
+    <div class="detail" id="detail">
+        <div class="empty">Select an aircraft to view CPDLC messages</div>
+    </div>
+</div>
+
+<script>
+const AIRPORT = location.pathname.split('/').pop().toUpperCase();
+document.getElementById('airport-title').textContent = `TDLS  ${AIRPORT}`;
+document.title = `TDLS ${AIRPORT} | swim.vncrcc.org`;
+
+let state = {}; // aircraftId → { aircraftId, acType, destination, beaconCode, messageCount, lastSeen, messages:[] }
+let selectedAc = null;
+
+const acListEl = document.getElementById('ac-list');
+const detailEl = document.getElementById('detail');
+const statsEl  = document.getElementById('stats');
+const statusEl = document.getElementById('status');
+
+// ── WebSocket ──────────────────────────────────────────────────
+let ws = null;
+function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/tdls/ws/${AIRPORT.toLowerCase()}`);
+
+    ws.onopen = () => {
+        statusEl.textContent = 'LIVE';
+        statusEl.className = 'ok';
+    };
+
+    ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === 'snapshot') {
+            handleSnapshot(msg.data);
+        } else if (msg.type === 'new') {
+            handleNewMessages(msg.data);
+        }
+    };
+
+    ws.onclose = () => {
+        statusEl.textContent = 'DISCONNECTED';
+        statusEl.className = '';
+        setTimeout(connect, 5000);
+    };
+
+    ws.onerror = () => ws.close();
+}
+
+function handleSnapshot(data) {
+    state = {};
+    if (data.aircraft) {
+        for (const ac of data.aircraft) {
+            state[ac.aircraftId] = ac;
+        }
+    }
+    renderAcList();
+    if (selectedAc && state[selectedAc]) renderDetail(selectedAc);
+    else if (selectedAc) { selectedAc = null; renderDetail(null); }
+}
+
+function handleNewMessages(messages) {
+    const flashIds = new Set();
+    for (const msg of messages) {
+        const id = msg.aircraftId;
+        if (!state[id]) {
+            state[id] = {
+                aircraftId: id,
+                acType: msg.acType,
+                destination: msg.destination,
+                beaconCode: msg.beaconCode,
+                messageCount: 0,
+                lastSeen: msg.time,
+                messages: []
+            };
+        }
+        const ac = state[id];
+        ac.messages.push(msg);
+        ac.messageCount = ac.messages.length;
+        ac.lastSeen = msg.time;
+        if (msg.acType) ac.acType = msg.acType;
+        if (msg.destination) ac.destination = msg.destination;
+        if (msg.beaconCode) ac.beaconCode = msg.beaconCode;
+        flashIds.add(id);
+    }
+    renderAcList(flashIds);
+    if (selectedAc && flashIds.has(selectedAc)) renderDetail(selectedAc);
+}
+
+// ── Render aircraft list ───────────────────────────────────────
+function renderAcList(flashIds) {
+    const sorted = Object.values(state).sort((a, b) => {
+        const ta = new Date(a.lastSeen).getTime();
+        const tb = new Date(b.lastSeen).getTime();
+        return tb - ta;
+    });
+
+    const totalMsg = sorted.reduce((s, a) => s + a.messageCount, 0);
+    statsEl.textContent = `${sorted.length} aircraft  •  ${totalMsg} messages`;
+
+    acListEl.innerHTML = sorted.map(ac => {
+        const sel = ac.aircraftId === selectedAc ? ' selected' : '';
+        const flash = flashIds && flashIds.has(ac.aircraftId) ? ' flash' : '';
+        const dest = ac.destination ? ` → ${ac.destination.replace(/^K/, '')}` : '';
+        return `<div class="ac-item${sel}${flash}" data-id="${ac.aircraftId}">
+            <div class="callsign">${ac.aircraftId}<span class="badge">${ac.messageCount}</span></div>
+            <div class="meta">${ac.acType || ''}${dest}</div>
+        </div>`;
+    }).join('');
+
+    acListEl.querySelectorAll('.ac-item').forEach(el => {
+        el.addEventListener('click', () => {
+            selectedAc = el.dataset.id;
+            renderAcList();
+            renderDetail(selectedAc);
+        });
+    });
+}
+
+// ── Render message detail ──────────────────────────────────────
+function renderDetail(aircraftId) {
+    if (!aircraftId || !state[aircraftId]) {
+        detailEl.innerHTML = '<div class="empty">Select an aircraft to view CPDLC messages</div>';
+        return;
+    }
+
+    const ac = state[aircraftId];
+    // Show messages newest first
+    const msgs = [...ac.messages].reverse();
+
+    detailEl.innerHTML = msgs.map(m => {
+        if (m.type === 'CPDLC') return renderCpdlc(m);
+        if (m.type === 'DEPART') return renderDepart(m);
+        return '';
+    }).join('');
+
+    detailEl.scrollTop = 0;
+}
+
+function renderCpdlc(m) {
+    const t = fmtTime(m.time);
+    const subMsgs = parseCpdlcBody(m.dataBody || '');
+
+    let metaParts = [];
+    if (m.acType) metaParts.push(`<span>${m.acType}</span>`);
+    if (m.beaconCode) metaParts.push(`BCN <span>${m.beaconCode}</span>`);
+    if (m.cid) metaParts.push(`CID <span>${m.cid}</span>`);
+    if (m.destination) metaParts.push(`→ <span>${m.destination}</span>`);
+
+    return `<div class="msg-card">
+        <div class="msg-header">
+            <span class="msg-time">${t}</span>
+            <span class="msg-type cpdlc">CPDLC</span>
+        </div>
+        ${metaParts.length ? `<div class="msg-meta">${metaParts.join('')}</div>` : ''}
+        <div class="msg-body">${subMsgs.map(renderSubMsg).join('')}</div>
+    </div>`;
+}
+
+function renderDepart(m) {
+    const t = fmtTime(m.time);
+
+    let gridItems = [];
+    if (m.gate && m.gate !== 'N/A') gridItems.push({ label: 'GATE', value: m.gate });
+    if (m.runway) gridItems.push({ label: 'RUNWAY', value: m.runway });
+    if (m.destination) gridItems.push({ label: 'DESTINATION', value: m.destination });
+    if (m.acType) gridItems.push({ label: 'TYPE', value: m.acType });
+    if (m.beaconCode) gridItems.push({ label: 'BEACON', value: m.beaconCode });
+    if (m.cid) gridItems.push({ label: 'CID', value: m.cid });
+
+    let timeline = [];
+    if (m.clearanceTime) timeline.push({ label: 'CLR', time: fmtTimeShort(m.clearanceTime) });
+    if (m.taxiTime) timeline.push({ label: 'TAXI', time: fmtTimeShort(m.taxiTime) });
+    if (m.takeoffTime) timeline.push({ label: 'T/O', time: fmtTimeShort(m.takeoffTime) });
+
+    return `<div class="msg-card">
+        <div class="msg-header">
+            <span class="msg-time">${t}</span>
+            <span class="msg-type depart">DEPARTURE</span>
+        </div>
+        <div class="depart-grid">
+            ${gridItems.map(i => `<div><div class="label">${i.label}</div><div class="value">${i.value}</div></div>`).join('')}
+        </div>
+        ${timeline.length ? `<div class="depart-timeline">${timeline.map(s => `<div class="step">${s.label} <span class="t">${s.time}</span></div>`).join('')}</div>` : ''}
+    </div>`;
+}
+
+// ── CPDLC body parser ──────────────────────────────────────────
+// dataBody contains numbered sub-messages like:
+// "005 AAL2469 KDFW ... PILOT RESPONSE - ROGER 002 CPDLC DCL DISPATCH MSG..."
+// Numbers are 3-digit sequences at the start or preceded by space
+function parseCpdlcBody(body) {
+    if (!body) return [{ text: body, isPilot: false }];
+
+    const parts = [];
+    // Split on 3-digit message sequence numbers
+    const regex = /(?:^|\s)(\d{3})\s/g;
+    let matches = [];
+    let m;
+    while ((m = regex.exec(body)) !== null) {
+        matches.push({ index: m.index, seqStart: m.index + (m[0].startsWith(' ') ? 1 : 0), num: m[1], contentStart: m.index + m[0].length });
+    }
+
+    if (matches.length === 0) return [{ text: body.trim(), isPilot: false }];
+
+    for (let i = 0; i < matches.length; i++) {
+        const start = matches[i].contentStart;
+        const end = i + 1 < matches.length ? matches[i + 1].seqStart : body.length;
+        const text = body.substring(start, end).trim();
+        const isPilot = /PILOT\s+RESPONSE/i.test(text);
+        parts.push({ num: matches[i].num, text, isPilot });
+    }
+
+    return parts;
+}
+
+function renderSubMsg(sub) {
+    if (sub.isPilot) {
+        // Extract the response text after "PILOT RESPONSE - "
+        const respMatch = sub.text.match(/PILOT\s+RESPONSE\s*-\s*(.*)/i);
+        const resp = respMatch ? respMatch[1].trim() : sub.text;
+        return `<div class="sub-msg">
+            <span class="sub-num">${sub.num || ''}</span> <span class="pilot-response">PILOT RESPONSE — ${resp}</span>
+        </div>`;
+    }
+
+    // Format clearance text — highlight key parts
+    let text = sub.text || '';
+    // Try to find the clearance portion
+    const clrMatch = text.match(/(CLEARED TO .+)/i);
+    if (clrMatch) {
+        const before = text.substring(0, clrMatch.index);
+        const clr = clrMatch[1];
+        return `<div class="sub-msg">
+            <span class="sub-num">${sub.num || ''}</span> ${escHtml(before)}
+<span class="clearance">${escHtml(clr)}</span>
+        </div>`;
+    }
+
+    return `<div class="sub-msg">
+        <span class="sub-num">${sub.num || ''}</span> ${escHtml(text)}
+    </div>`;
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toISOString().substring(11, 19) + 'Z';
+}
+
+function fmtTimeShort(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toISOString().substring(11, 16);
+}
+
+function escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Init ───────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>

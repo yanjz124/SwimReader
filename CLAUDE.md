@@ -714,14 +714,14 @@ STDDS Solace queue → AsdexBridge (SMES/* → ASDE-X processing)
 
 ### CPDLC `dataBody` Format
 
-The dataBody contains numbered sub-messages (3-digit sequence numbers):
+Each TDLSCSPMessage has its own dataBody starting with a 3-digit sequence number:
 ```
-005 AAL2469 KDFW /AN N894NN PILOT RESPONSE - ROGER 002 CPDLC DCL DISPATCH MSG -
-NOT TO BE USED AS A CLEARANCE AAL2469 KDFW B738/L P0311 /AN N894NN 406 FL370
-CLEARED TO KJAX AIRPORT FORCK3 THEN AS FILED CLIMB VIA SID DEP FREQ SEE SID
-KDFW.FORCK3.FORCK..HAWES..WINAP..KT15M..MGM..DUCHY.OHDEA2.KJAX
+001 ASA1158 3607 PHNL B712/G P0540 450 210 PHNL PALAY3 LNY VECKI9 PHKO
+@PBN/A1B1C1D1O1S1 NA V/Z1Z*** CLEARED PALAY3 DEPARTURE LNY TRSN TURN RIGHT HDG
+155 MAINTAIN 5000FT EXP 210 10 MIN AFT DP.DPFRQ 118.3 CTC GND CONTROL 121.9
+ADVISE ATIS AND BCN CODE
 ```
-The client-side parser splits on 3-digit sequence numbers and identifies pilot responses vs clearance text.
+The sequence number (e.g., `001`) is only at the very beginning of each message body. 3-digit numbers mid-text (like `155` for heading, `210` for altitude, `450` for CID) are data values, not sequence delimiters. The client-side parser strips the leading sequence number and identifies pilot responses vs clearance text.
 
 ### WebSocket Protocol (`/tdls/ws/{airport}`)
 
@@ -740,8 +740,9 @@ The client-side parser splits on 3-digit sequence numbers and identifies pilot r
 **`tdls-airport.html`** — Airport detail at `/tdls/{airport}`:
 - Two-panel layout: aircraft list (left) + message history (right)
 - Aircraft sorted by most recent message (newest on top); flash animation on new messages
+- Active/historical divider: aircraft not seen in 2+ hours shown below a `HISTORICAL` separator with dimmed styling
 - Left panel shows callsign, message count badge, acType/destination, and most recent message timestamp (green)
-- CPDLC messages: parsed sub-messages with pilot responses (green) and clearance text (white)
+- CPDLC messages: single message body with leading sequence number stripped; pilot responses (green) and clearance text (white)
 - Departure events: gate, runway, OOOI timeline (CLR → TAXI → T/O)
 - WebSocket real-time updates, 5s reconnect on disconnect
 - Black background, white text, ERAM monospace font (embedded as base64 data URI)

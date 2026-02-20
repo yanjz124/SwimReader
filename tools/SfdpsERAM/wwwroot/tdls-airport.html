@@ -57,16 +57,16 @@ header .stats { font-size: 11px; color: #888; margin-left: auto; }
 }
 .ac-item:hover { background: #1a1a1a; }
 .ac-item.selected { background: #1a2a1a; border-left: 2px solid #44aa44; }
-.ac-item .callsign { font-size: 13px; color: #fff; }
-.ac-item .meta { font-size: 10px; color: #666; margin-top: 2px; }
+.ac-item .callsign { font-size: 15px; color: #fff; }
+.ac-item .meta { font-size: 12px; color: #666; margin-top: 2px; }
 .ac-item .badge {
     display: inline-block;
-    font-size: 9px;
+    font-size: 11px;
     color: #888;
     background: #1a1a1a;
-    padding: 1px 4px;
+    padding: 1px 5px;
     border-radius: 2px;
-    margin-left: 6px;
+    margin-left: 8px;
 }
 .ac-item.flash { animation: flash 0.6s ease-out; }
 @keyframes flash { 0% { background: #2a2a00; } 100% { background: transparent; } }
@@ -88,10 +88,10 @@ header .stats { font-size: 11px; color: #888; margin-left: auto; }
 .msg-header {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
     padding: 8px 12px;
     border-bottom: 1px solid #222;
-    font-size: 11px;
+    font-size: 13px;
 }
 .msg-time { color: #44aa44; }
 .msg-type { color: #888; }
@@ -99,17 +99,17 @@ header .stats { font-size: 11px; color: #888; margin-left: auto; }
 .msg-type.depart { color: #ff8844; }
 .msg-meta {
     padding: 8px 12px;
-    font-size: 11px;
-    color: #888;
+    font-size: 12px;
+    color: #666;
     border-bottom: 1px solid #1a1a1a;
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px 16px;
+    gap: 0;
 }
-.msg-meta span { color: #aaa; }
+.msg-meta .field { margin-right: 20px; }
+.msg-meta .field span { color: #ccc; }
 .msg-body {
     padding: 10px 12px;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
@@ -254,7 +254,7 @@ function renderAcList(flashIds) {
     });
 
     const totalMsg = sorted.reduce((s, a) => s + a.messageCount, 0);
-    statsEl.textContent = `${sorted.length} aircraft  •  ${totalMsg} messages`;
+    statsEl.textContent = `${sorted.length} acft  •  ${totalMsg} msg`;
 
     acListEl.innerHTML = sorted.map(ac => {
         const sel = ac.aircraftId === selectedAc ? ' selected' : '';
@@ -300,10 +300,10 @@ function renderCpdlc(m) {
     const subMsgs = parseCpdlcBody(m.dataBody || '');
 
     let metaParts = [];
-    if (m.acType) metaParts.push(`<span>${m.acType}</span>`);
-    if (m.beaconCode) metaParts.push(`BCN <span>${m.beaconCode}</span>`);
-    if (m.cid) metaParts.push(`CID <span>${m.cid}</span>`);
-    if (m.destination) metaParts.push(`→ <span>${m.destination}</span>`);
+    if (m.acType) metaParts.push(`<div class="field"><span>${m.acType}</span></div>`);
+    if (m.beaconCode) metaParts.push(`<div class="field">BCN <span>${m.beaconCode}</span></div>`);
+    if (m.cid) metaParts.push(`<div class="field">CID <span>${m.cid}</span></div>`);
+    if (m.destination) metaParts.push(`<div class="field">→ <span>${m.destination}</span></div>`);
 
     return `<div class="msg-card">
         <div class="msg-header">
@@ -403,14 +403,14 @@ function renderSubMsg(sub) {
 // ── Helpers ────────────────────────────────────────────────────
 function fmtTime(iso) {
     if (!iso) return '';
-    const d = new Date(iso);
-    return d.toISOString().substring(11, 19) + 'Z';
+    const s = new Date(iso).toISOString();
+    return s.substring(5, 10).replace('-', '/') + ' ' + s.substring(11, 19) + 'Z';
 }
 
 function fmtTimeShort(iso) {
     if (!iso) return '';
-    const d = new Date(iso);
-    return d.toISOString().substring(11, 16);
+    const s = new Date(iso).toISOString();
+    return s.substring(11, 16);
 }
 
 function escHtml(s) {

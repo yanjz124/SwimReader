@@ -52,8 +52,6 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 }
 .ac-icon .db-wrap {
     position: absolute;
-    /* NE offset: right of and above the target center */
-    left: 23px; top: -15px;
     pointer-events: none;
 }
 .db {
@@ -61,8 +59,9 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     font-size: 13px; line-height: 16px;
     color: #00cc00;
     white-space: nowrap;
-    background: rgba(0,0,0,0.45);
     padding: 0 2px;
+    pointer-events: auto;
+    cursor: none;
 }
 .db-line2 { color: #00aa00; }
 
@@ -237,6 +236,67 @@ const hashes   = {};   // trackId → hash string for change detection
 let   trackCount = 0;
 let   centeredOnce = false;
 
+// ── Data block positions (8 compass points) ─────────────────────────────────
+const DB_ORDERS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+const DB_POS = {
+    N:  { wl: -5,  wt: -38, lx: 5,  ly: -12 },
+    NE: { wl: 23,  wt: -15, lx: 23, ly: -5 },
+    E:  { wl: 23,  wt: 1,   lx: 23, ly: 9 },
+    SE: { wl: 23,  wt: 20,  lx: 23, ly: 23 },
+    S:  { wl: -5,  wt: 28,  lx: 5,  ly: 26 },
+    SW: { wl: -80, wt: 20,  lx: -5, ly: 23 },
+    W:  { wl: -80, wt: 1,   lx: -5, ly: 9 },
+    NW: { wl: -80, wt: -15, lx: -5, ly: -5 },
+};
+const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
+
+// ── Data block drag (snap to 8 compass positions) ──────────────────────────
+let dragTid = null, dragOrigin = null;
+
+document.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    const db = e.target.closest('.db');
+    if (!db) return;
+    const icon = e.target.closest('.ac-icon[data-tid]');
+    if (!icon) return;
+    dragTid = icon.dataset.tid;
+    const m = markers[dragTid];
+    if (!m) { dragTid = null; return; }
+    const el = m.getElement();
+    if (!el) { dragTid = null; return; }
+    const rect = el.getBoundingClientRect();
+    dragOrigin = { x: rect.left + 9, y: rect.top + 9 };
+    e.preventDefault();
+    e.stopPropagation();
+});
+
+document.addEventListener('mousemove', e => {
+    if (!dragTid) return;
+    const sdx = e.clientX - dragOrigin.x;
+    const sdy = e.clientY - dragOrigin.y;
+    // Convert screen delta to icon-local (undo CSS rotation)
+    const rad = mapRotation * Math.PI / 180;
+    const ldx = sdx * Math.cos(rad) + sdy * Math.sin(rad);
+    const ldy = -sdx * Math.sin(rad) + sdy * Math.cos(rad);
+    // Snap to nearest octant
+    let angle = Math.atan2(ldx, -ldy) * 180 / Math.PI;
+    if (angle < 0) angle += 360;
+    const idx = Math.round(angle / 45) % 8;
+    const dir = DB_ORDERS[idx];
+    if (dbPositions[dragTid] === dir) return;
+    dbPositions[dragTid] = dir;
+    // Update DOM live
+    const iconEl = document.querySelector(`.ac-icon[data-tid="${dragTid}"]`);
+    if (!iconEl) return;
+    const pos = DB_POS[dir];
+    const wrap = iconEl.querySelector('.db-wrap');
+    if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; }
+    const line = iconEl.querySelector('.ldr line');
+    if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
+});
+
+document.addEventListener('mouseup', () => { dragTid = null; dragOrigin = null; });
+
 const connEl  = document.getElementById('conn');
 const cntEl   = document.getElementById('track-count');
 
@@ -301,12 +361,16 @@ function makeIcon(t) {
         }
     }
 
-    const html = `<div class="ac-icon">
+    const posKey = dbPositions[t.trackId] || 'NE';
+    const pos = DB_POS[posKey];
+    const ldrHtml = cs ? `<svg class="ldr" width="18" height="18" viewBox="0 0 18 18" style="position:absolute;left:0;top:0;overflow:visible">
+            <line x1="9" y1="9" x2="${pos.lx}" y2="${pos.ly}" stroke="#00cc00" stroke-width="0.5" opacity="0.6"/>
+        </svg>` : '';
+
+    const html = `<div class="ac-icon" data-tid="${t.trackId}">
         <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block">${symHtml}</svg>
-        <svg class="ldr" width="18" height="18" viewBox="0 0 18 18" style="position:absolute;left:0;top:0;overflow:visible">
-            <line x1="9" y1="9" x2="23" y2="-5" stroke="#fff" stroke-width="0.5" opacity="0.5"/>
-        </svg>
-        <div class="db-wrap">${dbHtml}</div>
+        ${ldrHtml}
+        <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px">${dbHtml}</div>
     </div>`;
 
     return L.divIcon({ className: '', html, iconSize: [200, 18], iconAnchor: [9, 9] });

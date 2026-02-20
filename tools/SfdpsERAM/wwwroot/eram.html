@@ -1363,19 +1363,20 @@ const MRMS_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/observations/weather_r
 
 // Classify NWS radar pixel to ERAM NEXRAD level (0=none, 1=moderate, 2=heavy, 3=extreme)
 // NOAA MRMS palette: cyan/blue (5-15 dBZ) → green (20-30) → yellow/gold (35-40) → orange (45) → red (50+) → magenta (65+)
-// Only cyan/blue = moderate; all greens and warmer = heavy; reds/magentas = extreme.
-// Tuned to match CRC NEXRAD where heavy (checkered) covers most precipitation area.
+// Green = moderate, yellow/orange = heavy, red/magenta = extreme.
 function classifyNwsPixel(r, g, b, a) {
     if (a < 128) return 0;                              // filter anti-aliased edges
     const max = Math.max(r, g, b), min = Math.min(r, g, b);
     if (max < 30) return 0;
     const delta = max - min;
     if (delta < 15) return 0;                            // filter greys/unsaturated
-    // Blue/cyan dominant or bright greens: moderate
-    if ((b > r && b >= g) || (g > r * 3 && g >= b)) return 1;
-    // Red strongly dominant over green: extreme — 50+ dBZ
-    if (r > g * 2.5) return 3;
-    // Everything else (yellows, oranges, orange-reds): heavy
+    // Blue/cyan dominant: moderate (lightest precip)
+    if (b > r && b >= g) return 1;
+    // Green dominant: moderate — 20-30 dBZ
+    if (g > r && g > b) return 1;
+    // Red dominant (r >= g): extreme — 50+ dBZ
+    if (r > g * 1.5) return 3;
+    // Yellow/orange (r and g both high, b low): heavy — 35-50 dBZ
     return 2;
 }
 

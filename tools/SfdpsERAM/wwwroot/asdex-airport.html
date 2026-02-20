@@ -48,9 +48,8 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     pointer-events: auto;
     cursor: none;
 }
-.ac-icon svg.sym:hover {
-    filter: drop-shadow(0 0 4px rgba(255,255,255,0.8)) drop-shadow(0 0 8px rgba(255,255,255,0.4));
-}
+.ac-icon svg.sym .halo { opacity: 0; }
+.ac-icon svg.sym:hover .halo { opacity: 1; }
 .ac-icon .ldr {
     position: absolute; left: 0; top: 0;
     overflow: visible; pointer-events: none;
@@ -162,7 +161,8 @@ const map = L.map('map', {
     zoomSnap: 0.25,
     zoomDelta: 0.25,
     attributionControl: false,
-    dragging: false
+    dragging: false,
+    doubleClickZoom: false
 });
 
 // Right-click drag panning
@@ -392,7 +392,7 @@ function makeIcon(t) {
         </svg>` : '';
 
     const html = `<div class="ac-icon" data-tid="${t.trackId}">
-        <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block">${symHtml}</svg>
+        <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block">${symHtml}<circle class="halo" cx="0" cy="0" r="11" fill="none" stroke="#fff" stroke-width="1"/></svg>
         ${ldrHtml}
         <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px${hideStyle}">${dbHtml}</div>
     </div>`;

@@ -96,6 +96,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     <label>ROT</label>
     <input type="number" id="rot" min="0" max="360" value="360" step="1">
     <button id="dn-toggle">NIGHT</button>
+    <button id="fs-toggle">FULL</button>
     <a href="/asdex">◂ DIRECTORY</a>
 </div>
 
@@ -145,6 +146,19 @@ dnBtn.addEventListener('click', () => {
             };
         });
     }
+});
+
+// ── Fullscreen toggle ───────────────────────────────────────────────────────
+const fsBtn = document.getElementById('fs-toggle');
+fsBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen();
+    } else {
+        document.exitFullscreen();
+    }
+});
+document.addEventListener('fullscreenchange', () => {
+    fsBtn.textContent = document.fullscreenElement ? 'EXIT' : 'FULL';
 });
 
 // ── Airport from URL ─────────────────────────────────────────────────────────
@@ -345,7 +359,7 @@ function targetCategory(t) {
 // Fuselage + swept wings + V-tail. ViewBox centered on 0,0, nose at top.
 const PLANE_PATH = 'M 0 -8 L 1.3 -5 L 1.3 -1 L 8 2 L 7.5 3 L 1.8 1.5 L 1.8 5 L 4 7 L 0 6 L -4 7 L -1.8 5 L -1.8 1.5 L -7.5 3 L -8 2 L -1.3 -1 L -1.3 -5 Z';
 // Kite shape (unknown): widest above center, long bottom — matches CRC reference
-const DIAMOND_PATH = 'M 0 -7 L 5 -1 L 0 9 L -5 -1 Z';
+const DIAMOND_PATH = 'M 0 -5.5 L 4 -1 L 0 7 L -4 -1 Z';
 // Vehicle: small square
 const VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z';
 

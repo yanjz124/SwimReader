@@ -100,7 +100,9 @@ builder.WebHost.UseUrls("http://0.0.0.0:5001");
 var app = builder.Build();
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+var contentTypes = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+contentTypes.Mappings[".geojson"] = "application/geo+json";
+app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = contentTypes });
 app.UseWebSockets();
 
 // Clean URLs: /eram → eram.html, /table → index.html (serve directly, no redirect)

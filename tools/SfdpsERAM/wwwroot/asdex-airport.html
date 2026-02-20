@@ -58,10 +58,22 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 
 /* hide Leaflet attribution noise */
 .leaflet-control-attribution { display: none; }
+
+/* ── Crosshair cursor ── */
+#map { cursor: none !important; }
+.leaflet-container { cursor: none !important; }
+.leaflet-grab, .leaflet-dragging { cursor: none !important; }
+#crosshair {
+    position: fixed; pointer-events: none; z-index: 9999; display: none;
+}
+#crosshair .ch { position: absolute; background: #fff; }
+#crosshair .h { width: 31px; height: 1px; left: -15px; top: 0; }
+#crosshair .v { width: 1px; height: 31px; left: 0; top: -15px; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="crosshair"><div class="ch h"></div><div class="ch v"></div></div>
 <div id="statusbar">
     <span class="airport-id" id="airport-id">—</span>
     <span id="track-count">0 tracks</span>
@@ -71,19 +83,52 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 </div>
 
 <script>
+// ── Crosshair cursor ────────────────────────────────────────────────────────
+const ch = document.getElementById('crosshair');
+document.addEventListener('mousemove', e => {
+    ch.style.left = e.clientX + 'px';
+    ch.style.top  = e.clientY + 'px';
+    ch.style.display = 'block';
+});
+document.addEventListener('mouseleave', () => { ch.style.display = 'none'; });
+
 // ── Airport from URL ─────────────────────────────────────────────────────────
 const pathParts = window.location.pathname.split('/').filter(Boolean);
 const AIRPORT = (pathParts[pathParts.length - 1] || 'UNKN').toUpperCase();
 document.getElementById('airport-id').textContent = AIRPORT;
 document.title = 'ASDE-X ' + AIRPORT;
 
-// ── Leaflet map ──────────────────────────────────────────────────────────────
+// ── Leaflet map (right-click drag to pan) ───────────────────────────────────
 const map = L.map('map', {
-    center: [38.85, -77.04],   // will be overridden by surface map bounds
+    center: [38.85, -77.04],
     zoom: 14,
     zoomControl: true,
-    attributionControl: false
+    attributionControl: false,
+    dragging: false
 });
+
+// Right-click drag panning
+(function() {
+    let panning = false, startX, startY;
+    const el = map.getContainer();
+    el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('mousedown', e => {
+        if (e.button !== 2) return;
+        panning = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+        if (!panning) return;
+        const dx = e.clientX - startX, dy = e.clientY - startY;
+        startX = e.clientX; startY = e.clientY;
+        map.panBy([-dx, -dy], { animate: false });
+    });
+    document.addEventListener('mouseup', e => {
+        if (e.button === 2) panning = false;
+    });
+})();
 
 // ── ASDEX surface colors (vNAS spec) ────────────────────────────────────────
 const ASDEX_NIGHT = {

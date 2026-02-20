@@ -222,6 +222,12 @@ app.MapGet("/tdls/{airport}", async (HttpContext ctx, string airport) =>
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls-airport.html"));
 });
 
+app.MapGet("/fdio", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio.html"));
+});
+
 // WebSocket — streams flight updates to browser
 app.Map("/ws", async (HttpContext ctx) =>
 {
@@ -1442,7 +1448,7 @@ string BuildEventSummary(string source, XElement flight)
         "TH" => "Track history update",
         "HZ" => BuildHzSummary(flight),
         "OH" => BuildOhSummary(flight),
-        "FH" => "Flight plan update",
+        "FH" => BuildFhSummary(flight),
         "HP" => "Handoff proposal",
         "HU" => "Handoff update",
         "AH" => "Assumed/amended handoff",
@@ -1493,6 +1499,34 @@ string BuildLhSummary(XElement flight)
             return $"Interim altitude set: {alt:F0} ft";
     }
     return "Local handoff / interim altitude cleared";
+}
+
+string BuildFhSummary(XElement flight)
+{
+    var parts = new List<string>();
+    var acType = flight.Descendants()
+        .FirstOrDefault(e => e.Name.LocalName == "icaoModelIdentifier")?.Value;
+    if (acType is not null) parts.Add(acType);
+
+    var dep = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "departure")
+        ?.Attribute("departurePoint")?.Value;
+    var arr = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "arrival")
+        ?.Attribute("arrivalPoint")?.Value;
+    if (dep is not null || arr is not null)
+        parts.Add($"{dep ?? "?"}-{arr ?? "?"}");
+
+    var simple = flight.Descendants()
+        .FirstOrDefault(e => e.Name.LocalName == "assignedAltitude")
+        ?.Descendants().FirstOrDefault(e => e.Name.LocalName == "simple")?.Value;
+    if (simple is not null && double.TryParse(simple, out var alt))
+        parts.Add(alt >= 18000 ? $"FL{alt / 100:F0}" : $"{alt:F0}ft");
+
+    var star = flight.Descendants()
+        .FirstOrDefault(e => e.Name.LocalName == "nasadaptedArrivalRoute")
+        ?.Attribute("nasRouteIdentifier")?.Value;
+    if (star is not null) parts.Add(star);
+
+    return parts.Count > 0 ? $"FP: {string.Join(" ", parts)}" : "Flight plan update";
 }
 
 string BuildPtSummary(XElement flight)

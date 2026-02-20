@@ -55,7 +55,8 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 - **ASDE-X Scope** (`/asdex/{airport}`) — Leaflet map with live surface targets, data blocks, 1s updates
 - **TDLS Directory** (`/tdls`) — Airport grid with CPDLC clearance/departure message counts
 - **TDLS Detail** (`/tdls/{airport}`) — Aircraft list + CPDLC message history with timestamps
-- Future: FIDO, strips, etc.
+- **FDIO** (`/fdio`) — Flight plan viewer with searchable accordion rows, expandable detail + ATC revision history
+- Future: strips, etc.
 
 ## Project Structure
 
@@ -82,6 +83,7 @@ tools/
       asdex-airport.html                ASDE-X airport scope / Leaflet map (single-file: HTML + CSS + JS)
       tdls.html                         TDLS clearance directory (single-file: HTML + CSS + JS)
       tdls-airport.html                 TDLS airport detail — aircraft list + CPDLC messages
+      fdio.html                          FDIO flight plan viewer — accordion rows + revision history
       handoff-codes.json                Facility handoff display code mappings (H/O/K suffixes)
       destination-codes.json            Per-ARTCC single-letter destination airport codes
       ERAMv110.ttf                      ERAM font for authentic ATC display
@@ -304,6 +306,7 @@ Core fields tracked per flight (by GUFI):
 | `GET /api/tdls/{airport}` | Full TDLS snapshot — `{airport, aircraft:[...with messages]}` |
 | `GET /api/tdls/{airport}/{id}` | Single aircraft message history |
 | `WS /tdls/ws/{airport}` | WebSocket — sends `snapshot`, `new` messages (see TDLS section) |
+| `GET /fdio` | FDIO flight plan viewer page (reuses `/ws` WebSocket + `/api/flights/{gufi}` for detail) |
 
 ### Handoff Detection Logic
 Server-side in `Program.cs` ProcessFlight():
@@ -753,6 +756,34 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 |---|---|---|
 | `FlushDirty` | 1s | Send new messages to WebSocket clients |
 | `PurgeStale` | 60s | No-op — all aircraft and messages retained indefinitely |
+
+## FDIO Display (SfdpsERAM)
+
+The FDIO (Flight Data Input/Output) page provides a searchable, accordion-style flight plan viewer. It reuses the existing SFDPS WebSocket and REST infrastructure — no new server endpoints.
+
+### Architecture
+- **Data source**: existing `/ws` WebSocket (snapshot + batch + remove + stats)
+- **Detail/events**: on-demand `GET /api/flights/{gufi}` when row is expanded
+- **No deduplication**: all GUFIs shown, even duplicate callsigns from different ARTCCs
+
+### Page Layout (`fdio.html`)
+- **Top bar**: FDIO title, connection status, flight count + message rate
+- **Filter bar**: search box (callsign/CID/airport/type/squawk/route), status filter (Active default), facility dropdown, flight rules filter
+- **Flight list**: sortable column headers, one row per GUFI
+- **Collapsed row**: callsign, type, dep, arr, altitude (FL/VFR/block), rules, sector, squawk, status dot
+- **Expanded row** (click to toggle): flight plan detail grid + revision history (event log newest-first)
+
+### Event Log Enhancement
+`BuildEventSummary()` for FH (flight plan update) messages now generates enriched summaries including aircraft type, origin-destination, altitude, and STAR — e.g., `"FP: B738 KDFW-KJFK FL360 LENDY6"` instead of generic `"Flight plan update"`. Other event types (OH, LH, PT, BA, etc.) are unchanged.
+
+### Event Source Color Coding
+| Source | Color | Description |
+|--------|-------|-------------|
+| FH | white | Flight plan update (enriched summary) |
+| OH/HP/AH/HU/HX | blue | Handoff events |
+| LH | orange | Interim altitude |
+| TH/HZ | dim grey | Position updates (low priority) |
+| BA/RE | grey | Beacon code events |
 
 ## STDDS Data Pipeline (SwimReader.Server)
 

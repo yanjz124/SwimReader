@@ -83,6 +83,16 @@ var jsonOpts = new JsonSerializerOptions
     // detect cleared fields (e.g., interimAltitude null after OH/FH clears it)
 };
 
+// Initialize Solace SDK (once, before any thread or connection is created)
+{
+    var cfp = new ContextFactoryProperties { SolClientLogLevel = SolLogLevel.Warning };
+    cfp.LogToConsoleError();
+    ContextFactory.Instance.Init(cfp);
+}
+
+// ASDEX bridge — created here so routes below can reference it
+var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVpn, jsonOpts);
+
 // ── ASP.NET Core setup ──────────────────────────────────────────────────────
 
 var builder = WebApplication.CreateBuilder(args);
@@ -618,18 +628,6 @@ static string FindRepoRoot(string start)
         dir = dir.Parent;
     return dir?.FullName ?? start;
 }
-
-// ── Solace SDK init (once, shared by all connections) ───────────────────────
-
-{
-    var cfp = new ContextFactoryProperties { SolClientLogLevel = SolLogLevel.Warning };
-    cfp.LogToConsoleError();
-    ContextFactory.Instance.Init(cfp);
-}
-
-// ── ASDEX bridge (STDDS/SMES) ────────────────────────────────────────────────
-
-var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVpn, jsonOpts);
 
 // ── Solace connection (background) ──────────────────────────────────────────
 

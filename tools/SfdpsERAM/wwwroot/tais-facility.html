@@ -57,6 +57,19 @@ body {
 }
 .search-box:focus { border-color: #cccc44; }
 .search-box::placeholder { color: #555; }
+.filter-label { font-size: 10px; color: #666; letter-spacing: 1px; }
+.filter-select {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 2px;
+    padding: 3px 6px;
+    font-size: 11px;
+    font-family: inherit;
+    color: #ccc;
+    outline: none;
+}
+.filter-select:focus { border-color: #cccc44; }
+.filter-sep { width: 1px; height: 18px; background: #333; }
 .result-count { font-size: 11px; color: #555; margin-left: 8px; }
 
 /* ── Track list ──────────────────────────────────────────── */
@@ -156,6 +169,13 @@ body {
 
 <div class="filterbar">
     <input type="text" class="search-box" id="search" placeholder="Search callsign, squawk, type, airport, owner, scratchpad...">
+    <div class="filter-sep"></div>
+    <span class="filter-label">FROZEN</span>
+    <select class="filter-select" id="filterFrozen">
+        <option value="">All</option>
+        <option value="yes">Frozen only</option>
+        <option value="no">Not frozen</option>
+    </select>
     <span class="result-count" id="resultCount"></span>
 </div>
 
@@ -186,11 +206,14 @@ let sortAsc = true;
 let expandedTrack = null;
 let searchTerm = '';
 
-const statusEl = document.getElementById('status');
-const statsEl  = document.getElementById('stats');
-const rowsEl   = document.getElementById('rows');
-const searchEl = document.getElementById('search');
-const resultEl = document.getElementById('resultCount');
+const statusEl     = document.getElementById('status');
+const statsEl      = document.getElementById('stats');
+const rowsEl       = document.getElementById('rows');
+const searchEl     = document.getElementById('search');
+const resultEl     = document.getElementById('resultCount');
+const filterFrozen = document.getElementById('filterFrozen');
+
+filterFrozen.addEventListener('change', () => render());
 
 // ── WebSocket ──────────────────────────────────────────────────
 let ws = null;
@@ -282,11 +305,18 @@ function cmpSort(a, b) {
 
 // ── Render ────────────────────────────────────────────────────
 function render() {
-    const filtered = tracks.filter(matchesSearch);
+    const fFrozen = filterFrozen.value;
+    const filtered = tracks.filter(t => {
+        if (!matchesSearch(t)) return false;
+        if (fFrozen === 'yes' && !t.frozen) return false;
+        if (fFrozen === 'no' && t.frozen) return false;
+        return true;
+    });
     filtered.sort(cmpSort);
 
     statsEl.textContent = `${tracks.length} tracks`;
-    resultEl.textContent = searchTerm ? `${filtered.length} / ${tracks.length}` : '';
+    const isFiltered = searchTerm || fFrozen;
+    resultEl.textContent = isFiltered ? `${filtered.length} / ${tracks.length}` : '';
 
     const html = filtered.map(t => {
         const isExpanded = expandedTrack === t.trackNum;

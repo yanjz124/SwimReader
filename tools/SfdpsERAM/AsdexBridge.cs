@@ -177,6 +177,7 @@ class AsdexBridge
                 var info   = report.Elements().FirstOrDefault(e => e.Name.LocalName == "flightInfo");
                 var acType = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "acType")?.Value;
                 var tgtType = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "tgtType")?.Value;
+                var wake   = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "wake")?.Value;
 
                 var movement = report.Elements().FirstOrDefault(e => e.Name.LocalName == "movement");
                 int? speed = ParseInt(movement?.Elements().FirstOrDefault(e => e.Name.LocalName == "speed")?.Value);
@@ -187,7 +188,7 @@ class AsdexBridge
 
                 var track = airportTracks.GetOrAdd(trackId,
                     id => new AsdexTrack { Airport = airport, TrackId = id });
-                track.MergeFrom(lat, lon, callsign, squawk, acType, tgtType, alt, speed, hdg, eramGufi);
+                track.MergeFrom(lat, lon, callsign, squawk, acType, tgtType, alt, speed, hdg, eramGufi, wake);
                 changed = true;
             }
 
@@ -344,6 +345,7 @@ class AsdexTrack
     public string? Squawk    { get; set; }
     public string? AircraftType { get; set; }
     public string? TargetType   { get; set; }   // "aircraft", "vehicle", "unknown"
+    public string? WakeCategory { get; set; }   // RECAT: A-F (from SMES flightInfo/wake)
     public double  Latitude  { get; set; }
     public double  Longitude { get; set; }
     public double? AltitudeFeet   { get; set; }
@@ -358,7 +360,7 @@ class AsdexTrack
     /// </summary>
     public void MergeFrom(double lat, double lon,
         string? callsign, string? squawk, string? acType, string? tgtType,
-        double? alt, int? speed, double? heading, string? eramGufi)
+        double? alt, int? speed, double? heading, string? eramGufi, string? wake = null)
     {
         Latitude  = lat;
         Longitude = lon;
@@ -370,6 +372,7 @@ class AsdexTrack
         if (speed.HasValue)   SpeedKts        = speed;
         if (heading.HasValue) HeadingDegrees  = heading;
         if (eramGufi is not null) EramGufi    = eramGufi;
+        if (wake     is not null) WakeCategory = wake;
         LastSeen = DateTime.UtcNow;
     }
 
@@ -387,6 +390,7 @@ class AsdexTrack
         spdKts   = SpeedKts,
         hdg      = HeadingDegrees,
         eramGufi = EramGufi,
+        wake     = WakeCategory,
         ageSec   = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
 }

@@ -71,18 +71,26 @@ body {
 .filter-sep { width: 1px; height: 18px; background: #333; }
 .result-count { font-size: 11px; color: #555; }
 
-/* ── Flight list ──────────────────────────────────────────── */
+/* ── Main split layout ───────────────────────────────────── */
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── Flight list (left panel) ────────────────────────────── */
 .flight-list {
     flex: 1;
     overflow-y: auto;
+    min-width: 0;
 }
 
 /* Column header */
 .col-header {
     display: grid;
-    grid-template-columns: 100px 55px 50px 50px 70px 50px 30px 80px 55px 30px 30px;
-    gap: 8px;
-    padding: 6px 16px;
+    grid-template-columns: 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
+    gap: 6px;
+    padding: 6px 12px;
     font-size: 10px;
     color: #555;
     letter-spacing: 1px;
@@ -97,28 +105,28 @@ body {
 .col-header span:hover { color: #cccc44; }
 .col-header .sorted { color: #cccc44; }
 
-/* Flight row (collapsed) */
+/* Flight row */
 .flight-row {
     display: grid;
-    grid-template-columns: 100px 55px 50px 50px 70px 50px 30px 80px 55px 30px 30px;
-    gap: 8px;
-    padding: 6px 16px;
-    font-size: 13px;
+    grid-template-columns: 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
+    gap: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
     border-bottom: 1px solid #111;
     cursor: pointer;
     transition: background 0.1s;
 }
 .flight-row:hover { background: #0a0a0a; }
-.flight-row.expanded { background: #0a0f0a; border-left: 2px solid #44aa44; }
+.flight-row.selected { background: #0a1a0a; border-left: 2px solid #44aa44; }
 .flight-row .cs { color: #fff; }
 .flight-row .dep, .flight-row .arr { color: #888; }
 .flight-row .alt { color: #39d2c0; }
 .flight-row .alt.vfr { color: #cccc44; }
 .flight-row .int { color: #ff8844; }
-.flight-row .rules { color: #888; margin-left: 8px; }
+.flight-row .rules { color: #888; }
 .flight-row .sector { color: #5588ff; }
 .flight-row .sqk { color: #888; }
-.flight-row .dl { font-size: 11px; }
+.flight-row .dl { font-size: 10px; }
 .flight-row .dl.yes { color: #44aa44; }
 .flight-row .dl.no { color: #333; }
 .flight-row .st { width: 8px; height: 8px; border-radius: 50%; margin-top: 3px; }
@@ -126,75 +134,161 @@ body {
 .flight-row .st.dropped { background: #ff4444; }
 .flight-row .st.cancelled { background: #555; }
 
-/* Expanded detail */
-.flight-detail {
+/* ── Detail panel (right) ────────────────────────────────── */
+.detail-panel {
+    width: 440px;
     background: #050505;
-    border-bottom: 1px solid #222;
-    border-left: 2px solid #44aa44;
-    padding: 12px 16px 12px 28px;
-    display: none;
+    border-left: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: width 0.2s;
+    flex-shrink: 0;
 }
-.flight-detail.open { display: block; }
+.detail-panel.collapsed { width: 0; border: none; }
 
-.detail-section {
-    margin-bottom: 12px;
+.detail-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 14px;
+    border-bottom: 1px solid #333;
+    gap: 10px;
+    flex-shrink: 0;
 }
-.detail-section h4 {
+.detail-header .cs-big { font-size: 16px; color: #fff; }
+.detail-header .type-badge { color: #888; font-size: 12px; }
+.detail-header .status-badge { font-size: 10px; padding: 1px 6px; border-radius: 2px; }
+.detail-header .status-badge.active { background: #0a200a; color: #44aa44; border: 1px solid #44aa44; }
+.detail-header .status-badge.dropped { background: #200a0a; color: #ff4444; border: 1px solid #ff4444; }
+.detail-close {
+    margin-left: auto;
+    cursor: pointer;
+    color: #555;
+    font-size: 18px;
+    padding: 2px 6px;
+}
+.detail-close:hover { color: #fff; }
+
+/* Tabs */
+.tab-bar {
+    display: flex;
+    border-bottom: 1px solid #333;
+    flex-shrink: 0;
+}
+.tab {
+    padding: 6px 16px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: #555;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s;
+}
+.tab:hover { color: #aaa; }
+.tab.active { color: #cccc44; border-bottom-color: #cccc44; }
+
+.detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+}
+
+/* Detail sections */
+.section { margin-bottom: 14px; }
+.section h3 {
     font-size: 10px;
     color: #555;
     letter-spacing: 1px;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
     border-bottom: 1px solid #1a1a1a;
     padding-bottom: 3px;
+    font-weight: normal;
 }
-.detail-grid {
+.field-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 4px 16px;
+    grid-template-columns: 100px 1fr;
+    gap: 3px 10px;
     font-size: 12px;
 }
-.detail-grid .f { display: flex; gap: 8px; }
-.detail-grid .lbl { color: #555; min-width: 80px; }
-.detail-grid .val { color: #ccc; word-break: break-all; }
-.detail-grid .val.hl { color: #39d2c0; }
-.detail-grid .val.warn { color: #ff8844; }
-.detail-grid .val.accent { color: #5588ff; }
+.field-label { color: #555; }
+.field-value { color: #ccc; word-break: break-all; }
+.field-value.hl { color: #39d2c0; }
+.field-value.warn { color: #ff8844; }
+.field-value.accent { color: #5588ff; }
 
-/* Route (full width) */
 .route-text {
-    font-size: 12px;
+    font-size: 11px;
     color: #aaa;
     white-space: pre-wrap;
     word-break: break-all;
-    margin-bottom: 8px;
     line-height: 1.5;
-    padding: 6px 8px;
+    padding: 5px 8px;
     background: #080808;
     border: 1px solid #1a1a1a;
     border-radius: 2px;
+    margin-bottom: 6px;
 }
 
-/* Event log */
-.event-log {
-    max-height: 300px;
-    overflow-y: auto;
-}
+/* Event log (tab 2) */
 .event-row {
-    display: flex;
-    gap: 10px;
-    font-size: 11px;
-    padding: 2px 0;
+    padding: 3px 0;
     border-bottom: 1px solid #0a0a0a;
+    cursor: pointer;
 }
-.event-row .ev-time { color: #555; min-width: 80px; font-variant-numeric: tabular-nums; }
-.event-row .ev-src { color: #5588ff; min-width: 24px; }
+.event-row:hover { background: #0a0a0a; }
+.event-row .ev-line {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+}
+.event-row .ev-time { color: #555; min-width: 68px; font-variant-numeric: tabular-nums; }
+.event-row .ev-src { min-width: 22px; font-weight: normal; }
+.event-row .ev-src.oh, .event-row .ev-src.hp, .event-row .ev-src.ah,
+.event-row .ev-src.hu, .event-row .ev-src.hx { color: #5588ff; }
 .event-row .ev-src.fh { color: #ccc; }
 .event-row .ev-src.th, .event-row .ev-src.hz { color: #333; }
 .event-row .ev-src.lh { color: #ff8844; }
 .event-row .ev-src.ba, .event-row .ev-src.re { color: #888; }
-.event-row .ev-centre { color: #444; min-width: 32px; }
+.event-row .ev-src.pt, .event-row .ev-src.ht { color: #cc44cc; }
+.event-row .ev-src.cl { color: #ff4444; }
+.event-row .ev-centre { color: #444; min-width: 30px; }
 .event-row .ev-summary { color: #aaa; flex: 1; }
+.event-row .ev-xml-indicator { color: #333; font-size: 10px; }
+.event-row .ev-xml-indicator.has-xml { color: #555; }
+
+/* Raw XML expansion */
+.xml-block {
+    background: #080808;
+    border: 1px solid #1a1a1a;
+    border-radius: 2px;
+    padding: 6px 8px;
+    margin: 4px 0 2px 0;
+    font-size: 10px;
+    line-height: 1.4;
+    max-height: 400px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    display: none;
+}
+.xml-block.open { display: block; }
+.xml-block .xml-tag { color: #44aa44; }
+.xml-block .xml-attr { color: #cccc44; }
+.xml-block .xml-val { color: #5588ff; }
+.xml-block .xml-text { color: #ccc; }
+
+.th-group {
+    font-size: 10px;
+    color: #333;
+    padding: 3px 0;
+    cursor: pointer;
+}
+.th-group:hover { color: #555; }
+
 .loading { color: #444; font-size: 11px; padding: 8px 0; }
+
+/* Event count in tab label */
+.event-count { color: #555; font-size: 10px; margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -206,7 +300,7 @@ body {
 </div>
 
 <div class="filterbar">
-    <input type="text" class="search-box" id="search" placeholder="Search callsign, CID, airport, type, squawk...">
+    <input type="text" class="search-box" id="search" placeholder="Search callsign, CID, airport, type, squawk, route, remarks...">
     <div class="filter-sep"></div>
     <span class="filter-label">STATUS</span>
     <select class="filter-select" id="filterStatus">
@@ -228,29 +322,49 @@ body {
     <span class="result-count" id="resultCount"></span>
 </div>
 
-<div class="flight-list" id="flightList">
-    <div class="col-header" id="colHeader">
-        <span data-col="callsign" class="sorted">CALLSIGN</span>
-        <span data-col="aircraftType">TYPE</span>
-        <span data-col="origin">DEP</span>
-        <span data-col="destination">ARR</span>
-        <span data-col="assignedAltitude">ALT</span>
-        <span data-col="interimAltitude">INT</span>
-        <span data-col="flightRules">FR</span>
-        <span data-col="controllingFacility">SECTOR</span>
-        <span data-col="squawk">SQK</span>
-        <span data-col="dataLinkCode">DL</span>
-        <span>ST</span>
+<div class="main">
+    <div class="flight-list" id="flightList">
+        <div class="col-header" id="colHeader">
+            <span data-col="callsign" class="sorted">CALLSIGN</span>
+            <span data-col="aircraftType">TYPE</span>
+            <span data-col="origin">DEP</span>
+            <span data-col="destination">ARR</span>
+            <span data-col="assignedAltitude">ALT</span>
+            <span data-col="interimAltitude">INT</span>
+            <span data-col="flightRules">FR</span>
+            <span data-col="controllingFacility">SECTOR</span>
+            <span data-col="squawk">SQK</span>
+            <span data-col="dataLinkCode">DL</span>
+            <span>ST</span>
+        </div>
+        <div id="rows"></div>
     </div>
-    <div id="rows"></div>
+
+    <div class="detail-panel collapsed" id="detailPanel">
+        <div class="detail-header">
+            <span class="cs-big" id="detailCallsign"></span>
+            <span class="type-badge" id="detailType"></span>
+            <span class="status-badge" id="detailStatus"></span>
+            <span class="detail-close" id="detailClose">&times;</span>
+        </div>
+        <div class="tab-bar">
+            <div class="tab active" data-tab="plan">FLIGHT PLAN</div>
+            <div class="tab" data-tab="events">EVENTS<span class="event-count" id="eventCount"></span></div>
+        </div>
+        <div class="detail-body" id="detailBody">
+        </div>
+    </div>
 </div>
 
 <script>
 // ── State ────────────────────────────────────────────────────
-const allFlights = new Map();  // gufi → flight summary
-const expandedGufis = new Set();
-const detailCache = {};        // gufi → detail from REST
+const allFlights = new Map();
 const knownFacilities = new Set();
+let selectedGufi = null;
+let currentDetail = null;
+let activeTab = 'plan';
+let expandedEvents = new Set();  // event indices with expanded XML
+let xmlCache = {};               // `${gufi}:${index}` → xml string
 let sortCol = 'callsign', sortAsc = true;
 let searchTerm = '';
 let ws = null;
@@ -263,6 +377,8 @@ const countEl    = document.getElementById('resultCount');
 const filterStatus   = document.getElementById('filterStatus');
 const filterFacility = document.getElementById('filterFacility');
 const filterRules    = document.getElementById('filterRules');
+const detailPanel = document.getElementById('detailPanel');
+const detailBody  = document.getElementById('detailBody');
 
 // ── WebSocket ────────────────────────────────────────────────
 function connect() {
@@ -285,10 +401,8 @@ function connect() {
             noteFacility(msg.data);
         } else if (msg.type === 'remove') {
             allFlights.delete(msg.data.gufi);
-            expandedGufis.delete(msg.data.gufi);
-            delete detailCache[msg.data.gufi];
         } else if (msg.type === 'stats') {
-            statsEl.textContent = `${(msg.data.flights || 0).toLocaleString()} flights  •  ${(msg.data.rate || 0).toFixed(0)} msg/s`;
+            statsEl.textContent = `${(msg.data.flights || 0).toLocaleString()} flights  ${(msg.data.rate || 0).toFixed(0)} msg/s`;
         }
         scheduleRender();
     };
@@ -330,7 +444,6 @@ function render() {
     const fRules = filterRules.value;
     const q = searchTerm.toUpperCase();
 
-    // Filter
     let filtered = [];
     for (const f of allFlights.values()) {
         if (fStatus === 'active' && f.flightStatus !== 'ACTIVE') continue;
@@ -341,7 +454,6 @@ function render() {
         filtered.push(f);
     }
 
-    // Sort
     filtered.sort((a, b) => {
         let va = getSortValue(a, sortCol);
         let vb = getSortValue(b, sortCol);
@@ -352,18 +464,15 @@ function render() {
 
     countEl.textContent = `${filtered.length} shown`;
 
-    // Build HTML
     const html = [];
     for (const f of filtered) {
-        const isExp = expandedGufis.has(f.gufi);
-        html.push(renderRow(f, isExp));
-        if (isExp) html.push(renderDetail(f.gufi));
+        const sel = f.gufi === selectedGufi ? ' selected' : '';
+        html.push(renderRow(f, sel));
     }
     rowsEl.innerHTML = html.join('');
 
-    // Attach click handlers
     rowsEl.querySelectorAll('.flight-row').forEach(el => {
-        el.addEventListener('click', () => toggleExpand(el.dataset.gufi));
+        el.addEventListener('click', () => selectFlight(el.dataset.gufi));
     });
 }
 
@@ -396,8 +505,7 @@ function getSortValue(f, col) {
     }
 }
 
-function renderRow(f, isExpanded) {
-    const exp = isExpanded ? ' expanded' : '';
+function renderRow(f, selClass) {
     const alt = fmtAlt(f);
     const altCls = f.assignedVfr ? ' vfr' : '';
     const intAlt = f.interimAltitude ? `FL${Math.round(f.interimAltitude / 100)}` : '';
@@ -406,7 +514,7 @@ function renderRow(f, isExpanded) {
         ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '')
         : '';
     const stCls = (f.flightStatus || '').toLowerCase();
-    return `<div class="flight-row${exp}" data-gufi="${f.gufi}">
+    return `<div class="flight-row${selClass}" data-gufi="${f.gufi}">
         <span class="cs">${f.callsign || '????'}</span>
         <span>${f.aircraftType || ''}</span>
         <span class="dep">${f.origin || ''}</span>
@@ -426,9 +534,8 @@ function fmtAlt(f) {
         if (f.assignedAltitude) return `VFR/${Math.round(f.assignedAltitude / 100)}`;
         return 'VFR';
     }
-    if (f.blockFloor && f.blockCeiling) {
+    if (f.blockFloor && f.blockCeiling)
         return `${Math.round(f.blockFloor / 100)}B${Math.round(f.blockCeiling / 100)}`;
-    }
     if (f.assignedAltitude) {
         const fl = Math.round(f.assignedAltitude / 100);
         return f.assignedAltitude >= 18000 ? `FL${fl}` : `${Math.round(f.assignedAltitude)}`;
@@ -436,60 +543,227 @@ function fmtAlt(f) {
     return '';
 }
 
+// ── Detail panel ─────────────────────────────────────────────
+async function selectFlight(gufi) {
+    selectedGufi = gufi;
+    expandedEvents.clear();
+    xmlCache = {};
+    detailPanel.classList.remove('collapsed');
+    scheduleRender();
+
+    try {
+        const resp = await fetch(`/api/flights/${encodeURIComponent(gufi)}`);
+        if (!resp.ok) return;
+        currentDetail = await resp.json();
+        renderDetailHeader(currentDetail);
+        renderActiveTab();
+    } catch {}
+}
+
+function closeDetail() {
+    selectedGufi = null;
+    currentDetail = null;
+    detailPanel.classList.add('collapsed');
+    scheduleRender();
+}
+
+function renderDetailHeader(d) {
+    document.getElementById('detailCallsign').textContent = d.callsign || '????';
+    document.getElementById('detailType').textContent = [d.aircraftType, d.wakeCategory].filter(Boolean).join('/');
+    const statEl = document.getElementById('detailStatus');
+    statEl.textContent = d.flightStatus || '';
+    statEl.className = 'status-badge ' + (d.flightStatus || '').toLowerCase();
+    document.getElementById('eventCount').textContent = d.events ? ` (${d.events.length})` : '';
+}
+
+function renderActiveTab() {
+    if (!currentDetail) return;
+    if (activeTab === 'plan') {
+        detailBody.innerHTML = renderFlightPlan(currentDetail);
+    } else {
+        detailBody.innerHTML = renderEventLog(currentDetail);
+        attachEventHandlers();
+    }
+}
+
+function renderFlightPlan(d) {
+    const routeHtml = d.route
+        ? `<div class="section"><h3>ROUTE</h3><div class="route-text">${esc(d.route)}</div></div>`
+        : '';
+
+    return `
+        ${section('Identity', [
+            ['Callsign', d.callsign],
+            ['Aircraft Type', d.aircraftType],
+            ['Registration', d.registration],
+            ['Wake Category', d.wakeCategory],
+            ['Mode S', d.modeSCode],
+            ['Equipment', d.equipmentQualifier],
+            ['CID', fmtCids(d)],
+            ['GUFI', d.gufi],
+        ])}
+        ${section('Flight Plan', [
+            ['Origin', d.origin],
+            ['Destination', d.destination],
+            ['Flight Rules', d.flightRules],
+            ['STAR', d.star],
+            ['Remarks', d.remarks, d.remarks ? 'warn' : ''],
+        ])}
+        ${routeHtml}
+        ${section('Altitude', [
+            ['Assigned', d.assignedAltitude ? fmtAltDetail(d) : null, 'hl'],
+            ['Interim', d.interimAltitude ? `FL${Math.round(d.interimAltitude / 100)} (${Math.round(d.interimAltitude)} ft)` : null, 'warn'],
+            ['Reported', d.reportedAltitude ? `FL${Math.round(d.reportedAltitude / 100)}` : null],
+        ])}
+        ${section('Position', [
+            ['Latitude', d.latitude?.toFixed(4)],
+            ['Longitude', d.longitude?.toFixed(4)],
+            ['Ground Speed', d.groundSpeed ? Math.round(d.groundSpeed) + ' kt' : null],
+        ])}
+        ${section('Ownership', [
+            ['Reporting', d.reportingFacility, 'accent'],
+            ['Controlling', d.controllingFacility ? d.controllingFacility + (d.controllingSector ? '/' + d.controllingSector : '') : null, 'accent'],
+            ['Handoff', d.handoffEvent ? `${d.handoffEvent}: ${d.handoffTransferring || '?'} \u2192 ${d.handoffReceiving || '?'}` : null, 'accent'],
+            ['Accepting', d.handoffAccepting],
+            ['Point-out', d.pointoutOriginatingUnit ? `${d.pointoutOriginatingUnit} \u2192 ${d.pointoutReceivingUnit || '?'}` : null],
+        ])}
+        ${section('Beacon', [
+            ['Squawk', d.squawk],
+            ['Assigned Sqk', d.assignedSquawk],
+        ])}
+        ${section('Clearance', [
+            ['Heading', d.clearanceHeading],
+            ['Speed', d.clearanceSpeed],
+            ['Text', d.clearanceText],
+        ])}
+        ${section('Datalink', [
+            ['Data Link', d.dataLinkCode, d.dataLinkCode?.includes('J') ? 'accent' : ''],
+            ['Other', d.otherDataLink],
+            ['Comm Code', d.communicationCode],
+            ['SELCAL', d.selcal],
+        ])}
+        ${section('Times', [
+            ['Dep Time', d.actualDepartureTime ? fmtTime(d.actualDepartureTime) : null],
+            ['ETA', d.eta ? fmtTime(d.eta) : null],
+            ['Coord Time', d.coordinationTime ? fmtTime(d.coordinationTime) : null],
+            ['Coord Fix', d.coordinationFix],
+        ])}
+        ${section('TMI / Navigation', [
+            ['TMI IDs', d.tmiIds],
+            ['Nav Code', d.navigationCode],
+            ['PBN Code', d.pbnCode],
+            ['Surveillance', d.surveillanceCode],
+        ])}
+    `;
+}
+
+function renderEventLog(d) {
+    if (!d.events || d.events.length === 0) {
+        return '<div class="loading">No events recorded</div>';
+    }
+
+    // Show all events newest first, but group consecutive TH/HZ runs
+    const events = d.events.slice().reverse();
+    const html = [];
+    let i = 0;
+    while (i < events.length) {
+        const e = events[i];
+        if (e.source === 'TH' || e.source === 'HZ') {
+            // Count consecutive TH/HZ
+            let count = 0;
+            while (i < events.length && (events[i].source === 'TH' || events[i].source === 'HZ')) {
+                count++;
+                i++;
+            }
+            html.push(`<div class="th-group" data-thgroup="1">\u2022\u2022\u2022 ${count} position update${count > 1 ? 's' : ''} \u2022\u2022\u2022</div>`);
+        } else {
+            const srcLc = (e.source || '').toLowerCase();
+            const xmlInd = e.hasXml ? 'has-xml' : '';
+            const idx = e.index;
+            const isExpanded = expandedEvents.has(idx);
+            const xmlHtml = isExpanded && xmlCache[`${d.gufi}:${idx}`] !== undefined
+                ? `<div class="xml-block open">${highlightXml(xmlCache[`${d.gufi}:${idx}`])}</div>`
+                : isExpanded
+                ? `<div class="xml-block open"><span class="loading">Loading XML...</span></div>`
+                : '';
+            html.push(`<div class="event-row" data-idx="${idx}" data-hasxml="${e.hasXml ? '1' : '0'}">
+                <div class="ev-line">
+                    <span class="ev-time">${fmtTime(e.time)}</span>
+                    <span class="ev-src ${srcLc}">${e.source}</span>
+                    <span class="ev-centre">${e.centre}</span>
+                    <span class="ev-summary">${esc(e.summary)}</span>
+                    <span class="ev-xml-indicator ${xmlInd}">${e.hasXml ? 'XML' : ''}</span>
+                </div>
+                ${xmlHtml}
+            </div>`);
+            i++;
+        }
+    }
+
+    return html.join('');
+}
+
+function attachEventHandlers() {
+    detailBody.querySelectorAll('.event-row[data-idx]').forEach(el => {
+        el.addEventListener('click', () => toggleEventXml(el));
+    });
+}
+
+async function toggleEventXml(el) {
+    const idx = parseInt(el.dataset.idx);
+    const hasXml = el.dataset.hasxml === '1';
+    if (!hasXml) return;
+
+    if (expandedEvents.has(idx)) {
+        expandedEvents.delete(idx);
+    } else {
+        expandedEvents.add(idx);
+        // Fetch XML if not cached
+        const key = `${selectedGufi}:${idx}`;
+        if (xmlCache[key] === undefined) {
+            xmlCache[key] = null; // mark as loading
+            try {
+                const resp = await fetch(`/api/event-xml/${idx}/${encodeURIComponent(selectedGufi)}`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    xmlCache[key] = data.xml || '(no XML available)';
+                } else {
+                    xmlCache[key] = '(failed to load)';
+                }
+            } catch {
+                xmlCache[key] = '(failed to load)';
+            }
+        }
+    }
+    // Re-render events tab
+    renderActiveTab();
+}
+
+function highlightXml(xml) {
+    if (!xml) return '<span class="xml-text">(no XML)</span>';
+    // Simple XML syntax highlighting
+    return esc(xml)
+        .replace(/(&lt;\/?[\w:.-]+)/g, '<span class="xml-tag">$1</span>')
+        .replace(/(&gt;)/g, '<span class="xml-tag">$1</span>')
+        .replace(/([\w:-]+)=(&quot;[^&]*&quot;)/g, '<span class="xml-attr">$1</span>=<span class="xml-val">$2</span>')
+        .replace(/([\w:-]+)=(&apos;[^&]*&apos;)/g, '<span class="xml-attr">$1</span>=<span class="xml-val">$2</span>');
+}
+
+function section(title, fields) {
+    const rows = fields.filter(f => f[1] != null && f[1] !== '');
+    if (rows.length === 0) return '';
+    return `<div class="section"><h3>${title}</h3><div class="field-grid">
+        ${rows.map(([label, value, cls]) =>
+            `<span class="field-label">${label}</span><span class="field-value${cls ? ' ' + cls : ''}">${esc(String(value))}</span>`
+        ).join('')}
+    </div></div>`;
+}
+
 function fmtCids(d) {
     if (d.computerIds && Object.keys(d.computerIds).length > 0) {
         return Object.entries(d.computerIds).map(([fac, cid]) => `${fac}/${cid}`).join('  ');
     }
     return d.computerId || null;
-}
-
-function renderDetail(gufi) {
-    const detail = detailCache[gufi];
-    if (!detail) {
-        return `<div class="flight-detail open" data-detail="${gufi}">
-            <div class="loading">Loading flight detail...</div>
-        </div>`;
-    }
-    return `<div class="flight-detail open" data-detail="${gufi}">
-        ${renderFlightPlan(detail)}
-        ${renderEventLog(detail)}
-    </div>`;
-}
-
-function renderFlightPlan(d) {
-    const routeHtml = d.route
-        ? `<div class="detail-section"><h4>ROUTE</h4><div class="route-text">${esc(d.route)}</div></div>`
-        : '';
-
-    const fields = [
-        ['STAR', d.star],
-        ['Remarks', d.remarks],
-        ['Assigned Alt', d.assignedAltitude ? fmtAltDetail(d) : null],
-        ['Interim Alt', d.interimAltitude ? `FL${Math.round(d.interimAltitude / 100)}` : null, 'warn'],
-        ['Reported Alt', d.reportedAltitude ? `FL${Math.round(d.reportedAltitude / 100)}` : null],
-        ['Squawk', d.squawk],
-        ['Assigned Sqk', d.assignedSquawk],
-        ['Registration', d.registration],
-        ['Wake', d.wakeCategory],
-        ['Mode S', d.modeSCode],
-        ['Equipment', d.equipmentQualifier],
-        ['Data Link', d.dataLinkCode, d.dataLinkCode?.includes('J') ? 'accent' : null],
-        ['CID', fmtCids(d)],
-        ['Dep Time', d.actualDepartureTime ? fmtTime(d.actualDepartureTime) : null],
-        ['ETA', d.eta ? fmtTime(d.eta) : null],
-        ['Clearance Hdg', d.clearanceHeading],
-        ['Clearance Spd', d.clearanceSpeed],
-        ['Clearance Txt', d.clearanceText],
-        ['Handoff', d.handoffEvent ? `${d.handoffEvent}: ${d.handoffTransferring || '?'} → ${d.handoffReceiving || '?'}` : null, 'accent'],
-        ['GUFI', d.gufi],
-    ];
-
-    const gridHtml = fields.filter(f => f[1] != null && f[1] !== '')
-        .map(([lbl, val, cls]) =>
-            `<div class="f"><span class="lbl">${lbl}</span><span class="val${cls ? ' ' + cls : ''}">${esc(String(val))}</span></div>`
-        ).join('');
-
-    return `${routeHtml}<div class="detail-section"><h4>FLIGHT PLAN</h4><div class="detail-grid">${gridHtml}</div></div>`;
 }
 
 function fmtAltDetail(d) {
@@ -506,51 +780,6 @@ function fmtAltDetail(d) {
     return '';
 }
 
-function renderEventLog(d) {
-    if (!d.events || d.events.length === 0) {
-        return '<div class="detail-section"><h4>REVISION HISTORY</h4><div class="loading">No events</div></div>';
-    }
-
-    // Filter out TH/HZ (position-only updates) — not useful for flight plan history
-    const filtered = d.events.filter(e => e.source !== 'TH' && e.source !== 'HZ');
-    if (filtered.length === 0) {
-        return '<div class="detail-section"><h4>REVISION HISTORY</h4><div class="loading">No revision events</div></div>';
-    }
-
-    const rows = filtered.slice().reverse().map(e => {
-        const srcLc = (e.source || '').toLowerCase();
-        return `<div class="event-row">
-            <span class="ev-time">${fmtTime(e.time)}</span>
-            <span class="ev-src ${srcLc}">${e.source}</span>
-            <span class="ev-centre">${e.centre}</span>
-            <span class="ev-summary">${esc(e.summary)}</span>
-        </div>`;
-    }).join('');
-
-    return `<div class="detail-section"><h4>REVISION HISTORY (${filtered.length} events)</h4><div class="event-log">${rows}</div></div>`;
-}
-
-// ── Expand / collapse ────────────────────────────────────────
-function toggleExpand(gufi) {
-    if (expandedGufis.has(gufi)) {
-        expandedGufis.delete(gufi);
-    } else {
-        expandedGufis.add(gufi);
-        // Fetch detail if not cached
-        if (!detailCache[gufi]) fetchDetail(gufi);
-    }
-    scheduleRender();
-}
-
-async function fetchDetail(gufi) {
-    try {
-        const resp = await fetch(`/api/flights/${encodeURIComponent(gufi)}`);
-        if (!resp.ok) return;
-        detailCache[gufi] = await resp.json();
-        scheduleRender();
-    } catch {}
-}
-
 // ── Helpers ──────────────────────────────────────────────────
 function fmtTime(iso) {
     if (!iso) return '';
@@ -561,8 +790,21 @@ function fmtTime(iso) {
 }
 
 function esc(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
+
+// ── Tabs ─────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        activeTab = tab.dataset.tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        renderActiveTab();
+    });
+});
+
+// ── Close detail ─────────────────────────────────────────────
+document.getElementById('detailClose').addEventListener('click', closeDetail);
 
 // ── Sort ─────────────────────────────────────────────────────
 document.getElementById('colHeader').addEventListener('click', (e) => {
@@ -587,6 +829,18 @@ searchEl.addEventListener('input', () => {
 filterStatus.addEventListener('change', scheduleRender);
 filterFacility.addEventListener('change', scheduleRender);
 filterRules.addEventListener('change', scheduleRender);
+
+// ── Auto-refresh selected flight every 3s ────────────────────
+setInterval(async () => {
+    if (!selectedGufi) return;
+    try {
+        const resp = await fetch(`/api/flights/${encodeURIComponent(selectedGufi)}`);
+        if (!resp.ok) return;
+        currentDetail = await resp.json();
+        renderDetailHeader(currentDetail);
+        renderActiveTab();
+    } catch {}
+}, 3000);
 
 // ── Init ─────────────────────────────────────────────────────
 connect();

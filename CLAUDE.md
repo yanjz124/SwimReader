@@ -620,9 +620,9 @@ Uses Leaflet `L.divIcon` with inline SVG. The icon size is `[200, 18]`, `iconAnc
 **SVG paths (viewBox -9 -9 18 18, nose/top at 0,0):**
 ```javascript
 // Aircraft (nose up = heading 0°/north)
-PLANE_PATH = 'M 0 -8 L 1.5 -3 L 7.5 1.5 L 2 2.5 L 2 5.5 L 3.5 7 L 0 6.5 L -3.5 7 L -2 5.5 L -2 2.5 L -7.5 1.5 L -1.5 -3 Z'
-// Unknown (kite diamond)
-DIAMOND_PATH = 'M 0 -9 L 4.5 0 L 0 9 L -4.5 0 Z'
+PLANE_PATH = 'M 0 -8 L 1.3 -5 L 1.3 -1 L 8 2 L 7.5 3 L 1.8 1.5 L 1.8 5 L 4 7 L 0 6 L -4 7 ...'
+// Unknown (kite — smaller than aircraft, pointy bottom)
+DIAMOND_PATH = 'M 0 3.5 L 2.5 0.5 L 0 -4.5 L -2.5 0.5 Z'
 // Vehicle (square)
 VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z'
 ```
@@ -647,9 +647,13 @@ const B757_CODES = ['B752','B753','B757'];
 - Line 2 (`.db-line2`, grey `#aaa`): `{acType}  {spdKts/10 padded to 2 digits}`
 - Omitted for `unknown` and `vehicle` targets (only line 1 with callsign/squawk)
 
-**Leader line:** Fixed-offset SVG line from target center to NE data block corner (x1=9,y1=9 → x2=23,y2=-5), `#cccc44` at 50% opacity.
+**Data block positions (8 compass points):** Leader lines radiate from target center (9,9) to the data block. N/S lines are vertical (lx=9), E/W are horizontal (ly=9), diagonals go to corners. Data block wrap position (`wl`, `wt`) places the text div relative to icon anchor. Default position is NE. Left-click target symbol toggles data block visibility; drag data block to snap to nearest octant.
 
-**Change detection:** `trackHash(t)` hashes `lat, lon, callsign, altFt, spdKts, hdg, tgtType, acType`. Only calls `setIcon()` (expensive) when hash changes; otherwise just `setLatLng()`.
+**Leader line:** SVG line from target center to data block position, `#00cc00` at 60% opacity. Hidden for unknown targets.
+
+**Font size:** Adjustable via FONT input in status bar (8-20px, default 13). Changes invalidate all track hashes so icons rebuild on next batch.
+
+**Change detection:** `trackHash(t)` hashes `lat, lon, callsign, altFt, spdKts, hdg, tgtType, acType, wake`. Only calls `setIcon()` (expensive) when hash changes; otherwise just `setLatLng()`.
 
 **Auto-center:** On first snapshot, map centers on centroid of all tracks. Subsequent updates do not reposition the map.
 
@@ -735,11 +739,12 @@ The client-side parser splits on 3-digit sequence numbers and identifies pilot r
 
 **`tdls-airport.html`** — Airport detail at `/tdls/{airport}`:
 - Two-panel layout: aircraft list (left) + message history (right)
-- Aircraft sorted by most recent message; flash animation on new messages
+- Aircraft sorted by most recent message (newest on top); flash animation on new messages
+- Left panel shows callsign, message count badge, acType/destination, and most recent message timestamp (green)
 - CPDLC messages: parsed sub-messages with pilot responses (green) and clearance text (white)
 - Departure events: gate, runway, OOOI timeline (CLR → TAXI → T/O)
 - WebSocket real-time updates, 5s reconnect on disconnect
-- Black background, white text, ERAM monospace font
+- Black background, white text, ERAM monospace font (embedded as base64 data URI)
 
 ### Timers
 
@@ -825,18 +830,29 @@ SMES publishes surface movement data from ASDE-X sensors at ~35 major US airport
 
 **`<positionReport full="false">`** — only changed fields present; identity fields absent.
 
-**`<adsbReport>` (AD messages)** — lighter ADS-B-specific updates; uses `<lat>`/`<lon>` (not `<latitude>`/`<longitude>`):
+**`<adsbReport>` (AD messages)** — ADS-B updates; uses `<lat>`/`<lon>` (not `<latitude>`/`<longitude>`). `full="true"` reports carry rich identity data in `<enhancedData>` and `<descriptor>`:
 ```xml
-<adsbReport full="false">
+<adsbReport full="true">
   <report><basicReport>
     <time>...</time>
-    <track>3425</track>
-    <position><lat>38.84765</lat><lon>-77.0418</lon></position>
-    <velocity><x>0.0</x><y>1.0</y></velocity>
-  </basicReport></report>
-  <enhancedData><eramGufi>KW783715SH</eramGufi></enhancedData>
+    <track>1671</track>
+    <position><lat>33.6438</lat><lon>-84.43643</lon></position>
+  </basicReport>
+  <mode3ACode><code>7275</code></mode3ACode>
+  <acAddress>AC9ABC</acAddress></report>
+  <descriptor><tot>aircraft</tot></descriptor>
+  <enhancedData>
+    <eramGufi>KT060616ui</eramGufi>
+    <sfdpsGufi>us.fdps.2026-02-20T01:41:01Z.000/19/6ui</sfdpsGufi>
+    <callsign>DAL1663</callsign>
+    <departureAirport>KATL</departureAirport>
+    <destinationAirport>KCHS</destinationAirport>
+    <aircraftType>B739</aircraftType>
+  </enhancedData>
 </adsbReport>
 ```
+
+AsdexBridge parses from AD messages: `eramGufi`, `callsign`, `aircraftType` (from `enhancedData`), `squawk` (from `mode3ACode/code`), and `tgtType` (from `descriptor/tot`). This enriches tracks that would otherwise appear as identity-less unknowns from partial position-only updates.
 
 **Active ASDE-X airports (observed in SWIM):**
 KATL, KBDL, KBOS, KBWI, KCLE, KCLT, KCVG, KDCA, KDEN, KDFW, KDTW, KEWR, KFLL, KHOU, KIAH, KJFK, KLAS, KLAX, KMCO, KMEM, KMIA, KMKE, KMDW, KMSP, KMSY, KORD, KPDX, KPHL, KPHX, KPIT, KPVD, KSAN, KSDF, KSEA, KSFO, KSLC, KSNA, KSTL, KTPA, PANC, PHNL

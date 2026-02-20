@@ -59,6 +59,7 @@ header .stats { font-size: 11px; color: #888; margin-left: auto; }
 .ac-item.selected { background: #1a2a1a; border-left: 2px solid #44aa44; }
 .ac-item .callsign { font-size: 15px; color: #fff; }
 .ac-item .meta { font-size: 12px; color: #666; margin-top: 2px; }
+.ac-item .ts { font-size: 11px; color: #44aa44; margin-top: 1px; }
 .ac-item .badge {
     display: inline-block;
     font-size: 11px;
@@ -260,9 +261,11 @@ function renderAcList(flashIds) {
         const sel = ac.aircraftId === selectedAc ? ' selected' : '';
         const flash = flashIds && flashIds.has(ac.aircraftId) ? ' flash' : '';
         const dest = ac.destination ? ` → ${ac.destination.replace(/^K/, '')}` : '';
+        const ts = ac.lastSeen ? fmtTime(ac.lastSeen) : '';
         return `<div class="ac-item${sel}${flash}" data-id="${ac.aircraftId}">
             <div class="callsign">${ac.aircraftId}<span class="badge">${ac.messageCount}</span></div>
             <div class="meta">${ac.acType || ''}${dest}</div>
+            <div class="ts">${ts}</div>
         </div>`;
     }).join('');
 

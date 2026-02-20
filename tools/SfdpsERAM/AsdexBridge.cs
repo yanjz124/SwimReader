@@ -193,6 +193,7 @@ class AsdexBridge
             }
 
             // adsbReport (AD topic type) — coordinate elements: lat, lon (different names)
+            // full=true reports carry enriched identity in enhancedData + descriptor
             foreach (var report in root.Elements().Where(e => e.Name.LocalName == "adsbReport"))
             {
                 var basicReport = report.Elements().FirstOrDefault(e => e.Name.LocalName == "report")
@@ -207,12 +208,23 @@ class AsdexBridge
 
                 if (!TryParseCoord(pos, "lat", "lon", out var lat, out var lon)) continue;
 
-                var eramGufi = report.Elements().FirstOrDefault(e => e.Name.LocalName == "enhancedData")
-                    ?.Elements().FirstOrDefault(e => e.Name.LocalName == "eramGufi")?.Value;
+                var enhanced = report.Elements().FirstOrDefault(e => e.Name.LocalName == "enhancedData");
+                var eramGufi = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "eramGufi")?.Value;
+                var adCallsign = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "callsign")?.Value;
+                var adAcType = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftType")?.Value;
+
+                // squawk from report/mode3ACode/code
+                var adSquawk = report.Elements().FirstOrDefault(e => e.Name.LocalName == "report")
+                    ?.Elements().FirstOrDefault(e => e.Name.LocalName == "mode3ACode")
+                    ?.Elements().FirstOrDefault(e => e.Name.LocalName == "code")?.Value;
+
+                // tgtType from descriptor/tot
+                var adTgtType = report.Elements().FirstOrDefault(e => e.Name.LocalName == "descriptor")
+                    ?.Elements().FirstOrDefault(e => e.Name.LocalName == "tot")?.Value;
 
                 var track = airportTracks.GetOrAdd(trackId,
                     id => new AsdexTrack { Airport = airport, TrackId = id });
-                track.MergeFrom(lat, lon, null, null, null, null, null, null, null, eramGufi);
+                track.MergeFrom(lat, lon, adCallsign, adSquawk, adAcType, adTgtType, null, null, null, eramGufi);
                 changed = true;
             }
 

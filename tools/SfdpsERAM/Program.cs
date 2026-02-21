@@ -1549,12 +1549,14 @@ void ProcessFlight(XElement flight, string rawXml)
         }
     }
 
-    // interimAltitude — nil="true" means clear
+    // interimAltitude — xsi:nil="true" means clear
     var ia = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "interimAltitude");
     var prevIA = state.InterimAltitude;
+    XNamespace xsiNs = "http://www.w3.org/2001/XMLSchema-instance";
     if (ia is not null)
     {
-        var isNil = string.Equals(ia.Attribute("nil")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+        var isNil = string.Equals(ia.Attribute(xsiNs + "nil")?.Value, "true", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(ia.Attribute("nil")?.Value, "true", StringComparison.OrdinalIgnoreCase);
         if (isNil)
             state.InterimAltitude = null;
         else if (double.TryParse(ia.Value, out var ival))
@@ -1938,9 +1940,11 @@ string BuildOhSummary(XElement flight)
 string BuildLhSummary(XElement flight)
 {
     var ia = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "interimAltitude");
+    XNamespace xsiNs2 = "http://www.w3.org/2001/XMLSchema-instance";
     if (ia is not null)
     {
-        var isNil = string.Equals(ia.Attribute("nil")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+        var isNil = string.Equals(ia.Attribute(xsiNs2 + "nil")?.Value, "true", StringComparison.OrdinalIgnoreCase)
+                 || string.Equals(ia.Attribute("nil")?.Value, "true", StringComparison.OrdinalIgnoreCase);
         if (isNil) return "Interim altitude cleared (nil)";
         if (double.TryParse(ia.Value, out var alt))
             return $"Interim altitude set: {alt:F0} ft";

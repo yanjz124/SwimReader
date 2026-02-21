@@ -479,6 +479,9 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             <span id="stat-uptime">00:00:00</span>
             <br><span id="stat-fp" style="color:#888;font-size:0.85em;"></span>
             <br><button id="cmd-help-btn">COMMANDS</button>
+            <label style="display:block;margin-top:6px;font-size:10px;color:#888;cursor:pointer">
+                <input type="checkbox" id="numpad-inverted" checked style="vertical-align:middle"> Std numpad (789 top)
+            </label>
         </div>
     </div>
     <button id="sidebar-toggle" title="Toggle sidebar">&#9664;</button>
@@ -541,7 +544,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
         <div id="mca">
             <div id="mca-preview"><span class="mca-cursor">_</span></div>
             <div id="mca-feedback"></div>
-            <button id="mca-kb-btn" title="Open keyboard" aria-label="Open keyboard">&#9000;&#xFE0E;</button>
+            <button id="mca-kb-btn" title="Open on-screen keyboard (for touchscreen MCA input)" aria-label="Open keyboard">&#9000;&#xFE0E;</button>
             <input id="mca-mobile-input" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">
         </div>
         <div id="ra">
@@ -1669,9 +1672,15 @@ let CHAR_W = fontSize * 0.625;  // approx char width in ERAM font
 let LINE_H = fontSize * 1.25;   // line-height
 
 // Data block position offsets (numpad layout):
-//   7=NW  8=N   9=NE
-//   4=W   5=def 6=E
-//   1=SW  2=S   3=SE
+//   Standard (789 top):  7=NW 8=N  9=NE / 4=W 5=def 6=E / 1=SW 2=S 3=SE
+//   Inverted (123 top):  1=NW 2=N  3=NE / 4=W 5=def 6=E / 7=SW 8=S 9=SE
+const NUMPAD_INVERT = { 1: 7, 2: 8, 3: 9, 7: 1, 8: 2, 9: 3 };
+function numpadPos(n) {
+    // When "Std numpad (789 top)" is checked, standard layout — no remap.
+    // When unchecked (inverted, 123 top), swap top/bottom rows.
+    const inverted = !document.getElementById('numpad-inverted')?.checked;
+    return inverted ? (NUMPAD_INVERT[n] ?? n) : n;
+}
 function getLeaderOffset(gufi) {
     const pos = dbPositions.get(gufi);
     const level = ldrLenOverrides.get(gufi) ?? 1;
@@ -3764,6 +3773,9 @@ function loadSettingsFromUrl() {
         document.getElementById('chk-mca-kb').checked = true;
         document.getElementById('mca').classList.add('show-kb');
     }
+    if (params.has('numinv')) {
+        document.getElementById('numpad-inverted').checked = false;
+    }
     // Transp MCA: reserved for future use
     // if (params.has('tmca')) {
     //     document.getElementById('map-container').classList.toggle('transp-mca', true);
@@ -3860,6 +3872,7 @@ function saveSettingsToUrl() {
     if (ldbBrightness !== 30) params.set('ldb', ldbBrightness);
     if (facilityOnly) params.set('faconly', '1');
     if (document.getElementById('chk-mca-kb').checked) params.set('kb', '1');
+    if (!document.getElementById('numpad-inverted').checked) params.set('numinv', '1');
     const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.airports, nasrBrightness.centerlines, nasrBrightness.proc];
     const nasrDefaults = [0, 0, 15, 0, 0, 0];
     if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
@@ -4209,7 +4222,7 @@ function processCommand(cmd) {
 
     // <1-9>/<0-3> <FLID> — Combined position + leader length (CRC spec)
     if (/^[1-9]\/[0-3]$/.test(verb) && parts.length >= 2) {
-        const pos = parseInt(verb.charAt(0));
+        const pos = numpadPos(parseInt(verb.charAt(0)));
         const level = parseInt(verb.charAt(2));
         const flid = parts.slice(1).join('').toUpperCase();
         const f = findFlight(flid);
@@ -4230,7 +4243,7 @@ function processCommand(cmd) {
 
     // <1-9> <FLID> — Position data block (numpad layout)
     if (/^[1-9]$/.test(verb) && parts.length >= 2) {
-        const pos = parseInt(verb);
+        const pos = numpadPos(parseInt(verb));
         const flid = parts.slice(1).join('').toUpperCase();
         const f = findFlight(flid);
         if (f) {
@@ -5638,6 +5651,7 @@ document.getElementById('cmd-help-btn').onclick = () => {
     const p = document.getElementById('cmd-help-popup');
     p.style.display = p.style.display === 'block' ? 'none' : 'block';
 };
+document.getElementById('numpad-inverted').addEventListener('change', saveSettingsToUrl);
 </script>
 <script src="/idle-timer.js"></script>
 </body>

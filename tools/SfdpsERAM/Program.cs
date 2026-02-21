@@ -1235,8 +1235,10 @@ string? ResolveGateCode(string airport, FlightState? fp)
     }
 
     // Fallback: destination FAA LID (strip leading K/P for US airports)
+    // Skip if destination matches the airport (not useful for arrivals already on surface)
     var dest = fp.Destination;
     if (dest is null) return null;
+    if (string.Equals(dest, airport, StringComparison.OrdinalIgnoreCase)) return null;
     if (dest.Length == 4 && (dest[0] == 'K' || dest[0] == 'P')) dest = dest[1..];
     return dest;
 }
@@ -1284,8 +1286,9 @@ asdex.OnEnrich = (track) =>
     if (track.GateCode is null)
     {
         // Fallback: best available destination → FAA LID
+        // Skip if destination matches the airport (arrivals already on surface)
         var dest = track.FpDestination ?? track.AdDestination;
-        if (dest is not null)
+        if (dest is not null && !string.Equals(dest, track.Airport, StringComparison.OrdinalIgnoreCase))
         {
             if (dest.Length == 4 && (dest[0] == 'K' || dest[0] == 'P')) dest = dest[1..];
             track.GateCode = dest;

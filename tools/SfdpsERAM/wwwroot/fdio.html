@@ -133,6 +133,21 @@ body {
 .flight-row .st.active { background: #44aa44; }
 .flight-row .st.dropped { background: #ff4444; }
 .flight-row .st.cancelled { background: #555; }
+.flight-row .st.historical { background: #444; }
+.flight-row.historical { opacity: 0.5; }
+.flight-row.historical:hover { opacity: 0.75; }
+.flight-row.historical.selected { opacity: 0.75; }
+.purge-banner {
+    background: #1a1000;
+    border: 1px solid #665500;
+    color: #cccc44;
+    font-size: 11px;
+    padding: 6px 12px;
+    margin-bottom: 10px;
+    letter-spacing: 1px;
+    text-align: center;
+}
+.detail-header .status-badge.historical { background: #1a1a00; color: #888; border: 1px solid #555; }
 
 /* ── Detail panel (right) ────────────────────────────────── */
 .detail-panel {
@@ -307,6 +322,7 @@ body {
         <option value="active">Active</option>
         <option value="">All</option>
         <option value="dropped">Dropped</option>
+        <option value="historical">Historical</option>
     </select>
     <span class="filter-label">FACILITY</span>
     <select class="filter-select" id="filterFacility">
@@ -369,6 +385,24 @@ let sortCol = 'callsign', sortAsc = true;
 let searchTerm = '';
 let ws = null;
 
+// Historical flights: retained after server purge, size-capped
+const MAX_HIST_BYTES = 50 * 1024 * 1024; // 50 MB
+let historicalBytes = 0;
+
+function trimHistorical() {
+    if (historicalBytes <= MAX_HIST_BYTES) return;
+    const hist = [];
+    for (const [gufi, f] of allFlights) {
+        if (f._historical) hist.push([gufi, f._removedAt || 0, f._histBytes || 0]);
+    }
+    hist.sort((a, b) => a[1] - b[1]); // oldest first
+    while (historicalBytes > MAX_HIST_BYTES && hist.length > 0) {
+        const [gufi, , bytes] = hist.shift();
+        allFlights.delete(gufi);
+        historicalBytes -= bytes;
+    }
+}
+
 const statusEl   = document.getElementById('status');
 const statsEl    = document.getElementById('stats');
 const rowsEl     = document.getElementById('rows');
@@ -400,7 +434,14 @@ function connect() {
             allFlights.set(msg.data.gufi, msg.data);
             noteFacility(msg.data);
         } else if (msg.type === 'remove') {
-            allFlights.delete(msg.data.gufi);
+            const rf = allFlights.get(msg.data.gufi);
+            if (rf && !rf._historical) {
+                rf._historical = true;
+                rf._removedAt = Date.now();
+                rf._histBytes = JSON.stringify(rf).length;
+                historicalBytes += rf._histBytes;
+                trimHistorical();
+            }
         } else if (msg.type === 'stats') {
             statsEl.textContent = `${(msg.data.flights || 0).toLocaleString()} flights  ${(msg.data.rate || 0).toFixed(0)} msg/s`;
         }
@@ -445,9 +486,13 @@ function render() {
     const q = searchTerm.toUpperCase();
 
     let filtered = [];
+    let histCount = 0;
     for (const f of allFlights.values()) {
-        if (fStatus === 'active' && f.flightStatus !== 'ACTIVE') continue;
-        if (fStatus === 'dropped' && f.flightStatus !== 'DROPPED') continue;
+        if (f._historical) histCount++;
+        if (fStatus === 'historical' && !f._historical) continue;
+        if (fStatus === 'active' && (f.flightStatus !== 'ACTIVE' || f._historical)) continue;
+        if (fStatus === 'dropped' && (f.flightStatus !== 'DROPPED' || f._historical)) continue;
+        // fStatus === '' (All) shows everything including historical
         if (fFacility && f.reportingFacility !== fFacility) continue;
         if (fRules && f.flightRules !== fRules) continue;
         if (q && !matchesSearch(f, q)) continue;
@@ -462,7 +507,9 @@ function render() {
         return 0;
     });
 
-    countEl.textContent = `${filtered.length} shown`;
+    countEl.textContent = histCount > 0
+        ? `${filtered.length} shown (${histCount} historical)`
+        : `${filtered.length} shown`;
 
     const html = [];
     for (const f of filtered) {
@@ -513,8 +560,9 @@ function renderRow(f, selClass) {
     const sector = f.controllingFacility
         ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '')
         : '';
-    const stCls = (f.flightStatus || '').toLowerCase();
-    return `<div class="flight-row${selClass}" data-gufi="${f.gufi}">
+    const histCls = f._historical ? ' historical' : '';
+    const stCls = f._historical ? 'historical' : (f.flightStatus || '').toLowerCase();
+    return `<div class="flight-row${selClass}${histCls}" data-gufi="${f.gufi}">
         <span class="cs">${f.callsign || '????'}</span>
         <span>${f.aircraftType || ''}</span>
         <span class="dep">${f.origin || ''}</span>
@@ -553,8 +601,15 @@ async function selectFlight(gufi) {
 
     try {
         const resp = await fetch(`/api/flights/${encodeURIComponent(gufi)}`);
-        if (!resp.ok) return;
-        currentDetail = await resp.json();
+        if (resp.ok) {
+            currentDetail = await resp.json();
+            currentDetail._purged = false;
+        } else {
+            // 404 — flight purged from server, use last known data from Map
+            const f = allFlights.get(gufi);
+            if (!f) return;
+            currentDetail = Object.assign({}, f, { _purged: true, events: [] });
+        }
         renderDetailHeader(currentDetail);
         renderActiveTab();
     } catch {}
@@ -571,8 +626,13 @@ function renderDetailHeader(d) {
     document.getElementById('detailCallsign').textContent = d.callsign || '????';
     document.getElementById('detailType').textContent = [d.aircraftType, d.wakeCategory].filter(Boolean).join('/');
     const statEl = document.getElementById('detailStatus');
-    statEl.textContent = d.flightStatus || '';
-    statEl.className = 'status-badge ' + (d.flightStatus || '').toLowerCase();
+    if (d._purged) {
+        statEl.textContent = 'HISTORICAL';
+        statEl.className = 'status-badge historical';
+    } else {
+        statEl.textContent = d.flightStatus || '';
+        statEl.className = 'status-badge ' + (d.flightStatus || '').toLowerCase();
+    }
     document.getElementById('eventCount').textContent = d.events ? ` (${d.events.length})` : '';
 }
 
@@ -581,8 +641,12 @@ function renderActiveTab() {
     if (activeTab === 'plan') {
         detailBody.innerHTML = renderFlightPlan(currentDetail);
     } else {
-        detailBody.innerHTML = renderEventLog(currentDetail);
-        attachEventHandlers();
+        if (currentDetail._purged) {
+            detailBody.innerHTML = '<div class="purge-banner">PURGED FROM SERVER &mdash; EVENT LOG UNAVAILABLE</div>';
+        } else {
+            detailBody.innerHTML = renderEventLog(currentDetail);
+            attachEventHandlers();
+        }
     }
 }
 
@@ -590,8 +654,11 @@ function renderFlightPlan(d) {
     const routeHtml = d.route
         ? `<div class="section"><h3>ROUTE</h3><div class="route-text">${esc(d.route)}</div></div>`
         : '';
+    const purgeBanner = d._purged
+        ? '<div class="purge-banner">PURGED FROM SERVER &mdash; SHOWING LAST KNOWN DATA</div>'
+        : '';
 
-    return `
+    return `${purgeBanner}
         ${section('Identity', [
             ['Callsign', d.callsign],
             ['Aircraft Type', d.aircraftType],
@@ -831,7 +898,7 @@ filterFacility.addEventListener('change', scheduleRender);
 filterRules.addEventListener('change', scheduleRender);
 
 // ── Auto-refresh selected flight every 3s ────────────────────
-const _fdioDetailRefresh = () => { if (selectedGufi) fetch(`/api/flights/${encodeURIComponent(selectedGufi)}`).then(r => r.ok ? r.json() : null).then(d => { if (d) { currentDetail = d; renderDetailHeader(d); renderActiveTab(); } }).catch(() => {}); };
+const _fdioDetailRefresh = () => { if (selectedGufi && !(currentDetail && currentDetail._purged)) fetch(`/api/flights/${encodeURIComponent(selectedGufi)}`).then(r => r.ok ? r.json() : null).then(d => { if (d) { currentDetail = d; currentDetail._purged = false; renderDetailHeader(d); renderActiveTab(); } }).catch(() => {}); };
 let _fdioDetailTimer = setInterval(_fdioDetailRefresh, 3000);
 
 window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } clearInterval(_fdioDetailTimer); };

@@ -952,15 +952,16 @@ function drawOverlay() {
             if (manuallyHidden.has(gufi)) continue;
             if (isCoasting(f)) continue;  // no velocity vector for coast tracks
             if (!showFdb || !shouldShowFdb(gufi, classifyTrack(f))) continue;
-            if (!bounds.contains([f.latitude, f.longitude])) continue;
+            const vll = displayPosition(f);
+            if (!bounds.contains(vll)) continue;
 
             const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
 
             const dLat = f.trackVelocityY * vectorMinutes / 3600;
-            const dLon = f.trackVelocityX * vectorMinutes / (3600 * Math.cos(f.latitude * Math.PI / 180));
+            const dLon = f.trackVelocityX * vectorMinutes / (3600 * Math.cos(vll[0] * Math.PI / 180));
 
-            const startPt = map.latLngToLayerPoint([f.latitude, f.longitude]);
-            const endPt = map.latLngToLayerPoint([f.latitude + dLat, f.longitude + dLon]);
+            const startPt = map.latLngToLayerPoint(vll);
+            const endPt = map.latLngToLayerPoint([vll[0] + dLat, vll[1] + dLon]);
 
             ctx.strokeStyle = color;
             ctx.beginPath();
@@ -980,12 +981,13 @@ function drawOverlay() {
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
             if (manuallyHidden.has(gufi)) continue;
-            if (!bounds.contains([f.latitude, f.longitude])) continue;
+            const dll = displayPosition(f);
+            if (!bounds.contains(dll)) continue;
 
             const radiusNm = driType === 'T' ? 3 : 5;
             const radiusDeg = radiusNm / 60; // 1 NM = 1/60 degree latitude
-            const centerPt = map.latLngToLayerPoint([f.latitude, f.longitude]);
-            const edgePt = map.latLngToLayerPoint([f.latitude + radiusDeg, f.longitude]);
+            const centerPt = map.latLngToLayerPoint(dll);
+            const edgePt = map.latLngToLayerPoint([dll[0] + radiusDeg, dll[1]]);
             const radiusPx = Math.abs(centerPt.y - edgePt.y);
             const cx = centerPt.x - topLeft.x;
             const cy = centerPt.y - topLeft.y;
@@ -1740,10 +1742,28 @@ function isReducedSep(f) {
 }
 
 function isCoasting(f) {
-    // Use server-side posAge (seconds since last position update) — immune to WebSocket message drops
-    // Coast if: ACTIVE flight with no position update for >26s (2 SFDPS cycles + 1s batch + jitter)
+    // Primary: ERAM-authoritative coast indicator (from SFDPS position @coastIndicator attribute)
+    if (f.CoastIndicator) return true;
+    // Fallback: time-based heuristic — no position update for >26s (2 SFDPS cycles + 1s batch + jitter)
     if (f.posAge != null && f.flightStatus === 'ACTIVE' && f.posAge > 26) return true;
     return false;
+}
+
+// Compute display position: extrapolate using track velocity when position is stale (>12s).
+// Uses ERAM-predicted target position as the 12s extrapolation point, then continues with
+// velocity vector beyond that. Returns [lat, lon] for marker placement.
+function displayPosition(f) {
+    const age = f.posAge ?? 0;
+    // Fresh position or no velocity — use actual
+    if (age <= 12 || f.trackVelocityX == null || f.trackVelocityY == null)
+        return [f.latitude, f.longitude];
+    // Coasting (ERAM-confirmed or >26s) — freeze at last known position
+    if (isCoasting(f)) return [f.latitude, f.longitude];
+    // Stale (12-26s): extrapolate using velocity vector
+    const dt = age / 3600;  // hours
+    const dLat = f.trackVelocityY * dt / 60;  // knots → degrees lat (1° ≈ 60nm)
+    const dLon = f.trackVelocityX * dt / (60 * Math.cos(f.latitude * Math.PI / 180));
+    return [f.latitude + dLat, f.longitude + dLon];
 }
 
 // Check if this flight's CID has been recycled to a different, fresher flight.
@@ -2799,10 +2819,10 @@ function doRender() {
         }
 
         // Viewport culling — count all visible flights but only render on-screen ones
-        if (!mapBounds.contains([f.latitude, f.longitude])) continue;
+        const ll = displayPosition(f);
+        if (!mapBounds.contains(ll)) continue;
 
         onScreenGufis.add(gufi);
-        const ll = [f.latitude, f.longitude];
         const hash = flightHash(f, cls);
 
         const existing = markers.get(gufi);

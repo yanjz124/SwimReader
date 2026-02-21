@@ -276,8 +276,8 @@ However, SFDPS does contain **~136 "pseudo-primary" controller-created tracks** 
 Core fields tracked per flight (by GUFI):
 - Identity: `gufi`, `fdpsGufi`, `callsign`, `computerId`, `computerIds` (per-facility CID map)
 - Flight plan: `origin`, `destination`, `aircraftType`, `route`, `star`, `remarks`, `flightRules`
-- Position: `latitude`, `longitude`, `groundSpeed`, `trackVelocityX/Y`
-- Altitude: `assignedAltitude`, `assignedVfr`, `blockFloor`, `blockCeiling`, `interimAltitude`, `reportedAltitude`
+- Position: `latitude`, `longitude`, `groundSpeed`, `trackVelocityX/Y`, `targetLatitude`, `targetLongitude`, `coastIndicator`
+- Altitude: `assignedAltitude`, `assignedVfr`, `blockFloor`, `blockCeiling`, `interimAltitude`, `reportedAltitude`, `targetAltitude`
 - Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`
 - Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
 - Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit` (expire after 3 min via `PointoutTimestamp`)
@@ -294,13 +294,13 @@ The following FIXM XML elements are present in SFDPS messages but currently drop
 
 **High priority — useful for display accuracy:**
 
-| Element | Path | Frequency | Description | Use Case |
-|---------|------|-----------|-------------|----------|
-| Coast indicator | `position/@coastIndicator` | ~18/10K | ERAM-level coast flag on position reports | Direct coast mode detection instead of relying on 24s position timeout heuristic. When present, target is coasting at the facility level. |
-| Reported altitude | `position/altitude` | ~8,752/10K | Mode C / radar-reported altitude in feet | Cleaner source for `reportedAltitude` than using TH's `assignedAltitude`. Present in both TH and HZ, avoids the HZ altitude ambiguity. Would let us safely use HZ messages for altitude updates too. |
-| Target position | `position/targetPosition` | ~8,742/10K | ERAM-predicted next position (lat/lon) | Track smoothing / extrapolation between 12s updates. Contains predicted lat/lon at `targetPositionTime`. |
-| Target altitude | `position/targetAltitude` | ~8,742/10K | ERAM-predicted altitude at target position | Smoother altitude display during climbs/descents. `@invalid="true"` flag (4 seen) indicates stale prediction. |
-| Position time | `position/@positionTime` | ~8,760/10K | Actual time of radar position fix | More accurate age calculation than using message timestamp. |
+| Element | Path | Frequency | Description | Status |
+|---------|------|-----------|-------------|--------|
+| Coast indicator | `position/@coastIndicator` | ~18/10K | ERAM-level coast flag on position reports | **IMPLEMENTED** — parsed into `FlightState.CoastIndicator`, used as primary coast detection in `isCoasting()` |
+| Reported altitude | `position/altitude` | ~8,752/10K | Mode C / radar-reported altitude in feet | **IMPLEMENTED** — parsed into `FlightState.ReportedAltitude` (was already done) |
+| Target position | `position/targetPosition` | ~8,742/10K | ERAM-predicted next position (lat/lon) | **IMPLEMENTED** — parsed into `FlightState.TargetLatitude/TargetLongitude`, used for dead-reckoning extrapolation in `displayPosition()` |
+| Target altitude | `position/targetAltitude` | ~8,742/10K | ERAM-predicted altitude at target position | **IMPLEMENTED** — parsed into `FlightState.TargetAltitude`, `@invalid="true"` skipped |
+| Position time | `position/@positionTime` | ~8,760/10K | Actual time of radar position fix | Not yet used — more accurate age calculation than message timestamp |
 
 **Medium priority — enrichment data:**
 
@@ -494,13 +494,33 @@ Defined in `handoff-codes.json`. Default mappings (e.g., ZDC=W, ZNY=N, ZOB=C) wi
 - `•` — reduced separation (at or below FL230)
 
 ### Coast Track Behavior
-When a flight misses at least one radar refresh (no position update for >24 seconds), it enters coast mode:
+Coast detection uses two sources, primary winning:
+1. **ERAM coast indicator** (primary) — `@coastIndicator` attribute on SFDPS `<position>` element. Only present when the track is coasting at the facility level (~0.2% of position messages). Parsed server-side into `FlightState.CoastIndicator`, sent to client as `CoastIndicator: true`.
+2. **Time-based fallback** — no position update for >26 seconds (2 SFDPS cycles + 1s batch + jitter). Catches cases where SFDPS stops sending TH messages entirely.
+
+When coasting:
 - Position symbol changes to `#` (hash) — rendered as CSS geometry (2H + 2V lines)
 - Diamond overlay is hidden (no radar return = no diamond)
 - Velocity vector is hidden (stale velocity data)
 - Data block stays visible (FDB/LDB as normal)
 - History dots continue to decay normally (time-based)
 - Recovery: any new position update immediately exits coast mode
+
+### Track Extrapolation (Dead Reckoning)
+When position age is 12-26 seconds (missed one radar scan but not yet coasting), `displayPosition(f)` extrapolates the marker position using `trackVelocityX/Y`:
+- **posAge ≤ 12s**: actual position (normal)
+- **12-26s, not coasting**: velocity-extrapolated position — target keeps moving along trajectory
+- **Coasting**: freezes at last known position
+
+This reduces false coast visual artifacts when SFDPS occasionally delays a TH message. Applied to marker placement, velocity vector origin, and DRI halos. History dots use their stored positions (not extrapolated).
+
+### ERAM Position Enrichment
+Server-side, each TH/HZ message's `<position>` element provides additional data beyond lat/lon:
+- **`targetPosition`** — ERAM Kalman-filter predicted next position (lat/lon). Present in ~98% of position messages.
+- **`targetAltitude`** — ERAM-predicted altitude in feet. Skipped when `@invalid="true"` (4 observed). Stored in `FlightState.TargetAltitude`.
+- **`coastIndicator`** — boolean attribute, only present when coasting. Stored in `FlightState.CoastIndicator`.
+- **`positionTime`** — actual radar fix time (vs message receipt time). Not yet used but documented.
+- **`reportSource`** — which sensor reported position (e.g., "SURVEILLANCE"). Not yet used.
 
 ### Time-Based History Decay
 History symbols age out based on wall-clock time, like real radar:

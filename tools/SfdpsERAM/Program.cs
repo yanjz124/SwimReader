@@ -1659,6 +1659,33 @@ void ProcessFlight(XElement flight, string rawXml)
                 if (xEl is not null && double.TryParse(xEl.Value, out var vx)) state.TrackVelocityX = vx;
                 if (yEl is not null && double.TryParse(yEl.Value, out var vy)) state.TrackVelocityY = vy;
             }
+
+            // Coast indicator — authoritative from ERAM (attribute only present when coasting)
+            state.CoastIndicator = string.Equals(pos.Attribute("coastIndicator")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+
+            // Target position — ERAM-predicted next position for track smoothing
+            var tgtPos = pos.Elements().FirstOrDefault(e => e.Name.LocalName == "targetPosition");
+            if (tgtPos is not null)
+            {
+                var tgtPosEl = tgtPos.Elements().FirstOrDefault(e => e.Name.LocalName == "pos")
+                            ?? tgtPos.Descendants().FirstOrDefault(e => e.Name.LocalName == "pos");
+                if (tgtPosEl is not null)
+                {
+                    var tp = tgtPosEl.Value.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (tp.Length == 2 && double.TryParse(tp[0], out var tlat) && double.TryParse(tp[1], out var tlon))
+                    {
+                        state.TargetLatitude = tlat;
+                        state.TargetLongitude = tlon;
+                    }
+                }
+            }
+
+            // Target altitude — ERAM-predicted altitude (skip if @invalid="true")
+            var tgtAlt = pos.Elements().FirstOrDefault(e => e.Name.LocalName == "targetAltitude");
+            if (tgtAlt is not null && !string.Equals(tgtAlt.Attribute("invalid")?.Value, "true", StringComparison.OrdinalIgnoreCase))
+            {
+                if (double.TryParse(tgtAlt.Value, out var ta)) state.TargetAltitude = ta;
+            }
         }
 
         // Beacon code — BA/RE messages carry <beaconCodeAssignment> (assigned code);
@@ -3095,6 +3122,12 @@ class FlightState
     public double? TrackVelocityX { get; set; }
     public double? TrackVelocityY { get; set; }
 
+    // ERAM position enrichment (from position sub-elements)
+    public bool CoastIndicator { get; set; }           // from @coastIndicator on <position>
+    public double? TargetLatitude { get; set; }        // ERAM-predicted next position
+    public double? TargetLongitude { get; set; }
+    public double? TargetAltitude { get; set; }        // ERAM-predicted altitude (feet)
+
     // Times
     public string? ActualDepartureTime { get; set; }
     public string? ETA { get; set; }
@@ -3286,6 +3319,8 @@ class FlightState
         InterimAltitude, ReportedAltitude,
         Latitude, Longitude, GroundSpeed, Squawk, AssignedSquawk,
         TrackVelocityX, TrackVelocityY,
+        CoastIndicator = CoastIndicator ? true : (bool?)null,       // only send when true
+        TargetLatitude, TargetLongitude, TargetAltitude,
         ControllingFacility, ControllingSector,
         ReportingFacility,
         HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,

@@ -1718,12 +1718,29 @@ void ProcessFlight(XElement flight, string rawXml)
         }
         else if (hadClearance)
         {
-            // Flight HAS clearance data but this message has NO <cleared> element — log to see what source types arrive
-            var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} " +
-                $"HAS_CLR(H={state.ClearanceHeading ?? "-"} S={state.ClearanceSpeed ?? "-"} T={state.ClearanceText ?? "-"}) " +
-                $"NO_CLEARED_ELEM enRoute_children=[{string.Join(",", enRoute.Elements().Select(e => e.Name.LocalName))}]";
-            clearanceLog.Enqueue(logEntry);
-            while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
+            // FH is the canonical state snapshot — if it omits <cleared>, clearance has been wiped (QS *).
+            // Other sources (TH/OH/AH/HF) simply don't carry clearance data, so absence is not meaningful.
+            if (source is "FH")
+            {
+                var prevH = state.ClearanceHeading; var prevS = state.ClearanceSpeed; var prevT = state.ClearanceText;
+                state.ClearanceHeading = null;
+                state.ClearanceSpeed = null;
+                state.ClearanceText = null;
+                var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} " +
+                    $"CLEARED_WIPED(H={prevH ?? "-"} S={prevS ?? "-"} T={prevT ?? "-"}) " +
+                    $"FH had enRoute but no <cleared> element";
+                clearanceLog.Enqueue(logEntry);
+                while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
+                Console.WriteLine($"[CLR] {source} {state.Callsign}/{state.Gufi?[..8]} WIPED H:{prevH ?? "-"} S:{prevS ?? "-"} T:{prevT ?? "-"}");
+            }
+            else
+            {
+                var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} " +
+                    $"HAS_CLR(H={state.ClearanceHeading ?? "-"} S={state.ClearanceSpeed ?? "-"} T={state.ClearanceText ?? "-"}) " +
+                    $"NO_CLEARED_ELEM enRoute_children=[{string.Join(",", enRoute.Elements().Select(e => e.Name.LocalName))}]";
+                clearanceLog.Enqueue(logEntry);
+                while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
+            }
         }
 
         // Handoff (OH)

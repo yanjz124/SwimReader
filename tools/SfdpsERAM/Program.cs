@@ -1571,9 +1571,10 @@ void ProcessFlight(XElement flight, string rawXml)
             Console.WriteLine($"[INTERIM] {source} {state.Callsign}/{state.Gufi?[..8]} {prevIA?.ToString() ?? "null"} → {state.InterimAltitude?.ToString() ?? "CLEARED"}");
         }
     }
-    // Clear interim only when absent in LH (the dedicated interim altitude message type).
-    // Interim survives handoffs — OH/FH omit the element because interim isn't their concern.
-    else if (source is "LH")
+    // Clear interim when absent in LH (dedicated interim message) or FH (canonical state snapshot).
+    // FH is the full flight plan — if it omits interimAltitude, the interim has been cleared.
+    // Other sources (TH/OH/AH) simply don't carry interim data, so absence is not meaningful.
+    else if (source is "LH" or "FH")
     {
         state.InterimAltitude = null;
         if (prevIA.HasValue)

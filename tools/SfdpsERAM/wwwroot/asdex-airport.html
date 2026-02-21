@@ -438,8 +438,8 @@ document.getElementById('gc-close').onclick = () => { gcPopup.style.display = 'n
 
 // ── Heavy-type detection (client-side from ICAO type code) ───────────────────
 const HEAVY_PREFIXES = ['B74','B77','B78','A33','A34','A35','A38','A30',
-                        'A22','C17','C5M','IL7','AN1','DC8','L101'];
-const B757_CODES     = ['B752','B753','B757'];
+                        'A22','C5M','IL7','AN1','DC8','L101'];
+const HEAVY_EXACT    = ['C17','C17A','B752','B753','B757'];
 
 function targetCategory(t) {
     // unknown = no callsign/squawk, OR tgtType explicitly unknown
@@ -450,7 +450,7 @@ function targetCategory(t) {
     if (t.wake && 'ABCDE'.includes(t.wake.toUpperCase())) return 'heavy';
     if (t.acType) {
         const ac = t.acType.toUpperCase();
-        if (B757_CODES.includes(ac)) return 'heavy';
+        if (HEAVY_EXACT.includes(ac)) return 'heavy';
         for (const pfx of HEAVY_PREFIXES) if (ac.startsWith(pfx)) return 'heavy';
     }
     return 'aircraft';

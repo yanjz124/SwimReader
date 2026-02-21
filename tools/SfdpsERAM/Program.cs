@@ -1144,19 +1144,19 @@ solaceThread.Start();
 asdex.Start();
 
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
-// Callsign → FlightState index (rebuilt every 30s for O(1) lookup)
-var csIndex = new Dictionary<string, FlightState>();
+// Callsign → FlightState list (rebuilt every 30s; multiple flights per callsign for turnover legs)
+var csIndex = new Dictionary<string, List<FlightState>>();
 var csIndexTimer = new Timer(_ =>
 {
     try
     {
-        var idx = new Dictionary<string, FlightState>();
+        var idx = new Dictionary<string, List<FlightState>>();
         foreach (var f in flights.Values)
         {
             if (f.Callsign is null || f.FlightStatus == "CANCELLED") continue;
-            // Prefer flight with position (active radar track) over flight-plan-only
-            if (!idx.TryGetValue(f.Callsign, out var existing) || (f.Latitude != 0 && existing.Latitude == 0))
-                idx[f.Callsign] = f;
+            if (!idx.TryGetValue(f.Callsign, out var list))
+                idx[f.Callsign] = list = new List<FlightState>();
+            list.Add(f);
         }
         csIndex = idx;
     }
@@ -1235,10 +1235,8 @@ string? ResolveGateCode(string airport, FlightState? fp)
     }
 
     // Fallback: destination FAA LID (strip leading K/P for US airports)
-    // Skip if destination matches the airport (not useful for arrivals already on surface)
     var dest = fp.Destination;
     if (dest is null) return null;
-    if (string.Equals(dest, airport, StringComparison.OrdinalIgnoreCase)) return null;
     if (dest.Length == 4 && (dest[0] == 'K' || dest[0] == 'P')) dest = dest[1..];
     return dest;
 }
@@ -1255,8 +1253,17 @@ asdex.OnEnrich = (track) =>
         flights.TryGetValue(track.SfdpsGufi, out fp);
 
     // Path 2: SFDPS via callsign (index lookup)
-    if (fp is null && track.Callsign is not null)
-        csIndex.TryGetValue(track.Callsign, out fp);
+    // Airlines reuse callsigns for turnover legs (e.g., DAL123 ORD→IAD then IAD→DFW).
+    // Prefer the flight whose origin matches the surface airport (departure leg)
+    // over the one whose destination matches (arrival leg).
+    if (fp is null && track.Callsign is not null && csIndex.TryGetValue(track.Callsign, out var candidates))
+    {
+        // Priority: origin matches airport > has position > first
+        fp = candidates.FirstOrDefault(f =>
+                string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase))
+            ?? candidates.FirstOrDefault(f => f.Latitude != 0)
+            ?? candidates.FirstOrDefault();
+    }
 
     // Apply SFDPS flight plan data
     if (fp is not null)
@@ -1286,9 +1293,8 @@ asdex.OnEnrich = (track) =>
     if (track.GateCode is null)
     {
         // Fallback: best available destination → FAA LID
-        // Skip if destination matches the airport (arrivals already on surface)
         var dest = track.FpDestination ?? track.AdDestination;
-        if (dest is not null && !string.Equals(dest, track.Airport, StringComparison.OrdinalIgnoreCase))
+        if (dest is not null)
         {
             if (dest.Length == 4 && (dest[0] == 'K' || dest[0] == 'P')) dest = dest[1..];
             track.GateCode = dest;

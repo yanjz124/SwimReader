@@ -213,7 +213,7 @@ function connect() {
     ws.onclose = () => {
         statusEl.textContent = 'DISCONNECTED';
         statusEl.className = '';
-        setTimeout(connect, 5000);
+        if (!window.idlePaused || !window.idlePaused()) setTimeout(connect, 5000);
     };
 
     ws.onerror = () => ws.close();
@@ -430,7 +430,10 @@ function escHtml(s) {
 }
 
 // ── Init ───────────────────────────────────────────────────────
+window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } };
+window.idleOnResume = () => { connect(); };
 connect();
 </script>
+<script src="/idle-timer.js"></script>
 </body>
 </html>

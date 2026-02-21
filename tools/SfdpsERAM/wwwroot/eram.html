@@ -68,6 +68,26 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     margin-top: auto; padding: 8px 12px; border-top: 1px solid #333;
     font-size: 11px; color: #666;
 }
+#cmd-help-btn {
+    background: #222; border: 1px solid #444; color: #888; font-family: inherit;
+    font-size: 10px; padding: 2px 8px; cursor: pointer; margin-top: 6px;
+}
+#cmd-help-btn:hover { border-color: #cccc44; color: #cccc44; }
+#cmd-help-popup {
+    display: none; position: fixed; z-index: 10000;
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #1a1a1a; border: 1px solid #cccc44; padding: 16px 20px;
+    font-family: 'ERAM', 'Consolas', monospace; font-size: 11px;
+    color: #ccc; max-width: 600px; max-height: 80vh; overflow-y: auto; line-height: 1.6;
+}
+#cmd-help-popup h3 { color: #cccc44; margin: 0 0 10px 0; font-size: 13px; }
+#cmd-help-popup h4 { color: #cccc44; margin: 12px 0 4px 0; font-size: 11px; }
+#cmd-help-popup .cmd { color: #cccc44; }
+#cmd-help-popup .desc { color: #888; }
+#cmd-help-popup .close-btn {
+    float: right; color: #888; cursor: pointer; font-size: 14px; margin: -4px -4px 0 0;
+}
+#cmd-help-popup .close-btn:hover { color: #cccc44; }
 
 /* ── Map overrides ── */
 .leaflet-container {
@@ -458,11 +478,64 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
             <span id="stat-flights">0</span> flights &middot;
             <span id="stat-uptime">00:00:00</span>
             <br><span id="stat-fp" style="color:#888;font-size:0.85em;"></span>
+            <br><button id="cmd-help-btn">COMMANDS</button>
         </div>
     </div>
     <button id="sidebar-toggle" title="Toggle sidebar">&#9664;</button>
     </div>
 
+    <div id="cmd-help-popup">
+        <span class="close-btn" onclick="this.parentElement.style.display='none'">&times;</span>
+        <h3>MCA COMMANDS</h3>
+        <h4>DATA BLOCK</h4>
+        <span class="cmd">&lt;1-9&gt; &lt;FLID&gt;</span> <span class="desc">— Position data block (numpad layout)</span><br>
+        <span class="cmd">&lt;1-9&gt;/&lt;0-3&gt; &lt;FLID&gt;</span> <span class="desc">— Position + set leader length</span><br>
+        <span class="cmd">/&lt;0-3&gt; &lt;FLID&gt;</span> <span class="desc">— Set leader line length</span><br>
+        <span class="cmd">&lt;FLID&gt;</span> <span class="desc">— Toggle FDB/LDB</span><br>
+        <span class="cmd">// &lt;FLID&gt;</span> <span class="desc">— Toggle VCI indicator</span><br>
+        <h4>QUERIES</h4>
+        <span class="cmd">QF &lt;FLID&gt;</span> <span class="desc">— Query flight plan → Response Area</span><br>
+        <span class="cmd">QD</span> <span class="desc">— Clear Response Area</span><br>
+        <span class="cmd">QU [min] &lt;FLID...&gt;</span> <span class="desc">— Route display (default 20 min, /M = full)</span><br>
+        <span class="cmd">QU &lt;FLID&gt;</span> <span class="desc">— Clear route for flight (toggle)</span><br>
+        <span class="cmd">QU</span> <span class="desc">— Clear all route displays</span><br>
+        <span class="cmd">QL [sector...]</span> <span class="desc">— Quick Look sectors (force FDB); QL alone clears</span><br>
+        <span class="cmd">QX &lt;FLID&gt;</span> <span class="desc">— Drop track from display</span><br>
+        <h4>ALTITUDE</h4>
+        <span class="cmd">QZ &lt;alt&gt; &lt;FLID&gt;</span> <span class="desc">— Set assigned altitude (e.g. QZ 350 UAL123)</span><br>
+        <span class="cmd">QZ VFR[/&lt;alt&gt;] &lt;FLID&gt;</span> <span class="desc">— Set VFR; QZ OTP = on-top</span><br>
+        <span class="cmd">QZ &lt;floor&gt;B&lt;ceil&gt; &lt;FLID&gt;</span> <span class="desc">— Block altitude (e.g. QZ 180B240)</span><br>
+        <span class="cmd">QQ &lt;alt&gt; &lt;FLID...&gt;</span> <span class="desc">— Set interim altitude</span><br>
+        <span class="cmd">QQ P&lt;alt&gt; &lt;FLID&gt;</span> <span class="desc">— Procedure altitude</span><br>
+        <span class="cmd">QQ &lt;FLID&gt;</span> <span class="desc">— Clear interim altitude</span><br>
+        <span class="cmd">QR &lt;alt&gt; &lt;FLID&gt;</span> <span class="desc">— Set reported altitude</span><br>
+        <h4>HSF (HEADING / SPEED / FREE TEXT)</h4>
+        <span class="cmd">QS &lt;hdg&gt; &lt;FLID&gt;</span> <span class="desc">— Set heading (3-digit, 001-360)</span><br>
+        <span class="cmd">QS /&lt;spd&gt; &lt;FLID&gt;</span> <span class="desc">— Set speed</span><br>
+        <span class="cmd">QS `&lt;text&gt; &lt;FLID&gt;</span> <span class="desc">— Set free text</span><br>
+        <span class="cmd">QS * &lt;FLID&gt;</span> <span class="desc">— Clear all HSF; */ = heading, /* = speed</span><br>
+        <span class="cmd">QS &lt;FLID&gt;</span> <span class="desc">— Toggle HSF line display</span><br>
+        <h4>POINT-OUT</h4>
+        <span class="cmd">QP A [sector] &lt;FLID&gt;</span> <span class="desc">— Acknowledge point-out</span><br>
+        <span class="cmd">QP &lt;FLID&gt;</span> <span class="desc">— Clear point-out indicator</span><br>
+        <h4>RANGE / BEARING</h4>
+        <span class="cmd">LA &lt;loc1&gt; &lt;loc2&gt;</span> <span class="desc">— Range/bearing between two locations</span><br>
+        <span class="cmd">LB &lt;fix&gt; &lt;loc&gt;</span> <span class="desc">— Range/bearing from fix to location</span><br>
+        <span class="cmd">LC &lt;fix&gt;/&lt;time&gt; &lt;track&gt;</span> <span class="desc">— Required speed to reach fix at time</span><br>
+        <h4>WEATHER</h4>
+        <span class="cmd">WR R &lt;station&gt;</span> <span class="desc">— Display METAR (e.g. WR R DCA)</span><br>
+        <h4>DOT COMMANDS</h4>
+        <span class="cmd">.FIND &lt;ident&gt;</span> <span class="desc">— Highlight fix/navaid/airport on scope</span><br>
+        <span class="cmd">.SID [name]</span> <span class="desc">— Toggle SID overlay; no args = list active</span><br>
+        <span class="cmd">.STAR [name]</span> <span class="desc">— Toggle STAR overlay; no args = list active</span><br>
+        <span class="cmd">.PROC [name]</span> <span class="desc">— Toggle procedure overlay; no args = list active</span><br>
+        <span class="cmd">.NOPROC</span> <span class="desc">— Clear all procedure overlays</span><br>
+        <h4>F-KEY SHORTCUTS</h4>
+        <span class="cmd">F1</span>=QF &nbsp; <span class="cmd">F2</span>=QP &nbsp; <span class="cmd">F4</span>=QX &nbsp; <span class="cmd">F5</span>=QZ &nbsp; <span class="cmd">F6</span>=QU &nbsp; <span class="cmd">F7</span>=QL &nbsp; <span class="cmd">F8</span>=QQ &nbsp; <span class="cmd">F9</span>=QB<br>
+        <span class="cmd">Shift+F2</span>=QD &nbsp; <span class="cmd">Shift+F7</span>=WR &nbsp; <span class="cmd">Shift+F8</span>=QR<br>
+        <h4>FLID TYPES</h4>
+        <span class="desc">Callsign (UAL123), CID (0423), or Squawk (4523). Click target or map to insert.</span>
+    </div>
     <div id="map-container">
         <div id="map"></div>
         <div id="mca">
@@ -2425,9 +2498,10 @@ function processFlightUpdate(f) {
 // ════════════════════════════════════════════════════════════════════════════
 // WebSocket
 // ════════════════════════════════════════════════════════════════════════════
+let _ws = null;
 function connectWs() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/ws`);
+    const ws = _ws = new WebSocket(`${proto}//${location.host}/ws`);
 
     ws.onopen = () => {
         wsConnected = true;
@@ -2439,7 +2513,7 @@ function connectWs() {
         wsConnected = false;
         document.getElementById('connection-status').textContent = 'Disconnected \u2014 reconnecting...';
         document.getElementById('connection-status').style.color = '#cc4444';
-        setTimeout(connectWs, 3000);
+        if (!window.idlePaused || !window.idlePaused()) setTimeout(connectWs, 3000);
     };
 
     ws.onmessage = (evt) => {
@@ -5556,6 +5630,15 @@ map.on('moveend', () => {
     clearTimeout(_mapSaveTimer);
     _mapSaveTimer = setTimeout(saveSettingsToUrl, 500);
 });
+
+window.idleOnPause = () => { if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; } };
+window.idleOnResume = () => { connectWs(); };
+
+document.getElementById('cmd-help-btn').onclick = () => {
+    const p = document.getElementById('cmd-help-popup');
+    p.style.display = p.style.display === 'block' ? 'none' : 'block';
+};
 </script>
+<script src="/idle-timer.js"></script>
 </body>
 </html>

@@ -211,7 +211,7 @@ function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws`);
   ws.onopen = () => document.getElementById('statusDot').classList.add('on');
-  ws.onclose = () => { document.getElementById('statusDot').classList.remove('on'); setTimeout(connect, 2000); };
+  ws.onclose = () => { document.getElementById('statusDot').classList.remove('on'); if (!window.idlePaused || !window.idlePaused()) setTimeout(connect, 2000); };
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === 'snapshot') msg.data.forEach(f => { allFlights.set(f.gufi, f); noteFacility(f); });
@@ -556,9 +556,13 @@ document.querySelectorAll('thead th').forEach(th => {
 });
 
 // Auto-refresh detail panel for selected flight
-setInterval(() => { if (selectedGufi) selectFlight(selectedGufi); }, 3000);
+let _detailTimer = setInterval(() => { if (selectedGufi) selectFlight(selectedGufi); }, 3000);
+
+window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } clearInterval(_detailTimer); };
+window.idleOnResume = () => { connect(); _detailTimer = setInterval(() => { if (selectedGufi) selectFlight(selectedGufi); }, 3000); };
 
 connect();
 </script>
+<script src="/idle-timer.js"></script>
 </body>
 </html>

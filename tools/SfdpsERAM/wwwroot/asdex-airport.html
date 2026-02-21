@@ -723,13 +723,17 @@ function connect() {
     ws.onclose = () => {
         connEl.textContent = 'DISCONNECTED';
         connEl.className   = '';
-        wsRetryTimer = setTimeout(connect, 5000);
+        if (!window.idlePaused || !window.idlePaused()) wsRetryTimer = setTimeout(connect, 5000);
     };
 
     ws.onerror = () => { ws.close(); };
 }
 
+window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; } };
+window.idleOnResume = () => { connect(); };
+
 connect();
 </script>
+<script src="/idle-timer.js"></script>
 </body>
 </html>

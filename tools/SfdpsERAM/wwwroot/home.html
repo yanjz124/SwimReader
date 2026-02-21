@@ -382,7 +382,10 @@ async function refreshStats() {
 }
 
 refreshStats();
-setInterval(refreshStats, 10000);
+let _pollTimer = setInterval(refreshStats, 10000);
+window.idleOnPause = () => { clearInterval(_pollTimer); };
+window.idleOnResume = () => { refreshStats(); _pollTimer = setInterval(refreshStats, 10000); };
 </script>
+<script src="/idle-timer.js"></script>
 </body>
 </html>

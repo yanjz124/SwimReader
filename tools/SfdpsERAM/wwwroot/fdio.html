@@ -410,7 +410,7 @@ function connect() {
     ws.onclose = () => {
         statusEl.textContent = 'DISCONNECTED';
         statusEl.className = 'status';
-        setTimeout(connect, 2000);
+        if (!window.idlePaused || !window.idlePaused()) setTimeout(connect, 2000);
     };
     ws.onerror = () => ws.close();
 }
@@ -831,19 +831,15 @@ filterFacility.addEventListener('change', scheduleRender);
 filterRules.addEventListener('change', scheduleRender);
 
 // ── Auto-refresh selected flight every 3s ────────────────────
-setInterval(async () => {
-    if (!selectedGufi) return;
-    try {
-        const resp = await fetch(`/api/flights/${encodeURIComponent(selectedGufi)}`);
-        if (!resp.ok) return;
-        currentDetail = await resp.json();
-        renderDetailHeader(currentDetail);
-        renderActiveTab();
-    } catch {}
-}, 3000);
+const _fdioDetailRefresh = () => { if (selectedGufi) fetch(`/api/flights/${encodeURIComponent(selectedGufi)}`).then(r => r.ok ? r.json() : null).then(d => { if (d) { currentDetail = d; renderDetailHeader(d); renderActiveTab(); } }).catch(() => {}); };
+let _fdioDetailTimer = setInterval(_fdioDetailRefresh, 3000);
+
+window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } clearInterval(_fdioDetailTimer); };
+window.idleOnResume = () => { connect(); _fdioDetailTimer = setInterval(_fdioDetailRefresh, 3000); };
 
 // ── Init ─────────────────────────────────────────────────────
 connect();
 </script>
+<script src="/idle-timer.js"></script>
 </body>
 </html>

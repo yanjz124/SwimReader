@@ -436,22 +436,26 @@ document.getElementById('gc-add').onclick = () => { const tr = gcAddRow(); tr.qu
 document.getElementById('gc-save').onclick = gcSave;
 document.getElementById('gc-close').onclick = () => { gcPopup.style.display = 'none'; };
 
-// ── Heavy-type detection (client-side from ICAO type code) ───────────────────
-const HEAVY_PREFIXES = ['B74','B77','B78','A33','A34','A35','A38','A30',
-                        'A22','C5M','IL7','AN1','DC8','L101'];
-const HEAVY_EXACT    = ['C17','C17A','B752','B753','B757'];
+// ── Wake turbulence detection (FAA 7360.1D type→weight class) ────────────────
+// Loaded from wake-categories.json: { "A320": "L", "B738": "L", "C172": "S", "C17": "H", ... }
+// Weight classes: J=Super, H=Heavy, L=Large, S=Small, S+=Small 12.5-41K lbs
+let WAKE_MAP = {};  // populated async on load
+fetch('/wake-categories.json').then(r => r.json()).then(data => {
+    WAKE_MAP = data;
+    // Invalidate all hashes so icons rebuild with correct wake colors
+    for (const tid of Object.keys(hashes)) hashes[tid] = '';
+}).catch(() => {});
 
 function targetCategory(t) {
     // unknown = no callsign/squawk, OR tgtType explicitly unknown
     if (t.tgtType === 'unknown') return 'unknown';
     if (t.tgtType === 'vehicle') return 'vehicle';
     if (!t.callsign && !t.squawk) return 'unknown';
-    // RECAT wake category A-E = heavy (orange)
+    // RECAT wake category A-E from SMES = heavy (orange)
     if (t.wake && 'ABCDE'.includes(t.wake.toUpperCase())) return 'heavy';
     if (t.acType) {
-        const ac = t.acType.toUpperCase();
-        if (HEAVY_EXACT.includes(ac)) return 'heavy';
-        for (const pfx of HEAVY_PREFIXES) if (ac.startsWith(pfx)) return 'heavy';
+        const wt = WAKE_MAP[t.acType.toUpperCase()];
+        if (wt === 'J' || wt === 'H') return 'heavy';
     }
     return 'aircraft';
 }

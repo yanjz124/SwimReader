@@ -94,6 +94,13 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     font-family: inherit; font-size: 11px; padding: 3px 10px; cursor: pointer; margin: 4px 4px 0 0;
 }
 #gatecode-popup .gc-btn:hover { border-color: #cccc44; }
+#gc-import-area {
+    width: 100%; height: 80px; background: #111; border: 1px solid #444; color: #ccc;
+    font-family: inherit; font-size: 10px; padding: 4px; resize: vertical;
+    outline: none; margin-top: 4px;
+}
+#gc-import-area:focus { border-color: #cccc44; }
+#gc-import-area::placeholder { color: #555; }
 
 /* hide Leaflet attribution noise */
 .leaflet-control-attribution { display: none; }
@@ -123,6 +130,11 @@ body { background: #393939; overflow: hidden; height: 100vh; }
         <button class="gc-btn" id="gc-save">SAVE</button>
         <button class="gc-btn" id="gc-close">CLOSE</button>
     </div>
+    <details style="margin-top:10px;border-top:1px solid #333;padding-top:8px">
+        <summary style="color:#888;cursor:pointer;font-size:10px">PASTE IMPORT</summary>
+        <textarea id="gc-import-area" rows="4" style="width:100%;background:#111;border:1px solid #444;color:#ccc;font-family:inherit;font-size:10px;margin-top:4px;padding:4px;resize:vertical" placeholder="Paste tab/comma-separated lines: PATTERN  CODE"></textarea>
+        <button class="gc-btn" id="gc-import-btn">IMPORT</button>
+    </details>
 </div>
 <div id="statusbar">
     <a href="/asdex">◂ DIR</a>
@@ -436,6 +448,31 @@ document.getElementById('gc-toggle').onclick = () => {
 document.getElementById('gc-add').onclick = () => { const tr = gcAddRow(); tr.querySelector('.gc-fix').focus(); };
 document.getElementById('gc-save').onclick = gcSave;
 document.getElementById('gc-close').onclick = () => { gcPopup.style.display = 'none'; };
+document.getElementById('gc-import-btn').onclick = () => {
+    const raw = document.getElementById('gc-import-area').value.trim();
+    if (!raw) return;
+    let count = 0;
+    for (const line of raw.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        // Try tab-separated, then comma, then 2+ spaces, then last whitespace token
+        let parts = trimmed.split('\t').map(s => s.trim()).filter(Boolean);
+        if (parts.length < 2) parts = trimmed.split(',').map(s => s.trim()).filter(Boolean);
+        if (parts.length < 2) parts = trimmed.split(/\s{2,}/).map(s => s.trim()).filter(Boolean);
+        if (parts.length < 2) {
+            // Last token is code, everything before is pattern
+            const m = trimmed.match(/^(.+)\s+(\S+)$/);
+            if (m) parts = [m[1].trim(), m[2].trim()];
+        }
+        if (parts.length >= 2) {
+            const pattern = parts.slice(0, parts.length - 1).join(' ').toUpperCase();
+            const code = parts[parts.length - 1].toUpperCase();
+            if (pattern && code) { gcAddRow(pattern, code); count++; }
+        }
+    }
+    document.getElementById('gc-import-area').value = '';
+    if (count) document.querySelector('details').removeAttribute('open');
+};
 
 // ── Wake turbulence detection (FAA 7360.1D type→weight class) ────────────────
 // Loaded from wake-categories.json: { "A320": "L", "B738": "L", "C172": "S", "C17": "H", ... }

@@ -228,10 +228,35 @@ class AsdexBridge
                 var adTgtType = report.Elements().FirstOrDefault(e => e.Name.LocalName == "descriptor")
                     ?.Elements().FirstOrDefault(e => e.Name.LocalName == "tot")?.Value;
 
-                var track = airportTracks.GetOrAdd(trackId,
-                    id => new AsdexTrack { Airport = airport, TrackId = id });
-                track.MergeFrom(lat, lon, adCallsign, adSquawk, adAcType, adTgtType, null, null, null, eramGufi,
-                    sfdpsGufi: sfdpsGufi, adDep: adDep, adDest: adDest);
+                // AD and AT reports use different track numbers for the same aircraft.
+                // If an AT track with the same callsign already exists, merge enrichment
+                // data into it instead of creating a duplicate AD-only track.
+                AsdexTrack? track = null;
+                if (adCallsign is not null)
+                {
+                    track = airportTracks.Values.FirstOrDefault(t =>
+                        t.TrackId != trackId &&
+                        string.Equals(t.Callsign, adCallsign, StringComparison.OrdinalIgnoreCase));
+                }
+                if (track is not null)
+                {
+                    // Merge enrichment fields only (position comes from AT reports)
+                    if (adAcType   is not null) track.AircraftType = adAcType;
+                    if (adSquawk   is not null) track.Squawk       = adSquawk;
+                    if (eramGufi   is not null) track.EramGufi     = eramGufi;
+                    if (sfdpsGufi  is not null) track.SfdpsGufi    = sfdpsGufi;
+                    if (adDep      is not null) track.AdDeparture  = adDep;
+                    if (adDest     is not null) track.AdDestination = adDest;
+                    track.LastSeen = DateTime.UtcNow;
+                }
+                else
+                {
+                    // No matching AT track — create/update AD track as before
+                    track = airportTracks.GetOrAdd(trackId,
+                        id => new AsdexTrack { Airport = airport, TrackId = id });
+                    track.MergeFrom(lat, lon, adCallsign, adSquawk, adAcType, adTgtType, null, null, null, eramGufi,
+                        sfdpsGufi: sfdpsGufi, adDep: adDep, adDest: adDest);
+                }
                 changed = true;
             }
 

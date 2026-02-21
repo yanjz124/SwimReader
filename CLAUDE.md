@@ -197,6 +197,7 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 | `RH` | ~3/500 | Radar handoff (drop) | Flight status = DROPPED |
 | `HV` | ~3/500 | Handoff void/complete | Flight status = COMPLETED, actual arrival time |
 | `DH` | ~3/500 | Departure handoff | `<coordination>` element with coordinationTime, coordinationTimeHandling |
+| `ET` | rare | ETA/time update | Estimated departure/arrival times, `<controlled time>` for CTOP/GDP slots |
 
 **Handoff event attribute values (on `<handoff>` element):**
 - `INITIATION` — handoff proposed
@@ -226,7 +227,9 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 - Heading values: numeric (255, 160), runway (15R, 10R, 20L), PH (published), VK, BL, BR, OR, SLO, CTRL, 4-digit (0348, 0405)
 - Speed values: knots (250, 280), Mach (M79, M75), S-prefix (S270, S290), +/- modifiers (280+, M74-)
 - Free text: frequencies (128.35), MEDEVAC, NORDO, route mods (D/SYRAH, STYONRTE, RNV1/54, DR/DPR)
-- SFDPS clears clearance data by sending a `<cleared>` element with empty/absent attributes. `ProcessFlight()` treats the presence of `<cleared>` as authoritative — any attribute not present is cleared to null
+- SFDPS clears individual clearance fields by sending `<cleared>` with only some attributes — absent attributes are cleared to null
+- Full clearance wipe (QS *): FH arrives with `<enRoute>` but no `<cleared>` child element. `ProcessFlight()` clears all three fields when `source == "FH"` and `<cleared>` is absent. Other sources (TH/OH/AH/HF) don't carry clearance data, so absence is not meaningful.
+- Only HF messages carry `<cleared>` — they set values but never clear all three
 - ~2-3% of flights carry clearance data at any time
 
 **Beacon code assignment (BA/RE messages) XML structure:**
@@ -284,6 +287,83 @@ Core fields tracked per flight (by GUFI):
 - Datalink: `dataLinkCode`, `otherDataLink`, `communicationCode`
 - Status: `flightStatus` (ACTIVE, DROPPED, CANCELLED)
 - Event log: last 50 state-change events with timestamps
+
+### Unprocessed SFDPS Data (TODO)
+
+The following FIXM XML elements are present in SFDPS messages but currently dropped or ignored. Listed by priority for future implementation.
+
+**High priority — useful for display accuracy:**
+
+| Element | Path | Frequency | Description | Use Case |
+|---------|------|-----------|-------------|----------|
+| Coast indicator | `position/@coastIndicator` | ~18/10K | ERAM-level coast flag on position reports | Direct coast mode detection instead of relying on 24s position timeout heuristic. When present, target is coasting at the facility level. |
+| Reported altitude | `position/altitude` | ~8,752/10K | Mode C / radar-reported altitude in feet | Cleaner source for `reportedAltitude` than using TH's `assignedAltitude`. Present in both TH and HZ, avoids the HZ altitude ambiguity. Would let us safely use HZ messages for altitude updates too. |
+| Target position | `position/targetPosition` | ~8,742/10K | ERAM-predicted next position (lat/lon) | Track smoothing / extrapolation between 12s updates. Contains predicted lat/lon at `targetPositionTime`. |
+| Target altitude | `position/targetAltitude` | ~8,742/10K | ERAM-predicted altitude at target position | Smoother altitude display during climbs/descents. `@invalid="true"` flag (4 seen) indicates stale prediction. |
+| Position time | `position/@positionTime` | ~8,760/10K | Actual time of radar position fix | More accurate age calculation than using message timestamp. |
+
+**Medium priority — enrichment data:**
+
+| Element | Path | Frequency | Description | Use Case |
+|---------|------|-----------|-------------|----------|
+| altFixAlt | `assignedAltitude/altFixAlt` | ~3/10K | "Cross FIX at altitude" clearance | Controller instruction like "cross BOSCO at FL240 then climb FL360". Has `<pre>` (altitude before fix), `<point fix="BOSCO">`, `<post>` (altitude after fix). Rare but operationally significant. |
+| Requested altitude | `flight/requestedAltitude` | ~19/10K | Pilot-requested (filed) altitude | Separate from controller-assigned altitude. Has same sub-types: `<simple>`, `<vfr>`, `<vfrPlus>`. Could show in FDIO/flight detail. |
+| Expanded route | `agreed/route/expandedRoute` | ~182/10K | ERAM-resolved route with fix-by-fix ETAs | Pre-resolved waypoint sequence with `estimatedTime` per point. Alternative to our NASR-based route resolution — ERAM has already done the work. Only in FH/HX/AH/HU messages. |
+| Estimated elapsed time | `agreed/route/estimatedElapsedTime` | ~498/10K | Time to reach each ARTCC boundary | Duration to cross each FIR (e.g., "38 min to reach KZOB"). Could show sector transit predictions. |
+| Adapted arrival route | `agreed/route/nasadaptedArrivalRoute` | ~33/10K | STAR identifier from ERAM adaptation | `@nasRouteIdentifier` = STAR name (e.g., "SHFTY6"). Complements our existing STAR extraction from route text. |
+| Adapted departure route | `agreed/route/adaptedDepartureRoute` | ~25/10K | SID identifier from ERAM adaptation | `@nasRouteIdentifier` = SID name. We don't currently extract SID. |
+| Flight type | `flight/@flightType` | ~190/10K | SCHEDULED, GENERAL, etc. | Commercial vs GA classification. Only on FH/HU/AH/CL/HX messages. |
+| Alternate aerodrome | `arrival/arrivalAerodromeAlternate` | ~63/10K | Filed alternate airport (ICAO code) | Could show in FDIO flight detail. |
+| En route alternate | `enRoute/alternateAerodrome` | ~6/10K | En route alternate airport | Very rare, separate from arrival alternate. |
+| Controlled time | `departure/runwayTime/controlled` | rare | CTOP/GDP slot time | TMI-assigned departure time (ground stop / ground delay program). Separate from estimated/actual. Seen in ET messages. |
+
+**Low priority — metadata / niche:**
+
+| Element | Path | Frequency | Description |
+|---------|------|-----------|-------------|
+| Report source | `position/@reportSource` | ~8,760/10K | Which radar system reported position (e.g., "SURVEILLANCE") |
+| RNP accuracy | `aircraftDescription/accuracy/cmsFieldType` | ~566/10K | RNP values by phase (arrival/enroute/departure) |
+| Originator | `flight/originator/aftnAddress` | ~38/10K | AFTN address of flight plan originator |
+| Flight plan revision | nameValue `FLIGHT_PLAN_REV_NO` | ~737/10K | Revision number of current flight plan |
+| ADS-B quality metrics | nameValue `ADSB_POS_174A`, `ADSB_ALT_175A`, `ADSB_VEL_176A`, `ADSB_TIME_177A`, `ADSB_02M_52B` | ~20-31K/10K | ADS-B position/altitude/velocity accuracy and Mode S address. Position is lat/lon, velocity is x/y knots, 02M is Mode S hex prefixed with `-`. |
+
+**altFixAlt XML structure (3 observed):**
+```xml
+<assignedAltitude>
+    <altFixAlt>
+        <pre uom="FEET">24000.0</pre>
+        <point fix="BOSCO" type="DESIGNATED_POINT"/>
+        <post uom="FEET">36000.0</post>
+    </altFixAlt>
+</assignedAltitude>
+```
+Means: "cross BOSCO at FL240, then climb to FL360." The `pre` altitude applies before the fix, `post` applies after.
+
+**requestedAltitude XML structure (19 observed):**
+```xml
+<requestedAltitude>
+    <simple uom="FEET">35000.0</simple>
+</requestedAltitude>
+```
+Same sub-types as `assignedAltitude`: `<simple>`, `<vfr>`, `<vfrPlus>`. Represents the pilot's filed altitude, which may differ from controller-assigned.
+
+**Expanded route XML structure (182 observed):**
+```xml
+<agreed>
+    <route nasRouteText="KBNA./.CVG285010..JHW.Q82.PONCT.JFUND2.KBOS/2221">
+        <expandedRoute>
+            <routePoint estimatedTime="2026-02-21T20:45:00Z">
+                <point fix="CVG" type="DESIGNATED_POINT"/>
+            </routePoint>
+            <routePoint estimatedTime="2026-02-21T21:12:00Z">
+                <point fix="JHW" type="DESIGNATED_POINT"/>
+            </routePoint>
+            <!-- ... more routePoints with ETAs ... -->
+        </expandedRoute>
+    </route>
+</agreed>
+```
+ERAM pre-resolves the route string into fix-by-fix waypoints with estimated times. Some points use radial/distance from a navaid instead of a named fix.
 
 ### API Endpoints (SfdpsERAM, port 5001)
 | Endpoint | Description |
@@ -371,7 +451,11 @@ Line 0 only appears when the flight has an active point-out to/from the selected
 **HZ `assignedAltitude` = Mode C (radar-reported altitude), NOT controller-assigned.**
 HZ heartbeat messages carry the current Mode C reading in the `assignedAltitude` XML field. This causes altitude oscillation if not skipped (e.g., FL240 assigned → 13300 Mode C → FL240 restored by TH). `ProcessFlight()` skips `assignedAltitude` from HZ messages to prevent this.
 
-**Interim altitude** has no sub-types in SFDPS — only `<interimAltitude uom="FEET">value</interimAltitude>`. Procedural/temp/local distinctions (QQ P, QQ L, QQ R) are local ERAM concepts not reflected in the SFDPS feed. Interim is set exclusively by LH messages, cleared by OH (~92%) and FH (~8%) when the element is absent. The `@nil="true"` clear path exists in code but is never observed in practice.
+**Interim altitude** has no sub-types in SFDPS — only `<interimAltitude uom="FEET">value</interimAltitude>`. Procedural/temp/local distinctions (QQ P, QQ L, QQ R) are local ERAM concepts not reflected in the SFDPS feed. Interim is set exclusively by LH messages. Cleared via two paths:
+1. **LH with `<interimAltitude xsi:nil="true"/>`** — explicit nil clear (note: `xsi:nil` is namespaced, requires XNamespace lookup)
+2. **LH or FH with no `<interimAltitude>` element** — absence in LH (dedicated interim message) or FH (canonical state snapshot) means interim has been cleared. Other sources (TH/OH/AH) don't carry interim data, so absence in those is not meaningful.
+
+SFDPS does not always send LH clears during inter-sector handoffs — the clearing FH from the new sector is often the only signal.
 
 **Line 3 Field E (right side after CID, in priority order):**
 - `HIJK` = squawk 7500 (hijack)

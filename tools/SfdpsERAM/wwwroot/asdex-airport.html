@@ -319,14 +319,14 @@ let   centeredOnce = false;
 // ── Data block positions (8 compass points) ─────────────────────────────────
 const DB_ORDERS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const DB_POS = {
-    N:  { wl: -5,  wt: -38, lx: 9,  ly: -12 },
-    NE: { wl: 23,  wt: -21, lx: 23, ly: -5 },
-    E:  { wl: 23,  wt: -7,  lx: 23, ly: 9 },
-    SE: { wl: 23,  wt: 7,   lx: 23, ly: 23 },
-    S:  { wl: -5,  wt: 28,  lx: 9,  ly: 26 },
-    SW: { wl: -80, wt: 7,   lx: -5, ly: 23 },
-    W:  { wl: -80, wt: -7,  lx: -5, ly: 9 },
-    NW: { wl: -80, wt: -21, lx: -5, ly: -5 },
+    N:  { wl: -5,  wt: -43, lx: 9,   ly: -16 },
+    NE: { wl: 26,  wt: -24, lx: 26,  ly: -8 },
+    E:  { wl: 26,  wt: -7,  lx: 26,  ly: 9 },
+    SE: { wl: 26,  wt: 10,  lx: 26,  ly: 26 },
+    S:  { wl: -5,  wt: 33,  lx: 9,   ly: 30 },
+    SW: { wl: -83, wt: 10,  lx: -8,  ly: 26 },
+    W:  { wl: -83, wt: -7,  lx: -8,  ly: 9 },
+    NW: { wl: -83, wt: -24, lx: -8,  ly: -8 },
 };
 const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
 const hiddenDbs = new Set();  // trackIds with hidden data blocks
@@ -377,6 +377,79 @@ document.addEventListener('mousemove', e => {
 });
 
 document.addEventListener('mouseup', () => { dragTid = null; dragOrigin = null; });
+
+// ── Touch support: tap symbol to toggle DB, drag DB to reposition ────────────
+let touchDragTid = null, touchOrigin = null, touchMoved = false;
+
+document.addEventListener('touchstart', e => {
+    const touch = e.touches[0];
+    // Drag: start on data block
+    const db = touch.target.closest('.db');
+    if (db) {
+        const icon = touch.target.closest('.ac-icon[data-tid]');
+        if (!icon) return;
+        touchDragTid = icon.dataset.tid;
+        const m = markers[touchDragTid];
+        if (!m) { touchDragTid = null; return; }
+        const el = m.getElement();
+        if (!el) { touchDragTid = null; return; }
+        const rect = el.getBoundingClientRect();
+        touchOrigin = { x: rect.left + 9, y: rect.top + 9 };
+        touchMoved = false;
+        e.preventDefault();
+        return;
+    }
+    // Tap: on target symbol — track for toggle on touchend
+    const sym = touch.target.closest('svg.sym');
+    if (sym) { touchMoved = false; }
+}, { passive: false });
+
+document.addEventListener('touchmove', e => {
+    touchMoved = true;
+    if (!touchDragTid) return;
+    const touch = e.touches[0];
+    const sdx = touch.clientX - touchOrigin.x;
+    const sdy = touch.clientY - touchOrigin.y;
+    const rad = mapRotation * Math.PI / 180;
+    const ldx = sdx * Math.cos(rad) + sdy * Math.sin(rad);
+    const ldy = -sdx * Math.sin(rad) + sdy * Math.cos(rad);
+    let angle = Math.atan2(ldx, -ldy) * 180 / Math.PI;
+    if (angle < 0) angle += 360;
+    const idx = Math.round(angle / 45) % 8;
+    const dir = DB_ORDERS[idx];
+    if (dbPositions[touchDragTid] === dir) return;
+    dbPositions[touchDragTid] = dir;
+    const iconEl = document.querySelector(`.ac-icon[data-tid="${touchDragTid}"]`);
+    if (!iconEl) return;
+    const pos = DB_POS[dir];
+    const wrap = iconEl.querySelector('.db-wrap');
+    if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; }
+    const line = iconEl.querySelector('.ldr line');
+    if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
+    e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchend', e => {
+    if (touchDragTid) { touchDragTid = null; touchOrigin = null; return; }
+    // Tap on symbol (no drag) → toggle data block
+    if (touchMoved) return;
+    const touch = e.changedTouches[0];
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    if (!el) return;
+    const sym = el.closest('svg.sym');
+    if (!sym) return;
+    const icon = sym.closest('.ac-icon[data-tid]');
+    if (!icon) return;
+    const tid = icon.dataset.tid;
+    if (hiddenDbs.has(tid)) hiddenDbs.delete(tid);
+    else hiddenDbs.add(tid);
+    const hidden = hiddenDbs.has(tid);
+    const wrap = icon.querySelector('.db-wrap');
+    const ldr = icon.querySelector('.ldr');
+    if (wrap) wrap.style.display = hidden ? 'none' : '';
+    if (ldr) ldr.style.display = hidden ? 'none' : '';
+    e.preventDefault();
+});
 
 // ── Left-click target to toggle data block ──────────────────────────────────
 document.addEventListener('click', e => {
@@ -557,7 +630,7 @@ function makeIcon(t) {
         </svg>` : '';
 
     const html = `<div class="ac-icon" data-tid="${t.trackId}">
-        <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block">${symHtml}<circle class="halo" cx="0" cy="0" r="11" fill="none" stroke="#fff" stroke-width="1"/></svg>
+        <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block"><circle cx="0" cy="0" r="14" fill="transparent"/>${symHtml}<circle class="halo" cx="0" cy="0" r="11" fill="none" stroke="#fff" stroke-width="1"/></svg>
         ${ldrHtml}
         <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px${hideStyle}">${dbHtml}</div>
     </div>`;

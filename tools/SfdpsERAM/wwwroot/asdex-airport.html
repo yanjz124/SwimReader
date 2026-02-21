@@ -68,6 +68,32 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     cursor: none;
 }
 .db-line2 { color: #00cc00; }
+.db-extra { color: #00cc00; }
+
+/* ── Gate codes config popup ── */
+#gatecode-popup {
+    display: none; position: fixed; z-index: 10000;
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #1a1a1a; border: 1px solid #cccc44; padding: 12px 16px;
+    font-family: 'ERAM', 'Consolas', monospace; font-size: 11px;
+    color: #ccc; min-width: 340px; max-height: 80vh; overflow-y: auto;
+}
+#gatecode-popup h3 { color: #cccc44; margin: 0 0 8px 0; font-size: 12px; }
+#gatecode-popup table { width: 100%; border-collapse: collapse; }
+#gatecode-popup th { color: #888; text-align: left; padding: 2px 4px; border-bottom: 1px solid #333; }
+#gatecode-popup td { padding: 2px 4px; }
+#gatecode-popup input {
+    background: #111; border: 1px solid #444; color: #ccc;
+    font-family: inherit; font-size: 11px; width: 100%; padding: 2px 4px;
+    outline: none; text-transform: uppercase;
+}
+#gatecode-popup input:focus { border-color: #cccc44; }
+#gatecode-popup .gc-del { color: #ff4444; cursor: pointer; padding: 0 4px; }
+#gatecode-popup .gc-btn {
+    background: #222; border: 1px solid #555; color: #cccc44;
+    font-family: inherit; font-size: 11px; padding: 3px 10px; cursor: pointer; margin: 4px 4px 0 0;
+}
+#gatecode-popup .gc-btn:hover { border-color: #cccc44; }
 
 /* hide Leaflet attribution noise */
 .leaflet-control-attribution { display: none; }
@@ -88,6 +114,15 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 <body>
 <div id="map"></div>
 <div id="crosshair"><div class="ch h"></div><div class="ch v"></div></div>
+<div id="gatecode-popup">
+    <h3>SCRATCHPAD CONFIG — <span id="gc-airport"></span></h3>
+    <table><thead><tr><th>FIX</th><th>CODE</th><th></th></tr></thead><tbody id="gc-body"></tbody></table>
+    <div style="margin-top:8px">
+        <button class="gc-btn" id="gc-add">+ ADD</button>
+        <button class="gc-btn" id="gc-save">SAVE</button>
+        <button class="gc-btn" id="gc-close">CLOSE</button>
+    </div>
+</div>
 <div id="statusbar">
     <a href="/asdex">◂ DIR</a>
     <span class="airport-id" id="airport-id">—</span>
@@ -98,6 +133,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     <input type="number" id="font-size" min="8" max="20" value="13" step="1">
     <label>ROT</label>
     <input type="number" id="rot" min="0" max="360" value="360" step="1">
+    <button id="gc-toggle">SP CONFIG</button>
     <button id="dn-toggle">NIGHT</button>
     <button id="fs-toggle">FULL</button>
 </div>
@@ -348,6 +384,58 @@ document.addEventListener('click', e => {
 const connEl  = document.getElementById('conn');
 const cntEl   = document.getElementById('track-count');
 
+// ── Gate code configuration popup ───────────────────────────────────────────
+const gcPopup = document.getElementById('gatecode-popup');
+const gcBody = document.getElementById('gc-body');
+const gcAirportEl = document.getElementById('gc-airport');
+
+function gcAddRow(fix = '', code = '') {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input class="gc-fix" value="${fix}" placeholder="FIX"></td>` +
+        `<td><input class="gc-code" value="${code}" placeholder="CODE"></td>` +
+        `<td><span class="gc-del">\u2715</span></td>`;
+    tr.querySelector('.gc-del').onclick = () => tr.remove();
+    gcBody.appendChild(tr);
+    return tr;
+}
+
+async function gcOpen() {
+    gcAirportEl.textContent = AIRPORT;
+    gcBody.innerHTML = '';
+    try {
+        const resp = await fetch(`/api/asdex/${AIRPORT}/gatecodes`);
+        const data = await resp.json();
+        // Group by code for display: group fixes sharing the same code
+        for (const [fix, code] of Object.entries(data)) gcAddRow(fix, code);
+    } catch {}
+    if (!gcBody.children.length) gcAddRow();
+    gcPopup.style.display = 'block';
+}
+
+async function gcSave() {
+    const entries = {};
+    for (const tr of gcBody.querySelectorAll('tr')) {
+        const fix = tr.querySelector('.gc-fix').value.trim().toUpperCase();
+        const code = tr.querySelector('.gc-code').value.trim().toUpperCase();
+        if (fix && code) entries[fix] = code;
+    }
+    await fetch(`/api/asdex/${AIRPORT}/gatecodes`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entries)
+    });
+    gcPopup.style.display = 'none';
+    // Force hash invalidation so all icons rebuild with new gate codes
+    for (const tid of Object.keys(hashes)) hashes[tid] = '';
+}
+
+document.getElementById('gc-toggle').onclick = () => {
+    if (gcPopup.style.display === 'block') gcPopup.style.display = 'none';
+    else gcOpen();
+};
+document.getElementById('gc-add').onclick = () => { const tr = gcAddRow(); tr.querySelector('.gc-fix').focus(); };
+document.getElementById('gc-save').onclick = gcSave;
+document.getElementById('gc-close').onclick = () => { gcPopup.style.display = 'none'; };
+
 // ── Heavy-type detection (client-side from ICAO type code) ───────────────────
 const HEAVY_PREFIXES = ['B74','B77','B78','A33','A34','A35','A38','A30',
                         'A22','C17','C5M','IL7','AN1','DC8','L101'];
@@ -399,13 +487,19 @@ function makeIcon(t) {
     const spd = t.spdKts != null ? Math.round(t.spdKts / 10).toString().padStart(2, '0') : '';
     const typ = t.acType || '';
 
+    // Enrichment: gate code (from fix→code mapping or destination fallback)
+    const gateCode = t.gateCode || '';
+
     let dbHtml = '';
     const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 1.25)}px`;
     if (cs && cat !== 'unknown') {
         if (cat !== 'vehicle') {
+            const gcSpan = gateCode ? `<span class="db-extra">${gateCode}</span>` : '';
+            // Line 2: {acType} {gateCode} {speed}
+            const parts2 = [typ, gcSpan, spd].filter(Boolean).join(' ');
             dbHtml = `<div class="db" style="${dbStyle}">
                 <div class="db-line1">${cs}${alt ? ' ' + alt : ''}</div>
-                <div class="db-line2">${typ}${typ && spd ? ' ' : ''}${spd}</div>
+                <div class="db-line2">${parts2}</div>
             </div>`;
         } else {
             dbHtml = `<div class="db" style="${dbStyle}"><div class="db-line1">${cs}</div></div>`;
@@ -430,7 +524,7 @@ function makeIcon(t) {
 }
 
 function trackHash(t) {
-    return `${t.lat?.toFixed(5)},${t.lon?.toFixed(5)},${t.callsign||''},${t.altFt||0},${t.spdKts||0},${t.hdg?.toFixed(0)||0},${t.tgtType||''},${t.acType||''},${t.wake||''}`;
+    return `${t.lat?.toFixed(5)},${t.lon?.toFixed(5)},${t.callsign||''},${t.altFt||0},${t.spdKts||0},${t.hdg?.toFixed(0)||0},${t.tgtType||''},${t.acType||''},${t.wake||''},${t.gateCode||''}`;
 }
 
 // ── Apply one track update ───────────────────────────────────────────────────

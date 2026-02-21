@@ -217,6 +217,34 @@ class TdlsBridge
         if (ac.IsEmpty) _clients.TryRemove(airport, out _);
     }
 
+    // ── Cross-reference lookup ──────────────────────────────────────────────────
+
+    /// <summary>Lookup TDLS data for an aircraft by airport + callsign (for ASDE-X enrichment).</summary>
+    public (string? destination, string? gate, string? runway)? FindAircraft(string airport, string callsign)
+    {
+        if (!_state.TryGetValue(airport, out var aircraft)) return null;
+        // Try exact match first, then case-insensitive
+        if (!aircraft.TryGetValue(callsign, out var ac))
+        {
+            var key = aircraft.Keys.FirstOrDefault(k =>
+                string.Equals(k, callsign, StringComparison.OrdinalIgnoreCase));
+            if (key is null || !aircraft.TryGetValue(key, out ac)) return null;
+        }
+
+        string? gate = null, runway = null;
+        lock (ac.Messages)
+        {
+            // Get latest departure event for gate/runway
+            var depart = ac.Messages.LastOrDefault(m => m.Type == "DEPART");
+            if (depart is not null)
+            {
+                gate = depart.Gate;
+                runway = depart.TakeoffRunway;
+            }
+        }
+        return (ac.Destination, gate, runway);
+    }
+
     // ── REST helpers ───────────────────────────────────────────────────────────
 
     /// <summary>Airport directory: [{airport, aircraftCount, messageCount}]</summary>

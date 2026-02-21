@@ -86,6 +86,10 @@ var jsonOpts = new JsonSerializerOptions
 // Flight history directory (declared early so route lambdas can capture it)
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
 
+// ASDE-X departure gate codes: airport → pattern → abbreviation (declared early for route lambdas)
+var gateCodesPath = Path.Combine(Directory.GetCurrentDirectory(), "asdex-gatecodes.json");
+var gateCodes = new ConcurrentDictionary<string, ConcurrentDictionary<string, string>>();
+
 // Initialize Solace SDK (once, before any thread or connection is created)
 {
     var cfp = new ContextFactoryProperties { SolClientLogLevel = SolLogLevel.Warning };
@@ -809,6 +813,39 @@ app.MapGet("/api/asdex", () => Results.Json(asdex.GetDirectory(), jsonOpts));
 app.MapGet("/api/asdex/{airport}", (string airport) =>
     Results.Json(asdex.GetSnapshot(airport.ToUpperInvariant()), jsonOpts));
 
+// ASDEX scratchpad config — pattern→code mapping, shared across all clients
+// Pattern can be any substring to match against the route (SID, fix, SID+transition, airway, etc.)
+app.MapGet("/api/asdex/{airport}/gatecodes", (string airport) =>
+{
+    airport = airport.ToUpperInvariant();
+    if (gateCodes.TryGetValue(airport, out var codes))
+        return Results.Json(codes.ToDictionary(kv => kv.Key, kv => kv.Value), jsonOpts);
+    return Results.Json(new Dictionary<string, string>(), jsonOpts);
+});
+
+app.MapPut("/api/asdex/{airport}/gatecodes", async (HttpContext ctx, string airport) =>
+{
+    airport = airport.ToUpperInvariant();
+    using var reader = new StreamReader(ctx.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    var entries = JsonSerializer.Deserialize<Dictionary<string, string>>(body);
+    if (entries is null) return Results.BadRequest();
+    var map = new ConcurrentDictionary<string, string>();
+    foreach (var (pattern, code) in entries)
+    {
+        var k = pattern.Trim().ToUpperInvariant();
+        var v = code.Trim().ToUpperInvariant();
+        if (k.Length > 0 && v.Length > 0 && v.Length <= 10)
+            map[k] = v;
+    }
+    if (map.IsEmpty)
+        gateCodes.TryRemove(airport, out _);
+    else
+        gateCodes[airport] = map;
+    Task.Run(SaveGateCodes);
+    return Results.Ok();
+});
+
 // TDLS directory and detail
 app.MapGet("/api/tdls", () => Results.Json(tdls.GetDirectory(), jsonOpts));
 app.MapGet("/api/tdls/{airport}", (string airport) =>
@@ -1106,6 +1143,156 @@ lifetime.ApplicationStopping.Register(() =>
 solaceThread.Start();
 asdex.Start();
 
+// ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
+// Callsign → FlightState index (rebuilt every 30s for O(1) lookup)
+var csIndex = new Dictionary<string, FlightState>();
+var csIndexTimer = new Timer(_ =>
+{
+    try
+    {
+        var idx = new Dictionary<string, FlightState>();
+        foreach (var f in flights.Values)
+        {
+            if (f.Callsign is null || f.FlightStatus == "CANCELLED") continue;
+            // Prefer flight with position (active radar track) over flight-plan-only
+            if (!idx.TryGetValue(f.Callsign, out var existing) || (f.Latitude != 0 && existing.Latitude == 0))
+                idx[f.Callsign] = f;
+        }
+        csIndex = idx;
+    }
+    catch { /* best-effort */ }
+}, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+
+// Gate codes: load pattern→code mappings from disk on startup
+try
+{
+    if (File.Exists(gateCodesPath))
+    {
+        var raw = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
+            File.ReadAllText(gateCodesPath));
+        if (raw is not null)
+            foreach (var (apt, entries) in raw)
+                gateCodes[apt] = new ConcurrentDictionary<string, string>(entries);
+        Console.WriteLine($"[GateCodes] Loaded {gateCodes.Sum(kv => kv.Value.Count)} entries");
+    }
+}
+catch (Exception ex) { Console.WriteLine($"[GateCodes] Load error: {ex.Message}"); }
+
+void SaveGateCodes()
+{
+    try
+    {
+        var data = gateCodes.ToDictionary(kv => kv.Key,
+            kv => kv.Value.ToDictionary(e => e.Key, e => e.Value));
+        var tmp = gateCodesPath + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(data, jsonOpts));
+        File.Move(tmp, gateCodesPath, overwrite: true);
+    }
+    catch (Exception ex) { Console.Error.WriteLine($"[GateCodes] Save error: {ex.Message}"); }
+}
+
+// Resolve departure gate code: match route fixes against airport gate map, fallback to destination
+string? ResolveGateCode(string airport, FlightState? fp)
+{
+    if (fp is null) return null;
+
+    // Check gate code map for this airport
+    // Pattern keys can be multi-token ("AMEEE# COLIN") or single ("COLIN", "J121")
+    // Each pattern token is checked against route tokens; # in pattern = digit wildcard
+    if (gateCodes.TryGetValue(airport, out var fixMap) && !fixMap.IsEmpty && fp.Route is not null)
+    {
+        var routeUpper = fp.Route.ToUpperInvariant();
+        var routeTokens = routeUpper.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries);
+        // Also build set with trailing digits stripped (AMEEE3 → AMEEE)
+        var routeSet = new HashSet<string>(routeTokens);
+        foreach (var rt in routeTokens)
+        {
+            var stripped = rt.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
+            if (stripped.Length > 0 && stripped.Length != rt.Length) routeSet.Add(stripped);
+        }
+
+        foreach (var (pattern, code) in fixMap)
+        {
+            var patTokens = pattern.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries);
+            // ALL tokens in the pattern must match something in the route
+            var allMatch = true;
+            foreach (var pt in patTokens)
+            {
+                // # suffix = digit wildcard (AMEEE# matches AMEEE, AMEEE3, etc.)
+                var ptClean = pt.TrimEnd('#');
+                if (ptClean != pt)
+                {
+                    // Wildcard: check if any route token starts with ptClean (+ optional digits)
+                    if (!routeSet.Contains(ptClean) && !routeTokens.Any(rt => rt.StartsWith(ptClean))) { allMatch = false; break; }
+                }
+                else
+                {
+                    if (!routeSet.Contains(pt)) { allMatch = false; break; }
+                }
+            }
+            if (allMatch) return code;
+        }
+    }
+
+    // Fallback: destination FAA LID (strip leading K/P for US airports)
+    var dest = fp.Destination;
+    if (dest is null) return null;
+    if (dest.Length == 4 && (dest[0] == 'K' || dest[0] == 'P')) dest = dest[1..];
+    return dest;
+}
+
+asdex.OnEnrich = (track) =>
+{
+    // Clear enrichment fields (re-derived each cycle)
+    track.FpOrigin = null; track.FpDestination = null; track.FpStar = null; track.FpRoute = null;
+    track.TdlsGate = null; track.TdlsRunway = null; track.GateCode = null;
+
+    // Path 1: SFDPS via sfdpsGufi (direct O(1) lookup)
+    FlightState? fp = null;
+    if (track.SfdpsGufi is not null)
+        flights.TryGetValue(track.SfdpsGufi, out fp);
+
+    // Path 2: SFDPS via callsign (index lookup)
+    if (fp is null && track.Callsign is not null)
+        csIndex.TryGetValue(track.Callsign, out fp);
+
+    // Apply SFDPS flight plan data
+    if (fp is not null)
+    {
+        track.FpDestination = fp.Destination;
+        track.FpOrigin = fp.Origin;
+        track.FpStar = fp.STAR;
+        track.FpRoute = fp.Route;
+    }
+
+    // Path 3: TDLS via airport + callsign
+    if (track.Callsign is not null)
+    {
+        var tdlsData = tdls.FindAircraft(track.Airport, track.Callsign);
+        if (tdlsData.HasValue)
+        {
+            track.TdlsGate = tdlsData.Value.gate;
+            track.TdlsRunway = tdlsData.Value.runway;
+            if (track.FpDestination is null)
+                track.FpDestination = tdlsData.Value.destination;
+        }
+    }
+
+    // Resolve gate code: fix map match → best available destination as FAA LID
+    track.GateCode = ResolveGateCode(track.Airport, fp);
+
+    if (track.GateCode is null)
+    {
+        // Fallback: best available destination → FAA LID
+        var dest = track.FpDestination ?? track.AdDestination;
+        if (dest is not null)
+        {
+            if (dest.Length == 4 && (dest[0] == 'K' || dest[0] == 'P')) dest = dest[1..];
+            track.GateCode = dest;
+        }
+    }
+};
+
 // Save flight cache periodically (every 5 minutes)
 var cacheTimer = new Timer(_ => SaveFlightCache(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 
@@ -1181,7 +1368,7 @@ var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHo
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, historyCleanupTimer };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, historyCleanupTimer, csIndexTimer };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
 
 await solaceReady.Task;
@@ -3232,3 +3419,4 @@ class GlobalStats
         };
     }
 }
+

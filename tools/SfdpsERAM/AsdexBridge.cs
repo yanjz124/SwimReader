@@ -32,6 +32,9 @@ class AsdexBridge
     /// <summary>Callback for non-SMES messages (topic, xmlBody). Set before Start().</summary>
     public Action<string, string>? OnOtherMessage { get; set; }
 
+    /// <summary>Called for each track during FlushDirty to enrich with SFDPS/TDLS data. Set before Start().</summary>
+    public Action<AsdexTrack>? OnEnrich { get; set; }
+
     public AsdexBridge(string user, string pass, string queue, string host, string vpn,
         JsonSerializerOptions jsonOpts)
     {
@@ -212,6 +215,9 @@ class AsdexBridge
                 var eramGufi = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "eramGufi")?.Value;
                 var adCallsign = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "callsign")?.Value;
                 var adAcType = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftType")?.Value;
+                var sfdpsGufi = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "sfdpsGufi")?.Value;
+                var adDep = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "departureAirport")?.Value;
+                var adDest = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "destinationAirport")?.Value;
 
                 // squawk from report/mode3ACode/code
                 var adSquawk = report.Elements().FirstOrDefault(e => e.Name.LocalName == "report")
@@ -224,7 +230,8 @@ class AsdexBridge
 
                 var track = airportTracks.GetOrAdd(trackId,
                     id => new AsdexTrack { Airport = airport, TrackId = id });
-                track.MergeFrom(lat, lon, adCallsign, adSquawk, adAcType, adTgtType, null, null, null, eramGufi);
+                track.MergeFrom(lat, lon, adCallsign, adSquawk, adAcType, adTgtType, null, null, null, eramGufi,
+                    sfdpsGufi: sfdpsGufi, adDep: adDep, adDest: adDest);
                 changed = true;
             }
 
@@ -259,6 +266,9 @@ class AsdexBridge
             _dirty.TryRemove(airport, out _);
             if (!_clients.TryGetValue(airport, out var airportClients) || airportClients.IsEmpty) continue;
             if (!_state.TryGetValue(airport, out var tracks)) continue;
+
+            if (OnEnrich is not null)
+                foreach (var t in tracks.Values) OnEnrich(t);
 
             var arr = tracks.Values.Select(t => t.ToJson()).ToArray();
             var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("batch", arr), _jsonOpts);
@@ -366,13 +376,32 @@ class AsdexTrack
     public string? EramGufi { get; set; }
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
 
+    // From AD enhanced data (ADS-B reports)
+    public string? SfdpsGufi      { get; set; }  // for SFDPS flight lookup
+    public string? AdDeparture    { get; set; }  // departureAirport from AD
+    public string? AdDestination  { get; set; }  // destinationAirport from AD
+
+    // Enrichment from SFDPS (set by OnEnrich delegate)
+    public string? FpOrigin       { get; set; }
+    public string? FpDestination  { get; set; }
+    public string? FpStar         { get; set; }
+    public string? FpRoute        { get; set; }
+
+    // Enrichment from TDLS (set by OnEnrich delegate)
+    public string? TdlsGate       { get; set; }
+    public string? TdlsRunway     { get; set; }
+
+    // Departure gate code — from fix→code mapping or destination fallback (set by OnEnrich)
+    public string? GateCode        { get; set; }
+
     /// <summary>
     /// Merges incoming data. Position (lat/lon) is always updated.
     /// All other fields only overwrite when the incoming value is non-null.
     /// </summary>
     public void MergeFrom(double lat, double lon,
         string? callsign, string? squawk, string? acType, string? tgtType,
-        double? alt, int? speed, double? heading, string? eramGufi, string? wake = null)
+        double? alt, int? speed, double? heading, string? eramGufi, string? wake = null,
+        string? sfdpsGufi = null, string? adDep = null, string? adDest = null)
     {
         Latitude  = lat;
         Longitude = lon;
@@ -383,8 +412,11 @@ class AsdexTrack
         if (alt.HasValue)     AltitudeFeet   = alt;
         if (speed.HasValue)   SpeedKts        = speed;
         if (heading.HasValue) HeadingDegrees  = heading;
-        if (eramGufi is not null) EramGufi    = eramGufi;
-        if (wake     is not null) WakeCategory = wake;
+        if (eramGufi   is not null) EramGufi      = eramGufi;
+        if (wake       is not null) WakeCategory  = wake;
+        if (sfdpsGufi  is not null) SfdpsGufi     = sfdpsGufi;
+        if (adDep      is not null) AdDeparture   = adDep;
+        if (adDest     is not null) AdDestination = adDest;
         LastSeen = DateTime.UtcNow;
     }
 
@@ -403,6 +435,13 @@ class AsdexTrack
         hdg      = HeadingDegrees,
         eramGufi = EramGufi,
         wake     = WakeCategory,
-        ageSec   = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
+        ageSec   = (int)(DateTime.UtcNow - LastSeen).TotalSeconds,
+        // Enrichment: best available destination/origin (SFDPS > AD > TDLS)
+        dest     = FpDestination ?? AdDestination,
+        origin   = FpOrigin ?? AdDeparture,
+        star     = FpStar,
+        gate     = TdlsGate,
+        runway   = TdlsRunway,
+        gateCode = GateCode,
     };
 }

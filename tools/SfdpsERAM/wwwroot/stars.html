@@ -1,0 +1,2266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>STARS | swim.vncrcc.org</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); font-display: block; }
+@font-face { font-family: 'FixedDemiBold'; src: url('/FixedDemiBold.otf') format('opentype'); font-display: block; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+    font-family: 'FixedDemiBold', 'Consolas', 'Courier New', monospace;
+    background: #000;
+    color: #00ff00;
+}
+
+/* ── Scope layout ──────────────────────────────────────────── */
+#scope { width: 100%; height: 100%; display: flex; flex-direction: column; }
+#map { flex: 1; background: #000; }
+.leaflet-container { background: #000 !important; }
+.leaflet-tile-pane { opacity: 0.12; }
+.leaflet-control-attribution, .leaflet-control-zoom { display: none !important; }
+
+/* ── DCB (Display Control Bar) ───────────────────────────── */
+#dcb, #dcb-shift {
+    background: rgb(0, 35, 15);
+    border-bottom: 1px solid #0a3a1a;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    flex-shrink: 0;
+    height: 80px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    z-index: 1000;
+    scrollbar-width: none;
+}
+#dcb::-webkit-scrollbar, #dcb-shift::-webkit-scrollbar { display: none; }
+
+/* DCB button base — 80×80 main */
+.dcb-b {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-width: 80px;
+    height: 80px;
+    padding: 2px 4px;
+    font-family: inherit;
+    font-size: 10px;
+    line-height: 1.2;
+    letter-spacing: 0.3px;
+    text-align: center;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    background: rgb(0, 80, 0);
+    color: #fff;
+    border: 3px outset;
+    border-color: #a9a9a9 #000 #000 #a9a9a9;
+}
+.dcb-b:hover { color: #ffff00; }
+.dcb-b:active, .dcb-b.pressed {
+    border-style: inset;
+    border-color: #000 #a9a9a9 #a9a9a9 #000;
+    background: rgb(0, 200, 0);
+    color: #fff;
+}
+/* DGScope: BackColorActive = Color.Green (0,255,0), border inverts for pressed look */
+.dcb-b.active {
+    border-style: inset;
+    border-color: #000 #a9a9a9 #a9a9a9 #000;
+    background: rgb(0, 255, 0);
+    color: #fff;
+}
+/* DGScope: ForeColorDisabled = Color.DarkGray (#a9a9a9), BackColorDisabled = (0,40,0) */
+.dcb-b.disabled {
+    background: rgb(0, 40, 0);
+    color: #a9a9a9;
+    cursor: default;
+    border-color: #a9a9a9 #000 #000 #a9a9a9;
+}
+/* DGScope: button text is all white, value is part of the button text */
+.dcb-b .val {
+    font-size: 12px;
+    color: #fff;
+    margin-top: 2px;
+}
+.dcb-b:hover .val { color: #ffff00; }
+
+/* Half-height buttons stacked in a cell — 40×80 */
+.dcb-stack {
+    display: flex;
+    flex-direction: column;
+}
+.dcb-stack .dcb-b {
+    height: 40px;
+    min-width: 80px;
+    font-size: 9px;
+}
+
+/* DCB separator */
+.dcb-div {
+    width: 3px;
+    background: #0a3a1a;
+    flex-shrink: 0;
+}
+
+/* WX buttons (narrow, side-by-side) */
+.dcb-wx-group {
+    display: flex;
+    flex-direction: row;
+}
+.dcb-wx-group .dcb-b {
+    min-width: 40px;
+    width: 40px;
+    font-size: 9px;
+    padding: 2px 1px;
+}
+
+/* ── BRITE menu (DGScope: DCBSubmenuButton replaces main DCB bar) ── */
+/* Same styling as #dcb — displayed via same hide/show toggle as SHIFT */
+#dcb-brite {
+    background: rgb(0, 35, 15);
+    border-bottom: 1px solid #0a3a1a;
+    display: none;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    flex-shrink: 0;
+    height: 80px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    z-index: 1000;
+    scrollbar-width: none;
+}
+#dcb-brite::-webkit-scrollbar { display: none; }
+
+/* ── SSA (System Status Area — DGScope: RenderStatus()) ── */
+#ssa {
+    position: absolute;
+    bottom: 50px;
+    left: 12px;
+    z-index: 500;
+    font-family: 'FixedDemiBold', 'Consolas', monospace;
+    font-size: var(--stars-font, 11px);
+    color: #00ff00;
+    white-space: pre;
+    line-height: 1.3;
+    pointer-events: none;
+}
+
+/* ── Preview area (DGScope: PreviewArea — rendered on scope) ── */
+#preview-area {
+    position: absolute;
+    bottom: 40px;
+    left: 12px;
+    z-index: 500;
+    font-family: 'FixedDemiBold', 'Consolas', monospace;
+    font-size: var(--stars-font, 11px);
+    color: #00ff00;
+    white-space: pre-line;
+    line-height: 1.3;
+    pointer-events: none;
+}
+#preview-area.error { color: #ff0000; }
+
+/* ── Status bar ────────────────────────────────────────────── */
+#status-bar {
+    background: rgb(0, 20, 8);
+    border-top: 1px solid #0a3a1a;
+    padding: 3px 12px;
+    font-size: 10px;
+    display: flex;
+    gap: 16px;
+    flex-shrink: 0;
+    z-index: 1000;
+    color: #00ff00;
+}
+#status-bar .conn { color: #555; }
+#status-bar .conn.ok { color: #00ff00; }
+#status-bar .info { color: #00aa00; }
+#status-bar .range-info { color: #8c8c8c; }
+
+/* ── Target symbol SVG ───────────────────────────────────── */
+.ac-group { position: relative; pointer-events: none; overflow: visible !important; }
+.ac-sym {
+    position: absolute;
+    pointer-events: auto;
+    cursor: pointer;
+    overflow: visible;
+}
+.ac-sym.ident { animation: ident-flash 0.3s infinite alternate; }
+@keyframes ident-flash { from { opacity: 1; } to { opacity: 0.3; } }
+
+/* ── Position indicator (DGScope: TransparentLabel, NewTextBitmap(outline=true)) ── */
+/* DGScope: 2px black outline Pen + colored fill, centered on aircraft position */
+/* Rendered ON TOP of target symbol (posIndicators drawn after target symbols) */
+.ac-pos {
+    position: absolute;
+    font-family: 'FixedDemiBold', 'Consolas', monospace;
+    font-size: var(--stars-font, 11px);
+    font-weight: bold;
+    pointer-events: none;
+    line-height: 1;
+    left: 0; top: 0;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    /* DGScope: Pen(Color.Black, 2.0f) outline + SolidBrush fill — 2px black outline */
+    text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000,
+                 0 -2px 0 #000, 0 2px 0 #000, -2px 0 0 #000, 2px 0 0 #000,
+                 -1px -2px 0 #000, 1px -2px 0 #000, -1px 2px 0 #000, 1px 2px 0 #000,
+                 -2px -1px 0 #000, 2px -1px 0 #000, -2px 1px 0 #000, 2px 1px 0 #000;
+}
+
+/* ── Data blocks ───────────────────────────────────────────── */
+.ac-db {
+    position: absolute;
+    font-family: 'FixedDemiBold', 'Consolas', monospace;
+    font-size: var(--stars-font, 11px);
+    line-height: 1.2;
+    white-space: pre;
+    pointer-events: auto;
+    cursor: pointer;
+}
+/* Data block colors set inline per-aircraft via DGScope color priority */
+.ac-db .db-line { color: inherit; }
+.ac-db.handoff { animation: ho-flash 0.75s infinite alternate; }
+@keyframes ho-flash { from { opacity: 1; } to { opacity: 0.3; } }
+
+/* ── Leader lines ──────────────────────────────────────────── */
+.ac-leader {
+    position: absolute;
+    pointer-events: none;
+    overflow: visible;
+}
+
+/* ── Mobile responsive ────────────────────────────────────── */
+@media (max-width: 768px) {
+    #dcb, #dcb-shift {
+        height: 60px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .dcb-b {
+        min-width: 56px;
+        height: 60px;
+        font-size: 8px;
+        padding: 1px 2px;
+    }
+    .dcb-stack .dcb-b {
+        height: 30px;
+        min-width: 56px;
+        font-size: 7px;
+    }
+    .dcb-wx-group .dcb-b {
+        min-width: 28px;
+        width: 28px;
+        font-size: 7px;
+    }
+    #status-bar { font-size: 9px; gap: 8px; padding: 2px 6px; }
+    #preview-area { bottom: 30px; left: 6px; }
+}
+
+@media (max-width: 480px) {
+    #dcb, #dcb-shift { height: 48px; }
+    .dcb-b { min-width: 44px; height: 48px; font-size: 7px; }
+    .dcb-stack .dcb-b { height: 24px; min-width: 44px; font-size: 6px; }
+}
+</style>
+</head>
+<body>
+<div id="scope">
+
+<!-- ── DCB Main Menu ──────────────────────────────────────── -->
+<div id="dcb">
+    <!-- RANGE -->
+    <div class="dcb-b" id="dcbRange" title="Mousewheel to adjust range">RANGE<div class="val" id="dcbRangeVal">6</div></div>
+
+    <!-- PLACE CNTR / OFF CNTR (DGScope: "PLACE\r\nCNTR", "OFF\r\nCNTR") -->
+    <div class="dcb-stack">
+        <div class="dcb-b disabled">PLACE<br>CNTR</div>
+        <div class="dcb-b disabled">OFF<br>CNTR</div>
+    </div>
+
+    <div class="dcb-div"></div>
+
+    <!-- RR (Range Ring spacing) -->
+    <div class="dcb-b" id="dcbRR" title="Mousewheel to adjust spacing">RR<div class="val" id="dcbRRVal">5</div></div>
+
+    <!-- PLACE RR / RR CNTR (DGScope: "PLACE\r\nRR", "RR\r\nCNTR") -->
+    <div class="dcb-stack">
+        <div class="dcb-b disabled" id="dcbPlaceRR">PLACE<br>RR</div>
+        <div class="dcb-b" id="dcbRRCntr">RR<br>CNTR</div>
+    </div>
+
+    <div class="dcb-div"></div>
+
+    <!-- MAPS -->
+    <div class="dcb-b" id="dcbMaps">MAPS</div>
+
+    <!-- MAP 1-6 (stacked pairs, DGScope: "MAP\r\n" + (i+1)) -->
+    <div class="dcb-stack">
+        <div class="dcb-b dcb-map" data-map="0">MAP<br>1</div>
+        <div class="dcb-b dcb-map" data-map="1">MAP<br>2</div>
+    </div>
+    <div class="dcb-stack">
+        <div class="dcb-b dcb-map" data-map="2">MAP<br>3</div>
+        <div class="dcb-b dcb-map" data-map="3">MAP<br>4</div>
+    </div>
+    <div class="dcb-stack">
+        <div class="dcb-b dcb-map" data-map="4">MAP<br>5</div>
+        <div class="dcb-b dcb-map" data-map="5">MAP<br>6</div>
+    </div>
+
+    <div class="dcb-div"></div>
+
+    <!-- WX 1-6 (DGScope: Width=40, Height=80, Text="WX"+(i+1)) -->
+    <div class="dcb-wx-group">
+        <div class="dcb-b">WX1</div>
+        <div class="dcb-b">WX2</div>
+        <div class="dcb-b">WX3</div>
+        <div class="dcb-b">WX4</div>
+        <div class="dcb-b">WX5</div>
+        <div class="dcb-b">WX6</div>
+    </div>
+
+    <div class="dcb-div"></div>
+
+    <!-- BRITE -->
+    <div class="dcb-b" id="dcbBrite">BRITE</div>
+
+    <div class="dcb-div"></div>
+
+    <!-- LDR DIR / LDR LEN (DGScope: LDR DIR Disabled=true, shows UnownedLeaderDirection) -->
+    <div class="dcb-stack">
+        <div class="dcb-b disabled" id="dcbLdrDir">LDR DIR<span class="val" id="dcbLdrDirVal">N</span></div>
+        <div class="dcb-b" id="dcbLdrLen">LDR LEN<span class="val" id="dcbLdrLenVal">1</span></div>
+    </div>
+
+    <!-- SHIFT → toggle to shift menu -->
+    <div class="dcb-b" id="dcbShift">SHIFT</div>
+</div>
+
+<!-- ── DCB Shift Menu (hidden by default) ─────────────────── -->
+<div id="dcb-shift" style="display:none">
+    <div class="dcb-b disabled">VOL<br>N/A</div>
+    <div class="dcb-stack">
+        <div class="dcb-b" id="dcbHistNum">HISTORY<span class="val" id="dcbHistVal">10</span></div>
+        <div class="dcb-b" id="dcbHistRate">H_RATE<span class="val" id="dcbHistRateVal">4.5</span></div>
+    </div>
+    <div class="dcb-b disabled">CURSOR<br>HOME</div>
+    <div class="dcb-b disabled">CSR SPD<br>N/A</div>
+    <div class="dcb-div"></div>
+    <div class="dcb-b disabled">MAP<br>UNCOR</div>
+    <div class="dcb-b disabled">UNCOR</div>
+    <div class="dcb-b disabled">BEACON<br>MODE-2</div>
+    <div class="dcb-div"></div>
+    <div class="dcb-b disabled">RTQC</div>
+    <div class="dcb-b disabled">MCP</div>
+    <div class="dcb-div"></div>
+    <div class="dcb-stack">
+        <div class="dcb-b dcb-pos" data-pos="top" id="dcbDcbTop">DCB<br>TOP</div>
+        <div class="dcb-b dcb-pos" data-pos="left" id="dcbDcbLeft">DCB<br>LEFT</div>
+    </div>
+    <div class="dcb-stack">
+        <div class="dcb-b dcb-pos" data-pos="right" id="dcbDcbRight">DCB<br>RIGHT</div>
+        <div class="dcb-b dcb-pos" data-pos="bottom" id="dcbDcbBottom">DCB<br>BOTTOM</div>
+    </div>
+    <div class="dcb-div"></div>
+    <div class="dcb-b" id="dcbPtlLen">PTL LNTH<div class="val" id="dcbPtlVal">1</div></div>
+    <div class="dcb-stack">
+        <div class="dcb-b" id="dcbPtlOwn">PTL OWN</div>
+        <div class="dcb-b" id="dcbPtlAll">PTL ALL</div>
+    </div>
+    <div class="dcb-div"></div>
+    <div class="dcb-b" id="dcbShift2">SHIFT</div>
+</div>
+
+<!-- ── BRITE submenu (DGScope: DCBAdjustmentButtons, 80×40 stacked pairs) ── -->
+<!-- Click button to select, then mousewheel to adjust value ±5 -->
+<div id="dcb-brite">
+    <div class="dcb-stack"><div class="dcb-b brite-btn" data-brite="dcb" data-min="25" data-max="100">DCB 100</div>
+                           <div class="dcb-b brite-btn" data-brite="bkc" data-min="25" data-max="100">BKC 100</div></div>
+    <div class="dcb-stack"><div class="dcb-b brite-btn" data-brite="mpa" data-min="5" data-max="100">MPA 100</div>
+                           <div class="dcb-b brite-btn" data-brite="mpb" data-min="5" data-max="100">MPB 100</div></div>
+    <!-- DGScope PrefSet.BrightnessSettings: min/max/orZero per getMinMaxValue() -->
+    <div class="dcb-stack"><div class="dcb-b brite-btn" data-brite="fdb" data-min="5" data-max="100" data-or-zero>FDB 100</div>
+                           <div class="dcb-b brite-btn" data-brite="lst" data-min="25" data-max="100">LST 100</div></div>
+    <div class="dcb-stack"><div class="dcb-b brite-btn" data-brite="pos" data-min="5" data-max="100" data-or-zero>POS 100</div>
+                           <div class="dcb-b brite-btn" data-brite="ldb" data-min="5" data-max="100" data-or-zero>LDB 100</div></div>
+    <div class="dcb-stack"><div class="dcb-b brite-btn" data-brite="oth" data-min="5" data-max="100" data-or-zero>OTH 100</div>
+                           <div class="dcb-b brite-btn" data-brite="tls" data-min="5" data-max="100" data-or-zero>TLS 100</div></div>
+    <div class="dcb-stack"><div class="dcb-b brite-btn" data-brite="rr" data-min="5" data-max="100" data-or-zero>RR 100</div>
+                           <div class="dcb-b brite-btn" data-brite="cmp" data-min="5" data-max="100" data-or-zero>CMP 100</div></div>
+    <div class="dcb-stack"><div class="dcb-b brite-btn" data-brite="bcn" data-min="5" data-max="100" data-or-zero>BCN 100</div>
+                           <div class="dcb-b brite-btn" data-brite="pri" data-min="5" data-max="100" data-or-zero>PRI 100</div></div>
+    <div class="dcb-stack"><div class="dcb-b brite-btn" data-brite="hst" data-min="5" data-max="100" data-or-zero>HST 100</div>
+                           <div class="dcb-b brite-btn" data-brite="wx" data-min="5" data-max="100">WX 100</div></div>
+    <div class="dcb-b brite-btn" data-brite="wxc" data-min="5" data-max="100" style="height:40px;font-size:9px">WXC 100</div>
+    <div class="dcb-b" id="dcbBriteDone">DONE</div>
+</div>
+
+<div id="map"></div>
+<div id="ssa"></div>
+<div id="preview-area"></div>
+
+<div id="status-bar">
+    <span class="conn" id="connStatus">CONNECTING</span>
+    <span class="info" id="trackCount">0 tracks</span>
+    <span class="range-info" id="rangeDisplay"></span>
+    <span class="info" id="msgRate" style="margin-left:auto"></span>
+</div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  STARS Scope — Browser Implementation
+// ══════════════════════════════════════════════════════════════════
+
+// ── Configuration ───────────────────────────────────────────────
+const params = new URLSearchParams(window.location.search);
+const profileName = params.get('profile') || '';
+const facilityName = params.get('facility') || '';
+
+let profile = null;
+let ws = null;
+
+// ── Aircraft state ──────────────────────────────────────────────
+const aircraft = new Map();
+const fpByGuid = new Map();
+const fpToTrack = new Map();
+
+// ── Display settings ────────────────────────────────────────────
+let historyCount = 10;  // DGScope PrefSet default = 10
+let historyRate = 4.5;  // DGScope: 0-4.5, step 0.5
+let ptlMinutes = 1;     // DGScope: 0-5, step 0.5
+let ptlOwn = false;     // DGScope: show PTL for owned aircraft
+let ptlAll = false;     // DGScope: show PTL for all FDB aircraft
+let fontSize = 11;
+let showRangeRings = false;
+let showCompassRose = true;  // DGScope: compass visible by default (controlled by CMP brightness)
+let facilityFilter = '';
+let currentRange = 6;     // DGScope PrefSet.Range default = 6
+let dcbPosition = 'top'; // DGScope: DCBLocation.Top default
+
+// DGScope altitude filters (SSA display: "{min} {max} U {min} {max} A")
+let minAltitude = 0;          // unassociated min (hundreds of feet)
+let maxAltitude = 600;        // unassociated max (FL600)
+let minAltitudeAssoc = 0;     // associated min
+let maxAltitudeAssoc = 600;   // associated max
+
+// ── STARS symbol constants ──────────────────────────────────────
+const HIST_RADIUS = 3;  // DGScope FUSED: history dots are small filled circles
+
+// DGScope HistoryColors[] — index 0 = newest/brightest, index 4 = oldest/darkest
+const HIST_COLORS = [
+    'rgb(30, 80, 200)',   // [0] newest — brightest blue
+    'rgb(70, 70, 170)',   // [1]
+    'rgb(50, 50, 130)',   // [2]
+    'rgb(40, 40, 110)',   // [3]
+    'rgb(30, 30, 90)',    // [4] oldest — darkest blue
+];
+
+// ── Timeshare / clock phase ──────────────────────────────────────
+// DGScope ClockPhase: sequence ONE_TWO_ONE_THREE
+// Phase 0 (DataBlock): alt+speed, Phase 1 (DataBlock2): scratch+reqalt, Phase 2 (DataBlock3): scratch2+type
+let clockPhase = 0;
+let clockPhaseCount = 0;
+const CLOCK_INTERVALS = [2000, 1500, 2000, 1500]; // ms for each step
+function advanceClockPhase() {
+    switch (clockPhaseCount) {
+        case 0: clockPhase = 1; clockPhaseCount = 1; break;
+        case 1: clockPhase = 0; clockPhaseCount = 2; break;
+        case 2: clockPhase = 2; clockPhaseCount = 3; break;
+        case 3: clockPhase = 0; clockPhaseCount = 0; break;
+    }
+    hashCache.clear(); // force icon rebuild on phase change
+    scheduleRender();
+    setTimeout(advanceClockPhase, CLOCK_INTERVALS[clockPhaseCount]);
+}
+setTimeout(advanceClockPhase, CLOCK_INTERVALS[0]);
+
+// ── Render state ────────────────────────────────────────────────
+const markers = new Map();
+const hashCache = new Map();
+let mapLayers = [];
+let lastRenderTime = 0;
+const RENDER_INTERVAL = 1000;
+let msgCount = 0;
+let lastMsgTime = performance.now();
+let msgRateVal = 0;
+
+// ── Leaflet setup ───────────────────────────────────────────────
+const map = L.map('map', {
+    center: [39.0, -98.0],
+    zoom: 7,
+    dragging: true,
+    doubleClickZoom: false,
+    zoomControl: false,
+    keyboard: false,
+    zoomSnap: 0.1,
+    wheelPxPerZoomLevel: 200,
+    attributionControl: false,
+});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+    subdomains: 'abcd', maxZoom: 19, opacity: 0.12
+}).addTo(map);
+
+map.createPane('nexrad');
+map.getPane('nexrad').style.zIndex = 250;
+map.getPane('nexrad').style.pointerEvents = 'none';
+map.createPane('videoMaps');
+map.getPane('videoMaps').style.zIndex = 300;
+map.createPane('targets');
+map.getPane('targets').style.zIndex = 450;
+
+// Canvas overlay
+const overlayCanvas = document.createElement('canvas');
+overlayCanvas.style.position = 'absolute';
+overlayCanvas.style.pointerEvents = 'none';
+overlayCanvas.style.zIndex = '400';
+map.getPane('overlayPane').appendChild(overlayCanvas);
+
+// ── Character sizing (measured from actual font) ────────────────
+let CHAR_W, LINE_H;
+const _measureCanvas = document.createElement('canvas').getContext('2d');
+function updateFontMetrics() {
+    _measureCanvas.font = `${fontSize}px FixedDemiBold, Consolas, monospace`;
+    CHAR_W = _measureCanvas.measureText('M').width;
+    LINE_H = fontSize * 1.25;
+    document.documentElement.style.setProperty('--stars-font', fontSize + 'px');
+}
+updateFontMetrics();
+
+// ── Profile loading ─────────────────────────────────────────────
+async function loadProfile() {
+    if (!profileName) return;
+    try {
+        const resp = await fetch(`/stars-profiles/${encodeURIComponent(profileName)}.json`);
+        if (!resp.ok) return;
+        profile = await resp.json();
+        console.log('[STARS] Profile loaded:', profile.facility);
+
+        currentRange = profile.range || 20;
+        historyCount = profile.historyCount ?? historyCount;
+        ptlMinutes = profile.ptlLength ?? ptlMinutes;
+        fontSize = profile.fontSize ?? fontSize;
+        updateFontMetrics();
+        updateDcbValues();
+
+        if (profile.center) {
+            map.setView(profile.center, rangeToZoom(currentRange));
+        }
+
+        // Load ALL video maps & set map button labels (DGScope: MAP 1-6 toggle individual layers)
+        // mapLayers[i] aligns with button index i
+        if (profile.videoMaps) {
+            const mapBtns = document.querySelectorAll('.dcb-map');
+            for (let i = 0; i < profile.videoMaps.length && i < mapBtns.length; i++) {
+                const vm = profile.videoMaps[i];
+                mapBtns[i].innerHTML = vm.name || `MAP<br>${i+1}`;
+                if (vm.visible) mapBtns[i].classList.add('active');
+                try {
+                    const r = await fetch(`/stars-maps/${encodeURIComponent(vm.file)}`);
+                    if (!r.ok) { mapLayers[i] = null; continue; }
+                    const geojson = await r.json();
+                    const layer = L.geoJSON(geojson, {
+                        pane: 'videoMaps',
+                        style: { color: '#8c8c8c', weight: 1, opacity: 0.7, fill: false }
+                    });
+                    mapLayers[i] = { layer, meta: vm };
+                    if (vm.visible) layer.addTo(map);
+                } catch (e) {
+                    console.warn('[STARS] Map load error:', vm.file, e);
+                    mapLayers[i] = null;
+                }
+            }
+        }
+
+        if (profile.thisPosition) facilityFilter = profile.thisPosition.toUpperCase();
+    } catch (e) {
+        console.warn('[STARS] Profile load error:', e);
+    }
+}
+
+function rangeToZoom(rangeNm) {
+    return Math.log2(120 / rangeNm) + 7;
+}
+
+function updateDcbValues() {
+    document.getElementById('dcbRangeVal').textContent = currentRange;
+    document.getElementById('dcbHistVal').textContent = historyCount;
+    document.getElementById('dcbHistRateVal').textContent = historyRate.toFixed(1);
+    document.getElementById('dcbPtlVal').textContent = ptlMinutes.toFixed(1);
+    document.getElementById('dcbRRVal').textContent = profile?.rangeRingSpacing || 5;
+    document.getElementById('dcbLdrLenVal').textContent = leaderLength;
+}
+
+// ── DCB Interactions ────────────────────────────────────────────
+// SHIFT toggle
+document.getElementById('dcbShift').addEventListener('click', () => {
+    document.getElementById('dcb').style.display = 'none';
+    document.getElementById('dcb-shift').style.display = 'flex';
+});
+document.getElementById('dcbShift2').addEventListener('click', () => {
+    document.getElementById('dcb-shift').style.display = 'none';
+    document.getElementById('dcb').style.display = 'flex';
+});
+
+// BRITE toggle (DGScope: DCBSubmenuButton replaces entire DCB bar, same as SHIFT)
+document.getElementById('dcbBrite').addEventListener('click', () => {
+    document.getElementById('dcb').style.display = 'none';
+    document.getElementById('dcb-brite').style.display = 'flex';
+});
+document.getElementById('dcbBriteDone').addEventListener('click', () => {
+    document.getElementById('dcb-brite').style.display = 'none';
+    activeBriteKey = null;
+    document.querySelectorAll('.brite-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('dcb').style.display = 'flex';
+});
+
+// ── BRITE system (DGScope: DCBAdjustmentButton — click to select, mousewheel to adjust) ──
+// Brightness values stored in briteValues map, buttons show "LABEL VALUE"
+const briteValues = {
+    dcb: 100, bkc: 100, mpa: 100, mpb: 100, fdb: 100, lst: 100,
+    pos: 100, ldb: 100, oth: 100, tls: 100, rr: 100, cmp: 100,
+    bcn: 100, pri: 100, hst: 100, wx: 100, wxc: 100
+};
+let activeBriteKey = null; // which BRITE button is currently selected for mousewheel adjustment
+
+function briteNum(key) { return briteValues[key] ?? 100; }
+
+const briteTargets = {
+    dcb: () => {
+        const v = briteNum('dcb') / 100;
+        document.getElementById('dcb').style.opacity = v;
+        document.getElementById('dcb-shift').style.opacity = v;
+    },
+    bkc: () => { document.querySelector('.leaflet-tile-pane').style.opacity = briteNum('bkc') / 100 * 0.12; },
+    mpa: () => { mapLayers.forEach((ml, i) => { if (ml && ml.meta.category === 'A') ml.layer.setStyle({ opacity: briteNum('mpa') / 100 }); }); },
+    mpb: () => { mapLayers.forEach((ml, i) => { if (ml && ml.meta.category === 'B') ml.layer.setStyle({ opacity: briteNum('mpb') / 100 }); }); },
+    fdb: () => { hashCache.clear(); scheduleRender(); },
+    lst: () => { document.getElementById('status-bar').style.opacity = briteNum('lst') / 100; },
+    pos: () => { hashCache.clear(); scheduleRender(); },
+    ldb: () => { hashCache.clear(); scheduleRender(); },
+    oth: () => { hashCache.clear(); scheduleRender(); },
+    tls: () => scheduleRender(),
+    rr:  () => scheduleRender(),
+    cmp: () => scheduleRender(),
+    bcn: () => { hashCache.clear(); scheduleRender(); },
+    pri: () => { hashCache.clear(); scheduleRender(); },
+    hst: () => scheduleRender(),
+    wx:  () => { if (nexradLayer) { nexradLayer.setOpacity(briteNum('wx') / 100); } },
+    wxc: () => { updateWx(); },
+};
+
+// Update BRITE button text to show current value
+function updateBriteButtonText(key) {
+    const btn = document.querySelector(`.brite-btn[data-brite="${key}"]`);
+    if (btn) btn.textContent = `${key.toUpperCase()} ${briteValues[key]}`;
+}
+
+// BRITE button click: toggle active state (DGScope: DCBAdjustmentButton.OnClick)
+document.querySelectorAll('.brite-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const key = btn.dataset.brite;
+        if (activeBriteKey === key) {
+            // Deactivate
+            activeBriteKey = null;
+            btn.classList.remove('active');
+        } else {
+            // Deactivate previous
+            document.querySelectorAll('.brite-btn').forEach(b => b.classList.remove('active'));
+            activeBriteKey = key;
+            btn.classList.add('active');
+        }
+    });
+});
+
+// BRITE mousewheel on active button (DGScope: DCBAdjustmentButton.MouseWheel)
+// DGScope PrefSet.BrightnessSettings.getMinMaxValue(value, min, max, orZero):
+//   orZero=true: value can be 0 or [min, max]; values 1..(min-1) snap to 0 or min
+//   orZero=false: value clamped to [min, max]
+document.getElementById('dcb-brite').addEventListener('wheel', (e) => {
+    if (!activeBriteKey) return;
+    e.preventDefault();
+    const btn = document.querySelector(`.brite-btn[data-brite="${activeBriteKey}"]`);
+    if (!btn) return;
+    const min = parseInt(btn.dataset.min) || 0;
+    const max = parseInt(btn.dataset.max) || 100;
+    const orZero = btn.hasAttribute('data-or-zero');
+    const step = 5;
+    const d = e.deltaY < 0 ? step : -step;
+    let val = briteValues[activeBriteKey] + d;
+    if (orZero) {
+        // DGScope orZero: allow 0 or [min, max]
+        if (val < min) val = 0;
+        else if (val > max) val = max;
+    } else {
+        val = Math.max(min, Math.min(max, val));
+    }
+    briteValues[activeBriteKey] = val;
+    updateBriteButtonText(activeBriteKey);
+    if (briteTargets[activeBriteKey]) briteTargets[activeBriteKey]();
+}, { passive: false });
+
+// RANGE mousewheel (DGScope: step=1, min=6, max=512)
+document.getElementById('dcbRange').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    currentRange += e.deltaY < 0 ? -1 : 1;
+    currentRange = Math.max(6, Math.min(512, currentRange));
+    document.getElementById('dcbRangeVal').textContent = currentRange;
+    map.setZoom(rangeToZoom(currentRange));
+}, { passive: false });
+
+// HIST # mousewheel
+document.getElementById('dcbHistNum').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    historyCount += e.deltaY < 0 ? 1 : -1;
+    historyCount = Math.max(0, Math.min(10, historyCount));
+    document.getElementById('dcbHistVal').textContent = historyCount;
+    scheduleRender();
+}, { passive: false });
+
+// PTL LNTH mousewheel (DGScope: 0-5, step 0.5)
+document.getElementById('dcbPtlLen').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    ptlMinutes += e.deltaY < 0 ? 0.5 : -0.5;
+    ptlMinutes = Math.max(0, Math.min(5, ptlMinutes));
+    document.getElementById('dcbPtlVal').textContent = ptlMinutes.toFixed(1);
+    scheduleRender();
+}, { passive: false });
+
+// H_RATE mousewheel (DGScope: 0-4.5, step 0.5)
+document.getElementById('dcbHistRate').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    historyRate += e.deltaY < 0 ? 0.5 : -0.5;
+    historyRate = Math.max(0, Math.min(4.5, historyRate));
+    document.getElementById('dcbHistRateVal').textContent = historyRate.toFixed(1);
+    scheduleRender();
+}, { passive: false });
+
+// PTL OWN/ALL toggles (DGScope: mutually exclusive)
+document.getElementById('dcbPtlOwn').addEventListener('click', () => {
+    ptlOwn = !ptlOwn;
+    if (ptlOwn) ptlAll = false;
+    document.getElementById('dcbPtlOwn').classList.toggle('active', ptlOwn);
+    document.getElementById('dcbPtlAll').classList.toggle('active', ptlAll);
+    scheduleRender();
+});
+document.getElementById('dcbPtlAll').addEventListener('click', () => {
+    ptlAll = !ptlAll;
+    if (ptlAll) ptlOwn = false;
+    document.getElementById('dcbPtlAll').classList.toggle('active', ptlAll);
+    document.getElementById('dcbPtlOwn').classList.toggle('active', ptlOwn);
+    scheduleRender();
+});
+
+// DCB TOP/LEFT/RIGHT/BOT position buttons (DGScope: fully functional)
+document.querySelectorAll('.dcb-pos').forEach(btn => {
+    btn.addEventListener('click', () => {
+        dcbPosition = btn.dataset.pos;
+        applyDcbPosition();
+    });
+});
+
+function applyDcbPosition() {
+    const dcbMain = document.getElementById('dcb');
+    const dcbShift = document.getElementById('dcb-shift');
+    const dcbBrite = document.getElementById('dcb-brite');
+    const scope = document.getElementById('scope');
+    const allBars = [dcbMain, dcbShift, dcbBrite];
+    // Reset all bars
+    scope.style.flexDirection = '';
+    for (const bar of allBars) {
+        bar.style.flexDirection = '';
+        bar.style.borderBottom = ''; bar.style.borderTop = '';
+        bar.style.borderLeft = ''; bar.style.borderRight = '';
+        bar.style.height = ''; bar.style.width = '';
+        bar.style.overflowX = ''; bar.style.overflowY = '';
+    }
+
+    const border = '1px solid #0a3a1a';
+    if (dcbPosition === 'top') {
+        scope.style.flexDirection = 'column';
+        for (const bar of allBars) { bar.style.height = '80px'; bar.style.borderBottom = border; }
+    } else if (dcbPosition === 'bottom') {
+        scope.style.flexDirection = 'column-reverse';
+        for (const bar of allBars) { bar.style.height = '80px'; bar.style.borderTop = border; }
+    } else if (dcbPosition === 'left') {
+        scope.style.flexDirection = 'row';
+        for (const bar of allBars) {
+            bar.style.flexDirection = 'column'; bar.style.width = '80px'; bar.style.height = '100%';
+            bar.style.overflowY = 'auto'; bar.style.overflowX = 'hidden'; bar.style.borderRight = border;
+        }
+    } else if (dcbPosition === 'right') {
+        scope.style.flexDirection = 'row-reverse';
+        for (const bar of allBars) {
+            bar.style.flexDirection = 'column'; bar.style.width = '80px'; bar.style.height = '100%';
+            bar.style.overflowY = 'auto'; bar.style.overflowX = 'hidden'; bar.style.borderLeft = border;
+        }
+    }
+    // Update active state on position buttons
+    document.querySelectorAll('.dcb-pos').forEach(b => {
+        b.classList.toggle('active', b.dataset.pos === dcbPosition);
+    });
+    map.invalidateSize();
+}
+
+// RR (Range Ring spacing) mousewheel + toggle
+// DGScope: cycles through 2 → 5 → 10 → 20 (max), default 5
+const RR_STEPS = [2, 5, 10, 20];
+document.getElementById('dcbRR').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    if (!profile) return;
+    let sp = profile.rangeRingSpacing || 5;
+    const idx = RR_STEPS.indexOf(sp);
+    const d = e.deltaY < 0 ? -1 : 1;
+    if (idx === -1) { sp = 2; } // default reset
+    else {
+        const ni = Math.max(0, Math.min(RR_STEPS.length - 1, idx + d));
+        sp = RR_STEPS[ni];
+    }
+    profile.rangeRingSpacing = sp;
+    document.getElementById('dcbRRVal').textContent = sp;
+    scheduleRender();
+}, { passive: false });
+document.getElementById('dcbRR').addEventListener('click', () => {
+    showRangeRings = !showRangeRings;
+    document.getElementById('dcbRR').classList.toggle('active', showRangeRings);
+    scheduleRender();
+});
+// RR CNTR: center range rings on current map center (DGScope: RangeRingsCentered + RangeRingLocation)
+document.getElementById('dcbRRCntr').addEventListener('click', () => {
+    if (profile) {
+        profile.center = [map.getCenter().lat, map.getCenter().lng];
+    }
+    showRangeRings = true;
+    document.getElementById('dcbRR').classList.add('active');
+    scheduleRender();
+});
+// Compass rose: visible when CMP brightness > 0 (default: on)
+
+// LDR LEN mousewheel (DGScope: 0-8, default 1)
+document.getElementById('dcbLdrLen').addEventListener('wheel', (e) => {
+    e.preventDefault();
+    leaderLength += e.deltaY < 0 ? 1 : -1;
+    leaderLength = Math.max(0, Math.min(8, leaderLength));
+    document.getElementById('dcbLdrLenVal').textContent = leaderLength;
+    hashCache.clear();
+    scheduleRender();
+}, { passive: false });
+
+// MAP button toggles
+document.querySelectorAll('.dcb-map').forEach(btn => {
+    btn.addEventListener('click', () => {
+        btn.classList.toggle('active');
+        // Toggle visibility for this map index
+        const idx = parseInt(btn.dataset.map);
+        const mapData = mapLayers[idx];
+        if (mapData) {
+            if (btn.classList.contains('active')) mapData.layer.addTo(map);
+            else mapData.layer.remove();
+        }
+    });
+});
+
+// ── NEXRAD Weather Radar ──────────────────────────────────────────
+// DGScope: NexradDisplay.cs — decodes Level III NEXRAD binary from NWS FTP
+// Browser: uses NOAA MRMS WMS composite, remapped to DGScope's 6-level color table
+// DGScope color table (WXColorTable default):
+//   WX1 (≥20 dBZ): dark cyan #264D4D, dense stipple
+//   WX2 (≥30 dBZ): dark cyan #264D4D, light stipple
+//   WX3 (≥40 dBZ): dark cyan #264D4D, dense stipple (brighter)
+//   WX4 (≥45 dBZ): olive/brown #646433, solid
+//   WX5 (≥50 dBZ): olive/brown #646433, light stipple
+//   WX6 (≥55 dBZ): olive/brown #646433, dense stipple
+let nexradLayer = null;
+const wxLevelsEnabled = [false, false, false, false, false, false]; // WX1-WX6 toggles
+let wxBrightness = 100;
+const MRMS_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows';
+
+// Classify NWS radar pixel to DGScope WX level (0=none, 1-6 = reflectivity tiers)
+// NOAA MRMS palette: cyan(5-15 dBZ) → green(20-30) → yellow(35-40) → orange(45) → red(50+) → magenta(65+)
+function classifyNwsPixel(r, g, b, a) {
+    if (a < 128) return 0;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    if (max < 30) return 0;
+    if (max - min < 15) return 0;
+    // Blue/cyan dominant: WX1 (light precip, ≥20 dBZ)
+    if (b > r && b >= g) return 1;
+    // Green dominant: WX2 (moderate, ≥30 dBZ)
+    if (g > r && g > b) return 2;
+    // Yellow-green (g >= r, b low): WX3 (≥40 dBZ)
+    if (g >= r && b < g * 0.5) return 3;
+    // Red-magenta (r >> g): WX6 (≥55 dBZ extreme)
+    if (r > g * 2) return 6;
+    // Dark red (r > g * 1.5): WX5 (≥50 dBZ)
+    if (r > g * 1.5) return 5;
+    // Orange/yellow (r and g both high): WX4 (≥45 dBZ)
+    return 4;
+}
+
+const StarsWxLayer = L.GridLayer.extend({
+    createTile: function(coords, done) {
+        const tile = document.createElement('canvas');
+        tile.width = tile.height = 256;
+        const ctx = tile.getContext('2d');
+        const enabled = this.options.wxEnabled;
+        const bounds = this._tileCoordsToBounds(coords);
+        const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+        const bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
+        const url = `${MRMS_WMS_URL}?service=WMS&version=1.1.1&request=GetMap` +
+            `&layers=conus_base_reflectivity_mosaic&srs=EPSG:4326` +
+            `&bbox=${bbox}&width=256&height=256&format=image/png&transparent=true`;
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            ctx.drawImage(img, 0, 0, 256, 256);
+            const imageData = ctx.getImageData(0, 0, 256, 256);
+            const d = imageData.data;
+            for (let i = 0; i < d.length; i += 4) {
+                const lvl = classifyNwsPixel(d[i], d[i + 1], d[i + 2], d[i + 3]);
+                if (lvl === 0 || !enabled[lvl - 1]) { d[i + 3] = 0; continue; }
+                const px = i / 4;
+                const tx = px % 256, ty = Math.floor(px / 256);
+                // DGScope WXColorTable: levels 1-3 = dark cyan, 4-6 = olive/brown
+                if (lvl <= 3) {
+                    // Dark cyan #264D4D with stipple patterns
+                    if (lvl === 1) {
+                        // WX1: dense stipple — checkered pattern 2px
+                        if ((Math.floor(tx / 2) + Math.floor(ty / 2)) % 2 === 0) {
+                            d[i] = 38; d[i+1] = 77; d[i+2] = 77;
+                        } else { d[i+3] = 0; continue; }
+                    } else if (lvl === 2) {
+                        // WX2: light stipple — sparse pattern 4px
+                        if ((Math.floor(tx / 4) + Math.floor(ty / 4)) % 2 === 0) {
+                            d[i] = 38; d[i+1] = 77; d[i+2] = 77;
+                        } else { d[i+3] = 0; continue; }
+                    } else {
+                        // WX3: solid dark cyan (brighter)
+                        d[i] = 50; d[i+1] = 100; d[i+2] = 100;
+                    }
+                } else {
+                    // Olive/brown #646433 with stipple patterns
+                    if (lvl === 4) {
+                        // WX4: solid olive
+                        d[i] = 100; d[i+1] = 100; d[i+2] = 51;
+                    } else if (lvl === 5) {
+                        // WX5: olive + light stipple (white overlay)
+                        if ((Math.floor(tx / 4) + Math.floor(ty / 4)) % 2 === 0) {
+                            d[i] = 140; d[i+1] = 140; d[i+2] = 70;
+                        } else {
+                            d[i] = 100; d[i+1] = 100; d[i+2] = 51;
+                        }
+                    } else {
+                        // WX6: olive + dense stipple (white overlay)
+                        if ((Math.floor(tx / 2) + Math.floor(ty / 2)) % 2 === 0) {
+                            d[i] = 180; d[i+1] = 180; d[i+2] = 90;
+                        } else {
+                            d[i] = 100; d[i+1] = 100; d[i+2] = 51;
+                        }
+                    }
+                }
+                d[i + 3] = 255;
+            }
+            ctx.putImageData(imageData, 0, 0);
+            done(null, tile);
+        };
+        img.onerror = () => done(null, tile);
+        img.src = url;
+        return tile;
+    }
+});
+
+function updateWx() {
+    if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = null; }
+    if (!wxLevelsEnabled.some(Boolean)) return;
+    nexradLayer = new StarsWxLayer({
+        pane: 'nexrad', opacity: wxBrightness / 100, maxZoom: 16, tileSize: 256,
+        wxEnabled: [...wxLevelsEnabled]
+    });
+    nexradLayer.addTo(map);
+}
+
+// Auto-refresh every 5 minutes (NWS updates every ~4 min)
+setInterval(() => { if (nexradLayer) updateWx(); }, 5 * 60 * 1000);
+
+// WX 1-6 button handlers — DGScope: each button toggles its level independently
+document.querySelectorAll('.dcb-wx-group .dcb-b').forEach((btn, idx) => {
+    btn.addEventListener('click', () => {
+        wxLevelsEnabled[idx] = !wxLevelsEnabled[idx];
+        btn.classList.toggle('active', wxLevelsEnabled[idx]);
+        updateWx();
+    });
+});
+
+// ── WebSocket connection ────────────────────────────────────────
+function connect() {
+    const fac = facilityName || 'ALL';
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/dstars/${encodeURIComponent(fac)}/updates`);
+
+    ws.onopen = () => {
+        document.getElementById('connStatus').textContent = 'LIVE';
+        document.getElementById('connStatus').className = 'conn ok';
+    };
+    ws.onmessage = (e) => {
+        msgCount++;
+        const msg = JSON.parse(e.data);
+        switch (msg.UpdateType) {
+            case 0: processTrackUpdate(msg); break;
+            case 1: processFlightPlanUpdate(msg); break;
+            case 2: processDeletion(msg); break;
+        }
+        scheduleRender();
+    };
+    ws.onclose = () => {
+        document.getElementById('connStatus').textContent = 'DISCONNECTED';
+        document.getElementById('connStatus').className = 'conn';
+        setTimeout(connect, 3000);
+    };
+    ws.onerror = () => ws.close();
+}
+
+// ── Data processing ─────────────────────────────────────────────
+function processTrackUpdate(msg) {
+    const guid = msg.Guid;
+    let ac = aircraft.get(guid);
+    if (!ac) { ac = { guid, history: [], _lastUpdate: 0 }; aircraft.set(guid, ac); }
+
+    // DGScope: H_RATE controls seconds between history marks (0-4.5, default 4.5)
+    if (ac.lat != null && ac.lon != null && msg.Location && historyRate > 0) {
+        const now = performance.now();
+        const rateMs = historyRate * 1000;
+        if (ac.history.length === 0 || now - (ac.history[ac.history.length - 1]?.t || 0) > rateMs) {
+            ac.history.push({ lat: ac.lat, lon: ac.lon, hdg: ac.groundTrack || 0, t: now });
+            if (ac.history.length > 20) ac.history.shift();
+        }
+    }
+
+    if (msg.Location) { ac.lat = msg.Location.Latitude; ac.lon = msg.Location.Longitude; }
+    if (msg.Altitude != null) { ac.altitude = msg.Altitude.Value; ac.altitudeType = msg.Altitude.AltitudeType; }
+    if (msg.GroundSpeed != null) ac.groundSpeed = msg.GroundSpeed;
+    if (msg.GroundTrack != null) ac.groundTrack = msg.GroundTrack;
+    if (msg.VerticalRate != null) ac.verticalRate = msg.VerticalRate;
+    if (msg.Squawk != null) ac.squawk = msg.Squawk;
+    if (msg.Callsign != null) ac.callsign = msg.Callsign;
+    if (msg.ModeSCode != null) ac.modeSCode = msg.ModeSCode;
+    if (msg.Ident != null) ac.ident = msg.Ident;
+    if (msg.IsOnGround != null) ac.isOnGround = msg.IsOnGround;
+    ac._lastUpdate = performance.now();
+}
+
+function processFlightPlanUpdate(msg) {
+    const fpGuid = msg.Guid;
+    let fp = fpByGuid.get(fpGuid);
+    if (!fp) { fp = { guid: fpGuid }; fpByGuid.set(fpGuid, fp); }
+
+    if (msg.Callsign != null) fp.callsign = msg.Callsign;
+    if (msg.AircraftType != null) fp.aircraftType = msg.AircraftType;
+    if (msg.WakeCategory != null) fp.wakeCategory = msg.WakeCategory;
+    if (msg.FlightRules != null) fp.flightRules = msg.FlightRules;
+    if (msg.Origin != null) fp.origin = msg.Origin;
+    if (msg.Destination != null) fp.destination = msg.Destination;
+    if (msg.Scratchpad1 != null) fp.scratchpad1 = msg.Scratchpad1;
+    if (msg.Scratchpad2 != null) fp.scratchpad2 = msg.Scratchpad2;
+    if (msg.Owner != null) fp.owner = msg.Owner;
+    if (msg.PendingHandoff != null) fp.pendingHandoff = msg.PendingHandoff;
+    if (msg.LDRDirection != null) fp.ldrDirection = msg.LDRDirection;
+    if (msg.RequestedAltitude != null) fp.requestedAltitude = msg.RequestedAltitude;
+    if (msg.Runway != null) fp.runway = msg.Runway;
+    if (msg.Category != null) fp.category = msg.Category;
+
+    if (msg.AssociatedTrackGuid) {
+        fp.trackGuid = msg.AssociatedTrackGuid;
+        fpToTrack.set(fpGuid, msg.AssociatedTrackGuid);
+        const ac = aircraft.get(msg.AssociatedTrackGuid);
+        if (ac) { ac.fpGuid = fpGuid; mergeFpIntoAc(ac, fp); }
+    }
+}
+
+function mergeFpIntoAc(ac, fp) {
+    if (fp.callsign) ac.callsign = fp.callsign;
+    if (fp.aircraftType) ac.aircraftType = fp.aircraftType;
+    if (fp.wakeCategory) ac.wakeCategory = fp.wakeCategory;
+    if (fp.flightRules) ac.flightRules = fp.flightRules;
+    if (fp.origin) ac.origin = fp.origin;
+    if (fp.destination) ac.destination = fp.destination;
+    if (fp.scratchpad1) ac.scratchpad1 = fp.scratchpad1;
+    if (fp.scratchpad2) ac.scratchpad2 = fp.scratchpad2;
+    if (fp.owner) ac.owner = fp.owner;
+    if (fp.pendingHandoff) ac.pendingHandoff = fp.pendingHandoff;
+    if (fp.ldrDirection) ac.ldrDirection = fp.ldrDirection;
+    if (fp.requestedAltitude != null) ac.requestedAltitude = fp.requestedAltitude;
+    if (fp.runway) ac.runway = fp.runway;
+    if (fp.category) ac.category = fp.category;
+    ac._hasFP = true;
+}
+
+function processDeletion(msg) {
+    const guid = msg.Guid;
+    if (aircraft.has(guid)) {
+        const m = markers.get(guid); if (m) { m.remove(); markers.delete(guid); }
+        hashCache.delete(guid); aircraft.delete(guid);
+    }
+    if (fpByGuid.has(guid)) {
+        const fp = fpByGuid.get(guid);
+        if (fp.trackGuid) {
+            const ac = aircraft.get(fp.trackGuid);
+            if (ac) { ac._hasFP = false; ac.owner = null; ac.pendingHandoff = null; ac.scratchpad1 = null; ac.scratchpad2 = null; }
+        }
+        fpToTrack.delete(guid); fpByGuid.delete(guid);
+    }
+}
+
+// ── Render loop ─────────────────────────────────────────────────
+let renderPending = false;
+function scheduleRender() { if (!renderPending) { renderPending = true; requestAnimationFrame(doRender); } }
+
+function doRender() {
+    renderPending = false;
+    const now = performance.now();
+    if (now - lastRenderTime < RENDER_INTERVAL) { requestAnimationFrame(doRender); return; }
+    lastRenderTime = now;
+
+    const elapsed = (now - lastMsgTime) / 1000;
+    if (elapsed >= 2) {
+        msgRateVal = msgCount / elapsed; msgCount = 0; lastMsgTime = now;
+        document.getElementById('msgRate').textContent = `${msgRateVal.toFixed(0)} msg/s`;
+    }
+
+    const bounds = map.getBounds();
+    let visibleCount = 0;
+    const activeGuids = new Set();
+
+    for (const [guid, ac] of aircraft) {
+        if (ac.lat == null || ac.lon == null) continue;
+        const age = (now - ac._lastUpdate) / 1000;
+        if (age > 60) continue;
+        if (!bounds.contains([ac.lat, ac.lon])) {
+            const m = markers.get(guid); if (m) { m.remove(); markers.delete(guid); hashCache.delete(guid); }
+            continue;
+        }
+        activeGuids.add(guid); visibleCount++;
+
+        const hash = acHash(ac);
+        const latlng = [ac.lat, ac.lon];
+        let m = markers.get(guid);
+        if (!m) {
+            m = L.marker(latlng, { icon: buildIcon(ac), pane: 'targets', interactive: false }).addTo(map);
+            markers.set(guid, m); hashCache.set(guid, hash);
+            const el = m.getElement(); if (el) el.style.pointerEvents = 'auto';
+        } else if (hash !== hashCache.get(guid)) {
+            m.setIcon(buildIcon(ac)); m.setLatLng(latlng); hashCache.set(guid, hash);
+        } else {
+            m.setLatLng(latlng);
+        }
+    }
+
+    for (const [guid, m] of markers) {
+        if (!activeGuids.has(guid)) { m.remove(); markers.delete(guid); hashCache.delete(guid); }
+    }
+
+    document.getElementById('trackCount').textContent = `${visibleCount} tracks`;
+    drawOverlay();
+}
+
+function acHash(ac) {
+    return `${ac.lat?.toFixed(4)}|${ac.lon?.toFixed(4)}|${ac.altitude}|${ac.groundSpeed}|` +
+           `${ac.groundTrack}|${ac.squawk}|${ac.callsign}|${ac.verticalRate}|` +
+           `${ac.owner}|${ac.pendingHandoff}|${ac.scratchpad1}|${ac.ident}|` +
+           `${ac._hasFP}|${ac.ldrDirection}|${ac._marked ? 1 : 0}|${fontSize}|${clockPhase}|${leaderLength}|` +
+           `${briteNum('fdb')}|${briteNum('oth')}|${briteNum('ldb')}|${briteNum('pos')}|${briteNum('bcn')}|${briteNum('pri')}`;
+}
+
+// ── Icon building ───────────────────────────────────────────────
+// DGScope LeaderLength default=1, range 0-8
+let leaderLength = 1;
+
+function buildIcon(ac) {
+    return L.divIcon({ className: 'ac-group', html: buildMarkerHtml(ac), iconSize: [0, 0], iconAnchor: [0, 0] });
+}
+
+function buildMarkerHtml(ac) {
+    const hasFP = ac._hasFP;
+    const hasSquawk = !!ac.squawk;
+    const isIdent = ac.ident;
+    // DGScope RadarWindow.cs line 904-907:
+    // Owned = PositionInd == ThisPositionIndicator || PendingHandoff == ThisPositionIndicator
+    const tpi = thisPositionIndicator.toUpperCase();
+    const isOwned = tpi && (
+        (ac.owner && ac.owner.toUpperCase() === tpi) ||
+        (ac.pendingHandoff && ac.pendingHandoff.toUpperCase() === tpi)
+    );
+    const isEmergency = ac.squawk === '7700' || ac.squawk === '7600' || ac.squawk === '7500';
+    // DGScope: Flashing = PendingHandoff == ThisPositionIndicator (handoff pending TO us)
+    const isHandoffToUs = tpi && ac.pendingHandoff && ac.pendingHandoff.toUpperCase() === tpi;
+    const isHandoff = isHandoffToUs;
+    let showFdb = hasFP || isOwned || isEmergency;
+    if (fdbOverrides.has(ac.guid)) showFdb = fdbOverrides.get(ac.guid);
+    // DGScope: ForceQuickLook forces FDB on unowned tracks
+    if (ac._forceQL) showFdb = true;
+    const primaryOnly = !hasSquawk && !hasFP;
+
+    // ── DGScope color priority (GenerateDataBlock lines 4847-4888) ──
+    // Emergency > Marked(Cyan) > ForceQuickLook(Yellow) > Owned(White) > default(Lime)
+    let dbColor;
+    let dbBrite = 100; // which brightness category applies
+    if (isEmergency)               { dbColor = '#ff0000'; }    // DataBlockEmergencyColor = Red
+    else if (ac._marked)           { dbColor = '#00ffff'; }    // SelectedColor = Cyan
+    else if (ac._forceQL)          { dbColor = '#ffff00'; }    // PointoutColor = Yellow
+    else if (isOwned)              { dbColor = '#ffffff'; }    // OwnedColor = White
+    else                           { dbColor = '#00ff00'; }    // DataBlockColor = Lime
+    // Apply per-ownership brightness (DGScope: FDB=owned FDB, OTH=non-owned FDB, LDB=limited)
+    if (showFdb) {
+        dbBrite = isOwned ? briteNum('fdb') : briteNum('oth');
+    } else {
+        dbBrite = briteNum('ldb');
+    }
+
+    // ── Target symbol (DGScope DrawTarget, RadarWindow.cs line 5406) ──
+    // Default RadarType is FUSED:
+    //   Beacon tracks: filled circle, primarycolor (Lime)
+    //   Primary-only: filled square, ReturnColor (30,120,255)
+    //   History: smaller filled circle
+    // FusedTracks.NormalSymbolDistanceDimension = 22 → radius ~11px
+    const symRadius = 6;  // scaled for screen
+    let symHtml;
+
+    // DGScope: BCN brightness for beacon targets, PRI brightness for primary-only
+    const bcnBrite = briteNum('bcn') / 100;
+    const priBrite = briteNum('pri') / 100;
+
+    // DGScope FUSED mode target symbols (RadarWindow.cs lines 5491-5534)
+    if (!primaryOnly) {
+        // Beacon target: filled circle, HistoryColors[0]=(30,80,200) adjusted by PRI brightness
+        const r = symRadius;
+        const d = r * 2 + 2;
+        symHtml = `<svg class="ac-sym${isIdent ? ' ident' : ''}" width="${d}" height="${d}" style="left:-${r+1}px;top:-${r+1}px" viewBox="-${r+1} -${r+1} ${d} ${d}" data-guid="${ac.guid}">
+            <circle cx="0" cy="0" r="${r}" fill="rgba(30,80,200,${priBrite})"/></svg>`;
+    } else {
+        // Primary-only target: filled square, ReturnColor=(30,120,255) adjusted by PRI brightness
+        const s = 8;
+        symHtml = `<svg class="ac-sym" width="${s*2}" height="${s*2}" style="left:-${s}px;top:-${s}px" viewBox="-${s} -${s} ${s*2} ${s*2}" data-guid="${ac.guid}">
+            <rect x="-4" y="-4" width="8" height="8" fill="rgba(30,120,255,${priBrite})"/></svg>`;
+    }
+
+    // ── Position indicator (DGScope: RadarWindow.cs lines 4994-5001) ──
+    // Text: PositionInd.Last() if set, else "*" for beacon, "◇" for primary-only
+    // Color: same as data block (DGScope line 4887: PositionIndicator.ForeColor = DataBlock.ForeColor)
+    // DGScope: PositionInd = Owner field from dSTARS data (sector/position string)
+    let posChar;
+    if (ac.owner && ac.owner.trim()) posChar = ac.owner.trim().slice(-1);
+    else if (primaryOnly) posChar = '\u25C7';
+    else posChar = '*';
+
+    // DGScope: POS brightness for owned PI, OTH/LDB brightness for non-owned
+    const posBrite = briteNum('pos') / 100;
+    const posOpacity = isOwned ? posBrite : (dbBrite / 100);
+    const posHtml = `<span class="ac-pos" style="color:${dbColor};opacity:${posOpacity}" data-guid="${ac.guid}">${posChar}</span>`;
+
+    // ── Data block ──
+    const dbLines = showFdb ? buildFdbLines(ac) : buildLdbLines(ac);
+    const numLines = dbLines.length;
+
+    let dbClass = showFdb ? 'ac-db fdb' : 'ac-db ldb';
+    if (isOwned) dbClass += ' owned';
+    if (isEmergency) dbClass += ' emergency';
+    if (isHandoff) dbClass += ' handoff';
+
+    const ldr = ac.ldrDirection || 3; // default NE (DGScope enum: NE=3)
+    const { lx, ly, dbLeft, dbTop, sx, sy } = getLeaderGeometry(ldr, numLines);
+
+    const dbHtml = dbLines.map(l => `<div class="db-line">${esc(l)}</div>`).join('');
+
+    // DGScope: leader line color = data block color, 1px, drawn with GL.Lines
+    const leaderSvg = leaderLength > 0 ? `<svg class="ac-leader" style="position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible">
+        <line x1="${sx}" y1="${sy}" x2="${lx}" y2="${ly}" stroke="${dbColor}" stroke-width="1" opacity="${dbBrite/100}"/></svg>` : '';
+
+    return symHtml + posHtml + leaderSvg +
+           `<div class="${dbClass}" style="left:${dbLeft}px;top:${dbTop}px;color:${dbColor};opacity:${dbBrite/100}" data-guid="${ac.guid}">${dbHtml}</div>`;
+}
+
+// DGScope LeaderDirection enum: NW=1, N=2, NE=3, W=4, E=6, SW=7, S=8, SE=9
+// DGScope OffsetDatablockLocation (RadarWindow.cs lines 5125-5281)
+function getLeaderGeometry(ldr, numLines) {
+    // DGScope: offset = (1 + LeaderLength) * PositionIndicator.Height
+    const piH = fontSize;  // position indicator height ≈ font size
+    const piW = fontSize * 0.7;  // * character is narrower than em
+    const offset = (1 + leaderLength) * piH;
+    const diagOffset = offset * 0.707; // sqrt(2)/2 for diagonals
+    const dbW = 9 * CHAR_W; // max data block width (9 chars)
+    const dbH = numLines * LINE_H;
+
+    // Leader start from PI edge, data block position from PI edge + offset
+    // DGScope applies blockLocation.Y -= DataBlock.Height * 0.75 to ALL directions
+    const vAdj = dbH * 0.75;
+    let sx = 0, sy = 0; // leader start (from PI edge)
+    let dbLeft = 0, dbTop = 0;
+
+    switch (ldr) {
+        case 2: // N
+            sx = 0; sy = -piH / 2;
+            dbLeft = -dbW / 2; dbTop = -piH / 2 - offset - vAdj;
+            break;
+        case 8: // S
+            sx = 0; sy = piH / 2;
+            dbLeft = -dbW / 2; dbTop = piH / 2 + offset - vAdj;
+            break;
+        case 6: // E
+            sx = piW / 2; sy = 0;
+            dbLeft = piW / 2 + offset; dbTop = -vAdj;
+            break;
+        case 4: // W
+            sx = -piW / 2; sy = 0;
+            dbLeft = -piW / 2 - offset - dbW; dbTop = -vAdj;
+            break;
+        case 3: // NE
+            sx = piW / 2; sy = -piH / 2;
+            dbLeft = piW / 2 + diagOffset; dbTop = -piH / 2 - diagOffset - vAdj;
+            break;
+        case 1: // NW
+            sx = -piW / 2; sy = -piH / 2;
+            dbLeft = -piW / 2 - diagOffset - dbW; dbTop = -piH / 2 - diagOffset - vAdj;
+            break;
+        case 9: // SE
+            sx = piW / 2; sy = piH / 2;
+            dbLeft = piW / 2 + diagOffset; dbTop = piH / 2 + diagOffset - vAdj;
+            break;
+        case 7: // SW
+            sx = -piW / 2; sy = piH / 2;
+            dbLeft = -piW / 2 - diagOffset - dbW; dbTop = piH / 2 + diagOffset - vAdj;
+            break;
+        default: // default NE
+            sx = piW / 2; sy = -piH / 2;
+            dbLeft = piW / 2 + diagOffset; dbTop = -piH / 2 - diagOffset - vAdj;
+            break;
+    }
+
+    // DGScope: leader end point = nearest edge of data block at 0.75*height
+    const isWest = ldr === 1 || ldr === 4 || ldr === 7;
+    const lx = isWest ? dbLeft + dbW : dbLeft;
+    const ly = dbTop + vAdj;
+
+    return { lx, ly, dbLeft, dbTop, sx, sy };
+}
+
+// DGScope STARS data block formatting
+function getAltString(ac) {
+    if (ac.altitude != null) {
+        let a = ac.altitude;
+        if (a % 100 > 50) a = Math.floor(a / 100) * 100 + 100;
+        return Math.floor(a / 100).toString().padStart(3, '0');
+    }
+    return 'RDR';
+}
+
+function getHandoffChar(ac) {
+    if (ac.pendingHandoff) return ac.pendingHandoff.slice(-1);
+    return ' ';
+}
+
+function getVfrChar(ac) {
+    if (!ac.flightRules) return ' ';
+    if (ac.flightRules.charAt(0) === 'I') return ' ';
+    return ac.flightRules.charAt(0);
+}
+
+function getCatChar(ac) {
+    if (ac.category) return ac.category;
+    return ' ';
+}
+
+function getCallsignDisplay(ac, ldr) {
+    const cs = ac.callsign || ac.squawk || '';
+    if (!cs) return '';
+    const isWest = ldr === 1 || ldr === 4 || ldr === 7; // NW, W, SW
+    return isWest ? cs.padStart(9) : cs.padEnd(9);
+}
+
+function buildFdbLines(ac) {
+    const ldr = ac.ldrDirection || 3; // default NE
+    const altStr = getAltString(ac);
+    const ho = getHandoffChar(ac);
+    const vfr = getVfrChar(ac);
+    const cat = getCatChar(ac);
+    const spd = ac.groundSpeed != null ? Math.round(ac.groundSpeed / 10).toString().padStart(2, '0') : '  ';
+    const callsign = getCallsignDisplay(ac, ldr);
+
+    // Destination / scratchpad fields
+    let destination = '   ';
+    if (ac.destination && ac.destination.trim() && ac.destination !== 'unassigned') {
+        destination = ac.destination.padEnd(3).slice(0, 3);
+    } else {
+        destination = altStr;
+    }
+
+    let yscratch = ac.scratchpad1 ? ac.scratchpad1.padEnd(3).slice(0, 3) : destination;
+    let yscratch2;
+    if (ac.scratchpad2) {
+        yscratch2 = ac.scratchpad2.padEnd(3).slice(0, 3) + '+';
+    } else if (ac.scratchpad1) {
+        yscratch2 = ac.scratchpad1.padEnd(3).slice(0, 3);
+    } else {
+        yscratch2 = destination;
+    }
+
+    let type = '    ';
+    if (ac.aircraftType && ac.aircraftType.trim()) {
+        type = ac.aircraftType.padEnd(4).slice(0, 4);
+    } else {
+        type = spd + vfr + cat;
+    }
+
+    let reqalt = '    ';
+    if (ac.requestedAltitude && ac.requestedAltitude > 0) {
+        reqalt = 'R' + Math.floor(ac.requestedAltitude / 100).toString().padStart(3, '0');
+    } else {
+        reqalt = type;
+    }
+
+    // DGScope FDB line2 formats (Aircraft.cs lines 432-440):
+    // fdb1line2 = altstring + handoffchar + (speed/10)D2 + vfrchar + catchar + " " (9 chars)
+    // fdb2line2 = yscratch + handoffchar + reqalt + " " (9 chars)
+    // fdb3line2 = yscratch2(4) + type(4) OR yscratch2(3) + handoff(1) + type(4) + " "
+    let line2;
+    switch (clockPhase) {
+        case 0: line2 = altStr + ho + spd + vfr + cat + ' '; break;
+        case 1: line2 = yscratch + ho + reqalt + ' '; break;
+        case 2: line2 = (yscratch2.length === 4 ? yscratch2 + type : yscratch2 + ho + type + ' '); break;
+        default: line2 = altStr + ho + spd + vfr + cat + ' '; break;
+    }
+
+    return [callsign, line2];
+}
+
+// DGScope LDB format (Aircraft.cs lines 540-545):
+// DataBlock.Text  = altstring + handoffchar + vfrchar + catchar + "\r\n     "
+// DataBlock2.Text = yscratch.PadRight(3) + handoffchar + vfrchar + catchar + "\r\n     "
+// DataBlock3.Text = yscratch.PadRight(3) + handoffchar + vfrchar + catchar + "\r\n     "
+// NO padding to 9 chars, NO west alignment — positioning handles offset
+function buildLdbLines(ac) {
+    const altStr = getAltString(ac);
+    const ho = getHandoffChar(ac);
+    const vfr = getVfrChar(ac);
+    const cat = getCatChar(ac);
+
+    let destination = '   ';
+    if (ac.destination && ac.destination.trim() && ac.destination !== 'unassigned') {
+        destination = ac.destination.padEnd(3).slice(0, 3);
+    } else {
+        destination = altStr;
+    }
+    let yscratch = ac.scratchpad1 ? ac.scratchpad1.padEnd(3).slice(0, 3) : destination;
+
+    // DGScope: Phase 0 = altstring, Phase 1/2 = yscratch (scratchpad or destination)
+    let line1;
+    switch (clockPhase) {
+        case 0: line1 = altStr + ho + vfr + cat; break;
+        case 1: case 2: line1 = yscratch.padEnd(3) + ho + vfr + cat; break;
+        default: line1 = altStr + ho + vfr + cat; break;
+    }
+
+    return [line1];
+}
+
+// ── Canvas overlay ──────────────────────────────────────────────
+function drawOverlay() {
+    const size = map.getSize();
+    const canvas = overlayCanvas;
+    canvas.width = size.x; canvas.height = size.y;
+    canvas.style.width = size.x + 'px'; canvas.style.height = size.y + 'px';
+    const topLeft = map.containerPointToLayerPoint([0, 0]);
+    L.DomUtil.setPosition(canvas, topLeft);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const now = performance.now();
+    // DGScope: H_RATE = configurable seconds between dots, window = count * rate
+    const histWindow = historyCount * historyRate * 1000;
+
+    for (const [guid, ac] of aircraft) {
+        if (ac.lat == null || ac.lon == null) continue;
+        if ((now - ac._lastUpdate) / 1000 > 60) continue;
+        const pos = map.latLngToContainerPoint([ac.lat, ac.lon]);
+
+        // DGScope FUSED mode: History drawn as filled circles (DrawCircle)
+        // Colors assigned by index: [0]=brightest (30,80,200), [4]=darkest (30,30,90)
+        // Brightness controlled by HST slider
+        const hstBrite = briteNum('hst') / 100;
+        if (historyCount > 0 && ac.history.length > 0 && hstBrite > 0) {
+            const histSlice = ac.history.slice(-historyCount);
+            for (let i = 0; i < histSlice.length; i++) {
+                const h = histSlice[i];
+                const hAge = now - h.t;
+                if (hAge > histWindow) continue;
+                const hPos = map.latLngToContainerPoint([h.lat, h.lon]);
+                const fromEnd = histSlice.length - 1 - i;
+                const colorIdx = Math.min(fromEnd, HIST_COLORS.length - 1);
+                ctx.globalAlpha = hstBrite;
+                ctx.fillStyle = HIST_COLORS[colorIdx];
+                ctx.beginPath();
+                ctx.arc(hPos.x, hPos.y, HIST_RADIUS, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        // PTL (DGScope: solid line, RBLColor=White, 1px, brightness via Tools)
+        // Visibility: PTLLength > 0 && (ShowPTL || (Owned && PTLOwn) || (FDB && PTLAll))
+        if (ptlMinutes > 0 && ac.groundSpeed && ac.groundTrack != null) {
+            const tpi = thisPositionIndicator.toUpperCase();
+            const acOwned = tpi && ((ac.owner && ac.owner.toUpperCase() === tpi) ||
+                (ac.pendingHandoff && ac.pendingHandoff.toUpperCase() === tpi));
+            const acHasFdb = ac._hasFP || acOwned || fdbOverrides.get(ac.guid) === true;
+            const showPtl = ac._showPTL || (acOwned && ptlOwn) || (acHasFdb && ptlAll);
+            if (showPtl) {
+                const dist = ac.groundSpeed * (ptlMinutes / 60);
+                const bearing = ac.groundTrack * Math.PI / 180;
+                const endLat = ac.lat + (dist / 60) * Math.cos(bearing);
+                const endLon = ac.lon + (dist / 60) * Math.sin(bearing) / Math.cos(ac.lat * Math.PI / 180);
+                const endPos = map.latLngToContainerPoint([endLat, endLon]);
+                // DGScope: RBLColor = White, adjusted by Brightness.Tools
+                const tlsBrite = briteNum('tls') / 100;
+                ctx.strokeStyle = `rgba(255,255,255,${tlsBrite})`; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(pos.x, pos.y); ctx.lineTo(endPos.x, endPos.y); ctx.stroke();
+            }
+        }
+    }
+
+    // RBL (Range/Bearing Lines) — DGScope: RBLColor=White, brightness via Tools
+    const tlsBriteRbl = briteNum('tls') / 100;
+    if (tlsBriteRbl > 0) {
+        for (let i = rblLines.length - 1; i >= 0; i--) {
+            const rbl = rblLines[i];
+            const ac1 = aircraft.get(rbl.guid1);
+            const ac2 = aircraft.get(rbl.guid2);
+            if (!ac1 || !ac2 || ac1.lat == null || ac2.lat == null) { rblLines.splice(i, 1); continue; }
+            const p1 = map.latLngToContainerPoint([ac1.lat, ac1.lon]);
+            const p2 = map.latLngToContainerPoint([ac2.lat, ac2.lon]);
+            ctx.strokeStyle = `rgba(255,255,255,${tlsBriteRbl})`; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+            const dLat = ac2.lat - ac1.lat;
+            const dLon = (ac2.lon - ac1.lon) * Math.cos((ac1.lat + ac2.lat) / 2 * Math.PI / 180);
+            const distNm = Math.sqrt(dLat * dLat + dLon * dLon) * 60;
+            const bearing = (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            ctx.font = `${fontSize}px FixedDemiBold, Consolas, monospace`;
+            ctx.fillStyle = `rgba(255,255,255,${tlsBriteRbl})`;
+            ctx.fillText(`${distNm.toFixed(1)}NM ${Math.round(bearing).toString().padStart(3, '0')}\u00B0`, midX + 4, midY - 4);
+        }
+    }
+
+    // Range rings — DGScope: RangeRingColor, brightness via RR slider
+    const rrBrite = briteNum('rr') / 100;
+    if (showRangeRings && profile?.center && rrBrite > 0) {
+        const center = map.latLngToContainerPoint(profile.center);
+        const spacing = profile.rangeRingSpacing || 5;
+        ctx.strokeStyle = `rgba(140,140,140,${rrBrite})`; ctx.lineWidth = 1;
+        for (let nm = spacing; nm <= 120; nm += spacing) {
+            const edgeLat = profile.center[0] + nm / 60;
+            const edgePoint = map.latLngToContainerPoint([edgeLat, profile.center[1]]);
+            const radius = Math.abs(center.y - edgePoint.y);
+            if (radius < 5 || radius > Math.max(canvas.width, canvas.height) * 1.5) continue;
+            ctx.beginPath(); ctx.arc(center.x, center.y, radius, 0, Math.PI * 2); ctx.stroke();
+        }
+    }
+
+    // Compass rose — DGScope: DrawCompass() (RadarWindow.cs lines 4159-4298)
+    // Rectangular border + 5° tick marks radiating inward + 10° degree labels
+    const cmpBrite = briteNum('cmp') / 100;
+    if (showCompassRose && cmpBrite > 0) {
+        const cmpColor = `rgba(140,140,140,${cmpBrite})`;
+        const W = canvas.width;
+        const H = canvas.height;
+        const cx = W / 2;
+        const cy = H / 2;
+        // Half-dimensions (DGScope uses OpenGL centered coords)
+        const hw = W / 2 - 1;
+        const hh = H / 2 - 1;
+        const tickLen = 15; // DGScope: linelength = 15 * pixelScale
+        ctx.strokeStyle = cmpColor;
+        ctx.lineWidth = 1;
+
+        // Draw border rectangle (DGScope: 4 DrawLine calls)
+        ctx.beginPath();
+        ctx.rect(cx - hw, cy - hh, hw * 2, hh * 2);
+        ctx.stroke();
+
+        // DGScope: aspect_ratio = w/h, atan = degrees where tick transitions from top/bottom edge to left/right edge
+        const aspect_ratio = hw / hh;
+        const atanDeg = Math.atan(aspect_ratio) * 180 / Math.PI;
+
+        ctx.font = `${Math.max(8, fontSize - 2)}px FixedDemiBold, Consolas, monospace`;
+        ctx.fillStyle = cmpColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Inner tick endpoint ratios
+        const h1 = hh - tickLen;
+        const w1 = hw - tickLen;
+        const hr = h1 / hh;
+        const wr = w1 / hw;
+
+        // VERTICAL section: 0 to atan degrees (ticks on top and bottom edges)
+        for (let i = 0; i < atanDeg; i += 5) {
+            const rad = i * Math.PI / 180;
+            const x = Math.tan(rad) * hh;
+            const x1 = x * hr;
+            // Top edge ticks (heading 0/360 is up/north)
+            ctx.beginPath(); ctx.moveTo(cx + x, cy - hh); ctx.lineTo(cx + x1, cy - h1); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(cx - x, cy - hh); ctx.lineTo(cx - x1, cy - h1); ctx.stroke();
+            // Bottom edge ticks
+            ctx.beginPath(); ctx.moveTo(cx + x, cy + hh); ctx.lineTo(cx + x1, cy + h1); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(cx - x, cy + hh); ctx.lineTo(cx - x1, cy + h1); ctx.stroke();
+
+            // Labels every 10°
+            if (i % 10 === 0) {
+                const lbl0 = i === 0 ? '360' : i.toString();
+                const lbl180 = (i + 180).toString();
+                // Top-right: heading i (0=360, 10, 20...)
+                ctx.fillText(lbl0, cx + x1, cy - h1 + tickLen * 0.7);
+                // Bottom-left: heading i+180
+                ctx.fillText(lbl180, cx - x1, cy + h1 - tickLen * 0.7);
+                if (i > 0) {
+                    // Top-left: heading 360-i
+                    ctx.fillText((360 - i).toString(), cx - x1, cy - h1 + tickLen * 0.7);
+                    // Bottom-right: heading 180-i
+                    ctx.fillText((180 - i).toString(), cx + x1, cy + h1 - tickLen * 0.7);
+                }
+            }
+        }
+
+        // HORIZONTAL section: atan to 90 degrees (ticks on left and right edges)
+        for (let i = Math.ceil(atanDeg / 5) * 5; i <= 90; i += 5) {
+            const rad = (90 - i) * Math.PI / 180;
+            const y = Math.tan(rad) * hw;
+            const y1 = y * wr;
+            // Right edge ticks
+            ctx.beginPath(); ctx.moveTo(cx + hw, cy - y); ctx.lineTo(cx + w1, cy - y1); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(cx + hw, cy + y); ctx.lineTo(cx + w1, cy + y1); ctx.stroke();
+            // Left edge ticks
+            ctx.beginPath(); ctx.moveTo(cx - hw, cy - y); ctx.lineTo(cx - w1, cy - y1); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(cx - hw, cy + y); ctx.lineTo(cx - w1, cy + y1); ctx.stroke();
+
+            // Labels every 10°
+            if (i % 10 === 0) {
+                const lbl = i.toString();
+                const lbl180 = (i + 180).toString();
+                // Right-top: heading i (e.g., 50, 60, 70, 80, 90)
+                ctx.fillText(lbl, cx + w1 - tickLen * 0.5, cy - y1);
+                // Left-bottom: heading i+180
+                ctx.fillText(lbl180, cx - w1 + tickLen * 0.5, cy + y1);
+                if (i < 90) {
+                    // Right-bottom: heading 180-i
+                    ctx.fillText((180 - i).toString(), cx + w1 - tickLen * 0.5, cy + y1);
+                    // Left-top: heading 360-i
+                    ctx.fillText((360 - i).toString(), cx - w1 + tickLen * 0.5, cy - y1);
+                } else {
+                    // 90° = E and W
+                    ctx.fillText('90', cx + w1 - tickLen * 0.5, cy);
+                    ctx.fillText('270', cx - w1 + tickLen * 0.5, cy);
+                }
+            }
+        }
+    }
+}
+
+function esc(s) { return s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
+
+// ── SSA (System Status Area) — DGScope: RenderStatus() (RadarWindow.cs lines 2525-2635) ──
+// Exact DGScope format: time+altimeter, range+PTL, alt filters, METAR, QL list
+// NO AC counter (FPSInStatusArea defaults to false in DGScope)
+// NO "TPI:" prefix (DGScope does not show this)
+function renderSSA() {
+    const el = document.getElementById('ssa');
+    const now = new Date();
+    const hh = now.getUTCHours().toString().padStart(2, '0');
+    const mm = now.getUTCMinutes().toString().padStart(2, '0');
+    const ss = now.getUTCSeconds().toString().padStart(2, '0');
+    let lines = [];
+    // DGScope line 2541: CurrentTime.ToString("HHmm/ss") + timesyncind + altimeter.ToString("00.00")
+    // timesyncind: " " if synchronized, "*" if not (we always show "*" since no time sync)
+    lines.push(`${hh}${mm}/${ss}*29.92`);
+    // DGScope line 2564: (int)Range + "NM" + " PTL: " + PTLLength.ToString("0.0")
+    lines.push(`${currentRange}NM PTL: ${ptlMinutes.toFixed(1)}`);
+    // DGScope line 2565: ToFilterAltitudeString(min) + " " + ToFilterAltitudeString(max) + " U " + ... + " A"
+    const fmtAlt = (v) => v.toString().padStart(3, '0');
+    lines.push(`${fmtAlt(minAltitude)} ${fmtAlt(maxAltitude)} U ${fmtAlt(minAltitudeAssoc)} ${fmtAlt(maxAltitudeAssoc)} A`);
+    el.textContent = lines.join('\n');
+    // DGScope: SSA color = DataBlockColor adjusted by Lists brightness
+    el.style.opacity = briteNum('lst') / 100;
+}
+setInterval(renderSSA, 1000);
+
+// ══════════════════════════════════════════════════════════════════
+//  DGScope-faithful Preview / Command System
+//  (RadarWindow.cs: Preview list, ProcessCommand, ProcessImpliedCommand)
+// ══════════════════════════════════════════════════════════════════
+
+// ── Preview state (DGScope: List<object> Preview) ──────────────
+// DGScope accumulates chars in Preview, displays via GeneratePreviewString,
+// and executes via ProcessCommand(Preview, clicked) on left-click or Enter.
+const preview = [];  // array of uppercase chars
+let previewMessage = null;   // error/info message shown when preview is empty
+let previewMessageExpiry = 0;
+let thisPositionIndicator = '';  // DGScope: ThisPositionIndicator
+
+// ── FDB/LDB overrides & RBL state ──────────────────────────────
+const fdbOverrides = new Map();
+const rblLines = [];
+let tempRblPlane = null;  // DGScope: tempLine — first target for R&B line
+
+// ── Preview display ─────────────────────────────────────────────
+// DGScope: RenderPreview() — shows typed text or error message in PreviewArea
+function renderPreview() {
+    const el = document.getElementById('preview-area');
+    const now = performance.now();
+
+    if (previewMessage && previewMessageExpiry <= now) {
+        previewMessage = null;  // expired
+    }
+
+    if (previewMessage && preview.length === 0) {
+        el.textContent = previewMessage;
+        el.classList.add('error');
+    } else {
+        el.textContent = generatePreviewString();
+        el.classList.remove('error');
+    }
+}
+
+// DGScope: GeneratePreviewString — spaces become newlines in display
+// Preview can contain chars or Key objects ({ key: 'F12' })
+function generatePreviewString() {
+    let out = '';
+    for (const ch of preview) {
+        if (typeof ch === 'object' && ch.key) out += ch.key;
+        else if (ch === ' ') out += '\n';
+        else out += ch;
+    }
+    if (preview.length > 0) out += ' ';  // trailing space (cursor indicator)
+    return out;
+}
+
+// DGScope: DisplayPreviewMessage — show error, clear preview, auto-expire
+function displayPreviewMessage(msg, seconds = 5) {
+    preview.length = 0;
+    previewMessage = msg;
+    previewMessageExpiry = performance.now() + seconds * 1000;
+    renderPreview();
+}
+
+// ── Find aircraft by callsign or squawk (DGScope: ProcessCommand auto-lookup) ─
+function findAircraftByFlid(flid) {
+    if (!flid) return null;
+    const upper = flid.trim().toUpperCase();
+    if (!upper) return null;
+    // Exact callsign match (DGScope: FlightPlanCallsign.Trim() ==)
+    for (const [guid, ac] of aircraft) {
+        if (ac.callsign && ac.callsign.toUpperCase().trim() === upper) return ac;
+    }
+    // Exact squawk match
+    for (const [guid, ac] of aircraft) {
+        if (ac.squawk && ac.squawk.trim() === upper && ac.squawk !== '1200') return ac;
+    }
+    return null;
+}
+
+// ── Split preview into space-separated command tokens ───────────
+// DGScope: splits Preview list by space chars into object[][] keys
+// Each token is either a string (joined chars) or a Key object ({ key: 'F12' })
+// DGScope stores keys[0][0] as the first element which can be a Key enum or char
+function splitPreview() {
+    const commands = [];
+    let current = [];
+    for (const ch of preview) {
+        if (ch === ' ') {
+            if (current.length === 1 && typeof current[0] === 'object') {
+                commands.push(current[0]); // preserve Key object
+            } else {
+                commands.push(current.filter(c => typeof c === 'string').join(''));
+            }
+            current = [];
+        } else {
+            current.push(ch);
+        }
+    }
+    if (current.length === 1 && typeof current[0] === 'object') {
+        commands.push(current[0]);
+    } else {
+        commands.push(current.filter(c => typeof c === 'string').join(''));
+    }
+    return commands;
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ProcessCommand (DGScope: RadarWindow.cs line 1186)
+//  Called on left-click (with clicked object) or Enter (clicked=null)
+// ══════════════════════════════════════════════════════════════════
+function processCommand(clicked) {
+    const enter = (clicked === undefined || clicked === null);
+
+    // No keys typed → implied command on click
+    if (preview.length === 0) {
+        if (!enter) processImpliedCommand(clicked);
+        return;
+    }
+
+    const clickedPlane = clicked && clicked._isAc;
+
+    // DGScope: Preview can start with a Key enum (F4, F12). Check preview[0] directly
+    // before splitPreview(), because splitPreview filters out Key objects when mixed with chars.
+    const startsWithKey = preview.length > 0 && typeof preview[0] === 'object' && preview[0].key;
+    const startKey = startsWithKey ? preview[0].key : null;
+
+    const keys = splitPreview();  // space-separated tokens (strings or Key objects)
+    const firstKey = startsWithKey ? preview[0] : (keys[0] || '');
+    // DGScope: keys[0][0] can be a Key enum — check for Key object
+    const isKeyObj = startsWithKey;
+    const firstKeyStr = isKeyObj ? startKey : (typeof firstKey === 'string' ? firstKey : '');
+    const firstChar = isKeyObj ? '' : firstKeyStr.charAt(0);
+
+    // DGScope: auto-complete last token as callsign/squawk
+    if (!clickedPlane && keys.length > 0) {
+        const lastLine = keys[keys.length - 1];
+        if (typeof lastLine === 'string') {
+            const typed = findAircraftByFlid(lastLine);
+            if (typed) clicked = typed;
+        }
+    }
+    const resolvedPlane = clicked && clicked._isAc ? clicked : null;
+
+    // ── Leader direction: 1-9 + click target ──
+    if (!isKeyObj && firstKey.length === 1 && /^[1-9]$/.test(firstChar)) {
+        if (resolvedPlane) {
+            const dir = parseInt(firstChar);
+            resolvedPlane.ldrDirection = dir === 5 ? null : dir;
+            resolvedPlane._redraw = true;
+            hashCache.delete(resolvedPlane.guid);
+            preview.length = 0;
+            renderPreview();
+            scheduleRender();
+            return;
+        }
+        if (enter) { displayPreviewMessage('NO FLIGHT'); return; }
+        return; // wait for click
+    }
+
+    // ── F4: Delete flight plan ──
+    if (isKeyObj && firstKeyStr === 'F4') {
+        if (resolvedPlane) {
+            const pi = resolvedPlane.owner;
+            if (resolvedPlane.pendingHandoff || (thisPositionIndicator && pi !== thisPositionIndicator)) {
+                displayPreviewMessage('ILL TRK');
+            } else {
+                resolvedPlane._lastUpdate = 0;  // force timeout
+                preview.length = 0;
+                renderPreview();
+                scheduleRender();
+            }
+        } else {
+            displayPreviewMessage('NO FLIGHT');
+        }
+        return;
+    }
+
+    // ── F12: Set position indicator (DGScope: RadarWindow.cs line 1369) ──
+    // DGScope: KeysToString(keys[0]) skips F12 key enum, joins remaining chars
+    // preview = [{key:'F12'}, 'Z'] → newPos = 'Z'
+    if (isKeyObj && firstKeyStr === 'F12') {
+        const newPos = preview.slice(1).filter(c => typeof c === 'string').join('');
+        if (newPos === '*') {
+            thisPositionIndicator = '';
+        } else {
+            thisPositionIndicator = newPos;
+        }
+        // DGScope RadarWindow.cs line 904: sweep ownership on position change
+        hashCache.clear(); // force all icons to rebuild with new ownership
+        preview.length = 0;
+        renderPreview();
+        scheduleRender();
+        return;
+    }
+
+    // ── *T: Range/Bearing line ──
+    if (!isKeyObj && firstKey === '*T') {
+        if (enter && keys.length === 1) {
+            // *T Enter → clear all RBLs
+            rblLines.length = 0;
+            tempRblPlane = null;
+            preview.length = 0;
+            renderPreview();
+            scheduleRender();
+            return;
+        }
+        if (resolvedPlane) {
+            if (!tempRblPlane) {
+                // First target for RBL
+                tempRblPlane = resolvedPlane;
+                preview.length = 0;
+                renderPreview();
+                return; // wait for second click
+            } else {
+                // Second target → create RBL
+                rblLines.push({ guid1: tempRblPlane.guid, guid2: resolvedPlane.guid });
+                tempRblPlane = null;
+                preview.length = 0;
+                renderPreview();
+                scheduleRender();
+                return;
+            }
+        }
+        if (enter) { displayPreviewMessage('NO FLIGHT'); return; }
+        return; // wait for click
+    }
+
+    // ── Dot (.): Clear scratchpad1 ──
+    if (!isKeyObj && firstKey === '.') {
+        if (resolvedPlane) {
+            if (resolvedPlane.pendingHandoff || (thisPositionIndicator && resolvedPlane.owner !== thisPositionIndicator)) {
+                displayPreviewMessage('ILL TRK');
+            } else {
+                resolvedPlane.scratchpad1 = '';
+                hashCache.delete(resolvedPlane.guid);
+                preview.length = 0;
+                renderPreview();
+                scheduleRender();
+            }
+        } else {
+            if (enter) displayPreviewMessage('NO FLIGHT');
+        }
+        return;
+    }
+
+    // ── Plus (+): Clear scratchpad2 ──
+    if (!isKeyObj && firstKey === '+') {
+        if (resolvedPlane) {
+            if (resolvedPlane.pendingHandoff || (thisPositionIndicator && resolvedPlane.owner !== thisPositionIndicator)) {
+                displayPreviewMessage('ILL TRK');
+            } else {
+                resolvedPlane.scratchpad2 = '';
+                hashCache.delete(resolvedPlane.guid);
+                preview.length = 0;
+                renderPreview();
+                scheduleRender();
+            }
+        } else {
+            if (enter) displayPreviewMessage('NO FLIGHT');
+        }
+        return;
+    }
+
+    // ── Default: scratchpad / type / handoff based on length ──
+    if (!isKeyObj && resolvedPlane) {
+        const owned = !thisPositionIndicator || resolvedPlane.owner === thisPositionIndicator;
+        const blocked = resolvedPlane.pendingHandoff || !owned;
+
+        // 3 chars → scratchpad1
+        if (firstKey.length === 3 && !firstKey.endsWith('+')) {
+            if (blocked) { displayPreviewMessage('ILL TRK'); return; }
+            resolvedPlane.scratchpad1 = firstKey;
+            hashCache.delete(resolvedPlane.guid);
+            preview.length = 0;
+            renderPreview();
+            scheduleRender();
+            return;
+        }
+        // 4 chars ending with + → scratchpad2
+        if (firstKey.length === 4 && firstKey.endsWith('+')) {
+            if (blocked) { displayPreviewMessage('ILL TRK'); return; }
+            resolvedPlane.scratchpad2 = firstKey.slice(0, 3);
+            hashCache.delete(resolvedPlane.guid);
+            preview.length = 0;
+            renderPreview();
+            scheduleRender();
+            return;
+        }
+        // 4 chars → aircraft type
+        if (firstKey.length === 4) {
+            if (blocked) { displayPreviewMessage('ILL TRK'); return; }
+            resolvedPlane.aircraftType = firstKey;
+            hashCache.delete(resolvedPlane.guid);
+            preview.length = 0;
+            renderPreview();
+            scheduleRender();
+            return;
+        }
+        // 2 chars → handoff
+        if (firstKey.length === 2) {
+            resolvedPlane.pendingHandoff = firstKey;
+            hashCache.delete(resolvedPlane.guid);
+            preview.length = 0;
+            renderPreview();
+            scheduleRender();
+            return;
+        }
+    }
+
+    if (enter) displayPreviewMessage('FORMAT');
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  ProcessImpliedCommand (DGScope: RadarWindow.cs line 2272)
+//  Called when left-click with empty Preview
+// ══════════════════════════════════════════════════════════════════
+// DGScope ProcessImpliedCommand (RadarWindow.cs lines 2272-2353)
+// Full priority chain from DGScope source
+function processImpliedCommand(clicked) {
+    if (!clicked || !clicked._isAc) return;
+    const plane = clicked;
+    const tpi = thisPositionIndicator.toUpperCase();
+    const planeOwner = plane.owner ? plane.owner.toUpperCase() : '';
+    const planePH = plane.pendingHandoff ? plane.pendingHandoff.toUpperCase() : '';
+    const isOwned = tpi && (planeOwner === tpi || planePH === tpi);
+
+    // 1. Accept incoming handoff (PendingHandoff == ThisPositionIndicator)
+    if (tpi && planePH === tpi) {
+        plane.owner = thisPositionIndicator;
+        plane.pendingHandoff = null;
+        hashCache.delete(plane.guid);
+        scheduleRender();
+        return;
+    }
+    // 2. Recall outgoing handoff (we own it and initiated a handoff)
+    if (tpi && planeOwner === tpi && plane.pendingHandoff) {
+        plane.pendingHandoff = null;
+        hashCache.delete(plane.guid);
+        scheduleRender();
+        return;
+    }
+    // 3. Clear pointout
+    if (plane._pointout) {
+        plane._pointout = false;
+        hashCache.delete(plane.guid);
+        scheduleRender();
+        return;
+    }
+    // 4. Clear force quick look
+    if (plane._forceQL) {
+        plane._forceQL = false;
+        hashCache.delete(plane.guid);
+        scheduleRender();
+        return;
+    }
+    // 5. Drop stale ownership (Owned but PositionInd != us)
+    if (isOwned && planeOwner !== tpi) {
+        // Nothing meaningful to do in browser (server controls ownership)
+    }
+    // 6. Beacon readout for owned associated track
+    if (isOwned && plane.callsign) {
+        displayPreviewMessage(`${plane.callsign} ${plane.squawk || ''} ${plane.assignedSquawk || ''}`, 5);
+        return;
+    }
+    // 7. Toggle FDB for non-owned track with callsign
+    if (!isOwned && plane.callsign) {
+        const cur = fdbOverrides.get(plane.guid);
+        const newVal = cur === undefined ? false : !cur; // first click: FDB→LDB
+        fdbOverrides.set(plane.guid, newVal);
+        hashCache.delete(plane.guid);
+        scheduleRender();
+        return;
+    }
+    // 8. Toggle FDB for unassociated track (no callsign)
+    if (!plane.callsign) {
+        const cur = fdbOverrides.get(plane.guid);
+        const newVal = cur === undefined ? true : !cur; // first click: show FDB
+        fdbOverrides.set(plane.guid, newVal);
+        hashCache.delete(plane.guid);
+        scheduleRender();
+        return;
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  Keyboard handler (DGScope: Window_KeyDown + Window_KeyPress)
+// ══════════════════════════════════════════════════════════════════
+document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+    const key = e.key;
+    const code = e.code;
+
+    // ── Escape: clear preview, release temp state (DGScope line 2866) ──
+    if (key === 'Escape') {
+        e.preventDefault();
+        preview.length = 0;
+        previewMessage = null;
+        tempRblPlane = null;
+        renderPreview();
+        return;
+    }
+
+    // ── Enter / NumpadEnter: execute command (DGScope line 2881) ──
+    if (key === 'Enter') {
+        e.preventDefault();
+        processCommand(null);
+        return;
+    }
+
+    // ── Backspace: remove last char (DGScope line 2893) ──
+    if (key === 'Backspace') {
+        e.preventDefault();
+        if (preview.length > 0) {
+            preview.pop();
+            previewMessage = null;
+            renderPreview();
+        }
+        return;
+    }
+
+    // ── F4/F12: add to preview as Key enum objects (DGScope: Preview.Add(e.Key)) ──
+    // DGScope: F10-F24 clear preview first, then add Key enum
+    if (key === 'F4' || key === 'F12') {
+        e.preventDefault();
+        preview.length = 0;
+        preview.push({ key: key }); // store as Key object, not chars
+        renderPreview();
+        return;
+    }
+
+    // ── Ctrl combinations (DGScope system shortcuts) ──
+    if (e.ctrlKey) {
+        if (key === 'F8' || key === 'f8') {
+            // Toggle DCB visibility
+            e.preventDefault();
+            const dcb = document.getElementById('dcb');
+            const dcbShift = document.getElementById('dcb-shift');
+            const visible = dcb.style.display !== 'none' || dcbShift.style.display !== 'none';
+            dcb.style.display = visible ? 'none' : 'flex';
+            dcbShift.style.display = 'none';
+        }
+        return; // don't capture other ctrl combos
+    }
+
+    // ── Space: command separator (DGScope: space = newline in preview) ──
+    if (key === ' ') {
+        e.preventDefault();
+        if (preview.length > 0 && preview[preview.length - 1] !== ' ') {
+            preview.push(' ');
+            previewMessage = null;
+            renderPreview();
+        }
+        return;
+    }
+
+    // ── Text input: letters, numbers, punctuation ──
+    // DGScope: KeyPress adds char.ToUpper(e.KeyChar) to Preview
+    const isText = (key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey);
+    if (isText) {
+        e.preventDefault();
+        preview.push(key.toUpperCase());
+        previewMessage = null;
+        renderPreview();
+        return;
+    }
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  Click handler (DGScope: Window_MouseDown)
+//  Left click → ProcessCommand(Preview, clicked)
+//  Middle click → toggle Marked flag
+// ══════════════════════════════════════════════════════════════════
+document.getElementById('map').addEventListener('mousedown', (e) => {
+    const el = e.target.closest('[data-guid]');
+
+    if (e.button === 0) {
+        // ── Left click ──
+        // DGScope: if tempLine in progress and clicking a target, complete RBL
+        if (tempRblPlane && el) {
+            const g = el.dataset.guid;
+            const ac = aircraft.get(g);
+            if (ac && ac.guid !== tempRblPlane.guid) {
+                rblLines.push({ guid1: tempRblPlane.guid, guid2: ac.guid });
+                tempRblPlane = null;
+                preview.length = 0;
+                renderPreview();
+                scheduleRender();
+                return;
+            }
+        }
+
+        // DGScope: ProcessCommand(Preview, ClickedObject(e.Position))
+        let clicked = null;
+        if (el) {
+            const g = el.dataset.guid;
+            const ac = aircraft.get(g);
+            if (ac) {
+                ac._isAc = true;
+                const tpi = thisPositionIndicator.toUpperCase();
+                ac._isOwned = tpi && (
+                    (ac.owner && ac.owner.toUpperCase() === tpi) ||
+                    (ac.pendingHandoff && ac.pendingHandoff.toUpperCase() === tpi)
+                );
+                clicked = ac;
+            }
+        }
+        processCommand(clicked);
+    }
+    else if (e.button === 1) {
+        // ── Middle click: toggle Marked (DGScope: plane.Marked = !plane.Marked) ──
+        if (el) {
+            e.preventDefault();
+            const g = el.dataset.guid;
+            const ac = aircraft.get(g);
+            if (ac) {
+                ac._marked = !ac._marked;
+                hashCache.delete(g);
+                scheduleRender();
+            }
+        }
+    }
+});
+
+// ── Touch: long-press = middle click (toggle Marked) ────────────
+let touchTimer = null;
+document.getElementById('map').addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    touchTimer = setTimeout(() => {
+        const el = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('[data-guid]');
+        if (el) {
+            const ac = aircraft.get(el.dataset.guid);
+            if (ac) { ac._marked = !ac._marked; hashCache.delete(ac.guid); scheduleRender(); }
+        }
+        touchTimer = null;
+    }, 600);
+}, { passive: true });
+document.getElementById('map').addEventListener('touchend', () => { if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; } }, { passive: true });
+document.getElementById('map').addEventListener('touchmove', () => { if (touchTimer) { clearTimeout(touchTimer); touchTimer = null; } }, { passive: true });
+
+// Prevent context menu on long-press
+document.getElementById('map').addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ── Map events ──────────────────────────────────────────────────
+map.on('moveend zoomend', () => {
+    scheduleRender();
+    const b = map.getBounds();
+    const nm = b.getNorthWest().distanceTo(b.getNorthEast()) / 1852 / 2;
+    document.getElementById('rangeDisplay').textContent = `~${Math.round(nm)} NM`;
+});
+
+// ── Idle timer hooks ────────────────────────────────────────────
+window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } };
+window.idleOnResume = () => { connect(); };
+
+// ── Init ────────────────────────────────────────────────────────
+(async () => {
+    await loadProfile();
+    applyDcbPosition(); // set DCB TOP active by default
+    connect();
+    requestAnimationFrame(function loop() {
+        requestAnimationFrame(loop);
+        if (performance.now() - lastRenderTime >= RENDER_INTERVAL) doRender();
+    });
+})();
+</script>
+<script src="/idle-timer.js"></script>
+</body>
+</html>

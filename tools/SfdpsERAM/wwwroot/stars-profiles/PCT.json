@@ -1,0 +1,33 @@
+{
+    "facility": "PCT",
+    "center": [38.847796, -77.037376],
+    "range": 20,
+    "rotation": -9,
+    "videoMaps": [
+        { "file": "PCT_ADW_North.geojson", "name": "ADW N", "fullName": "ADW North", "category": "A", "mapNumber": 66, "dcbSlot": 1, "visible": true },
+        { "file": "PCT_ADW_South.geojson", "name": "ADW S", "fullName": "ADW South", "category": "A", "mapNumber": 67, "dcbSlot": 2, "visible": true },
+        { "file": "PCT_ADW_Hold.geojson", "name": "Hold", "fullName": "ADW Hold", "category": "B", "mapNumber": 68, "dcbSlot": 3, "visible": false },
+        { "file": "PCT_ADW_RTEZONE.geojson", "name": "RTE ZONE", "fullName": "ADW RTEZONE", "category": "B", "mapNumber": 69, "dcbSlot": 4, "visible": false },
+        { "file": "PCT_ADW_VFR.geojson", "name": "ADW VFR", "fullName": "ADW VFR", "category": "A", "mapNumber": 70, "dcbSlot": 5, "visible": false },
+        { "file": "PCT_PCT_ClassB.geojson", "name": "BRAVO", "fullName": "PCT ClassB", "category": "B", "mapNumber": 11, "dcbSlot": 6, "visible": true },
+        { "file": "PCT_PCT_ClassD.geojson", "name": "DELTA", "fullName": "PCT ClassD", "category": "B", "mapNumber": 12, "dcbSlot": 7, "visible": false },
+        { "file": "PCT_PCT_SFRA.geojson", "name": "SFRA", "fullName": "PCT SFRA", "category": "B", "mapNumber": 4, "dcbSlot": 8, "visible": true },
+        { "file": "PCT_PCT_Zones.geojson", "name": "ZONE", "fullName": "PCT Zones", "category": "B", "mapNumber": 16, "dcbSlot": 9, "visible": false },
+        { "file": "PCT_PCT_Helo_Route.geojson", "name": "HELO", "fullName": "PCT Helo Route", "category": "B", "mapNumber": 15, "dcbSlot": 10, "visible": false },
+        { "file": "PCT_PCT_Roads.geojson", "name": "ROAD", "fullName": "PCT Roads", "category": "B", "mapNumber": 17, "dcbSlot": 11, "visible": false },
+        { "file": "PCT_PCT_Airport.geojson", "name": "ARPT", "fullName": "PCT Airport", "category": "B", "mapNumber": 13, "dcbSlot": 12, "visible": true },
+        { "file": "PCT_PCT_Coastlines.geojson", "name": "COAST", "fullName": "PCT Coastlines", "category": "B", "mapNumber": 14, "dcbSlot": 13, "visible": true }
+    ],
+    "atpaVolumes": [],
+    "altimeterStations": ["KADW", "KBWI", "KCHO", "KDCA", "KIAD", "KRIC"],
+    "nexradStation": "TDCA",
+    "historyCount": 5,
+    "ptlLength": 1,
+    "leaderLength": 1,
+    "rangeRingSpacing": 5,
+    "thisPosition": "",
+    "clockPhase": {
+        "sequence": "ONE_TWO_ONE_THREE",
+        "intervals": [2, 1.5, 2, 1.5]
+    }
+}

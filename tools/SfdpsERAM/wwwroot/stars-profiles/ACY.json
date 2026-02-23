@@ -1,0 +1,22 @@
+{
+    "facility": "ACY",
+    "center": [39.452745, -74.591952],
+    "range": 20,
+    "rotation": -9,
+    "videoMaps": [
+        { "file": "ACY_RVM.geojson", "name": "RVM", "fullName": "ACY RVM", "category": "A", "mapNumber": 1, "dcbSlot": 1, "visible": true },
+        { "file": "ACY_MVA.geojson", "name": "MVA", "fullName": "ACY MVA", "category": "B", "mapNumber": 2, "dcbSlot": 2, "visible": false }
+    ],
+    "atpaVolumes": [],
+    "altimeterStations": ["KACY"],
+    "nexradStation": "KDIX",
+    "historyCount": 5,
+    "ptlLength": 1,
+    "leaderLength": 1,
+    "rangeRingSpacing": 5,
+    "thisPosition": "",
+    "clockPhase": {
+        "sequence": "ONE_TWO_ONE_THREE",
+        "intervals": [2, 1.5, 2, 1.5]
+    }
+}

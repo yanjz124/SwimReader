@@ -335,6 +335,96 @@ app.MapGet("/fdio", async (HttpContext ctx) =>
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio.html"));
 });
+app.MapGet("/stars", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "stars.html"));
+});
+
+// STARS profile listing — returns available facility profiles
+app.MapGet("/api/stars-profiles", (HttpContext ctx) =>
+{
+    var dir = Path.Combine(builder.Environment.WebRootPath, "stars-profiles");
+    if (!Directory.Exists(dir)) return Results.Json(Array.Empty<object>());
+    var profiles = Directory.GetFiles(dir, "*.json")
+        .Select(f =>
+        {
+            try
+            {
+                var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(f));
+                var root = json.RootElement;
+                return new
+                {
+                    name = Path.GetFileNameWithoutExtension(f),
+                    facility = root.TryGetProperty("facility", out var fac) ? fac.GetString() : Path.GetFileNameWithoutExtension(f),
+                    center = root.TryGetProperty("center", out var c) ? new[] { c[0].GetDouble(), c[1].GetDouble() } : null as double[]
+                };
+            }
+            catch { return null; }
+        })
+        .Where(p => p != null)
+        .OrderBy(p => p!.name)
+        .ToArray();
+    return Results.Json(profiles);
+});
+
+// dSTARS WebSocket proxy — forwards to SwimReader.Server on port 5000
+app.Map("/dstars/{facility}/updates", async (HttpContext ctx, string facility) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+    using var clientWs = await ctx.WebSockets.AcceptWebSocketAsync();
+    using var upstream = new ClientWebSocket();
+    try
+    {
+        await upstream.ConnectAsync(new Uri($"ws://localhost:5000/dstars/{Uri.EscapeDataString(facility)}/updates"), CancellationToken.None);
+    }
+    catch
+    {
+        await clientWs.CloseAsync(WebSocketCloseStatus.EndpointUnavailable, "upstream unavailable", CancellationToken.None);
+        return;
+    }
+    using var cts = new CancellationTokenSource();
+    // upstream → client
+    var relay1 = Task.Run(async () =>
+    {
+        var buf = new byte[65536];
+        try
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                var r = await upstream.ReceiveAsync(buf, cts.Token);
+                if (r.MessageType == WebSocketMessageType.Close) break;
+                if (clientWs.State == WebSocketState.Open)
+                    await clientWs.SendAsync(new ArraySegment<byte>(buf, 0, r.Count), r.MessageType, r.EndOfMessage, cts.Token);
+            }
+        }
+        catch { }
+        finally { cts.Cancel(); }
+    });
+    // client → upstream
+    var relay2 = Task.Run(async () =>
+    {
+        var buf = new byte[65536];
+        try
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                var r = await clientWs.ReceiveAsync(buf, cts.Token);
+                if (r.MessageType == WebSocketMessageType.Close) break;
+                if (upstream.State == WebSocketState.Open)
+                    await upstream.SendAsync(new ArraySegment<byte>(buf, 0, r.Count), r.MessageType, r.EndOfMessage, cts.Token);
+            }
+        }
+        catch { }
+        finally { cts.Cancel(); }
+    });
+    await Task.WhenAny(relay1, relay2);
+    cts.Cancel();
+    if (upstream.State == WebSocketState.Open)
+        try { await upstream.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None); } catch { }
+    if (clientWs.State == WebSocketState.Open)
+        try { await clientWs.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None); } catch { }
+});
 
 // WebSocket — streams flight updates to browser
 app.Map("/ws", async (HttpContext ctx) =>

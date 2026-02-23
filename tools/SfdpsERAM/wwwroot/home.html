@@ -198,6 +198,10 @@ header .sub {
         </a>
 
         <div class="nav-section">TERMINAL (STDDS)</div>
+        <a class="nav-item" data-key="stars" href="/stars">
+            <div class="title">STARS SCOPE</div>
+            <div class="desc">Terminal radar scope display</div>
+        </a>
         <a class="nav-item" data-key="tais" href="/tais">
             <div class="title">TAIS</div>
             <div class="desc">STARS terminal radar tracks</div>
@@ -261,6 +265,17 @@ const pages = {
         fields: [
             ['Data Source', 'SFDPS (FIXM en route)'],
             ['Features', 'Search, sort, expand, revision history'],
+        ]
+    },
+    stars: {
+        title: 'STARS SCOPE',
+        source: 'STDDS — STDDS VPN — TAIS/dSTARS',
+        desc: 'Browser-based STARS terminal radar scope. Connects to SwimReader.Server dSTARS endpoint for live terminal radar tracks with data blocks, leader lines, history trails, and video maps. Faithful STARS green/white display style.',
+        href: '/stars',
+        fields: [
+            ['Data Source', 'STDDS via dSTARS (terminal)'],
+            ['Update Rate', '~4 sec'],
+            ['Features', 'STARS data blocks, history, PTL, video maps'],
         ]
     },
     tais: {

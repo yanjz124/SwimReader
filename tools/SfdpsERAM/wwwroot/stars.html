@@ -928,22 +928,22 @@ const StarsWxLayer = L.GridLayer.extend({
                 if (lvl === 0 || !enabled[lvl - 1]) { d[i + 3] = 0; continue; }
                 const px = i / 4;
                 const tx = px % 256, ty = Math.floor(px / 256);
-                // WX1-3: blue/green/yellow matching MRMS source palette
-                // WX4-6: olive/brown (higher reflectivity)
+                // DGScope WXColorTable: levels 1-3 = dark cyan, 4-6 = olive/brown
                 if (lvl <= 3) {
+                    // Dark cyan #264D4D with stipple patterns
                     if (lvl === 1) {
-                        // WX1: blue — dense stipple (≥20 dBZ)
+                        // WX1: dense stipple — checkered pattern 2px
                         if ((Math.floor(tx / 2) + Math.floor(ty / 2)) % 2 === 0) {
-                            d[i] = 0; d[i+1] = 50; d[i+2] = 200;
+                            d[i] = 38; d[i+1] = 77; d[i+2] = 77;
                         } else { d[i+3] = 0; continue; }
                     } else if (lvl === 2) {
-                        // WX2: green — light stipple (≥30 dBZ)
+                        // WX2: light stipple — sparse pattern 4px
                         if ((Math.floor(tx / 4) + Math.floor(ty / 4)) % 2 === 0) {
-                            d[i] = 0; d[i+1] = 160; d[i+2] = 0;
+                            d[i] = 38; d[i+1] = 77; d[i+2] = 77;
                         } else { d[i+3] = 0; continue; }
                     } else {
-                        // WX3: yellow — solid (≥40 dBZ)
-                        d[i] = 200; d[i+1] = 200; d[i+2] = 0;
+                        // WX3: solid dark cyan (brighter)
+                        d[i] = 50; d[i+1] = 100; d[i+2] = 100;
                     }
                 } else {
                     // Olive/brown #646433 with stipple patterns

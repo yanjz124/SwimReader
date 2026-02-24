@@ -845,18 +845,21 @@ function buildIcaoFpl(d) {
     if (navParts.length) f18.push('NAV/' + navParts.join(' '));
     if (hasDAT) f18.push('DAT/' + d.otherDataLink.trim());
     // SUR/: from FIXM <surveillance otherSurveillanceCapabilities="...">
-    // SFDPS adds spaces between codes (e.g. "260B C2 I0 CANMANDATE").
-    // Concatenate equipment codes (alphanumeric tokens like 260B, C2, I0) and
-    // keep spaces before free text (all-letter words like CANMANDATE).
+    // AAL Airbus flights file codes concatenated (260BC2I0 CANMANDATE) but SFDPS
+    // spaces them out. Concatenate codes only for AAL+Airbus; keep raw for everyone else.
     if (d.otherSurveillanceCapabilities) {
-        const surTokens = d.otherSurveillanceCapabilities.trim().split(/\s+/);
-        let sur = '', needSpace = false;
-        for (const t of surTokens) {
-            const isCode = /\d/.test(t);  // equipment codes always contain a digit
-            if (!isCode && sur) needSpace = true;
-            if (needSpace) sur += ' ';
-            sur += t;
-            needSpace = !isCode;
+        const isAalAirbus = /^AAL/.test(d.callsign || '') && /^A3/.test(d.aircraftType || '');
+        let sur = d.otherSurveillanceCapabilities.trim();
+        if (isAalAirbus) {
+            const surTokens = sur.split(/\s+/);
+            sur = ''; let needSpace = false;
+            for (const t of surTokens) {
+                const isCode = /\d/.test(t);
+                if (!isCode && sur) needSpace = true;
+                if (needSpace) sur += ' ';
+                sur += t;
+                needSpace = !isCode;
+            }
         }
         f18.push('SUR/' + sur);
     }

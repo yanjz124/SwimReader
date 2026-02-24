@@ -741,6 +741,8 @@ function buildIcaoFpl(d) {
         for (const jc of jCodes) { if (!f10a.includes(jc)) f10a += jc; }
     }
     if (!f10a) f10a = d.equipmentQualifier || 'S';
+    // S = Standard (VOR, VHF, ILS) — always present for IFR aircraft
+    if (!f10a.includes('S')) f10a = 'S' + f10a;
 
     // Build Field 18 PBN/NAV first so we can set R and Z in 10a
     let pbnStr = '', navStr = '';

@@ -768,6 +768,14 @@ function buildIcaoFpl(d) {
     if (pbnStr && !f10a.includes('R')) f10a += 'R';
     // Z in 10a when filing NAV/, COM/, or DAT/ in Field 18
     if ((hasDAT || hasNAV) && !f10a.includes('Z')) f10a += 'Z';
+    // Sort alphabetically: S always first, then single letters sorted, then J-codes sorted
+    {
+        const chars = f10a.replace(/J\d/g, '').split('').filter(c => c !== 'S');
+        const jcs = f10a.match(/J\d/g) || [];
+        chars.sort();
+        jcs.sort();
+        f10a = 'S' + chars.join('') + jcs.join('');
+    }
 
     // 10b: Surveillance equipment (concatenated, no spaces)
     const f10b = d.surveillanceCode ? d.surveillanceCode.replace(/\s+/g, '') : 'C';

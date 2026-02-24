@@ -1004,6 +1004,8 @@ void SaveFlightCache()
     try
     {
         Directory.CreateDirectory(cacheDir);
+        // Backfill fields from stored event XML before snapshotting
+        foreach (var f in flights.Values) f.BackfillFromEvents();
         var cache = new FlightCache
         {
             SavedAt = DateTime.UtcNow,
@@ -1055,7 +1057,13 @@ void LoadFlightCache()
             flights[snapshot.Gufi] = FlightState.FromSnapshot(snapshot);
             loaded++;
         }
-        Console.WriteLine($"[Cache] Restored {loaded} flights (saved {ageMinutes:F0} min ago)");
+        // Backfill FlightType from event summaries (survives cache via [TYPE] in summary text)
+        int backfilled = 0;
+        foreach (var f in flights.Values)
+        {
+            if (f.FlightType is null) { f.BackfillFromEvents(); if (f.FlightType is not null) backfilled++; }
+        }
+        Console.WriteLine($"[Cache] Restored {loaded} flights (saved {ageMinutes:F0} min ago){(backfilled > 0 ? $", backfilled {backfilled} flight types" : "")}");
     }
     catch (Exception ex)
     {
@@ -2065,6 +2073,9 @@ string BuildLhSummary(XElement flight)
 string BuildFhSummary(XElement flight)
 {
     var parts = new List<string>();
+    var ft = flight.Attribute("flightType")?.Value;
+    if (ft is not null) parts.Add($"[{ft}]");
+
     var acType = flight.Descendants()
         .FirstOrDefault(e => e.Name.LocalName == "icaoModelIdentifier")?.Value;
     if (acType is not null) parts.Add(acType);
@@ -3299,6 +3310,34 @@ class FlightState
     public void RestorePosition(PositionRecord rec)
     {
         lock (_posHistory) { _posHistory.Add(rec); }
+    }
+
+    /// Backfill FlightType from stored FH events — tries RawXml first, then summary text
+    public void BackfillFromEvents()
+    {
+        if (FlightType is not null) return;
+        lock (_allEvents)
+        {
+            foreach (var e in _allEvents)
+            {
+                if (e.Source != "FH") continue;
+                // Try RawXml first (available before cache save, gone after restore)
+                if (e.RawXml is not null)
+                {
+                    try
+                    {
+                        var doc = System.Xml.Linq.XDocument.Parse(e.RawXml);
+                        var flight = doc.Descendants().FirstOrDefault(x => x.Name.LocalName == "flight");
+                        var ft = flight?.Attribute("flightType")?.Value;
+                        if (!string.IsNullOrEmpty(ft)) { FlightType = ft; return; }
+                    }
+                    catch { }
+                }
+                // Fallback: parse from summary text "[SCHEDULED]", "[NON_SCHEDULED]", etc.
+                var match = System.Text.RegularExpressions.Regex.Match(e.Summary, @"\[([A-Z_]+)\]");
+                if (match.Success) { FlightType = match.Groups[1].Value; return; }
+            }
+        }
     }
 
     public FlightSnapshot ToSnapshot() => new()

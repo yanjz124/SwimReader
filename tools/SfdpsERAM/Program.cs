@@ -1462,9 +1462,13 @@ void ProcessFlight(XElement flight, string rawXml)
         if (!string.IsNullOrEmpty(s)) state.FlightStatus = s;
     }
 
-    // operator
-    var op = flight.Descendants().FirstOrDefault(e => e.Name.LocalName == "organization" && e.Attribute("name") is not null);
-    if (op is not null) state.Operator = op.Attribute("name")!.Value;
+    // operator — <operator><operatingOrganization><organization name="FLEXJET"/>
+    var opEl = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "operator");
+    if (opEl is not null)
+    {
+        var org = opEl.Descendants().FirstOrDefault(e => e.Name.LocalName == "organization" && e.Attribute("name") is not null);
+        if (org is not null) state.Operator = org.Attribute("name")!.Value;
+    }
 
     // originator (AFTN address, e.g. EKODFFLX)
     var originator = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "originator");
@@ -1490,6 +1494,15 @@ void ProcessFlight(XElement flight, string rawXml)
         if (!string.IsNullOrEmpty(pt)) state.Destination = pt;
         var eta = arr.Descendants().FirstOrDefault(e => e.Name.LocalName == "estimated")?.Attribute("time")?.Value;
         if (!string.IsNullOrEmpty(eta)) state.ETA = eta;
+        // Alternate airport(s)
+        var altns = arr.Elements().Where(e => e.Name.LocalName == "arrivalAerodromeAlternate");
+        var altnCodes = new List<string>();
+        foreach (var altn in altns)
+        {
+            var code = altn.Attribute("code")?.Value;
+            if (!string.IsNullOrEmpty(code)) altnCodes.Add(code);
+        }
+        if (altnCodes.Count > 0) state.AlternateAerodrome = string.Join(" ", altnCodes);
     }
 
     // assignedAltitude — has mutually exclusive sub-types: simple, vfr, vfrPlus, block
@@ -3132,6 +3145,7 @@ class FlightState
     public string? FlightStatus { get; set; }
     public string? Origin { get; set; }
     public string? Destination { get; set; }
+    public string? AlternateAerodrome { get; set; }
     public string? AircraftType { get; set; }
     public string? Registration { get; set; }
     public string? WakeCategory { get; set; }
@@ -3277,7 +3291,7 @@ class FlightState
         ComputerId = ComputerId,
         ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
         Operator = Operator, Originator = Originator, FlightStatus = FlightStatus,
-        Origin = Origin, Destination = Destination, AircraftType = AircraftType,
+        Origin = Origin, Destination = Destination, AlternateAerodrome = AlternateAerodrome, AircraftType = AircraftType,
         Registration = Registration, WakeCategory = WakeCategory,
         ModeSCode = ModeSCode, EquipmentQualifier = EquipmentQualifier,
         Squawk = Squawk, AssignedSquawk = AssignedSquawk, FlightRules = FlightRules,
@@ -3317,7 +3331,7 @@ class FlightState
             Gufi = s.Gufi, FdpsGufi = s.FdpsGufi, Callsign = s.Callsign,
             ComputerId = s.ComputerId,
             Operator = s.Operator, Originator = s.Originator, FlightStatus = s.FlightStatus,
-            Origin = s.Origin, Destination = s.Destination, AircraftType = s.AircraftType,
+            Origin = s.Origin, Destination = s.Destination, AlternateAerodrome = s.AlternateAerodrome, AircraftType = s.AircraftType,
             Registration = s.Registration, WakeCategory = s.WakeCategory,
             ModeSCode = s.ModeSCode, EquipmentQualifier = s.EquipmentQualifier,
             Squawk = s.Squawk, AssignedSquawk = s.AssignedSquawk, FlightRules = s.FlightRules,
@@ -3411,7 +3425,7 @@ class FlightState
             Gufi, FdpsGufi, Callsign, ComputerId,
             ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
             Operator, Originator, FlightStatus,
-            Origin, Destination, AircraftType, Registration, WakeCategory,
+            Origin, Destination, AlternateAerodrome, AircraftType, Registration, WakeCategory,
             ModeSCode, EquipmentQualifier, Squawk, AssignedSquawk, FlightRules,
             Route, OriginalRoute, STAR, Remarks,
             AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
@@ -3454,6 +3468,7 @@ class FlightSnapshot
     public string? FlightStatus { get; set; }
     public string? Origin { get; set; }
     public string? Destination { get; set; }
+    public string? AlternateAerodrome { get; set; }
     public string? AircraftType { get; set; }
     public string? Registration { get; set; }
     public string? WakeCategory { get; set; }

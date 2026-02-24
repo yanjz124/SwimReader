@@ -736,9 +736,31 @@ function buildIcaoFpl(d) {
     if (d.communicationCode) f10a += d.communicationCode.replace(/\s+/g, '');
     if (d.navigationCode) f10a += d.navigationCode.replace(/\s+/g, '');
     if (d.dataLinkCode && d.dataLinkCode.includes('J') && !f10a.includes('J')) f10a += 'J';
-    // Z in 10a required when filing NAV/, COM/, or DAT/ in Field 18
-    if (d.otherDataLink && f10a && !f10a.includes('Z')) f10a += 'Z';
     if (!f10a) f10a = d.equipmentQualifier || 'S';
+
+    // Build Field 18 PBN/NAV first so we can set R and Z in 10a
+    let pbnStr = '', navStr = '';
+    if (d.pbnCode) {
+        // PBN/ allows up to 8 codes; additional PBN capabilities (Z1,Z2,Z5,R1,P1,M1,M2) overflow to NAV/
+        const allCodes = d.pbnCode.replace(/\s+/g, '').match(/.{2}/g) || [];
+        const additional = new Set(['Z1','Z2','Z5','R1','P1','M1','M2']);
+        const pbnCodes = [], navCodes = [];
+        for (const c of allCodes) {
+            if (additional.has(c)) navCodes.push(c);
+            else pbnCodes.push(c);
+        }
+        // If standard codes exceed 8, overflow to NAV/ too
+        if (pbnCodes.length > 8) navCodes.push(...pbnCodes.splice(8));
+        pbnStr = pbnCodes.join('');
+        navStr = navCodes.join('');
+    }
+    const hasDAT = !!d.otherDataLink;
+    const hasNAV = navStr.length > 0;
+    // R in 10a when filing PBN/ in Field 18
+    if (pbnStr && !f10a.includes('R')) f10a += 'R';
+    // Z in 10a when filing NAV/, COM/, or DAT/ in Field 18
+    if ((hasDAT || hasNAV) && !f10a.includes('Z')) f10a += 'Z';
+
     // 10b: Surveillance equipment (concatenated, no spaces)
     const f10b = d.surveillanceCode ? d.surveillanceCode.replace(/\s+/g, '') : 'C';
     const f10 = f10a + '/' + f10b;
@@ -791,8 +813,9 @@ function buildIcaoFpl(d) {
 
     // Field 18: Other information (per FAA FPL Quick Guide)
     const f18 = [];
-    if (d.pbnCode) f18.push('PBN/' + d.pbnCode.replace(/\s+/g, ''));
-    if (d.otherDataLink) f18.push('DAT/' + d.otherDataLink.replace(/\s+/g, ''));
+    if (pbnStr) f18.push('PBN/' + pbnStr);
+    if (navStr) f18.push('NAV/' + navStr);
+    if (hasDAT) f18.push('DAT/' + d.otherDataLink.replace(/\s+/g, ''));
     // SUR/: ADS-B frequency band — derive from Field 10b surveillance codes
     if (d.surveillanceCode) {
         const sc = d.surveillanceCode;
@@ -810,7 +833,8 @@ function buildIcaoFpl(d) {
         f18.push('DOF/' + dof);
     }
     if (d.registration) f18.push('REG/' + d.registration);
-    if (d.operator) f18.push('OPR/' + d.operator);
+    // OPR/: show when callsign is ICAO 3-letter designator
+    if (d.operator && /^[A-Z]{3}\d/.test(f7)) f18.push('OPR/' + d.operator);
     if (d.selcal) f18.push('SEL/' + d.selcal);
     if (d.modeSCode) f18.push('CODE/' + d.modeSCode);
     if (d.remarks) f18.push('RMK/' + d.remarks);

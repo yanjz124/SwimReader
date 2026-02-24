@@ -955,8 +955,8 @@ function buildSimBriefUrl(d) {
     if (d.otherSurveillanceCapabilities) extra.push('SUR/' + d.otherSurveillanceCapabilities.trim());
     if (extra.length) acdata.extrarmk = extra.join(' ');
     if (Object.keys(acdata).length) p.set('acdata', JSON.stringify(acdata));
-    // Remarks
-    if (d.remarks) p.set('manualrmk', d.remarks.replace(/\|/g, '').trim());
+    // Remarks (Field 18 RMK/ → extrarmk, not dispatch remarks)
+    if (d.remarks) p.set('extrarmk', 'RMK/' + d.remarks.replace(/\|/g, '').trim());
     p.set('units', 'LBS');
     return 'https://dispatch.simbrief.com/options/custom?' + p.toString();
 }

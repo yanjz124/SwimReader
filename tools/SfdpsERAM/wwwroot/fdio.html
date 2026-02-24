@@ -255,6 +255,7 @@ body {
     margin-bottom: 8px;
 }
 .icao-btn:hover { background: #0a300a; color: #fff; }
+.simbrief-btn { text-decoration: none; display: inline-block; margin-left: 6px; }
 .icao-block {
     background: #080808;
     border: 1px solid #333;
@@ -895,6 +896,68 @@ function buildIcaoFpl(d) {
     return `(FPL-${f7}-${f8}\n-${f9}-${f10}\n-${f13}\n-${f15}\n-${f16}\n-${f18str})`;
 }
 
+function buildSimBriefUrl(d) {
+    const p = new URLSearchParams();
+    // Airline + flight number from callsign (e.g. AAL123 → airline=AAL, fltnum=123)
+    const cs = d.callsign || '';
+    const csMatch = cs.match(/^([A-Z]{3})(\d+)$/);
+    if (csMatch) {
+        p.set('airline', csMatch[1]);
+        p.set('fltnum', csMatch[2]);
+        p.set('callsign', cs);
+    } else if (cs) {
+        p.set('callsign', cs);
+    }
+    // Aircraft
+    if (d.aircraftType) p.set('type', d.aircraftType);
+    // Airports (already ICAO in SFDPS)
+    if (d.origin) p.set('orig', d.origin);
+    if (d.destination) p.set('dest', d.destination);
+    if (d.alternateAerodrome) {
+        const altns = d.alternateAerodrome.split(' ').filter(Boolean);
+        if (altns[0]) p.set('altn', altns[0]);
+    }
+    // Route (NAS → ICAO cleaned)
+    const routeSource = d.originalRoute || d.route;
+    if (routeSource) {
+        const r = nasToIcaoRoute(routeSource, d.origin, d.destination);
+        if (r && r !== 'DCT') p.set('route', r);
+    }
+    // Altitude
+    if (d.assignedAltitude && !d.assignedVfr) {
+        p.set('fl', String(Math.round(d.assignedAltitude / 100)));
+    }
+    if (d.assignedVfr) p.set('flightrules', 'v');
+    // Registration & Mode S
+    if (d.registration) p.set('reg', d.registration);
+    if (d.modeSCode) p.set('hexcode', d.modeSCode);
+    // Equipment (acdata JSON for equip/transponder/pbn/extrarmk)
+    const acdata = {};
+    const wakeMap = { J: 'J', H: 'H', L: 'M', S: 'L' };
+    if (d.wakeCategory) acdata.cat = wakeMap[d.wakeCategory] || d.wakeCategory;
+    // Build equipment and transponder strings from ICAO FPL fields
+    let equip = '';
+    if (d.communicationCode) equip += d.communicationCode.replace(/\s+/g, '');
+    if (d.navigationCode) equip += d.navigationCode.replace(/\s+/g, '');
+    if (d.dataLinkCode) {
+        const jCodes = d.dataLinkCode.match(/J\d/g) || [];
+        for (const jc of jCodes) { if (!equip.includes(jc)) equip += jc; }
+    }
+    if (!equip) equip = d.equipmentQualifier || 'S';
+    if (!equip.includes('S')) equip = 'S' + equip;
+    acdata.equip = equip;
+    if (d.surveillanceCode) acdata.transponder = d.surveillanceCode.replace(/\s+/g, '');
+    if (d.pbnCode) acdata.pbn = 'PBN/' + d.pbnCode.replace(/\s+/g, '');
+    // Extra remarks (DAT, SUR, etc.)
+    const extra = [];
+    if (d.otherDataLink) extra.push('DAT/' + d.otherDataLink.trim());
+    if (d.otherSurveillanceCapabilities) extra.push('SUR/' + d.otherSurveillanceCapabilities.trim());
+    if (extra.length) acdata.extrarmk = extra.join(' ');
+    if (Object.keys(acdata).length) p.set('acdata', JSON.stringify(acdata));
+    p.set('units', 'LBS');
+    return 'https://dispatch.simbrief.com/options/custom?' + p.toString();
+}
+
 function toggleIcaoFpl() {
     showIcao = !showIcao;
     renderActiveTab();
@@ -922,8 +985,10 @@ function renderFlightPlan(d) {
         ? `<div class="icao-block"><button class="icao-copy" onclick="copyIcaoFpl(event)">COPY</button>${esc(lastIcaoText).replace(/\n/g, '<br>')}</div>`
         : '';
     const icaoBtn = `<button class="icao-btn" onclick="toggleIcaoFpl()">${showIcao ? 'HIDE ICAO FPL' : 'ICAO FPL'}</button>`;
+    const sbUrl = buildSimBriefUrl(d);
+    const sbBtn = `<a class="icao-btn simbrief-btn" href="${esc(sbUrl)}" target="_blank" rel="noopener">SIMBRIEF</a>`;
 
-    return `${purgeBanner}${icaoBtn}${icaoHtml}
+    return `${purgeBanner}${icaoBtn}${sbBtn}${icaoHtml}
         ${section('Identity', [
             ['Callsign', d.callsign],
             ['Aircraft Type', d.aircraftType],

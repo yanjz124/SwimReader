@@ -793,6 +793,7 @@ function buildIcaoFpl(d) {
     const f18 = [];
     if (d.pbnCode) f18.push('PBN/' + d.pbnCode.replace(/\s+/g, ''));
     if (d.navigationCode) f18.push('NAV/' + d.navigationCode);
+    if (d.surveillanceCode) f18.push('SUR/' + d.surveillanceCode.replace(/\s+/g, ''));
     if (d.dataLinkCode) f18.push('DAT/' + d.dataLinkCode.replace(/\s+/g, ''));
     // DOF: date of flight (YYMMDD)
     if (d.actualDepartureTime) {
@@ -803,9 +804,9 @@ function buildIcaoFpl(d) {
         f18.push('DOF/' + dof);
     }
     if (d.registration) f18.push('REG/' + d.registration);
+    if (d.operator) f18.push('OPR/' + d.operator);
     if (d.selcal) f18.push('SEL/' + d.selcal);
     if (d.modeSCode) f18.push('CODE/' + d.modeSCode);
-    if (d.squawk) f18.push('SQK/' + d.squawk);
     if (d.remarks) f18.push('RMK/' + d.remarks);
     const f18str = f18.length > 0 ? f18.join(' ') : '0';
 

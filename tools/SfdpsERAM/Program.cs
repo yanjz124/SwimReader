@@ -1463,18 +1463,12 @@ void ProcessFlight(XElement flight, string rawXml)
     }
 
     // operator — <operator><operatingOrganization><organization name="FLEXJET"/>
-    // Some FH messages carry only the 3-letter ICAO code (e.g. "ERY") while others carry
-    // the full name (e.g. "SKY QUEST"). Keep the longer/more descriptive value.
+    // Value is whatever SFDPS sends — sometimes full name, sometimes ICAO code
     var opEl = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "operator");
     if (opEl is not null)
     {
         var org = opEl.Descendants().FirstOrDefault(e => e.Name.LocalName == "organization" && e.Attribute("name") is not null);
-        if (org is not null)
-        {
-            var newOp = org.Attribute("name")!.Value;
-            if (string.IsNullOrEmpty(state.Operator) || newOp.Length > state.Operator.Length)
-                state.Operator = newOp;
-        }
+        if (org is not null) state.Operator = org.Attribute("name")!.Value;
     }
 
     // originator (AFTN address, e.g. EKODFFLX)

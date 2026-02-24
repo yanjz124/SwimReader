@@ -898,21 +898,17 @@ function buildIcaoFpl(d) {
 
 function buildSimBriefUrl(d) {
     const p = new URLSearchParams();
-    // Airline + flight number from callsign (e.g. AAL123 → airline=AAL, fltnum=123)
-    // GA flights use tail number as callsign (e.g. N123AB) — set as reg instead
+    // 3-letter ICAO airline + alphanumeric fltnum (AAL123, BAW12AB)
+    // Otherwise everything goes into fltnum (N123AB, BLOCKED, etc.)
     const cs = d.callsign || '';
-    const csMatch = cs.match(/^([A-Z]{3})(\d+)$/);
+    const csMatch = cs.match(/^([A-Z]{3})([A-Z0-9]+)$/);
     if (csMatch) {
         p.set('airline', csMatch[1]);
         p.set('fltnum', csMatch[2]);
-        p.set('callsign', cs);
-    } else if (/^N\d/.test(cs)) {
-        // GA N-number — use as registration
-        if (!d.registration) p.set('reg', cs);
-        p.set('callsign', cs);
     } else if (cs) {
-        p.set('callsign', cs);
+        p.set('fltnum', cs);
     }
+    if (cs) p.set('callsign', cs);
     // Aircraft
     if (d.aircraftType) p.set('type', d.aircraftType);
     // Airports (already ICAO in SFDPS)

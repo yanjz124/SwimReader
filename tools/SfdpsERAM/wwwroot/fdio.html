@@ -845,7 +845,21 @@ function buildIcaoFpl(d) {
     if (navParts.length) f18.push('NAV/' + navParts.join(' '));
     if (hasDAT) f18.push('DAT/' + d.otherDataLink.trim());
     // SUR/: from FIXM <surveillance otherSurveillanceCapabilities="...">
-    if (d.otherSurveillanceCapabilities) f18.push('SUR/' + d.otherSurveillanceCapabilities);
+    // SFDPS adds spaces between codes (e.g. "260B C2 I0 CANMANDATE").
+    // Concatenate equipment codes (alphanumeric tokens like 260B, C2, I0) and
+    // keep spaces before free text (all-letter words like CANMANDATE).
+    if (d.otherSurveillanceCapabilities) {
+        const surTokens = d.otherSurveillanceCapabilities.trim().split(/\s+/);
+        let sur = '', needSpace = false;
+        for (const t of surTokens) {
+            const isCode = /\d/.test(t);  // equipment codes always contain a digit
+            if (!isCode && sur) needSpace = true;
+            if (needSpace) sur += ' ';
+            sur += t;
+            needSpace = !isCode;
+        }
+        f18.push('SUR/' + sur);
+    }
     // DOF: date of flight (YYMMDD)
     if (d.actualDepartureTime) {
         const dt = new Date(d.actualDepartureTime);

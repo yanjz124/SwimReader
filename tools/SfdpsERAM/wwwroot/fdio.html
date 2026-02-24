@@ -735,7 +735,11 @@ function buildIcaoFpl(d) {
     let f10a = '';
     if (d.communicationCode) f10a += d.communicationCode.replace(/\s+/g, '');
     if (d.navigationCode) f10a += d.navigationCode.replace(/\s+/g, '');
-    if (d.dataLinkCode && d.dataLinkCode.includes('J') && !f10a.includes('J')) f10a += 'J';
+    // J codes from dataLinkCode (J1-J7 = CPDLC capabilities, e.g. "J4 J5")
+    if (d.dataLinkCode) {
+        const jCodes = d.dataLinkCode.match(/J\d/g) || [];
+        for (const jc of jCodes) { if (!f10a.includes(jc)) f10a += jc; }
+    }
     if (!f10a) f10a = d.equipmentQualifier || 'S';
 
     // Build Field 18 PBN/NAV first so we can set R and Z in 10a

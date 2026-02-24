@@ -1082,7 +1082,7 @@ void SaveFlightHistory(FlightState f)
         var filePath = Path.Combine(historyDir, $"{datePart}.jsonl");
         var record = new
         {
-            f.Gufi, f.FdpsGufi, f.Callsign, f.ComputerId, f.Operator, f.FlightStatus,
+            f.Gufi, f.FdpsGufi, f.Callsign, f.ComputerId, f.Operator, f.Originator, f.FlightStatus,
             f.Origin, f.Destination, f.AircraftType, f.Registration, f.WakeCategory,
             f.ModeSCode, f.EquipmentQualifier, f.Squawk, f.AssignedSquawk, f.FlightRules,
             f.Route, f.STAR, f.Remarks,
@@ -1465,6 +1465,14 @@ void ProcessFlight(XElement flight, string rawXml)
     // operator
     var op = flight.Descendants().FirstOrDefault(e => e.Name.LocalName == "organization" && e.Attribute("name") is not null);
     if (op is not null) state.Operator = op.Attribute("name")!.Value;
+
+    // originator (AFTN address, e.g. EKODFFLX)
+    var originator = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "originator");
+    if (originator is not null)
+    {
+        var aftn = originator.Elements().FirstOrDefault(e => e.Name.LocalName == "aftnAddress")?.Value;
+        if (!string.IsNullOrEmpty(aftn)) state.Originator = aftn;
+    }
 
     // departure / arrival
     var dep = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "departure");
@@ -3095,6 +3103,7 @@ class FlightState
     public string? ComputerId { get; set; }
     public ConcurrentDictionary<string, string> ComputerIds { get; } = new();
     public string? Operator { get; set; }
+    public string? Originator { get; set; }
     public string? FlightStatus { get; set; }
     public string? Origin { get; set; }
     public string? Destination { get; set; }
@@ -3239,7 +3248,7 @@ class FlightState
         Gufi = Gufi, FdpsGufi = FdpsGufi, Callsign = Callsign,
         ComputerId = ComputerId,
         ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
-        Operator = Operator, FlightStatus = FlightStatus,
+        Operator = Operator, Originator = Originator, FlightStatus = FlightStatus,
         Origin = Origin, Destination = Destination, AircraftType = AircraftType,
         Registration = Registration, WakeCategory = WakeCategory,
         ModeSCode = ModeSCode, EquipmentQualifier = EquipmentQualifier,
@@ -3276,7 +3285,7 @@ class FlightState
         {
             Gufi = s.Gufi, FdpsGufi = s.FdpsGufi, Callsign = s.Callsign,
             ComputerId = s.ComputerId,
-            Operator = s.Operator, FlightStatus = s.FlightStatus,
+            Operator = s.Operator, Originator = s.Originator, FlightStatus = s.FlightStatus,
             Origin = s.Origin, Destination = s.Destination, AircraftType = s.AircraftType,
             Registration = s.Registration, WakeCategory = s.WakeCategory,
             ModeSCode = s.ModeSCode, EquipmentQualifier = s.EquipmentQualifier,
@@ -3318,7 +3327,7 @@ class FlightState
     {
         Gufi, Callsign, ComputerId,
         ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
-        Operator, FlightStatus,
+        Operator, Originator, FlightStatus,
         Origin, Destination, AircraftType, WakeCategory,
         AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
         InterimAltitude, ReportedAltitude,
@@ -3366,7 +3375,7 @@ class FlightState
         {
             Gufi, FdpsGufi, Callsign, ComputerId,
             ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
-            Operator, FlightStatus,
+            Operator, Originator, FlightStatus,
             Origin, Destination, AircraftType, Registration, WakeCategory,
             ModeSCode, EquipmentQualifier, Squawk, AssignedSquawk, FlightRules,
             Route, OriginalRoute, STAR, Remarks,
@@ -3405,6 +3414,7 @@ class FlightSnapshot
     public string? ComputerId { get; set; }
     public Dictionary<string, string>? ComputerIds { get; set; }
     public string? Operator { get; set; }
+    public string? Originator { get; set; }
     public string? FlightStatus { get; set; }
     public string? Origin { get; set; }
     public string? Destination { get; set; }

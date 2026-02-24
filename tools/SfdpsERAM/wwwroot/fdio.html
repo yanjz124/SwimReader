@@ -792,8 +792,11 @@ function buildIcaoFpl(d) {
     const f13 = dep + depTime;
 
     // Field 15: Cruising speed + level + route
+    // Use filed airspeed (requestedSpeed) for ICAO FPL, not ground speed
     let speed = 'N0000';
-    if (d.groundSpeed) {
+    if (d.requestedSpeed) {
+        speed = 'N' + String(Math.round(d.requestedSpeed)).padStart(4, '0');
+    } else if (d.groundSpeed) {
         speed = 'N' + String(Math.round(d.groundSpeed)).padStart(4, '0');
     }
     let level = 'F000';
@@ -831,7 +834,7 @@ function buildIcaoFpl(d) {
     const f18 = [];
     if (pbnStr) f18.push('PBN/' + pbnStr);
     if (navStr) f18.push('NAV/' + navStr);
-    if (hasDAT) f18.push('DAT/' + d.otherDataLink.replace(/\s+/g, ''));
+    if (hasDAT) f18.push('DAT/' + d.otherDataLink.trim());
     // SUR/: ADS-B frequency band — derive from Field 10b surveillance codes
     if (d.surveillanceCode) {
         const sc = d.surveillanceCode;
@@ -849,8 +852,10 @@ function buildIcaoFpl(d) {
         f18.push('DOF/' + dof);
     }
     if (d.registration) f18.push('REG/' + d.registration);
-    // OPR/: show when callsign is ICAO 3-letter designator
-    if (d.operator && /^[A-Z]{3}\d/.test(f7)) f18.push('OPR/' + d.operator);
+    // OPR/: operating organization name from SFDPS <operator><organization name="...">
+    if (d.operator) f18.push('OPR/' + d.operator);
+    // ORGN/: originator AFTN address from SFDPS <originator><aftnAddress>
+    if (d.originator) f18.push('ORGN/' + d.originator);
     if (d.selcal) f18.push('SEL/' + d.selcal);
     if (d.modeSCode) f18.push('CODE/' + d.modeSCode);
     if (d.remarks) f18.push('RMK/' + d.remarks);

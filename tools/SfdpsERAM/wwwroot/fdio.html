@@ -793,8 +793,7 @@ function buildIcaoFpl(d) {
     const f18 = [];
     if (d.pbnCode) f18.push('PBN/' + d.pbnCode.replace(/\s+/g, ''));
     if (d.navigationCode) f18.push('NAV/' + d.navigationCode);
-    if (d.surveillanceCode) f18.push('SUR/' + d.surveillanceCode.replace(/\s+/g, ''));
-    if (d.dataLinkCode) f18.push('DAT/' + d.dataLinkCode.replace(/\s+/g, ''));
+    if (d.otherDataLink) f18.push('DAT/' + d.otherDataLink.replace(/\s+/g, ''));
     // DOF: date of flight (YYMMDD)
     if (d.actualDepartureTime) {
         const dt = new Date(d.actualDepartureTime);

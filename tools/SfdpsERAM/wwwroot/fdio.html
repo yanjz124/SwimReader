@@ -899,11 +899,16 @@ function buildIcaoFpl(d) {
 function buildSimBriefUrl(d) {
     const p = new URLSearchParams();
     // Airline + flight number from callsign (e.g. AAL123 → airline=AAL, fltnum=123)
+    // GA flights use tail number as callsign (e.g. N123AB) — set as reg instead
     const cs = d.callsign || '';
     const csMatch = cs.match(/^([A-Z]{3})(\d+)$/);
     if (csMatch) {
         p.set('airline', csMatch[1]);
         p.set('fltnum', csMatch[2]);
+        p.set('callsign', cs);
+    } else if (/^N\d/.test(cs)) {
+        // GA N-number — use as registration
+        if (!d.registration) p.set('reg', cs);
         p.set('callsign', cs);
     } else if (cs) {
         p.set('callsign', cs);
@@ -954,6 +959,8 @@ function buildSimBriefUrl(d) {
     if (d.otherSurveillanceCapabilities) extra.push('SUR/' + d.otherSurveillanceCapabilities.trim());
     if (extra.length) acdata.extrarmk = extra.join(' ');
     if (Object.keys(acdata).length) p.set('acdata', JSON.stringify(acdata));
+    // Remarks
+    if (d.remarks) p.set('manualrmk', d.remarks.replace(/\|/g, '').trim());
     p.set('units', 'LBS');
     return 'https://dispatch.simbrief.com/options/custom?' + p.toString();
 }

@@ -828,7 +828,12 @@ function buildIcaoFpl(d) {
                   String(diffMin % 60).padStart(2, '0');
         }
     }
-    const f16 = dest + eet;
+    // Alternate aerodrome(s) from SFDPS <arrivalAerodromeAlternate code="KMIA"/>
+    let altnStr = '';
+    if (d.alternateAerodrome) {
+        altnStr = ' ' + d.alternateAerodrome.split(' ').map(a => toIcao(a)).join(' ');
+    }
+    const f16 = dest + eet + altnStr;
 
     // Field 18: Other information (per FAA FPL Quick Guide)
     const f18 = [];

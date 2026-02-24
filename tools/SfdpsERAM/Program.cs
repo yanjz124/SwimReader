@@ -1841,6 +1841,8 @@ void ProcessFlight(XElement flight, string rawXml)
             if (!string.IsNullOrEmpty(navCode)) state.NavigationCode = navCode;
             var pbn = nav.Elements().FirstOrDefault(e => e.Name.LocalName == "performanceBasedCode")?.Value;
             if (!string.IsNullOrEmpty(pbn)) state.PBNCode = pbn;
+            var otherNav = nav.Attribute("otherNavigationCapabilities")?.Value;
+            if (!string.IsNullOrEmpty(otherNav)) state.OtherNavigationCapabilities = otherNav;
         }
 
         // Surveillance
@@ -1849,6 +1851,8 @@ void ProcessFlight(XElement flight, string rawXml)
         {
             var survCode = surv.Elements().FirstOrDefault(e => e.Name.LocalName == "surveillanceCode")?.Value;
             if (!string.IsNullOrEmpty(survCode)) state.SurveillanceCode = survCode;
+            var otherSurv = surv.Attribute("otherSurveillanceCapabilities")?.Value;
+            if (!string.IsNullOrEmpty(otherSurv)) state.OtherSurveillanceCapabilities = otherSurv;
         }
     }
 
@@ -1870,6 +1874,27 @@ void ProcessFlight(XElement flight, string rawXml)
 
             var star = route.Descendants().FirstOrDefault(e => e.Name.LocalName == "nasadaptedArrivalRoute");
             if (star is not null) state.STAR = star.Attribute("nasRouteIdentifier")?.Value;
+
+            // estimatedElapsedTime — FIR boundary crossing times (for ICAO EET/)
+            var eets = route.Elements().Where(e => e.Name.LocalName == "estimatedElapsedTime");
+            var eetParts = new List<string>();
+            foreach (var eet in eets)
+            {
+                var elapsed = eet.Attribute("elapsedTime")?.Value; // ISO 8601 duration e.g. P0Y0M0DT1H9M0S
+                var region = eet.Descendants().FirstOrDefault(e => e.Name.LocalName == "region")?.Value;
+                if (!string.IsNullOrEmpty(elapsed) && !string.IsNullOrEmpty(region))
+                {
+                    // Parse ISO 8601 duration to HHMM
+                    try
+                    {
+                        var ts = System.Xml.XmlConvert.ToTimeSpan(elapsed);
+                        var hhmm = $"{(int)ts.TotalHours:D2}{ts.Minutes:D2}";
+                        eetParts.Add($"{region}{hhmm}");
+                    }
+                    catch { }
+                }
+            }
+            if (eetParts.Count > 0) state.EstimatedElapsedTimes = string.Join(" ", eetParts);
         }
     }
 
@@ -3180,6 +3205,9 @@ class FlightState
     public string? NavigationCode { get; set; }
     public string? PBNCode { get; set; }
     public string? SurveillanceCode { get; set; }
+    public string? OtherNavigationCapabilities { get; set; }
+    public string? OtherSurveillanceCapabilities { get; set; }
+    public string? EstimatedElapsedTimes { get; set; }
 
     // Meta
     public DateTime LastSeen { get; set; }
@@ -3274,6 +3302,9 @@ class FlightState
         CommunicationCode = CommunicationCode, DataLinkCode = DataLinkCode,
         OtherDataLink = OtherDataLink, SELCAL = SELCAL,
         NavigationCode = NavigationCode, PBNCode = PBNCode, SurveillanceCode = SurveillanceCode,
+        OtherNavigationCapabilities = OtherNavigationCapabilities,
+        OtherSurveillanceCapabilities = OtherSurveillanceCapabilities,
+        EstimatedElapsedTimes = EstimatedElapsedTimes,
         LastSeen = LastSeen, LastMsgSource = LastMsgSource,
         PosHistory = GetPositionHistory(),
         Events = GetEvents()
@@ -3311,6 +3342,9 @@ class FlightState
             CommunicationCode = s.CommunicationCode, DataLinkCode = s.DataLinkCode,
             OtherDataLink = s.OtherDataLink, SELCAL = s.SELCAL,
             NavigationCode = s.NavigationCode, PBNCode = s.PBNCode, SurveillanceCode = s.SurveillanceCode,
+            OtherNavigationCapabilities = s.OtherNavigationCapabilities,
+            OtherSurveillanceCapabilities = s.OtherSurveillanceCapabilities,
+            EstimatedElapsedTimes = s.EstimatedElapsedTimes,
             LastSeen = s.LastSeen, LastMsgSource = s.LastMsgSource,
             LastPositionTime = s.Latitude.HasValue ? s.LastSeen : default
         };
@@ -3343,6 +3377,7 @@ class FlightState
         DataLinkCode, OtherDataLink,
         Route, OriginalRoute, FlightRules, STAR, Remarks,
         Registration, EquipmentQualifier, RequestedSpeed,
+        OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
         CoordinationFix, CoordinationTime,
         ETA, ActualDepartureTime,
         LastMsgSource,
@@ -3389,6 +3424,7 @@ class FlightState
             ClearanceHeading, ClearanceSpeed, ClearanceText, FourthAdaptedField, TmiIds,
             CommunicationCode, DataLinkCode, OtherDataLink, SELCAL,
             NavigationCode, PBNCode, SurveillanceCode,
+            OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),
             Events = allEvents,
             History = HistoryWithAge()
@@ -3468,6 +3504,9 @@ class FlightSnapshot
     public string? NavigationCode { get; set; }
     public string? PBNCode { get; set; }
     public string? SurveillanceCode { get; set; }
+    public string? OtherNavigationCapabilities { get; set; }
+    public string? OtherSurveillanceCapabilities { get; set; }
+    public string? EstimatedElapsedTimes { get; set; }
     public DateTime LastSeen { get; set; }
     public string? LastMsgSource { get; set; }
     public List<PositionRecord>? PosHistory { get; set; }

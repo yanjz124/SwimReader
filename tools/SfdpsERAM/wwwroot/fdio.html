@@ -763,7 +763,7 @@ function buildIcaoFpl(d) {
         navStr = navCodes.join('');
     }
     const hasDAT = !!d.otherDataLink;
-    const hasNAV = navStr.length > 0;
+    const hasNAV = navStr.length > 0 || !!d.otherNavigationCapabilities;
     // R in 10a when filing PBN/ in Field 18
     if (pbnStr && !f10a.includes('R')) f10a += 'R';
     // Z in 10a when filing NAV/, COM/, or DAT/ in Field 18
@@ -833,16 +833,14 @@ function buildIcaoFpl(d) {
     // Field 18: Other information (per FAA FPL Quick Guide)
     const f18 = [];
     if (pbnStr) f18.push('PBN/' + pbnStr);
-    if (navStr) f18.push('NAV/' + navStr);
+    // NAV/: PBN overflow codes + otherNavigationCapabilities from FIXM
+    const navParts = [];
+    if (navStr) navParts.push(navStr);
+    if (d.otherNavigationCapabilities) navParts.push(d.otherNavigationCapabilities);
+    if (navParts.length) f18.push('NAV/' + navParts.join(' '));
     if (hasDAT) f18.push('DAT/' + d.otherDataLink.trim());
-    // SUR/: ADS-B frequency band — derive from Field 10b surveillance codes
-    if (d.surveillanceCode) {
-        const sc = d.surveillanceCode;
-        const surParts = [];
-        if (/B1/.test(sc)) surParts.push('260B');
-        if (/B2|U1|U2/.test(sc)) surParts.push('282B');
-        if (surParts.length) f18.push('SUR/' + surParts.join(' '));
-    }
+    // SUR/: from FIXM <surveillance otherSurveillanceCapabilities="...">
+    if (d.otherSurveillanceCapabilities) f18.push('SUR/' + d.otherSurveillanceCapabilities);
     // DOF: date of flight (YYMMDD)
     if (d.actualDepartureTime) {
         const dt = new Date(d.actualDepartureTime);
@@ -852,6 +850,8 @@ function buildIcaoFpl(d) {
         f18.push('DOF/' + dof);
     }
     if (d.registration) f18.push('REG/' + d.registration);
+    // EET/: estimated elapsed times to FIR boundaries
+    if (d.estimatedElapsedTimes) f18.push('EET/' + d.estimatedElapsedTimes);
     // OPR/: operating organization name from SFDPS <operator><organization name="...">
     if (d.operator) f18.push('OPR/' + d.operator);
     // ORGN/: originator AFTN address from SFDPS <originator><aftnAddress>

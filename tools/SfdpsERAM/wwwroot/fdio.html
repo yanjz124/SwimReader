@@ -848,7 +848,7 @@ function buildIcaoFpl(d) {
     // AAL Airbus flights file codes concatenated (260BC2I0 CANMANDATE) but SFDPS
     // spaces them out. Concatenate codes only for AAL+Airbus; keep raw for everyone else.
     if (d.otherSurveillanceCapabilities) {
-        const isAalAirbus = /^AAL/.test(d.callsign || '') && /^A3/.test(d.aircraftType || '');
+        const isAalAirbus = /^AAL/.test(d.callsign || '') && /^A\d/.test(d.aircraftType || '');
         let sur = d.otherSurveillanceCapabilities.trim();
         if (isAalAirbus) {
             const surTokens = sur.split(/\s+/);

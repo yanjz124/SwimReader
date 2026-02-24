@@ -991,8 +991,10 @@ function renderFlightPlan(d) {
     const icaoBtn = `<button class="icao-btn" onclick="toggleIcaoFpl()">${showIcao ? 'HIDE ICAO FPL' : 'ICAO FPL'}</button>`;
     const sbUrl = buildSimBriefUrl(d);
     const sbBtn = `<a class="icao-btn simbrief-btn" href="${esc(sbUrl)}" target="_blank" rel="noopener">SIMBRIEF</a>`;
+    const vatUrl = 'https://my.vatsim.net/pilots/flightplan?raw=' + encodeURIComponent(lastIcaoText);
+    const vatBtn = `<a class="icao-btn simbrief-btn" href="${esc(vatUrl)}" target="_blank" rel="noopener">VATSIM</a>`;
 
-    return `${purgeBanner}${icaoBtn}${sbBtn}${icaoHtml}
+    return `${purgeBanner}${icaoBtn}${sbBtn}${vatBtn}${icaoHtml}
         ${section('Identity', [
             ['Callsign', d.callsign],
             ['Aircraft Type', d.aircraftType],

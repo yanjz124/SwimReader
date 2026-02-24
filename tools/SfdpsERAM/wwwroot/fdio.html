@@ -731,7 +731,7 @@ function buildIcaoFpl(d) {
     // Field 8: Flight rules + type of flight (S=scheduled, N=non-scheduled, G=GA, M=military, X=other)
     const rules = d.flightRules ? d.flightRules.charAt(0).toUpperCase() : 'I';
     const ftypeMap = { SCHEDULED: 'S', NON_SCHEDULED: 'N', GENERAL: 'G', MILITARY: 'M', OTHER: 'X' };
-    const ftype = d.flightType ? (ftypeMap[d.flightType] || 'S') : (/^[A-Z]{3}\d/.test(f7) ? 'S' : 'G');
+    const ftype = d.flightType ? (ftypeMap[d.flightType] || 'N') : 'N';
     const f8 = rules + ftype;
 
     // Field 9: Type/Wake (FAA→ICAO wake: L→M, S→L)

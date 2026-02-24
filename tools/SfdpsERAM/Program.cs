@@ -1463,15 +1463,19 @@ void ProcessFlight(XElement flight, string rawXml)
     }
 
     // operator — <operator><operatingOrganization><organization name="FLEXJET"/>
-    // Value is whatever SFDPS sends — sometimes full name, sometimes ICAO code
+    // SFDPS sends full company names from some ARTCCs (e.g. "JAZZ AVIATION LP", "ALASKA AIRLINES")
+    // and ICAO codes from others (e.g. "JZA", "ASA"). Later FH messages can overwrite full names
+    // with short codes, so keep the longer (more descriptive) value once we have it.
     var opEl = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "operator");
     if (opEl is not null)
     {
         var org = opEl.Descendants().FirstOrDefault(e => e.Name.LocalName == "organization" && e.Attribute("name") is not null);
-        if (org is not null) state.Operator = org.Attribute("name")!.Value;
-        // TEMP: log full operator XML when name is longer than 3 chars (captures small operators)
-        if (org is not null && org.Attribute("name")!.Value.Length > 3)
-            Console.WriteLine($"[OPR-LONG] {state.Callsign}: {opEl}");
+        if (org is not null)
+        {
+            var newOp = org.Attribute("name")!.Value;
+            if (string.IsNullOrEmpty(state.Operator) || newOp.Length > state.Operator.Length)
+                state.Operator = newOp;
+        }
     }
 
     // originator (AFTN address, e.g. EKODFFLX)

@@ -713,8 +713,14 @@ function buildIcaoFpl(d) {
     const f9 = '1' + acType + '/' + wake;
 
     // Field 10: Equipment / surveillance
-    const f10a = d.equipmentQualifier || 'S';
-    const f10b = d.surveillanceCode || 'C';
+    // Build 10a from communicationCode + navigationCode (space-separated ICAO letters)
+    let codes10a = '';
+    if (d.communicationCode) codes10a += d.communicationCode.replace(/\s+/g, '');
+    if (d.navigationCode) codes10a += d.navigationCode.replace(/\s+/g, '');
+    if (d.dataLinkCode && d.dataLinkCode.includes('J') && !codes10a.includes('J')) codes10a += 'J';
+    const f10a = codes10a || d.equipmentQualifier || 'S';
+    // Build 10b from surveillanceCode (remove spaces between multi-char codes like B1 L → B1L)
+    const f10b = d.surveillanceCode ? d.surveillanceCode.replace(/\s+/g, '') : 'C';
     const f10 = f10a + '/' + f10b;
 
     // Field 13: Departure aerodrome + time
@@ -777,7 +783,6 @@ function buildIcaoFpl(d) {
     // Field 18: Other information
     const parts = [];
     if (d.pbnCode) parts.push('PBN/' + d.pbnCode);
-    if (d.navigationCode) parts.push('NAV/' + d.navigationCode);
     if (d.dataLinkCode) parts.push('DAT/' + d.dataLinkCode);
     if (d.registration) parts.push('REG/' + d.registration);
     if (d.remarks) parts.push('RMK/' + d.remarks);

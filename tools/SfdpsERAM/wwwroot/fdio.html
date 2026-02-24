@@ -697,33 +697,53 @@ function toIcao(lid) {
     return 'K' + lid.toUpperCase();
 }
 
+function nasToIcaoRoute(route, origin, dest) {
+    if (!route) return 'DCT';
+    let r = route;
+    r = r.replace(/\/\d{4}$/, '');           // strip trailing /HHMM ETE
+    r = r.replace(/\.\./g, ' DCT ');         // .. = direct-to
+    r = r.replace(/\./g, ' ');               // . = element separator
+    // Strip origin/dest ICAO codes at boundaries
+    if (origin) {
+        const oI = toIcao(origin);
+        r = r.replace(new RegExp('^\\s*(' + origin + '|' + oI + ')\\s*'), '');
+    }
+    if (dest) {
+        const dI = toIcao(dest);
+        r = r.replace(new RegExp('\\s*(' + dest + '|' + dI + ')\\s*$'), '');
+    }
+    return r.replace(/\s+/g, ' ').trim() || 'DCT';
+}
+
 function buildIcaoFpl(d) {
     // Field 7: Aircraft identification
     const f7 = d.callsign || 'ZZZZ';
 
-    // Field 8: Flight rules + type (S=scheduled, G=general aviation)
+    // Field 8: Flight rules + type of flight (S=scheduled, N=non-scheduled, G=GA, M=military)
     const rules = d.flightRules ? d.flightRules.charAt(0).toUpperCase() : 'I';
     const ftype = /^[A-Z]{3}\d/.test(f7) ? 'S' : 'G';
     const f8 = rules + ftype;
 
-    // Field 9: Number of aircraft, type, wake turbulence (FAA→ICAO: L→M, S→L)
+    // Field 9: Type/Wake (FAA→ICAO wake: L→M, S→L)
     const acType = d.aircraftType || 'ZZZZ';
     const wakeMap = { J: 'J', H: 'H', L: 'M', S: 'L' };
     const wake = wakeMap[d.wakeCategory] || d.wakeCategory || 'M';
-    const f9 = '1' + acType + '/' + wake;
+    const f9 = acType + '/' + wake;
 
-    // Field 10: Equipment / surveillance
-    // Build 10a from communicationCode + navigationCode (space-separated ICAO letters)
-    let codes10a = '';
-    if (d.communicationCode) codes10a += d.communicationCode.replace(/\s+/g, '');
-    if (d.navigationCode) codes10a += d.navigationCode.replace(/\s+/g, '');
-    if (d.dataLinkCode && d.dataLinkCode.includes('J') && !codes10a.includes('J')) codes10a += 'J';
-    const f10a = codes10a || d.equipmentQualifier || 'S';
-    // Build 10b from surveillanceCode (remove spaces between multi-char codes like B1 L → B1L)
+    // Field 10: Equipment & Capabilities / Surveillance
+    // 10a: COM/NAV equipment letters (concatenated, no spaces)
+    let f10a = '';
+    if (d.communicationCode) f10a += d.communicationCode.replace(/\s+/g, '');
+    if (d.navigationCode) f10a += d.navigationCode.replace(/\s+/g, '');
+    if (d.dataLinkCode && d.dataLinkCode.includes('J') && !f10a.includes('J')) f10a += 'J';
+    // Include Z if we have NAV/ supplementary info (per FAA: "Always include Z in Item 10a when filing NAV/")
+    if (f10a && !f10a.includes('Z')) f10a += 'Z';
+    if (!f10a) f10a = d.equipmentQualifier || 'S';
+    // 10b: Surveillance equipment (concatenated, no spaces)
     const f10b = d.surveillanceCode ? d.surveillanceCode.replace(/\s+/g, '') : 'C';
     const f10 = f10a + '/' + f10b;
 
-    // Field 13: Departure aerodrome + time
+    // Field 13: Departure aerodrome + EOBT (estimated off-block time)
     const dep = toIcao(d.origin);
     let depTime = '0000';
     if (d.actualDepartureTime) {
@@ -752,23 +772,12 @@ function buildIcaoFpl(d) {
             level = 'A' + String(Math.round(d.assignedAltitude / 100)).padStart(3, '0');
         }
     }
-    // Convert NAS route text to ICAO-style
-    let route = d.route || 'DCT';
-    route = route.replace(/\/\d{4}$/, '');       // remove trailing /HHMM
-    route = route.replace(/\.\./g, ' DCT ');     // .. = direct
-    route = route.replace(/\./g, ' ');           // . = element separator
-    if (d.origin) {
-        const oI = toIcao(d.origin);
-        route = route.replace(new RegExp('^\\s*(' + d.origin + '|' + oI + ')\\s*'), '');
-    }
-    if (d.destination) {
-        const dI = toIcao(d.destination);
-        route = route.replace(new RegExp('\\s*(' + d.destination + '|' + dI + ')\\s*$'), '');
-    }
-    route = route.replace(/\s+/g, ' ').trim() || 'DCT';
+    // Use original (filed) route for ICAO FPL, fall back to current
+    const routeSource = d.originalRoute || d.route;
+    const route = nasToIcaoRoute(routeSource, d.origin, d.destination);
     const f15 = speed + level + ' ' + route;
 
-    // Field 16: Destination + total EET
+    // Field 16: Destination + ETE + alternate(s)
     const dest = toIcao(d.destination);
     let eet = '0000';
     if (d.eta && d.actualDepartureTime) {
@@ -780,15 +789,28 @@ function buildIcaoFpl(d) {
     }
     const f16 = dest + eet;
 
-    // Field 18: Other information
-    const parts = [];
-    if (d.pbnCode) parts.push('PBN/' + d.pbnCode);
-    if (d.dataLinkCode) parts.push('DAT/' + d.dataLinkCode);
-    if (d.registration) parts.push('REG/' + d.registration);
-    if (d.remarks) parts.push('RMK/' + d.remarks);
-    const f18 = parts.length > 0 ? parts.join(' ') : '0';
+    // Field 18: Other information (per FAA FPL Quick Guide)
+    const f18 = [];
+    if (d.pbnCode) f18.push('PBN/' + d.pbnCode.replace(/\s+/g, ''));
+    if (d.navigationCode) f18.push('NAV/' + d.navigationCode);
+    if (d.dataLinkCode) f18.push('DAT/' + d.dataLinkCode.replace(/\s+/g, ''));
+    // DOF: date of flight (YYMMDD)
+    if (d.actualDepartureTime) {
+        const dt = new Date(d.actualDepartureTime);
+        const dof = String(dt.getUTCFullYear() % 100).padStart(2, '0') +
+                    String(dt.getUTCMonth() + 1).padStart(2, '0') +
+                    String(dt.getUTCDate()).padStart(2, '0');
+        f18.push('DOF/' + dof);
+    }
+    if (d.registration) f18.push('REG/' + d.registration);
+    if (d.selcal) f18.push('SEL/' + d.selcal);
+    if (d.modeSCode) f18.push('CODE/' + d.modeSCode);
+    if (d.squawk) f18.push('SQK/' + d.squawk);
+    if (d.remarks) f18.push('RMK/' + d.remarks);
+    const f18str = f18.length > 0 ? f18.join(' ') : '0';
 
-    return `(FPL-${f7}-${f8}\n-${f9}-${f10}\n-${f13}\n-${f15}\n-${f16}\n-${f18})`;
+    // Format per FAA ICAO FPL Quick Guide
+    return `(FPL-${f7}-${f8}\n-${f9}-${f10}\n-${f13}\n-${f15}\n-${f16}\n-${f18str})`;
 }
 
 function toggleIcaoFpl() {
@@ -838,6 +860,9 @@ function renderFlightPlan(d) {
             ['Remarks', d.remarks, d.remarks ? 'warn' : ''],
         ])}
         ${routeHtml}
+        ${d.originalRoute && d.originalRoute !== d.route
+            ? `<div class="section"><h3>ORIGINAL ROUTE</h3><div class="route-text">${esc(d.originalRoute)}</div></div>`
+            : ''}
         ${section('Altitude', [
             ['Assigned', d.assignedAltitude ? fmtAltDetail(d) : null, 'hl'],
             ['Interim', d.interimAltitude ? `FL${Math.round(d.interimAltitude / 100)} (${Math.round(d.interimAltitude)} ft)` : null, 'warn'],

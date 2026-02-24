@@ -1852,7 +1852,11 @@ void ProcessFlight(XElement flight, string rawXml)
         if (route is not null)
         {
             var routeText = route.Attribute("nasRouteText")?.Value;
-            if (!string.IsNullOrEmpty(routeText)) state.Route = routeText;
+            if (!string.IsNullOrEmpty(routeText))
+            {
+                if (string.IsNullOrEmpty(state.OriginalRoute)) state.OriginalRoute = routeText;
+                state.Route = routeText;
+            }
             var rules = route.Attribute("initialFlightRules")?.Value;
             if (!string.IsNullOrEmpty(rules)) state.FlightRules = rules;
 
@@ -3103,6 +3107,7 @@ class FlightState
     public string? AssignedSquawk { get; set; }     // Controller-assigned beacon code (from BA/RE messages)
     public string? FlightRules { get; set; }
     public string? Route { get; set; }
+    public string? OriginalRoute { get; set; }  // First route received (before ATC amendments)
     public string? STAR { get; set; }
     public string? Remarks { get; set; }
 
@@ -3239,7 +3244,7 @@ class FlightState
         Registration = Registration, WakeCategory = WakeCategory,
         ModeSCode = ModeSCode, EquipmentQualifier = EquipmentQualifier,
         Squawk = Squawk, AssignedSquawk = AssignedSquawk, FlightRules = FlightRules,
-        Route = Route, STAR = STAR, Remarks = Remarks,
+        Route = Route, OriginalRoute = OriginalRoute, STAR = STAR, Remarks = Remarks,
         AssignedAltitude = AssignedAltitude, AssignedVfr = AssignedVfr,
         BlockFloor = BlockFloor, BlockCeiling = BlockCeiling,
         InterimAltitude = InterimAltitude, ReportedAltitude = ReportedAltitude,
@@ -3276,7 +3281,7 @@ class FlightState
             Registration = s.Registration, WakeCategory = s.WakeCategory,
             ModeSCode = s.ModeSCode, EquipmentQualifier = s.EquipmentQualifier,
             Squawk = s.Squawk, AssignedSquawk = s.AssignedSquawk, FlightRules = s.FlightRules,
-            Route = s.Route, STAR = s.STAR, Remarks = s.Remarks,
+            Route = s.Route, OriginalRoute = s.OriginalRoute, STAR = s.STAR, Remarks = s.Remarks,
             AssignedAltitude = s.AssignedAltitude, AssignedVfr = s.AssignedVfr,
             BlockFloor = s.BlockFloor, BlockCeiling = s.BlockCeiling,
             InterimAltitude = s.InterimAltitude, ReportedAltitude = s.ReportedAltitude,
@@ -3327,7 +3332,7 @@ class FlightState
         PointoutOriginatingUnit, PointoutReceivingUnit,
         ClearanceHeading, ClearanceSpeed, ClearanceText,
         DataLinkCode, OtherDataLink,
-        Route, FlightRules, STAR, Remarks,
+        Route, OriginalRoute, FlightRules, STAR, Remarks,
         Registration, EquipmentQualifier, RequestedSpeed,
         CoordinationFix, CoordinationTime,
         ETA, ActualDepartureTime,
@@ -3364,7 +3369,7 @@ class FlightState
             Operator, FlightStatus,
             Origin, Destination, AircraftType, Registration, WakeCategory,
             ModeSCode, EquipmentQualifier, Squawk, AssignedSquawk, FlightRules,
-            Route, STAR, Remarks,
+            Route, OriginalRoute, STAR, Remarks,
             AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
             InterimAltitude, ReportedAltitude,
             Latitude, Longitude, GroundSpeed, RequestedSpeed,
@@ -3412,6 +3417,7 @@ class FlightSnapshot
     public string? AssignedSquawk { get; set; }
     public string? FlightRules { get; set; }
     public string? Route { get; set; }
+    public string? OriginalRoute { get; set; }
     public string? STAR { get; set; }
     public string? Remarks { get; set; }
     public double? AssignedAltitude { get; set; }

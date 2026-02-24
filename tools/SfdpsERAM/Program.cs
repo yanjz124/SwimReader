@@ -1469,6 +1469,9 @@ void ProcessFlight(XElement flight, string rawXml)
     {
         var org = opEl.Descendants().FirstOrDefault(e => e.Name.LocalName == "organization" && e.Attribute("name") is not null);
         if (org is not null) state.Operator = org.Attribute("name")!.Value;
+        // TEMP: log full operator XML when name is longer than 3 chars (captures small operators)
+        if (org is not null && org.Attribute("name")!.Value.Length > 3)
+            Console.WriteLine($"[OPR-LONG] {state.Callsign}: {opEl}");
     }
 
     // originator (AFTN address, e.g. EKODFFLX)

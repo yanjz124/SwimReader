@@ -794,6 +794,14 @@ function buildIcaoFpl(d) {
     if (d.pbnCode) f18.push('PBN/' + d.pbnCode.replace(/\s+/g, ''));
     if (d.navigationCode) f18.push('NAV/' + d.navigationCode);
     if (d.otherDataLink) f18.push('DAT/' + d.otherDataLink.replace(/\s+/g, ''));
+    // SUR/: ADS-B frequency band — derive from Field 10b surveillance codes
+    if (d.surveillanceCode) {
+        const sc = d.surveillanceCode;
+        const surParts = [];
+        if (/B1/.test(sc)) surParts.push('260B');
+        if (/B2|U1|U2/.test(sc)) surParts.push('282B');
+        if (surParts.length) f18.push('SUR/' + surParts.join(' '));
+    }
     // DOF: date of flight (YYMMDD)
     if (d.actualDepartureTime) {
         const dt = new Date(d.actualDepartureTime);

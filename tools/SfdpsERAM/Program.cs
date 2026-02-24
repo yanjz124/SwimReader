@@ -1084,7 +1084,7 @@ void SaveFlightHistory(FlightState f)
         {
             f.Gufi, f.FdpsGufi, f.Callsign, f.ComputerId, f.Operator, f.Originator, f.FlightStatus,
             f.Origin, f.Destination, f.AircraftType, f.Registration, f.WakeCategory,
-            f.ModeSCode, f.EquipmentQualifier, f.Squawk, f.AssignedSquawk, f.FlightRules,
+            f.ModeSCode, f.EquipmentQualifier, f.Squawk, f.AssignedSquawk, f.FlightRules, f.FlightType,
             f.Route, f.STAR, f.Remarks,
             f.AssignedAltitude, f.AssignedVfr, f.BlockFloor, f.BlockCeiling,
             f.InterimAltitude, f.ReportedAltitude,
@@ -1427,6 +1427,7 @@ void ProcessFlight(XElement flight, string rawXml)
     var source = flight.Attribute("source")?.Value ?? "";
     var centre = flight.Attribute("centre")?.Value ?? "";
     var timestamp = flight.Attribute("timestamp")?.Value;
+    var flightType = flight.Attribute("flightType")?.Value;
 
     // XML element discovery: walk the flight element tree (first 10K messages only to minimize overhead)
     if (Interlocked.Read(ref _procCount) < 10_000)
@@ -1438,6 +1439,7 @@ void ProcessFlight(XElement flight, string rawXml)
     var state = flights.GetOrAdd(gufi, _ => new FlightState { Gufi = gufi });
     state.LastSeen = DateTime.UtcNow;
     state.LastMsgSource = source;
+    if (!string.IsNullOrEmpty(flightType)) state.FlightType = flightType;
 
     // flightIdentification
     var fid = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "flightIdentification");
@@ -1903,14 +1905,19 @@ void ProcessFlight(XElement flight, string rawXml)
             {
                 var elapsed = eet.Attribute("elapsedTime")?.Value; // ISO 8601 duration e.g. P0Y0M0DT1H9M0S
                 var region = eet.Descendants().FirstOrDefault(e => e.Name.LocalName == "region")?.Value;
-                if (!string.IsNullOrEmpty(elapsed) && !string.IsNullOrEmpty(region))
+                var fix = eet.Descendants().FirstOrDefault(e => e.Name.LocalName == "point")?.Attribute("fix")?.Value;
+                if (!string.IsNullOrEmpty(elapsed))
                 {
                     // Parse ISO 8601 duration to HHMM
                     try
                     {
                         var ts = System.Xml.XmlConvert.ToTimeSpan(elapsed);
                         var hhmm = $"{(int)ts.TotalHours:D2}{ts.Minutes:D2}";
-                        eetParts.Add($"{region}{hhmm}");
+                        // Format: REGION/FIX HHMM or REGION HHMM or FIX HHMM
+                        var label = !string.IsNullOrEmpty(region) && !string.IsNullOrEmpty(fix)
+                            ? $"{region}/{fix}" : (region ?? fix ?? "");
+                        if (!string.IsNullOrEmpty(label))
+                            eetParts.Add($"{label}{hhmm}");
                     }
                     catch { }
                 }
@@ -3162,6 +3169,7 @@ class FlightState
     public string? Squawk { get; set; }            // Current/received beacon code
     public string? AssignedSquawk { get; set; }     // Controller-assigned beacon code (from BA/RE messages)
     public string? FlightRules { get; set; }
+    public string? FlightType { get; set; }     // SCHEDULED, NON_SCHEDULED, GENERAL, MILITARY, OTHER
     public string? Route { get; set; }
     public string? OriginalRoute { get; set; }  // First route received (before ATC amendments)
     public string? STAR { get; set; }
@@ -3302,7 +3310,7 @@ class FlightState
         Origin = Origin, Destination = Destination, AlternateAerodrome = AlternateAerodrome, AircraftType = AircraftType,
         Registration = Registration, WakeCategory = WakeCategory,
         ModeSCode = ModeSCode, EquipmentQualifier = EquipmentQualifier,
-        Squawk = Squawk, AssignedSquawk = AssignedSquawk, FlightRules = FlightRules,
+        Squawk = Squawk, AssignedSquawk = AssignedSquawk, FlightRules = FlightRules, FlightType = FlightType,
         Route = Route, OriginalRoute = OriginalRoute, STAR = STAR, Remarks = Remarks,
         AssignedAltitude = AssignedAltitude, AssignedVfr = AssignedVfr,
         BlockFloor = BlockFloor, BlockCeiling = BlockCeiling,
@@ -3342,7 +3350,7 @@ class FlightState
             Origin = s.Origin, Destination = s.Destination, AlternateAerodrome = s.AlternateAerodrome, AircraftType = s.AircraftType,
             Registration = s.Registration, WakeCategory = s.WakeCategory,
             ModeSCode = s.ModeSCode, EquipmentQualifier = s.EquipmentQualifier,
-            Squawk = s.Squawk, AssignedSquawk = s.AssignedSquawk, FlightRules = s.FlightRules,
+            Squawk = s.Squawk, AssignedSquawk = s.AssignedSquawk, FlightRules = s.FlightRules, FlightType = s.FlightType,
             Route = s.Route, OriginalRoute = s.OriginalRoute, STAR = s.STAR, Remarks = s.Remarks,
             AssignedAltitude = s.AssignedAltitude, AssignedVfr = s.AssignedVfr,
             BlockFloor = s.BlockFloor, BlockCeiling = s.BlockCeiling,
@@ -3397,7 +3405,7 @@ class FlightState
         PointoutOriginatingUnit, PointoutReceivingUnit,
         ClearanceHeading, ClearanceSpeed, ClearanceText,
         DataLinkCode, OtherDataLink,
-        Route, OriginalRoute, FlightRules, STAR, Remarks,
+        Route, OriginalRoute, FlightRules, FlightType, STAR, Remarks,
         Registration, EquipmentQualifier, RequestedSpeed,
         OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
         CoordinationFix, CoordinationTime,
@@ -3434,7 +3442,7 @@ class FlightState
             ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
             Operator, Originator, FlightStatus,
             Origin, Destination, AlternateAerodrome, AircraftType, Registration, WakeCategory,
-            ModeSCode, EquipmentQualifier, Squawk, AssignedSquawk, FlightRules,
+            ModeSCode, EquipmentQualifier, Squawk, AssignedSquawk, FlightRules, FlightType,
             Route, OriginalRoute, STAR, Remarks,
             AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
             InterimAltitude, ReportedAltitude,
@@ -3485,6 +3493,7 @@ class FlightSnapshot
     public string? Squawk { get; set; }
     public string? AssignedSquawk { get; set; }
     public string? FlightRules { get; set; }
+    public string? FlightType { get; set; }
     public string? Route { get; set; }
     public string? OriginalRoute { get; set; }
     public string? STAR { get; set; }

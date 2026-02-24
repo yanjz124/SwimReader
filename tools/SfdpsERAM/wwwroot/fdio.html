@@ -863,7 +863,7 @@ function buildIcaoFpl(d) {
     if (d.originator) f18.push('ORGN/' + d.originator);
     if (d.selcal) f18.push('SEL/' + d.selcal);
     if (d.modeSCode) f18.push('CODE/' + d.modeSCode);
-    if (d.remarks) f18.push('RMK/' + d.remarks);
+    if (d.remarks) f18.push('RMK/' + d.remarks.replace(/\|/g, '').trim());
     const f18str = f18.length > 0 ? f18.join(' ') : '0';
 
     // Format per FAA ICAO FPL Quick Guide

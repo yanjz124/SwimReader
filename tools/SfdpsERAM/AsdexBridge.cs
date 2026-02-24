@@ -22,6 +22,8 @@ class AsdexBridge
     private readonly string _user, _pass, _queue, _host, _vpn;
     private readonly JsonSerializerOptions _jsonOpts;
 
+    private int _holdBarSamples = 0;
+
     // airport → trackId → track
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, AsdexTrack>> _state = new();
     // airport → clientId → WebSocket client
@@ -150,7 +152,18 @@ class AsdexBridge
         {
             var doc = XDocument.Parse(body);
             var root = doc.Root;
-            if (root is null || root.Name.LocalName != "asdexMsg") return; // skip SafetyLogicHoldBar
+            if (root is null || root.Name.LocalName != "asdexMsg")
+            {
+                // Capture first 5 SafetyLogicHoldBar samples for analysis
+                if (root?.Name.LocalName == "SafetyLogicHoldBar" && _holdBarSamples < 5)
+                {
+                    _holdBarSamples++;
+                    var path = $"holdbar-sample-{_holdBarSamples}.xml";
+                    try { File.WriteAllText(path, body); Console.WriteLine($"[ASDEX] Captured {path}"); }
+                    catch { }
+                }
+                return;
+            }
 
             var airport = root.Elements().FirstOrDefault(e => e.Name.LocalName == "airport")?.Value;
             if (string.IsNullOrEmpty(airport)) return;

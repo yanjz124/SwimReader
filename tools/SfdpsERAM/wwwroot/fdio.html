@@ -323,12 +323,20 @@ body {
     white-space: pre-wrap;
     word-break: break-all;
     display: none;
+    position: relative;
+    user-select: text;
 }
 .xml-block.open { display: block; }
 .xml-block .xml-tag { color: #44aa44; }
 .xml-block .xml-attr { color: #cccc44; }
 .xml-block .xml-val { color: #5588ff; }
 .xml-block .xml-text { color: #ccc; }
+.xml-copy-btn {
+    position: absolute; top: 4px; right: 4px;
+    background: #222; border: 1px solid #444; color: #aaa;
+    font-size: 10px; padding: 2px 6px; cursor: pointer; border-radius: 2px;
+}
+.xml-copy-btn:hover { background: #333; color: #fff; }
 
 .th-group {
     font-size: 10px;
@@ -1008,8 +1016,9 @@ function renderEventLog(d) {
             const xmlInd = e.hasXml ? 'has-xml' : '';
             const idx = e.index;
             const isExpanded = expandedEvents.has(idx);
-            const xmlHtml = isExpanded && xmlCache[`${d.gufi}:${idx}`] !== undefined
-                ? `<div class="xml-block open">${highlightXml(xmlCache[`${d.gufi}:${idx}`])}</div>`
+            const xmlKey = `${d.gufi}:${idx}`;
+            const xmlHtml = isExpanded && xmlCache[xmlKey] !== undefined
+                ? `<div class="xml-block open"><button class="xml-copy-btn" onclick="copyXml(event,'${xmlKey}')">Copy</button>${highlightXml(xmlCache[xmlKey])}</div>`
                 : isExpanded
                 ? `<div class="xml-block open"><span class="loading">Loading XML...</span></div>`
                 : '';
@@ -1064,6 +1073,17 @@ async function toggleEventXml(el) {
     }
     // Re-render events tab
     renderActiveTab();
+}
+
+function copyXml(ev, key) {
+    ev.stopPropagation();
+    const xml = xmlCache[key];
+    if (!xml) return;
+    navigator.clipboard.writeText(xml).then(() => {
+        const btn = ev.target;
+        btn.textContent = 'Copied';
+        setTimeout(() => btn.textContent = 'Copy', 1500);
+    });
 }
 
 function highlightXml(xml) {

@@ -751,6 +751,8 @@ function buildIcaoFpl(d) {
         }
         // If standard codes exceed 8, overflow to NAV/ too
         if (pbnCodes.length > 8) navCodes.push(...pbnCodes.splice(8));
+        pbnCodes.sort();
+        navCodes.sort();
         pbnStr = pbnCodes.join('');
         navStr = navCodes.join('');
     }

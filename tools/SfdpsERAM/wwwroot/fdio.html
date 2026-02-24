@@ -736,8 +736,8 @@ function buildIcaoFpl(d) {
     if (d.communicationCode) f10a += d.communicationCode.replace(/\s+/g, '');
     if (d.navigationCode) f10a += d.navigationCode.replace(/\s+/g, '');
     if (d.dataLinkCode && d.dataLinkCode.includes('J') && !f10a.includes('J')) f10a += 'J';
-    // Include Z if we have NAV/ supplementary info (per FAA: "Always include Z in Item 10a when filing NAV/")
-    if (f10a && !f10a.includes('Z')) f10a += 'Z';
+    // Z in 10a required when filing NAV/, COM/, or DAT/ in Field 18
+    if (d.otherDataLink && f10a && !f10a.includes('Z')) f10a += 'Z';
     if (!f10a) f10a = d.equipmentQualifier || 'S';
     // 10b: Surveillance equipment (concatenated, no spaces)
     const f10b = d.surveillanceCode ? d.surveillanceCode.replace(/\s+/g, '') : 'C';
@@ -792,7 +792,6 @@ function buildIcaoFpl(d) {
     // Field 18: Other information (per FAA FPL Quick Guide)
     const f18 = [];
     if (d.pbnCode) f18.push('PBN/' + d.pbnCode.replace(/\s+/g, ''));
-    if (d.navigationCode) f18.push('NAV/' + d.navigationCode);
     if (d.otherDataLink) f18.push('DAT/' + d.otherDataLink.replace(/\s+/g, ''));
     // SUR/: ADS-B frequency band — derive from Field 10b surveillance codes
     if (d.surveillanceCode) {

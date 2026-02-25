@@ -3276,7 +3276,8 @@ class FlightState
     private readonly List<FlightEvent> _events = new();
     private readonly List<FlightEvent> _allEvents = new();
     private const int MaxEvents = 50;
-    private const int MaxAllEvents = 500;
+    private const int MaxAllEvents = 200;
+    private const int MaxXmlEvents = 50;     // Only keep RawXml on the most recent N events
 
     public void AddEvent(FlightEvent e)
     {
@@ -3289,6 +3290,15 @@ class FlightState
         {
             _allEvents.Add(e);
             if (_allEvents.Count > MaxAllEvents) _allEvents.RemoveAt(0);
+            // Strip RawXml from older events beyond the most recent MaxXmlEvents with XML
+            int kept = 0;
+            for (int i = _allEvents.Count - 1; i >= 0; i--)
+            {
+                if (_allEvents[i].RawXml is not null)
+                {
+                    if (++kept > MaxXmlEvents) _allEvents[i].RawXml = null;
+                }
+            }
         }
     }
 

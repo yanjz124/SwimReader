@@ -190,9 +190,20 @@ class TdlsBridge
         }
     }
 
-    /// <summary>Called every 60s. No-op — all aircraft are retained indefinitely.</summary>
+    /// <summary>Called every 60s. Purge aircraft not seen in 24 hours to prevent unbounded memory growth.</summary>
     public void PurgeStale()
     {
+        var cutoff = DateTime.UtcNow.AddDays(-3);
+        foreach (var (airport, tracks) in _state)
+        {
+            foreach (var (id, ac) in tracks)
+            {
+                if (ac.LastSeen < cutoff)
+                    tracks.TryRemove(id, out _);
+            }
+            if (tracks.IsEmpty)
+                _state.TryRemove(airport, out _);
+        }
     }
 
     // ── WebSocket client management ────────────────────────────────────────────

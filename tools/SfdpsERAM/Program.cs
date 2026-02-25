@@ -3276,6 +3276,7 @@ class FlightState
     private readonly List<FlightEvent> _events = new();
     private readonly List<FlightEvent> _allEvents = new();
     private const int MaxEvents = 50;
+    private const int MaxAllEvents = 500;
 
     public void AddEvent(FlightEvent e)
     {
@@ -3284,7 +3285,11 @@ class FlightState
             _events.Add(e);
             if (_events.Count > MaxEvents) _events.RemoveAt(0);
         }
-        lock (_allEvents) { _allEvents.Add(e); }
+        lock (_allEvents)
+        {
+            _allEvents.Add(e);
+            if (_allEvents.Count > MaxAllEvents) _allEvents.RemoveAt(0);
+        }
     }
 
     public List<FlightEvent> GetEvents()

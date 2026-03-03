@@ -643,6 +643,7 @@ function getEffectiveHsf(f) {
 const pointoutAcked = new Set();  // GUFIs with acknowledged point-outs (P→A)
 const pointoutFirstSeen = new Map();  // GUFI → timestamp (ms) when PO first appeared on client
 const PO_CLIENT_TIMEOUT = 3 * 60 * 1000;  // 3 minutes
+const pointoutBlocked = new Set();  // GUFIs that had a point-out — FLID toggle blocked until QP <FLID>
 let pointoutMenuGufi = null;       // GUFI of flight whose point-out menu is open
 
 function updatePointoutMenuBody(f, poInfo) {
@@ -1531,7 +1532,15 @@ function updateNexrad() {
 // Auto-refresh every 5 minutes (nowCOAST updates every ~4 min)
 if (nexradLevel > 0) updateNexrad();
 setInterval(() => {
-    if (nexradLayer) { map.removeLayer(nexradLayer); nexradLayer = createNexradLayer(); nexradLayer.addTo(map); }
+    if (!nexradLayer) return;
+    // Double-buffer: add new layer on top, remove old after new tiles finish loading
+    const oldLayer = nexradLayer;
+    const newLayer = createNexradLayer();
+    nexradLayer = newLayer;
+    newLayer.addTo(map);
+    newLayer.once('load', () => { if (map.hasLayer(oldLayer)) map.removeLayer(oldLayer); });
+    // Safety: remove old layer after 15s even if load event doesn't fire
+    setTimeout(() => { if (map.hasLayer(oldLayer)) map.removeLayer(oldLayer); }, 15000);
 }, 5 * 60 * 1000);
 
 document.getElementById('sel-nxlvl').addEventListener('change', function () {
@@ -2173,6 +2182,7 @@ function getPointoutIndicator(f) {
             if (pointoutMenuGufi === f.gufi) closePointoutMenu();
             return null;
         }
+        pointoutBlocked.add(f.gufi);  // block FLID toggle until QP <FLID> (CRC spec)
         const role = isOrig ? 'originator' : 'receiver';
         const acked = pointoutAcked.has(f.gufi);
         return { ch: acked ? 'A' : 'P', cls: acked ? 'accepted' : 'pending',
@@ -2606,6 +2616,7 @@ function connectWs() {
             hoCompletedInfo.delete(msg.data.gufi);
             lastVisibleAt.delete(msg.data.gufi);
             driActive.delete(msg.data.gufi);
+            pointoutBlocked.delete(msg.data.gufi);
             const m = markers.get(msg.data.gufi);
             if (m) { map.removeLayer(m); markers.delete(msg.data.gufi); }
             removeRoute(msg.data.gufi);
@@ -2772,14 +2783,20 @@ function doRender() {
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
 
     // Deduplicate: same callsign reported by multiple ARTCCs → keep only the best GUFI.
-    // Priority: (1) has position, (2) facility matches, (3) ACTIVE over DROPPED, (4) first seen.
-    // During handoff the old GUFI may be DROPPED with position while the new GUFI is ACTIVE
-    // but has no position yet — we prefer the one with position so the target doesn't vanish.
+    // Priority: (1) passes isVisible status/age checks, (2) has position, (3) facility matches,
+    // (4) fresher posAge. Only considers candidates that would pass isVisible() status checks
+    // to prevent a "dead" GUFI from winning dedup over a "live" one during GUFI transitions.
     bestGufiByCallsign.clear();
     if (myFacility) {
         for (const [gufi, f] of flights) {
             if (!f.callsign) continue;
-            if (f.flightStatus === 'CANCELLED') continue;  // skip cancelled
+            if (f.flightStatus === 'CANCELLED') continue;
+            // Mirror isVisible() status/age guards — a flight that would fail isVisible()
+            // must never win dedup and shadow a visible sibling GUFI
+            if (f.latitude == null || f.longitude == null) continue;
+            if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) continue;
+            if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') continue;
+            if (f.flightStatus === 'ACTIVE' && f.posAge != null && f.posAge > 60) continue;
             const cs = f.callsign;
             const prev = bestGufiByCallsign.get(cs);
             if (!prev) { bestGufiByCallsign.set(cs, gufi); continue; }
@@ -2793,6 +2810,14 @@ function doRender() {
             const prevFac = prevF.controllingFacility || prevF.reportingFacility || '';
             const curFac = f.controllingFacility || f.reportingFacility || '';
             if (curFac === myFacility && prevFac !== myFacility) {
+                bestGufiByCallsign.set(cs, gufi);
+                continue;
+            }
+            if (prevFac === myFacility && curFac !== myFacility) continue;
+            // Both same facility (or neither ours): prefer fresher posAge
+            const prevAge = prevF.posAge ?? 9999;
+            const curAge = f.posAge ?? 9999;
+            if (curAge < prevAge) {
                 bestGufiByCallsign.set(cs, gufi);
             }
         }
@@ -3127,6 +3152,7 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     quickLookDests.clear();
     wasOwnOrHo.clear();
     manuallyHidden.clear();
+    pointoutBlocked.clear();
     closePointoutMenu();
     invalidateAllMarkers();
     rebuildSectorCheckboxes();
@@ -3302,8 +3328,9 @@ function toggleTrackSelect(gufi) {
         return;
     }
 
-    // Point-out active: cannot toggle to LDB — use QP command
-    if (getPointoutIndicator(f)) {
+    // Point-out active or was active: cannot toggle to LDB — use QP command (CRC spec:
+    // "even if the point out has been accepted and cleared")
+    if (getPointoutIndicator(f) || pointoutBlocked.has(gufi)) {
         mca.feedback = [
             { type: 'err', text: 'POINT OUT ACTIVE \u2014 USE QP' },
             { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
@@ -4685,6 +4712,7 @@ function processCommand(cmd) {
             const f = findFlight(flidStr);
             if (!f) return { feedback: [{ type: 'err', text: 'FLID NOT STORED' }] };
             pointoutAcked.delete(f.gufi);
+            pointoutBlocked.delete(f.gufi);  // only QP <FLID> unblocks the FLID toggle
             f.pointoutOriginatingUnit = null;
             f.pointoutReceivingUnit = null;
             pointoutFirstSeen.delete(f.gufi);
@@ -5291,10 +5319,11 @@ function processCommand(cmd) {
                     { type: 'info', text: `FORCED DATA BLK ${f.callsign}` }
                 ]};
             }
-            // Point-out tracks cannot be toggled to LDB — use QP <FLID> instead
-            if (currentlyFdb && getPointoutIndicator(f)) {
+            // Point-out tracks cannot be toggled to LDB — use QP <FLID> instead (CRC spec:
+            // "even if the point out has been accepted and cleared")
+            if (currentlyFdb && (getPointoutIndicator(f) || pointoutBlocked.has(f.gufi))) {
                 return { feedback: [
-                    { type: 'err', text: 'POINT OUT ACTIVE — USE QP' },
+                    { type: 'err', text: 'POINT OUT ACTIVE \u2014 USE QP' },
                     { type: 'info', text: `${f.callsign}/${getCid(f) || '???'}` }
                 ]};
             }
@@ -5610,18 +5639,24 @@ function handlePoSectorClick(e) {
     const isAcked = pointoutAcked.has(gufi);
 
     if (role === 'receiver' && !isAcked) {
-        // Acknowledge the point-out → P removed from line 0, menu closes
-        // Since we only have one originating sector per PO, acking it = acking all
-        f.pointoutOriginatingUnit = null;
-        f.pointoutReceivingUnit = null;
-        pointoutAcked.delete(gufi);
+        // CRC spec: click sector → cyan/boxed changes to white/unboxed → then P removed
+        // Brief visual transition before clearing (all sectors acked = P removed from FDB)
+        pointoutAcked.add(gufi);
         invalidateMarker(gufi);
-        closePointoutMenu();
+        const poInfo2 = getPointoutIndicator(f);
+        if (poInfo2) updatePointoutMenuBody(f, poInfo2);
         mca.feedback = [
             { type: 'ok', text: 'ACCEPT \u2014 ACKNOWLEDGE PO' },
             { type: 'info', text: f.callsign || '???' }
         ];
         mcaRender();
+        setTimeout(() => {
+            f.pointoutOriginatingUnit = null;
+            f.pointoutReceivingUnit = null;
+            pointoutAcked.delete(gufi);
+            invalidateMarker(gufi);
+            closePointoutMenu();
+        }, 300);
     } else if (role === 'receiver' && isAcked) {
         // Already acked → remove from display, clear PO
         f.pointoutOriginatingUnit = null;

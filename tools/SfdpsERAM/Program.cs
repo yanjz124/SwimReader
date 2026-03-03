@@ -76,6 +76,15 @@ const int MaxClearanceLogEntries = 2000;
 // Debug: altitude raw XML log — captures assigned/interim altitude changes
 var altitudeLog = new ConcurrentQueue<string>();
 const int MaxAltitudeLogEntries = 5000;
+
+// Investigation logger — captures ALL messages for flights with interim/clearance data.
+// Run locally for 10-20 min to debug clearing issues. Output: investigation-YYYYMMDD-HHmmss.jsonl
+// Uncomment these + the flush timer + shutdown flush + API endpoint + ProcessFlight logging block to enable.
+// var investigationLogPath = Path.Combine(Directory.GetCurrentDirectory(), $"investigation-{DateTime.UtcNow:yyyyMMdd-HHmmss}.jsonl");
+// var investigationQueue = new ConcurrentQueue<string>();
+// var investigationWatched = new ConcurrentDictionary<string, byte>();
+// long investigationEntryCount = 0;
+// Console.WriteLine($"[INVESTIGATION] Logging interim/clearance data to: {investigationLogPath}");
 var jsonOpts = new JsonSerializerOptions
 {
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -735,6 +744,21 @@ app.MapGet("/api/debug/altitude-log", (int? last) =>
     return Results.Text(string.Join("\n", recent), "text/plain");
 });
 
+// Debug: investigation log status (uncomment with investigation logger vars above)
+// app.MapGet("/api/debug/investigation", () =>
+// {
+//     var fileSize = File.Exists(investigationLogPath) ? new FileInfo(investigationLogPath).Length : 0;
+//     var totalEntries = Interlocked.Read(ref investigationEntryCount);
+//     return Results.Json(new
+//     {
+//         logFile = investigationLogPath,
+//         fileSizeBytes = fileSize,
+//         fileSizeMB = Math.Round(fileSize / 1024.0 / 1024.0, 2),
+//         totalEntries,
+//         watchedFlights = investigationWatched.Count
+//     }, jsonOpts);
+// });
+
 // Debug: STDDS message telemetry — all topic/root-element combinations received from STDDS
 app.MapGet("/api/debug/stdds", () =>
 {
@@ -1146,6 +1170,12 @@ lifetime.ApplicationStopping.Register(() =>
 {
     Console.WriteLine("[Cache] Shutdown — saving flight state...");
     SaveFlightCache();
+
+    // Investigation: flush remaining log entries (uncomment with investigation logger)
+    // var remaining = new List<string>();
+    // while (investigationQueue.TryDequeue(out var entry)) remaining.Add(entry);
+    // if (remaining.Count > 0) { try { File.AppendAllLines(investigationLogPath, remaining); } catch { } }
+    // Console.WriteLine($"[INVESTIGATION] Shutdown — {Interlocked.Read(ref investigationEntryCount) + remaining.Count} total entries → {investigationLogPath}");
 });
 
 solaceThread.Start();
@@ -1383,9 +1413,28 @@ var taisFlushTimer = new Timer(_ => tais.FlushDirty(), null, TimeSpan.FromSecond
 var taisPurgeTimer = new Timer(_ => tais.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
 
+// Investigation: flush queued log entries to disk (uncomment with investigation logger vars)
+// var investigationFlushTimer = new Timer(_ =>
+// {
+//     if (investigationQueue.IsEmpty) return;
+//     var batch = new List<string>();
+//     while (investigationQueue.TryDequeue(out var entry)) batch.Add(entry);
+//     if (batch.Count > 0)
+//     {
+//         try
+//         {
+//             File.AppendAllLines(investigationLogPath, batch);
+//             var total = Interlocked.Add(ref investigationEntryCount, batch.Count);
+//             if (total % 1000 < batch.Count)
+//                 Console.WriteLine($"[INVESTIGATION] {total} entries logged, {investigationWatched.Count} watched flights");
+//         }
+//         catch (Exception ex) { Console.WriteLine($"[INVESTIGATION] Write error: {ex.Message}"); }
+//     }
+// }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, historyCleanupTimer, csIndexTimer };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, historyCleanupTimer, csIndexTimer /*, investigationFlushTimer */ };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
 
 await solaceReady.Task;
@@ -1448,6 +1497,12 @@ void ProcessFlight(XElement flight, string rawXml)
     state.LastSeen = DateTime.UtcNow;
     state.LastMsgSource = source;
     if (!string.IsNullOrEmpty(flightType)) state.FlightType = flightType;
+
+    // Investigation: capture before-state (uncomment with investigation logger)
+    // var prevClrH = state.ClearanceHeading;
+    // var prevClrS = state.ClearanceSpeed;
+    // var prevClrT = state.ClearanceText;
+    // var prevRA = state.ReportedAltitude;
 
     // flightIdentification
     var fid = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "flightIdentification");
@@ -1610,10 +1665,14 @@ void ProcessFlight(XElement flight, string rawXml)
             Console.WriteLine($"[INTERIM] {source} {state.Callsign}/{state.Gufi?[..8]} {prevIA?.ToString() ?? "null"} → {state.InterimAltitude?.ToString() ?? "CLEARED"}");
         }
     }
-    // Clear interim when absent in LH (dedicated interim message) or FH (canonical state snapshot).
-    // FH is the full flight plan — if it omits interimAltitude, the interim has been cleared.
-    // Other sources (TH/OH/AH) simply don't carry interim data, so absence is not meaningful.
-    else if (source is "LH" or "FH")
+    // Clear interim when absent in full-state-snapshot sources:
+    // - LH: dedicated interim message — absence means explicitly cleared
+    // - FH: canonical flight plan snapshot — absence means interim not active
+    // - AH: assumed/forced handoff — full state transfer (carries assignedAltitude, route, aircraft
+    //   description at 100%, enRoute at 95%), NEVER carries interimAltitude (0/197 observed)
+    // - HU: handoff update — structurally identical to FH/AH, also never carries interimAltitude
+    // Other sources (TH/OH/HX/HP) are event-specific and don't carry interim, so absence is incidental.
+    else if (source is "LH" or "FH" or "AH" or "HU")
     {
         state.InterimAltitude = null;
         if (prevIA.HasValue)
@@ -1834,6 +1893,26 @@ void ProcessFlight(XElement flight, string rawXml)
             if (acpt is not null) state.HandoffAccepting = FormatUnit(acpt);
         }
     }
+    else if (source == "HF" && (!string.IsNullOrEmpty(state.ClearanceHeading) || !string.IsNullOrEmpty(state.ClearanceSpeed) || !string.IsNullOrEmpty(state.ClearanceText)))
+    {
+        // HF without <enRoute> = clearance wipe signal.
+        // Data-driven: HF-no-enRoute targets flights with active clearance at 89% rate (2x baseline),
+        // and 92% of affected flights receive NO other clearing message. The absence of <enRoute>
+        // in the authoritative clearance source (HF) means "no en route clearance data exists."
+        var prevH = state.ClearanceHeading; var prevS = state.ClearanceSpeed; var prevT = state.ClearanceText;
+        state.ClearanceHeading = null;
+        state.ClearanceSpeed = null;
+        state.ClearanceText = null;
+        if (prevH is not null || prevS is not null || prevT is not null)
+        {
+            var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} " +
+                $"CLEARED_WIPED(H={prevH ?? "-"} S={prevS ?? "-"} T={prevT ?? "-"}) " +
+                $"HF had no <enRoute> element (clearance removal signal)";
+            clearanceLog.Enqueue(logEntry);
+            while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
+            Console.WriteLine($"[CLR] {source} {state.Callsign}/{state.Gufi?[..8]} WIPED(no-enRoute) H:{prevH ?? "-"} S:{prevS ?? "-"} T:{prevT ?? "-"}");
+        }
+    }
 
     // aircraftDescription (FH, AH, HU)
     var acft = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftDescription");
@@ -1977,6 +2056,50 @@ void ProcessFlight(XElement flight, string rawXml)
 
     // Track which facility reports on this flight (for "tracked by")
     if (!string.IsNullOrEmpty(centre)) state.ReportingFacility = centre;
+
+    // Investigation: log all messages for flights with interim or clearance data
+    // Uncomment this block + investigation logger vars + before-state vars (prevClrH etc.) to enable.
+    // {
+    //     bool hasInteresting = state.InterimAltitude.HasValue
+    //         || !string.IsNullOrEmpty(state.ClearanceHeading)
+    //         || !string.IsNullOrEmpty(state.ClearanceSpeed)
+    //         || !string.IsNullOrEmpty(state.ClearanceText);
+    //     bool wasInteresting = prevIA.HasValue
+    //         || !string.IsNullOrEmpty(prevClrH)
+    //         || !string.IsNullOrEmpty(prevClrS)
+    //         || !string.IsNullOrEmpty(prevClrT);
+    //     if (hasInteresting || wasInteresting || investigationWatched.ContainsKey(gufi))
+    //     {
+    //         investigationWatched.TryAdd(gufi, 0);
+    //         bool isTH = source is "TH" or "HZ";
+    //         bool thHasIa = isTH && rawXml != null && rawXml.Contains("interimAltitude");
+    //         bool thHasClr = isTH && rawXml != null && rawXml.Contains("\"cleared\"");
+    //         string logLine;
+    //         if (!isTH || thHasIa || thHasClr)
+    //         {
+    //             logLine = JsonSerializer.Serialize(new
+    //             {
+    //                 ts = DateTime.UtcNow.ToString("o"), src = source, gufi, cs = state.Callsign,
+    //                 ctrl = $"{state.ControllingFacility}/{state.ControllingSector}",
+    //                 ho = state.HandoffEvent, hoRecv = state.HandoffReceiving,
+    //                 b = new { ia = prevIA, aa = prevAA, ra = prevRA, ch = prevClrH, csp = prevClrS, ct = prevClrT },
+    //                 a = new { ia = state.InterimAltitude, aa = state.AssignedAltitude, ra = state.ReportedAltitude,
+    //                           ch = state.ClearanceHeading, csp = state.ClearanceSpeed, ct = state.ClearanceText },
+    //                 thHasIa, thHasClr, xml = rawXml
+    //             }, jsonOpts);
+    //         }
+    //         else
+    //         {
+    //             logLine = JsonSerializer.Serialize(new
+    //             {
+    //                 ts = DateTime.UtcNow.ToString("o"), src = source, gufi, cs = state.Callsign,
+    //                 ra = state.ReportedAltitude, aa = state.AssignedAltitude, ia = state.InterimAltitude,
+    //                 ch = state.ClearanceHeading, csp = state.ClearanceSpeed, ct = state.ClearanceText
+    //             }, jsonOpts);
+    //         }
+    //         investigationQueue.Enqueue(logLine);
+    //     }
+    // }
 
     // Mark flight dirty for batched broadcast (all updates batched every 1s)
     _dirty.TryAdd(gufi, 0);

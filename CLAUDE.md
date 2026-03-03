@@ -228,8 +228,9 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 - Speed values: knots (250, 280), Mach (M79, M75), S-prefix (S270, S290), +/- modifiers (280+, M74-)
 - Free text: frequencies (128.35), MEDEVAC, NORDO, route mods (D/SYRAH, STYONRTE, RNV1/54, DR/DPR)
 - SFDPS clears individual clearance fields by sending `<cleared>` with only some attributes — absent attributes are cleared to null
-- Full clearance wipe (QS *): FH arrives with `<enRoute>` but no `<cleared>` child element. `ProcessFlight()` clears all three fields when `source == "FH"` and `<cleared>` is absent. Other sources (TH/OH/AH/HF) don't carry clearance data, so absence is not meaningful.
-- Only HF messages carry `<cleared>` — they set values but never clear all three
+- Full clearance wipe (QS *): FH arrives with `<enRoute>` but no `<cleared>` child element. `ProcessFlight()` clears all three fields when `source == "FH"` and `<cleared>` is absent. Other sources (TH/OH/AH) don't carry clearance data, so absence is not meaningful.
+- HF without `<enRoute>` = clearance removal signal. Data-driven: HF-no-enRoute targets flights with active clearance at 89% rate (2x the 45% baseline), and 92% of affected flights receive no other clearing message. These lightweight HF messages (arrival/departure times, callsign, status only) indicate clearance data has been removed. `ProcessFlight()` wipes all three clearance fields when `source == "HF"` and `enRoute` is absent.
+- Only HF messages carry `<cleared>` — they set values but never clear all three via empty `<cleared/>`
 - ~2-3% of flights carry clearance data at any time
 
 **Beacon code assignment (BA/RE messages) XML structure:**
@@ -451,11 +452,11 @@ Line 0 only appears when the flight has an active point-out to/from the selected
 **HZ `assignedAltitude` = Mode C (radar-reported altitude), NOT controller-assigned.**
 HZ heartbeat messages carry the current Mode C reading in the `assignedAltitude` XML field. This causes altitude oscillation if not skipped (e.g., FL240 assigned → 13300 Mode C → FL240 restored by TH). `ProcessFlight()` skips `assignedAltitude` from HZ messages to prevent this.
 
-**Interim altitude** has no sub-types in SFDPS — only `<interimAltitude uom="FEET">value</interimAltitude>`. Procedural/temp/local distinctions (QQ P, QQ L, QQ R) are local ERAM concepts not reflected in the SFDPS feed. Interim is set exclusively by LH messages. Cleared via two paths:
+**Interim altitude** has no sub-types in SFDPS — only `<interimAltitude uom="FEET">value</interimAltitude>`. Procedural/temp/local distinctions (QQ P, QQ L, QQ R) are local ERAM concepts not reflected in the SFDPS feed. Interim is set exclusively by LH messages. Cleared via absence in four full-state-snapshot sources:
 1. **LH with `<interimAltitude xsi:nil="true"/>`** — explicit nil clear (note: `xsi:nil` is namespaced, requires XNamespace lookup)
-2. **LH or FH with no `<interimAltitude>` element** — absence in LH (dedicated interim message) or FH (canonical state snapshot) means interim has been cleared. Other sources (TH/OH/AH) don't carry interim data, so absence in those is not meaningful.
+2. **LH, FH, AH, or HU with no `<interimAltitude>` element** — these are full state snapshots (carry `assignedAltitude`, `aircraftDescription`, `route` at 100%). Absence of `interimAltitude` means interim is not active. Investigation of 19K messages confirmed: AH/HU carry 100% of the same fields as FH but NEVER carry `interimAltitude` (0/197 when interim is active). Other sources (TH/OH/HX/HP) are event-specific — absence is incidental, not authoritative.
 
-SFDPS does not always send LH clears during inter-sector handoffs — the clearing FH from the new sector is often the only signal.
+SFDPS does not always send LH clears during inter-sector handoffs — the clearing FH/AH/HU from the new sector is often the only signal.
 
 **Line 3 Field E (right side after CID, in priority order):**
 - `HIJK` = squawk 7500 (hijack)

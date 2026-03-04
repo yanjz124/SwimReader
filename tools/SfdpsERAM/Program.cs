@@ -85,6 +85,13 @@ const int MaxAltitudeLogEntries = 5000;
 // var investigationWatched = new ConcurrentDictionary<string, byte>();
 // long investigationEntryCount = 0;
 // Console.WriteLine($"[INVESTIGATION] Logging interim/clearance data to: {investigationLogPath}");
+
+// Point-out investigation logger (disabled — investigation complete, no acceptance signal in SFDPS)
+// var poLogPath = Path.Combine(Directory.GetCurrentDirectory(), $"pointout-investigation-{DateTime.UtcNow:yyyyMMdd-HHmmss}.jsonl");
+// var poLogQueue = new ConcurrentQueue<string>();
+// long poLogCount = 0;
+// var poWatched = new ConcurrentDictionary<string, byte>();
+// Console.WriteLine($"[PO-INVESTIGATION] Logging to: {poLogPath}");
 var jsonOpts = new JsonSerializerOptions
 {
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase
@@ -1176,6 +1183,11 @@ lifetime.ApplicationStopping.Register(() =>
     // while (investigationQueue.TryDequeue(out var entry)) remaining.Add(entry);
     // if (remaining.Count > 0) { try { File.AppendAllLines(investigationLogPath, remaining); } catch { } }
     // Console.WriteLine($"[INVESTIGATION] Shutdown — {Interlocked.Read(ref investigationEntryCount) + remaining.Count} total entries → {investigationLogPath}");
+
+    // var poRemaining = new List<string>();
+    // while (poLogQueue.TryDequeue(out var poEntry)) poRemaining.Add(poEntry);
+    // if (poRemaining.Count > 0) { try { File.AppendAllLines(poLogPath, poRemaining); } catch { } }
+    // Console.WriteLine($"[PO] Shutdown — {Interlocked.Read(ref poLogCount) + poRemaining.Count} entries → {poLogPath}");
 });
 
 solaceThread.Start();
@@ -1432,9 +1444,16 @@ var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHo
 //     }
 // }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 
+// var poFlushTimer = new Timer(_ =>
+// {
+//     var batch = new List<string>();
+//     while (poLogQueue.TryDequeue(out var entry)) batch.Add(entry);
+//     if (batch.Count > 0) { try { File.AppendAllLines(poLogPath, batch); } catch { } }
+// }, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, historyCleanupTimer, csIndexTimer /*, investigationFlushTimer */ };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, historyCleanupTimer, csIndexTimer /*, poFlushTimer, investigationFlushTimer */ };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
 
 await solaceReady.Task;
@@ -1804,14 +1823,14 @@ void ProcessFlight(XElement flight, string rawXml)
             if (bc is not null) state.Squawk = bc.Value;
         }
 
-        // Point-out (PT, HT)
+        // Point-out (PT, HT) — may have multiple receiving units
         var po = enRoute.Elements().FirstOrDefault(e => e.Name.LocalName == "pointout");
         if (po is not null)
         {
             var origUnit = po.Elements().FirstOrDefault(e => e.Name.LocalName == "originatingUnit");
-            var recvUnit = po.Elements().FirstOrDefault(e => e.Name.LocalName == "receivingUnit");
+            var recvUnits = po.Elements().Where(e => e.Name.LocalName == "receivingUnit").Select(FormatUnit).ToArray();
             if (origUnit is not null) state.PointoutOriginatingUnit = FormatUnit(origUnit);
-            if (recvUnit is not null) state.PointoutReceivingUnit = FormatUnit(recvUnit);
+            if (recvUnits.Length > 0) state.PointoutReceivingUnit = string.Join(",", recvUnits);
             state.PointoutTimestamp = DateTime.UtcNow;
         }
 
@@ -2099,6 +2118,14 @@ void ProcessFlight(XElement flight, string rawXml)
     //         }
     //         investigationQueue.Enqueue(logLine);
     //     }
+    // }
+
+    // Point-out investigation (disabled — complete, no acceptance signal in SFDPS)
+    // var isPtHt = source is "PT" or "HT";
+    // if (isPtHt) poWatched.TryAdd(gufi, 0);
+    // if (isPtHt || poWatched.ContainsKey(gufi))
+    // {
+    //     ... investigation logging ...
     // }
 
     // Mark flight dirty for batched broadcast (all updates batched every 1s)

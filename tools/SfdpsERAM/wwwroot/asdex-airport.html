@@ -102,6 +102,31 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 #gc-import-area:focus { border-color: #cccc44; }
 #gc-import-area::placeholder { color: #555; }
 
+/* ── Flight list panel ── */
+#flight-list {
+    display: none; position: fixed; top: 0; right: 0; bottom: 28px; width: 380px;
+    z-index: 9000; background: #1a1a1a; border-left: 1px solid #cccc44;
+    font-family: 'ERAM', 'Consolas', monospace; font-size: 11px; color: #ccc;
+    overflow: hidden; flex-direction: column;
+}
+#fl-header {
+    padding: 6px 10px; border-bottom: 1px solid #333;
+    display: flex; justify-content: space-between; align-items: center;
+}
+#fl-body { flex: 1; overflow-y: auto; }
+#fl-table { width: 100%; border-collapse: collapse; }
+#fl-table th {
+    position: sticky; top: 0; background: #1a1a1a;
+    color: #888; text-align: left; padding: 3px 6px; border-bottom: 1px solid #333;
+    font-size: 10px; font-weight: normal;
+}
+#fl-table td { padding: 2px 6px; border-bottom: 1px solid #1f1f1f; white-space: nowrap; }
+#fl-table tr:hover { background: #252525; }
+#fl-table tr { cursor: pointer; }
+.fl-cs { color: #cccc44; }
+.fl-apt { color: #aaa; }
+.fl-route { color: #00cc00; }
+
 /* hide Leaflet attribution noise */
 .leaflet-control-attribution { display: none; }
 
@@ -136,6 +161,18 @@ body { background: #393939; overflow: hidden; height: 100vh; }
         <button class="gc-btn" id="gc-import-btn">IMPORT</button>
     </details>
 </div>
+<div id="flight-list">
+    <div id="fl-header">
+        <span style="color:#cccc44">FLIGHT LIST</span>
+        <span id="fl-count" style="color:#888"></span>
+    </div>
+    <div id="fl-body">
+        <table id="fl-table">
+            <thead><tr><th>CALLSIGN</th><th>DEP</th><th>ARR</th><th>ROUTE</th></tr></thead>
+            <tbody id="fl-tbody"></tbody>
+        </table>
+    </div>
+</div>
 <div id="statusbar">
     <a href="/asdex">◂ DIR</a>
     <span class="airport-id" id="airport-id">—</span>
@@ -146,6 +183,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     <input type="number" id="font-size" min="8" max="20" value="13" step="1">
     <label>ROT</label>
     <input type="number" id="rot" min="0" max="360" value="360" step="1">
+    <button id="fl-toggle">FLT LIST</button>
     <button id="gc-toggle">SP CONFIG</button>
     <button id="dn-toggle">NIGHT</button>
     <button id="fs-toggle">FULL</button>
@@ -313,6 +351,7 @@ fetch(`/asdex/maps/${AIRPORT}.geojson`)
 // ── State ────────────────────────────────────────────────────────────────────
 const markers  = {};   // trackId → L.marker
 const hashes   = {};   // trackId → hash string for change detection
+const trackData = {};  // trackId → latest track object (for flight list)
 let   trackCount = 0;
 let   centeredOnce = false;
 
@@ -547,6 +586,57 @@ document.getElementById('gc-import-btn').onclick = () => {
     if (count) document.querySelector('details').removeAttribute('open');
 };
 
+// ── Flight list panel ────────────────────────────────────────────────────────
+const flPanel = document.getElementById('flight-list');
+let flVisible = false;
+let flInterval = null;
+
+function routeSnippet(route, origin, dest) {
+    if (!route) return origin && dest ? `${origin}-${dest}` : origin || dest || '';
+    const tokens = route.split('.')
+        .filter(t => t && t !== 'DCT' && t !== origin && t !== dest
+                   && t !== ('K' + origin) && t !== ('K' + dest)
+                   && !/^\d+$/.test(t));
+    return tokens.slice(0, 3).join(' ') || (origin && dest ? `${origin}-${dest}` : '');
+}
+
+function renderFlightList() {
+    const tracks = Object.values(trackData)
+        .filter(t => t.callsign && t.tgtType !== 'vehicle' && t.tgtType !== 'unknown')
+        .sort((a, b) => (a.callsign || '').localeCompare(b.callsign || ''));
+    document.getElementById('fl-count').textContent = tracks.length + ' aircraft';
+    const tbody = document.getElementById('fl-tbody');
+    let html = '';
+    for (const t of tracks) {
+        const cs = t.callsign || '';
+        const dep = t.origin || '';
+        const arr = t.dest || '';
+        const rte = routeSnippet(t.route, dep, arr);
+        html += `<tr data-tid="${t.trackId}"><td class="fl-cs">${cs}</td><td class="fl-apt">${dep}</td><td class="fl-apt">${arr}</td><td class="fl-route">${rte}</td></tr>`;
+    }
+    tbody.innerHTML = html;
+}
+
+document.getElementById('fl-toggle').onclick = () => {
+    flVisible = !flVisible;
+    flPanel.style.display = flVisible ? 'flex' : 'none';
+    if (flVisible) {
+        renderFlightList();
+        flInterval = setInterval(renderFlightList, 2000);
+    } else {
+        if (flInterval) { clearInterval(flInterval); flInterval = null; }
+    }
+};
+
+// Click flight list row → center map on that target
+document.getElementById('fl-tbody').addEventListener('click', (e) => {
+    const row = e.target.closest('tr');
+    if (!row) return;
+    const tid = row.dataset.tid;
+    const t = trackData[tid];
+    if (t && t.lat != null && t.lon != null) map.setView([t.lat, t.lon], Math.max(map.getZoom(), 16));
+});
+
 // ── Wake turbulence detection (FAA 7360.1D type→weight class) ────────────────
 // Loaded from wake-categories.json: { "A320": "L", "B738": "L", "C172": "S", "C17": "H", ... }
 // Weight classes: J=Super, H=Heavy, L=Large, S=Small, S+=Small 12.5-41K lbs
@@ -645,6 +735,7 @@ function trackHash(t) {
 // ── Apply one track update ───────────────────────────────────────────────────
 function applyTrack(t) {
     if (t.lat == null || t.lon == null) return;
+    trackData[t.trackId] = t;
     const ll  = [t.lat, t.lon];
     const h   = trackHash(t);
     const tid = t.trackId;
@@ -663,6 +754,7 @@ function applyTrack(t) {
 function removeTrack(trackId) {
     if (markers[trackId]) { map.removeLayer(markers[trackId]); delete markers[trackId]; }
     delete hashes[trackId];
+    delete trackData[trackId];
 }
 
 function updateCount() {

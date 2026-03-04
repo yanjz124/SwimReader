@@ -478,6 +478,7 @@ class AsdexTrack
         dest     = FpDestination ?? AdDestination,
         origin   = FpOrigin ?? AdDeparture,
         star     = FpStar,
+        route    = FpRoute,
         gate     = TdlsGate,
         runway   = TdlsRunway,
         gateCode = GateCode,

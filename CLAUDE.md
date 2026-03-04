@@ -213,9 +213,19 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
     <pointout>
         <originatingUnit unitIdentifier="ZDV" sectorIdentifier="32"/>
         <receivingUnit unitIdentifier="ZLC" sectorIdentifier="05"/>
+        <!-- May have multiple receivingUnit elements (multi-sector point-out) -->
     </pointout>
 </enRoute>
 ```
+
+**Point-out behavior (investigated 2026-03-03, 1,467 records / 110 flights):**
+- `<pointout>` has NO attributes (no event/status/acknowledgment data)
+- **HT** = always published by originator's centre; **PT** = always published by receiver's centre
+- Inter-facility POs produce both HT + PT within 0-1000ms (dual publication)
+- **SFDPS has no point-out acceptance signal** — `<pointout>` appears ONLY in PT/HT messages; no other source (TH, OH, FH, etc.) ever carries point-out data
+- **Mostly one-shot** (94%); 6% repeat with variable interval (38s to ~3.3 min, not a fixed timer)
+- **Multi-receiver**: HT can have multiple `<receivingUnit>` elements; server stores comma-separated (e.g., `"ZDV/07,ZDV/34"`)
+- Bidirectional POs observed: receiver sector can point the flight back to originator
 
 **Clearance (cleared element) XML structure:**
 ```xml
@@ -281,7 +291,7 @@ Core fields tracked per flight (by GUFI):
 - Altitude: `assignedAltitude`, `assignedVfr`, `blockFloor`, `blockCeiling`, `interimAltitude`, `reportedAltitude`, `targetAltitude`
 - Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`
 - Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
-- Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit` (expire after 3 min via `PointoutTimestamp`)
+- Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit` (comma-separated if multi-receiver, expire after 3 min via `PointoutTimestamp`)
 - Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `assignedSquawk`, `equipmentQualifier`
 - Clearance (HSF): `clearanceHeading`, `clearanceSpeed`, `clearanceText`, `fourthAdaptedField`
 - TMI: `tmiIds` (traffic management initiative IDs — ground stops, slot times, etc.)
@@ -421,8 +431,9 @@ Line 0 only appears when the flight has an active point-out to/from the selected
 - `A` (white) = acknowledged point-out (originator side)
 - Point-out indicator requires sector-level match (selected sector must be orig or recv sector)
 - No sector selected = no point-outs shown
-- Dwell box excludes Line 0; FDB→LDB toggle is blocked during active point-out (`<FLID>` → use `QP <FLID>`)
+- Dwell box excludes Line 0; FDB→LDB toggle is blocked persistently after any point-out (`<FLID>` → use `QP <FLID>` to unblock)
 - Client-side 3-minute timeout: point-outs auto-expire if user doesn't interact
+- Multi-receiver: originator menu shows each receiving sector as a separate row
 - **Click P on line 0** → opens pop-up menu showing sector(s); **Click A on line 0** → removes A indicator from FDB
 - **Pop-up menu**: shows `P [sector]`, draggable by title bar
   - Closed by left/middle clicking title bar or X; also closed on map pan/zoom

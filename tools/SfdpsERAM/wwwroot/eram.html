@@ -649,34 +649,23 @@ let pointoutMenuGufi = null;       // GUFI of flight whose point-out menu is ope
 function updatePointoutMenuBody(f, poInfo) {
     const body = document.getElementById('po-menu-body');
     const acked = pointoutAcked.has(f.gufi);
-    // Determine which sector to show and its styling
-    let sectorId, pColor, sectorCls;
+    let html = '';
     if (poInfo.role === 'originator') {
-        // Originator sees receiving sector(s)
-        sectorId = poInfo.recvSector || '??';
-        if (acked) {
-            // Remote acknowledged: white P, white unboxed sector
-            pColor = '#fff';
-            sectorCls = 'po-acked';
-        } else {
-            // Pending: yellow P, yellow boxed sector
-            pColor = '#cccc44';
-            sectorCls = 'po-orig-pending';
+        // Originator sees each receiving sector as a separate row
+        for (const rs of poInfo.recvSectors) {
+            const sectorId = rs.sector || '??';
+            const pColor = acked ? '#fff' : '#cccc44';
+            const sectorCls = acked ? 'po-acked' : 'po-orig-pending';
+            html += `<div class="po-sector-row" data-gufi="${f.gufi}" data-role="${poInfo.role}"><span style="color:${pColor}">P</span> <span class="po-sector-box ${sectorCls}">${sectorId}</span></div>`;
         }
     } else {
-        // Receiver sees initiating sector(s)
-        sectorId = poInfo.origSector || '??';
-        if (acked) {
-            // Already acknowledged: white P, white unboxed sector
-            pColor = '#fff';
-            sectorCls = 'po-acked';
-        } else {
-            // Pending: cyan P, cyan boxed sector
-            pColor = '#00cccc';
-            sectorCls = 'po-recv-pending';
-        }
+        // Receiver sees initiating sector
+        const sectorId = poInfo.origSector || '??';
+        const pColor = acked ? '#fff' : '#00cccc';
+        const sectorCls = acked ? 'po-acked' : 'po-recv-pending';
+        html = `<div class="po-sector-row" data-gufi="${f.gufi}" data-role="${poInfo.role}"><span style="color:${pColor}">P</span> <span class="po-sector-box ${sectorCls}">${sectorId}</span></div>`;
     }
-    body.innerHTML = `<div class="po-sector-row" data-gufi="${f.gufi}" data-role="${poInfo.role}"><span style="color:${pColor}">P</span> <span class="po-sector-box ${sectorCls}">${sectorId}</span></div>`;
+    body.innerHTML = html;
 }
 
 function openPointoutMenu(f, poInfo, clientX, clientY) {
@@ -2143,7 +2132,8 @@ function formatFdbHtml(f, cls) {
 }
 
 // Determine point-out indicator for a flight.
-// Returns {ch, cls, role, origSector, recvSector, origFac, recvFac} or null.
+// Returns {ch, cls, role, origSector, origFac, recvSectors:[{fac,sector}]} or null.
+// recvSectors is always an array (may have multiple receiving sectors).
 function getPointoutIndicator(f) {
     if (!f.pointoutOriginatingUnit && !f.pointoutReceivingUnit) {
         pointoutFirstSeen.delete(f.gufi);
@@ -2161,13 +2151,15 @@ function getPointoutIndicator(f) {
     if (!myFacility || mySectors.size === 0) return null;
 
     const origFac = (f.pointoutOriginatingUnit || '').split('/')[0];
-    const recvFac = (f.pointoutReceivingUnit || '').split('/')[0];
     const origSector = (f.pointoutOriginatingUnit || '').split('/')[1] || '';
-    const recvSector = (f.pointoutReceivingUnit || '').split('/')[1] || '';
 
-    // Show P only if a selected sector is the originator or receiver
+    // Parse comma-separated receiving units (may be multiple: "ZDV/07,ZDV/34")
+    const recvSectors = (f.pointoutReceivingUnit || '').split(',').filter(Boolean)
+        .map(u => ({ fac: u.split('/')[0], sector: u.split('/')[1] || '' }));
+
+    // Show P only if a selected sector is the originator or any receiver
     const isOrig = myFacility === origFac && mySectors.has(origSector);
-    const isRecv = myFacility === recvFac && mySectors.has(recvSector);
+    const isRecv = recvSectors.some(r => myFacility === r.fac && mySectors.has(r.sector));
     if (isOrig || isRecv) {
         // Client-side 3-minute timeout: auto-expire if user hasn't interacted
         const now = Date.now();
@@ -2186,7 +2178,7 @@ function getPointoutIndicator(f) {
         const role = isOrig ? 'originator' : 'receiver';
         const acked = pointoutAcked.has(f.gufi);
         return { ch: acked ? 'A' : 'P', cls: acked ? 'accepted' : 'pending',
-                 role, origSector, recvSector, origFac, recvFac };
+                 role, origSector, origFac, recvSectors };
     }
     return null;
 }

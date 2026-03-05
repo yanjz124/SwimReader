@@ -191,16 +191,11 @@ app.MapGet("/", async (HttpContext ctx) =>
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "home.html"));
 });
 
-// Clean URLs: /eram → eram.html, /table → index.html (serve directly, no redirect)
+// Clean URLs: /eram → eram.html (serve directly, no redirect)
 app.MapGet("/eram", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "eram.html"));
-});
-app.MapGet("/table", async (HttpContext ctx) =>
-{
-    ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "index.html"));
 });
 app.MapGet("/asdex", async (HttpContext ctx) =>
 {
@@ -361,26 +356,26 @@ app.MapGet("/fdio", async (HttpContext ctx) =>
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio.html"));
 });
 
-// FIDO routes — TFMS-powered pages
-app.MapGet("/fido", async (HttpContext ctx) =>
+// FDIO routes — TFMS-powered pages
+app.MapGet("/fdio/tfms", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fido.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio-tfms.html"));
 });
-app.MapGet("/fido/route", async (HttpContext ctx) =>
+app.MapGet("/fdio/route", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fido-route.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio-route.html"));
 });
-app.MapGet("/fido/sectors", async (HttpContext ctx) =>
+app.MapGet("/fdio/sectors", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fido-sectors.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio-sectors.html"));
 });
-app.MapGet("/fido/flow", async (HttpContext ctx) =>
+app.MapGet("/fdio/flow", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fido-flow.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio-flow.html"));
 });
 // TFMS WebSocket — flight stream
 app.Map("/tfms/ws", async (HttpContext ctx) =>

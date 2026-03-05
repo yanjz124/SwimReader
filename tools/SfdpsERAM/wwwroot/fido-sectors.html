@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIDO - Sector Loading</title>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    background: #000;
+    color: #ccc;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+header {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header .sub { font-size: 11px; color: #555; }
+.status-bar { margin-left: auto; font-size: 11px; color: #666; }
+.status-bar b { color: #aaa; font-weight: normal; }
+
+.filter-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid #222;
+    background: #050505;
+    flex-shrink: 0;
+}
+.filter-row input {
+    background: #111;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 5px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    width: 200px;
+    outline: none;
+}
+.filter-row input:focus { border-color: #cccc44; }
+.filter-row label { font-size: 11px; color: #666; }
+.filter-row select {
+    background: #111;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 11px;
+}
+
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── Left: Sector grid ────────────────────────────────────── */
+.sector-grid {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+    align-content: start;
+}
+.sector-card {
+    background: #0a0a0a;
+    border: 1px solid #1a1a1a;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.sector-card:hover { border-color: #444; }
+.sector-card.selected { border-color: #cccc44; background: #0a0f0a; }
+.sector-card .sec-name {
+    font-size: 13px;
+    color: #cccc44;
+    letter-spacing: 1px;
+}
+.sector-card .sec-count {
+    font-size: 20px;
+    color: #44aa44;
+    margin-top: 4px;
+}
+.sector-card .sec-label {
+    font-size: 10px;
+    color: #555;
+}
+.sector-card .bar {
+    height: 3px;
+    background: #111;
+    margin-top: 6px;
+    border-radius: 1px;
+    overflow: hidden;
+}
+.sector-card .bar-fill {
+    height: 100%;
+    background: #44aa44;
+    transition: width 0.3s;
+}
+
+/* ── Right: Sector detail ─────────────────────────────────── */
+.sidebar {
+    width: 380px;
+    min-width: 380px;
+    border-left: 1px solid #222;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+.sidebar .section-title {
+    padding: 8px 12px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #1a1a1a;
+    background: #050505;
+}
+.sidebar .sector-header {
+    padding: 12px;
+    border-bottom: 1px solid #111;
+}
+.sidebar .sector-header h2 {
+    font-size: 18px;
+    color: #cccc44;
+    font-weight: normal;
+}
+.sidebar .sector-header .meta { font-size: 11px; color: #555; margin-top: 4px; }
+
+.flight-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+.flight-table th {
+    text-align: left;
+    padding: 5px 8px;
+    color: #555;
+    border-bottom: 1px solid #1a1a1a;
+    font-weight: normal;
+    position: sticky;
+    top: 0;
+    background: #000;
+}
+.flight-table td { padding: 4px 8px; border-bottom: 1px solid #0a0a0a; color: #aaa; }
+.flight-table tr:hover td { background: #0a0a0a; }
+.flight-table .cs { color: #fff; }
+.flight-table .time { color: #39d2c0; }
+
+.empty-sidebar {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: #333;
+    font-size: 12px;
+    gap: 6px;
+    text-align: center;
+    padding: 20px;
+}
+</style>
+</head>
+<body>
+
+<header>
+    <h1>FIDO</h1>
+    <span class="sub">SECTOR LOADING</span>
+    <div class="status-bar">
+        <span id="sectorCount">Sectors: <b>--</b></span>
+    </div>
+</header>
+
+<div class="filter-row">
+    <input type="text" id="searchInput" placeholder="Filter sectors (e.g. ZDC, ZOA13)...">
+    <label>ARTCC:</label>
+    <select id="artccFilter">
+        <option value="">ALL</option>
+    </select>
+</div>
+
+<div class="main">
+    <div class="sector-grid" id="sectorGrid"></div>
+    <div class="sidebar" id="sidebar">
+        <div class="empty-sidebar">
+            <div>Select a sector to view flights</div>
+            <div style="color:#444; font-size:10px;">Shows predicted traffic from<br>TFMS traversal data</div>
+        </div>
+    </div>
+</div>
+
+<script>
+let sectors = [];
+let selectedSector = null;
+let maxCount = 1;
+
+// ── Load sector summary ──────────────────────────────────────
+async function loadSectors() {
+    try {
+        const r = await fetch('/api/tfms/sectors');
+        if (!r.ok) return;
+        sectors = await r.json();
+        maxCount = Math.max(1, ...sectors.map(s => s.count));
+
+        // Populate ARTCC filter
+        const artccs = new Set();
+        sectors.forEach(s => {
+            const artcc = s.sector.replace(/[0-9]+$/, '').replace(/[A-Z]{2}$/, function(m) {
+                // Keep full sector ID but extract ARTCC prefix (e.g., ZOA from ZOA13)
+                return '';
+            });
+            // Simple extraction: first 3-4 chars (Z** pattern)
+            const m = s.sector.match(/^(Z[A-Z]{2})/);
+            if (m) artccs.add(m[1]);
+        });
+        const sel = document.getElementById('artccFilter');
+        const current = sel.value;
+        sel.innerHTML = '<option value="">ALL</option>';
+        [...artccs].sort().forEach(a => {
+            sel.innerHTML += `<option value="${a}" ${a === current ? 'selected' : ''}>${a}</option>`;
+        });
+
+        renderGrid();
+        document.getElementById('sectorCount').innerHTML = `Sectors: <b>${sectors.length}</b>`;
+    } catch {}
+}
+
+// ── Render sector grid ───────────────────────────────────────
+function renderGrid() {
+    const search = (document.getElementById('searchInput').value || '').toUpperCase();
+    const artcc = document.getElementById('artccFilter').value;
+
+    const filtered = sectors.filter(s => {
+        if (search && !s.sector.toUpperCase().includes(search)) return false;
+        if (artcc && !s.sector.toUpperCase().startsWith(artcc)) return false;
+        return true;
+    });
+
+    const grid = document.getElementById('sectorGrid');
+    grid.innerHTML = filtered.map(s => {
+        const pct = Math.round((s.count / maxCount) * 100);
+        const sel = selectedSector === s.sector ? 'selected' : '';
+        // Color by load
+        const color = s.count > maxCount * 0.8 ? '#cc4444'
+            : s.count > maxCount * 0.5 ? '#cccc44' : '#44aa44';
+        return `<div class="sector-card ${sel}" data-sector="${esc(s.sector)}">
+            <div class="sec-name">${esc(s.sector)}</div>
+            <div class="sec-count" style="color:${color}">${s.count}</div>
+            <div class="sec-label">predicted transits</div>
+            <div class="bar"><div class="bar-fill" style="width:${pct}%; background:${color}"></div></div>
+        </div>`;
+    }).join('');
+
+    grid.querySelectorAll('.sector-card').forEach(el => {
+        el.addEventListener('click', () => {
+            selectedSector = el.dataset.sector;
+            renderGrid();
+            loadSectorDetail(el.dataset.sector);
+        });
+    });
+}
+
+document.getElementById('searchInput').addEventListener('input', renderGrid);
+document.getElementById('artccFilter').addEventListener('change', renderGrid);
+
+// ── Load sector detail ───────────────────────────────────────
+async function loadSectorDetail(sector) {
+    try {
+        const r = await fetch(`/api/tfms/sectors/${encodeURIComponent(sector)}`);
+        if (!r.ok) return;
+        const flights = await r.json();
+        renderSectorDetail(sector, flights);
+    } catch {}
+}
+
+function renderSectorDetail(sector, flights) {
+    const sidebar = document.getElementById('sidebar');
+    sidebar.innerHTML = `
+        <div class="sector-header">
+            <h2>${esc(sector)}</h2>
+            <div class="meta">${flights.length} predicted flights</div>
+        </div>
+        <div class="section-title">PREDICTED TRANSITS</div>
+        <table class="flight-table">
+            <thead>
+                <tr>
+                    <th>CALLSIGN</th>
+                    <th>DEP</th>
+                    <th>ARR</th>
+                    <th>ALT</th>
+                    <th>ENTRY TIME</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${flights.map(f => `<tr>
+                    <td class="cs">${esc(f.callsign || '?')}</td>
+                    <td>${esc(f.depArpt || '')}</td>
+                    <td>${esc(f.arrArpt || '')}</td>
+                    <td>${f.altitude ? (f.altitude >= 18000 ? 'FL' + Math.round(f.altitude/100) : f.altitude) : ''}</td>
+                    <td class="time">${f.entryTime ? formatTime(f.entryTime) : ''}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+// ── Utils ────────────────────────────────────────────────────
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function formatTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toISOString().substring(11, 16) + 'Z';
+}
+
+// ── Init ─────────────────────────────────────────────────────
+loadSectors();
+setInterval(loadSectors, 30000);
+</script>
+</body>
+</html>

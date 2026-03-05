@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIDO - Flow Advisory</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    background: #000;
+    color: #ccc;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+header {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header .sub { font-size: 11px; color: #555; }
+.status-bar { margin-left: auto; font-size: 11px; color: #666; }
+
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+#map { flex: 1; }
+.leaflet-container { background: #0a0a0a; }
+
+/* ── Right panel: FCA list ─────────────────────────────────── */
+.sidebar {
+    width: 360px;
+    min-width: 360px;
+    border-left: 1px solid #222;
+    overflow-y: auto;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+.sidebar .section-title {
+    padding: 8px 12px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #1a1a1a;
+    background: #050505;
+    flex-shrink: 0;
+}
+.search-bar {
+    padding: 8px 12px;
+    border-bottom: 1px solid #222;
+    flex-shrink: 0;
+}
+.search-bar input {
+    width: 100%;
+    background: #111;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 5px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+}
+.search-bar input:focus { border-color: #cccc44; }
+
+.fca-list { flex: 1; overflow-y: auto; }
+.fca-item {
+    padding: 10px 12px;
+    border-bottom: 1px solid #111;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.fca-item:hover { background: #0a0a0a; }
+.fca-item.selected { background: #0a1a0a; border-left: 2px solid #44aa44; }
+.fca-item .fca-name { font-size: 13px; color: #cccc44; letter-spacing: 1px; }
+.fca-item .fca-meta {
+    display: flex;
+    gap: 12px;
+    margin-top: 4px;
+    font-size: 11px;
+}
+.fca-item .fca-meta .flights { color: #44aa44; }
+.fca-item .fca-meta .updated { color: #555; }
+.fca-item .fca-id {
+    font-size: 9px;
+    color: #333;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Flight popup ─────────────────────────────────────────── */
+.flight-popup {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 360px;
+    max-height: 40vh;
+    background: #0a0a0a;
+    border-top: 1px solid #333;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+}
+.flight-popup .popup-header {
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    border-bottom: 1px solid #222;
+    position: sticky;
+    top: 0;
+    background: #0a0a0a;
+}
+.flight-popup .popup-header h3 {
+    font-size: 13px;
+    color: #cccc44;
+    font-weight: normal;
+    letter-spacing: 1px;
+}
+.flight-popup .popup-header .close {
+    margin-left: auto;
+    cursor: pointer;
+    color: #666;
+    font-size: 14px;
+}
+.flight-popup .popup-header .close:hover { color: #fff; }
+
+.flight-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+.flight-table th {
+    text-align: left;
+    padding: 5px 10px;
+    color: #555;
+    border-bottom: 1px solid #1a1a1a;
+    font-weight: normal;
+    position: sticky;
+    top: 37px;
+    background: #0a0a0a;
+}
+.flight-table td { padding: 4px 10px; border-bottom: 1px solid #0a0a0a; color: #aaa; }
+.flight-table tr:hover td { background: #111; }
+.flight-table .cs { color: #fff; }
+.flight-table .time { color: #39d2c0; }
+.flight-table .active { color: #44aa44; }
+</style>
+</head>
+<body>
+
+<header>
+    <h1>FIDO</h1>
+    <span class="sub">FLOW ADVISORY</span>
+    <div class="status-bar">
+        <span id="fcaCount">FCAs: <b>--</b></span>
+    </div>
+</header>
+
+<div class="main">
+    <div id="map"></div>
+
+    <div class="sidebar">
+        <div class="section-title">ACTIVE FCAs / TMIs</div>
+        <div class="search-bar">
+            <input type="text" id="fcaSearch" placeholder="Search FCA / TMI...">
+        </div>
+        <div class="fca-list" id="fcaList"></div>
+    </div>
+</div>
+
+<div class="flight-popup" id="flightPopup">
+    <div class="popup-header">
+        <h3 id="popupTitle">FCA Flights</h3>
+        <span class="close" id="popupClose">X</span>
+    </div>
+    <table class="flight-table">
+        <thead>
+            <tr>
+                <th>CALLSIGN</th>
+                <th>DEP</th>
+                <th>ARR</th>
+                <th>STATUS</th>
+                <th>ENTRY</th>
+                <th>EXIT</th>
+            </tr>
+        </thead>
+        <tbody id="popupBody"></tbody>
+    </table>
+</div>
+
+<script>
+// ── Map ──────────────────────────────────────────────────────
+const map = L.map('map', {
+    center: [39, -98],
+    zoom: 5,
+    zoomControl: false
+});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OSM &copy; CARTO',
+    maxZoom: 18
+}).addTo(map);
+L.control.zoom({ position: 'topright' }).addTo(map);
+
+let tmis = [];
+let selectedFca = null;
+let entryMarkers = [];
+
+// ── Load TMIs ────────────────────────────────────────────────
+async function loadTmis() {
+    try {
+        const r = await fetch('/api/tfms/tmis');
+        if (!r.ok) return;
+        tmis = await r.json();
+        renderFcaList();
+        document.getElementById('fcaCount').innerHTML = `FCAs: <b>${tmis.length}</b>`;
+    } catch {}
+}
+
+// ── Render FCA list ──────────────────────────────────────────
+function renderFcaList() {
+    const search = (document.getElementById('fcaSearch').value || '').toUpperCase();
+    const filtered = tmis
+        .filter(t => {
+            if (!search) return true;
+            return (t.fcaName || '').toUpperCase().includes(search)
+                || (t.fcaId || '').toUpperCase().includes(search);
+        })
+        .sort((a, b) => (b.flightCount || 0) - (a.flightCount || 0));
+
+    const list = document.getElementById('fcaList');
+    list.innerHTML = filtered.map(t => {
+        const name = t.fcaName || '(unnamed)';
+        const sel = selectedFca === t.fcaId ? 'selected' : '';
+        return `<div class="fca-item ${sel}" data-id="${esc(t.fcaId)}">
+            <div class="fca-name">${esc(name)}</div>
+            <div class="fca-meta">
+                <span class="flights">${t.flightCount || 0} flights</span>
+                <span class="updated">${timeSince(t.lastUpdated)}</span>
+            </div>
+            <div class="fca-id">${esc(t.fcaId)}</div>
+        </div>`;
+    }).join('');
+
+    list.querySelectorAll('.fca-item').forEach(el => {
+        el.addEventListener('click', () => {
+            selectedFca = el.dataset.id;
+            renderFcaList();
+            loadFcaDetail(el.dataset.id);
+        });
+    });
+}
+
+document.getElementById('fcaSearch').addEventListener('input', renderFcaList);
+
+// ── Load FCA detail and show on map ──────────────────────────
+async function loadFcaDetail(fcaId) {
+    try {
+        const r = await fetch(`/api/tfms/tmis/${encodeURIComponent(fcaId)}`);
+        if (!r.ok) return;
+        const t = await r.json();
+        showFlightsOnMap(t);
+        showFlightPopup(t);
+    } catch {}
+}
+
+function showFlightsOnMap(t) {
+    // Clear old markers
+    entryMarkers.forEach(m => map.removeLayer(m));
+    entryMarkers = [];
+
+    const flights = t.flights || [];
+    const bounds = [];
+
+    flights.forEach(f => {
+        if (f.entryLat && f.entryLon) {
+            const marker = L.circleMarker([f.entryLat, f.entryLon], {
+                radius: 4,
+                color: f.status === 'ACTIVE' ? '#44aa44' : '#666',
+                fillColor: f.status === 'ACTIVE' ? '#44aa44' : '#666',
+                fillOpacity: 0.7,
+                weight: 1
+            }).addTo(map);
+            marker.bindTooltip(`${f.callsign || '?'} ${f.depArpt||'?'}-${f.arrArpt||'?'}`, {
+                direction: 'top',
+                className: ''
+            });
+            entryMarkers.push(marker);
+            bounds.push([f.entryLat, f.entryLon]);
+        }
+    });
+
+    if (bounds.length > 0) {
+        map.fitBounds(bounds, { padding: [60, 60], maxZoom: 8 });
+    }
+}
+
+function showFlightPopup(t) {
+    const popup = document.getElementById('flightPopup');
+    const flights = t.flights || [];
+    document.getElementById('popupTitle').textContent =
+        `${t.fcaName || t.fcaId} — ${flights.length} flights`;
+
+    document.getElementById('popupBody').innerHTML = flights.map(f => `<tr>
+        <td class="cs">${esc(f.callsign || '?')}</td>
+        <td>${esc(f.depArpt || '')}</td>
+        <td>${esc(f.arrArpt || '')}</td>
+        <td class="${f.status === 'ACTIVE' ? 'active' : ''}">${esc(f.status || '')}</td>
+        <td class="time">${f.entryTime ? formatTime(f.entryTime) : ''}</td>
+        <td class="time">${f.exitTime ? formatTime(f.exitTime) : ''}</td>
+    </tr>`).join('');
+
+    popup.style.display = 'block';
+}
+
+document.getElementById('popupClose').addEventListener('click', () => {
+    document.getElementById('flightPopup').style.display = 'none';
+});
+
+// ── WebSocket for live updates ───────────────────────────────
+function connectWs() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/tfms/ws/tmi`);
+    ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'snapshot') {
+            tmis = msg.data;
+            renderFcaList();
+        } else if (msg.type === 'update') {
+            for (const t of msg.data) {
+                const idx = tmis.findIndex(x => x.fcaId === t.fcaId);
+                if (idx >= 0) tmis[idx] = t;
+                else tmis.push(t);
+            }
+            renderFcaList();
+            if (selectedFca) {
+                const updated = msg.data.find(t => t.fcaId === selectedFca);
+                if (updated) loadFcaDetail(selectedFca);
+            }
+        }
+    };
+    ws.onclose = () => setTimeout(connectWs, 5000);
+    ws.onerror = () => ws.close();
+}
+connectWs();
+
+// ── Utils ────────────────────────────────────────────────────
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function formatTime(iso) {
+    if (!iso) return '';
+    return new Date(iso).toISOString().substring(11, 16) + 'Z';
+}
+function timeSince(iso) {
+    if (!iso) return '?';
+    const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (sec < 60) return sec + 's ago';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+    return Math.floor(sec / 3600) + 'h ago';
+}
+
+// ── Init ─────────────────────────────────────────────────────
+loadTmis();
+</script>
+</body>
+</html>

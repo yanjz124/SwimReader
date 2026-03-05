@@ -49,6 +49,13 @@ var stddsQueue = Environment.GetEnvironmentVariable("SCDSCONNECTION__QUEUENAME")
 var stddsHost  = Environment.GetEnvironmentVariable("SCDSCONNECTION__HOST") ?? "tcps://ems2.swim.faa.gov:55443";
 var stddsVpn   = Environment.GetEnvironmentVariable("SCDSCONNECTION__MESSAGEVPN") ?? "STDDS";
 
+// TFMS credentials (Traffic Flow Management)
+var tfmsUser  = Environment.GetEnvironmentVariable("TFMS_USER") ?? "";
+var tfmsPass  = Environment.GetEnvironmentVariable("TFMS_PASS") ?? "";
+var tfmsQueue = Environment.GetEnvironmentVariable("TFMS_QUEUE") ?? "";
+var tfmsHost  = Environment.GetEnvironmentVariable("TFMS_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
+var tfmsVpn   = Environment.GetEnvironmentVariable("TFMS_VPN") ?? "TFMS";
+
 // ── Shared state ────────────────────────────────────────────────────────────
 
 var flights = new ConcurrentDictionary<string, FlightState>();
@@ -120,6 +127,8 @@ var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVp
 var tdls = new TdlsBridge(jsonOpts);
 // TAIS bridge — receives forwarded TAIS messages from ASDEX bridge (shared Solace session)
 var tais = new TaisBridge(jsonOpts);
+// TFMS bridge — own Solace session for Traffic Flow Management data
+var tfms = new TfmsBridge(tfmsUser, tfmsPass, tfmsQueue, tfmsHost, tfmsVpn, jsonOpts);
 
 // STDDS message telemetry — in-memory counters only, no disk I/O
 // Key: "TOPIC_PREFIX/ROOT_ELEMENT" → count (e.g. "TAIS/TATrackAndFlightPlan" → 12345)
@@ -350,6 +359,106 @@ app.MapGet("/fdio", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio.html"));
+});
+
+// FIDO routes — TFMS-powered pages
+app.MapGet("/fido", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fido.html"));
+});
+app.MapGet("/fido/route", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fido-route.html"));
+});
+app.MapGet("/fido/sectors", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fido-sectors.html"));
+});
+app.MapGet("/fido/flow", async (HttpContext ctx) =>
+{
+    ctx.Response.ContentType = "text/html";
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fido-flow.html"));
+});
+// TFMS WebSocket — flight stream
+app.Map("/tfms/ws", async (HttpContext ctx) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+    using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+    var client = new WsClient(ws);
+
+    var sendTask = Task.Run(async () =>
+    {
+        try
+        {
+            await foreach (var data in client.Queue.Reader.ReadAllAsync())
+            {
+                if (ws.State != WebSocketState.Open) break;
+                await ws.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+        catch (WebSocketException) { }
+        catch (OperationCanceledException) { }
+    });
+
+    var clientId = tfms.AddFlightClient(client);
+    try
+    {
+        var buf = new byte[4096];
+        while (ws.State == WebSocketState.Open)
+        {
+            var result = await ws.ReceiveAsync(buf, CancellationToken.None);
+            if (result.MessageType == WebSocketMessageType.Close) break;
+        }
+    }
+    catch (WebSocketException) { }
+    finally
+    {
+        tfms.RemoveFlightClient(clientId);
+        client.Queue.Writer.TryComplete();
+        await sendTask;
+    }
+});
+// TFMS WebSocket — TMI stream
+app.Map("/tfms/ws/tmi", async (HttpContext ctx) =>
+{
+    if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+    using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+    var client = new WsClient(ws);
+
+    var sendTask = Task.Run(async () =>
+    {
+        try
+        {
+            await foreach (var data in client.Queue.Reader.ReadAllAsync())
+            {
+                if (ws.State != WebSocketState.Open) break;
+                await ws.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+        catch (WebSocketException) { }
+        catch (OperationCanceledException) { }
+    });
+
+    var clientId = tfms.AddTmiClient(client);
+    try
+    {
+        var buf = new byte[4096];
+        while (ws.State == WebSocketState.Open)
+        {
+            var result = await ws.ReceiveAsync(buf, CancellationToken.None);
+            if (result.MessageType == WebSocketMessageType.Close) break;
+        }
+    }
+    catch (WebSocketException) { }
+    finally
+    {
+        tfms.RemoveTmiClient(clientId);
+        client.Queue.Writer.TryComplete();
+        await sendTask;
+    }
 });
 
 // WebSocket — streams flight updates to browser
@@ -889,6 +998,24 @@ app.MapGet("/api/tais", () => Results.Json(tais.GetDirectory(), jsonOpts));
 app.MapGet("/api/tais/{facility}", (string facility) =>
     Results.Json(tais.GetSnapshot(facility.ToUpperInvariant()), jsonOpts));
 
+// TFMS API routes
+app.MapGet("/api/tfms/stats", () => Results.Json(tfms.GetStats(), jsonOpts));
+app.MapGet("/api/tfms/flights", () => Results.Json(tfms.GetFlights(), jsonOpts));
+app.MapGet("/api/tfms/flights/{key}", (string key) =>
+{
+    var f = tfms.GetFlight(key);
+    return f is not null ? Results.Json(f, jsonOpts) : Results.NotFound();
+});
+app.MapGet("/api/tfms/tmis", () => Results.Json(tfms.GetTmis(), jsonOpts));
+app.MapGet("/api/tfms/tmis/{fcaId}", (string fcaId) =>
+{
+    var t = tfms.GetTmi(fcaId);
+    return t is not null ? Results.Json(t, jsonOpts) : Results.NotFound();
+});
+app.MapGet("/api/tfms/sectors", () => Results.Json(tfms.GetSectorSummary(), jsonOpts));
+app.MapGet("/api/tfms/sectors/{sector}", (string sector) =>
+    Results.Json(tfms.GetSectorFlights(sector), jsonOpts));
+
 // Flight history search and retrieval
 app.MapGet("/api/history", (string? q, string? date) =>
 {
@@ -1192,6 +1319,7 @@ lifetime.ApplicationStopping.Register(() =>
 
 solaceThread.Start();
 asdex.Start();
+tfms.Start();
 
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
 // Callsign → FlightState list (rebuilt every 30s; multiple flights per callsign for turnover legs)
@@ -1324,6 +1452,23 @@ asdex.OnEnrich = (track) =>
         track.FpRoute = fp.Route;
     }
 
+    // Path 2b: TFMS via callsign (fills gaps SFDPS doesn't have — route, STAR, ETA)
+    if (track.Callsign is not null)
+    {
+        var tfmsFlight = tfms.FindByCallsign(track.Callsign);
+        if (tfmsFlight is not null)
+        {
+            if (track.FpDestination is null && tfmsFlight.ArrArpt is not null)
+                track.FpDestination = tfmsFlight.ArrArpt;
+            if (track.FpOrigin is null && tfmsFlight.DepArpt is not null)
+                track.FpOrigin = tfmsFlight.DepArpt;
+            if (track.FpStar is null && tfmsFlight.Star is not null)
+                track.FpStar = tfmsFlight.Star;
+            if (track.FpRoute is null && tfmsFlight.RouteOfFlight is not null)
+                track.FpRoute = tfmsFlight.RouteOfFlight;
+        }
+    }
+
     // Path 3: TDLS via airport + callsign
     if (track.Callsign is not null)
     {
@@ -1423,6 +1568,8 @@ var tdlsFlushTimer = new Timer(_ => tdls.FlushDirty(), null, TimeSpan.FromSecond
 var tdlsPurgeTimer = new Timer(_ => tdls.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 var taisFlushTimer = new Timer(_ => tais.FlushDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 var taisPurgeTimer = new Timer(_ => tais.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
 
 // Investigation: flush queued log entries to disk (uncomment with investigation logger vars)
@@ -1453,7 +1600,7 @@ var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHo
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, historyCleanupTimer, csIndexTimer /*, poFlushTimer, investigationFlushTimer */ };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, historyCleanupTimer, csIndexTimer /*, poFlushTimer, investigationFlushTimer */ };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
 
 await solaceReady.Task;

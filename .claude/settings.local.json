@@ -59,7 +59,12 @@
       "WebFetch(domain:virtualnas.net)",
       "WebFetch(domain:vnas.vatsim.net)",
       "Bash(powershell:*)",
-      "Bash(copy:*)"
+      "Bash(copy:*)",
+      "Bash(git commit:*)",
+      "Bash(ssh JY@JY5 \"journalctl -u sfdps-eram --no-pager -n 5\")",
+      "Bash(ssh JY@JY5 \"journalctl -u swimreader-deploy.service --no-pager -n 10\")",
+      "Bash(ssh JY@JY5 \"journalctl -u swimreader-deploy.service --no-pager -n 15\")",
+      "Bash(ssh JY@JY5:*)"
     ]
   }
 }

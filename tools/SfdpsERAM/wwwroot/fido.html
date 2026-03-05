@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIDO - TMI Dashboard</title>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    background: #000;
+    color: #ccc;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+header {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header .sub { font-size: 11px; color: #555; }
+.status-bar {
+    margin-left: auto;
+    display: flex;
+    gap: 16px;
+    font-size: 11px;
+    color: #666;
+}
+.status-bar b { color: #aaa; font-weight: normal; }
+.status-bar .live { color: #44aa44; }
+
+.tabs {
+    display: flex;
+    background: #0a0a0a;
+    border-bottom: 1px solid #222;
+    flex-shrink: 0;
+}
+.tab {
+    padding: 8px 20px;
+    font-family: inherit;
+    font-size: 12px;
+    color: #666;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    letter-spacing: 1px;
+}
+.tab:hover { color: #aaa; }
+.tab.active { color: #cccc44; border-bottom-color: #cccc44; }
+
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── Left: TMI list ──────────────────────────────────────────── */
+.tmi-list {
+    width: 360px;
+    min-width: 360px;
+    border-right: 1px solid #222;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+.tmi-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid #111;
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.tmi-item:hover { background: #111; }
+.tmi-item.selected { background: #0a1a0a; border-left: 2px solid #44aa44; }
+.tmi-item .tmi-name {
+    font-size: 13px;
+    color: #cccc44;
+    letter-spacing: 1px;
+}
+.tmi-item .tmi-id {
+    font-size: 10px;
+    color: #444;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.tmi-item .tmi-meta {
+    display: flex;
+    gap: 16px;
+    margin-top: 4px;
+    font-size: 11px;
+}
+.tmi-item .tmi-meta .flights { color: #44aa44; }
+.tmi-item .tmi-meta .updated { color: #555; }
+
+/* ── Right: TMI detail ───────────────────────────────────────── */
+.detail {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+}
+.detail-header {
+    margin-bottom: 16px;
+}
+.detail-header h2 {
+    font-size: 16px;
+    color: #cccc44;
+    font-weight: normal;
+    letter-spacing: 2px;
+}
+.detail-header .fca-id {
+    font-size: 10px;
+    color: #444;
+    margin-top: 4px;
+}
+
+.flight-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.flight-table th {
+    text-align: left;
+    padding: 6px 10px;
+    color: #666;
+    border-bottom: 1px solid #222;
+    font-weight: normal;
+    letter-spacing: 1px;
+    position: sticky;
+    top: 0;
+    background: #000;
+}
+.flight-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid #0a0a0a;
+    color: #aaa;
+}
+.flight-table tr:hover td { background: #0a0a0a; }
+.flight-table .cs { color: #fff; }
+.flight-table .active { color: #44aa44; }
+.flight-table .time { color: #39d2c0; }
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: #333;
+    font-size: 13px;
+    gap: 8px;
+}
+.empty-state .big { font-size: 22px; color: #cccc44; letter-spacing: 3px; }
+
+.search-bar {
+    padding: 8px 14px;
+    border-bottom: 1px solid #222;
+}
+.search-bar input {
+    width: 100%;
+    background: #111;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+}
+.search-bar input:focus { border-color: #cccc44; }
+</style>
+</head>
+<body>
+
+<header>
+    <h1>FIDO</h1>
+    <span class="sub">TRAFFIC FLOW MANAGEMENT</span>
+    <div class="status-bar">
+        <span id="tfmsStatus">TFMS: <b>connecting...</b></span>
+        <span id="flightCount">Flights: <b>--</b></span>
+        <span id="tmiCount">TMIs: <b>--</b></span>
+    </div>
+</header>
+
+<div class="tabs">
+    <button class="tab active" data-tab="tmis">TMI / FCAs</button>
+    <button class="tab" data-tab="flights">FLIGHTS</button>
+</div>
+
+<div class="main" id="tmiView">
+    <div class="tmi-list">
+        <div class="search-bar">
+            <input type="text" id="tmiSearch" placeholder="Search TMI / FCA name...">
+        </div>
+        <div id="tmiListBody"></div>
+    </div>
+    <div class="detail" id="tmiDetail">
+        <div class="empty-state">
+            <div class="big">FIDO</div>
+            <div>Select a TMI to view affected flights</div>
+        </div>
+    </div>
+</div>
+
+<div class="main" id="flightView" style="display:none">
+    <div style="flex:1; overflow-y:auto; padding:0;">
+        <div class="search-bar">
+            <input type="text" id="flightSearch" placeholder="Search callsign, airport, route...">
+        </div>
+        <table class="flight-table" id="flightTable">
+            <thead>
+                <tr>
+                    <th>CALLSIGN</th>
+                    <th>DEP</th>
+                    <th>ARR</th>
+                    <th>ALT</th>
+                    <th>SPD</th>
+                    <th>STAR</th>
+                    <th>ETA</th>
+                    <th>CATEGORY</th>
+                    <th>FACILITY</th>
+                </tr>
+            </thead>
+            <tbody id="flightTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+// ── Tab switching ────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tmiView').style.display = tab.dataset.tab === 'tmis' ? 'flex' : 'none';
+        document.getElementById('flightView').style.display = tab.dataset.tab === 'flights' ? 'flex' : 'none';
+    });
+});
+
+// ── State ────────────────────────────────────────────────────
+let tmis = [];
+let flights = [];
+let selectedTmi = null;
+
+// ── TMI WebSocket ────────────────────────────────────────────
+let tmiWs = null;
+function connectTmiWs() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    tmiWs = new WebSocket(`${proto}//${location.host}/tfms/ws/tmi`);
+    tmiWs.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'snapshot') {
+            tmis = msg.data;
+            renderTmiList();
+        } else if (msg.type === 'update') {
+            for (const t of msg.data) {
+                const idx = tmis.findIndex(x => x.fcaId === t.fcaId);
+                if (idx >= 0) tmis[idx] = t;
+                else tmis.push(t);
+            }
+            renderTmiList();
+            if (selectedTmi) {
+                const updated = msg.data.find(t => t.fcaId === selectedTmi);
+                if (updated) loadTmiDetail(selectedTmi);
+            }
+        }
+    };
+    tmiWs.onclose = () => setTimeout(connectTmiWs, 5000);
+    tmiWs.onerror = () => tmiWs.close();
+}
+connectTmiWs();
+
+// ── Render TMI list ──────────────────────────────────────────
+function renderTmiList() {
+    const search = (document.getElementById('tmiSearch').value || '').toUpperCase();
+    const filtered = tmis
+        .filter(t => {
+            if (!search) return true;
+            return (t.fcaName || '').toUpperCase().includes(search)
+                || (t.fcaId || '').toUpperCase().includes(search);
+        })
+        .sort((a, b) => (b.flightCount || 0) - (a.flightCount || 0));
+
+    const body = document.getElementById('tmiListBody');
+    body.innerHTML = filtered.map(t => {
+        const name = t.fcaName || t.fcaId || '?';
+        const ago = t.lastUpdated ? timeSince(t.lastUpdated) : '?';
+        const sel = selectedTmi === t.fcaId ? 'selected' : '';
+        return `<div class="tmi-item ${sel}" data-id="${esc(t.fcaId)}">
+            <div class="tmi-name">${esc(name)}</div>
+            <div class="tmi-id">${esc(t.fcaId)}</div>
+            <div class="tmi-meta">
+                <span class="flights">${t.flightCount || 0} flights</span>
+                <span class="updated">${ago}</span>
+            </div>
+        </div>`;
+    }).join('');
+
+    body.querySelectorAll('.tmi-item').forEach(el => {
+        el.addEventListener('click', () => {
+            selectedTmi = el.dataset.id;
+            renderTmiList();
+            loadTmiDetail(el.dataset.id);
+        });
+    });
+
+    document.getElementById('tmiCount').innerHTML = `TMIs: <b>${tmis.length}</b>`;
+}
+
+document.getElementById('tmiSearch').addEventListener('input', renderTmiList);
+
+// ── Load TMI detail ──────────────────────────────────────────
+async function loadTmiDetail(fcaId) {
+    try {
+        const r = await fetch(`/api/tfms/tmis/${encodeURIComponent(fcaId)}`);
+        if (!r.ok) return;
+        const t = await r.json();
+        renderTmiDetail(t);
+    } catch {}
+}
+
+function renderTmiDetail(t) {
+    const detail = document.getElementById('tmiDetail');
+    const flights = t.flights || [];
+    detail.innerHTML = `
+        <div class="detail-header">
+            <h2>${esc(t.fcaName || t.fcaId)}</h2>
+            <div class="fca-id">${esc(t.fcaId)}</div>
+            <div style="margin-top:6px; font-size:11px; color:#666;">
+                ${flights.length} flights | Last updated: ${t.lastUpdated ? formatTime(t.lastUpdated) : '?'}
+            </div>
+        </div>
+        <table class="flight-table">
+            <thead>
+                <tr>
+                    <th>CALLSIGN</th>
+                    <th>DEP</th>
+                    <th>ARR</th>
+                    <th>STATUS</th>
+                    <th>ENTRY</th>
+                    <th>EXIT</th>
+                    <th>UPDATE</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${flights.map(f => `<tr>
+                    <td class="cs">${esc(f.callsign || '?')}</td>
+                    <td>${esc(f.depArpt || '')}</td>
+                    <td>${esc(f.arrArpt || '')}</td>
+                    <td class="${f.status === 'ACTIVE' ? 'active' : ''}">${esc(f.status || '')}</td>
+                    <td class="time">${f.entryTime ? formatTime(f.entryTime) : ''}</td>
+                    <td class="time">${f.exitTime ? formatTime(f.exitTime) : ''}</td>
+                    <td>${esc(f.updateType || '')}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+// ── Flight polling ───────────────────────────────────────────
+async function refreshFlights() {
+    try {
+        const r = await fetch('/api/tfms/flights');
+        if (!r.ok) return;
+        flights = await r.json();
+        renderFlightTable();
+    } catch {}
+}
+
+function renderFlightTable() {
+    const search = (document.getElementById('flightSearch').value || '').toUpperCase();
+    const filtered = flights.filter(f => {
+        if (!search) return true;
+        return (f.callsign || '').toUpperCase().includes(search)
+            || (f.depArpt || '').toUpperCase().includes(search)
+            || (f.arrArpt || '').toUpperCase().includes(search)
+            || (f.star || '').toUpperCase().includes(search);
+    });
+
+    const body = document.getElementById('flightTableBody');
+    body.innerHTML = filtered.slice(0, 500).map(f => `<tr data-ref="${esc(f.flightRef || '')}">
+        <td class="cs">${esc(f.callsign || '?')}</td>
+        <td>${esc(f.depArpt || '')}</td>
+        <td>${esc(f.arrArpt || '')}</td>
+        <td>${f.altitude ? (f.altitude >= 18000 ? 'FL' + Math.round(f.altitude/100) : f.altitude + 'ft') : ''}</td>
+        <td>${f.speed || ''}</td>
+        <td>${esc(f.star || '')}</td>
+        <td class="time">${f.eta ? formatTime(f.eta) : ''}</td>
+        <td>${esc(f.category || '')}</td>
+        <td>${esc(f.facility || '')}</td>
+    </tr>`).join('');
+
+    body.querySelectorAll('tr').forEach(row => {
+        row.addEventListener('click', () => {
+            const ref = row.dataset.ref;
+            if (ref) window.open(`/fido/route?flight=${encodeURIComponent(ref)}`, '_blank');
+        });
+        row.style.cursor = 'pointer';
+    });
+
+    document.getElementById('flightCount').innerHTML = `Flights: <b>${flights.length}</b>`;
+}
+
+document.getElementById('flightSearch').addEventListener('input', renderFlightTable);
+
+// ── Stats polling ────────────────────────────────────────────
+async function refreshStats() {
+    try {
+        const r = await fetch('/api/tfms/stats');
+        if (!r.ok) return;
+        const s = await r.json();
+        document.getElementById('tfmsStatus').innerHTML = s.connected
+            ? `TFMS: <b class="live" style="color:#44aa44">LIVE</b> ${s.messageCount?.toLocaleString() || 0} msg`
+            : `TFMS: <b style="color:#aa4444">DISCONNECTED</b>`;
+        document.getElementById('flightCount').innerHTML = `Flights: <b>${s.flightCount || 0}</b>`;
+        document.getElementById('tmiCount').innerHTML = `TMIs: <b>${s.tmiCount || 0}</b>`;
+    } catch {}
+}
+
+// ── Utils ────────────────────────────────────────────────────
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function formatTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toISOString().substring(11, 16) + 'Z';
+}
+
+function timeSince(iso) {
+    const d = new Date(iso);
+    const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (sec < 60) return sec + 's ago';
+    if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+    return Math.floor(sec / 3600) + 'h ago';
+}
+
+// ── Init ─────────────────────────────────────────────────────
+refreshStats();
+refreshFlights();
+setInterval(refreshStats, 10000);
+setInterval(refreshFlights, 15000);
+</script>
+</body>
+</html>

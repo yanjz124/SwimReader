@@ -176,6 +176,7 @@ header .sub {
     <div class="status-bar">
         <span class="stat" id="sfdpsStat">SFDPS: <b>--</b></span>
         <span class="stat" id="stddsStat">STDDS: <b>--</b></span>
+        <span class="stat" id="tfmsStat">TFMS: <b>--</b></span>
         <span class="stat" id="connStat"></span>
     </div>
 </header>
@@ -194,7 +195,26 @@ header .sub {
         </a>
         <a class="nav-item" data-key="fdio" href="/fdio">
             <div class="title">FDIO</div>
-            <div class="desc">Flight plan viewer / EDST</div>
+            <div class="desc">Enroute flight plan viewer</div>
+        </a>
+
+        <div class="nav-section">TRAFFIC FLOW (TFMS)</div>
+        <a class="nav-item" data-key="fido" href="/fido">
+            <div class="title">FIDO</div>
+            <div class="desc">TMI dashboard / flight data</div>
+            <div class="count" id="fidoCount"></div>
+        </a>
+        <a class="nav-item" data-key="fido-route" href="/fido/route">
+            <div class="title">ROUTE VIEWER</div>
+            <div class="desc">Route traversal with sectors</div>
+        </a>
+        <a class="nav-item" data-key="fido-sectors" href="/fido/sectors">
+            <div class="title">SECTOR LOADING</div>
+            <div class="desc">Predicted sector traffic</div>
+        </a>
+        <a class="nav-item" data-key="fido-flow" href="/fido/flow">
+            <div class="title">FLOW ADVISORY</div>
+            <div class="desc">FCA status and restrictions</div>
         </a>
 
         <div class="nav-section">TERMINAL (STDDS)</div>
@@ -254,13 +274,53 @@ const pages = {
         ]
     },
     fdio: {
-        title: 'FDIO',
+        title: 'FDIO — Enroute Flight Plan',
         source: 'SFDPS — FDPS VPN — FIXM XML',
         desc: 'Flight Data Input/Output viewer. Searchable accordion rows showing flight plans with full detail and ATC revision history. Filter by status, facility, and flight rules.',
         href: '/fdio',
         fields: [
             ['Data Source', 'SFDPS (FIXM en route)'],
             ['Features', 'Search, sort, expand, revision history'],
+        ]
+    },
+    fido: {
+        title: 'FIDO — Traffic Flow Management',
+        source: 'TFMS — TFMS VPN',
+        desc: 'Traffic Flow Management dashboard. View active TMIs (Traffic Management Initiatives), ground stops, GDPs, and FCAs with affected flight lists. Live flight tracking with ETD/ETA, route, STAR, and sector traversal data.',
+        href: '/fido',
+        fields: [
+            ['Data Source', 'TFMS (flow management)'],
+            ['Features', 'TMI dashboard, flight search, route data'],
+        ]
+    },
+    'fido-route': {
+        title: 'FIDO — Route Viewer',
+        source: 'TFMS — TFMS VPN',
+        desc: 'Visualize full route traversal on a map with fix-by-fix lat/lon waypoints, ARTCC center crossings, and sector-by-sector transit predictions. Enter a callsign to see the complete TFMS route.',
+        href: '/fido/route',
+        fields: [
+            ['Data Source', 'TFMS (traversal data)'],
+            ['Features', 'Map, waypoints, centers, sectors, airways'],
+        ]
+    },
+    'fido-sectors': {
+        title: 'FIDO — Sector Loading',
+        source: 'TFMS — TFMS VPN',
+        desc: 'Predicted sector traffic from TFMS traversal data. Grid of all sectors with flight counts. Click a sector to see which flights are predicted to transit it and their entry times.',
+        href: '/fido/sectors',
+        fields: [
+            ['Data Source', 'TFMS (sector traversal)'],
+            ['Features', 'Sector grid, traffic predictions, ARTCC filter'],
+        ]
+    },
+    'fido-flow': {
+        title: 'FIDO — Flow Advisory',
+        source: 'TFMS — TFMS VPN',
+        desc: 'Active FCAs (Flow Constrained Areas) and TMIs mapped on a Leaflet display. See entry points of affected flights and browse FCA details with flight lists.',
+        href: '/fido/flow',
+        fields: [
+            ['Data Source', 'TFMS (flow information)'],
+            ['Features', 'FCA map, entry points, live updates'],
         ]
     },
     tais: {
@@ -377,6 +437,20 @@ async function refreshStats() {
             const stddsTracks = document.getElementById('asdexCount').textContent;
             document.getElementById('stddsStat').innerHTML =
                 `STDDS: <b>${stddsTracks || 'connecting...'}</b>`;
+        }
+    } catch {}
+
+    try {
+        // TFMS stats
+        const tfr = await fetch('/api/tfms/stats');
+        if (tfr.ok) {
+            const ts = await tfr.json();
+            document.getElementById('tfmsStat').innerHTML = ts.connected
+                ? `TFMS: <b>${(ts.flightCount || 0).toLocaleString()} flights</b>`
+                : `TFMS: <b>--</b>`;
+            const fidoEl = document.getElementById('fidoCount');
+            if (fidoEl) fidoEl.textContent =
+                `${(ts.flightCount || 0).toLocaleString()} flights  ${(ts.tmiCount || 0)} TMIs`;
         }
     } catch {}
 }

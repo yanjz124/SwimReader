@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FIDO - Route Viewer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+@font-face { font-family: 'ERAM'; src: url('ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    background: #000;
+    color: #ccc;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+header {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header .sub { font-size: 11px; color: #555; }
+
+.search-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+.search-row input {
+    background: #111;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 5px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    width: 200px;
+    outline: none;
+}
+.search-row input:focus { border-color: #cccc44; }
+.search-row button {
+    background: #111;
+    border: 1px solid #444;
+    color: #cccc44;
+    padding: 5px 14px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+.search-row button:hover { border-color: #cccc44; }
+
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+#map {
+    flex: 1;
+}
+.leaflet-container { background: #0a0a0a; }
+
+/* ── Sidebar ──────────────────────────────────────────────── */
+.sidebar {
+    width: 340px;
+    min-width: 340px;
+    border-left: 1px solid #222;
+    overflow-y: auto;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+.sidebar .section-title {
+    padding: 8px 12px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #1a1a1a;
+    background: #050505;
+}
+.flight-info {
+    padding: 10px 12px;
+    border-bottom: 1px solid #111;
+}
+.flight-info .cs { font-size: 16px; color: #cccc44; letter-spacing: 1px; }
+.flight-info .route { font-size: 12px; color: #aaa; margin-top: 4px; }
+.flight-info .meta { font-size: 11px; color: #555; margin-top: 4px; }
+
+.fix-list {
+    flex: 1;
+    overflow-y: auto;
+}
+.fix-item {
+    display: flex;
+    padding: 4px 12px;
+    font-size: 11px;
+    border-bottom: 1px solid #0a0a0a;
+}
+.fix-item:hover { background: #0a0a0a; }
+.fix-item .fix-name { color: #39d2c0; width: 80px; flex-shrink: 0; }
+.fix-item .fix-time { color: #666; width: 60px; flex-shrink: 0; text-align: right; }
+
+.sector-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+.sector-item {
+    display: flex;
+    padding: 4px 12px;
+    font-size: 11px;
+    border-bottom: 1px solid #0a0a0a;
+}
+.sector-item .sec-name { color: #aaa; width: 100px; flex-shrink: 0; }
+.sector-item .sec-time { color: #666; flex: 1; text-align: right; }
+
+.empty-sidebar {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: #333;
+    font-size: 12px;
+    gap: 6px;
+    text-align: center;
+    padding: 20px;
+}
+</style>
+</head>
+<body>
+
+<header>
+    <h1>FIDO</h1>
+    <span class="sub">ROUTE VIEWER</span>
+    <div class="search-row">
+        <input type="text" id="searchInput" placeholder="Callsign or flight ref...">
+        <button id="searchBtn">SHOW</button>
+    </div>
+</header>
+
+<div class="main">
+    <div id="map"></div>
+    <div class="sidebar" id="sidebar">
+        <div class="empty-sidebar">
+            <div>Enter a callsign to view route</div>
+            <div style="color:#444; font-size:10px;">Route includes TFMS traversal data with<br>fix-by-fix lat/lon and sector crossings</div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Map setup ────────────────────────────────────────────────
+const map = L.map('map', {
+    center: [39, -98],
+    zoom: 5,
+    zoomControl: false
+});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OSM &copy; CARTO',
+    maxZoom: 18
+}).addTo(map);
+
+L.control.zoom({ position: 'topright' }).addTo(map);
+
+let routeLine = null;
+let fixMarkers = [];
+let posMarker = null;
+let currentFlight = null;
+
+// ── URL params ───────────────────────────────────────────────
+const params = new URLSearchParams(location.search);
+const initFlight = params.get('flight');
+if (initFlight) {
+    document.getElementById('searchInput').value = initFlight;
+    loadFlight(initFlight);
+}
+
+// ── Search ───────────────────────────────────────────────────
+document.getElementById('searchBtn').addEventListener('click', doSearch);
+document.getElementById('searchInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch();
+});
+
+function doSearch() {
+    const q = document.getElementById('searchInput').value.trim();
+    if (q) loadFlight(q);
+}
+
+// ── Load flight ──────────────────────────────────────────────
+async function loadFlight(key) {
+    try {
+        const r = await fetch(`/api/tfms/flights/${encodeURIComponent(key)}`);
+        if (!r.ok) {
+            document.getElementById('sidebar').innerHTML =
+                '<div class="empty-sidebar"><div>Flight not found</div></div>';
+            return;
+        }
+        const f = await r.json();
+        currentFlight = f;
+        renderRoute(f);
+        renderSidebar(f);
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// ── Render route on map ──────────────────────────────────────
+function renderRoute(f) {
+    // Clear previous
+    if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+    fixMarkers.forEach(m => map.removeLayer(m));
+    fixMarkers = [];
+    if (posMarker) { map.removeLayer(posMarker); posMarker = null; }
+
+    // Draw waypoint polyline
+    if (f.waypoints && f.waypoints.length > 1) {
+        const latlngs = f.waypoints.map(w => [w.lat, w.lon]);
+        routeLine = L.polyline(latlngs, {
+            color: '#44aa44',
+            weight: 2,
+            opacity: 0.8
+        }).addTo(map);
+        map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+    }
+
+    // Draw fix markers
+    if (f.fixes) {
+        f.fixes.forEach(fix => {
+            // Find closest waypoint to get lat/lon
+            if (f.waypoints && fix.elapsedTime != null) {
+                const wp = findWaypointAtTime(f.waypoints, fix.elapsedTime);
+                if (wp) {
+                    const marker = L.circleMarker([wp.lat, wp.lon], {
+                        radius: 4,
+                        color: '#39d2c0',
+                        fillColor: '#39d2c0',
+                        fillOpacity: 0.8,
+                        weight: 1
+                    }).addTo(map);
+                    marker.bindTooltip(fix.name, {
+                        permanent: false,
+                        direction: 'top',
+                        className: 'fix-tooltip'
+                    });
+                    fixMarkers.push(marker);
+                }
+            }
+        });
+    }
+
+    // Draw current position
+    if (f.lat && f.lon && f.lat !== 0) {
+        posMarker = L.circleMarker([f.lat, f.lon], {
+            radius: 6,
+            color: '#cccc44',
+            fillColor: '#cccc44',
+            fillOpacity: 1,
+            weight: 2
+        }).addTo(map);
+        posMarker.bindTooltip(f.callsign || '?', {
+            permanent: true,
+            direction: 'right',
+            className: 'pos-tooltip'
+        });
+    }
+
+    // Draw center boundaries as colored segments
+    if (f.centers && f.centers.length > 1 && f.waypoints) {
+        const colors = ['#4444cc', '#44cc44', '#cc4444', '#cc44cc', '#cccc44', '#44cccc'];
+        for (let i = 0; i < f.centers.length; i++) {
+            const startTime = f.centers[i].elapsedEntryTime || 0;
+            const endTime = i + 1 < f.centers.length ? f.centers[i + 1].elapsedEntryTime : Infinity;
+            const segWps = f.waypoints.filter(w =>
+                (w.elapsedTime || 0) >= startTime && (w.elapsedTime || 0) < endTime);
+            // Prepend last wp from previous segment for continuity
+            if (i > 0 && startTime > 0) {
+                const prev = f.waypoints.filter(w => (w.elapsedTime || 0) < startTime);
+                if (prev.length > 0) segWps.unshift(prev[prev.length - 1]);
+            }
+            if (segWps.length > 1) {
+                L.polyline(segWps.map(w => [w.lat, w.lon]), {
+                    color: colors[i % colors.length],
+                    weight: 3,
+                    opacity: 0.6
+                }).addTo(map);
+                // Label at midpoint
+                const mid = segWps[Math.floor(segWps.length / 2)];
+                const label = L.divIcon({
+                    html: `<span style="color:${colors[i % colors.length]}; font-size:10px; font-family:ERAM,monospace; white-space:nowrap;">${f.centers[i].name}</span>`,
+                    className: '',
+                    iconAnchor: [0, -8]
+                });
+                L.marker([mid.lat, mid.lon], { icon: label }).addTo(map);
+                fixMarkers.push(L.marker([mid.lat, mid.lon], { icon: label }));
+            }
+        }
+    }
+}
+
+function findWaypointAtTime(waypoints, elapsed) {
+    let best = null;
+    let bestDiff = Infinity;
+    for (const wp of waypoints) {
+        const diff = Math.abs((wp.elapsedTime || 0) - elapsed);
+        if (diff < bestDiff) { bestDiff = diff; best = wp; }
+    }
+    return best;
+}
+
+// ── Render sidebar ───────────────────────────────────────────
+function renderSidebar(f) {
+    const sidebar = document.getElementById('sidebar');
+    const etdStr = f.etd ? formatTime(f.etd) : '?';
+    const etaStr = f.eta ? formatTime(f.eta) : '?';
+    const altStr = f.altitude ? (f.altitude >= 18000 ? 'FL' + Math.round(f.altitude/100) : f.altitude + 'ft') : '?';
+
+    let html = `
+        <div class="flight-info">
+            <div class="cs">${esc(f.callsign || '?')}</div>
+            <div class="route">${esc(f.depArpt || '?')} → ${esc(f.arrArpt || '?')}</div>
+            <div class="meta">
+                ${esc(f.category || '')} ${esc(f.userCategory || '')} |
+                ${altStr} | ${f.speed || '?'} kts
+            </div>
+            <div class="meta">
+                ETD: ${etdStr} | ETA: ${etaStr}
+                ${f.star ? ' | STAR: ' + esc(f.star) : ''}
+                ${f.starTransitionFix ? ' via ' + esc(f.starTransitionFix) : ''}
+            </div>
+            ${f.routeOfFlight ? `<div class="meta" style="color:#666; margin-top:6px; word-break:break-all;">${esc(f.routeOfFlight)}</div>` : ''}
+        </div>
+    `;
+
+    // Fixes
+    if (f.fixes && f.fixes.length > 0) {
+        html += '<div class="section-title">ROUTE FIXES</div><div class="fix-list">';
+        for (const fix of f.fixes) {
+            const time = fix.elapsedTime != null ? formatElapsed(fix.elapsedTime, f.etd) : '';
+            html += `<div class="fix-item">
+                <span class="fix-name">${esc(fix.name)}</span>
+                <span class="fix-time">${time}</span>
+            </div>`;
+        }
+        html += '</div>';
+    }
+
+    // Centers
+    if (f.centers && f.centers.length > 0) {
+        html += '<div class="section-title">ARTCC TRAVERSAL</div><div class="sector-list">';
+        for (const c of f.centers) {
+            const time = c.elapsedEntryTime != null ? formatElapsed(c.elapsedEntryTime, f.etd) : 'origin';
+            html += `<div class="sector-item">
+                <span class="sec-name">${esc(c.name)}</span>
+                <span class="sec-time">${time}</span>
+            </div>`;
+        }
+        html += '</div>';
+    }
+
+    // Sectors
+    if (f.sectors && f.sectors.length > 0) {
+        html += '<div class="section-title">SECTOR TRAVERSAL</div><div class="sector-list" style="max-height:none;">';
+        for (const s of f.sectors) {
+            const time = s.elapsedEntryTime != null ? formatElapsed(s.elapsedEntryTime, f.etd) : 'origin';
+            html += `<div class="sector-item">
+                <span class="sec-name">${esc(s.name)}</span>
+                <span class="sec-time">${time}</span>
+            </div>`;
+        }
+        html += '</div>';
+    }
+
+    // Airways
+    if (f.airways && f.airways.length > 0) {
+        html += `<div class="section-title">AIRWAYS</div>
+            <div style="padding:6px 12px; font-size:11px; color:#aaa;">
+                ${f.airways.map(a => esc(a)).join(' &nbsp; ')}
+            </div>`;
+    }
+
+    sidebar.innerHTML = html;
+}
+
+// ── Utils ────────────────────────────────────────────────────
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function formatTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toISOString().substring(11, 16) + 'Z';
+}
+
+function formatElapsed(secs, etdIso) {
+    if (etdIso) {
+        const etd = new Date(etdIso);
+        const t = new Date(etd.getTime() + secs * 1000);
+        return t.toISOString().substring(11, 16) + 'Z';
+    }
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return h > 0 ? `+${h}h${String(m).padStart(2, '0')}m` : `+${m}m`;
+}
+
+// ── Auto-refresh current flight ──────────────────────────────
+setInterval(() => {
+    if (currentFlight && currentFlight.flightRef) {
+        loadFlight(currentFlight.flightRef);
+    }
+}, 30000);
+</script>
+</body>
+</html>

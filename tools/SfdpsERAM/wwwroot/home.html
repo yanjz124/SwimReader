@@ -189,30 +189,26 @@ header .sub {
             <div class="desc">Radar display with data blocks</div>
             <div class="count" id="eramCount"></div>
         </a>
-        <a class="nav-item" data-key="table" href="/table">
-            <div class="title">FLIGHT TABLE</div>
-            <div class="desc">Tabular flight explorer</div>
-        </a>
         <a class="nav-item" data-key="fdio" href="/fdio">
-            <div class="title">FDIO</div>
-            <div class="desc">Enroute flight plan viewer</div>
+            <div class="title">FLIGHT TABLE</div>
+            <div class="desc">Flight plan viewer with event history</div>
         </a>
 
         <div class="nav-section">TRAFFIC FLOW (TFMS)</div>
-        <a class="nav-item" data-key="fido" href="/fido">
-            <div class="title">FIDO</div>
+        <a class="nav-item" data-key="fdio-tfms" href="/fdio/tfms">
+            <div class="title">FDIO</div>
             <div class="desc">TMI dashboard / flight data</div>
-            <div class="count" id="fidoCount"></div>
+            <div class="count" id="fdioCount"></div>
         </a>
-        <a class="nav-item" data-key="fido-route" href="/fido/route">
+        <a class="nav-item" data-key="fdio-route" href="/fdio/route">
             <div class="title">ROUTE VIEWER</div>
             <div class="desc">Route traversal with sectors</div>
         </a>
-        <a class="nav-item" data-key="fido-sectors" href="/fido/sectors">
+        <a class="nav-item" data-key="fdio-sectors" href="/fdio/sectors">
             <div class="title">SECTOR LOADING</div>
             <div class="desc">Predicted sector traffic</div>
         </a>
-        <a class="nav-item" data-key="fido-flow" href="/fido/flow">
+        <a class="nav-item" data-key="fdio-flow" href="/fdio/flow">
             <div class="title">FLOW ADVISORY</div>
             <div class="desc">FCA status and restrictions</div>
         </a>
@@ -263,61 +259,51 @@ const pages = {
             ['Features', 'Data blocks, history, vectors, NEXRAD, boundaries'],
         ]
     },
-    table: {
+    fdio: {
         title: 'FLIGHT TABLE',
         source: 'SFDPS — FDPS VPN — FIXM XML',
-        desc: 'Tabular real-time flight explorer with filtering by facility, sector, and search. Pinnable flights, detail panel with full flight plan and event log. Same data as ERAM scope in a spreadsheet view.',
-        href: '/table',
-        fields: [
-            ['Data Source', 'SFDPS (FIXM en route)'],
-            ['Features', 'Sort, filter, pin, detail panel, event log'],
-        ]
-    },
-    fdio: {
-        title: 'FDIO — Enroute Flight Plan',
-        source: 'SFDPS — FDPS VPN — FIXM XML',
-        desc: 'Flight Data Input/Output viewer. Searchable accordion rows showing flight plans with full detail and ATC revision history. Filter by status, facility, and flight rules.',
+        desc: 'Flight data explorer with searchable table, detail panel showing full flight plans, altitude/ownership/clearance data, and complete SWIM event history with raw XML. Filter by status, facility, sector, and flight rules.',
         href: '/fdio',
         fields: [
             ['Data Source', 'SFDPS (FIXM en route)'],
-            ['Features', 'Search, sort, expand, revision history'],
+            ['Features', 'Search, sort, detail panel, event history, raw XML'],
         ]
     },
-    fido: {
-        title: 'FIDO — Traffic Flow Management',
+    'fdio-tfms': {
+        title: 'FDIO — Traffic Flow Management',
         source: 'TFMS — TFMS VPN',
         desc: 'Traffic Flow Management dashboard. View active TMIs (Traffic Management Initiatives), ground stops, GDPs, and FCAs with affected flight lists. Live flight tracking with ETD/ETA, route, STAR, and sector traversal data.',
-        href: '/fido',
+        href: '/fdio/tfms',
         fields: [
             ['Data Source', 'TFMS (flow management)'],
             ['Features', 'TMI dashboard, flight search, route data'],
         ]
     },
-    'fido-route': {
-        title: 'FIDO — Route Viewer',
+    'fdio-route': {
+        title: 'FDIO — Route Viewer',
         source: 'TFMS — TFMS VPN',
         desc: 'Visualize full route traversal on a map with fix-by-fix lat/lon waypoints, ARTCC center crossings, and sector-by-sector transit predictions. Enter a callsign to see the complete TFMS route.',
-        href: '/fido/route',
+        href: '/fdio/route',
         fields: [
             ['Data Source', 'TFMS (traversal data)'],
             ['Features', 'Map, waypoints, centers, sectors, airways'],
         ]
     },
-    'fido-sectors': {
-        title: 'FIDO — Sector Loading',
+    'fdio-sectors': {
+        title: 'FDIO — Sector Loading',
         source: 'TFMS — TFMS VPN',
         desc: 'Predicted sector traffic from TFMS traversal data. Grid of all sectors with flight counts. Click a sector to see which flights are predicted to transit it and their entry times.',
-        href: '/fido/sectors',
+        href: '/fdio/sectors',
         fields: [
             ['Data Source', 'TFMS (sector traversal)'],
             ['Features', 'Sector grid, traffic predictions, ARTCC filter'],
         ]
     },
-    'fido-flow': {
-        title: 'FIDO — Flow Advisory',
+    'fdio-flow': {
+        title: 'FDIO — Flow Advisory',
         source: 'TFMS — TFMS VPN',
         desc: 'Active FCAs (Flow Constrained Areas) and TMIs mapped on a Leaflet display. See entry points of affected flights and browse FCA details with flight lists.',
-        href: '/fido/flow',
+        href: '/fdio/flow',
         fields: [
             ['Data Source', 'TFMS (flow information)'],
             ['Features', 'FCA map, entry points, live updates'],
@@ -448,7 +434,7 @@ async function refreshStats() {
             document.getElementById('tfmsStat').innerHTML = ts.connected
                 ? `TFMS: <b>${(ts.flightCount || 0).toLocaleString()} flights</b>`
                 : `TFMS: <b>--</b>`;
-            const fidoEl = document.getElementById('fidoCount');
+            const fidoEl = document.getElementById('fdioCount');
             if (fidoEl) fidoEl.textContent =
                 `${(ts.flightCount || 0).toLocaleString()} flights  ${(ts.tmiCount || 0)} TMIs`;
         }

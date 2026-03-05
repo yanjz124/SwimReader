@@ -1245,7 +1245,7 @@ void SaveFlightHistory(FlightState f)
         {
             f.Gufi, f.FdpsGufi, f.Callsign, f.ComputerId, f.Operator, f.Originator, f.FlightStatus,
             f.Origin, f.Destination, f.AircraftType, f.Registration, f.WakeCategory,
-            f.ModeSCode, f.EquipmentQualifier, f.Squawk, f.AssignedSquawk, f.FlightRules, f.FlightType,
+            f.ModeSCode, f.EquipmentQualifier, f.AircraftPerformance, f.Squawk, f.AssignedSquawk, f.FlightRules, f.FlightType,
             f.Route, f.STAR, f.Remarks,
             f.AssignedAltitude, f.AssignedVfr, f.BlockFloor, f.BlockCeiling,
             f.InterimAltitude, f.ReportedAltitude,
@@ -2089,6 +2089,8 @@ void ProcessFlight(XElement flight, string rawXml)
         if (!string.IsNullOrEmpty(modeS)) state.ModeSCode = modeS;
         var equip = acft.Attribute("equipmentQualifier")?.Value;
         if (!string.IsNullOrEmpty(equip)) state.EquipmentQualifier = equip;
+        var perf = acft.Attribute("aircraftPerformance")?.Value;
+        if (!string.IsNullOrEmpty(perf)) state.AircraftPerformance = perf;
 
         // Communication / datalink
         var comm = acft.Descendants().FirstOrDefault(e => e.Name.LocalName == "communication");
@@ -3469,6 +3471,7 @@ class FlightState
     public string? WakeCategory { get; set; }
     public string? ModeSCode { get; set; }
     public string? EquipmentQualifier { get; set; }
+    public string? AircraftPerformance { get; set; } // ICAO performance category (A-E)
     public string? Squawk { get; set; }            // Current/received beacon code
     public string? AssignedSquawk { get; set; }     // Controller-assigned beacon code (from BA/RE messages)
     public string? FlightRules { get; set; }
@@ -3655,7 +3658,7 @@ class FlightState
         Operator = Operator, Originator = Originator, FlightStatus = FlightStatus,
         Origin = Origin, Destination = Destination, AlternateAerodrome = AlternateAerodrome, AircraftType = AircraftType,
         Registration = Registration, WakeCategory = WakeCategory,
-        ModeSCode = ModeSCode, EquipmentQualifier = EquipmentQualifier,
+        ModeSCode = ModeSCode, EquipmentQualifier = EquipmentQualifier, AircraftPerformance = AircraftPerformance,
         Squawk = Squawk, AssignedSquawk = AssignedSquawk, FlightRules = FlightRules, FlightType = FlightType,
         Route = Route, OriginalRoute = OriginalRoute, STAR = STAR, Remarks = Remarks,
         AssignedAltitude = AssignedAltitude, AssignedVfr = AssignedVfr,
@@ -3695,7 +3698,7 @@ class FlightState
             Operator = s.Operator, Originator = s.Originator, FlightStatus = s.FlightStatus,
             Origin = s.Origin, Destination = s.Destination, AlternateAerodrome = s.AlternateAerodrome, AircraftType = s.AircraftType,
             Registration = s.Registration, WakeCategory = s.WakeCategory,
-            ModeSCode = s.ModeSCode, EquipmentQualifier = s.EquipmentQualifier,
+            ModeSCode = s.ModeSCode, EquipmentQualifier = s.EquipmentQualifier, AircraftPerformance = s.AircraftPerformance,
             Squawk = s.Squawk, AssignedSquawk = s.AssignedSquawk, FlightRules = s.FlightRules, FlightType = s.FlightType,
             Route = s.Route, OriginalRoute = s.OriginalRoute, STAR = s.STAR, Remarks = s.Remarks,
             AssignedAltitude = s.AssignedAltitude, AssignedVfr = s.AssignedVfr,
@@ -3752,7 +3755,7 @@ class FlightState
         ClearanceHeading, ClearanceSpeed, ClearanceText,
         DataLinkCode, OtherDataLink,
         Route, OriginalRoute, FlightRules, FlightType, STAR, Remarks,
-        Registration, EquipmentQualifier, RequestedSpeed,
+        Registration, EquipmentQualifier, AircraftPerformance, RequestedSpeed,
         OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
         CoordinationFix, CoordinationTime,
         ETA, ActualDepartureTime,
@@ -3788,7 +3791,7 @@ class FlightState
             ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
             Operator, Originator, FlightStatus,
             Origin, Destination, AlternateAerodrome, AircraftType, Registration, WakeCategory,
-            ModeSCode, EquipmentQualifier, Squawk, AssignedSquawk, FlightRules, FlightType,
+            ModeSCode, EquipmentQualifier, AircraftPerformance, Squawk, AssignedSquawk, FlightRules, FlightType,
             Route, OriginalRoute, STAR, Remarks,
             AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
             InterimAltitude, ReportedAltitude,
@@ -3836,6 +3839,7 @@ class FlightSnapshot
     public string? WakeCategory { get; set; }
     public string? ModeSCode { get; set; }
     public string? EquipmentQualifier { get; set; }
+    public string? AircraftPerformance { get; set; }
     public string? Squawk { get; set; }
     public string? AssignedSquawk { get; set; }
     public string? FlightRules { get; set; }

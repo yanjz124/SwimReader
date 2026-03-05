@@ -1427,15 +1427,19 @@ asdex.OnEnrich = (track) =>
 
     // Path 2: SFDPS via callsign (index lookup)
     // Airlines reuse callsigns for turnover legs (e.g., DAL123 ORD→IAD then IAD→DFW).
-    // Prefer the flight whose origin matches the surface airport (departure leg)
-    // over the one whose destination matches (arrival leg).
+    // Use squawk to disambiguate, then prefer origin match, then positioned, then first.
     if (fp is null && track.Callsign is not null && csIndex.TryGetValue(track.Callsign, out var candidates))
     {
-        // Priority: origin matches airport > has position > first
-        fp = candidates.FirstOrDefault(f =>
-                string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase))
-            ?? candidates.FirstOrDefault(f => f.Latitude != 0)
-            ?? candidates.FirstOrDefault();
+        // Best match: squawk matches (transponder code is unique per active flight plan)
+        if (track.Squawk is not null)
+            fp = candidates.FirstOrDefault(f =>
+                !string.IsNullOrEmpty(f.Squawk) && f.Squawk == track.Squawk);
+        // Fallback: origin matches airport (departure leg on surface)
+        fp ??= candidates.FirstOrDefault(f =>
+                string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase));
+        // Fallback: has radar position (active flight, not just a filed plan)
+        fp ??= candidates.FirstOrDefault(f => f.Latitude != 0);
+        fp ??= candidates.FirstOrDefault();
     }
 
     // Apply SFDPS flight plan data

@@ -25,6 +25,8 @@ class TfmsBridge
     private readonly ConcurrentDictionary<string, TfmsFlight> _flights = new();
     // tmiId → TfmsTmi (active TMIs)
     private readonly ConcurrentDictionary<string, TfmsTmi> _tmis = new();
+    // callsign → flightRef key (for O(1) lookup by callsign)
+    private readonly ConcurrentDictionary<string, string> _callsignIndex = new(StringComparer.OrdinalIgnoreCase);
     // flights modified since last flush
     private readonly ConcurrentDictionary<string, byte> _dirtyFlights = new();
     // TMIs modified since last flush
@@ -105,15 +107,23 @@ class TfmsBridge
                 flow.Start();
                 Console.WriteLine("[TFMS] Listening on TFMS queue");
 
+                int watchdogCycles = 0;
                 while (true)
                 {
                     Thread.Sleep(10000);
+                    watchdogCycles++;
                     var silence = (DateTime.UtcNow -
                         new DateTime(Interlocked.Read(ref lastMsgTicks), DateTimeKind.Utc)).TotalSeconds;
                     if (silence > 90)
                     {
                         Console.WriteLine($"[TFMS] No messages for {silence:F0}s — reconnecting");
                         break;
+                    }
+                    // Log stats every ~60s
+                    if (watchdogCycles % 6 == 0)
+                    {
+                        Console.WriteLine($"[TFMS] {_flights.Count} flights, {_tmis.Count} TMIs, " +
+                            $"{Interlocked.Read(ref MessageCount)} msgs ({Interlocked.Read(ref FltdCount)} fltd, {Interlocked.Read(ref FiCount)} fi)");
                     }
                 }
 
@@ -206,6 +216,7 @@ class TfmsBridge
         var flight = _flights.GetOrAdd(key, _ => new TfmsFlight { FlightRef = flightRef ?? "" });
 
         flight.Callsign = acid;
+        _callsignIndex[acid] = key;  // O(1) callsign lookup
         flight.Airline = airline;
         flight.LastSeen = DateTime.UtcNow;
         if (depArpt is not null) flight.DepArpt = depArpt;
@@ -606,7 +617,10 @@ class TfmsBridge
         foreach (var (key, f) in _flights)
         {
             if (f.LastSeen < cutoff)
+            {
                 _flights.TryRemove(key, out _);
+                if (f.Callsign is not null) _callsignIndex.TryRemove(f.Callsign, out _);
+            }
         }
 
         // Purge TMIs not updated in 24 hours
@@ -657,11 +671,12 @@ class TfmsBridge
         return null;
     }
 
-    /// <summary>Get flights by airport (departing or arriving), for ASDE-X enrichment.</summary>
+    /// <summary>Find a TFMS flight by callsign (O(1) via index), for ASDE-X enrichment.</summary>
     public TfmsFlight? FindByCallsign(string callsign)
     {
-        return _flights.Values.FirstOrDefault(f =>
-            string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase));
+        if (_callsignIndex.TryGetValue(callsign, out var key) && _flights.TryGetValue(key, out var f))
+            return f;
+        return null;
     }
 
     /// <summary>Get all flights transiting a sector (predicted).</summary>

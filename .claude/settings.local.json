@@ -60,11 +60,24 @@
       "WebFetch(domain:vnas.vatsim.net)",
       "Bash(powershell:*)",
       "Bash(copy:*)",
+      "Bash(ssh JY@JY5 \"journalctl --boot=-1 -p err --no-pager -n 50 2>/dev/null || journalctl -p err --no-pager -n 50\")",
+      "Bash(ssh JY@JY5 \"journalctl --boot=-1 --no-pager -n 100 | grep -iE ''oom|kill|memory|swap|sfdps|swimreader'' | tail -40\")",
+      "Bash(ssh JY@JY5 \"journalctl --boot=-1 --no-pager | grep -iE ''oom|out of memory|killed process|memory available'' | tail -20\")",
+      "Bash(ssh JY@JY5 \"systemctl status sfdps-eram --no-pager -l 2>/dev/null | head -20 && echo ''==='' && systemctl status swimreader-stdds --no-pager -l 2>/dev/null | head -20\")",
+      "Bash(ssh JY@JY5 \"ps aux --sort=-%mem | head -10\")",
+      "Bash(ssh JY@JY5 \"journalctl -u sfdps-eram --no-pager | grep -E ''\\\\[Cache\\\\]'' | head -5\")",
+      "Bash(ssh JY@JY5 \"journalctl -u sfdps-eram --no-pager | grep -E ''\\\\[Cache\\\\] Restored'' | head -5\")",
+      "Bash(ssh JY@JY5 \"journalctl --boot=-1 -u sfdps-eram --no-pager | grep ''\\\\[Stats\\\\]'' | head -5 && echo ''...'' && journalctl --boot=-1 -u sfdps-eram --no-pager | grep ''\\\\[Stats\\\\]'' | tail -5\")",
+      "Bash(ssh JY@JY5 \"journalctl --boot=-1 -u sfdps-eram --no-pager | head -10\")",
       "Bash(git commit:*)",
-      "Bash(ssh JY@JY5 \"journalctl -u sfdps-eram --no-pager -n 5\")",
-      "Bash(ssh JY@JY5 \"journalctl -u swimreader-deploy.service --no-pager -n 10\")",
-      "Bash(ssh JY@JY5 \"journalctl -u swimreader-deploy.service --no-pager -n 15\")",
-      "Bash(ssh JY@JY5:*)"
+      "Bash(ssh JY@JY5 \"echo ''=== MEMORY ==='' && free -h && echo && echo ''=== TOP PROCESSES BY MEMORY ==='' && ps aux --sort=-%mem | head -25 && echo && echo ''=== TOP PROCESSES BY CPU ==='' && ps aux --sort=-%cpu | head -15 && echo && echo ''=== DISK ==='' && df -h / && echo && echo ''=== UPTIME/LOAD ==='' && uptime && echo && echo ''=== SWAP ==='' && cat /proc/swaps\")",
+      "Bash(ssh JY@JY5 \"sudo systemctl set-default multi-user.target\")",
+      "Bash(for src in PT HT)",
+      "Bash(do)",
+      "Bash(while read line)",
+      "Bash(done)",
+      "WebFetch(domain:swim.vncrcc.org)",
+      "Bash(ls -la tools/SfdpsERAM/pointout-investigation-*.jsonl)"
     ]
   }
 }

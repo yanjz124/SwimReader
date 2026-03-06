@@ -222,10 +222,16 @@ class TfmsBridge
         var sourceFacility = msg.Attribute("sourceFacility")?.Value;
         var sourceTs = msg.Attribute("sourceTimeStamp")?.Value;
 
-        // Find qualifiedAircraftId (nested in trackInformation or flightPlanInformation)
+        // Find primary info block (trackInformation or flightPlanInformation take precedence)
         var trackInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "trackInformation");
         var planInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "flightPlanInformation");
-        var info = trackInfo ?? planInfo;
+        var depInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "departureInformation");
+        var arrInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "arrivalInformation");
+        var modInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "ncsmFlightModify");
+        var routeInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "ncsmFlightRoute");
+        var timesInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "ncsmFlightTimes");
+        var amendInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "flightPlanAmendmentInformation");
+        var info = trackInfo ?? planInfo ?? depInfo ?? arrInfo ?? modInfo ?? routeInfo ?? timesInfo ?? amendInfo;
         if (info is null) return;
 
         var qid = info.Elements().FirstOrDefault(e => e.Name.LocalName == "qualifiedAircraftId");
@@ -252,6 +258,29 @@ class TfmsBridge
         if (userCategory is not null) flight.UserCategory = userCategory;
         if (facility is not null) flight.Facility = facility;
         if (idNumber is not null) flight.IdNumber = idNumber;
+
+        // Aircraft type — from flightAircraftSpecs (planInfo/depInfo) or aircraftSpecification (ncsm blocks)
+        string? acType = null;
+        foreach (var block in new[] { planInfo, depInfo, amendInfo })
+        {
+            if (block is null) continue;
+            var specs = block.Elements().FirstOrDefault(e => e.Name.LocalName == "flightAircraftSpecs");
+            if (specs is not null) { acType = specs.Value; break; }
+            // Amendment uses newFlightAircraftSpecs inside amendmentData
+            var amendData = block.Elements().FirstOrDefault(e => e.Name.LocalName == "amendmentData");
+            var newSpecs = amendData?.Elements().FirstOrDefault(e => e.Name.LocalName == "newFlightAircraftSpecs");
+            if (newSpecs is not null) { acType = newSpecs.Value; break; }
+        }
+        if (acType is null)
+        {
+            foreach (var block in new[] { modInfo, routeInfo, timesInfo })
+            {
+                var fss = block?.Elements().FirstOrDefault(e => e.Name.LocalName == "flightStatusAndSpec");
+                var spec = fss?.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftSpecification");
+                if (spec is not null) { acType = spec.Value; break; }
+            }
+        }
+        if (!string.IsNullOrEmpty(acType)) flight.AircraftType = acType;
 
         // Speed
         var speedStr = info.Elements().FirstOrDefault(e => e.Name.LocalName == "speed")?.Value;
@@ -285,7 +314,13 @@ class TfmsBridge
             flight.PositionTime = tap;
 
         // Route data (ncsmRouteData — full route with traversal)
-        var routeData = info.Elements().FirstOrDefault(e => e.Name.LocalName == "ncsmRouteData");
+        // Search all info blocks since route may appear in flightPlanInformation, ncsmFlightRoute, etc.
+        XElement? routeData = null;
+        foreach (var block in new[] { info, planInfo, routeInfo, trackInfo })
+        {
+            routeData = block?.Elements().FirstOrDefault(e => e.Name.LocalName == "ncsmRouteData");
+            if (routeData is not null) break;
+        }
         if (routeData is not null) ParseRouteData(flight, routeData);
 
         // Track data (ncsmTrackData — lighter, ETA only)
@@ -785,6 +820,7 @@ class TfmsFlight
     public string? Gufi { get; set; }
     public string? DepArpt { get; set; }
     public string? ArrArpt { get; set; }
+    public string? AircraftType { get; set; }      // ICAO type (B738, A319, C210, etc.)
     public string? AircraftCategory { get; set; }
     public string? UserCategory { get; set; }
     public string? Facility { get; set; }
@@ -823,6 +859,7 @@ class TfmsFlight
         altitude = Altitude,
         eta = Eta?.ToString("o"),
         star = Star,
+        acType = AircraftType,
         category = AircraftCategory,
         ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
@@ -835,6 +872,7 @@ class TfmsFlight
         gufi = Gufi,
         depArpt = DepArpt,
         arrArpt = ArrArpt,
+        acType = AircraftType,
         category = AircraftCategory,
         userCategory = UserCategory,
         facility = Facility,

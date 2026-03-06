@@ -1621,6 +1621,9 @@ asdex.OnEnrich = (track) =>
         track.FpOrigin = fp.Origin;
         track.FpStar = fp.STAR;
         track.FpRoute = fp.Route;
+        // SFDPS aircraft type fills gaps where SMES didn't provide one
+        if (track.AircraftType is null && fp.AircraftType is not null)
+            track.AircraftType = fp.AircraftType;
         // If SFDPS matched via squawk, propagate callsign to ASDE-X track
         if (track.Callsign is null && fp.Callsign is not null)
             track.Callsign = fp.Callsign;
@@ -1640,6 +1643,9 @@ asdex.OnEnrich = (track) =>
                 track.FpStar = tfmsFlight.Star;
             if (track.FpRoute is null && tfmsFlight.RouteOfFlight is not null)
                 track.FpRoute = tfmsFlight.RouteOfFlight;
+            // TFMS aircraft type fills gaps where SMES didn't provide one
+            if (track.AircraftType is null && tfmsFlight.AircraftType is not null)
+                track.AircraftType = tfmsFlight.AircraftType;
         }
     }
 

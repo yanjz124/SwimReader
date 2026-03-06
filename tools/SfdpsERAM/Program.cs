@@ -2287,6 +2287,8 @@ void ProcessFlight(XElement flight, string rawXml)
             if (!string.IsNullOrEmpty(dlCode)) state.DataLinkCode = dlCode;
             var otherDl = comm.Attribute("otherDataLinkCapabilities")?.Value;
             if (!string.IsNullOrEmpty(otherDl)) state.OtherDataLink = otherDl;
+            var otherComm = comm.Attribute("otherCommunicationCapabilities")?.Value;
+            if (!string.IsNullOrEmpty(otherComm)) state.OtherCommunicationCapabilities = otherComm;
             var selcal = comm.Attribute("selectiveCallingCode")?.Value;
             if (!string.IsNullOrEmpty(selcal)) state.SELCAL = selcal;
         }
@@ -3722,6 +3724,7 @@ class FlightState
     public string? CommunicationCode { get; set; }
     public string? DataLinkCode { get; set; }
     public string? OtherDataLink { get; set; }
+    public string? OtherCommunicationCapabilities { get; set; }
     public string? SELCAL { get; set; }
     public string? NavigationCode { get; set; }
     public string? PBNCode { get; set; }
@@ -3864,7 +3867,8 @@ class FlightState
         ClearanceText = ClearanceText, FourthAdaptedField = FourthAdaptedField,
         TmiIds = TmiIds,
         CommunicationCode = CommunicationCode, DataLinkCode = DataLinkCode,
-        OtherDataLink = OtherDataLink, SELCAL = SELCAL,
+        OtherDataLink = OtherDataLink, OtherCommunicationCapabilities = OtherCommunicationCapabilities,
+        SELCAL = SELCAL,
         NavigationCode = NavigationCode, PBNCode = PBNCode, SurveillanceCode = SurveillanceCode,
         OtherNavigationCapabilities = OtherNavigationCapabilities,
         OtherSurveillanceCapabilities = OtherSurveillanceCapabilities,
@@ -3904,7 +3908,8 @@ class FlightState
             ClearanceText = s.ClearanceText, FourthAdaptedField = s.FourthAdaptedField,
             TmiIds = s.TmiIds,
             CommunicationCode = s.CommunicationCode, DataLinkCode = s.DataLinkCode,
-            OtherDataLink = s.OtherDataLink, SELCAL = s.SELCAL,
+            OtherDataLink = s.OtherDataLink, OtherCommunicationCapabilities = s.OtherCommunicationCapabilities,
+            SELCAL = s.SELCAL,
             NavigationCode = s.NavigationCode, PBNCode = s.PBNCode, SurveillanceCode = s.SurveillanceCode,
             OtherNavigationCapabilities = s.OtherNavigationCapabilities,
             OtherSurveillanceCapabilities = s.OtherSurveillanceCapabilities,
@@ -3986,7 +3991,7 @@ class FlightState
             HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
             PointoutOriginatingUnit, PointoutReceivingUnit,
             ClearanceHeading, ClearanceSpeed, ClearanceText, FourthAdaptedField, TmiIds,
-            CommunicationCode, DataLinkCode, OtherDataLink, SELCAL,
+            CommunicationCode, DataLinkCode, OtherDataLink, OtherCommunicationCapabilities, SELCAL,
             NavigationCode, PBNCode, SurveillanceCode,
             OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
             LastMsgSource, LastSeen = LastSeen.ToString("o"),
@@ -4067,6 +4072,7 @@ class FlightSnapshot
     public string? CommunicationCode { get; set; }
     public string? DataLinkCode { get; set; }
     public string? OtherDataLink { get; set; }
+    public string? OtherCommunicationCapabilities { get; set; }
     public string? SELCAL { get; set; }
     public string? NavigationCode { get; set; }
     public string? PBNCode { get; set; }

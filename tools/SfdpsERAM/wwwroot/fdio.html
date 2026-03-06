@@ -773,11 +773,12 @@ function buildIcaoFpl(d) {
         navStr = navCodes.join('');
     }
     const hasDAT = !!d.otherDataLink;
+    const hasCOM = !!d.otherCommunicationCapabilities;
     const hasNAV = navStr.length > 0 || !!d.otherNavigationCapabilities;
     // R in 10a when filing PBN/ in Field 18
     if (pbnStr && !f10a.includes('R')) f10a += 'R';
     // Z in 10a when filing NAV/, COM/, or DAT/ in Field 18
-    if ((hasDAT || hasNAV) && !f10a.includes('Z')) f10a += 'Z';
+    if ((hasDAT || hasCOM || hasNAV) && !f10a.includes('Z')) f10a += 'Z';
     // Sort alphabetically: S always first, then remaining tokens sorted
     // Tokens are letter+digit pairs (E3, J4, B1) or single letters (D, G, R, W, Z)
     {
@@ -853,6 +854,7 @@ function buildIcaoFpl(d) {
     if (navStr) navParts.push(navStr);
     if (d.otherNavigationCapabilities) navParts.push(d.otherNavigationCapabilities);
     if (navParts.length) f18.push('NAV/' + navParts.join(' '));
+    if (d.otherCommunicationCapabilities) f18.push('COM/' + d.otherCommunicationCapabilities.trim());
     if (hasDAT) f18.push('DAT/' + d.otherDataLink.trim());
     // SUR/: from FIXM <surveillance otherSurveillanceCapabilities="...">
     // AAL Airbus flights file codes concatenated (260BC2I0 CANMANDATE) but SFDPS
@@ -953,6 +955,7 @@ function buildSimBriefUrl(d) {
     if (d.pbnCode) acdata.pbn = 'PBN/' + d.pbnCode.replace(/\s+/g, '');
     // Extra remarks (DAT, SUR, etc.)
     const extra = [];
+    if (d.otherCommunicationCapabilities) extra.push('COM/' + d.otherCommunicationCapabilities.trim());
     if (d.otherDataLink) extra.push('DAT/' + d.otherDataLink.trim());
     if (d.otherSurveillanceCapabilities) extra.push('SUR/' + d.otherSurveillanceCapabilities.trim());
     if (extra.length) acdata.extrarmk = extra.join(' ');
@@ -1045,7 +1048,8 @@ function renderFlightPlan(d) {
         ])}
         ${section('Datalink', [
             ['Data Link', d.dataLinkCode, d.dataLinkCode?.includes('J') ? 'accent' : ''],
-            ['Other', d.otherDataLink],
+            ['Other DL', d.otherDataLink],
+            ['Other Comm', d.otherCommunicationCapabilities],
             ['Comm Code', d.communicationCode],
             ['SELCAL', d.selcal],
         ])}

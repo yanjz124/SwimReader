@@ -294,20 +294,22 @@ class AsdexBridge
 
     // ── Timer callbacks ──────────────────────────────────────────────────────
 
-    /// <summary>Called every 1s. Sends batch updates to clients of dirty airports.</summary>
+    /// <summary>Called every 1s. Enriches all dirty airports and sends batch updates to connected clients.</summary>
     public void FlushDirty()
     {
-        if (_dirty.IsEmpty || _clients.IsEmpty) return;
+        if (_dirty.IsEmpty) return;
 
         foreach (var airport in _dirty.Keys.ToArray())
         {
             _dirty.TryRemove(airport, out _);
-            if (!_clients.TryGetValue(airport, out var airportClients) || airportClients.IsEmpty) continue;
             if (!_state.TryGetValue(airport, out var tracks)) continue;
 
+            // Enrich all dirty airports regardless of viewers
             if (OnEnrich is not null)
                 foreach (var t in tracks.Values) OnEnrich(t);
 
+            // Only serialize + broadcast if there are connected clients
+            if (!_clients.TryGetValue(airport, out var airportClients) || airportClients.IsEmpty) continue;
             var arr = tracks.Values.Select(t => t.ToJson()).ToArray();
             var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("batch", arr), _jsonOpts);
             foreach (var (_, client) in airportClients)
@@ -388,9 +390,14 @@ class AsdexBridge
     /// <summary>Full snapshot of all tracks for one airport.</summary>
     public object GetSnapshot(string airport)
     {
-        var tracks = _state.TryGetValue(airport, out var t)
-            ? t.Values.Select(x => x.ToJson()).ToArray()
-            : Array.Empty<object>();
+        if (!_state.TryGetValue(airport, out var t))
+            return new { airport, tracks = Array.Empty<object>() };
+
+        // Run enrichment so REST API returns the same data as WebSocket
+        if (OnEnrich is not null)
+            foreach (var track in t.Values) OnEnrich(track);
+
+        var tracks = t.Values.Select(x => x.ToJson()).ToArray();
         return new { airport, tracks };
     }
 }

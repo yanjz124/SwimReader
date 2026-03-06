@@ -1032,28 +1032,6 @@ app.MapGet("/api/tfms/raw/{msgType}", (string msgType) =>
 });
 app.MapGet("/api/tfms/msgtypes", () => Results.Json(tfms.GetMessageTypes(), jsonOpts));
 
-// Debug: trace ASDE-X enrichment for a specific callsign
-app.MapGet("/api/asdex/{airport}/enrich-debug/{callsign}", (string airport, string callsign) =>
-{
-    airport = airport.ToUpperInvariant();
-    callsign = callsign.ToUpperInvariant();
-    var result = new List<string>();
-
-    // Check SFDPS flights by callsign
-    var sfdpsMatches = flights.Values.Where(f => f.Callsign == callsign && f.FlightStatus != "CANCELLED").ToList();
-    result.Add($"SFDPS: {sfdpsMatches.Count} flights with callsign {callsign}");
-    foreach (var c in sfdpsMatches)
-        result.Add($"  gufi={c.Gufi} origin={c.Origin} dest={c.Destination} route={(c.Route is not null ? c.Route[..Math.Min(40, c.Route.Length)] : "null")} acType={c.AircraftType} squawk={c.Squawk}");
-
-    // Check TFMS
-    var tf = tfms.FindByCallsign(callsign);
-    if (tf is not null)
-        result.Add($"TFMS: dep={tf.DepArpt} arr={tf.ArrArpt} route={(tf.RouteOfFlight is not null ? tf.RouteOfFlight[..Math.Min(50, tf.RouteOfFlight.Length)] : "null")} acType={tf.AircraftType}");
-    else result.Add("TFMS: NOT FOUND");
-
-    return Results.Json(result, jsonOpts);
-});
-
 // Flight history search and retrieval
 app.MapGet("/api/history", (string? q, string? date) =>
 {

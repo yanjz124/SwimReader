@@ -1022,6 +1022,16 @@ app.MapGet("/api/tfms/sectors", () => Results.Json(tfms.GetSectorSummary(), json
 app.MapGet("/api/tfms/sectors/{sector}", (string sector) =>
     Results.Json(tfms.GetSectorFlights(sector), jsonOpts));
 
+// TFMS element discovery (investigation)
+app.MapGet("/api/tfms/elements", (string? filter) =>
+    Results.Json(tfms.GetDiscoveredElements(filter), jsonOpts));
+app.MapGet("/api/tfms/raw/{msgType}", (string msgType) =>
+{
+    var xml = tfms.GetRawSample(msgType);
+    return xml is not null ? Results.Text(xml, "application/xml") : Results.NotFound();
+});
+app.MapGet("/api/tfms/msgtypes", () => Results.Json(tfms.GetMessageTypes(), jsonOpts));
+
 // Flight history search and retrieval
 app.MapGet("/api/history", (string? q, string? date) =>
 {
@@ -1330,19 +1340,34 @@ tfms.Start();
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
 // Callsign → FlightState list (rebuilt every 30s; multiple flights per callsign for turnover legs)
 var csIndex = new Dictionary<string, List<FlightState>>();
+var sqIndex = new Dictionary<string, List<FlightState>>(); // squawk → flights (for ASDE-X enrichment)
 var csIndexTimer = new Timer(_ =>
 {
     try
     {
-        var idx = new Dictionary<string, List<FlightState>>();
+        var csIdx = new Dictionary<string, List<FlightState>>();
+        var sqIdx = new Dictionary<string, List<FlightState>>();
         foreach (var f in flights.Values)
         {
-            if (f.Callsign is null || f.FlightStatus == "CANCELLED") continue;
-            if (!idx.TryGetValue(f.Callsign, out var list))
-                idx[f.Callsign] = list = new List<FlightState>();
-            list.Add(f);
+            if (f.FlightStatus == "CANCELLED") continue;
+            if (f.Callsign is not null)
+            {
+                if (!csIdx.TryGetValue(f.Callsign, out var csList))
+                    csIdx[f.Callsign] = csList = new List<FlightState>();
+                csList.Add(f);
+            }
+            // Squawk index: assigned squawk is more stable (controller-assigned),
+            // fallback to received squawk. Skip 1200 (VFR) and 0000.
+            var sq = f.AssignedSquawk ?? f.Squawk;
+            if (sq is not null && sq != "1200" && sq != "0000")
+            {
+                if (!sqIdx.TryGetValue(sq, out var sqList))
+                    sqIdx[sq] = sqList = new List<FlightState>();
+                sqList.Add(f);
+            }
         }
-        csIndex = idx;
+        csIndex = csIdx;
+        sqIndex = sqIdx;
     }
     catch { /* best-effort */ }
 }, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
@@ -1575,6 +1600,20 @@ asdex.OnEnrich = (track) =>
         fp ??= candidates.FirstOrDefault();
     }
 
+    // Path 2a: SFDPS via squawk (beacon code index)
+    // Catches tracks where callsign lookup failed or matched the wrong turnaround leg,
+    // and unknown targets that only have a transponder code (no callsign from SMES).
+    // Pre-departure aircraft on the ground squawk their assigned code before getting a callsign tag.
+    if (fp is null && track.Squawk is not null && track.Squawk != "1200"
+        && sqIndex.TryGetValue(track.Squawk, out var sqCandidates))
+    {
+        // Prefer flight whose origin matches this airport (departing from here)
+        fp = sqCandidates.FirstOrDefault(f =>
+            string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase));
+        // Fallback: any flight with this squawk (unique per active plan)
+        fp ??= sqCandidates.FirstOrDefault();
+    }
+
     // Apply SFDPS flight plan data
     if (fp is not null)
     {
@@ -1582,6 +1621,9 @@ asdex.OnEnrich = (track) =>
         track.FpOrigin = fp.Origin;
         track.FpStar = fp.STAR;
         track.FpRoute = fp.Route;
+        // If SFDPS matched via squawk, propagate callsign to ASDE-X track
+        if (track.Callsign is null && fp.Callsign is not null)
+            track.Callsign = fp.Callsign;
     }
 
     // Path 2b: TFMS via callsign (fills gaps SFDPS doesn't have — route, STAR, ETA)

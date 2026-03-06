@@ -43,6 +43,11 @@ class TfmsBridge
     public long FiCount;
     public bool Connected;
 
+    // Raw XML element discovery (for investigating available TFMS fields)
+    private readonly ConcurrentDictionary<string, string> _elementPaths = new();
+    private int _rawSampleCount = 0;
+    private readonly ConcurrentDictionary<string, string> _rawSamples = new(); // msgType → XML sample
+
     public TfmsBridge(string user, string pass, string queue, string host, string vpn,
         JsonSerializerOptions jsonOpts)
     {
@@ -185,6 +190,27 @@ class TfmsBridge
 
     private void ProcessFltdMessage(XElement msg)
     {
+        // Element discovery: capture unique XML paths from first 500 messages
+        if (_rawSampleCount < 500)
+        {
+            Interlocked.Increment(ref _rawSampleCount);
+            void DiscoverPaths(XElement el, string prefix)
+            {
+                var path = prefix + "/" + el.Name.LocalName;
+                foreach (var attr in el.Attributes())
+                    _elementPaths.TryAdd(path + "/@" + attr.Name.LocalName, attr.Value);
+                if (!el.HasElements && !string.IsNullOrEmpty(el.Value))
+                    _elementPaths.TryAdd(path, el.Value);
+                foreach (var child in el.Elements())
+                    DiscoverPaths(child, path);
+            }
+            DiscoverPaths(msg, "fltdMessage");
+            // Capture one raw sample per msgType
+            var mt = msg.Attribute("msgType")?.Value;
+            if (mt is not null && !_rawSamples.ContainsKey(mt))
+                _rawSamples[mt] = msg.ToString();
+        }
+
         var acid = msg.Attribute("acid")?.Value;
         if (acid is null) return;
 
@@ -670,6 +696,27 @@ class TfmsBridge
         if (_tmis.TryGetValue(fcaId, out var t)) return t.ToDetailJson();
         return null;
     }
+
+    /// <summary>All discovered XML element paths (for investigation).</summary>
+    public object GetDiscoveredElements(string? filter = null)
+    {
+        var paths = _elementPaths.Keys.AsEnumerable();
+        if (!string.IsNullOrEmpty(filter))
+            paths = paths.Where(p => p.Contains(filter, StringComparison.OrdinalIgnoreCase));
+        return new
+        {
+            totalPaths = _elementPaths.Count,
+            sampled = _rawSampleCount,
+            elements = paths.OrderBy(p => p).Select(p => new { path = p, sample = _elementPaths[p] }).ToArray()
+        };
+    }
+
+    /// <summary>Raw XML sample for a message type.</summary>
+    public string? GetRawSample(string msgType) =>
+        _rawSamples.TryGetValue(msgType, out var xml) ? xml : null;
+
+    /// <summary>List all captured message types with sample availability.</summary>
+    public string[] GetMessageTypes() => _rawSamples.Keys.OrderBy(k => k).ToArray();
 
     /// <summary>Find a TFMS flight by callsign (O(1) via index), for ASDE-X enrichment.</summary>
     public TfmsFlight? FindByCallsign(string callsign)

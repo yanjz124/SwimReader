@@ -160,6 +160,10 @@ body { background: #393939; overflow: hidden; height: 100vh; }
         <textarea id="gc-import-area" rows="4" style="width:100%;background:#111;border:1px solid #444;color:#ccc;font-family:inherit;font-size:10px;margin-top:4px;padding:4px;resize:vertical" placeholder="Paste tab/comma-separated lines: PATTERN  CODE"></textarea>
         <button class="gc-btn" id="gc-import-btn">IMPORT</button>
     </details>
+    <details id="vnas-rules-section" style="margin-top:10px;border-top:1px solid #333;padding-top:8px;display:none">
+        <summary style="color:#888;cursor:pointer;font-size:10px">vNAS AUTO RULES <span id="vnas-count" style="color:#666"></span></summary>
+        <div id="vnas-rules-body" style="margin-top:4px;color:#666;font-size:10px;max-height:200px;overflow-y:auto"></div>
+    </details>
 </div>
 <div id="flight-list">
     <div id="fl-header">
@@ -530,10 +534,26 @@ async function gcOpen() {
     try {
         const resp = await fetch(`/api/asdex/${AIRPORT}/gatecodes`);
         const data = await resp.json();
-        // Group by code for display: group fixes sharing the same code
         for (const [fix, code] of Object.entries(data)) gcAddRow(fix, code);
     } catch {}
     if (!gcBody.children.length) gcAddRow();
+    // Load vNAS auto rules (read-only display)
+    try {
+        const resp = await fetch(`/api/asdex/${AIRPORT}/vnasrules`);
+        const rules = await resp.json();
+        const entries = Object.entries(rules);
+        const section = document.getElementById('vnas-rules-section');
+        if (entries.length > 0) {
+            section.style.display = 'block';
+            document.getElementById('vnas-count').textContent = `(${entries.length})`;
+            document.getElementById('vnas-rules-body').innerHTML = entries
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([p, c]) => `<span style="color:#888">${p}</span> → <span style="color:#cccc44">${c}</span>`)
+                .join('<br>');
+        } else {
+            section.style.display = 'none';
+        }
+    } catch { document.getElementById('vnas-rules-section').style.display = 'none'; }
     gcPopup.style.display = 'block';
 }
 

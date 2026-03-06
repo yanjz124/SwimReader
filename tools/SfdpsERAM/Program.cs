@@ -112,6 +112,8 @@ var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history")
 // ASDE-X departure gate codes: airport → pattern → abbreviation (declared early for route lambdas)
 var gateCodesPath = Path.Combine(Directory.GetCurrentDirectory(), "asdex-gatecodes.json");
 var gateCodes = new ConcurrentDictionary<string, ConcurrentDictionary<string, string>>();
+// vNAS fix rules: ICAO airport → pattern → code (auto-fetched from data-api.vnas.vatsim.net)
+var vnasFixRules = new ConcurrentDictionary<string, ConcurrentDictionary<string, string>>();
 
 // Initialize Solace SDK (once, before any thread or connection is created)
 {
@@ -981,6 +983,15 @@ app.MapPut("/api/asdex/{airport}/gatecodes", async (HttpContext ctx, string airp
     return Results.Ok();
 });
 
+// vNAS fix rules (auto-fetched, read-only)
+app.MapGet("/api/asdex/{airport}/vnasrules", (string airport) =>
+{
+    airport = airport.ToUpperInvariant();
+    if (vnasFixRules.TryGetValue(airport, out var rules))
+        return Results.Json(rules.ToDictionary(kv => kv.Key, kv => kv.Value), jsonOpts);
+    return Results.Json(new Dictionary<string, string>(), jsonOpts);
+});
+
 // TDLS directory and detail
 app.MapGet("/api/tdls", () => Results.Json(tdls.GetDirectory(), jsonOpts));
 app.MapGet("/api/tdls/{airport}", (string airport) =>
@@ -1364,47 +1375,169 @@ void SaveGateCodes()
     catch (Exception ex) { Console.Error.WriteLine($"[GateCodes] Save error: {ex.Message}"); }
 }
 
-// Resolve departure gate code: match route fixes against airport gate map, fallback to destination
+// Map FAA LID → ICAO code for SMES matching
+string FaaToIcao(string faaLid)
+{
+    // Alaska = PA prefix, Hawaii = PH prefix, everything else = K prefix
+    if (faaLid.Length == 3)
+    {
+        if (faaLid.StartsWith("A", StringComparison.OrdinalIgnoreCase) && faaLid != "ATL")
+        {
+            // Check known Alaska airports (ANC, ADQ, AKN, etc.)
+        }
+        // Hawaii: HNL → PHNL
+        if (faaLid is "HNL" or "OGG" or "LIH" or "KOA" or "ITO" or "MKK" or "LNY" or "JHM" or "HNM")
+            return "PH" + faaLid;
+        // Alaska: ANC → PANC
+        if (faaLid is "ANC" or "FAI" or "JNU" or "BET" or "SCC" or "ADQ" or "AKN" or "DLG" or "OME"
+            or "OTZ" or "BRW" or "SIT" or "KTN" or "CDV" or "YAK" or "VDZ" or "MRI" or "ENA")
+            return "PA" + faaLid;
+        return "K" + faaLid;
+    }
+    // Already 4 chars — probably already ICAO
+    return faaLid;
+}
+
+async Task FetchVnasFixRules()
+{
+    try
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        // Get list of all ARTCCs
+        var artccListJson = await http.GetStringAsync("https://data-api.vnas.vatsim.net/api/artccs/");
+        var artccList = JsonSerializer.Deserialize<JsonElement>(artccListJson);
+        var artccIds = new List<string>();
+        foreach (var artcc in artccList.EnumerateArray())
+        {
+            var id = artcc.GetProperty("id").GetString();
+            if (id is not null) artccIds.Add(id);
+        }
+
+        Console.WriteLine($"[vNAS] Fetching fix rules from {artccIds.Count} ARTCCs...");
+        int totalRules = 0, totalAirports = 0;
+
+        // Fetch each ARTCC (parallel, throttled)
+        var semaphore = new SemaphoreSlim(4);
+        var tasks = artccIds.Select(async artccId =>
+        {
+            await semaphore.WaitAsync();
+            try
+            {
+                var json = await http.GetStringAsync($"https://data-api.vnas.vatsim.net/api/artccs/{artccId}/");
+                var doc = JsonSerializer.Deserialize<JsonElement>(json);
+                var facility = doc.GetProperty("facility");
+                ScanFacilityFixRules(facility, ref totalRules, ref totalAirports);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[vNAS] Error fetching {artccId}: {ex.Message}");
+            }
+            finally { semaphore.Release(); }
+        });
+        await Task.WhenAll(tasks);
+
+        Console.WriteLine($"[vNAS] Loaded {totalRules} fix rules for {totalAirports} airports");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[vNAS] Fix rules fetch failed: {ex.Message}");
+    }
+}
+
+void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int totalAirports)
+{
+    // Check this facility for asdexConfiguration.fixRules
+    if (facility.TryGetProperty("asdexConfiguration", out var asdexConfig)
+        && asdexConfig.TryGetProperty("fixRules", out var fixRulesArr)
+        && fixRulesArr.GetArrayLength() > 0)
+    {
+        var facId = facility.GetProperty("id").GetString() ?? "";
+        var icao = FaaToIcao(facId);
+        var map = new ConcurrentDictionary<string, string>();
+        foreach (var rule in fixRulesArr.EnumerateArray())
+        {
+            var pattern = rule.GetProperty("searchPattern").GetString()?.Trim().ToUpperInvariant();
+            var code = rule.GetProperty("fixId").GetString()?.Trim().ToUpperInvariant();
+            if (pattern is not null && code is not null && pattern.Length > 0 && code.Length > 0)
+                map[pattern] = code;
+        }
+        if (!map.IsEmpty)
+        {
+            vnasFixRules[icao] = map;
+            Interlocked.Add(ref totalRules, map.Count);
+            Interlocked.Increment(ref totalAirports);
+        }
+    }
+
+    // Recurse into child facilities
+    if (facility.TryGetProperty("childFacilities", out var children))
+    {
+        foreach (var child in children.EnumerateArray())
+            ScanFacilityFixRules(child, ref totalRules, ref totalAirports);
+    }
+}
+
+// Fetch vNAS fix rules on startup (background) and refresh daily
+_ = Task.Run(async () =>
+{
+    await FetchVnasFixRules();
+    while (true)
+    {
+        await Task.Delay(TimeSpan.FromHours(24));
+        await FetchVnasFixRules();
+    }
+});
+
+// Match route against a pattern→code map; returns first matching code or null
+string? MatchFixRules(ConcurrentDictionary<string, string> fixMap, string[] routeTokens, HashSet<string> routeSet)
+{
+    foreach (var (pattern, code) in fixMap)
+    {
+        var patTokens = pattern.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries);
+        var allMatch = true;
+        foreach (var pt in patTokens)
+        {
+            var ptClean = pt.TrimEnd('#');
+            if (ptClean != pt)
+            {
+                if (!routeSet.Contains(ptClean) && !routeTokens.Any(rt => rt.StartsWith(ptClean))) { allMatch = false; break; }
+            }
+            else
+            {
+                if (!routeSet.Contains(pt)) { allMatch = false; break; }
+            }
+        }
+        if (allMatch) return code;
+    }
+    return null;
+}
+
+// Resolve departure gate code: manual gateCodes → vNAS fixRules → destination fallback
 string? ResolveGateCode(string airport, FlightState? fp)
 {
-    if (fp is null) return null;
+    if (fp is null || fp.Route is null) return null;
 
-    // Check gate code map for this airport
-    // Pattern keys can be multi-token ("AMEEE# COLIN") or single ("COLIN", "J121")
-    // Each pattern token is checked against route tokens; # in pattern = digit wildcard
-    if (gateCodes.TryGetValue(airport, out var fixMap) && !fixMap.IsEmpty && fp.Route is not null)
+    var routeUpper = fp.Route.ToUpperInvariant();
+    var routeTokens = routeUpper.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries);
+    var routeSet = new HashSet<string>(routeTokens);
+    foreach (var rt in routeTokens)
     {
-        var routeUpper = fp.Route.ToUpperInvariant();
-        var routeTokens = routeUpper.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries);
-        // Also build set with trailing digits stripped (AMEEE3 → AMEEE)
-        var routeSet = new HashSet<string>(routeTokens);
-        foreach (var rt in routeTokens)
-        {
-            var stripped = rt.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
-            if (stripped.Length > 0 && stripped.Length != rt.Length) routeSet.Add(stripped);
-        }
+        var stripped = rt.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
+        if (stripped.Length > 0 && stripped.Length != rt.Length) routeSet.Add(stripped);
+    }
 
-        foreach (var (pattern, code) in fixMap)
-        {
-            var patTokens = pattern.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries);
-            // ALL tokens in the pattern must match something in the route
-            var allMatch = true;
-            foreach (var pt in patTokens)
-            {
-                // # suffix = digit wildcard (AMEEE# matches AMEEE, AMEEE3, etc.)
-                var ptClean = pt.TrimEnd('#');
-                if (ptClean != pt)
-                {
-                    // Wildcard: check if any route token starts with ptClean (+ optional digits)
-                    if (!routeSet.Contains(ptClean) && !routeTokens.Any(rt => rt.StartsWith(ptClean))) { allMatch = false; break; }
-                }
-                else
-                {
-                    if (!routeSet.Contains(pt)) { allMatch = false; break; }
-                }
-            }
-            if (allMatch) return code;
-        }
+    // Priority 1: manual gate codes (user-configured per airport)
+    if (gateCodes.TryGetValue(airport, out var manualMap) && !manualMap.IsEmpty)
+    {
+        var result = MatchFixRules(manualMap, routeTokens, routeSet);
+        if (result is not null) return result;
+    }
+
+    // Priority 2: vNAS fix rules (auto-fetched from data-api.vnas.vatsim.net)
+    if (vnasFixRules.TryGetValue(airport, out var vnasMap) && !vnasMap.IsEmpty)
+    {
+        var result = MatchFixRules(vnasMap, routeTokens, routeSet);
+        if (result is not null) return result;
     }
 
     // Fallback: destination FAA LID (strip leading K/P for US airports)

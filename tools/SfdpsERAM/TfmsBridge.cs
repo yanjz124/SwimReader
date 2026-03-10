@@ -221,6 +221,9 @@ class TfmsBridge
         var msgType = msg.Attribute("msgType")?.Value;
         var sourceFacility = msg.Attribute("sourceFacility")?.Value;
         var sourceTs = msg.Attribute("sourceTimeStamp")?.Value;
+        var fdTrigger = msg.Attribute("fdTrigger")?.Value;
+        var sensitivity = msg.Attribute("sensitivity")?.Value;
+        var cdmPart = msg.Attribute("cdmPart")?.Value;
 
         // Find primary info block (trackInformation or flightPlanInformation take precedence)
         var trackInfo = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "trackInformation");
@@ -281,6 +284,80 @@ class TfmsBridge
             }
         }
         if (!string.IsNullOrEmpty(acType)) flight.AircraftType = acType;
+
+        // Message-level attributes
+        if (fdTrigger is not null) flight.FdTrigger = fdTrigger;
+        if (sensitivity is not null) flight.Sensitivity = sensitivity;
+        if (cdmPart is not null) flight.CdmPart = cdmPart;
+        if (sourceFacility is not null) flight.SourceFacility = sourceFacility;
+
+        // FlightStatus & aircraft details from flightStatusAndSpec blocks
+        foreach (var block in new[] { modInfo, routeInfo, timesInfo })
+        {
+            var fss = block?.Elements().FirstOrDefault(e => e.Name.LocalName == "flightStatusAndSpec");
+            if (fss is null) continue;
+            var status = fss.Elements().FirstOrDefault(e => e.Name.LocalName == "flightStatus")?.Value;
+            if (status is not null) flight.FlightStatus = status;
+            var model = fss.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftModel")?.Value;
+            if (model is not null) flight.AircraftModel = model;
+            var saq = fss.Elements().FirstOrDefault(e => e.Name.LocalName == "specialAircraftQualifier")?.Value;
+            if (saq is not null) flight.SpecialAircraftQualifier = saq;
+            var engine = fss.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftEngineClass")?.Value;
+            if (engine is not null) flight.AircraftEngineClass = engine;
+        }
+
+        // CDM airline times from ncsmFlightModify/airlineData
+        if (modInfo is not null) ParseCdmTimes(flight, modInfo);
+
+        // Flight plan extras from flightPlanInformation / amendmentData
+        if (planInfo is not null) ParseFlightPlanExtras(flight, planInfo);
+        if (amendInfo is not null)
+        {
+            var amendData = amendInfo.Elements().FirstOrDefault(e => e.Name.LocalName == "amendmentData");
+            if (amendData is not null) ParseFlightPlanExtras(flight, amendData);
+        }
+
+        // Boundary crossing from boundaryCrossingUpdate (inside trackInfo or as its own block)
+        var bcUpdate = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "boundaryCrossingUpdate");
+        if (bcUpdate is not null) ParseBoundaryCrossing(flight, bcUpdate);
+
+        // SID / departure procedure from ncsmFlightRoute
+        if (routeInfo is not null) ParseDepartureProc(flight, routeInfo);
+
+        // Reported altitude raw (with conformance suffix)
+        var rawAlt = info.Elements().FirstOrDefault(e => e.Name.LocalName == "reportedAltitude");
+        var simpleRaw = rawAlt?.Descendants().FirstOrDefault(e => e.Name.LocalName == "simpleAltitude")?.Value;
+        if (simpleRaw is not null) flight.ReportedAltitudeRaw = simpleRaw;
+
+        // Track data extras (nextEvent position)
+        var ncsmTrack = info.Elements().FirstOrDefault(e => e.Name.LocalName == "ncsmTrackData");
+        if (ncsmTrack is not null)
+        {
+            var nextEvent = ncsmTrack.Elements().FirstOrDefault(e => e.Name.LocalName == "nextEvent");
+            if (nextEvent is not null)
+            {
+                var lat = ParseDms(nextEvent, "latitude", "latitudeDMS");
+                var lon = ParseDms(nextEvent, "longitude", "longitudeDMS");
+                if (lat.HasValue) flight.NextEventLat = lat.Value;
+                if (lon.HasValue) flight.NextEventLon = lon.Value;
+            }
+        }
+
+        // Assigned beacon code
+        var beaconCode = info.Elements().FirstOrDefault(e => e.Name.LocalName == "assignedBeaconCode")?.Value;
+        if (beaconCode is null)
+        {
+            // Also check in flightPlanInformation
+            beaconCode = planInfo?.Elements().FirstOrDefault(e => e.Name.LocalName == "assignedBeaconCode")?.Value;
+        }
+        if (beaconCode is not null) flight.AssignedBeaconCode = beaconCode;
+
+        // Ground speed (from ncsmFlightRoute or ncsmFlightModify)
+        foreach (var block in new[] { routeInfo, modInfo })
+        {
+            var gsStr = block?.Elements().FirstOrDefault(e => e.Name.LocalName == "groundSpeed")?.Value;
+            if (int.TryParse(gsStr, out var gs)) { flight.GroundSpeed = gs; break; }
+        }
 
         // Speed
         var speedStr = info.Elements().FirstOrDefault(e => e.Name.LocalName == "speed")?.Value;
@@ -476,6 +553,116 @@ class TfmsBridge
             if (depTime is not null && DateTime.TryParse(depTime, null, DateTimeStyles.AdjustToUniversal, out var dt))
                 flight.DepartureFixTime = dt;
         }
+    }
+
+    private void ParseCdmTimes(TfmsFlight flight, XElement modInfo)
+    {
+        var airlineData = modInfo.Elements().FirstOrDefault(e => e.Name.LocalName == "airlineData");
+        if (airlineData is not null)
+        {
+            SetTime(airlineData, "airlineOutTime", ref flight, (f, t) => f.AirlineOutTime = t);
+            SetTime(airlineData, "airlineOffTime", ref flight, (f, t) => f.AirlineOffTime = t);
+            SetTime(airlineData, "airlineOnTime", ref flight, (f, t) => f.AirlineOnTime = t);
+            SetTime(airlineData, "airlineInTime", ref flight, (f, t) => f.AirlineInTime = t);
+        }
+
+        // Gate/runway times may be in ncsmFlightModify directly
+        SetTimeAttr(modInfo, "gateDeparture", "timeValue", ref flight, (f, t) => f.GateDeparture = t);
+        SetTimeAttr(modInfo, "gateArrival", "timeValue", ref flight, (f, t) => f.GateArrival = t);
+        SetTimeAttr(modInfo, "runwayDeparture", "timeValue", ref flight, (f, t) => f.RunwayDeparture = t);
+        SetTimeAttr(modInfo, "runwayArrival", "timeValue", ref flight, (f, t) => f.RunwayArrival = t);
+        SetTimeAttr(modInfo, "originalDeparture", "timeValue", ref flight, (f, t) => f.OriginalDeparture = t);
+        SetTimeAttr(modInfo, "originalArrival", "timeValue", ref flight, (f, t) => f.OriginalArrival = t);
+        SetTimeAttr(modInfo, "flightCreation", "timeValue", ref flight, (f, t) => f.FlightCreation = t);
+    }
+
+    private static void SetTime(XElement parent, string name, ref TfmsFlight flight, Action<TfmsFlight, DateTime> setter)
+    {
+        var val = parent.Elements().FirstOrDefault(e => e.Name.LocalName == name)?.Value;
+        if (val is not null && DateTime.TryParse(val, null, DateTimeStyles.AdjustToUniversal, out var t))
+            setter(flight, t);
+    }
+
+    private static void SetTimeAttr(XElement parent, string elemName, string attrName, ref TfmsFlight flight, Action<TfmsFlight, DateTime> setter)
+    {
+        var el = parent.Elements().FirstOrDefault(e => e.Name.LocalName == elemName);
+        var val = el?.Attribute(attrName)?.Value ?? el?.Value;
+        if (val is not null && DateTime.TryParse(val, null, DateTimeStyles.AdjustToUniversal, out var t))
+            setter(flight, t);
+    }
+
+    private void ParseFlightPlanExtras(TfmsFlight flight, XElement planBlock)
+    {
+        // Requested altitude
+        var reqAlt = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "requestedAltitude")?.Value;
+        if (reqAlt is not null)
+        {
+            var clean = reqAlt.TrimEnd('C', 'D', 'A');
+            if (int.TryParse(clean, out var ra)) flight.RequestedAltitude = ra * 100;
+        }
+
+        // Assigned altitude
+        var assAlt = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "assignedAltitude")?.Value;
+        if (assAlt is not null)
+        {
+            var clean = assAlt.TrimEnd('C', 'D', 'A');
+            if (int.TryParse(clean, out var aa)) flight.AssignedAltitude = aa * 100;
+        }
+
+        // Coordination point
+        var coordPt = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "coordinationPoint");
+        if (coordPt is not null)
+        {
+            var fix = coordPt.Elements().FirstOrDefault(e => e.Name.LocalName == "fixRadialDistance")
+                ?? coordPt.Elements().FirstOrDefault(e => e.Name.LocalName == "fix");
+            flight.CoordinationFix = fix?.Value ?? coordPt.Value;
+        }
+        var coordTime = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "coordinationTime");
+        if (coordTime is not null)
+        {
+            var tv = coordTime.Attribute("timeValue")?.Value ?? coordTime.Value;
+            if (tv is not null && DateTime.TryParse(tv, null, DateTimeStyles.AdjustToUniversal, out var ct))
+                flight.CoordinationTime = ct;
+        }
+
+        // Filed TAS
+        var tasStr = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "filedTrueAirSpeed")?.Value;
+        if (int.TryParse(tasStr, out var tas)) flight.FiledTrueAirSpeed = tas;
+
+        // Filed Mach
+        var machStr = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "filedMach")?.Value;
+        if (machStr is not null) flight.FiledMach = machStr;
+    }
+
+    private void ParseBoundaryCrossing(TfmsFlight flight, XElement bc)
+    {
+        var info = bc.Elements().FirstOrDefault(e => e.Name.LocalName == "boundaryCrossingInformation")
+            ?? bc;
+
+        var timeVal = info.Elements().FirstOrDefault(e => e.Name.LocalName == "boundaryCrossingTime");
+        var tv = timeVal?.Attribute("timeValue")?.Value ?? timeVal?.Value;
+        if (tv is not null && DateTime.TryParse(tv, null, DateTimeStyles.AdjustToUniversal, out var bct))
+            flight.BoundaryCrossingTime = bct;
+
+        var fix = info.Elements().FirstOrDefault(e => e.Name.LocalName == "boundaryCrossingFix")?.Value;
+        if (fix is not null) flight.BoundaryFix = fix;
+
+        var radStr = info.Elements().FirstOrDefault(e => e.Name.LocalName == "boundaryCrossingRadial")?.Value;
+        if (int.TryParse(radStr, out var rad)) flight.BoundaryRadial = rad;
+
+        var distStr = info.Elements().FirstOrDefault(e => e.Name.LocalName == "boundaryCrossingDistance")?.Value;
+        if (int.TryParse(distStr, out var dist)) flight.BoundaryDistance = dist;
+    }
+
+    private void ParseDepartureProc(TfmsFlight flight, XElement routeInfo)
+    {
+        var dp = routeInfo.Elements().FirstOrDefault(e => e.Name.LocalName == "dp");
+        if (dp is null) return;
+        flight.DpName = dp.Attribute("routeName")?.Value;
+        flight.DpType = dp.Attribute("routeType")?.Value;
+
+        var transFix = routeInfo.Elements().FirstOrDefault(e => e.Name.LocalName == "dpTransitionFix")?.Value;
+        if (transFix is not null) flight.DpTransitionFix = transFix;
     }
 
     private void ProcessFiMessage(XElement msg)
@@ -845,6 +1032,59 @@ class TfmsFlight
     public List<string>? Airways { get; set; }
     public List<TfmsSectorEntry>? Centers { get; set; }
     public List<TfmsSectorEntry>? Sectors { get; set; }
+
+    // ── New fields (CDM, status, flight plan, boundary, departure, track) ──
+    // CDM / Airline times
+    public DateTime? AirlineOutTime { get; set; }
+    public DateTime? AirlineOffTime { get; set; }
+    public DateTime? AirlineOnTime { get; set; }
+    public DateTime? AirlineInTime { get; set; }
+    public DateTime? GateDeparture { get; set; }
+    public DateTime? GateArrival { get; set; }
+    public DateTime? RunwayDeparture { get; set; }
+    public DateTime? RunwayArrival { get; set; }
+    public DateTime? OriginalDeparture { get; set; }
+    public DateTime? OriginalArrival { get; set; }
+    public DateTime? FlightCreation { get; set; }
+
+    // Status & aircraft
+    public string? FlightStatus { get; set; }
+    public string? AircraftModel { get; set; }
+    public string? SpecialAircraftQualifier { get; set; }
+    public string? AircraftEngineClass { get; set; }
+
+    // Flight plan extras
+    public int? RequestedAltitude { get; set; }
+    public string? CoordinationFix { get; set; }
+    public DateTime? CoordinationTime { get; set; }
+    public int? FiledTrueAirSpeed { get; set; }
+    public string? FiledMach { get; set; }
+    public string? AssignedBeaconCode { get; set; }
+
+    // Boundary crossing
+    public DateTime? BoundaryCrossingTime { get; set; }
+    public string? BoundaryFix { get; set; }
+    public int? BoundaryRadial { get; set; }
+    public int? BoundaryDistance { get; set; }
+
+    // SID / Departure procedure
+    public string? DpName { get; set; }
+    public string? DpType { get; set; }
+    public string? DpTransitionFix { get; set; }
+    public int? AssignedAltitude { get; set; }
+    public int? GroundSpeed { get; set; }
+
+    // Track extras
+    public string? ReportedAltitudeRaw { get; set; }
+    public double? NextEventLat { get; set; }
+    public double? NextEventLon { get; set; }
+
+    // Message metadata
+    public string? FdTrigger { get; set; }
+    public string? Sensitivity { get; set; }
+    public string? CdmPart { get; set; }
+    public string? SourceFacility { get; set; }
+
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
 
     public object ToJson() => new
@@ -860,7 +1100,9 @@ class TfmsFlight
         eta = Eta?.ToString("o"),
         star = Star,
         acType = AircraftType,
+        acModel = AircraftModel,
         category = AircraftCategory,
+        status = FlightStatus,
         ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
 
@@ -873,6 +1115,7 @@ class TfmsFlight
         depArpt = DepArpt,
         arrArpt = ArrArpt,
         acType = AircraftType,
+        acModel = AircraftModel,
         category = AircraftCategory,
         userCategory = UserCategory,
         facility = Facility,
@@ -897,6 +1140,49 @@ class TfmsFlight
         waypoints = Waypoints?.Select(w => new { w.Lat, w.Lon, w.ElapsedTime }),
         centers = Centers?.Select(c => new { c.Name, c.ElapsedEntryTime }),
         sectors = Sectors?.Select(s => new { s.Name, s.ElapsedEntryTime }),
+        // CDM / airline times
+        airlineOutTime = AirlineOutTime?.ToString("o"),
+        airlineOffTime = AirlineOffTime?.ToString("o"),
+        airlineOnTime = AirlineOnTime?.ToString("o"),
+        airlineInTime = AirlineInTime?.ToString("o"),
+        gateDeparture = GateDeparture?.ToString("o"),
+        gateArrival = GateArrival?.ToString("o"),
+        runwayDeparture = RunwayDeparture?.ToString("o"),
+        runwayArrival = RunwayArrival?.ToString("o"),
+        originalDeparture = OriginalDeparture?.ToString("o"),
+        originalArrival = OriginalArrival?.ToString("o"),
+        flightCreation = FlightCreation?.ToString("o"),
+        // Status & aircraft
+        flightStatus = FlightStatus,
+        specialAircraftQualifier = SpecialAircraftQualifier,
+        aircraftEngineClass = AircraftEngineClass,
+        // Flight plan extras
+        requestedAltitude = RequestedAltitude,
+        coordinationFix = CoordinationFix,
+        coordinationTime = CoordinationTime?.ToString("o"),
+        filedTrueAirSpeed = FiledTrueAirSpeed,
+        filedMach = FiledMach,
+        assignedBeaconCode = AssignedBeaconCode,
+        // Boundary crossing
+        boundaryCrossingTime = BoundaryCrossingTime?.ToString("o"),
+        boundaryFix = BoundaryFix,
+        boundaryRadial = BoundaryRadial,
+        boundaryDistance = BoundaryDistance,
+        // SID / DP
+        dpName = DpName,
+        dpType = DpType,
+        dpTransitionFix = DpTransitionFix,
+        assignedAltitude = AssignedAltitude,
+        groundSpeed = GroundSpeed,
+        // Track extras
+        reportedAltitudeRaw = ReportedAltitudeRaw,
+        nextEventLat = NextEventLat,
+        nextEventLon = NextEventLon,
+        // Message meta
+        fdTrigger = FdTrigger,
+        sensitivity = Sensitivity,
+        cdmPart = CdmPart,
+        sourceFacility = SourceFacility,
         ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
 }

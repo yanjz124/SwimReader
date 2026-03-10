@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -13,6 +14,8 @@ namespace SwimReader.Scds;
 /// <summary>
 /// Background service that maintains SCDS connection, receives Solace messages,
 /// and dispatches them as RawMessageEvents onto the event bus.
+/// Uses an internal Channel to decouple the Solace callback from processing,
+/// ensuring the callback returns immediately for maximum throughput.
 /// </summary>
 public sealed class ScdsHostedService : BackgroundService
 {
@@ -20,6 +23,18 @@ public sealed class ScdsHostedService : BackgroundService
     private readonly IEventBus _eventBus;
     private readonly ScdsConnectionOptions _options;
     private readonly ILogger<ScdsHostedService> _logger;
+
+    /// <summary>
+    /// Internal buffer for raw messages extracted from Solace callbacks.
+    /// The callback writes (topic, body) tuples; the processing loop reads them.
+    /// </summary>
+    private readonly Channel<(string topic, string body)> _inbound =
+        Channel.CreateBounded<(string, string)>(new BoundedChannelOptions(50_000)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false
+        });
 
     public ScdsHostedService(
         ScdsConnectionManager connectionManager,
@@ -37,6 +52,9 @@ public sealed class ScdsHostedService : BackgroundService
     {
         _logger.LogInformation("SCDS hosted service starting");
 
+        // Start the processing loop that drains the inbound channel
+        _ = ProcessLoopAsync(stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             IFlow? flow = null;
@@ -45,8 +63,8 @@ public sealed class ScdsHostedService : BackgroundService
                 _connectionManager.Connect();
 
                 flow = _connectionManager.CreateQueueFlow(
-                    (sender, args) => HandleMessage(sender as IFlow, args),
-                    (sender, args) => HandleFlowEvent(args));
+                    (_, args) => HandleMessage(args),
+                    (_, args) => HandleFlowEvent(args));
 
                 _logger.LogInformation("Listening for SCDS messages on queue {Queue}", _options.QueueName);
 
@@ -76,7 +94,10 @@ public sealed class ScdsHostedService : BackgroundService
         _logger.LogInformation("SCDS hosted service stopped");
     }
 
-    private void HandleMessage(IFlow? flow, MessageEventArgs args)
+    /// <summary>
+    /// Solace callback — extract body and topic, queue for processing, return immediately.
+    /// </summary>
+    private void HandleMessage(MessageEventArgs args)
     {
         try
         {
@@ -85,26 +106,42 @@ public sealed class ScdsHostedService : BackgroundService
             if (body is null) return;
 
             var topic = message.Destination?.Name ?? "unknown";
-            var serviceType = InferServiceType(topic);
 
-            var rawEvent = new RawMessageEvent
-            {
-                Timestamp = DateTime.UtcNow,
-                Source = "SCDS",
-                Topic = topic,
-                XmlContent = body,
-                ServiceType = serviceType
-            };
-
-            // Fire-and-forget publish to event bus
-            _ = _eventBus.PublishAsync(rawEvent);
-
-            // Acknowledge message so Solace continues delivering
-            flow?.Ack(message.ADMessageId);
+            // Non-blocking write to channel; drops oldest if full
+            _inbound.Writer.TryWrite((topic, body));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing SCDS message");
+            _logger.LogError(ex, "Error extracting SCDS message");
+        }
+    }
+
+    /// <summary>
+    /// Background loop that drains the inbound channel and publishes to the event bus.
+    /// </summary>
+    private async Task ProcessLoopAsync(CancellationToken ct)
+    {
+        await foreach (var (topic, body) in _inbound.Reader.ReadAllAsync(ct))
+        {
+            try
+            {
+                var serviceType = InferServiceType(topic);
+
+                var rawEvent = new RawMessageEvent
+                {
+                    Timestamp = DateTime.UtcNow,
+                    Source = "SCDS",
+                    Topic = topic,
+                    XmlContent = body,
+                    ServiceType = serviceType
+                };
+
+                _ = _eventBus.PublishAsync(rawEvent);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing SCDS message");
+            }
         }
     }
 

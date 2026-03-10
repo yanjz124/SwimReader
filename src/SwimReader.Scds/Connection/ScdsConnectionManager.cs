@@ -96,7 +96,8 @@ public sealed class ScdsConnectionManager : IDisposable
 
         var flowProps = new FlowProperties
         {
-            AckMode = MessageAckMode.ClientAck
+            AckMode = MessageAckMode.AutoAck,
+            WindowSize = 255 // Max guaranteed message window for high throughput
         };
 
         var flow = _session.CreateFlow(flowProps, queue, null, messageHandler, flowEventHandler);

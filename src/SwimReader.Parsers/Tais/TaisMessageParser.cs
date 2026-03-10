@@ -99,6 +99,8 @@ public sealed class TaisMessageParser : IStddsMessageParser
 
             var isFrozen = track.Element("frozen")?.Value == "1";
             var isPseudo = track.Element("pseudo")?.Value == "1";
+            var adsbStr = track.Element("adsb")?.Value;
+            bool? isAdsb = adsbStr is not null ? adsbStr == "1" : null;
 
             return new TrackPositionEvent
             {
@@ -117,6 +119,7 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 IsOnGround = null, // TAIS has no on-ground indicator
                 IsFrozen = isFrozen,
                 IsPseudo = isPseudo,
+                IsAdsb = isAdsb,
                 Facility = facility
             };
         }
@@ -146,7 +149,7 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 TrackNumber = track.Element("trackNum")?.Value,
                 ModeSCode = modeSCode,
                 AircraftType = fp.Element("acType")?.Value,
-                EquipmentSuffix = NullIfUnavailable(fp.Element("eqptSuffix")?.Value),
+                EquipmentSuffix = fp.Element("eqptSuffix")?.Value,
                 FlightRules = fp.Element("flightRules")?.Value,
                 Origin = enhanced?.Element("departureAirport")?.Value,
                 Destination = enhanced?.Element("destinationAirport")?.Value,
@@ -154,11 +157,11 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 ExitFix = fp.Element("exitFix")?.Value,
                 AssignedSquawk = fp.Element("assignedBeaconCode")?.Value,
                 RequestedAltitude = ParseInt(fp.Element("requestedAltitude")?.Value),
-                Runway = NullIfEmpty(fp.Element("runway")?.Value),
-                Scratchpad1 = NullIfEmpty(fp.Element("scratchPad1")?.Value),
-                Scratchpad2 = NullIfEmpty(fp.Element("scratchPad2")?.Value),
+                Runway = fp.Element("runway")?.Value,
+                Scratchpad1 = fp.Element("scratchPad1")?.Value,
+                Scratchpad2 = fp.Element("scratchPad2")?.Value,
                 Owner = NullIfUnassigned(fp.Element("cps")?.Value),
-                PendingHandoff = NullIfEmpty(fp.Element("pendingHandoff")?.Value),
+                PendingHandoff = fp.Element("pendingHandoff")?.Value,
                 WakeCategory = NullIfEmpty(fp.Element("category")?.Value),
                 LdrDirection = ParseLdrDirection(fp.Element("lld")?.Value),
                 Facility = facility
@@ -189,9 +192,6 @@ public sealed class TaisMessageParser : IStddsMessageParser
 
     private static string? NullIfEmpty(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value;
-
-    private static string? NullIfUnavailable(string? value)
-        => value is null or "unavailable" ? null : value;
 
     private static string? NullIfUnassigned(string? value)
         => value is null or "unassigned" ? null : value;

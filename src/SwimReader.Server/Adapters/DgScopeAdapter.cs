@@ -112,7 +112,8 @@ public sealed class DgScopeAdapter : BackgroundService
             Callsign = positionOnly ? null : track.Callsign,
             ModeSCode = positionOnly ? null : track.ModeSCode,
             Ident = track.Ident,
-            IsOnGround = positionOnly ? null : track.IsOnGround
+            IsOnGround = positionOnly ? null : track.IsOnGround,
+            Source = positionOnly ? null : 0
         };
 
         return JsonSerializer.Serialize(update, JsonOptions);
@@ -123,9 +124,6 @@ public sealed class DgScopeAdapter : BackgroundService
         var guid = _trackState.GetFlightPlanGuid(fp.ModeSCode, fp.TrackNumber, fp.Callsign, fp.Facility);
         var trackGuid = _trackState.GetAssociatedTrackGuid(fp.ModeSCode, fp.TrackNumber, fp.Facility);
 
-        // When no primary scratchpad, default to the exit fix (matches STARS behavior)
-        var scratchpad1 = fp.Scratchpad1 ?? fp.ExitFix;
-
         var update = new DstarsFlightPlanUpdate
         {
             Guid = guid,
@@ -134,18 +132,18 @@ public sealed class DgScopeAdapter : BackgroundService
             AircraftType = fp.AircraftType,
             WakeCategory = fp.WakeCategory,
             FlightRules = fp.FlightRules,
-            Origin = IcaoToFaaLid(fp.Origin),
-            Destination = IcaoToFaaLid(fp.Destination),
+            Origin = fp.EntryFix,
+            Destination = fp.ExitFix,
             EntryFix = fp.EntryFix,
             ExitFix = fp.ExitFix,
             Route = fp.Route,
             RequestedAltitude = fp.RequestedAltitude,
-            Scratchpad1 = scratchpad1,
-            Scratchpad2 = fp.Scratchpad2,
+            Scratchpad1 = fp.Scratchpad1 ?? "",
+            Scratchpad2 = fp.Scratchpad2 ?? "",
             Runway = fp.Runway,
             Owner = fp.Owner,
-            PendingHandoff = fp.PendingHandoff,
-            AssignedSquawk = fp.AssignedSquawk,
+            PendingHandoff = fp.PendingHandoff ?? "",
+            AssignedSquawk = StripLeadingZeros(fp.AssignedSquawk),
             EquipmentSuffix = fp.EquipmentSuffix,
             LDRDirection = fp.LdrDirection,
             AssociatedTrackGuid = trackGuid
@@ -185,6 +183,17 @@ public sealed class DgScopeAdapter : BackgroundService
         if (icao is not null && icao.Length == 4 && icao[0] == 'K')
             return icao[1..];
         return icao;
+    }
+
+    /// <summary>
+    /// Strip leading zeros from squawk codes (e.g. "0535" → "535") to match OG dSTARS format.
+    /// Track squawk (reportedBeaconCode) keeps leading zeros; assigned squawk strips them.
+    /// </summary>
+    private static string? StripLeadingZeros(string? value)
+    {
+        if (value is null) return null;
+        var trimmed = value.TrimStart('0');
+        return trimmed.Length > 0 ? trimmed : "0";
     }
 
     private async Task PurgeLoopAsync(CancellationToken ct)

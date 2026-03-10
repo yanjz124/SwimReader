@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Hosting;
@@ -19,6 +20,12 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly TrackStateManager _trackState;
     private readonly ClientConnectionManager _clients;
     private readonly ILogger<DgScopeAdapter> _logger;
+
+    /// <summary>
+    /// Caches last-broadcast FP JSON per GUID to avoid re-sending unchanged flight plans.
+    /// TAIS batches arrive every ~5s with ALL tracks, so without dedup we'd flood 7x more FPs.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, string> _lastFpJson = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -111,7 +118,7 @@ public sealed class DgScopeAdapter : BackgroundService
         return JsonSerializer.Serialize(update, JsonOptions);
     }
 
-    private string ConvertFlightPlan(FlightPlanDataEvent fp)
+    private string? ConvertFlightPlan(FlightPlanDataEvent fp)
     {
         var guid = _trackState.GetFlightPlanGuid(fp.ModeSCode, fp.TrackNumber, fp.Callsign, fp.Facility);
         var trackGuid = _trackState.GetAssociatedTrackGuid(fp.ModeSCode, fp.TrackNumber, fp.Facility);
@@ -144,8 +151,30 @@ public sealed class DgScopeAdapter : BackgroundService
             AssociatedTrackGuid = trackGuid
         };
 
-        return JsonSerializer.Serialize(update, JsonOptions);
+        var json = JsonSerializer.Serialize(update, JsonOptions);
+
+        // Dedup: TAIS sends full batches every ~5s with all tracks, so the same FP
+        // re-emits unchanged every cycle. Only broadcast when content actually changes.
+        // Compare full JSON (includes all fields); TimeStamp varies but is fine for
+        // dedup since a changed timestamp with identical data still means "no change."
+        // We strip TimeStamp for comparison by using a content key.
+        var contentKey = BuildFpContentKey(update);
+        if (_lastFpJson.TryGetValue(guid, out var prev) && prev == contentKey)
+            return null; // unchanged — suppress
+        _lastFpJson[guid] = contentKey;
+
+        return json;
     }
+
+    /// <summary>
+    /// Build a content key for FP dedup — all fields except TimeStamp concatenated.
+    /// </summary>
+    private static string BuildFpContentKey(DstarsFlightPlanUpdate u) =>
+        $"{u.Guid}|{u.Callsign}|{u.AircraftType}|{u.WakeCategory}|{u.FlightRules}|" +
+        $"{u.Origin}|{u.Destination}|{u.EntryFix}|{u.ExitFix}|{u.Route}|" +
+        $"{u.RequestedAltitude}|{u.Scratchpad1}|{u.Scratchpad2}|{u.Runway}|" +
+        $"{u.Owner}|{u.PendingHandoff}|{u.AssignedSquawk}|{u.EquipmentSuffix}|" +
+        $"{u.LDRDirection}|{u.AssociatedTrackGuid}";
 
     /// <summary>
     /// Convert ICAO airport code to FAA LID (e.g. KDCA → DCA, KORD → ORD).
@@ -169,6 +198,8 @@ public sealed class DgScopeAdapter : BackgroundService
                 var deletedTargets = _trackState.PurgeStale();
                 foreach (var (guid, facility) in deletedTargets)
                 {
+                    _lastFpJson.TryRemove(guid, out _); // clean FP dedup cache
+
                     var deletion = new DstarsDeletionUpdate
                     {
                         Guid = guid,

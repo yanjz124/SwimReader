@@ -110,11 +110,11 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 Squawk = track.Element("reportedBeaconCode")?.Value,
                 Callsign = null, // Callsign is in flightPlan, not track
                 AltitudeFeet = ParseInt(track.Element("reportedAltitude")?.Value),
-                AltitudeType = AltitudeType.Pressure,
+                AltitudeType = AltitudeType.True,
                 GroundSpeedKnots = groundSpeed,
                 GroundTrackDegrees = groundTrack,
                 VerticalRateFpm = ParseInt(track.Element("vVert")?.Value),
-                IsOnGround = status == "drop" ? null : (ParseInt(track.Element("reportedAltitude")?.Value) == 0),
+                IsOnGround = null, // TAIS has no on-ground indicator
                 IsFrozen = isFrozen,
                 IsPseudo = isPseudo,
                 Facility = facility
@@ -158,6 +158,7 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 Scratchpad1 = NullIfEmpty(fp.Element("scratchPad1")?.Value),
                 Scratchpad2 = NullIfEmpty(fp.Element("scratchPad2")?.Value),
                 Owner = NullIfUnassigned(fp.Element("cps")?.Value),
+                PendingHandoff = NullIfEmpty(fp.Element("pendingHandoff")?.Value),
                 WakeCategory = NullIfEmpty(fp.Element("category")?.Value),
                 LdrDirection = ParseLdrDirection(fp.Element("lld")?.Value),
                 Facility = facility

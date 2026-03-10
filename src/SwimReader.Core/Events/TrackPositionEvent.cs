@@ -33,6 +33,9 @@ public sealed class TrackPositionEvent : ISwimEvent
     public bool IsFrozen { get; init; }
     public bool IsPseudo { get; init; }
 
+    // Data source indicator (TAIS adsb flag: true=transponder, false=primary-only)
+    public bool? IsAdsb { get; init; }
+
     // Source facility
     public string? Facility { get; init; }
 }

@@ -42,6 +42,9 @@ public sealed class DstarsTrackUpdate
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? ModeSCode { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Source { get; init; }
 }
 
 public sealed class DstarsGeoPoint

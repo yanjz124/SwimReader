@@ -65,19 +65,32 @@ builder.Services.AddSingleton<TrackStateManager>();
 builder.Services.AddSingleton<ClientConnectionManager>();
 builder.Services.AddHostedService<DgScopeAdapter>();
 
-// --- adsb.fi integration ---
+// --- ADS-B hybrid enrichment (adsb.fi + adsb.lol + airplanes.live) ---
 builder.Services.Configure<AdsbFiOptions>(
     builder.Configuration.GetSection(AdsbFiOptions.SectionName));
 
-builder.Services.AddHttpClient("AdsbFi", (sp, client) =>
+// Register HTTP clients for all 3 ADS-B APIs (same v2 response format)
+builder.Services.AddHttpClient("AdsbFi", client =>
 {
-    var opts = sp.GetRequiredService<IOptions<AdsbFiOptions>>().Value;
-    client.BaseAddress = new Uri(opts.BaseUrl);
+    client.BaseAddress = new Uri("https://opendata.adsb.fi/api/");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader/1.0");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddHttpClient("AdsbLol", client =>
+{
+    client.BaseAddress = new Uri("https://api.adsb.lol/");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader/1.0");
+    client.Timeout = TimeSpan.FromSeconds(10);
+});
+builder.Services.AddHttpClient("AirplanesLive", client =>
+{
+    client.BaseAddress = new Uri("https://api.airplanes.live/");
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader/1.0");
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
 builder.Services.AddSingleton<AdsbFiClient>();
+builder.Services.AddSingleton<MultiAdsbClient>();
 builder.Services.AddSingleton<AdsbFiCache>();
 
 var adsbFiConfig = builder.Configuration.GetSection(AdsbFiOptions.SectionName).Get<AdsbFiOptions>();

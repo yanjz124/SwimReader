@@ -12,7 +12,7 @@ namespace SwimReader.Server.AdsbFi;
 public sealed class CallsignEnrichmentService : BackgroundService
 {
     private readonly IEventBus _eventBus;
-    private readonly AdsbFiClient _adsbClient;
+    private readonly MultiAdsbClient _multiClient;
     private readonly AdsbFiCache _cache;
     private readonly TrackStateManager _trackState;
     private readonly AdsbFiOptions _options;
@@ -32,14 +32,14 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
     public CallsignEnrichmentService(
         IEventBus eventBus,
-        AdsbFiClient adsbClient,
+        MultiAdsbClient multiClient,
         AdsbFiCache cache,
         TrackStateManager trackState,
         IOptions<AdsbFiOptions> options,
         ILogger<CallsignEnrichmentService> logger)
     {
         _eventBus = eventBus;
-        _adsbClient = adsbClient;
+        _multiClient = multiClient;
         _cache = cache;
         _trackState = trackState;
         _options = options.Value;
@@ -48,7 +48,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        _logger.LogInformation("Callsign enrichment service started");
+        _logger.LogInformation("Callsign enrichment service started (3-source hybrid)");
 
         _ = CleanupLoopAsync(ct);
         _ = EnrichmentWorkerAsync(ct);
@@ -80,9 +80,9 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
     /// <summary>
     /// Enrichment worker: regional geo query approach.
-    /// 1. Fetch N regional 250NM circles covering CONUS (default 5 calls)
-    /// 2. Build combined indexed lookup (by hex + by squawk)
-    /// 3. Match ALL pending tracks against combined index in memory
+    /// 1. Fetch regional geo circles covering CONUS (rotates across 3 APIs)
+    /// 2. Build combined indexed lookup (by hex + by squawk + by callsign)
+    /// 3. Match ALL pending tracks: hex first, then callsign, then squawk
     /// 4. For remaining Mode S keys not in regions, individual hex lookups
     /// </summary>
     private async Task EnrichmentWorkerAsync(CancellationToken ct)
@@ -96,10 +96,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
         {
             try
             {
-                // Refresh regional data (N API calls, one per region)
                 await RefreshRegionsAsync(ct);
-
-                // Match all pending tracks against combined regional data
                 await ProcessAllPendingAsync(ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -117,6 +114,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
     /// <summary>
     /// Fetch aircraft from each configured region and build a combined index.
+    /// Round-robins across all 3 ADS-B APIs via MultiAdsbClient.
     /// </summary>
     private async Task RefreshRegionsAsync(CancellationToken ct)
     {
@@ -127,7 +125,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
         foreach (var region in regions)
         {
-            var aircraft = await _adsbClient.GetByLocationAsync(
+            var aircraft = await _multiClient.GetByLocationAsync(
                 region.Latitude, region.Longitude, region.RadiusNm, ct);
 
             foreach (var ac in aircraft)
@@ -139,6 +137,9 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
         // Build squawk index
         var bySquawk = new Dictionary<string, List<AdsbFiAircraft>>(StringComparer.Ordinal);
+        // Build callsign index
+        var byCallsign = new Dictionary<string, AdsbFiAircraft>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var ac in allAircraft.Values)
         {
             if (!string.IsNullOrEmpty(ac.Squawk))
@@ -150,23 +151,26 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 }
                 list.Add(ac);
             }
+
+            var cs = ac.TrimmedCallsign;
+            if (!string.IsNullOrEmpty(cs))
+                byCallsign[cs] = ac;
         }
 
-        _regionIndex = new AircraftIndex(allAircraft, bySquawk);
+        _regionIndex = new AircraftIndex(allAircraft, bySquawk, byCallsign);
 
-        // Cross-populate hex cache for individual lookups (military injection etc.)
+        // Cross-populate hex cache for individual lookups
         foreach (var (hex, ac) in allAircraft)
             _cache.SetHex(hex, ac);
 
         _logger.LogInformation(
-            "Enrichment regions refreshed: {RegionCount} regions, {AcCount} unique aircraft, {SqGroups} squawk groups",
+            "Enrichment regions refreshed: {RegionCount} regions, {AcCount} aircraft, {SqGroups} squawk groups",
             regions.Count, allAircraft.Count, bySquawk.Count);
     }
 
     /// <summary>
     /// Match all pending tracks against the combined regional index.
-    /// Mode S keys: direct hex lookup. Squawk keys: match by squawk + position.
-    /// Remaining Mode S keys not in regions: individual hex API calls.
+    /// Priority: hex (Mode S 24-bit) → callsign → squawk.
     /// </summary>
     private async Task ProcessAllPendingAsync(CancellationToken ct)
     {
@@ -192,7 +196,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
             if (key.StartsWith("MS:", StringComparison.Ordinal))
             {
-                // Mode S hex lookup - direct dictionary lookup
+                // Priority 1: Hex (Mode S 24-bit ICAO address) — most reliable
                 var hex = ModeSCodeHelper.ToHexString(track.ModeSCode!.Value);
                 if (index.ByHex.TryGetValue(hex, out aircraft))
                 {
@@ -201,13 +205,13 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 }
                 else
                 {
-                    // Not in any region - queue for individual lookup
+                    // Not in any region - queue for individual API lookup
                     msRemaining.Add((key, track));
                 }
             }
             else if (!string.IsNullOrEmpty(track.Squawk))
             {
-                // Squawk lookup - find matching aircraft by squawk + position proximity
+                // Priority 3: Squawk + position proximity (least reliable, last resort)
                 if (index.BySquawk.TryGetValue(track.Squawk, out var candidates))
                 {
                     aircraft = MatchBySquawk(candidates, track);
@@ -236,7 +240,8 @@ public sealed class CallsignEnrichmentService : BackgroundService
             }
             else if (!_cache.WasRecentlyQueried(hex))
             {
-                aircraft = await _adsbClient.GetByHexAsync(hex, ct);
+                // Individual hex lookup — rotates across all 3 APIs
+                aircraft = await _multiClient.GetByHexAsync(hex, ct);
                 _cache.SetHex(hex, aircraft);
             }
 
@@ -309,8 +314,8 @@ public sealed class CallsignEnrichmentService : BackgroundService
             return;
         }
 
-        // Mode S targets (LADD): callsign on line 1, squawk swappable via F1
-        // Uncorrelated targets (CRC-style): squawk on line 1, callsign on line 3 (scratchpad)
+        // LADD flights (Mode S target with no callsign): put callsign on line 1
+        // Uncorrelated targets (no Mode S): squawk on line 1, callsign in scratchpad
         var fpEvent = new FlightPlanDataEvent
         {
             Timestamp = DateTime.UtcNow,
@@ -327,7 +332,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
         await _eventBus.PublishAsync(fpEvent, ct);
 
-        // If TAIS has no altitude but adsb.fi does, supplement the track
+        // If TAIS has no altitude but ADS-B does, supplement the track
         if ((!track.AltitudeFeet.HasValue || track.AltitudeFeet.Value == 0) &&
             aircraft.ParsedAltBaro.HasValue && aircraft.ParsedAltBaro.Value > 0)
         {
@@ -357,8 +362,8 @@ public sealed class CallsignEnrichmentService : BackgroundService
         _enrichedTargets[enrichKey] = DateTime.UtcNow;
         _publishedCallsigns[csKey] = DateTime.UtcNow;
 
-        _logger.LogDebug("Enriched {Key} with callsign {Callsign} from adsb.fi",
-            enrichKey, aircraft.TrimmedCallsign);
+        _logger.LogDebug("Enriched {Key} with callsign {Callsign} (LADD={IsLadd})",
+            enrichKey, aircraft.TrimmedCallsign, isModeSTarget);
     }
 
     internal static double GeoDistanceNm(double lat1, double lon1, double lat2, double lon2)
@@ -397,5 +402,6 @@ public sealed class CallsignEnrichmentService : BackgroundService
     /// </summary>
     private sealed record AircraftIndex(
         Dictionary<string, AdsbFiAircraft> ByHex,
-        Dictionary<string, List<AdsbFiAircraft>> BySquawk);
+        Dictionary<string, List<AdsbFiAircraft>> BySquawk,
+        Dictionary<string, AdsbFiAircraft> ByCallsign);
 }

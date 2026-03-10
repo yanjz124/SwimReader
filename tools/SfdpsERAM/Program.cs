@@ -1604,14 +1604,22 @@ asdex.OnEnrich = (track) =>
     // Catches tracks where callsign lookup failed or matched the wrong turnaround leg,
     // and unknown targets that only have a transponder code (no callsign from SMES).
     // Pre-departure aircraft on the ground squawk their assigned code before getting a callsign tag.
+    // Squawk codes are NOT globally unique — multiple ARTCCs can assign the same code.
+    // Filter by origin/destination match or geographic proximity (<200nm) to avoid cross-country false matches.
     if (fp is null && track.Squawk is not null && track.Squawk != "1200"
         && sqIndex.TryGetValue(track.Squawk, out var sqCandidates))
     {
-        // Prefer flight whose origin matches this airport (departing from here)
-        fp = sqCandidates.FirstOrDefault(f =>
-            string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase));
-        // Fallback: any flight with this squawk (unique per active plan)
-        fp ??= sqCandidates.FirstOrDefault();
+        bool isNearby(FlightState f) =>
+            f.Latitude is double flat && f.Longitude is double flon && flat != 0 &&
+            HaversineNm(track.Latitude, track.Longitude, flat, flon) < 200;
+        bool matchesAirport(FlightState f) =>
+            string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(f.Destination, track.Airport, StringComparison.OrdinalIgnoreCase);
+
+        // Best: origin or destination matches this airport
+        fp = sqCandidates.FirstOrDefault(f => matchesAirport(f));
+        // Fallback: nearby flight (within 200nm — same region, not across the US)
+        fp ??= sqCandidates.FirstOrDefault(f => isNearby(f));
     }
 
     // Apply SFDPS flight plan data

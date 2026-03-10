@@ -34,6 +34,13 @@ public sealed class DgScopeAdapter : BackgroundService
     /// </summary>
     private readonly ConcurrentDictionary<Guid, DstarsFlightPlanUpdate> _lastTaisFp = new();
 
+    /// <summary>
+    /// Tracks which track GUIDs have had a flight plan sent. Used to generate
+    /// synthetic FPs for uncorrelated targets (squawk only, no TAIS FP) so
+    /// DGScope beacon reader can display their squawk codes.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, byte> _trackHasFp = new();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -63,8 +70,7 @@ public sealed class DgScopeAdapter : BackgroundService
         {
             try
             {
-                var (json, facility) = ConvertToJsonWithFacility(evt);
-                if (json is not null)
+                foreach (var (json, facility) in ConvertToMessages(evt))
                 {
                     _clients.Broadcast(json, facility);
                 }
@@ -76,22 +82,30 @@ public sealed class DgScopeAdapter : BackgroundService
         }
     }
 
-    private (string? json, string? facility) ConvertToJsonWithFacility(ISwimEvent evt)
+    private IEnumerable<(string json, string? facility)> ConvertToMessages(ISwimEvent evt)
     {
         switch (evt)
         {
             case TrackPositionEvent track:
-                return (ConvertTrack(track), track.Facility);
+            {
+                var (trackJson, syntheticFpJson) = ConvertTrack(track);
+                yield return (trackJson, track.Facility);
+                if (syntheticFpJson is not null)
+                    yield return (syntheticFpJson, track.Facility);
+                break;
+            }
 
             case FlightPlanDataEvent fp:
-                return (ConvertFlightPlan(fp), fp.Facility);
-
-            default:
-                return (null, null);
+            {
+                var json = ConvertFlightPlan(fp);
+                if (json is not null)
+                    yield return (json, fp.Facility);
+                break;
+            }
         }
     }
 
-    private string ConvertTrack(TrackPositionEvent track)
+    private (string trackJson, string? syntheticFpJson) ConvertTrack(TrackPositionEvent track)
     {
         var guid = _trackState.GetTrackGuid(track.ModeSCode, track.TrackNumber, track.Facility);
         var positionOnly = track.IsFrozen || track.IsPseudo;
@@ -123,7 +137,33 @@ public sealed class DgScopeAdapter : BackgroundService
             Source = positionOnly ? null : 0
         };
 
-        return JsonSerializer.Serialize(update, JsonOptions);
+        var trackJson = JsonSerializer.Serialize(update, JsonOptions);
+
+        // For uncorrelated targets with a squawk but no flight plan,
+        // generate a synthetic FP so DGScope beacon reader can display them.
+        string? syntheticFpJson = null;
+        if (!positionOnly && !string.IsNullOrEmpty(track.Squawk) && !_trackHasFp.ContainsKey(guid))
+        {
+            var fpGuid = _trackState.GetFlightPlanGuid(track.ModeSCode, track.TrackNumber, null, track.Facility);
+            var fpUpdate = new DstarsFlightPlanUpdate
+            {
+                Guid = fpGuid,
+                TimeStamp = track.Timestamp,
+                Callsign = track.Squawk,
+                AssignedSquawk = StripLeadingZeros(track.Squawk),
+                AssociatedTrackGuid = guid
+            };
+
+            var fpKey = BuildFpContentKey(fpUpdate);
+            if (!_lastFpJson.TryGetValue(fpGuid, out var prevFp) || prevFp != fpKey)
+            {
+                _lastFpJson[fpGuid] = fpKey;
+                _trackHasFp[guid] = 0;
+                syntheticFpJson = JsonSerializer.Serialize(fpUpdate, JsonOptions);
+            }
+        }
+
+        return (trackJson, syntheticFpJson);
     }
 
     private string? ConvertFlightPlan(FlightPlanDataEvent fp)
@@ -210,6 +250,12 @@ public sealed class DgScopeAdapter : BackgroundService
             _lastTaisFp[guid] = update;
         }
 
+        // Mark the associated track as having a flight plan
+        if (trackGuid.HasValue)
+        {
+            _trackHasFp[trackGuid.Value] = 0;
+        }
+
         var json = JsonSerializer.Serialize(update, JsonOptions);
 
         // Dedup: TAIS sends full batches every ~5s with all tracks, so the same FP
@@ -270,6 +316,7 @@ public sealed class DgScopeAdapter : BackgroundService
                 {
                     _lastFpJson.TryRemove(guid, out _);
                     _lastTaisFp.TryRemove(guid, out _);
+                    _trackHasFp.TryRemove(guid, out _);
 
                     var deletion = new DstarsDeletionUpdate
                     {

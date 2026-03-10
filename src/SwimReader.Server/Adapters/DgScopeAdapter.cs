@@ -28,18 +28,17 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly ConcurrentDictionary<Guid, string> _lastFpJson = new();
 
     /// <summary>
-    /// Caches last TAIS flight plan data per GUID. Used to:
-    /// 1) Suppress enrichment for tracks that already have a callsign (non-LADD)
-    /// 2) Merge ADS-B callsign into TAIS data for LADD tracks (have FP but no callsign)
+    /// Tracks which FP GUIDs have TAIS data with a callsign (non-LADD).
+    /// Enrichment is fully suppressed for these tracks.
     /// </summary>
-    private readonly ConcurrentDictionary<Guid, DstarsFlightPlanUpdate> _lastTaisFp = new();
+    private readonly ConcurrentDictionary<Guid, byte> _taisHasCallsign = new();
 
     /// <summary>
-    /// Tracks which track GUIDs have had a flight plan sent. Used to generate
-    /// synthetic FPs for uncorrelated targets (squawk only, no TAIS FP) so
-    /// DGScope beacon reader can display their squawk codes.
+    /// Stores the enriched callsign per FP GUID for LADD tracks.
+    /// When TAIS batches repeat every ~5s with no callsign, we re-apply
+    /// the enriched callsign instead of letting it oscillate.
     /// </summary>
-    private readonly ConcurrentDictionary<Guid, byte> _trackHasFp = new();
+    private readonly ConcurrentDictionary<Guid, string> _enrichedCallsigns = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -70,7 +69,8 @@ public sealed class DgScopeAdapter : BackgroundService
         {
             try
             {
-                foreach (var (json, facility) in ConvertToMessages(evt))
+                var (json, facility) = ConvertToJsonWithFacility(evt);
+                if (json is not null)
                 {
                     _clients.Broadcast(json, facility);
                 }
@@ -82,30 +82,22 @@ public sealed class DgScopeAdapter : BackgroundService
         }
     }
 
-    private IEnumerable<(string json, string? facility)> ConvertToMessages(ISwimEvent evt)
+    private (string? json, string? facility) ConvertToJsonWithFacility(ISwimEvent evt)
     {
         switch (evt)
         {
             case TrackPositionEvent track:
-            {
-                var (trackJson, syntheticFpJson) = ConvertTrack(track);
-                yield return (trackJson, track.Facility);
-                if (syntheticFpJson is not null)
-                    yield return (syntheticFpJson, track.Facility);
-                break;
-            }
+                return (ConvertTrack(track), track.Facility);
 
             case FlightPlanDataEvent fp:
-            {
-                var json = ConvertFlightPlan(fp);
-                if (json is not null)
-                    yield return (json, fp.Facility);
-                break;
-            }
+                return (ConvertFlightPlan(fp), fp.Facility);
+
+            default:
+                return (null, null);
         }
     }
 
-    private (string trackJson, string? syntheticFpJson) ConvertTrack(TrackPositionEvent track)
+    private string ConvertTrack(TrackPositionEvent track)
     {
         var guid = _trackState.GetTrackGuid(track.ModeSCode, track.TrackNumber, track.Facility);
         var positionOnly = track.IsFrozen || track.IsPseudo;
@@ -137,33 +129,7 @@ public sealed class DgScopeAdapter : BackgroundService
             Source = positionOnly ? null : 0
         };
 
-        var trackJson = JsonSerializer.Serialize(update, JsonOptions);
-
-        // For uncorrelated targets with a squawk but no flight plan,
-        // generate a synthetic FP so DGScope beacon reader can display them.
-        string? syntheticFpJson = null;
-        if (!positionOnly && !string.IsNullOrEmpty(track.Squawk) && !_trackHasFp.ContainsKey(guid))
-        {
-            var fpGuid = _trackState.GetFlightPlanGuid(track.ModeSCode, track.TrackNumber, null, track.Facility);
-            var fpUpdate = new DstarsFlightPlanUpdate
-            {
-                Guid = fpGuid,
-                TimeStamp = track.Timestamp,
-                Callsign = track.Squawk,
-                AssignedSquawk = StripLeadingZeros(track.Squawk),
-                AssociatedTrackGuid = guid
-            };
-
-            var fpKey = BuildFpContentKey(fpUpdate);
-            if (!_lastFpJson.TryGetValue(fpGuid, out var prevFp) || prevFp != fpKey)
-            {
-                _lastFpJson[fpGuid] = fpKey;
-                _trackHasFp[guid] = 0;
-                syntheticFpJson = JsonSerializer.Serialize(fpUpdate, JsonOptions);
-            }
-        }
-
-        return (trackJson, syntheticFpJson);
+        return JsonSerializer.Serialize(update, JsonOptions);
     }
 
     private string? ConvertFlightPlan(FlightPlanDataEvent fp)
@@ -175,56 +141,33 @@ public sealed class DgScopeAdapter : BackgroundService
 
         if (isEnrichment)
         {
-            if (_lastTaisFp.TryGetValue(guid, out var taisFp))
-            {
-                if (!string.IsNullOrEmpty(taisFp.Callsign))
-                    return null; // TAIS already has callsign — suppress enrichment
+            // Track already has a TAIS FP with callsign — suppress enrichment entirely
+            if (_taisHasCallsign.ContainsKey(guid))
+                return null;
 
-                // LADD track: TAIS FP exists but no callsign.
-                // Merge ADS-B callsign into the cached TAIS data so we
-                // keep Owner, Origin, Destination, etc. from TAIS.
-                var merged = new DstarsFlightPlanUpdate
-                {
-                    Guid = taisFp.Guid,
-                    TimeStamp = fp.Timestamp,
-                    Callsign = fp.Callsign,
-                    AircraftType = fp.AircraftType ?? taisFp.AircraftType,
-                    WakeCategory = fp.WakeCategory ?? taisFp.WakeCategory,
-                    FlightRules = taisFp.FlightRules,
-                    Origin = taisFp.Origin,
-                    Destination = taisFp.Destination,
-                    EntryFix = taisFp.EntryFix,
-                    ExitFix = taisFp.ExitFix,
-                    Route = taisFp.Route,
-                    RequestedAltitude = taisFp.RequestedAltitude,
-                    Scratchpad1 = taisFp.Scratchpad1,
-                    Scratchpad2 = taisFp.Scratchpad2,
-                    Runway = taisFp.Runway,
-                    Owner = taisFp.Owner,
-                    PendingHandoff = taisFp.PendingHandoff,
-                    AssignedSquawk = taisFp.AssignedSquawk,
-                    EquipmentSuffix = taisFp.EquipmentSuffix,
-                    LDRDirection = taisFp.LDRDirection,
-                    AssociatedTrackGuid = taisFp.AssociatedTrackGuid
-                };
-                var mergedJson = JsonSerializer.Serialize(merged, JsonOptions);
-                var mergedKey = BuildFpContentKey(merged);
-                if (_lastFpJson.TryGetValue(guid, out var prevKey) && prevKey == mergedKey)
-                    return null;
-                _lastFpJson[guid] = mergedKey;
-                return mergedJson;
-            }
+            // Store the enriched callsign so it persists across TAIS batch repeats
+            if (!string.IsNullOrEmpty(fp.Callsign))
+                _enrichedCallsigns[guid] = fp.Callsign;
         }
         else
         {
-            // Cache the TAIS FP data for LADD detection and enrichment merging
+            // TAIS FP — track whether it has a callsign
+            if (!string.IsNullOrEmpty(fp.Callsign))
+                _taisHasCallsign[guid] = 0;
+        }
+
+        // For TAIS FPs with no callsign (LADD), re-apply the enriched callsign
+        var effectiveCallsign = fp.Callsign;
+        if (!isEnrichment && string.IsNullOrEmpty(effectiveCallsign))
+        {
+            _enrichedCallsigns.TryGetValue(guid, out effectiveCallsign);
         }
 
         var update = new DstarsFlightPlanUpdate
         {
             Guid = guid,
             TimeStamp = fp.Timestamp,
-            Callsign = fp.Callsign,
+            Callsign = effectiveCallsign,
             AircraftType = fp.AircraftType,
             WakeCategory = fp.WakeCategory,
             FlightRules = fp.FlightRules,
@@ -245,24 +188,10 @@ public sealed class DgScopeAdapter : BackgroundService
             AssociatedTrackGuid = trackGuid
         };
 
-        if (!isEnrichment)
-        {
-            _lastTaisFp[guid] = update;
-        }
-
-        // Mark the associated track as having a flight plan
-        if (trackGuid.HasValue)
-        {
-            _trackHasFp[trackGuid.Value] = 0;
-        }
-
         var json = JsonSerializer.Serialize(update, JsonOptions);
 
         // Dedup: TAIS sends full batches every ~5s with all tracks, so the same FP
         // re-emits unchanged every cycle. Only broadcast when content actually changes.
-        // Compare full JSON (includes all fields); TimeStamp varies but is fine for
-        // dedup since a changed timestamp with identical data still means "no change."
-        // We strip TimeStamp for comparison by using a content key.
         var contentKey = BuildFpContentKey(update);
         if (_lastFpJson.TryGetValue(guid, out var prev) && prev == contentKey)
             return null; // unchanged — suppress
@@ -315,8 +244,8 @@ public sealed class DgScopeAdapter : BackgroundService
                 foreach (var (guid, facility) in deletedTargets)
                 {
                     _lastFpJson.TryRemove(guid, out _);
-                    _lastTaisFp.TryRemove(guid, out _);
-                    _trackHasFp.TryRemove(guid, out _);
+                    _taisHasCallsign.TryRemove(guid, out _);
+                    _enrichedCallsigns.TryRemove(guid, out _);
 
                     var deletion = new DstarsDeletionUpdate
                     {

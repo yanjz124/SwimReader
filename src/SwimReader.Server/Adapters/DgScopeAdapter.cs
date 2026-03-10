@@ -28,11 +28,11 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly ConcurrentDictionary<Guid, string> _lastFpJson = new();
 
     /// <summary>
-    /// Tracks which flight plan GUIDs have received authoritative TAIS data.
-    /// ADSB_ENRICH FPs are suppressed for these tracks to prevent overwriting
-    /// rich TAIS data (Owner, Origin, Destination) with nulls.
+    /// Caches last TAIS flight plan data per GUID. Used to:
+    /// 1) Suppress enrichment for tracks that already have a callsign (non-LADD)
+    /// 2) Merge ADS-B callsign into TAIS data for LADD tracks (have FP but no callsign)
     /// </summary>
-    private readonly ConcurrentDictionary<Guid, byte> _taisFpGuids = new();
+    private readonly ConcurrentDictionary<Guid, DstarsFlightPlanUpdate> _lastTaisFp = new();
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -135,14 +135,49 @@ public sealed class DgScopeAdapter : BackgroundService
 
         if (isEnrichment)
         {
-            // Don't overwrite existing TAIS flight plan data with sparse enrichment data
-            if (_taisFpGuids.ContainsKey(guid))
-                return null;
+            if (_lastTaisFp.TryGetValue(guid, out var taisFp))
+            {
+                if (!string.IsNullOrEmpty(taisFp.Callsign))
+                    return null; // TAIS already has callsign — suppress enrichment
+
+                // LADD track: TAIS FP exists but no callsign.
+                // Merge ADS-B callsign into the cached TAIS data so we
+                // keep Owner, Origin, Destination, etc. from TAIS.
+                var merged = new DstarsFlightPlanUpdate
+                {
+                    Guid = taisFp.Guid,
+                    TimeStamp = fp.Timestamp,
+                    Callsign = fp.Callsign,
+                    AircraftType = fp.AircraftType ?? taisFp.AircraftType,
+                    WakeCategory = fp.WakeCategory ?? taisFp.WakeCategory,
+                    FlightRules = taisFp.FlightRules,
+                    Origin = taisFp.Origin,
+                    Destination = taisFp.Destination,
+                    EntryFix = taisFp.EntryFix,
+                    ExitFix = taisFp.ExitFix,
+                    Route = taisFp.Route,
+                    RequestedAltitude = taisFp.RequestedAltitude,
+                    Scratchpad1 = taisFp.Scratchpad1,
+                    Scratchpad2 = taisFp.Scratchpad2,
+                    Runway = taisFp.Runway,
+                    Owner = taisFp.Owner,
+                    PendingHandoff = taisFp.PendingHandoff,
+                    AssignedSquawk = taisFp.AssignedSquawk,
+                    EquipmentSuffix = taisFp.EquipmentSuffix,
+                    LDRDirection = taisFp.LDRDirection,
+                    AssociatedTrackGuid = taisFp.AssociatedTrackGuid
+                };
+                var mergedJson = JsonSerializer.Serialize(merged, JsonOptions);
+                var mergedKey = BuildFpContentKey(merged);
+                if (_lastFpJson.TryGetValue(guid, out var prevKey) && prevKey == mergedKey)
+                    return null;
+                _lastFpJson[guid] = mergedKey;
+                return mergedJson;
+            }
         }
         else
         {
-            // Mark this GUID as having authoritative TAIS data
-            _taisFpGuids[guid] = 0;
+            // Cache the TAIS FP data for LADD detection and enrichment merging
         }
 
         var update = new DstarsFlightPlanUpdate
@@ -169,6 +204,11 @@ public sealed class DgScopeAdapter : BackgroundService
             LDRDirection = fp.LdrDirection,
             AssociatedTrackGuid = trackGuid
         };
+
+        if (!isEnrichment)
+        {
+            _lastTaisFp[guid] = update;
+        }
 
         var json = JsonSerializer.Serialize(update, JsonOptions);
 
@@ -229,7 +269,7 @@ public sealed class DgScopeAdapter : BackgroundService
                 foreach (var (guid, facility) in deletedTargets)
                 {
                     _lastFpJson.TryRemove(guid, out _);
-                    _taisFpGuids.TryRemove(guid, out _);
+                    _lastTaisFp.TryRemove(guid, out _);
 
                     var deletion = new DstarsDeletionUpdate
                     {

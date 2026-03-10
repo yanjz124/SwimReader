@@ -27,6 +27,13 @@ public sealed class DgScopeAdapter : BackgroundService
     /// </summary>
     private readonly ConcurrentDictionary<Guid, string> _lastFpJson = new();
 
+    /// <summary>
+    /// Tracks which flight plan GUIDs have received authoritative TAIS data.
+    /// ADSB_ENRICH FPs are suppressed for these tracks to prevent overwriting
+    /// rich TAIS data (Owner, Origin, Destination) with nulls.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, byte> _taisFpGuids = new();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -124,6 +131,20 @@ public sealed class DgScopeAdapter : BackgroundService
         var guid = _trackState.GetFlightPlanGuid(fp.ModeSCode, fp.TrackNumber, fp.Callsign, fp.Facility);
         var trackGuid = _trackState.GetAssociatedTrackGuid(fp.ModeSCode, fp.TrackNumber, fp.Facility);
 
+        var isEnrichment = fp.Source == "ADSB_ENRICH";
+
+        if (isEnrichment)
+        {
+            // Don't overwrite existing TAIS flight plan data with sparse enrichment data
+            if (_taisFpGuids.ContainsKey(guid))
+                return null;
+        }
+        else
+        {
+            // Mark this GUID as having authoritative TAIS data
+            _taisFpGuids[guid] = 0;
+        }
+
         var update = new DstarsFlightPlanUpdate
         {
             Guid = guid,
@@ -207,7 +228,8 @@ public sealed class DgScopeAdapter : BackgroundService
                 var deletedTargets = _trackState.PurgeStale();
                 foreach (var (guid, facility) in deletedTargets)
                 {
-                    _lastFpJson.TryRemove(guid, out _); // clean FP dedup cache
+                    _lastFpJson.TryRemove(guid, out _);
+                    _taisFpGuids.TryRemove(guid, out _);
 
                     var deletion = new DstarsDeletionUpdate
                     {

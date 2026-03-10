@@ -565,56 +565,45 @@ function renderFlightDetail(f, panelId) {
     html += '</div>';
 
     // CDM / Airline Times
-    const hasCdm = f.airlineOutTime || f.airlineOffTime || f.airlineOnTime || f.airlineInTime
-        || f.gateDeparture || f.gateArrival || f.runwayDeparture || f.runwayArrival
-        || f.originalDeparture || f.originalArrival || f.flightCreation;
-    if (hasCdm) {
-        html += '<div class="section-title">CDM / AIRLINE TIMES</div>';
-        html += '<div class="detail-grid">';
-        html += row('OUT (Gate Push)', f.airlineOutTime ? formatTime(f.airlineOutTime) : null, 'cyan');
-        html += row('OFF (Takeoff)', f.airlineOffTime ? formatTime(f.airlineOffTime) : null, 'cyan');
-        html += row('ON (Landing)', f.airlineOnTime ? formatTime(f.airlineOnTime) : null, 'cyan');
-        html += row('IN (Gate Arrival)', f.airlineInTime ? formatTime(f.airlineInTime) : null, 'cyan');
-        html += row('Gate Departure', f.gateDeparture ? formatTime(f.gateDeparture) : null, 'cyan');
-        html += row('Gate Arrival', f.gateArrival ? formatTime(f.gateArrival) : null, 'cyan');
-        html += row('Runway Departure', f.runwayDeparture ? formatTime(f.runwayDeparture) : null, 'cyan');
-        html += row('Runway Arrival', f.runwayArrival ? formatTime(f.runwayArrival) : null, 'cyan');
-        html += row('Original Dep', f.originalDeparture ? formatTime(f.originalDeparture) : null);
-        html += row('Original Arr', f.originalArrival ? formatTime(f.originalArrival) : null);
-        html += row('Flight Creation', f.flightCreation ? formatTime(f.flightCreation) : null);
-        html += '</div>';
-    }
+    html += '<div class="section-title">CDM / AIRLINE TIMES</div>';
+    html += '<div class="detail-grid">';
+    html += row('OUT (Gate Push)', f.airlineOutTime ? formatTime(f.airlineOutTime) : null, 'cyan');
+    html += row('OFF (Takeoff)', f.airlineOffTime ? formatTime(f.airlineOffTime) : null, 'cyan');
+    html += row('ON (Landing)', f.airlineOnTime ? formatTime(f.airlineOnTime) : null, 'cyan');
+    html += row('IN (Gate Arrival)', f.airlineInTime ? formatTime(f.airlineInTime) : null, 'cyan');
+    html += row('Gate Departure', f.gateDeparture ? formatTime(f.gateDeparture) : null, 'cyan');
+    html += row('Gate Arrival', f.gateArrival ? formatTime(f.gateArrival) : null, 'cyan');
+    html += row('Runway Departure', f.runwayDeparture ? formatTime(f.runwayDeparture) : null, 'cyan');
+    html += row('Runway Arrival', f.runwayArrival ? formatTime(f.runwayArrival) : null, 'cyan');
+    html += row('Original Dep', f.originalDeparture ? formatTime(f.originalDeparture) : null);
+    html += row('Original Arr', f.originalArrival ? formatTime(f.originalArrival) : null);
+    html += row('Flight Creation', f.flightCreation ? formatTime(f.flightCreation) : null);
+    html += '</div>';
 
     // Boundary crossing
-    if (f.boundaryFix || f.boundaryCrossingTime) {
-        html += '<div class="section-title">BOUNDARY CROSSING</div>';
-        html += '<div class="detail-grid">';
-        html += row('Fix', f.boundaryFix);
-        html += row('Time', f.boundaryCrossingTime ? formatTime(f.boundaryCrossingTime) : null, 'cyan');
-        html += row('Radial', f.boundaryRadial ? f.boundaryRadial + '\u00B0' : null);
-        html += row('Distance', f.boundaryDistance ? f.boundaryDistance + ' nm' : null);
-        html += '</div>';
-    }
+    html += '<div class="section-title">BOUNDARY CROSSING</div>';
+    html += '<div class="detail-grid">';
+    html += row('Fix', f.boundaryFix);
+    html += row('Time', f.boundaryCrossingTime ? formatTime(f.boundaryCrossingTime) : null, 'cyan');
+    html += row('Radial', f.boundaryRadial ? f.boundaryRadial + '\u00B0' : null);
+    html += row('Distance', f.boundaryDistance ? f.boundaryDistance + ' nm' : null);
+    html += '</div>';
 
     // Position extras
-    if (f.nextEventLat || f.nextEventLon) {
-        html += '<div class="section-title">TRACK DATA</div>';
-        html += '<div class="detail-grid">';
-        html += row('Position Time', f.positionTime ? formatTime(f.positionTime) : null, 'cyan');
-        html += row('Next Event', f.nextEventLat ? f.nextEventLat.toFixed(3) + ', ' + f.nextEventLon.toFixed(3) : null);
-        html += '</div>';
-    }
+    html += '<div class="section-title">TRACK DATA</div>';
+    html += '<div class="detail-grid">';
+    html += row('Position Time', f.positionTime ? formatTime(f.positionTime) : null, 'cyan');
+    html += row('Next Event', f.nextEventLat ? f.nextEventLat.toFixed(3) + ', ' + f.nextEventLon.toFixed(3) : null);
+    html += '</div>';
 
     // Message metadata
-    if (f.fdTrigger || f.sensitivity || f.cdmPart || f.sourceFacility) {
-        html += '<div class="section-title">MESSAGE META</div>';
-        html += '<div class="detail-grid">';
-        html += row('FD Trigger', f.fdTrigger);
-        html += row('Sensitivity', f.sensitivity);
-        html += row('CDM Part', f.cdmPart);
-        html += row('Source Facility', f.sourceFacility);
-        html += '</div>';
-    }
+    html += '<div class="section-title">MESSAGE META</div>';
+    html += '<div class="detail-grid">';
+    html += row('FD Trigger', f.fdTrigger);
+    html += row('Sensitivity', f.sensitivity);
+    html += row('CDM Part', f.cdmPart);
+    html += row('Source Facility', f.sourceFacility);
+    html += '</div>';
 
     // Route of flight
     if (f.routeOfFlight) {

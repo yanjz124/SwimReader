@@ -186,6 +186,29 @@ contentTypes.Mappings[".geojson"] = "application/geo+json";
 app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = contentTypes });
 app.UseWebSockets();
 
+// Reverse proxy: /dstars/* → SwimReader.Server on port 5000
+app.Map("/dstars/{**rest}", async (HttpContext ctx, string rest) =>
+{
+    var targetUrl = $"http://127.0.0.1:5000/dstars/{rest}";
+    if (ctx.Request.QueryString.HasValue)
+        targetUrl += ctx.Request.QueryString.Value;
+
+    using var httpClient = new HttpClient();
+    var request = new HttpRequestMessage(HttpMethod.Get, targetUrl);
+
+    var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ctx.RequestAborted);
+
+    ctx.Response.StatusCode = (int)response.StatusCode;
+    foreach (var header in response.Content.Headers)
+        ctx.Response.Headers[header.Key] = header.Value.ToArray();
+    ctx.Response.Headers.Remove("transfer-encoding");
+    ctx.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
+
+    // Stream the response body through (supports HTTP streaming / chunked)
+    await using var stream = await response.Content.ReadAsStreamAsync(ctx.RequestAborted);
+    await stream.CopyToAsync(ctx.Response.Body, ctx.RequestAborted);
+});
+
 // Home page
 app.MapGet("/", async (HttpContext ctx) =>
 {

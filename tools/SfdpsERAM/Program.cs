@@ -381,11 +381,11 @@ app.MapGet("/fdio", async (HttpContext ctx) =>
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio.html"));
 });
 
-// FDIO routes — TFMS-powered pages
-app.MapGet("/fdio/tfms", async (HttpContext ctx) =>
+// SFDPS flight table (was fdio.html, renamed to avoid confusion with TFMS FDIO)
+app.MapGet("/flight-table", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio-tfms.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "flight-table.html"));
 });
 app.MapGet("/fdio/route", async (HttpContext ctx) =>
 {

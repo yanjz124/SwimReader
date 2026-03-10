@@ -189,13 +189,13 @@ header .sub {
             <div class="desc">Radar display with data blocks</div>
             <div class="count" id="eramCount"></div>
         </a>
-        <a class="nav-item" data-key="fdio" href="/fdio">
+        <a class="nav-item" data-key="flight-table" href="/flight-table">
             <div class="title">FLIGHT TABLE</div>
             <div class="desc">Flight plan viewer with event history</div>
         </a>
 
         <div class="nav-section">TRAFFIC FLOW (TFMS)</div>
-        <a class="nav-item" data-key="fdio-tfms" href="/fdio/tfms">
+        <a class="nav-item" data-key="fdio" href="/fdio">
             <div class="title">FDIO</div>
             <div class="desc">TMI dashboard / flight data</div>
             <div class="count" id="fdioCount"></div>
@@ -259,21 +259,21 @@ const pages = {
             ['Features', 'Data blocks, history, vectors, NEXRAD, boundaries'],
         ]
     },
-    fdio: {
-        title: 'FLIGHT TABLE',
+    'flight-table': {
+        title: 'Flight Table — SFDPS',
         source: 'SFDPS — FDPS VPN — FIXM XML',
         desc: 'Flight data explorer with searchable table, detail panel showing full flight plans, altitude/ownership/clearance data, and complete SWIM event history with raw XML. Filter by status, facility, sector, and flight rules.',
-        href: '/fdio',
+        href: '/flight-table',
         fields: [
             ['Data Source', 'SFDPS (FIXM en route)'],
             ['Features', 'Search, sort, detail panel, event history, raw XML'],
         ]
     },
-    'fdio-tfms': {
+    fdio: {
         title: 'FDIO — Traffic Flow Management',
         source: 'TFMS — TFMS VPN',
         desc: 'Traffic Flow Management dashboard. View active TMIs (Traffic Management Initiatives), ground stops, GDPs, and FCAs with affected flight lists. Live flight tracking with ETD/ETA, route, STAR, and sector traversal data.',
-        href: '/fdio/tfms',
+        href: '/fdio',
         fields: [
             ['Data Source', 'TFMS (flow management)'],
             ['Features', 'TMI dashboard, flight search, route data'],

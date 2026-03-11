@@ -375,32 +375,31 @@ app.MapGet("/tais/{facility}", async (HttpContext ctx, string facility) =>
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais-facility.html"));
 });
 
-app.MapGet("/fdio", async (HttpContext ctx) =>
+app.MapGet("/tfm", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm.html"));
 });
 
-// SFDPS flight table (was fdio.html, renamed to avoid confusion with TFMS FDIO)
 app.MapGet("/flight-table", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "flight-table.html"));
 });
-app.MapGet("/fdio/route", async (HttpContext ctx) =>
+app.MapGet("/tfm/route", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio-route.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm-route.html"));
 });
-app.MapGet("/fdio/sectors", async (HttpContext ctx) =>
+app.MapGet("/tfm/sectors", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio-sectors.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm-sectors.html"));
 });
-app.MapGet("/fdio/flow", async (HttpContext ctx) =>
+app.MapGet("/tfm/flow", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "fdio-flow.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm-flow.html"));
 });
 // TFMS WebSocket — flight stream
 app.Map("/tfms/ws", async (HttpContext ctx) =>

@@ -292,7 +292,9 @@ class TfmsBridge
         if (sourceFacility is not null) flight.SourceFacility = sourceFacility;
 
         // FlightStatus & aircraft details from flightStatusAndSpec blocks
-        foreach (var block in new[] { modInfo, routeInfo, timesInfo })
+        // In ncsmFlightModify, flightStatusAndSpec is nested under airlineData
+        var modAirlineData = modInfo?.Elements().FirstOrDefault(e => e.Name.LocalName == "airlineData");
+        foreach (var block in new[] { modAirlineData, routeInfo, timesInfo })
         {
             var fss = block?.Elements().FirstOrDefault(e => e.Name.LocalName == "flightStatusAndSpec");
             if (fss is null) continue;
@@ -558,22 +560,34 @@ class TfmsBridge
     private void ParseCdmTimes(TfmsFlight flight, XElement modInfo)
     {
         var airlineData = modInfo.Elements().FirstOrDefault(e => e.Name.LocalName == "airlineData");
-        if (airlineData is not null)
+        if (airlineData is null) return;
+
+        // flightTimeData carries all CDM times as attributes
+        var ftd = airlineData.Elements().FirstOrDefault(e => e.Name.LocalName == "flightTimeData");
+        if (ftd is not null)
         {
-            SetTime(airlineData, "airlineOutTime", ref flight, (f, t) => f.AirlineOutTime = t);
-            SetTime(airlineData, "airlineOffTime", ref flight, (f, t) => f.AirlineOffTime = t);
-            SetTime(airlineData, "airlineOnTime", ref flight, (f, t) => f.AirlineOnTime = t);
-            SetTime(airlineData, "airlineInTime", ref flight, (f, t) => f.AirlineInTime = t);
+            void SetAttr(string attr, Action<TfmsFlight, DateTime> setter)
+            {
+                var val = ftd.Attribute(attr)?.Value;
+                if (val is not null && DateTime.TryParse(val, null, DateTimeStyles.AdjustToUniversal, out var t))
+                    setter(flight, t);
+            }
+            SetAttr("airlineOutTime", (f, t) => f.AirlineOutTime = t);
+            SetAttr("airlineOffTime", (f, t) => f.AirlineOffTime = t);
+            SetAttr("airlineOnTime", (f, t) => f.AirlineOnTime = t);
+            SetAttr("airlineInTime", (f, t) => f.AirlineInTime = t);
+            SetAttr("gateDeparture", (f, t) => f.GateDeparture = t);
+            SetAttr("gateArrival", (f, t) => f.GateArrival = t);
+            SetAttr("runwayDeparture", (f, t) => f.RunwayDeparture = t);
+            SetAttr("runwayArrival", (f, t) => f.RunwayArrival = t);
+            SetAttr("originalDeparture", (f, t) => f.OriginalDeparture = t);
+            SetAttr("originalArrival", (f, t) => f.OriginalArrival = t);
+            SetAttr("flightCreation", (f, t) => f.FlightCreation = t);
         }
 
-        // Gate/runway times may be in ncsmFlightModify directly
-        SetTimeAttr(modInfo, "gateDeparture", "timeValue", ref flight, (f, t) => f.GateDeparture = t);
-        SetTimeAttr(modInfo, "gateArrival", "timeValue", ref flight, (f, t) => f.GateArrival = t);
-        SetTimeAttr(modInfo, "runwayDeparture", "timeValue", ref flight, (f, t) => f.RunwayDeparture = t);
-        SetTimeAttr(modInfo, "runwayArrival", "timeValue", ref flight, (f, t) => f.RunwayArrival = t);
-        SetTimeAttr(modInfo, "originalDeparture", "timeValue", ref flight, (f, t) => f.OriginalDeparture = t);
-        SetTimeAttr(modInfo, "originalArrival", "timeValue", ref flight, (f, t) => f.OriginalArrival = t);
-        SetTimeAttr(modInfo, "flightCreation", "timeValue", ref flight, (f, t) => f.FlightCreation = t);
+        // ETD/ETA from airlineData (may be more accurate than outer level)
+        SetTimeAttr(airlineData, "etd", "timeValue", ref flight, (f, t) => f.Etd = t);
+        SetTimeAttr(airlineData, "eta", "timeValue", ref flight, (f, t) => f.Eta = t);
     }
 
     private static void SetTime(XElement parent, string name, ref TfmsFlight flight, Action<TfmsFlight, DateTime> setter)

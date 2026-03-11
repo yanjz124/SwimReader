@@ -195,20 +195,20 @@ header .sub {
         </a>
 
         <div class="nav-section">TRAFFIC FLOW (TFMS)</div>
-        <a class="nav-item" data-key="fdio" href="/fdio">
-            <div class="title">FDIO</div>
+        <a class="nav-item" data-key="tfm" href="/tfm">
+            <div class="title">TFM</div>
             <div class="desc">TMI dashboard / flight data</div>
-            <div class="count" id="fdioCount"></div>
+            <div class="count" id="tfmCount"></div>
         </a>
-        <a class="nav-item" data-key="fdio-route" href="/fdio/route">
+        <a class="nav-item" data-key="tfm-route" href="/tfm/route">
             <div class="title">ROUTE VIEWER</div>
             <div class="desc">Route traversal with sectors</div>
         </a>
-        <a class="nav-item" data-key="fdio-sectors" href="/fdio/sectors">
+        <a class="nav-item" data-key="tfm-sectors" href="/tfm/sectors">
             <div class="title">SECTOR LOADING</div>
             <div class="desc">Predicted sector traffic</div>
         </a>
-        <a class="nav-item" data-key="fdio-flow" href="/fdio/flow">
+        <a class="nav-item" data-key="tfm-flow" href="/tfm/flow">
             <div class="title">FLOW ADVISORY</div>
             <div class="desc">FCA status and restrictions</div>
         </a>
@@ -269,41 +269,41 @@ const pages = {
             ['Features', 'Search, sort, detail panel, event history, raw XML'],
         ]
     },
-    fdio: {
-        title: 'FDIO — Traffic Flow Management',
+    tfm: {
+        title: 'TFM — Traffic Flow Management',
         source: 'TFMS — TFMS VPN',
         desc: 'Traffic Flow Management dashboard. View active TMIs (Traffic Management Initiatives), ground stops, GDPs, and FCAs with affected flight lists. Live flight tracking with ETD/ETA, route, STAR, and sector traversal data.',
-        href: '/fdio',
+        href: '/tfm',
         fields: [
             ['Data Source', 'TFMS (flow management)'],
             ['Features', 'TMI dashboard, flight search, route data'],
         ]
     },
-    'fdio-route': {
-        title: 'FDIO — Route Viewer',
+    'tfm-route': {
+        title: 'TFM — Route Viewer',
         source: 'TFMS — TFMS VPN',
         desc: 'Visualize full route traversal on a map with fix-by-fix lat/lon waypoints, ARTCC center crossings, and sector-by-sector transit predictions. Enter a callsign to see the complete TFMS route.',
-        href: '/fdio/route',
+        href: '/tfm/route',
         fields: [
             ['Data Source', 'TFMS (traversal data)'],
             ['Features', 'Map, waypoints, centers, sectors, airways'],
         ]
     },
-    'fdio-sectors': {
-        title: 'FDIO — Sector Loading',
+    'tfm-sectors': {
+        title: 'TFM — Sector Loading',
         source: 'TFMS — TFMS VPN',
         desc: 'Predicted sector traffic from TFMS traversal data. Grid of all sectors with flight counts. Click a sector to see which flights are predicted to transit it and their entry times.',
-        href: '/fdio/sectors',
+        href: '/tfm/sectors',
         fields: [
             ['Data Source', 'TFMS (sector traversal)'],
             ['Features', 'Sector grid, traffic predictions, ARTCC filter'],
         ]
     },
-    'fdio-flow': {
-        title: 'FDIO — Flow Advisory',
+    'tfm-flow': {
+        title: 'TFM — Flow Advisory',
         source: 'TFMS — TFMS VPN',
         desc: 'Active FCAs (Flow Constrained Areas) and TMIs mapped on a Leaflet display. See entry points of affected flights and browse FCA details with flight lists.',
-        href: '/fdio/flow',
+        href: '/tfm/flow',
         fields: [
             ['Data Source', 'TFMS (flow information)'],
             ['Features', 'FCA map, entry points, live updates'],
@@ -434,7 +434,7 @@ async function refreshStats() {
             document.getElementById('tfmsStat').innerHTML = ts.connected
                 ? `TFMS: <b>${(ts.flightCount || 0).toLocaleString()} flights</b>`
                 : `TFMS: <b>--</b>`;
-            const fidoEl = document.getElementById('fdioCount');
+            const fidoEl = document.getElementById('tfmCount');
             if (fidoEl) fidoEl.textContent =
                 `${(ts.flightCount || 0).toLocaleString()} flights  ${(ts.tmiCount || 0)} TMIs`;
         }

@@ -5848,6 +5848,11 @@ document.getElementById('fm-close').addEventListener('auxclick', e => {
 document.getElementById('fm-title').addEventListener('auxclick', e => {
     if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeFieldMenu(); }
 });
+// Close field menu when clicking anywhere outside it
+document.addEventListener('mousedown', e => {
+    const fm = document.getElementById('field-menu');
+    if (fm.style.display !== 'none' && !fm.contains(e.target)) closeFieldMenu();
+});
 
 // ── Helpers: directly set local state (bypass ownership checks) ──
 function menuSetAlt(gufi, fl) {

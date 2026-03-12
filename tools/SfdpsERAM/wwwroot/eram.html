@@ -5931,13 +5931,13 @@ function buildAltMenuBody(gufi) {
     let html = '';
     // FP assigned row — shown when interim is active; click clears interim
     if (interim != null && assigned != null) {
-        html += `<div class="field-menu-row" data-action="clear-interim">\u00a0\u00a0FP\u00a0\u00a0${String(assignedFL).padStart(3,'0')}</div>`;
+        html += `<div class="field-menu-row fm-toggle" data-action="clear-interim">\u00a0\u00a0FP\u00a0\u00a0${String(assignedFL).padStart(3,'0')}</div>`;
     }
     // Current interim row (if interim set, show its value + type letter)
     if (interim != null) {
         const ifl = String(interimFL).padStart(3, '0');
         const letter = interimType === 'L' ? 'L' : interimType === 'P' ? 'P' : 'T';
-        html += `<div class="field-menu-row">\u00a0\u00a0${ifl}\u00a0\u00a0${letter}</div>`;
+        html += `<div class="field-menu-row fm-toggle">\u00a0\u00a0${ifl}\u00a0\u00a0${letter}</div>`;
     }
     // LOCAL TALT / PROCEDURE toggles
     html += `<div class="field-menu-row fm-toggle${altMenuLocalTalt ? ' toggle-active' : ''}" data-action="toggle-local">LOCAL\u00a0\u00a0TALT</div>`;

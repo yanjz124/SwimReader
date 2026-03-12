@@ -3560,24 +3560,22 @@ function findRouteProgress(waypoints, lat, lon, vx, vy) {
     let bestDist = Infinity, bestIdx = 0, bestFrac = 0;
     const hasVel = vx != null && vy != null && (vx !== 0 || vy !== 0);
 
+    const cosLat = Math.cos(lat * Math.PI / 180);  // longitude scaling at aircraft latitude
     for (let i = 0; i < waypoints.length - 1; i++) {
         const [aLat, aLon] = waypoints[i];
         const [bLat, bLon] = waypoints[i + 1];
-        // Project point onto segment (flat approximation for nearby points)
-        const dx = bLon - aLon, dy = bLat - aLat;
+        // Project point onto segment (equirectangular — scale lon by cos(lat))
+        const dx = (bLon - aLon) * cosLat, dy = bLat - aLat;
         const lenSq = dx * dx + dy * dy;
-        let t = lenSq > 0 ? ((lon - aLon) * dx + (lat - aLat) * dy) / lenSq : 0;
+        let t = lenSq > 0 ? (((lon - aLon) * cosLat) * dx + (lat - aLat) * dy) / lenSq : 0;
         t = Math.max(0, Math.min(1, t));
-        const pLat = aLat + t * dy, pLon = aLon + t * dx;
+        const pLat = aLat + t * (bLat - aLat), pLon = aLon + t * (bLon - aLon);
         let d = gcDistNm(lat, lon, pLat, pLon);
         // Direction penalty: if aircraft velocity opposes this segment direction, add penalty
+        // dx/dy are already equirectangular-scaled (lon*cosLat, lat) — same space as vx(east)/vy(north)
         if (hasVel && lenSq > 0) {
-            // Segment direction (in lon/lat space, similar to vx/vy east/north)
             const segLen = Math.sqrt(lenSq);
-            const segDx = dx / segLen, segDy = dy / segLen;
-            const velLen = Math.sqrt(vx * vx + vy * vy);
-            const velDx = vx / velLen, velDy = vy / velLen;
-            const dot = segDx * velDx + segDy * velDy;  // -1 to 1
+            const dot = (dx * vx + dy * vy) / (segLen * Math.sqrt(vx * vx + vy * vy));
             if (dot < 0) d += 50;  // 50nm penalty for backwards-facing segments
         }
         if (d < bestDist) { bestDist = d; bestIdx = i; bestFrac = t; }

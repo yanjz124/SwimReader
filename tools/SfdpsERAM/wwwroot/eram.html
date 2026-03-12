@@ -5863,7 +5863,10 @@ function openAltMenu(gufi, clientX, clientY) {
     // Center page around current altitude
     const localA = localAssignedAlt.get(gufi);
     const assigned = localA ? localA.feet : (f.assignedAltitude ?? null);
-    if (assigned != null) altMenuPage = Math.max(0, Math.floor(Math.round(assigned / 1000) / 7) - 1);
+    if (assigned != null) {
+        const fl = Math.round(assigned / 100);
+        altMenuPage = Math.max(0, Math.floor((fl - 10) / 70));
+    }
     openFieldMenu(gufi, 'alt', clientX, clientY, buildAltMenuBody(gufi));
 }
 
@@ -5927,8 +5930,8 @@ function openHdgMenu(gufi, clientX, clientY) {
     // Center page around current heading
     const hsf = getEffectiveHsf(f);
     if (hsf && hsf.heading) {
-        const h = parseInt(hsf.heading);
-        if (!isNaN(h)) hdgMenuPage = Math.max(0, Math.floor((h / 5 - 7) / 14));
+        const h = parseInt(hsf.heading.replace(/^H/, ''));
+        if (!isNaN(h)) hdgMenuPage = Math.max(0, Math.floor((h - 5) / 70));
     }
     openFieldMenu(gufi, 'hdg', clientX, clientY, buildHdgMenuBody(gufi));
 }
@@ -5937,7 +5940,8 @@ function buildHdgMenuBody(gufi) {
     const f = flights.get(gufi);
     if (!f) return '';
     const hsf = getEffectiveHsf(f);
-    const curHdg = hsf && hsf.heading ? parseInt(hsf.heading) : null;
+    const rawHdg = hsf?.heading?.replace(/^H/, '') || '';
+    const curHdg = /^\d+$/.test(rawHdg) ? parseInt(rawHdg) : null;
 
     let html = '<div class="field-menu-hdr">';
     html += `<span data-action="hdg-lt"${hdgMenuLT ? ' class="active"' : ''}>LT</span>`;
@@ -6030,7 +6034,7 @@ function buildSpdMenuBody(gufi) {
             if (k < 150) continue;
             const suffix = spdMenuPlus ? '+' : spdMenuMinus ? '-' : '';
             const display = `${k}${suffix}`;
-            const isCurrent = curSpd && parseInt(curSpd) === k;
+            const isCurrent = curSpd && parseInt(curSpd.replace(/^S/, '').replace(/[+-]/g, '')) === k;
             const cls = isCurrent ? ' current' : '';
             html += `<div class="field-menu-row${cls}" data-action="set-spd" data-spd="${k}">  ${display}</div>`;
         }

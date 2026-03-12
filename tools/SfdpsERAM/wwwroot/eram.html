@@ -247,20 +247,20 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .field-menu-close { color: #fff; cursor: pointer; padding: 0 4px; }
 .field-menu-close:hover { color: #ff4444; }
 .field-menu-body { padding: 3px 6px; }
-.field-menu-row { padding: 2px 0; cursor: pointer; white-space: pre; color: #ccc; }
+.field-menu-row { padding: 2px 0; cursor: pointer; white-space: pre; color: #ddd; }
 .field-menu-row:hover { background: #444; }
-.field-menu-row.current { color: #ff6666; }
-.field-menu-row.toggle-active { color: #cccc44; }
+.field-menu-row.current { background: #cd5c5c; color: #fff; }
+.field-menu-row.toggle-active { color: #fff; }
 .field-menu-divider { border-top: 1px solid #555; margin: 2px 0; }
 .field-menu-scroll { display: flex; justify-content: space-between; padding: 1px 0; }
 .field-menu-scroll span { cursor: pointer; color: #888; padding: 0 4px; }
 .field-menu-scroll span:hover { color: #fff; }
 .field-menu-hdr { display: flex; gap: 6px; padding: 2px 0; }
-.field-menu-hdr span { cursor: pointer; color: #888; padding: 1px 4px; }
+.field-menu-hdr span { cursor: pointer; color: #888; padding: 1px 4px; border: 1px solid transparent; }
 .field-menu-hdr span:hover { color: #fff; }
-.field-menu-hdr span.active { color: #cccc44; border: 1px solid #cccc44; }
+.field-menu-hdr span.active { color: #fff; border: 1px solid #fff; }
 .field-menu-input {
-    background: #111; color: #ccc; border: 1px solid #555;
+    background: #111; color: #ddd; border: 1px solid #555;
     font-family: inherit; font-size: inherit; width: 100%; padding: 2px 4px;
     outline: none;
 }
@@ -5945,8 +5945,8 @@ function buildAltMenuBody(gufi) {
         // Interim type letter: L for local, P for procedure, T for standard
         const tLetter = isInterim ? (interimType === 'L' ? 'L' : interimType === 'P' ? 'P' : 'T') : 'T';
         const cls = isCurrent ? ' current' : '';
-        const tStyle = isInterim ? ' style="color:#ff6666"' : '';
-        html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">\u00a0\u00a0${flStr}\u00a0\u00a0<span data-action="set-interim" data-fl="${fl}"${tStyle}>${tLetter}</span></div>`;
+        const tStyle = isInterim ? ' class="current"' : '';
+        html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">\u00a0\u00a0${flStr}\u00a0\u00a0<span data-action="set-interim" data-fl="${fl}"${isInterim ? ' style="background:#cd5c5c"' : ''}>${tLetter}</span></div>`;
     }
 
     html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
@@ -6010,7 +6010,7 @@ function buildHdgMenuBody(gufi) {
 
     html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
     html += '<div class="field-menu-divider"></div>';
-    html += `<div class="field-menu-row" data-action="delete-hdg" style="color:#00cc00">DELETE</div>`;
+    html += `<div class="field-menu-row" data-action="delete-hdg" style="color:#ddd">DELETE</div>`;
     return html;
 }
 
@@ -6076,7 +6076,7 @@ function buildSpdMenuBody(gufi) {
     html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
     html += '<div class="field-menu-divider"></div>';
     html += `<div style="display:flex;justify-content:space-between;padding:2px 6px;">`;
-    html += `<span class="field-menu-row" data-action="delete-spd" style="color:#00cc00;padding:0">DEL</span>`;
+    html += `<span class="field-menu-row" data-action="delete-spd" style="color:#ddd;padding:0">DEL</span>`;
     html += `<span style="color:#888">${curSpd || ''}</span></div>`;
     return html;
 }
@@ -6094,7 +6094,7 @@ function openTxtMenu(gufi, clientX, clientY) {
     const curText = hsf ? (hsf.freeText || '') : '';
     let html = `<input class="field-menu-input" id="fm-txt-input" value="${curText.replace(/"/g, '&quot;')}" maxlength="20">`;
     html += '<div class="field-menu-divider"></div>';
-    html += `<div class="field-menu-row" data-action="delete-txt" style="color:#00cc00">DELETE</div>`;
+    html += `<div class="field-menu-row" data-action="delete-txt" style="color:#ddd">DELETE</div>`;
     openFieldMenu(gufi, 'txt', clientX, clientY, html);
     const inp = document.getElementById('fm-txt-input');
     if (inp) {
@@ -6130,7 +6130,7 @@ function handleFieldMenuClick(e) {
     if (fieldMenuType === 'alt') {
         if (action === 'clear-interim') {
             menuClearInterim(gufi);
-            refreshAltMenu();
+            closeFieldMenu();
         } else if (action === 'toggle-local') {
             altMenuLocalTalt = !altMenuLocalTalt;
             if (altMenuLocalTalt) altMenuProcedure = false;
@@ -6145,12 +6145,12 @@ function handleFieldMenuClick(e) {
             if (altMenuLocalTalt) menuSetInterim(gufi, fl, 'L');
             else if (altMenuProcedure) menuSetInterim(gufi, fl, 'P');
             else menuSetAlt(gufi, fl);
-            refreshAltMenu();
+            closeFieldMenu();
         } else if (action === 'set-interim') {
             const fl = el.closest('[data-fl]')?.dataset?.fl;
             if (!fl) return;
             menuSetInterim(gufi, fl, 'I');
-            refreshAltMenu();
+            closeFieldMenu();
         } else if (action === 'scroll-up') {
             altMenuPage = Math.max(0, altMenuPage - 1);
             refreshAltMenu();

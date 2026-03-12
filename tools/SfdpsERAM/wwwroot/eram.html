@@ -5849,6 +5849,43 @@ document.getElementById('fm-title').addEventListener('auxclick', e => {
     if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeFieldMenu(); }
 });
 
+// ── Helpers: directly set local state (bypass ownership checks) ──
+function menuSetAlt(gufi, fl) {
+    const f = flights.get(gufi);
+    if (!f) return;
+    const feet = parseInt(fl) * 100;
+    localAssignedAlt.set(gufi, { feet, rules: null, block: null, serverVal: f.assignedAltitude ?? null });
+    invalidateMarker(gufi);
+}
+function menuSetInterim(gufi, fl, type) {
+    const f = flights.get(gufi);
+    if (!f) return;
+    const feet = parseInt(fl) * 100;
+    localInterimAlt.set(gufi, { feet, type: type || 'I', serverVal: f.interimAltitude ?? null });
+    invalidateMarker(gufi);
+}
+function menuClearInterim(gufi) {
+    localInterimAlt.delete(gufi);
+    invalidateMarker(gufi);
+}
+function menuSetHsf(gufi, field, value) {
+    const entry = hsfData.get(gufi) || {};
+    entry[field] = value;
+    hsfData.set(gufi, entry);
+    invalidateMarker(gufi);
+}
+function menuClearHsf(gufi, field) {
+    const entry = hsfData.get(gufi);
+    if (entry) { delete entry[field]; if (!entry.heading && !entry.speed && !entry.freeText) hsfData.delete(gufi); }
+    hsfShowMap.delete(gufi);
+    invalidateMarker(gufi);
+}
+function menuClearAllHsf(gufi) {
+    hsfData.delete(gufi);
+    hsfShowMap.delete(gufi);
+    invalidateMarker(gufi);
+}
+
 // ── Altitude Menu ──
 let altMenuPage = 0;
 let altMenuLocalTalt = false;
@@ -5860,7 +5897,6 @@ function openAltMenu(gufi, clientX, clientY) {
     altMenuPage = 0;
     altMenuLocalTalt = false;
     altMenuProcedure = false;
-    // Center page around current altitude
     const localA = localAssignedAlt.get(gufi);
     const assigned = localA ? localA.feet : (f.assignedAltitude ?? null);
     if (assigned != null) {
@@ -5877,20 +5913,25 @@ function buildAltMenuBody(gufi) {
     const localI = localInterimAlt.get(gufi);
     const assigned = localA ? localA.feet : (f.assignedAltitude ?? null);
     const interim = localI ? localI.feet : (f.interimAltitude ?? null);
+    const interimType = localI ? localI.type : 'I';
     const assignedFL = assigned != null ? Math.round(assigned / 100) : null;
     const interimFL = interim != null ? Math.round(interim / 100) : null;
 
     let html = '';
-    // FP assigned row (shown when interim/procedure is active — click clears interim)
+    // FP assigned row — shown when interim is active; click clears interim
     if (interim != null && assigned != null) {
-        html += `<div class="field-menu-row" data-action="clear-interim" style="color:#888">  FP  ${String(assignedFL).padStart(3,'0')}</div>`;
+        html += `<div class="field-menu-row" data-action="clear-interim" style="color:#888">\u00a0\u00a0FP\u00a0\u00a0${String(assignedFL).padStart(3,'0')}</div>`;
+    }
+    // Current interim row (if interim set, show its value + type letter)
+    if (interim != null) {
+        const ifl = String(interimFL).padStart(3, '0');
+        const letter = interimType === 'L' ? 'L' : interimType === 'P' ? 'P' : 'T';
+        html += `<div class="field-menu-row" style="color:#888">\u00a0\u00a0${ifl}\u00a0\u00a0${letter}</div>`;
     }
     // LOCAL TALT / PROCEDURE toggles
-    html += `<div class="field-menu-row${altMenuLocalTalt ? ' toggle-active' : ''}" data-action="toggle-local">LOCAL  TALT</div>`;
+    html += `<div class="field-menu-row${altMenuLocalTalt ? ' toggle-active' : ''}" data-action="toggle-local">LOCAL\u00a0\u00a0TALT</div>`;
     html += `<div class="field-menu-row${altMenuProcedure ? ' toggle-active' : ''}" data-action="toggle-proc">PROCEDURE</div>`;
     html += `<div class="field-menu-divider"></div>`;
-
-    // Scroll up
     html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
 
     // 7 altitude values per page (FL 010 to FL 600, step 10 = 1000ft)
@@ -5901,12 +5942,13 @@ function buildAltMenuBody(gufi) {
         const flStr = String(fl).padStart(3, '0');
         const isCurrent = (assignedFL === fl);
         const isInterim = (interimFL === fl);
+        // Interim type letter: L for local, P for procedure, T for standard
+        const tLetter = isInterim ? (interimType === 'L' ? 'L' : interimType === 'P' ? 'P' : 'T') : 'T';
         const cls = isCurrent ? ' current' : '';
-        const tCls = isInterim ? ' style="color:#ff6666"' : '';
-        html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">  ${flStr}  <span data-action="set-interim" data-fl="${fl}"${tCls}>T</span></div>`;
+        const tStyle = isInterim ? ' style="color:#ff6666"' : '';
+        html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">\u00a0\u00a0${flStr}\u00a0\u00a0<span data-action="set-interim" data-fl="${fl}"${tStyle}>${tLetter}</span></div>`;
     }
 
-    // Scroll down
     html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
     return html;
 }
@@ -5927,10 +5969,9 @@ function openHdgMenu(gufi, clientX, clientY) {
     hdgMenuPage = 0;
     hdgMenuLT = false;
     hdgMenuRT = false;
-    // Center page around current heading
     const hsf = getEffectiveHsf(f);
     if (hsf && hsf.heading) {
-        const h = parseInt(hsf.heading.replace(/^H/, ''));
+        const h = parseInt(String(hsf.heading).replace(/^H/, ''));
         if (!isNaN(h)) hdgMenuPage = Math.max(0, Math.floor((h - 5) / 70));
     }
     openFieldMenu(gufi, 'hdg', clientX, clientY, buildHdgMenuBody(gufi));
@@ -5940,31 +5981,28 @@ function buildHdgMenuBody(gufi) {
     const f = flights.get(gufi);
     if (!f) return '';
     const hsf = getEffectiveHsf(f);
-    const rawHdg = hsf?.heading?.replace(/^H/, '') || '';
+    const rawHdg = String(hsf?.heading || '').replace(/^H/, '');
     const curHdg = /^\d+$/.test(rawHdg) ? parseInt(rawHdg) : null;
 
     let html = '<div class="field-menu-hdr">';
     html += `<span data-action="hdg-lt"${hdgMenuLT ? ' class="active"' : ''}>LT</span>`;
     html += `<span data-action="hdg-ph">PH</span>`;
     html += `<span data-action="hdg-rt"${hdgMenuRT ? ' class="active"' : ''}>RT</span>`;
-    html += '</div>';
-    html += '<div class="field-menu-divider"></div>';
+    html += '</div><div class="field-menu-divider"></div>';
     html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
 
     // 14 heading values per page (2 columns × 7 rows), step 5°
-    const startH = hdgMenuPage * 70 + 5;  // 70 = 14 values × 5°
+    const startH = hdgMenuPage * 70 + 5;
     for (let row = 6; row >= 0; row--) {
         const h1 = startH + row * 10;
         const h2 = startH + row * 10 + 5;
-        let rowHtml = '<div class="field-menu-row" style="display:flex;gap:6px;">';
+        let rowHtml = '<div style="display:flex;gap:8px;padding:1px 4px;">';
         for (const h of [h1, h2]) {
-            if (h > 360) { rowHtml += '<span style="width:4ch"></span>'; continue; }
-            const hVal = h > 360 ? null : h;
-            if (hVal == null) { rowHtml += '<span style="width:4ch"></span>'; continue; }
+            if (h > 360) { rowHtml += '<span style="width:4ch">\u00a0</span>'; continue; }
             const suffix = hdgMenuLT ? 'L' : hdgMenuRT ? 'R' : '';
-            const display = String(hVal).padStart(3, '0') + suffix;
-            const cls = (curHdg === hVal) ? ' current' : '';
-            rowHtml += `<span class="field-menu-row${cls}" data-action="set-hdg" data-hdg="${hVal}" style="padding:0 2px;cursor:pointer">${display}</span>`;
+            const display = String(h).padStart(3, '0') + suffix;
+            const cls = (curHdg === h) ? ' current' : '';
+            rowHtml += `<span class="field-menu-row${cls}" data-action="set-hdg" data-hdg="${h}" style="cursor:pointer;padding:0 2px">${display}</span>`;
         }
         rowHtml += '</div>';
         html += rowHtml;
@@ -5972,7 +6010,7 @@ function buildHdgMenuBody(gufi) {
 
     html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
     html += '<div class="field-menu-divider"></div>';
-    html += `<div class="field-menu-row" data-action="delete-hdg" style="color:#ff6666">DELETE</div>`;
+    html += `<div class="field-menu-row" data-action="delete-hdg" style="color:#00cc00">DELETE</div>`;
     return html;
 }
 
@@ -5991,7 +6029,6 @@ function openSpdMenu(gufi, clientX, clientY) {
     const f = flights.get(gufi);
     if (!f) return;
     spdMenuPage = 0;
-    // Detect if current speed is Mach
     const hsf = getEffectiveHsf(f);
     spdMenuMach = !!(hsf && hsf.speed && /^M/i.test(hsf.speed));
     spdMenuPlus = !!(hsf && hsf.speed && /\+$/.test(hsf.speed));
@@ -6009,44 +6046,38 @@ function buildSpdMenuBody(gufi) {
     html += `<span data-action="spd-mach"${spdMenuMach ? ' class="active"' : ''}>${spdMenuMach ? 'M' : 'KT'}</span>`;
     html += `<span data-action="spd-plus"${spdMenuPlus ? ' class="active"' : ''}>+</span>`;
     html += `<span data-action="spd-minus"${spdMenuMinus ? ' class="active"' : ''}>-</span>`;
-    html += '</div>';
-    html += '<div class="field-menu-divider"></div>';
+    html += '</div><div class="field-menu-divider"></div>';
     html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
 
     if (spdMenuMach) {
-        // Mach: .60 to .92, step .01, 7 per page
         const startM = 92 - spdMenuPage * 7;
         for (let i = 0; i < 7; i++) {
             const m = startM - i;
             if (m < 60) continue;
             const suffix = spdMenuPlus ? '+' : spdMenuMinus ? '-' : '';
             const display = `.${m}${suffix}`;
-            const matchVal = `M${m}`;
-            const isCurrent = curSpd && curSpd.replace(/[+-]/g, '') === matchVal;
+            const isCurrent = curSpd && curSpd.replace(/[+-]/g, '').toUpperCase() === `M${m}`;
             const cls = isCurrent ? ' current' : '';
-            html += `<div class="field-menu-row${cls}" data-action="set-spd" data-spd="M${m}">  ${display}</div>`;
+            html += `<div class="field-menu-row${cls}" data-action="set-spd" data-spd="M${m}">\u00a0\u00a0${display}</div>`;
         }
     } else {
-        // Knots: 150-350, step 10, 7 per page
-        const startK = 350 - spdMenuPage * 70;
+        const startK = 500 - spdMenuPage * 70;
         for (let i = 0; i < 7; i++) {
             const k = startK - i * 10;
-            if (k < 150) continue;
+            if (k < 100) continue;
             const suffix = spdMenuPlus ? '+' : spdMenuMinus ? '-' : '';
             const display = `${k}${suffix}`;
-            const isCurrent = curSpd && parseInt(curSpd.replace(/^S/, '').replace(/[+-]/g, '')) === k;
+            const isCurrent = curSpd && parseInt(String(curSpd).replace(/^S/, '').replace(/[+-]/g, '')) === k;
             const cls = isCurrent ? ' current' : '';
-            html += `<div class="field-menu-row${cls}" data-action="set-spd" data-spd="${k}">  ${display}</div>`;
+            html += `<div class="field-menu-row${cls}" data-action="set-spd" data-spd="${k}">\u00a0\u00a0${display}</div>`;
         }
     }
 
     html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
     html += '<div class="field-menu-divider"></div>';
-    const curDisplay = curSpd || '';
-    html += `<div style="display:flex;justify-content:space-between;padding:2px 0;">`;
-    html += `<span class="field-menu-row" data-action="delete-spd" style="color:#ff6666;padding:0">DEL</span>`;
-    html += `<span style="color:#888">${curDisplay}</span>`;
-    html += `</div>`;
+    html += `<div style="display:flex;justify-content:space-between;padding:2px 6px;">`;
+    html += `<span class="field-menu-row" data-action="delete-spd" style="color:#00cc00;padding:0">DEL</span>`;
+    html += `<span style="color:#888">${curSpd || ''}</span></div>`;
     return html;
 }
 
@@ -6063,19 +6094,18 @@ function openTxtMenu(gufi, clientX, clientY) {
     const curText = hsf ? (hsf.freeText || '') : '';
     let html = `<input class="field-menu-input" id="fm-txt-input" value="${curText.replace(/"/g, '&quot;')}" maxlength="20">`;
     html += '<div class="field-menu-divider"></div>';
-    html += `<div class="field-menu-row" data-action="delete-txt" style="color:#ff6666">DELETE</div>`;
+    html += `<div class="field-menu-row" data-action="delete-txt" style="color:#00cc00">DELETE</div>`;
     openFieldMenu(gufi, 'txt', clientX, clientY, html);
     const inp = document.getElementById('fm-txt-input');
     if (inp) {
         inp.focus();
         inp.addEventListener('keydown', e => {
-            e.stopPropagation(); // prevent MCA from capturing
+            e.stopPropagation();
             if (e.key === 'Enter') {
-                const text = inp.value.trim();
+                const text = inp.value.trim().toUpperCase();
                 if (text && fieldMenuGufi) {
-                    const flid = getFlid(flights.get(fieldMenuGufi));
-                    if (flid) processCommand('QS `' + text + ' ' + flid);
-                    invalidateMarker(fieldMenuGufi);
+                    menuSetHsf(fieldMenuGufi, 'freeText', text);
+                    hsfShowMap.add(fieldMenuGufi);
                 }
                 closeFieldMenu();
             } else if (e.key === 'Escape') {
@@ -6085,23 +6115,21 @@ function openTxtMenu(gufi, clientX, clientY) {
     }
 }
 
-// ── Field menu body click handler ──
+// ── Field menu body click handler (directly sets local state — no ownership check) ──
 function handleFieldMenuClick(e) {
-    const action = e.target.dataset?.action || e.target.closest('[data-action]')?.dataset?.action;
+    const el = e.target.closest('[data-action]');
+    const action = el?.dataset?.action;
     if (!action) return;
     e.stopPropagation();
     const gufi = fieldMenuGufi;
     if (!gufi) return;
     const f = flights.get(gufi);
     if (!f) return;
-    const flid = getFlid(f);
-    if (!flid) return;
 
     // Altitude menu actions
     if (fieldMenuType === 'alt') {
         if (action === 'clear-interim') {
-            processCommand('QQ ' + flid);
-            invalidateMarker(gufi);
+            menuClearInterim(gufi);
             refreshAltMenu();
         } else if (action === 'toggle-local') {
             altMenuLocalTalt = !altMenuLocalTalt;
@@ -6112,22 +6140,16 @@ function handleFieldMenuClick(e) {
             if (altMenuProcedure) altMenuLocalTalt = false;
             refreshAltMenu();
         } else if (action === 'set-alt') {
-            const fl = e.target.closest('[data-fl]')?.dataset?.fl;
+            const fl = el.closest('[data-fl]')?.dataset?.fl;
             if (!fl) return;
-            if (altMenuLocalTalt) {
-                processCommand('QQ L' + fl + ' ' + flid);
-            } else if (altMenuProcedure) {
-                processCommand('QQ P' + fl + ' ' + flid);
-            } else {
-                processCommand('QZ ' + fl + ' ' + flid);
-            }
-            invalidateMarker(gufi);
+            if (altMenuLocalTalt) menuSetInterim(gufi, fl, 'L');
+            else if (altMenuProcedure) menuSetInterim(gufi, fl, 'P');
+            else menuSetAlt(gufi, fl);
             refreshAltMenu();
         } else if (action === 'set-interim') {
-            const fl = e.target.closest('[data-fl]')?.dataset?.fl;
+            const fl = el.closest('[data-fl]')?.dataset?.fl;
             if (!fl) return;
-            processCommand('QQ ' + fl + ' ' + flid);
-            invalidateMarker(gufi);
+            menuSetInterim(gufi, fl, 'I');
             refreshAltMenu();
         } else if (action === 'scroll-up') {
             altMenuPage = Math.max(0, altMenuPage - 1);
@@ -6141,81 +6163,60 @@ function handleFieldMenuClick(e) {
     // Heading menu actions
     if (fieldMenuType === 'hdg') {
         if (action === 'hdg-lt') {
-            hdgMenuLT = !hdgMenuLT;
-            if (hdgMenuLT) hdgMenuRT = false;
+            hdgMenuLT = !hdgMenuLT; if (hdgMenuLT) hdgMenuRT = false;
             refreshHdgMenu();
         } else if (action === 'hdg-rt') {
-            hdgMenuRT = !hdgMenuRT;
-            if (hdgMenuRT) hdgMenuLT = false;
+            hdgMenuRT = !hdgMenuRT; if (hdgMenuRT) hdgMenuLT = false;
             refreshHdgMenu();
         } else if (action === 'hdg-ph') {
-            // Assign present heading (track heading rounded to nearest 5°)
             const hdg = f.trackVelocityX != null && f.trackVelocityY != null
                 ? Math.round(((Math.atan2(f.trackVelocityX, f.trackVelocityY) * 180 / Math.PI + 360) % 360) / 5) * 5 || 360
                 : null;
-            if (hdg) {
-                processCommand('QS ' + String(hdg).padStart(3, '0') + ' ' + flid);
-                invalidateMarker(gufi);
-            }
+            if (hdg) menuSetHsf(gufi, 'heading', String(hdg).padStart(3, '0'));
             closeFieldMenu();
         } else if (action === 'set-hdg') {
-            const hdg = e.target.closest('[data-hdg]')?.dataset?.hdg;
+            const hdg = el.closest('[data-hdg]')?.dataset?.hdg;
             if (!hdg) return;
-            processCommand('QS ' + String(hdg).padStart(3, '0') + ' ' + flid);
-            invalidateMarker(gufi);
+            menuSetHsf(gufi, 'heading', String(hdg).padStart(3, '0'));
             closeFieldMenu();
         } else if (action === 'delete-hdg') {
-            processCommand('QS */ ' + flid);
-            invalidateMarker(gufi);
+            menuClearHsf(gufi, 'heading');
             closeFieldMenu();
         } else if (action === 'scroll-up') {
-            hdgMenuPage = Math.max(0, hdgMenuPage - 1);
-            refreshHdgMenu();
+            hdgMenuPage = Math.max(0, hdgMenuPage - 1); refreshHdgMenu();
         } else if (action === 'scroll-down') {
-            hdgMenuPage++;
-            refreshHdgMenu();
+            hdgMenuPage++; refreshHdgMenu();
         }
     }
 
     // Speed menu actions
     if (fieldMenuType === 'spd') {
         if (action === 'spd-mach') {
-            spdMenuMach = !spdMenuMach;
-            spdMenuPage = 0;
-            refreshSpdMenu();
+            spdMenuMach = !spdMenuMach; spdMenuPage = 0; refreshSpdMenu();
         } else if (action === 'spd-plus') {
-            spdMenuPlus = !spdMenuPlus;
-            if (spdMenuPlus) spdMenuMinus = false;
-            refreshSpdMenu();
+            spdMenuPlus = !spdMenuPlus; if (spdMenuPlus) spdMenuMinus = false; refreshSpdMenu();
         } else if (action === 'spd-minus') {
-            spdMenuMinus = !spdMenuMinus;
-            if (spdMenuMinus) spdMenuPlus = false;
-            refreshSpdMenu();
+            spdMenuMinus = !spdMenuMinus; if (spdMenuMinus) spdMenuPlus = false; refreshSpdMenu();
         } else if (action === 'set-spd') {
-            let spd = e.target.closest('[data-spd]')?.dataset?.spd;
+            let spd = el.closest('[data-spd]')?.dataset?.spd;
             if (!spd) return;
             const suffix = spdMenuPlus ? '+' : spdMenuMinus ? '-' : '';
-            processCommand('QS /' + spd + suffix + ' ' + flid);
-            invalidateMarker(gufi);
+            menuSetHsf(gufi, 'speed', spd + suffix);
             closeFieldMenu();
         } else if (action === 'delete-spd') {
-            processCommand('QS /* ' + flid);
-            invalidateMarker(gufi);
+            menuClearHsf(gufi, 'speed');
             closeFieldMenu();
         } else if (action === 'scroll-up') {
-            spdMenuPage = Math.max(0, spdMenuPage - 1);
-            refreshSpdMenu();
+            spdMenuPage = Math.max(0, spdMenuPage - 1); refreshSpdMenu();
         } else if (action === 'scroll-down') {
-            spdMenuPage++;
-            refreshSpdMenu();
+            spdMenuPage++; refreshSpdMenu();
         }
     }
 
     // Free text menu actions
     if (fieldMenuType === 'txt') {
         if (action === 'delete-txt') {
-            processCommand('QS * ' + flid);
-            invalidateMarker(gufi);
+            menuClearAllHsf(gufi);
             closeFieldMenu();
         }
     }

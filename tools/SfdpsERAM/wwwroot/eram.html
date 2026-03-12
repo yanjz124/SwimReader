@@ -222,7 +222,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     position: absolute; z-index: 1050;
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     font-size: 18px; letter-spacing: 2px;
-    color: #cccc44; background: rgba(0,0,0,0.6);
+    color: #ffffff; background: rgba(0,0,0,0.6);
     padding: 2px 8px; cursor: move; user-select: none;
     border: 1px solid transparent;
     top: 10px; right: 60px;
@@ -5791,7 +5791,7 @@ document.getElementById('po-menu-body').addEventListener('auxclick', (e) => {
 setupBoxDrag(document.getElementById('time-view'));
 setInterval(() => {
     const now = new Date();
-    const hh = String(now.getUTCHours()).padStart(2, '0');
+    const hh = String(now.getUTCHours());
     const mm = String(now.getUTCMinutes()).padStart(2, '0');
     const ss = String(now.getUTCSeconds()).padStart(2, '0');
     document.getElementById('time-view').textContent = `\u00D8${hh}${mm} ${ss}`;
@@ -5800,7 +5800,7 @@ setInterval(() => {
 {
     const now = new Date();
     document.getElementById('time-view').textContent =
-        `\u00D8${String(now.getUTCHours()).padStart(2,'0')}${String(now.getUTCMinutes()).padStart(2,'0')} ${String(now.getUTCSeconds()).padStart(2,'0')}`;
+        `\u00D8${String(now.getUTCHours())}${String(now.getUTCMinutes()).padStart(2,'0')} ${String(now.getUTCSeconds()).padStart(2,'0')}`;
 }
 // Middle-click toggles border
 document.getElementById('time-view').addEventListener('auxclick', e => {

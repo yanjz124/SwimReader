@@ -217,6 +217,55 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .po-recv-pending { color: #00cccc; border-color: #00cccc; }
 .po-acked { color: #fff; border-color: transparent; }
 
+/* ── Zulu Time View ── */
+#time-view {
+    position: absolute; z-index: 1050;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 18px; letter-spacing: 2px;
+    color: #cccc44; background: rgba(0,0,0,0.6);
+    padding: 2px 8px; cursor: move; user-select: none;
+    border: 1px solid transparent;
+    top: 10px; right: 60px;
+}
+#time-view.bordered { border-color: #555; }
+#time-view.box-dragging { outline: 2px solid #fff; }
+
+/* ── Field menus (altitude, heading, speed, free text) ── */
+.field-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
+    user-select: none; background: #222; border: 1px solid #888;
+    min-width: 120px;
+}
+.field-menu.box-dragging { outline: 2px solid #fff; cursor: move; }
+.field-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 2px 6px; border-bottom: 1px solid #555; background: #333; cursor: move;
+}
+.field-menu-cs { color: #fff; }
+.field-menu-close { color: #fff; cursor: pointer; padding: 0 4px; }
+.field-menu-close:hover { color: #ff4444; }
+.field-menu-body { padding: 3px 6px; }
+.field-menu-row { padding: 2px 0; cursor: pointer; white-space: pre; color: #ccc; }
+.field-menu-row:hover { background: #444; }
+.field-menu-row.current { color: #ff6666; }
+.field-menu-row.toggle-active { color: #cccc44; }
+.field-menu-divider { border-top: 1px solid #555; margin: 2px 0; }
+.field-menu-scroll { display: flex; justify-content: space-between; padding: 1px 0; }
+.field-menu-scroll span { cursor: pointer; color: #888; padding: 0 4px; }
+.field-menu-scroll span:hover { color: #fff; }
+.field-menu-hdr { display: flex; gap: 6px; padding: 2px 0; }
+.field-menu-hdr span { cursor: pointer; color: #888; padding: 1px 4px; }
+.field-menu-hdr span:hover { color: #fff; }
+.field-menu-hdr span.active { color: #cccc44; border: 1px solid #cccc44; }
+.field-menu-input {
+    background: #111; color: #ccc; border: 1px solid #555;
+    font-family: inherit; font-size: inherit; width: 100%; padding: 2px 4px;
+    outline: none;
+}
+.field-menu-input:focus { border-color: #cccc44; }
+
 /* ── Flight detail (sidebar panel) ── */
 #flight-detail-section { display: none; }
 #flight-detail-section .fd-title { color: #cccc44; font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
@@ -557,6 +606,14 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
                 <span id="po-menu-close">X</span>
             </div>
             <div id="po-menu-body"></div>
+        </div>
+        <div id="time-view" class="bordered"></div>
+        <div id="field-menu" class="field-menu" style="display:none;">
+            <div class="field-menu-title" id="fm-title">
+                <span class="field-menu-cs" id="fm-cs"></span>
+                <span class="field-menu-close" id="fm-close">X</span>
+            </div>
+            <div class="field-menu-body" id="fm-body"></div>
         </div>
     </div>
 </div>
@@ -1107,6 +1164,7 @@ map.on('zoomstart', () => {
 let _overlayRafPending = false;
 map.on('move zoom viewreset resize', () => {
     closePointoutMenu();
+    closeFieldMenu();
     if (!_overlayRafPending) {
         _overlayRafPending = true;
         requestAnimationFrame(() => {
@@ -2949,6 +3007,36 @@ function doRender() {
                             }
                             return;
                         }
+                        // Field menu detection (FDB only): line 2 = altitude, line 3 = heading/speed, line 4 = free text
+                        if (dbEl.classList.contains('fdb') && mca.text.trim().length === 0) {
+                            const lineIdx = Math.floor((e.clientY - fieldATop) / LINE_H);
+                            if (lineIdx === 1) { // Line 2: altitude
+                                openAltMenu(gufi, e.clientX, e.clientY);
+                                return;
+                            }
+                            if (lineIdx === 2) { // Line 3: CID (left) / Field E (right)
+                                const col0W = CHAR_W * 1.5;
+                                const charPos = (e.clientX - rect.left - col0W) / CHAR_W;
+                                if (charPos < 5) {
+                                    openHdgMenu(gufi, e.clientX, e.clientY); // Field D (CID area) → heading
+                                } else {
+                                    openSpdMenu(gufi, e.clientX, e.clientY); // Field E → speed
+                                }
+                                return;
+                            }
+                            if (lineIdx === 3) { // Line 4: HSF area
+                                const lfm = flights.get(gufi);
+                                const hsf = lfm ? getEffectiveHsf(lfm) : null;
+                                if (hsf && hsf.freeText) {
+                                    openTxtMenu(gufi, e.clientX, e.clientY);
+                                } else if (hsf && hsf.heading) {
+                                    openHdgMenu(gufi, e.clientX, e.clientY);
+                                } else if (hsf && hsf.speed) {
+                                    openSpdMenu(gufi, e.clientX, e.clientY);
+                                }
+                                return;
+                            }
+                        }
                     }
                     // If MCA has content, left-click inserts a ▽ target placeholder
                     if (mca.text.trim().length > 0) {
@@ -3052,6 +3140,25 @@ function doRender() {
                             e.clientY >= fieldATop && e.clientY <= fieldATop + LINE_H) {
                             showFlightInRA(f);
                             return;
+                        }
+                        // Field menu detection (FDB only, middle-click): same as left-click
+                        if (dbEl.classList.contains('fdb') && mca.text.trim().length === 0) {
+                            const lineIdx = Math.floor((e.clientY - fieldATop) / LINE_H);
+                            if (lineIdx === 1) { openAltMenu(gufi, e.clientX, e.clientY); return; }
+                            if (lineIdx === 2) {
+                                const col0W = CHAR_W * 1.5;
+                                const charPos = (e.clientX - rect.left - col0W) / CHAR_W;
+                                if (charPos < 5) openHdgMenu(gufi, e.clientX, e.clientY);
+                                else openSpdMenu(gufi, e.clientX, e.clientY);
+                                return;
+                            }
+                            if (lineIdx === 3) {
+                                const hsf = getEffectiveHsf(f);
+                                if (hsf && hsf.freeText) openTxtMenu(gufi, e.clientX, e.clientY);
+                                else if (hsf && hsf.heading) openHdgMenu(gufi, e.clientX, e.clientY);
+                                else if (hsf && hsf.speed) openSpdMenu(gufi, e.clientX, e.clientY);
+                                return;
+                            }
                         }
                     }
                     // Middle-click on data block area:
@@ -5413,7 +5520,7 @@ document.addEventListener('keydown', e => {
     if ((tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') && ae !== mcaMobileInput) return;
 
     // Escape → clear MCA
-    if (e.key === 'Escape') { clearFindMarker(); mcaClear(); e.preventDefault(); return; }
+    if (e.key === 'Escape') { clearFindMarker(); mcaClear(); closeFieldMenu(); e.preventDefault(); return; }
 
     // Ctrl+R → recall last command
     if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) { mcaRecall(); e.preventDefault(); return; }
@@ -5598,6 +5705,9 @@ window.addEventListener('resize', () => {
     clampBox(document.getElementById('ra'));
     const poMenu = document.getElementById('po-menu');
     if (poMenu.style.display !== 'none') clampBox(poMenu);
+    clampBox(document.getElementById('time-view'));
+    const fm = document.getElementById('field-menu');
+    if (fm.style.display !== 'none') clampBox(fm);
 });
 
 setupBoxDrag(document.getElementById('mca'));
@@ -5673,6 +5783,443 @@ function handlePoSectorClick(e) {
 document.getElementById('po-menu-body').addEventListener('click', handlePoSectorClick);
 document.getElementById('po-menu-body').addEventListener('auxclick', (e) => {
     if (e.button === 1) { e.preventDefault(); handlePoSectorClick(e); }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Zulu Time View
+// ════════════════════════════════════════════════════════════════════════════
+setupBoxDrag(document.getElementById('time-view'));
+setInterval(() => {
+    const now = new Date();
+    const hh = String(now.getUTCHours()).padStart(2, '0');
+    const mm = String(now.getUTCMinutes()).padStart(2, '0');
+    const ss = String(now.getUTCSeconds()).padStart(2, '0');
+    document.getElementById('time-view').textContent = `\u00D8${hh}${mm} ${ss}`;
+}, 1000);
+// Trigger immediately
+{
+    const now = new Date();
+    document.getElementById('time-view').textContent =
+        `\u00D8${String(now.getUTCHours()).padStart(2,'0')}${String(now.getUTCMinutes()).padStart(2,'0')} ${String(now.getUTCSeconds()).padStart(2,'0')}`;
+}
+// Middle-click toggles border
+document.getElementById('time-view').addEventListener('auxclick', e => {
+    if (e.button === 1) { e.preventDefault(); e.currentTarget.classList.toggle('bordered'); }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Field Menus (Altitude, Heading, Speed, Free Text)
+// ════════════════════════════════════════════════════════════════════════════
+let fieldMenuGufi = null;
+let fieldMenuType = null;  // 'alt' | 'hdg' | 'spd' | 'txt'
+
+function closeFieldMenu() {
+    fieldMenuGufi = null;
+    fieldMenuType = null;
+    document.getElementById('field-menu').style.display = 'none';
+}
+
+function openFieldMenu(gufi, type, clientX, clientY, bodyHtml) {
+    closeFieldMenu();
+    closePointoutMenu();
+    const f = flights.get(gufi);
+    if (!f) return;
+    fieldMenuGufi = gufi;
+    fieldMenuType = type;
+    const menu = document.getElementById('field-menu');
+    document.getElementById('fm-cs').textContent = f.callsign || '???';
+    document.getElementById('fm-body').innerHTML = bodyHtml;
+    // Position near click
+    const container = document.getElementById('map-container');
+    const cRect = container.getBoundingClientRect();
+    menu.style.left = (clientX - cRect.left + 10) + 'px';
+    menu.style.top = (clientY - cRect.top - 10) + 'px';
+    menu.style.right = 'auto';
+    menu.style.bottom = 'auto';
+    menu.style.display = 'block';
+    requestAnimationFrame(() => clampBox(menu));
+}
+
+setupBoxDrag(document.getElementById('field-menu'), document.getElementById('fm-title'));
+document.getElementById('fm-close').addEventListener('click', e => { e.stopPropagation(); closeFieldMenu(); });
+document.getElementById('fm-close').addEventListener('auxclick', e => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeFieldMenu(); }
+});
+document.getElementById('fm-title').addEventListener('auxclick', e => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeFieldMenu(); }
+});
+
+// ── Altitude Menu ──
+let altMenuPage = 0;
+let altMenuLocalTalt = false;
+let altMenuProcedure = false;
+
+function openAltMenu(gufi, clientX, clientY) {
+    const f = flights.get(gufi);
+    if (!f) return;
+    altMenuPage = 0;
+    altMenuLocalTalt = false;
+    altMenuProcedure = false;
+    // Center page around current altitude
+    const localA = localAssignedAlt.get(gufi);
+    const assigned = localA ? localA.feet : (f.assignedAltitude ?? null);
+    if (assigned != null) altMenuPage = Math.max(0, Math.floor(Math.round(assigned / 1000) / 7) - 1);
+    openFieldMenu(gufi, 'alt', clientX, clientY, buildAltMenuBody(gufi));
+}
+
+function buildAltMenuBody(gufi) {
+    const f = flights.get(gufi);
+    if (!f) return '';
+    const localA = localAssignedAlt.get(gufi);
+    const localI = localInterimAlt.get(gufi);
+    const assigned = localA ? localA.feet : (f.assignedAltitude ?? null);
+    const interim = localI ? localI.feet : (f.interimAltitude ?? null);
+    const assignedFL = assigned != null ? Math.round(assigned / 100) : null;
+    const interimFL = interim != null ? Math.round(interim / 100) : null;
+
+    let html = '';
+    // FP assigned row (shown when interim/procedure is active — click clears interim)
+    if (interim != null && assigned != null) {
+        html += `<div class="field-menu-row" data-action="clear-interim" style="color:#888">  FP  ${String(assignedFL).padStart(3,'0')}</div>`;
+    }
+    // LOCAL TALT / PROCEDURE toggles
+    html += `<div class="field-menu-row${altMenuLocalTalt ? ' toggle-active' : ''}" data-action="toggle-local">LOCAL  TALT</div>`;
+    html += `<div class="field-menu-row${altMenuProcedure ? ' toggle-active' : ''}" data-action="toggle-proc">PROCEDURE</div>`;
+    html += `<div class="field-menu-divider"></div>`;
+
+    // Scroll up
+    html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
+
+    // 7 altitude values per page (FL 010 to FL 600, step 10 = 1000ft)
+    const startFL = Math.max(10, (altMenuPage * 7 + 1) * 10);
+    for (let i = 6; i >= 0; i--) {
+        const fl = startFL + i * 10;
+        if (fl > 600) continue;
+        const flStr = String(fl).padStart(3, '0');
+        const isCurrent = (assignedFL === fl);
+        const isInterim = (interimFL === fl);
+        const cls = isCurrent ? ' current' : '';
+        const tCls = isInterim ? ' style="color:#ff6666"' : '';
+        html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">  ${flStr}  <span data-action="set-interim" data-fl="${fl}"${tCls}>T</span></div>`;
+    }
+
+    // Scroll down
+    html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
+    return html;
+}
+
+function refreshAltMenu() {
+    if (fieldMenuType !== 'alt' || !fieldMenuGufi) return;
+    document.getElementById('fm-body').innerHTML = buildAltMenuBody(fieldMenuGufi);
+}
+
+// ── Heading Menu ──
+let hdgMenuPage = 0;
+let hdgMenuLT = false;
+let hdgMenuRT = false;
+
+function openHdgMenu(gufi, clientX, clientY) {
+    const f = flights.get(gufi);
+    if (!f) return;
+    hdgMenuPage = 0;
+    hdgMenuLT = false;
+    hdgMenuRT = false;
+    // Center page around current heading
+    const hsf = getEffectiveHsf(f);
+    if (hsf && hsf.heading) {
+        const h = parseInt(hsf.heading);
+        if (!isNaN(h)) hdgMenuPage = Math.max(0, Math.floor((h / 5 - 7) / 14));
+    }
+    openFieldMenu(gufi, 'hdg', clientX, clientY, buildHdgMenuBody(gufi));
+}
+
+function buildHdgMenuBody(gufi) {
+    const f = flights.get(gufi);
+    if (!f) return '';
+    const hsf = getEffectiveHsf(f);
+    const curHdg = hsf && hsf.heading ? parseInt(hsf.heading) : null;
+
+    let html = '<div class="field-menu-hdr">';
+    html += `<span data-action="hdg-lt"${hdgMenuLT ? ' class="active"' : ''}>LT</span>`;
+    html += `<span data-action="hdg-ph">PH</span>`;
+    html += `<span data-action="hdg-rt"${hdgMenuRT ? ' class="active"' : ''}>RT</span>`;
+    html += '</div>';
+    html += '<div class="field-menu-divider"></div>';
+    html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
+
+    // 14 heading values per page (2 columns × 7 rows), step 5°
+    const startH = hdgMenuPage * 70 + 5;  // 70 = 14 values × 5°
+    for (let row = 6; row >= 0; row--) {
+        const h1 = startH + row * 10;
+        const h2 = startH + row * 10 + 5;
+        let rowHtml = '<div class="field-menu-row" style="display:flex;gap:6px;">';
+        for (const h of [h1, h2]) {
+            if (h > 360) { rowHtml += '<span style="width:4ch"></span>'; continue; }
+            const hVal = h > 360 ? null : h;
+            if (hVal == null) { rowHtml += '<span style="width:4ch"></span>'; continue; }
+            const suffix = hdgMenuLT ? 'L' : hdgMenuRT ? 'R' : '';
+            const display = String(hVal).padStart(3, '0') + suffix;
+            const cls = (curHdg === hVal) ? ' current' : '';
+            rowHtml += `<span class="field-menu-row${cls}" data-action="set-hdg" data-hdg="${hVal}" style="padding:0 2px;cursor:pointer">${display}</span>`;
+        }
+        rowHtml += '</div>';
+        html += rowHtml;
+    }
+
+    html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
+    html += '<div class="field-menu-divider"></div>';
+    html += `<div class="field-menu-row" data-action="delete-hdg" style="color:#ff6666">DELETE</div>`;
+    return html;
+}
+
+function refreshHdgMenu() {
+    if (fieldMenuType !== 'hdg' || !fieldMenuGufi) return;
+    document.getElementById('fm-body').innerHTML = buildHdgMenuBody(fieldMenuGufi);
+}
+
+// ── Speed Menu ──
+let spdMenuPage = 0;
+let spdMenuMach = false;
+let spdMenuPlus = false;
+let spdMenuMinus = false;
+
+function openSpdMenu(gufi, clientX, clientY) {
+    const f = flights.get(gufi);
+    if (!f) return;
+    spdMenuPage = 0;
+    // Detect if current speed is Mach
+    const hsf = getEffectiveHsf(f);
+    spdMenuMach = !!(hsf && hsf.speed && /^M/i.test(hsf.speed));
+    spdMenuPlus = !!(hsf && hsf.speed && /\+$/.test(hsf.speed));
+    spdMenuMinus = !!(hsf && hsf.speed && /-$/.test(hsf.speed));
+    openFieldMenu(gufi, 'spd', clientX, clientY, buildSpdMenuBody(gufi));
+}
+
+function buildSpdMenuBody(gufi) {
+    const f = flights.get(gufi);
+    if (!f) return '';
+    const hsf = getEffectiveHsf(f);
+    const curSpd = hsf ? hsf.speed : null;
+
+    let html = '<div class="field-menu-hdr">';
+    html += `<span data-action="spd-mach"${spdMenuMach ? ' class="active"' : ''}>${spdMenuMach ? 'M' : 'KT'}</span>`;
+    html += `<span data-action="spd-plus"${spdMenuPlus ? ' class="active"' : ''}>+</span>`;
+    html += `<span data-action="spd-minus"${spdMenuMinus ? ' class="active"' : ''}>-</span>`;
+    html += '</div>';
+    html += '<div class="field-menu-divider"></div>';
+    html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
+
+    if (spdMenuMach) {
+        // Mach: .60 to .92, step .01, 7 per page
+        const startM = 92 - spdMenuPage * 7;
+        for (let i = 0; i < 7; i++) {
+            const m = startM - i;
+            if (m < 60) continue;
+            const suffix = spdMenuPlus ? '+' : spdMenuMinus ? '-' : '';
+            const display = `.${m}${suffix}`;
+            const matchVal = `M${m}`;
+            const isCurrent = curSpd && curSpd.replace(/[+-]/g, '') === matchVal;
+            const cls = isCurrent ? ' current' : '';
+            html += `<div class="field-menu-row${cls}" data-action="set-spd" data-spd="M${m}">  ${display}</div>`;
+        }
+    } else {
+        // Knots: 150-350, step 10, 7 per page
+        const startK = 350 - spdMenuPage * 70;
+        for (let i = 0; i < 7; i++) {
+            const k = startK - i * 10;
+            if (k < 150) continue;
+            const suffix = spdMenuPlus ? '+' : spdMenuMinus ? '-' : '';
+            const display = `${k}${suffix}`;
+            const isCurrent = curSpd && parseInt(curSpd) === k;
+            const cls = isCurrent ? ' current' : '';
+            html += `<div class="field-menu-row${cls}" data-action="set-spd" data-spd="${k}">  ${display}</div>`;
+        }
+    }
+
+    html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
+    html += '<div class="field-menu-divider"></div>';
+    const curDisplay = curSpd || '';
+    html += `<div style="display:flex;justify-content:space-between;padding:2px 0;">`;
+    html += `<span class="field-menu-row" data-action="delete-spd" style="color:#ff6666;padding:0">DEL</span>`;
+    html += `<span style="color:#888">${curDisplay}</span>`;
+    html += `</div>`;
+    return html;
+}
+
+function refreshSpdMenu() {
+    if (fieldMenuType !== 'spd' || !fieldMenuGufi) return;
+    document.getElementById('fm-body').innerHTML = buildSpdMenuBody(fieldMenuGufi);
+}
+
+// ── Free Text Menu ──
+function openTxtMenu(gufi, clientX, clientY) {
+    const f = flights.get(gufi);
+    if (!f) return;
+    const hsf = getEffectiveHsf(f);
+    const curText = hsf ? (hsf.freeText || '') : '';
+    let html = `<input class="field-menu-input" id="fm-txt-input" value="${curText.replace(/"/g, '&quot;')}" maxlength="20">`;
+    html += '<div class="field-menu-divider"></div>';
+    html += `<div class="field-menu-row" data-action="delete-txt" style="color:#ff6666">DELETE</div>`;
+    openFieldMenu(gufi, 'txt', clientX, clientY, html);
+    const inp = document.getElementById('fm-txt-input');
+    if (inp) {
+        inp.focus();
+        inp.addEventListener('keydown', e => {
+            e.stopPropagation(); // prevent MCA from capturing
+            if (e.key === 'Enter') {
+                const text = inp.value.trim();
+                if (text && fieldMenuGufi) {
+                    const flid = getFlid(flights.get(fieldMenuGufi));
+                    if (flid) processCommand('QS `' + text + ' ' + flid);
+                    invalidateMarker(fieldMenuGufi);
+                }
+                closeFieldMenu();
+            } else if (e.key === 'Escape') {
+                closeFieldMenu();
+            }
+        });
+    }
+}
+
+// ── Field menu body click handler ──
+function handleFieldMenuClick(e) {
+    const action = e.target.dataset?.action || e.target.closest('[data-action]')?.dataset?.action;
+    if (!action) return;
+    e.stopPropagation();
+    const gufi = fieldMenuGufi;
+    if (!gufi) return;
+    const f = flights.get(gufi);
+    if (!f) return;
+    const flid = getFlid(f);
+    if (!flid) return;
+
+    // Altitude menu actions
+    if (fieldMenuType === 'alt') {
+        if (action === 'clear-interim') {
+            processCommand('QQ ' + flid);
+            invalidateMarker(gufi);
+            refreshAltMenu();
+        } else if (action === 'toggle-local') {
+            altMenuLocalTalt = !altMenuLocalTalt;
+            if (altMenuLocalTalt) altMenuProcedure = false;
+            refreshAltMenu();
+        } else if (action === 'toggle-proc') {
+            altMenuProcedure = !altMenuProcedure;
+            if (altMenuProcedure) altMenuLocalTalt = false;
+            refreshAltMenu();
+        } else if (action === 'set-alt') {
+            const fl = e.target.closest('[data-fl]')?.dataset?.fl;
+            if (!fl) return;
+            if (altMenuLocalTalt) {
+                processCommand('QQ L' + fl + ' ' + flid);
+            } else if (altMenuProcedure) {
+                processCommand('QQ P' + fl + ' ' + flid);
+            } else {
+                processCommand('QZ ' + fl + ' ' + flid);
+            }
+            invalidateMarker(gufi);
+            refreshAltMenu();
+        } else if (action === 'set-interim') {
+            const fl = e.target.closest('[data-fl]')?.dataset?.fl;
+            if (!fl) return;
+            processCommand('QQ ' + fl + ' ' + flid);
+            invalidateMarker(gufi);
+            refreshAltMenu();
+        } else if (action === 'scroll-up') {
+            altMenuPage = Math.max(0, altMenuPage - 1);
+            refreshAltMenu();
+        } else if (action === 'scroll-down') {
+            altMenuPage++;
+            refreshAltMenu();
+        }
+    }
+
+    // Heading menu actions
+    if (fieldMenuType === 'hdg') {
+        if (action === 'hdg-lt') {
+            hdgMenuLT = !hdgMenuLT;
+            if (hdgMenuLT) hdgMenuRT = false;
+            refreshHdgMenu();
+        } else if (action === 'hdg-rt') {
+            hdgMenuRT = !hdgMenuRT;
+            if (hdgMenuRT) hdgMenuLT = false;
+            refreshHdgMenu();
+        } else if (action === 'hdg-ph') {
+            // Assign present heading (track heading rounded to nearest 5°)
+            const hdg = f.trackVelocityX != null && f.trackVelocityY != null
+                ? Math.round(((Math.atan2(f.trackVelocityX, f.trackVelocityY) * 180 / Math.PI + 360) % 360) / 5) * 5 || 360
+                : null;
+            if (hdg) {
+                processCommand('QS ' + String(hdg).padStart(3, '0') + ' ' + flid);
+                invalidateMarker(gufi);
+            }
+            closeFieldMenu();
+        } else if (action === 'set-hdg') {
+            const hdg = e.target.closest('[data-hdg]')?.dataset?.hdg;
+            if (!hdg) return;
+            processCommand('QS ' + String(hdg).padStart(3, '0') + ' ' + flid);
+            invalidateMarker(gufi);
+            closeFieldMenu();
+        } else if (action === 'delete-hdg') {
+            processCommand('QS */ ' + flid);
+            invalidateMarker(gufi);
+            closeFieldMenu();
+        } else if (action === 'scroll-up') {
+            hdgMenuPage = Math.max(0, hdgMenuPage - 1);
+            refreshHdgMenu();
+        } else if (action === 'scroll-down') {
+            hdgMenuPage++;
+            refreshHdgMenu();
+        }
+    }
+
+    // Speed menu actions
+    if (fieldMenuType === 'spd') {
+        if (action === 'spd-mach') {
+            spdMenuMach = !spdMenuMach;
+            spdMenuPage = 0;
+            refreshSpdMenu();
+        } else if (action === 'spd-plus') {
+            spdMenuPlus = !spdMenuPlus;
+            if (spdMenuPlus) spdMenuMinus = false;
+            refreshSpdMenu();
+        } else if (action === 'spd-minus') {
+            spdMenuMinus = !spdMenuMinus;
+            if (spdMenuMinus) spdMenuPlus = false;
+            refreshSpdMenu();
+        } else if (action === 'set-spd') {
+            let spd = e.target.closest('[data-spd]')?.dataset?.spd;
+            if (!spd) return;
+            const suffix = spdMenuPlus ? '+' : spdMenuMinus ? '-' : '';
+            processCommand('QS /' + spd + suffix + ' ' + flid);
+            invalidateMarker(gufi);
+            closeFieldMenu();
+        } else if (action === 'delete-spd') {
+            processCommand('QS /* ' + flid);
+            invalidateMarker(gufi);
+            closeFieldMenu();
+        } else if (action === 'scroll-up') {
+            spdMenuPage = Math.max(0, spdMenuPage - 1);
+            refreshSpdMenu();
+        } else if (action === 'scroll-down') {
+            spdMenuPage++;
+            refreshSpdMenu();
+        }
+    }
+
+    // Free text menu actions
+    if (fieldMenuType === 'txt') {
+        if (action === 'delete-txt') {
+            processCommand('QS * ' + flid);
+            invalidateMarker(gufi);
+            closeFieldMenu();
+        }
+    }
+}
+
+document.getElementById('fm-body').addEventListener('click', handleFieldMenuClick);
+document.getElementById('fm-body').addEventListener('auxclick', e => {
+    if (e.button === 1) { e.preventDefault(); handleFieldMenuClick(e); }
 });
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -250,7 +250,8 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .field-menu-row { padding: 2px 0; cursor: pointer; white-space: pre; color: #fff; }
 .field-menu-row:hover { background: #333; }
 .field-menu-row.current { background: #cd5c5c; color: #fff; }
-.field-menu-row.toggle-active { color: #fff; }
+.field-menu-row.fm-toggle { color: #aaa; }
+.field-menu-row.fm-toggle.toggle-active { color: #fff; }
 .field-menu-divider { border-top: 1px solid #444; margin: 2px 0; }
 .field-menu-values { display: flex; }
 .field-menu-values-col { flex: 1; }
@@ -5938,8 +5939,8 @@ function buildAltMenuBody(gufi) {
         html += `<div class="field-menu-row">\u00a0\u00a0${ifl}\u00a0\u00a0${letter}</div>`;
     }
     // LOCAL TALT / PROCEDURE toggles
-    html += `<div class="field-menu-row${altMenuLocalTalt ? ' toggle-active' : ''}" data-action="toggle-local">LOCAL\u00a0\u00a0TALT</div>`;
-    html += `<div class="field-menu-row${altMenuProcedure ? ' toggle-active' : ''}" data-action="toggle-proc">PROCEDURE</div>`;
+    html += `<div class="field-menu-row fm-toggle${altMenuLocalTalt ? ' toggle-active' : ''}" data-action="toggle-local">LOCAL\u00a0\u00a0TALT</div>`;
+    html += `<div class="field-menu-row fm-toggle${altMenuProcedure ? ' toggle-active' : ''}" data-action="toggle-proc">PROCEDURE</div>`;
     html += `<div class="field-menu-divider"></div>`;
 
     // 7 altitude values per page with right-side scrollbar
@@ -5955,9 +5956,15 @@ function buildAltMenuBody(gufi) {
         const flStr = String(fl).padStart(3, '0');
         const isCurrent = (assignedFL === fl);
         const isInterim = (interimFL === fl);
-        const tLetter = isInterim ? (interimType === 'L' ? 'L' : interimType === 'P' ? 'P' : 'T') : 'T';
+        // Letter reflects toggle mode: L if LOCAL TALT active, P if PROCEDURE active, else T
+        const tLetter = altMenuLocalTalt ? 'L' : altMenuProcedure ? 'P' : 'T';
         const cls = isCurrent ? ' current' : '';
-        html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">\u00a0\u00a0${flStr}\u00a0\u00a0<span data-action="set-interim" data-fl="${fl}"${isInterim ? ' style="background:#cd5c5c"' : ''}>${tLetter}</span></div>`;
+        const isInterimHl = isInterim && (
+            (interimType === 'L' && altMenuLocalTalt) ||
+            (interimType === 'P' && altMenuProcedure) ||
+            (interimType === 'I' && !altMenuLocalTalt && !altMenuProcedure)
+        );
+        html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">\u00a0\u00a0${flStr}\u00a0\u00a0<span data-action="set-interim" data-fl="${fl}"${isInterimHl ? ' style="background:#cd5c5c"' : ''}>${tLetter}</span></div>`;
     }
     html += '</div>';
     html += `<div class="field-menu-scrollbar"><span data-action="scroll-up">\u25B2</span><div class="sb-track"><div class="sb-thumb" style="top:${thumbTop}%;height:${thumbPct}%"></div></div><span data-action="scroll-down">\u25BC</span></div>`;

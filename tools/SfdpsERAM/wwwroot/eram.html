@@ -235,7 +235,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     position: absolute; z-index: 1100;
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
-    user-select: none; background: #111; border: 1px solid #aaa;
+    user-select: none; background: #000; border: 1px solid #aaa;
     min-width: 120px;
 }
 .field-menu.box-dragging { outline: 2px solid #fff; cursor: move; }
@@ -252,15 +252,19 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .field-menu-row.current { background: #cd5c5c; color: #fff; }
 .field-menu-row.toggle-active { color: #fff; }
 .field-menu-divider { border-top: 1px solid #444; margin: 2px 0; }
-.field-menu-scroll { display: flex; justify-content: space-between; padding: 1px 0; }
-.field-menu-scroll span { cursor: pointer; color: #fff; padding: 0 4px; }
-.field-menu-scroll span:hover { color: #fff; }
+.field-menu-values { display: flex; }
+.field-menu-values-col { flex: 1; }
+.field-menu-scrollbar { display: flex; flex-direction: column; justify-content: space-between; align-items: center; width: 14px; border-left: 1px solid #555; margin-left: 4px; }
+.field-menu-scrollbar span { cursor: pointer; color: #aaa; padding: 2px 0; font-size: 10px; }
+.field-menu-scrollbar span:hover { color: #fff; }
+.field-menu-scrollbar .sb-track { flex: 1; width: 6px; background: #333; margin: 2px 0; position: relative; }
+.field-menu-scrollbar .sb-thumb { position: absolute; width: 100%; background: #888; min-height: 8px; }
 .field-menu-hdr { display: flex; gap: 6px; padding: 2px 0; }
 .field-menu-hdr span { cursor: pointer; color: #fff; padding: 1px 4px; border: 1px solid transparent; }
 .field-menu-hdr span:hover { background: #333; }
 .field-menu-hdr span.active { color: #cd5c5c; border: 1px solid #cd5c5c; }
 .field-menu-input {
-    background: #111; color: #fff; border: 1px solid #555;
+    background: #000; color: #fff; border: 1px solid #555;
     font-family: inherit; font-size: inherit; width: 100%; padding: 2px 4px;
     outline: none;
 }
@@ -5937,24 +5941,27 @@ function buildAltMenuBody(gufi) {
     html += `<div class="field-menu-row${altMenuLocalTalt ? ' toggle-active' : ''}" data-action="toggle-local">LOCAL\u00a0\u00a0TALT</div>`;
     html += `<div class="field-menu-row${altMenuProcedure ? ' toggle-active' : ''}" data-action="toggle-proc">PROCEDURE</div>`;
     html += `<div class="field-menu-divider"></div>`;
-    html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
 
-    // 7 altitude values per page (FL 010 to FL 600, step 10 = 1000ft)
+    // 7 altitude values per page with right-side scrollbar
     const startFL = Math.max(10, (altMenuPage * 7 + 1) * 10);
+    const maxPage = Math.floor((600 - 10) / 70);
+    const thumbPct = 1 / (maxPage + 1) * 100;
+    const thumbTop = altMenuPage / (maxPage + 1) * 100;
+    html += '<div class="field-menu-values">';
+    html += '<div class="field-menu-values-col">';
     for (let i = 6; i >= 0; i--) {
         const fl = startFL + i * 10;
         if (fl > 600) continue;
         const flStr = String(fl).padStart(3, '0');
         const isCurrent = (assignedFL === fl);
         const isInterim = (interimFL === fl);
-        // Interim type letter: L for local, P for procedure, T for standard
         const tLetter = isInterim ? (interimType === 'L' ? 'L' : interimType === 'P' ? 'P' : 'T') : 'T';
         const cls = isCurrent ? ' current' : '';
-        const tStyle = isInterim ? ' class="current"' : '';
         html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">\u00a0\u00a0${flStr}\u00a0\u00a0<span data-action="set-interim" data-fl="${fl}"${isInterim ? ' style="background:#cd5c5c"' : ''}>${tLetter}</span></div>`;
     }
-
-    html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
+    html += '</div>';
+    html += `<div class="field-menu-scrollbar"><span data-action="scroll-up">\u25B2</span><div class="sb-track"><div class="sb-thumb" style="top:${thumbTop}%;height:${thumbPct}%"></div></div><span data-action="scroll-down">\u25BC</span></div>`;
+    html += '</div>';
     return html;
 }
 
@@ -5994,10 +6001,14 @@ function buildHdgMenuBody(gufi) {
     html += `<span data-action="hdg-ph">PH</span>`;
     html += `<span data-action="hdg-rt"${hdgMenuRT ? ' class="active"' : ''}>RT</span>`;
     html += '</div><div class="field-menu-divider"></div>';
-    html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
 
-    // 14 heading values per page (2 columns × 7 rows), step 5°
+    // 14 heading values per page (2 columns × 7 rows) with right-side scrollbar
     const startH = hdgMenuPage * 70 + 5;
+    const hdgMaxPage = Math.floor((360 - 5) / 70);
+    const hdgThumbPct = 1 / (hdgMaxPage + 1) * 100;
+    const hdgThumbTop = hdgMenuPage / (hdgMaxPage + 1) * 100;
+    html += '<div class="field-menu-values">';
+    html += '<div class="field-menu-values-col">';
     for (let row = 6; row >= 0; row--) {
         const h1 = startH + row * 10;
         const h2 = startH + row * 10 + 5;
@@ -6012,10 +6023,11 @@ function buildHdgMenuBody(gufi) {
         rowHtml += '</div>';
         html += rowHtml;
     }
-
-    html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
+    html += '</div>';
+    html += `<div class="field-menu-scrollbar"><span data-action="scroll-up">\u25B2</span><div class="sb-track"><div class="sb-thumb" style="top:${hdgThumbTop}%;height:${hdgThumbPct}%"></div></div><span data-action="scroll-down">\u25BC</span></div>`;
+    html += '</div>';
     html += '<div class="field-menu-divider"></div>';
-    html += `<div class="field-menu-row" data-action="delete-hdg">DELETE</div>`;
+    if (curHdg != null) html += `<div class="field-menu-row" data-action="delete-hdg" style="color:#aaa">DELETE</div>`;
     return html;
 }
 
@@ -6052,8 +6064,13 @@ function buildSpdMenuBody(gufi) {
     html += `<span data-action="spd-plus"${spdMenuPlus ? ' class="active"' : ''}>+</span>`;
     html += `<span data-action="spd-minus"${spdMenuMinus ? ' class="active"' : ''}>-</span>`;
     html += '</div><div class="field-menu-divider"></div>';
-    html += `<div class="field-menu-scroll"><span data-action="scroll-up">\u25B2</span></div>`;
 
+    // Speed values with right-side scrollbar
+    const spdMaxPage = spdMenuMach ? Math.floor((92 - 60) / 7) : Math.floor((500 - 100) / 70);
+    const spdThumbPct = 1 / (spdMaxPage + 1) * 100;
+    const spdThumbTop = spdMenuPage / (spdMaxPage + 1) * 100;
+    html += '<div class="field-menu-values">';
+    html += '<div class="field-menu-values-col">';
     if (spdMenuMach) {
         const startM = 92 - spdMenuPage * 7;
         for (let i = 0; i < 7; i++) {
@@ -6077,12 +6094,15 @@ function buildSpdMenuBody(gufi) {
             html += `<div class="field-menu-row${cls}" data-action="set-spd" data-spd="${k}">\u00a0\u00a0${display}</div>`;
         }
     }
-
-    html += `<div class="field-menu-scroll"><span data-action="scroll-down">\u25BC</span></div>`;
-    html += '<div class="field-menu-divider"></div>';
-    html += `<div style="display:flex;justify-content:space-between;padding:2px 6px;">`;
-    html += `<span class="field-menu-row" data-action="delete-spd" style="padding:0">DEL</span>`;
-    html += `<span style="color:#ccc">${curSpd || ''}</span></div>`;
+    html += '</div>';
+    html += `<div class="field-menu-scrollbar"><span data-action="scroll-up">\u25B2</span><div class="sb-track"><div class="sb-thumb" style="top:${spdThumbTop}%;height:${spdThumbPct}%"></div></div><span data-action="scroll-down">\u25BC</span></div>`;
+    html += '</div>';
+    if (curSpd) {
+        html += '<div class="field-menu-divider"></div>';
+        html += `<div style="display:flex;justify-content:space-between;padding:2px 6px;">`;
+        html += `<span class="field-menu-row" data-action="delete-spd" style="padding:0;color:#aaa">DEL</span>`;
+        html += `<span style="color:#aaa">${curSpd}</span></div>`;
+    }
     return html;
 }
 
@@ -6098,8 +6118,10 @@ function openTxtMenu(gufi, clientX, clientY) {
     const hsf = getEffectiveHsf(f);
     const curText = hsf ? (hsf.freeText || '') : '';
     let html = `<input class="field-menu-input" id="fm-txt-input" value="${curText.replace(/"/g, '&quot;')}" maxlength="20">`;
-    html += '<div class="field-menu-divider"></div>';
-    html += `<div class="field-menu-row" data-action="delete-txt">DELETE</div>`;
+    if (curText) {
+        html += '<div class="field-menu-divider"></div>';
+        html += `<div class="field-menu-row" data-action="delete-txt" style="color:#aaa">DELETE</div>`;
+    }
     openFieldMenu(gufi, 'txt', clientX, clientY, html);
     const inp = document.getElementById('fm-txt-input');
     if (inp) {

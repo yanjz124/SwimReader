@@ -235,40 +235,57 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     position: absolute; z-index: 1100;
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
-    user-select: none; background: #000; border: 1px solid #aaa;
+    user-select: none; background: #000; border: 1px solid #999;
     min-width: 120px;
 }
 .field-menu.box-dragging { outline: 2px solid #fff; cursor: move; }
 .field-menu-title {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 2px 6px; border-bottom: 1px solid #aaa; background: #888; cursor: move;
+    padding: 1px 4px; background: #777; cursor: move;
 }
 .field-menu-cs { color: #fff; }
-.field-menu-close { color: #fff; cursor: pointer; padding: 0 4px; }
+.field-menu-close { color: #fff; cursor: pointer; padding: 0 2px; margin-left: 8px; }
 .field-menu-close:hover { color: #ff4444; }
-.field-menu-body { padding: 3px 6px; }
-.field-menu-row { padding: 2px 0; cursor: pointer; white-space: pre; color: #fff; }
+.field-menu-body { padding: 0; }
+.field-menu-row { padding: 1px 4px; cursor: pointer; white-space: pre; color: #fff; line-height: 15px; }
 .field-menu-row:hover { background: #333; }
 .field-menu-row.current { background: #cd5c5c; color: #fff; }
-.field-menu-row.fm-toggle { color: #fff; background: #666; padding: 2px 4px; }
-.field-menu-row.fm-toggle:hover { background: #777; }
-.field-menu-row.fm-toggle.toggle-active { background: #888; }
-.field-menu-divider { border-top: 1px solid #444; margin: 2px 0; }
+.field-menu-row.fm-toggle { color: #fff; background: #777; padding: 1px 4px; }
+.field-menu-row.fm-toggle:hover { background: #888; }
+.field-menu-row.fm-toggle.toggle-active { background: #999; }
+.field-menu-footer { padding: 1px 4px; }
 .field-menu-values { display: flex; }
-.field-menu-values-col { flex: 1; }
-.field-menu-scrollbar { display: flex; flex-direction: column; justify-content: space-between; align-items: center; width: 14px; border-left: 1px solid #555; margin-left: 4px; }
-.field-menu-scrollbar span { cursor: pointer; color: #aaa; padding: 2px 0; font-size: 10px; }
-.field-menu-scrollbar span:hover { color: #fff; }
-.field-menu-scrollbar .sb-track { flex: 1; width: 6px; background: #333; margin: 2px 0; position: relative; }
-.field-menu-scrollbar .sb-thumb { position: absolute; width: 100%; background: #888; min-height: 8px; }
-.field-menu-hdr { display: flex; gap: 6px; padding: 2px 0; }
-.field-menu-hdr span { cursor: pointer; color: #fff; padding: 1px 4px; border: 1px solid transparent; }
-.field-menu-hdr span:hover { background: #333; }
+.field-menu-values-col { flex: 1; padding: 0 2px; }
+.field-menu-scrollbar {
+    display: flex; flex-direction: column; align-items: center;
+    width: 16px; background: #444; border-left: 1px solid #666;
+}
+.field-menu-scrollbar .sb-arrow {
+    cursor: pointer; width: 100%; text-align: center;
+    background: #777; color: #fff; font-size: 8px; line-height: 14px;
+    border: 1px outset #999;
+}
+.field-menu-scrollbar .sb-arrow:hover { background: #999; }
+.field-menu-scrollbar .sb-arrow:active { background: #555; border-style: inset; }
+.field-menu-scrollbar .sb-track {
+    flex: 1; width: 10px; background: #333; position: relative;
+    border-left: 1px solid #222; border-right: 1px solid #222;
+}
+.field-menu-scrollbar .sb-thumb {
+    position: absolute; width: 100%; background: #999;
+    min-height: 10px; border: 1px outset #bbb;
+}
+.field-menu-hdr { display: flex; gap: 4px; padding: 1px 4px; background: #777; }
+.field-menu-hdr span {
+    cursor: pointer; color: #fff; padding: 0 3px;
+    border: 1px solid transparent; line-height: 15px;
+}
+.field-menu-hdr span:hover { background: #999; }
 .field-menu-hdr span.active { color: #cd5c5c; border: 1px solid #cd5c5c; }
 .field-menu-input {
     background: #000; color: #fff; border: 1px solid #555;
-    font-family: inherit; font-size: inherit; width: 100%; padding: 2px 4px;
-    outline: none;
+    font-family: inherit; font-size: inherit; width: calc(100% - 8px);
+    padding: 2px 4px; margin: 2px 4px; outline: none;
 }
 .field-menu-input:focus { border-color: #fff; }
 
@@ -5969,7 +5986,7 @@ function buildAltMenuBody(gufi) {
         html += `<div class="field-menu-row${cls}" data-action="set-alt" data-fl="${fl}">\u00a0\u00a0${flStr}\u00a0\u00a0<span data-action="set-interim" data-fl="${fl}"${isInterimHl ? ' style="background:#cd5c5c"' : ''}>${tLetter}</span></div>`;
     }
     html += '</div>';
-    html += `<div class="field-menu-scrollbar"><span data-action="scroll-up">\u25B2</span><div class="sb-track"><div class="sb-thumb" style="top:${thumbTop}%;height:${thumbPct}%"></div></div><span data-action="scroll-down">\u25BC</span></div>`;
+    html += `<div class="field-menu-scrollbar"><div class="sb-arrow" data-action="scroll-up">\u25B2</div><div class="sb-track"><div class="sb-thumb" style="top:${thumbTop}%;height:${thumbPct}%"></div></div><div class="sb-arrow" data-action="scroll-down">\u25BC</div></div>`;
     html += '</div>';
     return html;
 }
@@ -6033,10 +6050,9 @@ function buildHdgMenuBody(gufi) {
         html += rowHtml;
     }
     html += '</div>';
-    html += `<div class="field-menu-scrollbar"><span data-action="scroll-up">\u25B2</span><div class="sb-track"><div class="sb-thumb" style="top:${hdgThumbTop}%;height:${hdgThumbPct}%"></div></div><span data-action="scroll-down">\u25BC</span></div>`;
+    html += `<div class="field-menu-scrollbar"><div class="sb-arrow" data-action="scroll-up">\u25B2</div><div class="sb-track"><div class="sb-thumb" style="top:${hdgThumbTop}%;height:${hdgThumbPct}%"></div></div><div class="sb-arrow" data-action="scroll-down">\u25BC</div></div>`;
     html += '</div>';
-    html += '<div class="field-menu-divider"></div>';
-    if (curHdg != null) html += `<div class="field-menu-row" data-action="delete-hdg" style="color:#aaa">DELETE</div>`;
+    if (curHdg != null) html += `<div class="field-menu-row field-menu-footer" data-action="delete-hdg" style="color:#aaa">DELETE</div>`;
     return html;
 }
 
@@ -6104,11 +6120,10 @@ function buildSpdMenuBody(gufi) {
         }
     }
     html += '</div>';
-    html += `<div class="field-menu-scrollbar"><span data-action="scroll-up">\u25B2</span><div class="sb-track"><div class="sb-thumb" style="top:${spdThumbTop}%;height:${spdThumbPct}%"></div></div><span data-action="scroll-down">\u25BC</span></div>`;
+    html += `<div class="field-menu-scrollbar"><div class="sb-arrow" data-action="scroll-up">\u25B2</div><div class="sb-track"><div class="sb-thumb" style="top:${spdThumbTop}%;height:${spdThumbPct}%"></div></div><div class="sb-arrow" data-action="scroll-down">\u25BC</div></div>`;
     html += '</div>';
     if (curSpd) {
-        html += '<div class="field-menu-divider"></div>';
-        html += `<div style="display:flex;justify-content:space-between;padding:2px 6px;">`;
+        html += `<div class="field-menu-footer" style="display:flex;justify-content:space-between;">`;
         html += `<span class="field-menu-row" data-action="delete-spd" style="padding:0;color:#aaa">DEL</span>`;
         html += `<span style="color:#aaa">${curSpd}</span></div>`;
     }
@@ -6128,8 +6143,7 @@ function openTxtMenu(gufi, clientX, clientY) {
     const curText = hsf ? (hsf.freeText || '') : '';
     let html = `<input class="field-menu-input" id="fm-txt-input" value="${curText.replace(/"/g, '&quot;')}" maxlength="20">`;
     if (curText) {
-        html += '<div class="field-menu-divider"></div>';
-        html += `<div class="field-menu-row" data-action="delete-txt" style="color:#aaa">DELETE</div>`;
+        html += `<div class="field-menu-row field-menu-footer" data-action="delete-txt" style="color:#aaa">DELETE</div>`;
     }
     openFieldMenu(gufi, 'txt', clientX, clientY, html);
     const inp = document.getElementById('fm-txt-input');

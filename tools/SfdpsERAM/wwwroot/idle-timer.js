@@ -18,7 +18,7 @@
         const splashStyle = document.createElement('style');
         splashStyle.textContent = `
             #ja-splash {
-                position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.92);
+                position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.92);
                 display:flex;flex-direction:column;justify-content:center;align-items:center;
                 cursor:pointer;animation:ja-in 0.3s ease-out;
             }
@@ -26,7 +26,10 @@
             @keyframes ja-out { from{opacity:1} to{opacity:0} }
         `;
         document.head.appendChild(splashStyle);
-        document.body.appendChild(splash);
+        // Defer to ensure body is fully rendered
+        setTimeout(() => {
+            document.body.appendChild(splash);
+        }, 0);
         splash.addEventListener('click', () => {
             splash.style.animation = 'ja-out 0.3s ease-in forwards';
             setTimeout(() => splash.remove(), 300);

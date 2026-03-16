@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flight Table | swim.vncrcc.org</title>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/flight-table/flight-table.css">
+</head>
+<body>
+
+<div class="topbar">
+    <h1>FLIGHT TABLE</h1>
+    <span class="status" id="status">connecting...</span>
+    <div class="stats" id="stats"></div>
+</div>
+
+<div class="filterbar">
+    <input type="text" class="search-box" id="search" placeholder="Search callsign, CID, airport, type, squawk, route, remarks...">
+    <div class="filter-sep"></div>
+    <span class="filter-label">STATUS</span>
+    <select class="filter-select" id="filterStatus">
+        <option value="active">Active</option>
+        <option value="">All</option>
+        <option value="dropped">Dropped</option>
+        <option value="historical">Historical</option>
+    </select>
+    <span class="filter-label">FACILITY</span>
+    <select class="filter-select" id="filterFacility">
+        <option value="">All</option>
+    </select>
+    <span class="filter-label">RULES</span>
+    <select class="filter-select" id="filterRules">
+        <option value="">All</option>
+        <option value="IFR">IFR</option>
+        <option value="VFR">VFR</option>
+    </select>
+    <div class="filter-sep"></div>
+    <span class="result-count" id="resultCount"></span>
+</div>
+
+<div class="main">
+    <div class="flight-list" id="flightList">
+        <div class="col-header" id="colHeader">
+            <span data-col="callsign" class="sorted">CALLSIGN</span>
+            <span data-col="aircraftType">TYPE</span>
+            <span data-col="origin">DEP</span>
+            <span data-col="destination">ARR</span>
+            <span data-col="assignedAltitude">ALT</span>
+            <span data-col="interimAltitude">INT</span>
+            <span data-col="flightRules">FR</span>
+            <span data-col="controllingFacility">SECTOR</span>
+            <span data-col="squawk">SQK</span>
+            <span data-col="dataLinkCode">DL</span>
+            <span>ST</span>
+        </div>
+        <div id="rows"></div>
+    </div>
+
+    <div class="detail-panel collapsed" id="detailPanel">
+        <div class="detail-header">
+            <span class="cs-big" id="detailCallsign"></span>
+            <span class="type-badge" id="detailType"></span>
+            <span class="status-badge" id="detailStatus"></span>
+            <span class="detail-close" id="detailClose">&times;</span>
+        </div>
+        <div class="tab-bar">
+            <div class="tab active" data-tab="plan">FLIGHT PLAN</div>
+            <div class="tab" data-tab="events">EVENTS<span class="event-count" id="eventCount"></span></div>
+        </div>
+        <div class="detail-body" id="detailBody">
+        </div>
+    </div>
+</div>
+
+<script src="/flight-table/flight-table.js"></script>
+<script src="/idle-timer.js"></script>
+</body>
+</html>

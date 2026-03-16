@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TAIS | swim.vncrcc.org</title>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/tais/facility.css">
+</head>
+<body>
+
+<div class="topbar">
+    <a class="back" href="/tais">&#9664; TAIS</a>
+    <h1 id="title">TAIS</h1>
+    <span class="status" id="status">connecting...</span>
+    <div class="stats" id="stats"></div>
+</div>
+
+<div class="filterbar">
+    <input type="text" class="search-box" id="search" placeholder="Search callsign, squawk, type, airport, owner, scratchpad...">
+    <div class="filter-sep"></div>
+    <span class="filter-label">FROZEN</span>
+    <select class="filter-select" id="filterFrozen">
+        <option value="">All</option>
+        <option value="yes">Frozen only</option>
+        <option value="no">Not frozen</option>
+    </select>
+    <span class="result-count" id="resultCount"></span>
+</div>
+
+<div class="track-list" id="trackList">
+    <div class="col-header" id="colHeader">
+        <span data-col="callsign" class="sorted">CALLSIGN</span>
+        <span data-col="acType">TYPE</span>
+        <span data-col="origin">DEP</span>
+        <span data-col="dest">ARR</span>
+        <span data-col="altFt">ALT</span>
+        <span data-col="gs">GS</span>
+        <span data-col="reportedSqk">SQK</span>
+        <span data-col="runway">RWY</span>
+        <span data-col="sp1">SP1</span>
+        <span data-col="owner">OWN</span>
+    </div>
+    <div id="rows"></div>
+</div>
+
+<script src="/tais/facility.js"></script>
+<script src="/idle-timer.js"></script>
+</body>
+</html>

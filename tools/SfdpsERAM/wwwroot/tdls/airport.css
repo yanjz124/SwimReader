@@ -1,0 +1,151 @@
+body {
+    background: #000;
+    color: #fff;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+header {
+    background: #000;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex-shrink: 0;
+}
+header .back { color: #888; text-decoration: none; font-size: 12px; }
+header .back:hover { color: #fff; }
+header h1 { font-size: 15px; letter-spacing: 2px; font-weight: normal; }
+header .stats { font-size: 11px; color: #888; margin-left: auto; }
+#status { font-size: 11px; color: #666; margin-left: 12px; }
+#status.ok { color: #44aa44; }
+
+/* ── Main layout ────────────────────────────────────────────── */
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── Left panel: aircraft list ──────────────────────────────── */
+.ac-list {
+    width: 200px;
+    min-width: 200px;
+    border-right: 1px solid #333;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+.ac-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #1a1a1a;
+    transition: background 0.1s;
+}
+.ac-item:hover { background: #1a1a1a; }
+.ac-item.selected { background: #1a2a1a; border-left: 2px solid #44aa44; }
+.ac-item .callsign { font-size: 15px; color: #fff; }
+.ac-item .meta { font-size: 12px; color: #666; margin-top: 2px; }
+.ac-item .ts { font-size: 11px; color: #44aa44; margin-top: 1px; }
+.ac-item .badge {
+    display: inline-block;
+    font-size: 11px;
+    color: #888;
+    background: #1a1a1a;
+    padding: 1px 5px;
+    border-radius: 2px;
+    margin-left: 8px;
+}
+.ac-item.flash { animation: flash 0.6s ease-out; }
+@keyframes flash { 0% { background: #2a2a00; } 100% { background: transparent; } }
+.ac-item.historical .callsign { color: #777; }
+.ac-item.historical .meta { color: #444; }
+.ac-item.historical .ts { color: #555; }
+.ac-item.historical .badge { color: #555; }
+.ac-divider {
+    padding: 4px 12px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #333;
+    border-top: 1px solid #333;
+    background: #0a0a0a;
+}
+
+/* ── Right panel: message detail ────────────────────────────── */
+.detail {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+}
+.detail .empty { color: #444; font-size: 12px; padding-top: 40px; text-align: center; }
+
+.msg-card {
+    margin-bottom: 20px;
+    border: 1px solid #222;
+    background: #0a0a0a;
+    border-radius: 2px;
+}
+.msg-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #222;
+    font-size: 13px;
+}
+.msg-time { color: #44aa44; }
+.msg-type { color: #888; }
+.msg-type.cpdlc { color: #5588ff; }
+.msg-type.depart { color: #ff8844; }
+.msg-meta {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #666;
+    border-bottom: 1px solid #1a1a1a;
+    display: flex;
+    gap: 0;
+}
+.msg-meta .field { margin-right: 20px; }
+.msg-meta .field span { color: #ccc; }
+.msg-body {
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #ddd;
+}
+.msg-body .sub-msg {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #1a1a1a;
+}
+.msg-body .sub-msg:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.msg-body .sub-num { color: #666; }
+.msg-body .pilot-response { color: #44aa44; }
+.msg-body .clearance { color: #fff; }
+
+/* Departure card */
+.depart-grid {
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px 16px;
+    font-size: 11px;
+}
+.depart-grid .label { color: #666; font-size: 10px; }
+.depart-grid .value { color: #fff; margin-top: 1px; }
+.depart-timeline {
+    padding: 8px 12px;
+    border-top: 1px solid #1a1a1a;
+    font-size: 11px;
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+.depart-timeline .step { color: #888; }
+.depart-timeline .step .t { color: #ff8844; }

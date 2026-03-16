@@ -213,19 +213,19 @@ app.Map("/dstars/{**rest}", async (HttpContext ctx, string rest) =>
 app.MapGet("/", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "home.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "home", "index.html"));
 });
 
 // Clean URLs: /eram → eram.html (serve directly, no redirect)
 app.MapGet("/eram", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "eram.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "eram", "index.html"));
 });
 app.MapGet("/asdex", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex", "directory.html"));
 });
 // Register /asdex/ws/{airport} before /asdex/{airport} so the literal "ws" segment wins
 app.Map("/asdex/ws/{airport}", async (HttpContext ctx, string airport) =>
@@ -270,14 +270,14 @@ app.Map("/asdex/ws/{airport}", async (HttpContext ctx, string airport) =>
 app.MapGet("/asdex/{airport}", async (HttpContext ctx, string airport) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex-airport.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex", "scope.html"));
 });
 
 // TDLS routes — /tdls/ws/{airport} before /tdls/{airport} (literal wins)
 app.MapGet("/tdls", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls", "directory.html"));
 });
 app.Map("/tdls/ws/{airport}", async (HttpContext ctx, string airport) =>
 {
@@ -321,14 +321,14 @@ app.Map("/tdls/ws/{airport}", async (HttpContext ctx, string airport) =>
 app.MapGet("/tdls/{airport}", async (HttpContext ctx, string airport) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls-airport.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls", "airport.html"));
 });
 
 // TAIS routes — literal /tais/ws/{facility} before parameter /tais/{facility}
 app.MapGet("/tais", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais", "directory.html"));
 });
 app.Map("/tais/ws/{facility}", async (HttpContext ctx, string facility) =>
 {
@@ -372,34 +372,34 @@ app.Map("/tais/ws/{facility}", async (HttpContext ctx, string facility) =>
 app.MapGet("/tais/{facility}", async (HttpContext ctx, string facility) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais-facility.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais", "facility.html"));
 });
 
 app.MapGet("/tfm", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm", "index.html"));
 });
 
 app.MapGet("/flight-table", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "flight-table.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "flight-table", "index.html"));
 });
 app.MapGet("/tfm/route", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm-route.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm", "route.html"));
 });
 app.MapGet("/tfm/sectors", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm-sectors.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm", "sectors.html"));
 });
 app.MapGet("/tfm/flow", async (HttpContext ctx) =>
 {
     ctx.Response.ContentType = "text/html";
-    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm-flow.html"));
+    await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tfm", "flow.html"));
 });
 // TFMS WebSocket — flight stream
 app.Map("/tfms/ws", async (HttpContext ctx) =>

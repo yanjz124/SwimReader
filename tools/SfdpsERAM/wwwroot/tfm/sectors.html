@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TFM - Sector Loading</title>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/tfm/sectors.css">
+</head>
+<body>
+
+<header>
+    <h1>TFM</h1>
+    <span class="sub">SECTOR LOADING</span>
+    <div class="status-bar">
+        <span id="sectorCount">Sectors: <b>--</b></span>
+    </div>
+</header>
+
+<div class="filter-row">
+    <input type="text" id="searchInput" placeholder="Filter sectors (e.g. ZDC, ZOA13)...">
+    <label>ARTCC:</label>
+    <select id="artccFilter">
+        <option value="">ALL</option>
+    </select>
+</div>
+
+<div class="main">
+    <div class="sector-grid" id="sectorGrid"></div>
+    <div class="sidebar" id="sidebar">
+        <div class="empty-sidebar">
+            <div>Select a sector to view flights</div>
+            <div style="color:#444; font-size:10px;">Shows predicted traffic from<br>TFMS traversal data</div>
+        </div>
+    </div>
+</div>
+
+<script src="/idle-timer.js"></script>
+<script src="/tfm/sectors.js"></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TFM - Flow Advisory</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/tfm/flow.css">
+</head>
+<body>
+
+<header>
+    <h1>TFM</h1>
+    <span class="sub">FLOW ADVISORY</span>
+    <div class="status-bar">
+        <span id="fcaCount">FCAs: <b>--</b></span>
+    </div>
+</header>
+
+<div class="main">
+    <div id="map"></div>
+
+    <div class="sidebar">
+        <div class="section-title">ACTIVE FCAs / TMIs</div>
+        <div class="search-bar">
+            <input type="text" id="fcaSearch" placeholder="Search FCA / TMI...">
+        </div>
+        <div class="fca-list" id="fcaList"></div>
+    </div>
+</div>
+
+<div class="flight-popup" id="flightPopup">
+    <div class="popup-header">
+        <h3 id="popupTitle">FCA Flights</h3>
+        <span class="close" id="popupClose">X</span>
+    </div>
+    <table class="flight-table">
+        <thead>
+            <tr>
+                <th>CALLSIGN</th>
+                <th>DEP</th>
+                <th>ARR</th>
+                <th>STATUS</th>
+                <th>ENTRY</th>
+                <th>EXIT</th>
+            </tr>
+        </thead>
+        <tbody id="popupBody"></tbody>
+    </table>
+</div>
+
+<script src="/idle-timer.js"></script>
+<script src="/tfm/flow.js"></script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+/* ── Shared base styles for all SwimReader frontends ── */
+@font-face { font-family: 'ERAM'; src: url('/ERAMv110.ttf') format('truetype'); }
+* { margin: 0; padding: 0; box-sizing: border-box; }

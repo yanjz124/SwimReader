@@ -3,6 +3,38 @@
 // The page must set window.idleOnPause = function() { ... } to close WS / clear intervals
 // and window.idleOnResume = function() { ... } to reconnect.
 (function () {
+    // Secret bypass: ?jamesanthony in URL disables idle timeout entirely
+    if (new URLSearchParams(window.location.search).has('jamesanthony')) {
+        window.idlePaused = () => false;
+
+        // Splash greeting
+        const hr = new Date().getHours();
+        const greeting = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+        const splash = document.createElement('div');
+        splash.id = 'ja-splash';
+        splash.innerHTML = `
+            <img src="/TwistedGia.png" style="max-width:340px;max-height:50vh;border-radius:8px;margin-bottom:20px;box-shadow:0 4px 24px rgba(0,0,0,0.6)">
+            <div style="font-size:16px;color:#cccc44;font-family:'ERAM','Consolas',monospace;letter-spacing:1px">${greeting} James, what delay are you causing today?</div>`;
+        const splashStyle = document.createElement('style');
+        splashStyle.textContent = `
+            #ja-splash {
+                position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.92);
+                display:flex;flex-direction:column;justify-content:center;align-items:center;
+                cursor:pointer;animation:ja-in 0.3s ease-out;
+            }
+            @keyframes ja-in { from{opacity:0} to{opacity:1} }
+            @keyframes ja-out { from{opacity:1} to{opacity:0} }
+        `;
+        document.head.appendChild(splashStyle);
+        document.body.appendChild(splash);
+        splash.addEventListener('click', () => {
+            splash.style.animation = 'ja-out 0.3s ease-in forwards';
+            setTimeout(() => splash.remove(), 300);
+        });
+
+        return;
+    }
+
     const IDLE_MS = 30 * 60 * 1000; // 30 minutes
     let timer = null;
     let paused = false;

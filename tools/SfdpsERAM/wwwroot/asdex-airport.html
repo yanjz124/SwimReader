@@ -35,6 +35,8 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     font-family: inherit; font-size: 10px; padding: 1px 6px; cursor: pointer;
 }
 #statusbar button:hover { border-color: #888; }
+#statusbar button.db-tog { color: #555; }
+#statusbar button.db-tog.on { color: #cccc44; border-color: #666; }
 
 /* ── Target icons — rendered as Leaflet divIcons ── */
 .ac-icon {
@@ -187,6 +189,14 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     <input type="number" id="font-size" min="8" max="20" value="13" step="1">
     <label>ROT</label>
     <input type="number" id="rot" min="0" max="360" value="360" step="1">
+    <span style="border-left:1px solid #444;height:14px"></span>
+    <button class="db-tog" data-field="alt">ALT</button>
+    <button class="db-tog" data-field="type">TYPE</button>
+    <button class="db-tog" data-field="sens">SENS</button>
+    <button class="db-tog" data-field="cat">CAT</button>
+    <button class="db-tog" data-field="fix">FIX</button>
+    <button class="db-tog" data-field="vel">VEL</button>
+    <span style="border-left:1px solid #444;height:14px"></span>
     <button id="fl-toggle">FLT LIST</button>
     <button id="gc-toggle">SP CONFIG</button>
     <button id="dn-toggle">NIGHT</button>
@@ -226,6 +236,69 @@ fontInput.addEventListener('input', () => {
     // Invalidate all hashes so next batch re-creates icons with new font size
     for (const tid of Object.keys(hashes)) hashes[tid] = '';
 });
+
+// ── Data block field toggles ────────────────────────────────────────────────
+let dbShowAlt  = true;   // Field D: Altitude
+let dbShowType = true;   // Field F: Aircraft type
+let dbShowSens = false;  // Field E: Sensors (FUS/CST)
+let dbShowCat  = false;  // Field G: Wake category
+let dbShowFix  = true;   // Field H: Fix/destination
+let dbShowVel  = true;   // Field I: Velocity
+let dbToggleVer = 0;     // bumped on any toggle change to invalidate hashes
+
+// Restore from localStorage
+try {
+    const saved = JSON.parse(localStorage.getItem('asdex-db-toggles') || '{}');
+    if (saved.alt  !== undefined) dbShowAlt  = saved.alt;
+    if (saved.type !== undefined) dbShowType = saved.type;
+    if (saved.sens !== undefined) dbShowSens = saved.sens;
+    if (saved.cat  !== undefined) dbShowCat  = saved.cat;
+    if (saved.fix  !== undefined) dbShowFix  = saved.fix;
+    if (saved.vel  !== undefined) dbShowVel  = saved.vel;
+} catch(e) {}
+
+function saveDbToggles() {
+    localStorage.setItem('asdex-db-toggles', JSON.stringify({
+        alt: dbShowAlt, type: dbShowType, sens: dbShowSens,
+        cat: dbShowCat, fix: dbShowFix, vel: dbShowVel
+    }));
+    dbToggleVer++;
+    // Invalidate all hashes so icons rebuild
+    for (const tid of Object.keys(hashes)) hashes[tid] = '';
+}
+
+// Toggle button wiring
+const dbTogMap = { alt: () => dbShowAlt, type: () => dbShowType, sens: () => dbShowSens, cat: () => dbShowCat, fix: () => dbShowFix, vel: () => dbShowVel };
+const dbTogSet = { alt: v => dbShowAlt=v, type: v => dbShowType=v, sens: v => dbShowSens=v, cat: v => dbShowCat=v, fix: v => dbShowFix=v, vel: v => dbShowVel=v };
+document.querySelectorAll('.db-tog').forEach(btn => {
+    const f = btn.dataset.field;
+    if (dbTogMap[f]()) btn.classList.add('on');
+    btn.addEventListener('click', () => {
+        const nv = !dbTogMap[f]();
+        dbTogSet[f](nv);
+        btn.classList.toggle('on', nv);
+        saveDbToggles();
+    });
+});
+
+// Wake category mapping (RECAT A-F → CRC display letter)
+function wakeToCategory(wake, acType) {
+    if (!wake && !acType) return '';
+    // Check B757 first
+    if (acType && /^B75[237]$/.test(acType)) return 'B';
+    if (!wake) return '';
+    switch (wake) {
+        case 'A': return 'J'; // Super → J (Jumbo)
+        case 'B': return 'H'; // Upper Heavy → H
+        case 'C': return 'H'; // Lower Heavy → H
+        case 'D': return 'L'; // Upper Large → L
+        case 'E': return 'L'; // Lower Large → L
+        case 'F': return 'L'; // Upper Small → L
+        case 'G': return 'S'; // Lower Small → S
+        case 'H': return 'S'; // Light → S
+        default: return wake.length === 1 ? wake : '';
+    }
+}
 
 // ── Day/Night toggle ────────────────────────────────────────────────────────
 const dnBtn = document.getElementById('dn-toggle');
@@ -708,23 +781,24 @@ function makeIcon(t) {
 
     // Data block — skip for targets with no callsign and no squawk
     const cs  = t.callsign || t.squawk || '';
-    const alt = t.altFt != null ? Math.round(t.altFt / 100).toString().padStart(3, '0') : '';
-    const spd = t.spdKts != null ? Math.round(t.spdKts / 10).toString().padStart(2, '0') : '';
-    const typ = t.acType || '';
-
-    // Enrichment: gate code (from fix→code mapping or destination fallback)
-    const gateCode = t.gateCode || '';
+    const alt = (dbShowAlt && t.altFt != null) ? Math.round(t.altFt / 100).toString().padStart(3, '0') : '';
+    const sens = dbShowSens ? (t.ageSec > 8 ? 'CST' : 'FUS') : '';
+    const spd = (dbShowVel && t.spdKts != null) ? Math.round(t.spdKts / 10).toString().padStart(2, '0') : '';
+    const typ = dbShowType ? (t.acType || '') : '';
+    const catLetter = dbShowCat ? wakeToCategory(t.wake, t.acType) : '';
+    const fix = dbShowFix ? (t.gateCode || '') : '';
 
     let dbHtml = '';
     const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 1.25)}px`;
     if (cs && cat !== 'unknown') {
         if (cat !== 'vehicle') {
-            const gcSpan = gateCode ? `<span class="db-extra">${gateCode}</span>` : '';
-            // Line 2: {acType} {gateCode} {speed}
-            const parts2 = [typ, gcSpan, spd].filter(Boolean).join(' ');
+            // Line 1: {callsign} {altitude?} {sensors?}
+            const parts1 = [cs, alt, sens].filter(Boolean).join(' ');
+            // Line 2: {type?} {cat?} {fix?} {velocity?}
+            const parts2 = [typ, catLetter, fix, spd].filter(Boolean).join(' ');
             dbHtml = `<div class="db" style="${dbStyle}">
-                <div class="db-line1">${cs}${alt ? ' ' + alt : ''}</div>
-                <div class="db-line2">${parts2}</div>
+                <div class="db-line1">${parts1}</div>
+                ${parts2 ? `<div class="db-line2">${parts2}</div>` : ''}
             </div>`;
         } else {
             dbHtml = `<div class="db" style="${dbStyle}"><div class="db-line1">${cs}</div></div>`;
@@ -749,7 +823,7 @@ function makeIcon(t) {
 }
 
 function trackHash(t) {
-    return `${t.lat?.toFixed(5)},${t.lon?.toFixed(5)},${t.callsign||''},${t.altFt||0},${t.spdKts||0},${t.hdg?.toFixed(0)||0},${t.tgtType||''},${t.acType||''},${t.wake||''},${t.gateCode||''}`;
+    return `${t.lat?.toFixed(5)},${t.lon?.toFixed(5)},${t.callsign||''},${t.altFt||0},${t.spdKts||0},${t.hdg?.toFixed(0)||0},${t.tgtType||''},${t.acType||''},${t.wake||''},${t.gateCode||''},${t.ageSec||0},${dbToggleVer}`;
 }
 
 // ── Apply one track update ───────────────────────────────────────────────────

@@ -100,7 +100,7 @@ public sealed class DgScopeAdapter : BackgroundService
     private string ConvertTrack(TrackPositionEvent track)
     {
         var guid = _trackState.GetTrackGuid(track.ModeSCode, track.TrackNumber, track.Facility);
-        var positionOnly = track.IsFrozen || track.IsPseudo;
+        var positionOnly = track.IsPseudo;
 
         var update = new DstarsTrackUpdate
         {
@@ -111,8 +111,10 @@ public sealed class DgScopeAdapter : BackgroundService
                 Latitude = track.Position.Latitude,
                 Longitude = track.Position.Longitude
             },
-            // Omit altitude, squawk, Mode S for frozen/pseudo tracks so DGScope
-            // treats them as PrimaryOnly (position symbol only, no datablock)
+            // Omit altitude, squawk, Mode S for pseudo tracks so DGScope
+            // treats them as PrimaryOnly (position symbol only, no datablock).
+            // Frozen tracks keep all data — they're real correlated aircraft
+            // that temporarily lost radar coverage (coast), not uncorrelated targets.
             Altitude = !positionOnly && track.AltitudeFeet.HasValue ? new DstarsAltitude
             {
                 Value = track.AltitudeFeet.Value,

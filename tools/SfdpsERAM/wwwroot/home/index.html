@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>swim.vncrcc.org</title>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/home/home.css">
+</head>
+<body>
+
+<header>
+    <h1>SWIM</h1>
+    <span class="sub">SYSTEM WIDE INFORMATION MANAGEMENT</span>
+    <div class="status-bar">
+        <span class="stat" id="sfdpsStat">SFDPS: <b>--</b></span>
+        <span class="stat" id="stddsStat">STDDS: <b>--</b></span>
+        <span class="stat" id="tfmsStat">TFMS: <b>--</b></span>
+        <span class="stat" id="connStat"></span>
+    </div>
+</header>
+
+<div class="main">
+    <div class="nav" id="nav">
+        <div class="nav-section">EN ROUTE (SFDPS)</div>
+        <a class="nav-item" data-key="eram" href="/eram">
+            <div class="title">ERAM SCOPE</div>
+            <div class="desc">Radar display with data blocks</div>
+            <div class="count" id="eramCount"></div>
+        </a>
+        <a class="nav-item" data-key="flight-table" href="/flight-table">
+            <div class="title">FLIGHT TABLE</div>
+            <div class="desc">Flight plan viewer with event history</div>
+        </a>
+
+        <div class="nav-section">TRAFFIC FLOW (TFMS)</div>
+        <a class="nav-item" data-key="tfm" href="/tfm">
+            <div class="title">TFM</div>
+            <div class="desc">TMI dashboard / flight data</div>
+            <div class="count" id="tfmCount"></div>
+        </a>
+        <a class="nav-item" data-key="tfm-route" href="/tfm/route">
+            <div class="title">ROUTE VIEWER</div>
+            <div class="desc">Route traversal with sectors</div>
+        </a>
+        <a class="nav-item" data-key="tfm-sectors" href="/tfm/sectors">
+            <div class="title">SECTOR LOADING</div>
+            <div class="desc">Predicted sector traffic</div>
+        </a>
+        <a class="nav-item" data-key="tfm-flow" href="/tfm/flow">
+            <div class="title">FLOW ADVISORY</div>
+            <div class="desc">FCA status and restrictions</div>
+        </a>
+
+        <div class="nav-section">TERMINAL (STDDS)</div>
+        <a class="nav-item" data-key="tais" href="/tais">
+            <div class="title">TAIS</div>
+            <div class="desc">STARS terminal radar tracks</div>
+            <div class="count" id="taisCount"></div>
+        </a>
+        <a class="nav-item" data-key="asdex" href="/asdex">
+            <div class="title">ASDE-X</div>
+            <div class="desc">Airport surface surveillance</div>
+            <div class="count" id="asdexCount"></div>
+        </a>
+        <a class="nav-item" data-key="tdls" href="/tdls">
+            <div class="title">TDLS</div>
+            <div class="desc">CPDLC clearances / departures</div>
+            <div class="count" id="tdlsCount"></div>
+        </a>
+    </div>
+
+    <div class="panel" id="panel">
+        <div class="welcome">
+            <div class="big">SWIM</div>
+            <div>FAA System Wide Information Management</div>
+            <div style="color:#444; margin-top: 12px;">Select a service to view details</div>
+        </div>
+    </div>
+</div>
+
+<script src="/home/home.js"></script>
+<script src="/idle-timer.js"></script>
+</body>
+</html>

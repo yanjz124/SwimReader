@@ -1,0 +1,116 @@
+header {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header .sub { font-size: 11px; color: #555; }
+
+.search-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+.search-row input {
+    background: #111;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 5px 10px;
+    font-family: inherit;
+    font-size: 12px;
+    width: 200px;
+    outline: none;
+}
+.search-row input:focus { border-color: #cccc44; }
+.search-row button {
+    background: #111;
+    border: 1px solid #444;
+    color: #cccc44;
+    padding: 5px 14px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+.search-row button:hover { border-color: #cccc44; }
+
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+#map {
+    flex: 1;
+}
+.leaflet-container { background: #0a0a0a; }
+
+/* ── Sidebar ──────────────────────────────────────────────── */
+.sidebar {
+    width: 340px;
+    min-width: 340px;
+    border-left: 1px solid #222;
+    overflow-y: auto;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+}
+.sidebar .section-title {
+    padding: 8px 12px;
+    font-size: 10px;
+    color: #555;
+    letter-spacing: 1px;
+    border-bottom: 1px solid #1a1a1a;
+    background: #050505;
+}
+.flight-info {
+    padding: 10px 12px;
+    border-bottom: 1px solid #111;
+}
+.flight-info .cs { font-size: 16px; color: #cccc44; letter-spacing: 1px; }
+.flight-info .route { font-size: 12px; color: #aaa; margin-top: 4px; }
+.flight-info .meta { font-size: 11px; color: #555; margin-top: 4px; }
+
+.fix-list {
+    flex: 1;
+    overflow-y: auto;
+}
+.fix-item {
+    display: flex;
+    padding: 4px 12px;
+    font-size: 11px;
+    border-bottom: 1px solid #0a0a0a;
+}
+.fix-item:hover { background: #0a0a0a; }
+.fix-item .fix-name { color: #39d2c0; width: 80px; flex-shrink: 0; }
+.fix-item .fix-time { color: #666; width: 60px; flex-shrink: 0; text-align: right; }
+
+.sector-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+.sector-item {
+    display: flex;
+    padding: 4px 12px;
+    font-size: 11px;
+    border-bottom: 1px solid #0a0a0a;
+}
+.sector-item .sec-name { color: #aaa; width: 100px; flex-shrink: 0; }
+.sector-item .sec-time { color: #666; flex: 1; text-align: right; }
+
+.empty-sidebar {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    color: #333;
+    font-size: 12px;
+    gap: 6px;
+    text-align: center;
+    padding: 20px;
+}

@@ -1,0 +1,240 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "properties": {
+          "id": "7L - 25R"
+        },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                -150.00844583333333,
+                61.16997055555555
+              ],
+              [
+                -150.0084463888889,
+                61.169558888888886
+              ],
+              [
+                -149.94814833333334,
+                61.16958777777778
+              ],
+              [
+                -149.94815055555557,
+                61.16999944444444
+              ],
+              [
+                -150.00844583333333,
+                61.16997055555555
+              ]
+            ]
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "properties": {
+          "id": "7R - 25L"
+        },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                -150.04314305555556,
+                61.168101944444444
+              ],
+              [
+                -150.0431411111111,
+                61.16755333333333
+              ],
+              [
+                -149.97260666666668,
+                61.167588055555555
+              ],
+              [
+                -149.97260555555556,
+                61.16813666666666
+              ],
+              [
+                -150.04314305555556,
+                61.168101944444444
+              ]
+            ]
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "properties": {
+          "id": "15 - 33"
+        },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                -150.01418972222223,
+                61.19985666666666
+              ],
+              [
+                -150.0150136111111,
+                61.19975
+              ],
+              [
+                -149.99896,
+                61.170995
+              ],
+              [
+                -149.99813638888887,
+                61.171101944444445
+              ],
+              [
+                -150.01418972222223,
+                61.19985666666666
+              ]
+            ]
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "properties": {
+          "id": "Y"
+        },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                -150.001473043844,
+                61.170505816450316
+              ],
+              [
+                -150.0008991194625,
+                61.170576360243935
+              ],
+              [
+                -150.01420628771945,
+                61.19440841258889
+              ],
+              [
+                -150.0147464518432,
+                61.194323010642776
+              ],
+              [
+                -150.001473043844,
+                61.170505816450316
+              ]
+            ]
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "properties": {
+          "id": "R"
+        },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                -150.01081900852694,
+                61.19982757373392
+              ],
+              [
+                -150.0113816794892,
+                61.199758450734834
+              ],
+              [
+                -149.99396701320742,
+                61.1686187114028
+              ],
+              [
+                -149.99322428753726,
+                61.168683832652796
+              ],
+              [
+                -150.01081900852694,
+                61.19982757373392
+              ]
+            ]
+          ]
+        }
+      },
+      {
+        "type": "Feature",
+        "properties": {
+          "id": "K"
+        },
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                -150.03625314269811,
+                61.171332661193205
+              ],
+              [
+                -150.03625595605286,
+                61.17094467768023
+              ],
+              [
+                -149.94978694444444,
+                61.17113444444444
+              ],
+              [
+                -149.94978944444443,
+                61.17138861111111
+              ],
+              [
+                -150.03625314269811,
+                61.171332661193205
+              ]
+            ]
+          ]
+        }
+      },
+      { "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.014003628416191, 61.199802998096246 ], [ -150.013795440160152, 61.199425532376139 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.011541805036615, 61.195398783194271 ], [ -150.011261133575545, 61.194894497727887 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.009108393158442, 61.191047497474877 ], [ -150.008833238487625, 61.190544774994727 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.006678991262135, 61.186718085304229 ], [ -150.006403022276288, 61.186214588339361 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.002943387832204, 61.180046596817917 ], [ -150.001599457377182, 61.177644188304861 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.9990526270891, 61.173087854191344 ], [ -149.998776971309525, 61.17259819874522 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.998147571269101, 61.171453464415706 ], [ -149.997940206320209, 61.171103495260972 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.999363127606017, 61.171512342410324 ], [ -149.999137906000328, 61.171103495260972 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.000272825672852, 61.173156394656807 ], [ -150.000004845593907, 61.172658634535559 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.002765821891273, 61.177599987644157 ], [ -150.0018968484776, 61.176052273208057 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.007787012078893, 61.186574810909207 ], [ -150.00750439533499, 61.186064682305485 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.010213530603636, 61.190910953280635 ], [ -150.00992996929952, 61.190396008108095 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "15 - 33" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.01265017805116, 61.195260123468231 ], [ -150.012360185510857, 61.194743514584637 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.00835500854518, 61.169969721286144 ], [ -150.007211933785271, 61.169966891207274 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.002376160331778, 61.169969386192555 ], [ -149.999906197849299, 61.169976405049816 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.995556435552686, 61.169980917345406 ], [ -149.993604347788391, 61.169979762875926 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.99341346319261, 61.169975723783537 ], [ -149.991146278096096, 61.169978643600579 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.98736516805954, 61.169993194176712 ], [ -149.985406139900618, 61.169988717077082 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.978932884221024, 61.169993326265683 ], [ -149.977054737867746, 61.169995432726274 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.968899612307155, 61.169997396117992 ], [ -149.967410470094819, 61.170001029099517 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.960005621741146, 61.170011369687543 ], [ -149.958218821387135, 61.170012221843045 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.948335477902987, 61.170016698939328 ], [ -149.949941996880113, 61.170019916732116 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.968958221925362, 61.169582242014663 ], [ -149.965381808233587, 61.169589133375496 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.981359672243684, 61.169574239434965 ], [ -149.976421071176418, 61.169582417639766 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.986535712441878, 61.169573225286172 ], [ -149.984466084919148, 61.169575701902616 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.994964082217308, 61.169560128938045 ], [ -149.992812844705185, 61.169564509004196 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.008360060063154, 61.169545107480651 ], [ -150.007235145019422, 61.169549398584984 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7R - 25L" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.034407478103475, 61.168085033925621 ], [ -150.033461518440618, 61.168090929239931 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7R - 25L" }, "geometry": { "type": "LineString", "coordinates": [ [ -150.009068832514146, 61.168119472456652 ], [ -150.007214254908718, 61.168120032127312 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7R - 25L" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.994348267841445, 61.168130106197459 ], [ -149.992660125083518, 61.168132581947219 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7R - 25L" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.986260147931489, 61.168136384311524 ], [ -149.981912849166804, 61.168141299604969 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7R - 25L" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.97434598684697, 61.168151933338407 ], [ -149.972756534694753, 61.168162096377252 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7R - 25L" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.986757108245769, 61.167585322618891 ], [ -149.985538443935013, 61.167587780845501 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7R - 25L" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.984571135785103, 61.167586883359 ], [ -149.983695471946646, 61.167587780845501 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7R - 25L" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.974062116271824, 61.167600383035058 ], [ -149.972781549668014, 61.167601213164986 ] ] } },
+{ "type": "Feature", "properties": { "runwayId": "7L - 25R" }, "geometry": { "type": "LineString", "coordinates": [ [ -149.998400949317102, 61.168131225538396 ], [ -149.994503783109963, 61.168132344879275 ] ] } }
+
+    ]
+  }

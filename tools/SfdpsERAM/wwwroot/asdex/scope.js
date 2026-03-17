@@ -536,39 +536,73 @@ hbBtn.onclick = () => {
     hbBtn.style.color = hbVisible ? '#ff8c00' : '#ccc';
 };
 
+// ── Holdbar GeoJSON overlay ─────────────────────────────────────────────────
+let holdbarGeo = null;       // raw GeoJSON FeatureCollection
+let holdbarLines = [];       // ordered LineString features (index = bit position)
+let holdbarLayers = [];      // L.polyline layers (same order)
+let holdbarLayerGroup = null;
+let lastHoldbarBits = [];    // boolean array of active bits
+
+fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(geojson => {
+        holdbarGeo = geojson;
+        // Extract LineString features in order (index = bit position)
+        holdbarLines = geojson.features.filter(f => f.geometry.type === 'LineString');
+        // Create Leaflet polyline layers for each hold bar (initially hidden/grey)
+        holdbarLayerGroup = L.layerGroup().addTo(map);
+        for (const feat of holdbarLines) {
+            const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
+            const layer = L.polyline(coords, {
+                color: '#444', weight: 3, opacity: 0.3, interactive: false
+            });
+            holdbarLayers.push(layer);
+            holdbarLayerGroup.addLayer(layer);
+        }
+    })
+    .catch(() => {});
+
 function renderHoldBar(data) {
     const statusEl = document.getElementById('hb-status');
     const bitsEl = document.getElementById('hb-bits');
     const rawEl = document.getElementById('hb-raw');
-    if (!statusEl || !bitsEl) return;
 
     const hex = data.status || '';
-    // Count active bits
-    let activeBits = 0;
-    for (const ch of hex) {
-        const n = parseInt(ch, 16);
-        if (!isNaN(n)) for (let b = 0; b < 4; b++) if (n & (1 << b)) activeBits++;
-    }
-    statusEl.textContent = `ctrl=${data.control}  ${activeBits} active  ${data.ageSec || 0}s ago`;
-
-    // Render bit grid — each hex char = 4 bits, MSB first
-    let html = '';
+    // Parse all bits from hex
+    const bits = [];
     for (let i = 0; i < hex.length; i++) {
         const nibble = parseInt(hex[i], 16);
-        if (isNaN(nibble)) continue;
-        // Show bits MSB to LSB within each nibble
-        for (let b = 3; b >= 0; b--) {
-            const on = (nibble >> b) & 1;
-            const bitIndex = i * 4 + (3 - b);
-            html += `<div class="hb-bit ${on ? 'on' : 'off'}" title="Bit ${bitIndex}"></div>`;
-        }
-        // Add gap every 2 nibbles (byte boundary)
-        if (i % 2 === 1 && i < hex.length - 1) {
-            html += `<div class="hb-nibble-gap"></div>`;
+        if (isNaN(nibble)) { bits.push(false, false, false, false); continue; }
+        for (let b = 3; b >= 0; b--) bits.push(!!((nibble >> b) & 1));
+    }
+
+    // Count active
+    let activeBits = bits.filter(Boolean).length;
+
+    // Update map overlay — only change layers whose state flipped
+    for (let i = 0; i < holdbarLayers.length && i < bits.length; i++) {
+        if (bits[i] !== lastHoldbarBits[i]) {
+            holdbarLayers[i].setStyle(bits[i]
+                ? { color: '#00cc00', weight: 4, opacity: 1 }
+                : { color: '#444', weight: 3, opacity: 0.3 });
         }
     }
+    lastHoldbarBits = bits;
+
+    // Update debug panel
+    if (!statusEl || !bitsEl) return;
+    statusEl.textContent = `ctrl=${data.control}  ${activeBits}/${holdbarLines.length} active  ${data.ageSec || 0}s ago`;
+
+    let html = '';
+    for (let i = 0; i < bits.length; i++) {
+        const on = bits[i];
+        const rwy = i < holdbarLines.length ? holdbarLines[i].properties.runwayId || '?' : '';
+        html += `<div class="hb-bit ${on ? 'on' : 'off'}" title="Bit ${i}${rwy ? ' — ' + rwy : ''}"></div>`;
+        if ((i + 1) % 4 === 0 && (i + 1) % 8 !== 0) { /* nibble boundary, no gap */ }
+        if ((i + 1) % 8 === 0 && i < bits.length - 1) html += `<div class="hb-nibble-gap"></div>`;
+    }
     bitsEl.innerHTML = html;
-    rawEl.textContent = `RAW: ${hex}`;
+    rawEl.textContent = `RAW: ${hex}  (${holdbarLines.length} bars mapped)`;
 }
 
 // ── Wake turbulence detection (FAA 7360.1D type→weight class) ────────────────

@@ -1030,6 +1030,16 @@ app.MapGet("/api/asdex/{airport}/vnasrules", (string airport) =>
     return Results.Json(new Dictionary<string, string>(), jsonOpts);
 });
 
+// Holdbar GeoJSON (vNAS runway safety logic geometry)
+app.MapGet("/api/asdex/{airport}/holdbar-geo", (string airport) =>
+{
+    var icao = airport.ToUpperInvariant();
+    if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
+    var path = Path.Combine(app.Environment.WebRootPath, "asdex", "holdbar-geo", icao + ".geojson");
+    if (!File.Exists(path)) return Results.NotFound();
+    return Results.File(path, "application/json");
+});
+
 // TDLS directory and detail
 app.MapGet("/api/tdls", () => Results.Json(tdls.GetDirectory(), jsonOpts));
 app.MapGet("/api/tdls/{airport}", (string airport) =>

@@ -524,6 +524,53 @@ document.getElementById('fl-tbody').addEventListener('click', (e) => {
     if (t && t.lat != null && t.lon != null) map.setView([t.lat, t.lon], Math.max(map.getZoom(), 16));
 });
 
+// ── Hold bar debug panel ─────────────────────────────────────────────────────
+
+const hbPanel = document.getElementById('holdbar-panel');
+const hbBtn = document.getElementById('hb-toggle');
+let hbVisible = false;
+
+hbBtn.onclick = () => {
+    hbVisible = !hbVisible;
+    hbPanel.style.display = hbVisible ? 'flex' : 'none';
+    hbBtn.style.color = hbVisible ? '#ff8c00' : '#ccc';
+};
+
+function renderHoldBar(data) {
+    const statusEl = document.getElementById('hb-status');
+    const bitsEl = document.getElementById('hb-bits');
+    const rawEl = document.getElementById('hb-raw');
+    if (!statusEl || !bitsEl) return;
+
+    const hex = data.status || '';
+    // Count active bits
+    let activeBits = 0;
+    for (const ch of hex) {
+        const n = parseInt(ch, 16);
+        if (!isNaN(n)) for (let b = 0; b < 4; b++) if (n & (1 << b)) activeBits++;
+    }
+    statusEl.textContent = `ctrl=${data.control}  ${activeBits} active  ${data.ageSec || 0}s ago`;
+
+    // Render bit grid — each hex char = 4 bits, MSB first
+    let html = '';
+    for (let i = 0; i < hex.length; i++) {
+        const nibble = parseInt(hex[i], 16);
+        if (isNaN(nibble)) continue;
+        // Show bits MSB to LSB within each nibble
+        for (let b = 3; b >= 0; b--) {
+            const on = (nibble >> b) & 1;
+            const bitIndex = i * 4 + (3 - b);
+            html += `<div class="hb-bit ${on ? 'on' : 'off'}" title="Bit ${bitIndex}"></div>`;
+        }
+        // Add gap every 2 nibbles (byte boundary)
+        if (i % 2 === 1 && i < hex.length - 1) {
+            html += `<div class="hb-nibble-gap"></div>`;
+        }
+    }
+    bitsEl.innerHTML = html;
+    rawEl.textContent = `RAW: ${hex}`;
+}
+
 // ── Wake turbulence detection (FAA 7360.1D type→weight class) ────────────────
 // Loaded from wake-categories.json: { "A320": "L", "B738": "L", "C172": "S", "C17": "H", ... }
 // Weight classes: J=Super, H=Heavy, L=Large, S=Small, S+=Small 12.5-41K lbs
@@ -697,6 +744,9 @@ function connect() {
         } else if (msg.type === 'remove') {
             removeTrack(msg.data.trackId);
             updateCount();
+
+        } else if (msg.type === 'holdbar') {
+            renderHoldBar(msg.data);
         }
     };
 

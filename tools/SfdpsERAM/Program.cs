@@ -244,7 +244,7 @@ app.MapGet("/asdex", async (HttpContext ctx) =>
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex", "directory.html"));
 });
 // Register /asdex/ws/{airport} before /asdex/{airport} so the literal "ws" segment wins
-app.Map("/asdex/ws/{airport}", async (HttpContext ctx, string airport) =>
+app.Map("/asdex/ws/{airport:regex(^[A-Za-z0-9]+$)}", async (HttpContext ctx, string airport) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
     airport = airport.ToUpperInvariant();
@@ -283,7 +283,7 @@ app.Map("/asdex/ws/{airport}", async (HttpContext ctx, string airport) =>
         await sendTask;
     }
 });
-app.MapGet("/asdex/{airport}", async (HttpContext ctx, string airport) =>
+app.MapGet("/asdex/{airport:regex(^[A-Za-z0-9]+$)}", async (HttpContext ctx, string airport) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "asdex", "scope.html"));
@@ -295,7 +295,7 @@ app.MapGet("/tdls", async (HttpContext ctx) =>
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls", "directory.html"));
 });
-app.Map("/tdls/ws/{airport}", async (HttpContext ctx, string airport) =>
+app.Map("/tdls/ws/{airport:regex(^[A-Za-z0-9]+$)}", async (HttpContext ctx, string airport) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
     airport = airport.ToUpperInvariant();
@@ -334,7 +334,7 @@ app.Map("/tdls/ws/{airport}", async (HttpContext ctx, string airport) =>
         await sendTask;
     }
 });
-app.MapGet("/tdls/{airport}", async (HttpContext ctx, string airport) =>
+app.MapGet("/tdls/{airport:regex(^[A-Za-z0-9]+$)}", async (HttpContext ctx, string airport) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tdls", "airport.html"));
@@ -346,7 +346,7 @@ app.MapGet("/tais", async (HttpContext ctx) =>
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais", "directory.html"));
 });
-app.Map("/tais/ws/{facility}", async (HttpContext ctx, string facility) =>
+app.Map("/tais/ws/{facility:regex(^[A-Za-z0-9]+$)}", async (HttpContext ctx, string facility) =>
 {
     if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
     facility = facility.ToUpperInvariant();
@@ -385,7 +385,7 @@ app.Map("/tais/ws/{facility}", async (HttpContext ctx, string facility) =>
         await sendTask;
     }
 });
-app.MapGet("/tais/{facility}", async (HttpContext ctx, string facility) =>
+app.MapGet("/tais/{facility:regex(^[A-Za-z0-9]+$)}", async (HttpContext ctx, string facility) =>
 {
     ctx.Response.ContentType = "text/html";
     await ctx.Response.SendFileAsync(Path.Combine(builder.Environment.WebRootPath, "tais", "facility.html"));

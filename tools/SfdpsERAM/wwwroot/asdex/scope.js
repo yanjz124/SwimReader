@@ -543,6 +543,10 @@ let holdbarLayers = [];      // L.polyline layers (same order)
 let holdbarLayerGroup = null;
 let lastHoldbarBits = [];    // boolean array of active bits
 
+// Custom pane so hold bars render above surface polygons but below markers
+map.createPane('holdbar');
+map.getPane('holdbar').style.zIndex = 450;
+
 fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(geojson => {
@@ -554,7 +558,8 @@ fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
         for (const feat of holdbarLines) {
             const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
             const layer = L.polyline(coords, {
-                color: '#444', weight: 3, opacity: 0.3, interactive: false
+                color: '#444', weight: 3, opacity: 0.3, interactive: false,
+                pane: 'holdbar'
             });
             holdbarLayers.push(layer);
             holdbarLayerGroup.addLayer(layer);

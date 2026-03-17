@@ -623,8 +623,9 @@ fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
             holdbarLayers.push(layer);
             holdbarLayerGroup.addLayer(layer);
         }
+        buildHoldbarMapping();
         holdbarGeoReady = true;
-        console.log(`[HOLDBAR] loaded ${holdbarLines.length} hold bar lines`);
+        console.log(`[HOLDBAR] loaded ${holdbarLines.length} hold bar lines, bit range ${256 - holdbarLines.length}-255`);
         // Apply any holdbar data that arrived before GeoJSON
         if (lastHoldbarData) applyHoldbarToMap(lastHoldbarData);
     })
@@ -640,31 +641,43 @@ function parseHoldbarBits(hex) {
     return bits;
 }
 
-// Holdbar bit→line mapping per airport. Keys are bit positions, values are
-// GeoJSON LineString indices. This must be built per-airport by correlating
-// observed active bits with physical hold bar locations.
-// TODO: populate these mappings via an edit mode or config file
-const holdbarBitMap = {};  // e.g. { 176: 0, 177: 1, ... }
+// Holdbar bit mapping: sort GeoJSON lines north→south, map to the last N
+// bit positions (256 - lineCount through 255). This assumes the SMES bitmap
+// packs hold bars into the end of the 256-bit field, ordered N→S.
+let holdbarSortedIndices = []; // sortedRank → original line index
+
+function buildHoldbarMapping() {
+    // Compute center lat for each line
+    const withLat = holdbarLines.map((feat, i) => {
+        const coords = feat.geometry.coordinates;
+        const avgLat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+        return { idx: i, lat: avgLat };
+    });
+    // Sort north to south (highest lat first)
+    withLat.sort((a, b) => b.lat - a.lat);
+    holdbarSortedIndices = withLat.map(w => w.idx);
+}
 
 function applyHoldbarToMap(data) {
     const bits = parseHoldbarBits(data.status || '');
-    // Reset all layers to inactive
+    const startBit = 256 - holdbarSortedIndices.length;
+
     holdbarLayerGroup.clearLayers();
-    for (let i = 0; i < holdbarLayers.length; i++) {
-        const coords = holdbarLines[i].geometry.coordinates.map(c => [c[1], c[0]]);
-        // Check if any bit is mapped to this line
-        let on = false;
-        for (const [bitStr, lineIdx] of Object.entries(holdbarBitMap)) {
-            if (lineIdx === i && bits[parseInt(bitStr)]) { on = true; break; }
-        }
+    let litCount = 0;
+    for (let rank = 0; rank < holdbarSortedIndices.length; rank++) {
+        const lineIdx = holdbarSortedIndices[rank];
+        const bitPos = startBit + rank;
+        const on = bitPos < bits.length && bits[bitPos];
+        if (on) litCount++;
+        const coords = holdbarLines[lineIdx].geometry.coordinates.map(c => [c[1], c[0]]);
         const layer = L.polyline(coords, on
             ? { color: '#00cc00', weight: 5, opacity: 1, interactive: false, pane: 'holdbar' }
             : { color: '#555', weight: 3, opacity: 0.8, interactive: false, pane: 'holdbar' });
-        holdbarLayers[i] = layer;
+        holdbarLayers[lineIdx] = layer;
         holdbarLayerGroup.addLayer(layer);
     }
     const activeBits = bits.map((b, i) => b ? i : -1).filter(i => i >= 0);
-    console.log(`[HOLDBAR] ${activeBits.length} active bits: [${activeBits.join(',')}]`);
+    console.log(`[HOLDBAR] ${litCount}/${holdbarSortedIndices.length} lines lit, ${activeBits.length} active bits: [${activeBits.join(',')}]`);
 }
 
 function renderHoldBar(data) {

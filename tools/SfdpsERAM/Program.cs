@@ -183,7 +183,15 @@ var app = builder.Build();
 app.UseDefaultFiles();
 var contentTypes = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
 contentTypes.Mappings[".geojson"] = "application/geo+json";
-app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = contentTypes });
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = contentTypes,
+    OnPrepareResponse = ctx =>
+    {
+        // Prevent Cloudflare from caching stale static files
+        ctx.Context.Response.Headers["Cache-Control"] = "no-cache";
+    }
+});
 app.UseWebSockets();
 
 // Reverse proxy: /dstars/* → SwimReader.Server on port 5000

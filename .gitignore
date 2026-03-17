@@ -50,6 +50,9 @@ nasr-data/
 ## Flight state cache (persisted across restarts)
 flight-cache/
 
+## Learned holdbar bit mappings (per-deployment)
+holdbar-map/
+
 ## IDE
 .idea/
 *.swp

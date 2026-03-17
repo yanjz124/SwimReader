@@ -20,7 +20,7 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
                     └───────┬───────────────┬───────────┘
                             │               │
               ┌─────────────▼──┐    ┌───────▼──────────────────┐
-              │  SwimReader     │    │  SfdpsERAM               │
+              │  SwimReader     │    │  SwimServer               │
               │  Server         │    │  (standalone, self-      │
               │  (STDDS pipe)   │    │   contained Solace →     │
               │                 │    │   WebSocket bridge)      │
@@ -44,7 +44,7 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 
 ### Data Sources (Parsers)
 - **STDDS** — Terminal automation data (TAIS, TDES, SMES, APDS, ISMC) — parsed via `SwimReader.Parsers`
-- **SFDPS** — En route flight data (FIXM XML) — parsed inline in `SfdpsERAM/Program.cs`
+- **SFDPS** — En route flight data (FIXM XML) — parsed inline in `SwimServer/Program.cs`
 - Future: additional SWIM data sources as needed
 
 ### Frontends / API Services
@@ -74,7 +74,7 @@ src/
     Streaming/                  ClientConnectionManager (facility-scoped broadcast)
 tools/
   SwimReader.SfdpsExplorer/           Console tool — raw SFDPS FIXM message inspection
-  SfdpsERAM/                          Standalone web server — SFDPS+STDDS → WebSocket → ERAM/ASDE-X
+  SwimServer/                          Standalone web server — SFDPS+STDDS → WebSocket → ERAM/ASDE-X
     Program.cs                          All server logic: Solace (FDPS+STDDS), FIXM parsing, WebSocket, REST
     AsdexBridge.cs                      STDDS/SMES ingestion, AsdexTrack state, WS broadcast (ASDE-X)
     TdlsBridge.cs                       STDDS/TDES ingestion, CPDLC + departure state, WS broadcast (TDLS)
@@ -119,7 +119,7 @@ cp .env.example .env
 
 ### SFDPS ERAM (radar display + flight table)
 ```bash
-cd tools/SfdpsERAM
+cd tools/SwimServer
 dotnet run
 # ERAM scope:   http://localhost:5001/eram.html
 # Flight table: http://localhost:5001/index.html
@@ -134,7 +134,7 @@ dotnet run
 
 ## Environment Variables
 
-### SFDPS (SfdpsERAM)
+### SFDPS (SwimServer)
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SFDPS_HOST` | Solace broker URL | `tcps://ems2.swim.faa.gov:55443` |
@@ -143,7 +143,7 @@ dotnet run
 | `SFDPS_PASS` | SWIM subscription password | (required) |
 | `SFDPS_QUEUE` | Solace queue name | (required) |
 
-### STDDS (SwimReader.Server AND SfdpsERAM)
+### STDDS (SwimReader.Server AND SwimServer)
 Both services read these variables. SwimReader.Server also accepts them via `appsettings.json` section `ScdsConnection`.
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -153,11 +153,11 @@ Both services read these variables. SwimReader.Server also accepts them via `app
 | `SCDSCONNECTION__PASSWORD` | SWIM password | (required) |
 | `SCDSCONNECTION__QUEUENAME` | Solace queue | (required) |
 
-**Note:** SfdpsERAM uses `SCDSCONNECTION__*` vars for its `AsdexBridge` STDDS connection (separate Solace session from the FDPS session). If `SCDSCONNECTION__USERNAME` is empty, ASDE-X is silently disabled.
+**Note:** SwimServer uses `SCDSCONNECTION__*` vars for its `AsdexBridge` STDDS connection (separate Solace session from the FDPS session). If `SCDSCONNECTION__USERNAME` is empty, ASDE-X is silently disabled.
 
 All services search upward for a `.env` file, so a single `.env` at the repo root covers everything. See `.env.example`.
 
-## SFDPS Data Pipeline (SfdpsERAM)
+## SFDPS Data Pipeline (SwimServer)
 
 ### Message Flow
 ```
@@ -376,7 +376,7 @@ Same sub-types as `assignedAltitude`: `<simple>`, `<vfr>`, `<vfrPlus>`. Represen
 ```
 ERAM pre-resolves the route string into fix-by-fix waypoints with estimated times. Some points use radial/distance from a navaid instead of a named fix.
 
-### API Endpoints (SfdpsERAM, port 5001)
+### API Endpoints (SwimServer, port 5001)
 | Endpoint | Description |
 |----------|-------------|
 | `WS /ws` | WebSocket — sends `snapshot`, `update`, `remove`, `stats` messages |
@@ -633,7 +633,7 @@ Display normalization: 3-digit numeric headings get `H` prefix (255→H255), spe
 When clearance data exists (from either source), line 3 shows a ↴ indicator. Server clearance data always displays on line 4 without requiring manual toggle; local-only QS data requires toggling via ↴ click or `QS <FLID>`. Free text takes priority (fills line 4); otherwise heading and speed are positioned with speed aligned to the ↴ column.
 
 ### NASR Route Resolution
-On startup, SfdpsERAM downloads FAA NASR 28-Day Subscription data and parses:
+On startup, SwimServer downloads FAA NASR 28-Day Subscription data and parses:
 - **NAV_BASE.csv** — VOR/VORTAC/NDB navaids (lat/lon by identifier)
 - **FIX_BASE.csv** — Named waypoints/fixes
 - **APT_BASE.csv** — Airports (FAA LID + ICAO)
@@ -652,9 +652,9 @@ Data cached in `nasr-data/{AIRAC-date}/`, auto-refreshed every 24 hours.
 ### Destination Airport Codes
 Per-ARTCC single-letter destination codes in `destination-codes.json`. When a facility is selected, normal Field E shows `{letter}{groundspeed}` (e.g., `W420` where W=DCA). Add more ARTCCs by adding entries to the JSON file.
 
-## ASDE-X Display (SfdpsERAM)
+## ASDE-X Display (SwimServer)
 
-The ASDE-X feature adds live airport surface traffic to SfdpsERAM. It connects a second Solace session to STDDS (SMES topics), maintains per-airport track state, and broadcasts real-time updates to browser clients via WebSocket.
+The ASDE-X feature adds live airport surface traffic to SwimServer. It connects a second Solace session to STDDS (SMES topics), maintains per-airport track state, and broadcasts real-time updates to browser clients via WebSocket.
 
 ### Architecture
 
@@ -670,7 +670,7 @@ STDDS Solace queue → topic filter (SMES/*) → ProcessSmes() → AsdexTrack.Me
                           └──────────┘◀────────── remove WS message → WsClient queue
 ```
 
-**Key class:** `AsdexBridge` in `tools/SfdpsERAM/AsdexBridge.cs` — fully self-contained; Program.cs creates one instance and calls `Start()` plus the two timer callbacks.
+**Key class:** `AsdexBridge` in `tools/SwimServer/AsdexBridge.cs` — fully self-contained; Program.cs creates one instance and calls `Start()` plus the two timer callbacks.
 
 ### AsdexBridge Internals
 
@@ -802,7 +802,7 @@ const B757_CODES = ['B752','B753','B757'];
 
 Client-side purge: none implemented (server handles it authoritatively via `remove` messages).
 
-## TDLS Display (SfdpsERAM)
+## TDLS Display (SwimServer)
 
 The TDLS feature displays CPDLC (Controller-Pilot Data Link Communications) clearances and tower departure events from the TDES (Tower Departure Event Service) STDDS feed. It shares the STDDS Solace session with AsdexBridge via the `OnOtherMessage` callback — Solace queues deliver each message to one consumer, so a shared session is required.
 
@@ -823,7 +823,7 @@ STDDS Solace queue → AsdexBridge (SMES/* → ASDE-X processing)
                FlushDirty() (1s timer) → "new" WS message → clients
 ```
 
-### Key Class: `TdlsBridge` (`tools/SfdpsERAM/TdlsBridge.cs`)
+### Key Class: `TdlsBridge` (`tools/SwimServer/TdlsBridge.cs`)
 
 **State:** `ConcurrentDictionary<string, ConcurrentDictionary<string, TdlsAircraft>>` — airport → aircraftId → aircraft with message list.
 
@@ -881,7 +881,7 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 | `FlushDirty` | 1s | Send new messages to WebSocket clients |
 | `PurgeStale` | 60s | No-op — all aircraft and messages retained indefinitely |
 
-## FDIO Display (SfdpsERAM)
+## FDIO Display (SwimServer)
 
 The FDIO (Flight Data Input/Output) page provides a two-panel flight data explorer. Left panel: sortable, filterable flight table. Right panel: detail view with two tabs (Flight Plan and Events). Reuses the existing SFDPS WebSocket and REST infrastructure.
 
@@ -1071,7 +1071,7 @@ dotnet test
 Individual projects:
 ```bash
 dotnet build src/SwimReader.Server
-dotnet build tools/SfdpsERAM
+dotnet build tools/SwimServer
 ```
 
 ## Deployment (Raspberry Pi)
@@ -1086,7 +1086,7 @@ dotnet build tools/SfdpsERAM
 ### Systemd Services
 | Service | Unit | Port | Working Directory |
 |---------|------|------|-------------------|
-| SfdpsERAM | `sfdps-eram.service` | 5001 | `tools/SfdpsERAM` |
+| SwimServer | `sfdps-eram.service` | 5001 | `tools/SwimServer` |
 | SwimReader.Server (STDDS) | `swimreader-stdds.service` | 5000 | `src/SwimReader.Server` |
 
 ```bash
@@ -1127,7 +1127,7 @@ On shutdown (SIGTERM) and every 5 minutes, all flight data is serialized to `fli
 - **Tunnel ID**: `07b88be3-c0eb-423b-97d4-57bde0bb21da`
 - **Config**: `~/.cloudflared/config.yml`
 - **Service**: `cloudflared.service`
-- **Route**: `swim.vncrcc.org` → `http://127.0.0.1:5001` (SfdpsERAM)
+- **Route**: `swim.vncrcc.org` → `http://127.0.0.1:5001` (SwimServer)
 
 **DNS (manual step in Cloudflare dashboard):**
 - CNAME `swim` → `07b88be3-c0eb-423b-97d4-57bde0bb21da.cfargotunnel.com` (proxied)

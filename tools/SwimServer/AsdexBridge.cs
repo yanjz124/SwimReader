@@ -21,6 +21,7 @@ class AsdexBridge
 {
     private readonly string _user, _pass, _queue, _host, _vpn;
     private readonly JsonSerializerOptions _jsonOpts;
+    private string? _webRootPath;
 
     // airport → trackId → track
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, AsdexTrack>> _state = new();
@@ -30,6 +31,10 @@ class AsdexBridge
     private readonly ConcurrentDictionary<string, byte> _dirty = new();
     // airport → hold bar state {control, status hex, timestamp}
     private readonly ConcurrentDictionary<string, HoldBarState> _holdBars = new();
+
+    // ── Holdbar bit mapping (empirical correlation) ──
+    // airport → HoldbarMapper
+    private readonly ConcurrentDictionary<string, HoldbarMapper> _holdbarMappers = new();
 
     /// <summary>Callback for non-SMES messages (topic, xmlBody). Set before Start().</summary>
     public Action<string, string>? OnOtherMessage { get; set; }
@@ -43,6 +48,9 @@ class AsdexBridge
         _user = user; _pass = pass; _queue = queue; _host = host; _vpn = vpn;
         _jsonOpts = jsonOpts;
     }
+
+    /// <summary>Set webroot path so holdbar mapper can find GeoJSON files. Call before Start().</summary>
+    public void SetWebRoot(string webRootPath) => _webRootPath = webRootPath;
 
     public void Start()
     {
@@ -295,6 +303,32 @@ class AsdexBridge
         // Only broadcast if status changed
         if (prev?.Status == status) return;
 
+        // Empirical holdbar bit correlation: detect 0→1 transitions and match with nearby tracks
+        if (prev is not null && _webRootPath is not null)
+        {
+            var mapper = _holdbarMappers.GetOrAdd(airport,
+                a => HoldbarMapper.Load(a, _webRootPath));
+            if (mapper.HasGeo)
+            {
+                var prevBits = ParseBits(prev.Status);
+                var newBits = ParseBits(status);
+                var newlyActive = new List<int>();
+                for (int i = 0; i < 256 && i < newBits.Length; i++)
+                {
+                    if (newBits[i] && (i >= prevBits.Length || !prevBits[i]))
+                        newlyActive.Add(i);
+                }
+                if (newlyActive.Count > 0 && _state.TryGetValue(airport, out var tracks))
+                {
+                    var trackList = tracks.Values
+                        .Where(t => (DateTime.UtcNow - t.LastSeen).TotalSeconds < 10)
+                        .ToArray();
+                    if (trackList.Length > 0)
+                        mapper.Correlate(newlyActive, trackList);
+                }
+            }
+        }
+
         // Count active bits
         var activeBits = CountBits(status);
         Console.WriteLine($"[HOLDBAR] {airport} ctrl={state.Control} bits={activeBits} status={status}");
@@ -310,6 +344,36 @@ class AsdexBridge
                 client.Enqueue(json);
             }
         }
+    }
+
+    private static bool[] ParseBits(string hex)
+    {
+        var bits = new bool[hex.Length * 4];
+        for (int i = 0; i < hex.Length; i++)
+        {
+            if (int.TryParse(hex[i].ToString(), NumberStyles.HexNumber, null, out var nibble))
+            {
+                bits[i * 4]     = (nibble & 8) != 0;
+                bits[i * 4 + 1] = (nibble & 4) != 0;
+                bits[i * 4 + 2] = (nibble & 2) != 0;
+                bits[i * 4 + 3] = (nibble & 1) != 0;
+            }
+        }
+        return bits;
+    }
+
+    /// <summary>Get the learned holdbar bit→line mapping for an airport.</summary>
+    public Dictionary<int, int>? GetHoldbarMapping(string airport)
+    {
+        if (_holdbarMappers.TryGetValue(airport, out var mapper))
+            return mapper.GetMapping();
+        // Try loading from disk even if no holdbar data received yet
+        if (_webRootPath is not null)
+        {
+            var m = HoldbarMapper.Load(airport, _webRootPath);
+            if (m.HasMapping) return m.GetMapping();
+        }
+        return null;
     }
 
     private static int CountBits(string hex)
@@ -586,4 +650,209 @@ class HoldBarState
         status = Status,
         ageSec = (int)(DateTime.UtcNow - Timestamp).TotalSeconds,
     };
+}
+
+// ── Holdbar bit mapper (empirical correlation) ────────────────────────────────
+
+/// <summary>
+/// Learns the mapping between SMES holdbar bitmap bit positions and physical
+/// hold bar lines (from vNAS GeoJSON). When a bit transitions 0→1, finds
+/// the nearest aircraft to each GeoJSON line and records the association.
+/// Mappings are persisted to disk and accumulate over time.
+/// </summary>
+class HoldbarMapper
+{
+    private readonly string _airport;
+    private readonly string _savePath;
+
+    // GeoJSON line geometries: each is a pair of (lat, lon) endpoints
+    private readonly List<(double lat1, double lon1, double lat2, double lon2)> _lines = new();
+
+    // bit → lineIndex → observation count
+    private readonly ConcurrentDictionary<int, ConcurrentDictionary<int, int>> _observations = new();
+
+    // Minimum distance threshold in meters for a correlation to be recorded
+    private const double MaxCorrelationDistanceMeters = 300;
+
+    // Save at most once per 30 seconds
+    private DateTime _lastSave = DateTime.MinValue;
+
+    public bool HasGeo => _lines.Count > 0;
+    public bool HasMapping => !_observations.IsEmpty;
+
+    private HoldbarMapper(string airport, string savePath)
+    {
+        _airport = airport;
+        _savePath = savePath;
+    }
+
+    public static HoldbarMapper Load(string airport, string webRootPath)
+    {
+        var icao = airport.ToUpperInvariant();
+        if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
+
+        var saveDir = Path.Combine(Path.GetDirectoryName(webRootPath)!, "holdbar-map");
+        var savePath = Path.Combine(saveDir, airport.ToUpperInvariant() + ".json");
+        var mapper = new HoldbarMapper(airport, savePath);
+
+        // Load GeoJSON lines
+        var geoPath = Path.Combine(webRootPath, "asdex", "holdbar-geo", icao + ".geojson");
+        if (File.Exists(geoPath))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(geoPath));
+                foreach (var feat in doc.RootElement.GetProperty("features").EnumerateArray())
+                {
+                    var geom = feat.GetProperty("geometry");
+                    if (geom.GetProperty("type").GetString() != "LineString") continue;
+                    var coords = geom.GetProperty("coordinates");
+                    if (coords.GetArrayLength() < 2) continue;
+                    var c0 = coords[0]; var c1 = coords[coords.GetArrayLength() - 1];
+                    mapper._lines.Add((
+                        c0[1].GetDouble(), c0[0].GetDouble(),
+                        c1[1].GetDouble(), c1[0].GetDouble()));
+                }
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"[HOLDBAR-MAP] GeoJSON parse error: {ex.Message}"); }
+        }
+
+        // Load existing observations from disk
+        if (File.Exists(savePath))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(savePath));
+                foreach (var prop in doc.RootElement.EnumerateObject())
+                {
+                    if (!int.TryParse(prop.Name, out var bit)) continue;
+                    var bitObs = mapper._observations.GetOrAdd(bit, _ => new ConcurrentDictionary<int, int>());
+                    foreach (var inner in prop.Value.EnumerateObject())
+                    {
+                        if (int.TryParse(inner.Name, out var lineIdx))
+                            bitObs[lineIdx] = inner.Value.GetInt32();
+                    }
+                }
+                Console.WriteLine($"[HOLDBAR-MAP] {airport}: loaded {mapper._observations.Count} bit mappings from disk");
+            }
+            catch { /* ignore corrupt file */ }
+        }
+
+        return mapper;
+    }
+
+    /// <summary>
+    /// For each newly activated bit, find the GeoJSON line closest to any track.
+    /// Record the association if within threshold distance.
+    /// </summary>
+    public void Correlate(List<int> newlyActiveBits, AsdexTrack[] tracks)
+    {
+        bool changed = false;
+        foreach (var bit in newlyActiveBits)
+        {
+            // Find the GeoJSON line closest to any track
+            int bestLine = -1;
+            double bestDist = double.MaxValue;
+            for (int li = 0; li < _lines.Count; li++)
+            {
+                var (lat1, lon1, lat2, lon2) = _lines[li];
+                foreach (var t in tracks)
+                {
+                    var dist = PointToSegmentDistanceMeters(t.Latitude, t.Longitude, lat1, lon1, lat2, lon2);
+                    if (dist < bestDist) { bestDist = dist; bestLine = li; }
+                }
+            }
+
+            if (bestLine >= 0 && bestDist < MaxCorrelationDistanceMeters)
+            {
+                var bitObs = _observations.GetOrAdd(bit, _ => new ConcurrentDictionary<int, int>());
+                bitObs.AddOrUpdate(bestLine, 1, (_, v) => v + 1);
+                changed = true;
+            }
+        }
+
+        if (changed && (DateTime.UtcNow - _lastSave).TotalSeconds > 30)
+            Save();
+    }
+
+    /// <summary>Returns the best mapping: bit → lineIndex (highest observation count wins).</summary>
+    public Dictionary<int, int> GetMapping()
+    {
+        var result = new Dictionary<int, int>();
+        foreach (var (bit, obs) in _observations)
+        {
+            int bestLine = -1, bestCount = 0;
+            foreach (var (lineIdx, count) in obs)
+            {
+                if (count > bestCount) { bestCount = count; bestLine = lineIdx; }
+            }
+            if (bestLine >= 0) result[bit] = bestLine;
+        }
+        return result;
+    }
+
+    /// <summary>Returns full observation data for debugging/API.</summary>
+    public object GetDebugInfo()
+    {
+        var mapping = GetMapping();
+        return new
+        {
+            airport = _airport,
+            lineCount = _lines.Count,
+            mappedBits = mapping.Count,
+            mappings = mapping.OrderBy(kv => kv.Key)
+                .Select(kv => new { bit = kv.Key, lineIdx = kv.Value,
+                    observations = _observations.TryGetValue(kv.Key, out var o)
+                        ? o.OrderByDescending(x => x.Value).Select(x => new { lineIdx = x.Key, count = x.Value })
+                        : Enumerable.Empty<object>() })
+        };
+    }
+
+    private void Save()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(_savePath);
+            if (dir is not null) Directory.CreateDirectory(dir);
+
+            var data = new Dictionary<string, Dictionary<string, int>>();
+            foreach (var (bit, obs) in _observations)
+            {
+                var inner = new Dictionary<string, int>();
+                foreach (var (lineIdx, count) in obs)
+                    inner[lineIdx.ToString()] = count;
+                data[bit.ToString()] = inner;
+            }
+            File.WriteAllText(_savePath, JsonSerializer.Serialize(data,
+                new JsonSerializerOptions { WriteIndented = true }));
+            _lastSave = DateTime.UtcNow;
+            Console.WriteLine($"[HOLDBAR-MAP] {_airport}: saved {_observations.Count} bit mappings");
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[HOLDBAR-MAP] Save error: {ex.Message}"); }
+    }
+
+    // ── Geo math ──
+
+    private static double PointToSegmentDistanceMeters(
+        double pLat, double pLon, double aLat, double aLon, double bLat, double bLon)
+    {
+        // Convert to approximate meters (flat earth at this scale is fine)
+        var cosLat = Math.Cos(pLat * Math.PI / 180);
+        var px = pLon * cosLat * 111320;
+        var py = pLat * 111320;
+        var ax = aLon * cosLat * 111320;
+        var ay = aLat * 111320;
+        var bx = bLon * cosLat * 111320;
+        var by = bLat * 111320;
+
+        var dx = bx - ax;
+        var dy = by - ay;
+        var len2 = dx * dx + dy * dy;
+        if (len2 < 1e-10) return Math.Sqrt((px - ax) * (px - ax) + (py - ay) * (py - ay));
+
+        var t = Math.Max(0, Math.Min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+        var cx = ax + t * dx;
+        var cy = ay + t * dy;
+        return Math.Sqrt((px - cx) * (px - cx) + (py - cy) * (py - cy));
+    }
 }

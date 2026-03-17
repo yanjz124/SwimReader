@@ -591,45 +591,75 @@ document.getElementById('fl-tbody').addEventListener('click', (e) => {
 const hbPanel = document.getElementById('holdbar-panel');
 const hbBtn = document.getElementById('hb-toggle');
 let hbVisible = false;
+let holdbarOverlayVisible = true;
 
-hbBtn.onclick = () => {
-    hbVisible = !hbVisible;
-    hbPanel.style.display = hbVisible ? 'flex' : 'none';
-    hbBtn.style.color = hbVisible ? '#ff8c00' : '#ccc';
+hbBtn.onclick = (e) => {
+    if (e.shiftKey) {
+        // Shift+click: toggle debug panel
+        hbVisible = !hbVisible;
+        hbPanel.style.display = hbVisible ? 'flex' : 'none';
+    } else {
+        // Normal click: toggle holdbar overlay on map
+        holdbarOverlayVisible = !holdbarOverlayVisible;
+        if (holdbarLayerGroup) {
+            if (holdbarOverlayVisible) holdbarLayerGroup.addTo(map);
+            else map.removeLayer(holdbarLayerGroup);
+        }
+    }
+    hbBtn.style.color = holdbarOverlayVisible ? '#ff8c00' : '#ccc';
 };
 
 // ── Holdbar GeoJSON overlay ─────────────────────────────────────────────────
-let holdbarLines = [];       // ordered LineString features (index = bit position)
-let holdbarLayers = [];      // L.polyline layers (same order)
+let holdbarLines = [];       // ordered LineString features from GeoJSON
+let holdbarLayers = [];      // L.polyline layers (same order as holdbarLines)
 let holdbarLayerGroup = null;
 let holdbarGeoReady = false; // true once GeoJSON loaded and layers created
 let lastHoldbarData = null;  // latest WS holdbar data (kept for re-apply)
+let holdbarBitMap = null;    // learned mapping: { "176": 3, "177": 7, ... } (bit→lineIdx)
+let holdbarMapPolled = 0;    // how many times we've polled for mapping updates
 
 // Custom pane so hold bars render above surface polygons but below markers
 map.createPane('holdbar');
 map.getPane('holdbar').style.zIndex = 450;
 
-fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
-    .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-    .then(geojson => {
-        holdbarLines = geojson.features.filter(f => f.geometry.type === 'LineString');
-        holdbarLayerGroup = L.layerGroup().addTo(map);
-        for (const feat of holdbarLines) {
-            const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
-            const layer = L.polyline(coords, {
-                color: '#555', weight: 3, opacity: 0.8, interactive: false,
-                pane: 'holdbar'
-            });
-            holdbarLayers.push(layer);
-            holdbarLayerGroup.addLayer(layer);
-        }
-        buildHoldbarMapping();
-        holdbarGeoReady = true;
-        console.log(`[HOLDBAR] loaded ${holdbarLines.length} hold bar lines, bit range ${256 - holdbarLines.length}-255`);
-        // Apply any holdbar data that arrived before GeoJSON
-        if (lastHoldbarData) applyHoldbarToMap(lastHoldbarData);
-    })
-    .catch(err => console.warn('[HOLDBAR] GeoJSON fetch failed:', err));
+// Load GeoJSON and learned bit mapping in parallel
+Promise.all([
+    fetch(`/api/asdex/${AIRPORT}/holdbar-geo`).then(r => r.ok ? r.json() : null),
+    fetch(`/api/asdex/${AIRPORT}/holdbar-map`).then(r => r.ok ? r.json() : null)
+]).then(([geojson, bitMap]) => {
+    if (!geojson) { console.warn('[HOLDBAR] No GeoJSON for this airport'); return; }
+    holdbarLines = geojson.features.filter(f => f.geometry.type === 'LineString');
+    holdbarLayerGroup = L.layerGroup().addTo(map);
+    for (const feat of holdbarLines) {
+        const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
+        const layer = L.polyline(coords, {
+            color: '#555', weight: 0.5, opacity: 0.4, interactive: false,
+            pane: 'holdbar'
+        });
+        holdbarLayers.push(layer);
+        holdbarLayerGroup.addLayer(layer);
+    }
+    holdbarBitMap = (bitMap && Object.keys(bitMap).length > 0) ? bitMap : null;
+    holdbarGeoReady = true;
+    console.log(`[HOLDBAR] loaded ${holdbarLines.length} lines, ${holdbarBitMap ? Object.keys(holdbarBitMap).length + ' mapped bits' : 'no mapping yet (learning...)'}`);
+    if (lastHoldbarData) applyHoldbarToMap(lastHoldbarData);
+}).catch(err => console.warn('[HOLDBAR] fetch failed:', err));
+
+// Re-poll the learned mapping every 60s so newly learned correlations appear
+setInterval(() => {
+    fetch(`/api/asdex/${AIRPORT}/holdbar-map`)
+        .then(r => r.ok ? r.json() : null)
+        .then(bitMap => {
+            if (!bitMap || Object.keys(bitMap).length === 0) return;
+            const newCount = Object.keys(bitMap).length;
+            const oldCount = holdbarBitMap ? Object.keys(holdbarBitMap).length : 0;
+            if (newCount !== oldCount) {
+                console.log(`[HOLDBAR] mapping updated: ${oldCount} → ${newCount} bits`);
+                holdbarBitMap = bitMap;
+                if (lastHoldbarData && holdbarGeoReady) applyHoldbarToMap(lastHoldbarData);
+            }
+        }).catch(() => {});
+}, 60000);
 
 function parseHoldbarBits(hex) {
     const bits = [];
@@ -641,43 +671,38 @@ function parseHoldbarBits(hex) {
     return bits;
 }
 
-// Holdbar bit mapping: sort GeoJSON lines north→south, map to the last N
-// bit positions (256 - lineCount through 255). This assumes the SMES bitmap
-// packs hold bars into the end of the 256-bit field, ordered N→S.
-let holdbarSortedIndices = []; // sortedRank → original line index
-
-function buildHoldbarMapping() {
-    // Compute center lat for each line
-    const withLat = holdbarLines.map((feat, i) => {
-        const coords = feat.geometry.coordinates;
-        const avgLat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
-        return { idx: i, lat: avgLat };
-    });
-    // Sort north to south (highest lat first)
-    withLat.sort((a, b) => b.lat - a.lat);
-    holdbarSortedIndices = withLat.map(w => w.idx);
-}
-
 function applyHoldbarToMap(data) {
     const bits = parseHoldbarBits(data.status || '');
-    const startBit = 256 - holdbarSortedIndices.length;
 
     holdbarLayerGroup.clearLayers();
     let litCount = 0;
-    for (let rank = 0; rank < holdbarSortedIndices.length; rank++) {
-        const lineIdx = holdbarSortedIndices[rank];
-        const bitPos = startBit + rank;
-        const on = bitPos < bits.length && bits[bitPos];
+    const litLines = new Set(); // line indices that are lit green
+
+    if (holdbarBitMap) {
+        // Use learned mapping: bit position → line index
+        for (const [bitStr, lineIdx] of Object.entries(holdbarBitMap)) {
+            const bitPos = parseInt(bitStr);
+            if (bitPos < bits.length && bits[bitPos] && lineIdx < holdbarLines.length) {
+                litLines.add(lineIdx);
+            }
+        }
+    }
+
+    // Render all lines (green if lit, grey otherwise)
+    for (let li = 0; li < holdbarLines.length; li++) {
+        const on = litLines.has(li);
         if (on) litCount++;
-        const coords = holdbarLines[lineIdx].geometry.coordinates.map(c => [c[1], c[0]]);
+        const coords = holdbarLines[li].geometry.coordinates.map(c => [c[1], c[0]]);
         const layer = L.polyline(coords, on
-            ? { color: '#00cc00', weight: 5, opacity: 1, interactive: false, pane: 'holdbar' }
-            : { color: '#555', weight: 3, opacity: 0.8, interactive: false, pane: 'holdbar' });
-        holdbarLayers[lineIdx] = layer;
+            ? { color: '#00cc00', weight: 0.5, opacity: 1, interactive: false, pane: 'holdbar' }
+            : { color: '#555', weight: 0.5, opacity: 0.4, interactive: false, pane: 'holdbar' });
+        holdbarLayers[li] = layer;
         holdbarLayerGroup.addLayer(layer);
     }
+
     const activeBits = bits.map((b, i) => b ? i : -1).filter(i => i >= 0);
-    console.log(`[HOLDBAR] ${litCount}/${holdbarSortedIndices.length} lines lit, ${activeBits.length} active bits: [${activeBits.join(',')}]`);
+    const mappedCount = holdbarBitMap ? Object.keys(holdbarBitMap).length : 0;
+    console.log(`[HOLDBAR] ${litCount}/${holdbarLines.length} lines lit, ${activeBits.length} active bits, ${mappedCount} mapped`);
 }
 
 function renderHoldBar(data) {
@@ -873,6 +898,11 @@ function connect() {
             updateCount();
 
         } else if (msg.type === 'batch') {
+            // Batch contains ALL current (deduped) tracks — remove any not present
+            const batchIds = new Set((msg.data || []).map(t => t.trackId));
+            for (const tid of Object.keys(markers)) {
+                if (!batchIds.has(tid)) removeTrack(tid);
+            }
             for (const t of (msg.data || [])) applyTrack(t);
             updateCount();
 

@@ -1,0 +1,22 @@
+{
+"type": "FeatureCollection",
+"name": "SAN - SafetyLogic 9-27",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "id": "9 - 27", "runwayId": null }, "geometry": { "type": "Polygon", "coordinates": [ [ [ -117.204284199853433, 32.737395600315473 ], [ -117.204467506406516, 32.736861733127625 ], [ -117.175071700833456, 32.729735799681563 ], [ -117.174895800337154, 32.730274200206253 ], [ -117.204284199853433, 32.737395600315473 ] ] ] } },{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.2044700462435, 32.736861931028173 ], [ -117.203290851505727, 32.73657746549349 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.202235168299225, 32.736319744581714 ], [ -117.20064362010261, 32.735933649479946 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.198713630859629, 32.73546634797767 ], [ -117.197337498443986, 32.73513228332412 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.195204736332727, 32.734616355234714 ], [ -117.193873826643099, 32.734292502164458 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.191973985884161, 32.733831035852631 ], [ -117.190983948570306, 32.733591793043978 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.188857021649454, 32.733076351220454 ], [ -117.188005083843024, 32.732870174491048 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.185042752155397, 32.732150501001605 ], [ -117.184197622071167, 32.731947241867424 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.181575676493352, 32.731309990443066 ], [ -117.181017443273191, 32.731175051663875 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.177170107699865, 32.730243366254562 ], [ -117.175071384199555, 32.729734732153233 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.174895963786554, 32.73027509510262 ], [ -117.175875911083565, 32.730513851645426 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.176376521798005, 32.730634202448563 ], [ -117.177237212390096, 32.730843418339681 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.181638891056622, 32.731911258192937 ], [ -117.182489856331301, 32.732117434922351 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.183992417873455, 32.732480189262304 ], [ -117.1848676964417, 32.732693173713912 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.18781544015323, 32.733407012012897 ], [ -117.188690718721475, 32.733619023932761 ] ] } },
+{ "type": "Feature", "properties": { "id": null, "runwayId": "9 - 27" }, "geometry": { "type": "LineString", "coordinates": [ [ -117.19050935307996, 32.734058608280371 ], [ -117.191449791274948, 32.734286180708111 ] ] } }
+]
+}

@@ -359,7 +359,7 @@ class AsdexBridge
 
             // Only serialize + broadcast if there are connected clients
             if (!_clients.TryGetValue(airport, out var airportClients) || airportClients.IsEmpty) continue;
-            var arr = tracks.Values.Select(t => t.ToJson()).ToArray();
+            var arr = DeduplicateByCallsign(tracks.Values).Select(t => t.ToJson()).ToArray();
             var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("batch", arr), _jsonOpts);
             foreach (var (_, client) in airportClients)
             {
@@ -404,7 +404,7 @@ class AsdexBridge
 
         // Immediate full snapshot so the client doesn't wait for the next dirty flush
         var tracks = _state.TryGetValue(airport, out var t)
-            ? t.Values.Select(x => x.ToJson()).ToArray()
+            ? DeduplicateByCallsign(t.Values).Select(x => x.ToJson()).ToArray()
             : Array.Empty<object>();
         var json = JsonSerializer.SerializeToUtf8Bytes(
             new WsMsg("snapshot", new { airport, tracks }), _jsonOpts);
@@ -454,8 +454,29 @@ class AsdexBridge
         if (OnEnrich is not null)
             foreach (var track in t.Values) OnEnrich(track);
 
-        var tracks = t.Values.Select(x => x.ToJson()).ToArray();
+        var tracks = DeduplicateByCallsign(t.Values).Select(x => x.ToJson()).ToArray();
         return new { airport, tracks };
+    }
+
+    /// <summary>
+    /// Deduplicate tracks by callsign — when multiple tracks share the same callsign,
+    /// keep only the one with the most recent LastSeen. Tracks without callsigns are always kept.
+    /// </summary>
+    private static IEnumerable<AsdexTrack> DeduplicateByCallsign(ICollection<AsdexTrack> tracks)
+    {
+        var seen = new Dictionary<string, AsdexTrack>(StringComparer.OrdinalIgnoreCase);
+        var noCallsign = new List<AsdexTrack>();
+        foreach (var t in tracks)
+        {
+            if (string.IsNullOrEmpty(t.Callsign))
+            {
+                noCallsign.Add(t);
+                continue;
+            }
+            if (!seen.TryGetValue(t.Callsign, out var existing) || t.LastSeen > existing.LastSeen)
+                seen[t.Callsign] = t;
+        }
+        return seen.Values.Concat(noCallsign);
     }
 }
 

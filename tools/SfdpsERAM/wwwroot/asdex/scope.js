@@ -362,20 +362,18 @@ document.addEventListener('touchend', e => {
 });
 
 // ── Left-click target to toggle data block ──────────────────────────────────
-// Use elementsFromPoint to find sym halos underneath overlapping data blocks
-function findSymAtPoint(x, y) {
-    const els = document.elementsFromPoint(x, y);
-    for (const el of els) {
-        const sym = el.closest('svg.sym');
-        if (sym) return sym;
-    }
-    return null;
-}
-
+// When a data block overlaps another aircraft's symbol, temporarily hide all
+// data blocks to peek through and find the symbol underneath.
 document.addEventListener('click', e => {
-    // Direct click on sym, or sym found underneath via elementsFromPoint
     let sym = e.target.closest('svg.sym');
-    if (!sym) sym = findSymAtPoint(e.clientX, e.clientY);
+    if (!sym) {
+        // Temporarily disable pointer-events on all data blocks
+        const dbs = document.querySelectorAll('.db');
+        dbs.forEach(d => { d.style.pointerEvents = 'none'; });
+        const under = document.elementFromPoint(e.clientX, e.clientY);
+        dbs.forEach(d => { d.style.pointerEvents = ''; });
+        if (under) sym = under.closest('svg.sym');
+    }
     if (!sym) return;
     const icon = sym.closest('.ac-icon[data-tid]');
     if (!icon) return;
@@ -577,6 +575,14 @@ fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
             holdbarLayerGroup.addLayer(layer);
         }
         console.log(`[HOLDBAR] loaded ${holdbarLines.length} hold bar lines`);
+        // If holdbar data arrived before GeoJSON loaded, apply it now
+        if (lastHoldbarBits.length > 0) {
+            for (let i = 0; i < holdbarLayers.length && i < lastHoldbarBits.length; i++) {
+                if (lastHoldbarBits[i]) {
+                    holdbarLayers[i].setStyle({ color: '#00cc00', weight: 4, opacity: 1 });
+                }
+            }
+        }
     })
     .catch(() => {});
 

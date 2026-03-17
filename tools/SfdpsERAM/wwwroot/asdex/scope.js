@@ -341,19 +341,24 @@ document.addEventListener('touchmove', e => {
 
 document.addEventListener('touchend', e => {
     if (touchDragTid) { touchDragTid = null; touchOrigin = null; return; }
-    // Tap on symbol (no drag) → toggle data block
     if (touchMoved) return;
     const touch = e.changedTouches[0];
-    const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    if (!el) return;
-    const sym = el.closest('svg.sym');
-    if (!sym) return;
-    const icon = sym.closest('.ac-icon[data-tid]');
+    // Use proximity-based detection (same as click handler)
+    let bestTid = null, bestDist = Infinity;
+    for (const [tid, marker] of Object.entries(markers)) {
+        const el = marker.getElement();
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + 9, cy = rect.top + 9;
+        const dist = Math.hypot(touch.clientX - cx, touch.clientY - cy);
+        if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = tid; }
+    }
+    if (!bestTid) return;
+    if (hiddenDbs.has(bestTid)) hiddenDbs.delete(bestTid);
+    else hiddenDbs.add(bestTid);
+    const hidden = hiddenDbs.has(bestTid);
+    const icon = markers[bestTid].getElement()?.querySelector('.ac-icon');
     if (!icon) return;
-    const tid = icon.dataset.tid;
-    if (hiddenDbs.has(tid)) hiddenDbs.delete(tid);
-    else hiddenDbs.add(tid);
-    const hidden = hiddenDbs.has(tid);
     const wrap = icon.querySelector('.db-wrap');
     const ldr = icon.querySelector('.ldr');
     if (wrap) wrap.style.display = hidden ? 'none' : '';
@@ -362,25 +367,39 @@ document.addEventListener('touchend', e => {
 });
 
 // ── Left-click target to toggle data block ──────────────────────────────────
-// When a data block overlaps another aircraft's symbol, temporarily hide all
-// data blocks to peek through and find the symbol underneath.
+// Bypass DOM hit-testing entirely: on any click, find the nearest marker center
+// within the halo radius (14px). This works regardless of overlapping data blocks.
+const HALO_RADIUS = 14;
+
 document.addEventListener('click', e => {
-    let sym = e.target.closest('svg.sym');
-    if (!sym) {
-        // Temporarily disable pointer-events on all data blocks
-        const dbs = document.querySelectorAll('.db');
-        dbs.forEach(d => { d.style.pointerEvents = 'none'; });
-        const under = document.elementFromPoint(e.clientX, e.clientY);
-        dbs.forEach(d => { d.style.pointerEvents = ''; });
-        if (under) sym = under.closest('svg.sym');
+    // Don't toggle if clicking UI elements
+    if (e.target.closest('#statusbar, #gatecode-popup, #flight-list, #holdbar-panel')) return;
+
+    const clickPt = { x: e.clientX, y: e.clientY };
+    let bestTid = null, bestDist = Infinity;
+
+    for (const [tid, marker] of Object.entries(markers)) {
+        const el = marker.getElement();
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        // Marker anchor is at (9, 9) within the icon
+        const cx = rect.left + 9;
+        const cy = rect.top + 9;
+        const dx = clickPt.x - cx;
+        const dy = clickPt.y - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < HALO_RADIUS && dist < bestDist) {
+            bestDist = dist;
+            bestTid = tid;
+        }
     }
-    if (!sym) return;
-    const icon = sym.closest('.ac-icon[data-tid]');
+
+    if (!bestTid) return;
+    if (hiddenDbs.has(bestTid)) hiddenDbs.delete(bestTid);
+    else hiddenDbs.add(bestTid);
+    const hidden = hiddenDbs.has(bestTid);
+    const icon = markers[bestTid].getElement()?.querySelector('.ac-icon');
     if (!icon) return;
-    const tid = icon.dataset.tid;
-    if (hiddenDbs.has(tid)) hiddenDbs.delete(tid);
-    else hiddenDbs.add(tid);
-    const hidden = hiddenDbs.has(tid);
     const wrap = icon.querySelector('.db-wrap');
     const ldr = icon.querySelector('.ldr');
     if (wrap) wrap.style.display = hidden ? 'none' : '';
@@ -547,11 +566,11 @@ hbBtn.onclick = () => {
 };
 
 // ── Holdbar GeoJSON overlay ─────────────────────────────────────────────────
-let holdbarGeo = null;       // raw GeoJSON FeatureCollection
 let holdbarLines = [];       // ordered LineString features (index = bit position)
 let holdbarLayers = [];      // L.polyline layers (same order)
 let holdbarLayerGroup = null;
-let lastHoldbarBits = [];    // boolean array of active bits
+let holdbarGeoReady = false; // true once GeoJSON loaded and layers created
+let lastHoldbarData = null;  // latest WS holdbar data (kept for re-apply)
 
 // Custom pane so hold bars render above surface polygons but below markers
 map.createPane('holdbar');
@@ -560,10 +579,7 @@ map.getPane('holdbar').style.zIndex = 450;
 fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(geojson => {
-        holdbarGeo = geojson;
-        // Extract LineString features in order (index = bit position)
         holdbarLines = geojson.features.filter(f => f.geometry.type === 'LineString');
-        // Create Leaflet polyline layers for each hold bar (initially hidden/grey)
         holdbarLayerGroup = L.layerGroup().addTo(map);
         for (const feat of holdbarLines) {
             const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
@@ -574,47 +590,49 @@ fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
             holdbarLayers.push(layer);
             holdbarLayerGroup.addLayer(layer);
         }
+        holdbarGeoReady = true;
         console.log(`[HOLDBAR] loaded ${holdbarLines.length} hold bar lines`);
-        // If holdbar data arrived before GeoJSON loaded, apply it now
-        if (lastHoldbarBits.length > 0) {
-            for (let i = 0; i < holdbarLayers.length && i < lastHoldbarBits.length; i++) {
-                if (lastHoldbarBits[i]) {
-                    holdbarLayers[i].setStyle({ color: '#00cc00', weight: 4, opacity: 1 });
-                }
-            }
-        }
+        // Apply any holdbar data that arrived before GeoJSON
+        if (lastHoldbarData) applyHoldbarToMap(lastHoldbarData);
     })
-    .catch(() => {});
+    .catch(err => console.warn('[HOLDBAR] GeoJSON fetch failed:', err));
 
-function renderHoldBar(data) {
-    const statusEl = document.getElementById('hb-status');
-    const bitsEl = document.getElementById('hb-bits');
-    const rawEl = document.getElementById('hb-raw');
-
-    const hex = data.status || '';
-    // Parse all bits from hex
+function parseHoldbarBits(hex) {
     const bits = [];
     for (let i = 0; i < hex.length; i++) {
         const nibble = parseInt(hex[i], 16);
         if (isNaN(nibble)) { bits.push(false, false, false, false); continue; }
         for (let b = 3; b >= 0; b--) bits.push(!!((nibble >> b) & 1));
     }
+    return bits;
+}
 
-    // Count active
-    let activeBits = bits.filter(Boolean).length;
-
-    // Update map overlay — only change layers whose state flipped
-    for (let i = 0; i < holdbarLayers.length && i < bits.length; i++) {
-        if (bits[i] !== lastHoldbarBits[i]) {
-            holdbarLayers[i].setStyle(bits[i]
-                ? { color: '#00cc00', weight: 4, opacity: 1 }
-                : { color: '#555', weight: 3, opacity: 0.8 });
-        }
+function applyHoldbarToMap(data) {
+    const bits = parseHoldbarBits(data.status || '');
+    // Style every layer unconditionally
+    for (let i = 0; i < holdbarLayers.length; i++) {
+        const on = i < bits.length && bits[i];
+        holdbarLayers[i].setStyle(on
+            ? { color: '#00cc00', weight: 4, opacity: 1 }
+            : { color: '#555', weight: 3, opacity: 0.8 });
     }
-    lastHoldbarBits = bits;
+    console.log(`[HOLDBAR] applied: ${bits.filter(Boolean).length} active bits, ${holdbarLayers.length} layers`);
+}
+
+function renderHoldBar(data) {
+    lastHoldbarData = data;
+
+    // Update map if GeoJSON is loaded
+    if (holdbarGeoReady) applyHoldbarToMap(data);
 
     // Update debug panel
+    const statusEl = document.getElementById('hb-status');
+    const bitsEl = document.getElementById('hb-bits');
+    const rawEl = document.getElementById('hb-raw');
     if (!statusEl || !bitsEl) return;
+
+    const bits = parseHoldbarBits(data.status || '');
+    const activeBits = bits.filter(Boolean).length;
     statusEl.textContent = `ctrl=${data.control}  ${activeBits}/${holdbarLines.length} active  ${data.ageSec || 0}s ago`;
 
     let html = '';
@@ -622,11 +640,10 @@ function renderHoldBar(data) {
         const on = bits[i];
         const rwy = i < holdbarLines.length ? holdbarLines[i].properties.runwayId || '?' : '';
         html += `<div class="hb-bit ${on ? 'on' : 'off'}" title="Bit ${i}${rwy ? ' — ' + rwy : ''}"></div>`;
-        if ((i + 1) % 4 === 0 && (i + 1) % 8 !== 0) { /* nibble boundary, no gap */ }
         if ((i + 1) % 8 === 0 && i < bits.length - 1) html += `<div class="hb-nibble-gap"></div>`;
     }
     bitsEl.innerHTML = html;
-    rawEl.textContent = `RAW: ${hex}  (${holdbarLines.length} bars mapped)`;
+    rawEl.textContent = `RAW: ${data.status}  (${holdbarLines.length} bars mapped)`;
 }
 
 // ── Wake turbulence detection (FAA 7360.1D type→weight class) ────────────────

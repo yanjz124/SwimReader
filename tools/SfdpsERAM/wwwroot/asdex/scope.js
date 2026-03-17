@@ -362,8 +362,20 @@ document.addEventListener('touchend', e => {
 });
 
 // ── Left-click target to toggle data block ──────────────────────────────────
+// Use elementsFromPoint to find sym halos underneath overlapping data blocks
+function findSymAtPoint(x, y) {
+    const els = document.elementsFromPoint(x, y);
+    for (const el of els) {
+        const sym = el.closest('svg.sym');
+        if (sym) return sym;
+    }
+    return null;
+}
+
 document.addEventListener('click', e => {
-    const sym = e.target.closest('svg.sym');
+    // Direct click on sym, or sym found underneath via elementsFromPoint
+    let sym = e.target.closest('svg.sym');
+    if (!sym) sym = findSymAtPoint(e.clientX, e.clientY);
     if (!sym) return;
     const icon = sym.closest('.ac-icon[data-tid]');
     if (!icon) return;
@@ -558,12 +570,13 @@ fetch(`/api/asdex/${AIRPORT}/holdbar-geo`)
         for (const feat of holdbarLines) {
             const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
             const layer = L.polyline(coords, {
-                color: '#444', weight: 3, opacity: 0.3, interactive: false,
+                color: '#555', weight: 3, opacity: 0.8, interactive: false,
                 pane: 'holdbar'
             });
             holdbarLayers.push(layer);
             holdbarLayerGroup.addLayer(layer);
         }
+        console.log(`[HOLDBAR] loaded ${holdbarLines.length} hold bar lines`);
     })
     .catch(() => {});
 
@@ -589,7 +602,7 @@ function renderHoldBar(data) {
         if (bits[i] !== lastHoldbarBits[i]) {
             holdbarLayers[i].setStyle(bits[i]
                 ? { color: '#00cc00', weight: 4, opacity: 1 }
-                : { color: '#444', weight: 3, opacity: 0.3 });
+                : { color: '#555', weight: 3, opacity: 0.8 });
         }
     }
     lastHoldbarBits = bits;

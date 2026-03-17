@@ -6,7 +6,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     position: fixed; bottom: 0; left: 0; right: 0; z-index: 600;
     background: #111; border-top: 1px solid #333;
     display: flex; align-items: center; gap: 16px; padding: 4px 12px;
-    font-family: 'ERAM', 'Consolas', monospace; font-size: 10px; color: #888;
+    font-family: 'Consolas', monospace; font-size: 10px; color: #888;
 }
 #statusbar a { color: #444; text-decoration: none; }
 #statusbar a:hover { color: #888; }
@@ -50,7 +50,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     pointer-events: none;
 }
 .db {
-    font-family: 'ERAM', 'Consolas', monospace;
+    font-family: 'Consolas', monospace;
     font-size: 13px; line-height: 16px;
     color: #00cc00;
     white-space: nowrap;
@@ -66,7 +66,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     display: none; position: fixed; z-index: 10000;
     top: 50%; left: 50%; transform: translate(-50%, -50%);
     background: #1a1a1a; border: 1px solid #cccc44; padding: 12px 16px;
-    font-family: 'ERAM', 'Consolas', monospace; font-size: 11px;
+    font-family: 'Consolas', monospace; font-size: 11px;
     color: #ccc; min-width: 340px; max-height: 80vh; overflow-y: auto;
 }
 #gatecode-popup h3 { color: #cccc44; margin: 0 0 8px 0; font-size: 12px; }
@@ -97,7 +97,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 #flight-list {
     display: none; position: fixed; top: 0; right: 0; bottom: 28px; width: 380px;
     z-index: 9000; background: #1a1a1a; border-left: 1px solid #cccc44;
-    font-family: 'ERAM', 'Consolas', monospace; font-size: 11px; color: #ccc;
+    font-family: 'Consolas', monospace; font-size: 11px; color: #ccc;
     overflow: hidden; flex-direction: column;
 }
 #fl-header {

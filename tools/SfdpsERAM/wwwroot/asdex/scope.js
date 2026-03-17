@@ -653,7 +653,10 @@ function applyHoldbarToMap(data) {
         holdbarLayers[i] = layer;
         holdbarLayerGroup.addLayer(layer);
     }
-    console.log(`[HOLDBAR] applied: ${bits.filter(Boolean).length} active bits, ${holdbarLayers.length} layers`);
+    const activeBitPositions = bits.map((b, i) => b ? i : -1).filter(i => i >= 0);
+    const inRange = activeBitPositions.filter(i => i < holdbarLayers.length);
+    const outOfRange = activeBitPositions.filter(i => i >= holdbarLayers.length);
+    console.log(`[HOLDBAR] applied: ${activeBitPositions.length} active bits, ${holdbarLayers.length} layers, in-range: [${inRange.join(',')}], out-of-range: [${outOfRange.join(',')}]`);
 }
 
 function renderHoldBar(data) {

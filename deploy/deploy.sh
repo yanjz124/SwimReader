@@ -20,8 +20,8 @@ CHANGED=$(git diff --name-only "$PREV_HEAD" "$NEW_HEAD")
 SFDPS_RESTART=false
 STDDS_RESTART=false
 
-# SfdpsERAM backend: any .cs or .csproj under tools/SfdpsERAM/
-if echo "$CHANGED" | grep -qE '^tools/SfdpsERAM/.*\.(cs|csproj)$'; then
+# SwimServer backend: any .cs or .csproj under tools/SwimServer/
+if echo "$CHANGED" | grep -qE '^tools/SwimServer/.*\.(cs|csproj)$'; then
     SFDPS_RESTART=true
 fi
 
@@ -38,8 +38,8 @@ fi
 
 # Build only what needs restarting
 if [ "$SFDPS_RESTART" = true ]; then
-    echo "[Deploy] Building SfdpsERAM..."
-    /home/JY/.dotnet/dotnet build tools/SfdpsERAM/SfdpsERAM.csproj -c Release --nologo -v quiet
+    echo "[Deploy] Building SwimServer..."
+    /home/JY/.dotnet/dotnet build tools/SwimServer/SwimServer.csproj -c Release --nologo -v quiet
 fi
 
 if [ "$STDDS_RESTART" = true ]; then

@@ -178,6 +178,7 @@ asdex.OnOtherMessage = (topic, body) =>
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:5001");
+asdex.SetWebRoot(builder.Environment.WebRootPath);
 var app = builder.Build();
 
 app.UseDefaultFiles();
@@ -1046,6 +1047,16 @@ app.MapGet("/api/asdex/{airport}/holdbar-geo", (string airport) =>
     var path = Path.Combine(app.Environment.WebRootPath, "asdex", "holdbar-geo", icao + ".geojson");
     if (!File.Exists(path)) return Results.NotFound();
     return Results.File(path, "application/json");
+});
+
+// Holdbar bit mapping (learned from empirical correlation)
+app.MapGet("/api/asdex/{airport}/holdbar-map", (string airport) =>
+{
+    var icao = airport.ToUpperInvariant();
+    if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
+    var mapping = asdex.GetHoldbarMapping(icao);
+    if (mapping is null || mapping.Count == 0) return Results.Json(new { }, jsonOpts);
+    return Results.Json(mapping.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value), jsonOpts);
 });
 
 // TDLS directory and detail

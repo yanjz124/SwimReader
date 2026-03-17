@@ -22,14 +22,14 @@ class AsdexBridge
     private readonly string _user, _pass, _queue, _host, _vpn;
     private readonly JsonSerializerOptions _jsonOpts;
 
-    private int _holdBarSamples = 0;
-
     // airport → trackId → track
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, AsdexTrack>> _state = new();
     // airport → clientId → WebSocket client
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, WsClient>> _clients = new();
     // airports modified since last FlushDirty() call
     private readonly ConcurrentDictionary<string, byte> _dirty = new();
+    // airport → hold bar state {control, status hex, timestamp}
+    private readonly ConcurrentDictionary<string, HoldBarState> _holdBars = new();
 
     /// <summary>Callback for non-SMES messages (topic, xmlBody). Set before Start().</summary>
     public Action<string, string>? OnOtherMessage { get; set; }
@@ -154,14 +154,8 @@ class AsdexBridge
             var root = doc.Root;
             if (root is null || root.Name.LocalName != "asdexMsg")
             {
-                // Capture first 5 SafetyLogicHoldBar samples for analysis
-                if (root?.Name.LocalName == "SafetyLogicHoldBar" && _holdBarSamples < 5)
-                {
-                    _holdBarSamples++;
-                    var path = $"holdbar-sample-{_holdBarSamples}.xml";
-                    try { File.WriteAllText(path, body); Console.WriteLine($"[ASDEX] Captured {path}"); }
-                    catch { }
-                }
+                if (root?.Name.LocalName == "SafetyLogicHoldBar")
+                    ProcessHoldBar(root);
                 return;
             }
 
@@ -278,6 +272,61 @@ class AsdexBridge
         catch (Exception ex) { Console.Error.WriteLine($"[SMES] {ex.GetType().Name}: {ex.Message}"); }
     }
 
+    private void ProcessHoldBar(XElement root)
+    {
+        var airport = root.Elements().FirstOrDefault(e => e.Name.LocalName == "airport")?.Value;
+        if (string.IsNullOrEmpty(airport)) return;
+
+        var control = root.Elements().FirstOrDefault(e => e.Name.LocalName == "control")?.Value;
+        var status = root.Elements().FirstOrDefault(e => e.Name.LocalName == "status")?.Value;
+        if (status is null) return;
+
+        var state = new HoldBarState
+        {
+            Airport = airport,
+            Control = int.TryParse(control, out var c) ? c : 0,
+            Status = status,
+            Timestamp = DateTime.UtcNow
+        };
+
+        var prev = _holdBars.GetValueOrDefault(airport);
+        _holdBars[airport] = state;
+
+        // Only broadcast if status changed
+        if (prev?.Status == status) return;
+
+        // Count active bits
+        var activeBits = CountBits(status);
+        Console.WriteLine($"[HOLDBAR] {airport} ctrl={state.Control} bits={activeBits} status={status}");
+
+        // Broadcast to connected clients for this airport
+        if (_clients.TryGetValue(airport, out var airportClients) && !airportClients.IsEmpty)
+        {
+            var json = JsonSerializer.SerializeToUtf8Bytes(
+                new WsMsg("holdbar", state.ToJson()), _jsonOpts);
+            foreach (var (_, client) in airportClients)
+            {
+                if (client.Ws.State != WebSocketState.Open) continue;
+                client.Enqueue(json);
+            }
+        }
+    }
+
+    private static int CountBits(string hex)
+    {
+        int count = 0;
+        foreach (var ch in hex)
+        {
+            if (int.TryParse(ch.ToString(), NumberStyles.HexNumber, null, out var nibble))
+                count += int.PopCount(nibble);
+        }
+        return count;
+    }
+
+    /// <summary>Get hold bar state for an airport (for REST API / snapshot).</summary>
+    public HoldBarState? GetHoldBar(string airport) =>
+        _holdBars.TryGetValue(airport, out var s) ? s : null;
+
     private static bool TryParseCoord(XElement pos, string latName, string lonName,
         out double lat, out double lon)
     {
@@ -360,6 +409,14 @@ class AsdexBridge
         var json = JsonSerializer.SerializeToUtf8Bytes(
             new WsMsg("snapshot", new { airport, tracks }), _jsonOpts);
         client.Enqueue(json);
+
+        // Send current hold bar state if available
+        if (_holdBars.TryGetValue(airport, out var hb))
+        {
+            var hbJson = JsonSerializer.SerializeToUtf8Bytes(
+                new WsMsg("holdbar", hb.ToJson()), _jsonOpts);
+            client.Enqueue(hbJson);
+        }
 
         return clientId;
     }
@@ -489,5 +546,23 @@ class AsdexTrack
         gate     = TdlsGate,
         runway   = TdlsRunway,
         gateCode = GateCode,
+    };
+}
+
+// ── Hold bar state ───────────────────────────────────────────────────────────
+
+class HoldBarState
+{
+    public string Airport { get; set; } = "";
+    public int Control { get; set; }
+    public string Status { get; set; } = "";  // hex bitmap
+    public DateTime Timestamp { get; set; }
+
+    public object ToJson() => new
+    {
+        airport = Airport,
+        control = Control,
+        status = Status,
+        ageSec = (int)(DateTime.UtcNow - Timestamp).TotalSeconds,
     };
 }

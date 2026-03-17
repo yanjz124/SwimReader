@@ -6,8 +6,8 @@
 <title>ASDE-X</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="/shared/common.css?v=2">
-<link rel="stylesheet" href="/asdex/scope.css?v=2">
+<link rel="stylesheet" href="/shared/common.css?v=3">
+<link rel="stylesheet" href="/asdex/scope.css?v=3">
 </head>
 <body>
 <div id="map"></div>
@@ -64,10 +64,21 @@
     <button id="fl-toggle">FLT LIST</button>
     <button id="gc-toggle">SP CONFIG</button>
     <button id="dn-toggle">NIGHT</button>
+    <button id="hb-toggle">HOLDBARS</button>
     <button id="fs-toggle">FULL</button>
 </div>
+<div id="holdbar-panel" style="display:none">
+    <div id="hb-header">
+        <span style="color:#ff8c00">SAFETY LOGIC HOLD BARS</span>
+        <span id="hb-status" style="color:#888"></span>
+    </div>
+    <div id="hb-body">
+        <div id="hb-bits"></div>
+        <div id="hb-raw" style="color:#666;font-size:9px;margin-top:6px;word-break:break-all"></div>
+    </div>
+</div>
 
-<script src="/asdex/scope.js?v=2"></script>
-<script src="/idle-timer.js?v=2"></script>
+<script src="/asdex/scope.js?v=3"></script>
+<script src="/idle-timer.js?v=3"></script>
 </body>
 </html>

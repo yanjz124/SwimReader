@@ -118,6 +118,28 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 .fl-apt { color: #aaa; }
 .fl-route { color: #00cc00; }
 
+/* ── Hold bar debug panel ── */
+#holdbar-panel {
+    position: fixed; top: 0; left: 0; bottom: 28px; width: 320px;
+    z-index: 9000; background: #1a1a1a; border-right: 1px solid #ff8c00;
+    font-family: 'Consolas', monospace; font-size: 11px; color: #ccc;
+    overflow: hidden; display: flex; flex-direction: column;
+}
+#hb-header {
+    padding: 6px 10px; border-bottom: 1px solid #333;
+    display: flex; justify-content: space-between; align-items: center;
+}
+#hb-body { flex: 1; overflow-y: auto; padding: 8px 10px; }
+#hb-bits { display: flex; flex-wrap: wrap; gap: 1px; }
+.hb-bit {
+    width: 10px; height: 10px; border: 1px solid #333;
+    font-size: 0; line-height: 10px; text-align: center;
+}
+.hb-bit.on { background: #ff8c00; border-color: #ff8c00; }
+.hb-bit.off { background: #1a1a1a; }
+.hb-nibble-gap { width: 4px; }
+.hb-byte-label { width: 100%; color: #555; font-size: 8px; margin-top: 4px; }
+
 /* hide Leaflet attribution noise */
 .leaflet-control-attribution { display: none; }
 

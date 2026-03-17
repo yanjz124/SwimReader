@@ -1,11 +1,46 @@
-// ── Crosshair cursor ────────────────────────────────────────────────────────
+const HALO_RADIUS = 14; // px — match the halo circle radius for click + hover detection
+
+// ── Crosshair cursor + proximity halo ───────────────────────────────────────
 const ch = document.getElementById('crosshair');
+let haloTid = null; // trackId of currently highlighted halo
+
 document.addEventListener('mousemove', e => {
     ch.style.left = e.clientX + 'px';
     ch.style.top  = e.clientY + 'px';
     ch.style.display = 'block';
+
+    // Proximity halo: show halo on nearest marker within radius
+    if (typeof markers === 'undefined') return;
+    let bestTid = null, bestDist = Infinity;
+    for (const [tid, marker] of Object.entries(markers)) {
+        const el = marker.getElement();
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        const dist = Math.hypot(e.clientX - (rect.left + 9), e.clientY - (rect.top + 9));
+        if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = tid; }
+    }
+    if (bestTid !== haloTid) {
+        // Remove old halo
+        if (haloTid) {
+            const old = markers[haloTid]?.getElement()?.querySelector('.halo');
+            if (old) old.style.opacity = '0';
+        }
+        // Show new halo
+        if (bestTid) {
+            const halo = markers[bestTid]?.getElement()?.querySelector('.halo');
+            if (halo) halo.style.opacity = '1';
+        }
+        haloTid = bestTid;
+    }
 });
-document.addEventListener('mouseleave', () => { ch.style.display = 'none'; });
+document.addEventListener('mouseleave', () => {
+    ch.style.display = 'none';
+    if (haloTid) {
+        const old = markers[haloTid]?.getElement()?.querySelector('.halo');
+        if (old) old.style.opacity = '0';
+        haloTid = null;
+    }
+});
 
 // ── Map rotation ────────────────────────────────────────────────────────────
 let mapRotation = 0; // degrees, 360=north-up
@@ -368,9 +403,7 @@ document.addEventListener('touchend', e => {
 
 // ── Left-click target to toggle data block ──────────────────────────────────
 // Bypass DOM hit-testing entirely: on any click, find the nearest marker center
-// within the halo radius (14px). This works regardless of overlapping data blocks.
-const HALO_RADIUS = 14;
-
+// within the halo radius. This works regardless of overlapping data blocks.
 document.addEventListener('click', e => {
     // Don't toggle if clicking UI elements
     if (e.target.closest('#statusbar, #gatecode-popup, #flight-list, #holdbar-panel')) return;
@@ -609,12 +642,16 @@ function parseHoldbarBits(hex) {
 
 function applyHoldbarToMap(data) {
     const bits = parseHoldbarBits(data.status || '');
-    // Style every layer unconditionally
+    // Remove all existing layers and re-add with correct styles
+    holdbarLayerGroup.clearLayers();
     for (let i = 0; i < holdbarLayers.length; i++) {
         const on = i < bits.length && bits[i];
-        holdbarLayers[i].setStyle(on
-            ? { color: '#00cc00', weight: 4, opacity: 1 }
-            : { color: '#555', weight: 3, opacity: 0.8 });
+        const coords = holdbarLines[i].geometry.coordinates.map(c => [c[1], c[0]]);
+        const layer = L.polyline(coords, on
+            ? { color: '#00cc00', weight: 5, opacity: 1, interactive: false, pane: 'holdbar' }
+            : { color: '#555', weight: 3, opacity: 0.8, interactive: false, pane: 'holdbar' });
+        holdbarLayers[i] = layer;
+        holdbarLayerGroup.addLayer(layer);
     }
     console.log(`[HOLDBAR] applied: ${bits.filter(Boolean).length} active bits, ${holdbarLayers.length} layers`);
 }

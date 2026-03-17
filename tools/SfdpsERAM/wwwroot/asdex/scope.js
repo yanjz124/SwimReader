@@ -640,23 +640,31 @@ function parseHoldbarBits(hex) {
     return bits;
 }
 
+// Holdbar bit→line mapping per airport. Keys are bit positions, values are
+// GeoJSON LineString indices. This must be built per-airport by correlating
+// observed active bits with physical hold bar locations.
+// TODO: populate these mappings via an edit mode or config file
+const holdbarBitMap = {};  // e.g. { 176: 0, 177: 1, ... }
+
 function applyHoldbarToMap(data) {
     const bits = parseHoldbarBits(data.status || '');
-    // Remove all existing layers and re-add with correct styles
+    // Reset all layers to inactive
     holdbarLayerGroup.clearLayers();
     for (let i = 0; i < holdbarLayers.length; i++) {
-        const on = i < bits.length && bits[i];
         const coords = holdbarLines[i].geometry.coordinates.map(c => [c[1], c[0]]);
+        // Check if any bit is mapped to this line
+        let on = false;
+        for (const [bitStr, lineIdx] of Object.entries(holdbarBitMap)) {
+            if (lineIdx === i && bits[parseInt(bitStr)]) { on = true; break; }
+        }
         const layer = L.polyline(coords, on
             ? { color: '#00cc00', weight: 5, opacity: 1, interactive: false, pane: 'holdbar' }
             : { color: '#555', weight: 3, opacity: 0.8, interactive: false, pane: 'holdbar' });
         holdbarLayers[i] = layer;
         holdbarLayerGroup.addLayer(layer);
     }
-    const activeBitPositions = bits.map((b, i) => b ? i : -1).filter(i => i >= 0);
-    const inRange = activeBitPositions.filter(i => i < holdbarLayers.length);
-    const outOfRange = activeBitPositions.filter(i => i >= holdbarLayers.length);
-    console.log(`[HOLDBAR] applied: ${activeBitPositions.length} active bits, ${holdbarLayers.length} layers, in-range: [${inRange.join(',')}], out-of-range: [${outOfRange.join(',')}]`);
+    const activeBits = bits.map((b, i) => b ? i : -1).filter(i => i >= 0);
+    console.log(`[HOLDBAR] ${activeBits.length} active bits: [${activeBits.join(',')}]`);
 }
 
 function renderHoldBar(data) {
@@ -672,18 +680,17 @@ function renderHoldBar(data) {
     if (!statusEl || !bitsEl) return;
 
     const bits = parseHoldbarBits(data.status || '');
-    const activeBits = bits.filter(Boolean).length;
-    statusEl.textContent = `ctrl=${data.control}  ${activeBits}/${holdbarLines.length} active  ${data.ageSec || 0}s ago`;
+    const activeBitPositions = bits.map((b, i) => b ? i : -1).filter(i => i >= 0);
+    statusEl.textContent = `ctrl=${data.control}  ${activeBitPositions.length} active  ${data.ageSec || 0}s ago`;
 
     let html = '';
     for (let i = 0; i < bits.length; i++) {
         const on = bits[i];
-        const rwy = i < holdbarLines.length ? holdbarLines[i].properties.runwayId || '?' : '';
-        html += `<div class="hb-bit ${on ? 'on' : 'off'}" title="Bit ${i}${rwy ? ' — ' + rwy : ''}"></div>`;
+        html += `<div class="hb-bit ${on ? 'on' : 'off'}" title="Bit ${i}"></div>`;
         if ((i + 1) % 8 === 0 && i < bits.length - 1) html += `<div class="hb-nibble-gap"></div>`;
     }
     bitsEl.innerHTML = html;
-    rawEl.textContent = `RAW: ${data.status}  (${holdbarLines.length} bars mapped)`;
+    rawEl.textContent = `Active bits: ${activeBitPositions.join(', ') || 'none'}  |  ${holdbarLines.length} GeoJSON lines`;
 }
 
 // ── Wake turbulence detection (FAA 7360.1D type→weight class) ────────────────

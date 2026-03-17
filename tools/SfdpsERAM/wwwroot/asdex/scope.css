@@ -42,7 +42,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     z-index: 10;
 }
 .ac-icon svg.sym .halo { opacity: 0; }
-.ac-icon svg.sym:hover .halo { opacity: 1; }
+/* Halo is now controlled by JS proximity detection, not CSS :hover */
 .ac-icon .ldr {
     position: absolute; left: 0; top: 0;
     overflow: visible; pointer-events: none;

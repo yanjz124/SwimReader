@@ -209,6 +209,22 @@ app.Map("/dstars/{**rest}", async (HttpContext ctx, string rest) =>
     await stream.CopyToAsync(ctx.Response.Body, ctx.RequestAborted);
 });
 
+// Legacy .html redirects — old bookmarks/links still work
+app.MapGet("/eram.html", (HttpContext ctx) => Results.Redirect($"/eram{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/asdex.html", (HttpContext ctx) => Results.Redirect($"/asdex{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/asdex-airport.html", (HttpContext ctx) => Results.Redirect($"/asdex{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/tdls.html", (HttpContext ctx) => Results.Redirect($"/tdls{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/tdls-airport.html", (HttpContext ctx) => Results.Redirect($"/tdls{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/tais.html", (HttpContext ctx) => Results.Redirect($"/tais{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/tais-facility.html", (HttpContext ctx) => Results.Redirect($"/tais{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/tfm.html", (HttpContext ctx) => Results.Redirect($"/tfm{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/tfm-flow.html", (HttpContext ctx) => Results.Redirect($"/tfm/flow{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/tfm-route.html", (HttpContext ctx) => Results.Redirect($"/tfm/route{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/tfm-sectors.html", (HttpContext ctx) => Results.Redirect($"/tfm/sectors{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/flight-table.html", (HttpContext ctx) => Results.Redirect($"/flight-table{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/home.html", (HttpContext ctx) => Results.Redirect($"/{ctx.Request.QueryString}", permanent: true));
+app.MapGet("/index.html", (HttpContext ctx) => Results.Redirect($"/flight-table{ctx.Request.QueryString}", permanent: true));
+
 // Home page
 app.MapGet("/", async (HttpContext ctx) =>
 {

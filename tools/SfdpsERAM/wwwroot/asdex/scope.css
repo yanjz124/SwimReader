@@ -38,6 +38,8 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     overflow: visible;
     pointer-events: auto;
     cursor: none;
+    position: relative;
+    z-index: 10;
 }
 .ac-icon svg.sym .halo { opacity: 0; }
 .ac-icon svg.sym:hover .halo { opacity: 1; }

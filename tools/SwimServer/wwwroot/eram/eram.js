@@ -1069,11 +1069,16 @@ function extractSec(unitStr) { if (!unitStr) return ''; const p = unitStr.split(
 function getCid(f) {
     // Each ARTCC assigns its own CID — only show the selected facility's CID.
     // Never show a foreign facility's CID (controllers only see their own).
+    let cid;
     if (myFacility && f.computerIds) {
-        return f.computerIds[myFacility] || '';
+        cid = f.computerIds[myFacility] || '';
+    } else {
+        // No facility selected ("All") — show most recent CID from any facility
+        cid = f.computerId || '';
     }
-    // No facility selected ("All") — show most recent CID from any facility
-    return f.computerId || '';
+    // ERAM CIDs are 3 characters — SFDPS sometimes sends 4-digit with leading zero
+    if (cid.length > 3) cid = cid.replace(/^0+/, '').padStart(3, '0');
+    return cid;
 }
 
 // Handoff event classification — SFDPS sends INITIATION/ACCEPTANCE/UPDATE/EXECUTION
@@ -5171,7 +5176,7 @@ document.getElementById('po-menu-body').addEventListener('auxclick', (e) => {
 setupBoxDrag(document.getElementById('time-view'));
 setInterval(() => {
     const now = new Date();
-    const hh = String(now.getUTCHours());
+    const hh = String(now.getUTCHours()).padStart(2, '0');
     const mm = String(now.getUTCMinutes()).padStart(2, '0');
     const ss = String(now.getUTCSeconds()).padStart(2, '0');
     document.getElementById('time-view').textContent = `${hh}${mm} ${ss}`;
@@ -5180,7 +5185,7 @@ setInterval(() => {
 {
     const now = new Date();
     document.getElementById('time-view').textContent =
-        `${String(now.getUTCHours())}${String(now.getUTCMinutes()).padStart(2,'0')} ${String(now.getUTCSeconds()).padStart(2,'0')}`;
+        `${String(now.getUTCHours()).padStart(2,'0')}${String(now.getUTCMinutes()).padStart(2,'0')} ${String(now.getUTCSeconds()).padStart(2,'0')}`;
 }
 // Middle-click toggles border
 document.getElementById('time-view').addEventListener('auxclick', e => {

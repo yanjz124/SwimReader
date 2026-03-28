@@ -5820,8 +5820,9 @@ const TB_WEATHER = {
     parentMenu: 'atc-tools',
     rows: [
         [
-            nosim('NX 000'),
+            incdec('NX 000', { cls: 'tb-green', getValue: () => '600', formatValue: v => v, onDec: () => {}, onInc: () => {} }),
             incdec('NX LVL', {
+                cls: 'tb-green',
                 getValue: () => nxlvlLabel(getSelectVal('sel-nxlvl')),
                 formatValue: v => v,
                 onDec: () => {
@@ -5837,9 +5838,11 @@ const TB_WEATHER = {
                     setSelectVal('sel-nxlvl', next);
                 },
             }),
-            nosim('WX1'),
-            nosim('WX2'),
-            nosim('WX3'),
+        ],
+        [
+            { label: 'WX1', type: 'nosim', cls: 'tb-dark' },
+            { label: 'WX2', type: 'nosim', cls: 'tb-dark' },
+            { label: 'WX3', type: 'nosim', cls: 'tb-dark' },
         ],
     ],
 };
@@ -6388,28 +6391,23 @@ const MENU_LABELS = {
     'db-fields': 'DB\nFIELDS', 'radar-filter': 'RADAR\nFILTER',
 };
 
-// Build sub-menu: [tall pink parent spanning both rows] + [2 rows of items to the right]
-// Always renders 2 rows to match master toolbar height, even if sub-menu has only 1 row.
+// Build sub-menu: [pink parent on row 0] + [items extending right on each row]
+// Always renders 2 rows to match master toolbar height.
 function buildInlineSubMenu(menuSpec, menuId, container) {
-    // Wrapper: horizontal flex with [parent column] + [items column]
-    const wrapper = document.createElement('div');
-    wrapper.style.display = 'flex'; wrapper.style.flexDirection = 'row';
-
-    // Pink parent button — spans full height (both rows)
-    const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
-    const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
-    const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
-    parentBtn.classList.add('tb-menu-open');
-    parentBtn.style.height = '68px'; // 2 rows × 34px
-    wrapper.appendChild(parentBtn);
-
-    // Items column — always 2 rows
-    const itemsCol = document.createElement('div');
-    itemsCol.style.display = 'flex'; itemsCol.style.flexDirection = 'column';
-
-    for (let ri = 0; ri < 2; ri++) {
+    for (let ri = 0; ri < Math.max(2, menuSpec.rows.length); ri++) {
         const rowEl = document.createElement('div');
         rowEl.className = 'tb-row';
+        rowEl.style.height = '34px';
+
+        // Row 0 gets the pink parent button as first item
+        if (ri === 0) {
+            const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
+            const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
+            const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
+            parentBtn.classList.add('tb-menu-open');
+            rowEl.appendChild(parentBtn);
+        }
+
         const rowData = menuSpec.rows[ri];
         if (rowData) {
             for (let ci = 0; ci < rowData.length; ci++) {
@@ -6417,26 +6415,8 @@ function buildInlineSubMenu(menuSpec, menuId, container) {
                 rowEl.appendChild(btnEl);
             }
         }
-        // If row is empty, add a spacer to maintain height
-        if (!rowData || rowData.length === 0) {
-            rowEl.style.height = '34px';
-        }
-        itemsCol.appendChild(rowEl);
+        container.appendChild(rowEl);
     }
-
-    // If more than 2 rows (rare), add them
-    for (let ri = 2; ri < menuSpec.rows.length; ri++) {
-        const rowEl = document.createElement('div');
-        rowEl.className = 'tb-row';
-        for (let ci = 0; ci < menuSpec.rows[ri].length; ci++) {
-            const btnEl = createButton(menuSpec.rows[ri][ci], menuSpec.id, ri, ci);
-            rowEl.appendChild(btnEl);
-        }
-        itemsCol.appendChild(rowEl);
-    }
-
-    wrapper.appendChild(itemsCol);
-    container.appendChild(wrapper);
 }
 
 function handleBtnAction(spec, key, isMiddle) {

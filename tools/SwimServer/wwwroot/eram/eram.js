@@ -6325,10 +6325,10 @@ function refreshAllSubMenus() {
 function closeAllSubMenus() {
     tbState.openMenu = null;
     tbState.openSubMenu = null;
-    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.marginLeft = ''; }
-    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.marginLeft = ''; }
-    // Show master panel again
-    if (masterPanelEl) masterPanelEl.style.display = '';
+    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; }
+    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; }
+    // Restore master panel visibility
+    if (masterPanelEl) masterPanelEl.style.visibility = '';
     refreshAllButtons();
 }
 
@@ -6361,21 +6361,21 @@ function openSubMenu(menuId, anchorEl) {
         return;
     }
 
-    // Open new menu: hide master, show sub-menu inline
+    // Open new menu: overlay sub-menu on top of master panel
     tbState.openMenu = menuId;
     tbState.openSubMenu = null;
-    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; }
 
-    // Hide master toolbar panel
-    if (masterPanelEl) masterPanelEl.style.display = 'none';
+    // Hide master panel buttons (but keep grid for grey background + sizing)
+    if (masterPanelEl) masterPanelEl.style.visibility = 'hidden';
 
     if (subMenuContainerEl) {
         subMenuContainerEl.innerHTML = '';
         subMenuContainerEl.style.display = 'block';
-        // Position sub-menu so pink parent aligns with original button position
-        const anchorLeft = anchorEl.offsetLeft;
+        // Position sub-menu at same left offset as the clicked button
+        subMenuContainerEl.style.left = anchorEl.offsetLeft + 'px';
+        subMenuContainerEl.style.marginLeft = '';
         buildInlineSubMenu(menuSpec, menuId, subMenuContainerEl);
-        subMenuContainerEl.style.marginLeft = anchorLeft + 'px';
     }
     refreshAllButtons();
 }

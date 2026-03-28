@@ -360,7 +360,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 #tb-tearoff-btn:hover { background: #007800; }
 #tb-tearoff-btn .tb-gold-strip {
-    width: 10px; background: #8b7a2e; flex-shrink: 0; cursor: move;
+    width: 15px; background: #8b7a2e; flex-shrink: 0; cursor: move;
 }
 #tb-tearoff-btn .tb-tearoff-label {
     color: #ffffff; white-space: nowrap;
@@ -404,7 +404,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 
 /* Gold tearoff strip on each button */
 .tb-btn .tb-tear {
-    width: 10px; background: #8b7a2e; flex-shrink: 0;
+    width: 15px; background: #8b7a2e; flex-shrink: 0;
 }
 
 /* Button content area (label + value) */
@@ -459,12 +459,14 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 .tb-btn.tb-menu-open { background: #884466; }
 .tb-btn.tb-menu-open:hover { background: #994477; }
 
-/* Sub-menu panel (replaces master toolbar when menu is open) */
+/* Sub-menu panel — overlays on top of master grid, positioned absolutely */
 .tb-submenu {
-    background: #000; border: 1px solid #333;
+    position: absolute; top: 0;
+    background: transparent;
     font-family: 'ERAM', 'Consolas', monospace;
     font-size: 10px; line-height: 1;
     white-space: nowrap;
+    z-index: 2;
 }
 
 /* Left/right grey bars flanking the button grid */
@@ -486,4 +488,5 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 }
 .tb-master-grid {
     display: flex; flex-direction: column; flex-shrink: 0;
+    position: relative; background: #444;
 }

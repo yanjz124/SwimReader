@@ -353,16 +353,18 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 #tb-tearoff-btn {
     display: flex; align-items: stretch;
+    width: 88px; height: 34px;
     background: #006800; border: 1px solid #333;
     cursor: pointer; font-family: 'ERAM', 'Consolas', monospace;
-    font-size: 11px; line-height: 14px; padding: 0;
+    font-size: 10px; line-height: 14px; padding: 0;
 }
 #tb-tearoff-btn:hover { background: #007800; }
 #tb-tearoff-btn .tb-gold-strip {
-    width: 5px; background: #8b7a2e; flex-shrink: 0; cursor: move;
+    width: 10px; background: #8b7a2e; flex-shrink: 0; cursor: move;
 }
 #tb-tearoff-btn .tb-tearoff-label {
-    color: #ffffff; padding: 3px 8px; white-space: nowrap;
+    color: #ffffff; white-space: nowrap;
+    display: flex; align-items: center; justify-content: center; flex: 1;
 }
 
 #master-toolbar-container {
@@ -478,10 +480,10 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 }
 .tb-side-bar .tb-arrow-btn:hover { background: #666; }
 .tb-side-bar .tb-arrow-btn svg { width: 8px; height: 14px; }
-/* Master toolbar layout: [left bar] [button grid] [right bar] */
+/* Master toolbar layout: [left bar] [button grid] [right bar fills to edge] */
 .tb-master-row {
-    display: flex; flex-direction: row;
+    display: flex; flex-direction: row; width: 100%;
 }
 .tb-master-grid {
-    display: flex; flex-direction: column;
+    display: flex; flex-direction: column; flex-shrink: 0;
 }

@@ -344,3 +344,117 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     font-size: 14px; line-height: 18px; white-space: pre-wrap; word-break: break-all;
     font-weight: normal;
 }
+
+/* ── Master Toolbar System ── */
+#tb-tearoff {
+    position: absolute; z-index: 960;
+    bottom: 12px; left: 12px;
+    user-select: none;
+}
+#tb-tearoff-btn {
+    display: flex; align-items: stretch;
+    background: #1a1a1a; border: 1px solid #555;
+    cursor: pointer; font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 10px; line-height: 14px; padding: 0;
+}
+#tb-tearoff-btn:hover { border-color: #888; }
+#tb-tearoff-btn .tb-gold-strip {
+    width: 6px; background: #b8860b; flex-shrink: 0;
+}
+#tb-tearoff-btn .tb-tearoff-label {
+    color: #a0a030; padding: 4px 8px; white-space: nowrap;
+}
+#tb-tearoff-btn.tb-active { border-color: #888; }
+#tb-tearoff-btn.tb-active .tb-tearoff-label { color: #cccc44; }
+
+#master-toolbar-container {
+    position: absolute; z-index: 960;
+    top: 8px;
+    user-select: none;
+    display: none;
+}
+#master-toolbar-container.tb-visible { display: block; }
+#master-toolbar-container.box-dragging { outline: 2px solid #fff; cursor: move; }
+
+/* Toolbar panel (master + sub-menus) */
+.tb-panel {
+    background: #111; border: 1px solid #555;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 10px; line-height: 1;
+}
+.tb-row {
+    display: flex; border-bottom: 1px solid #333;
+}
+.tb-row:last-child { border-bottom: none; }
+
+/* Individual toolbar button */
+.tb-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-width: 72px; height: 28px;
+    padding: 2px 6px;
+    border-right: 1px solid #333;
+    cursor: pointer;
+    position: relative;
+    white-space: nowrap;
+}
+.tb-btn:last-child { border-right: none; }
+.tb-btn:hover { background: #222; }
+.tb-btn:active { background: #333; }
+
+/* Label text */
+.tb-btn .tb-label {
+    color: #a0a030; font-size: 10px; text-align: center;
+    line-height: 11px; white-space: pre;
+}
+
+/* Value text (for incdec buttons) */
+.tb-btn .tb-value {
+    color: #00cc00; font-size: 9px; text-align: center;
+    line-height: 10px; margin-top: 1px;
+}
+
+/* Menu indicator triangle */
+.tb-btn .tb-menu-ind {
+    position: absolute; bottom: 2px; right: 3px;
+    color: #666; font-size: 7px; line-height: 7px;
+}
+
+/* Button type states */
+.tb-btn.tb-nosim {
+    cursor: default; opacity: 0.4;
+}
+.tb-btn.tb-nosim:hover { background: transparent; }
+.tb-btn.tb-nosim:active { background: transparent; }
+.tb-btn.tb-nosim .tb-label { color: #666; }
+
+.tb-btn.tb-toggle-on {
+    background: #006400;
+}
+.tb-btn.tb-toggle-on .tb-label { color: #00ff00; }
+.tb-btn.tb-toggle-on:hover { background: #007800; }
+
+.tb-btn.tb-menu-open {
+    border-color: #888;
+    background: #222;
+}
+.tb-btn.tb-menu-open .tb-label { color: #cccc44; }
+
+/* Sub-menu panel */
+.tb-submenu {
+    position: absolute; left: 0;
+    background: #111; border: 1px solid #555;
+    border-top: none;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 10px; line-height: 1;
+    z-index: 961;
+    white-space: nowrap;
+}
+.tb-submenu .tb-row { border-bottom: 1px solid #333; }
+.tb-submenu .tb-row:last-child { border-bottom: none; }
+
+/* Drag handle at top of master toolbar */
+.tb-drag-handle {
+    height: 5px; background: #222; cursor: move;
+    border-bottom: 1px solid #333;
+}
+.tb-drag-handle:hover { background: #333; }

@@ -466,18 +466,16 @@ async function gcOpen() {
         for (const [fix, code] of Object.entries(data)) gcAddRow(fix, code);
     } catch {}
     if (!gcBody.children.length) gcAddRow();
-    // Load vNAS auto rules (read-only display)
+    // Load vNAS auto rules (read-only display, ordered by vNAS priority)
     try {
         const resp = await fetch(`/api/asdex/${AIRPORT}/vnasrules`);
         const rules = await resp.json();
-        const entries = Object.entries(rules);
         const section = document.getElementById('vnas-rules-section');
-        if (entries.length > 0) {
+        if (rules.length > 0) {
             section.style.display = 'block';
-            document.getElementById('vnas-count').textContent = `(${entries.length})`;
-            document.getElementById('vnas-rules-body').innerHTML = entries
-                .sort((a, b) => a[0].localeCompare(b[0]))
-                .map(([p, c]) => `<span style="color:#888">${p}</span> → <span style="color:#cccc44">${c}</span>`)
+            document.getElementById('vnas-count').textContent = `(${rules.length})`;
+            document.getElementById('vnas-rules-body').innerHTML = rules
+                .map(r => `<span style="color:#888">${r.pattern}</span> → <span style="color:#cccc44">${r.code}</span>`)
                 .join('<br>');
         } else {
             section.style.display = 'none';

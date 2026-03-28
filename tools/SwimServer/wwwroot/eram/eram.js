@@ -6474,19 +6474,14 @@ function buildToolbar() {
     });
     tearoffBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // ── Master toolbar container ──
-    // Grey ribbon across top
-    const ribbon = document.createElement('div');
-    ribbon.className = 'tb-ribbon';
-    masterContainer.appendChild(ribbon);
-
-    // Layout: [left grey bar (drag + arrow)] [button grid]
+    // ── Master toolbar container (fixed at top, not draggable) ──
+    // Layout: [left grey bar + arrow] [button grid] [right grey bar]
     const masterRow = document.createElement('div');
     masterRow.className = 'tb-master-row';
 
-    // Left grey bar (drag handle + down arrow that toggles sidebar)
+    // Left grey bar with down arrow (toggles sidebar below toolbar)
     const leftBar = document.createElement('div');
-    leftBar.className = 'tb-left-bar';
+    leftBar.className = 'tb-side-bar';
     const arrowBtn = document.createElement('div');
     arrowBtn.className = 'tb-arrow-btn';
     arrowBtn.innerHTML = '<svg viewBox="0 0 10 18"><line x1="5" y1="2" x2="5" y2="14" stroke="#fff" stroke-width="1.5"/><polygon points="1,11 5,17 9,11" fill="#fff"/></svg>';
@@ -6507,9 +6502,14 @@ function buildToolbar() {
     masterPanelEl = renderPanel(TB_MASTER, masterGrid);
     masterRow.appendChild(masterGrid);
 
+    // Right grey bar (matching left)
+    const rightBar = document.createElement('div');
+    rightBar.className = 'tb-side-bar';
+    masterRow.appendChild(rightBar);
+
     masterContainer.appendChild(masterRow);
 
-    // Sub-menu container (appears below master)
+    // Sub-menu container (replaces master when menu is open)
     subMenuContainerEl = document.createElement('div');
     subMenuContainerEl.className = 'tb-submenu';
     subMenuContainerEl.style.display = 'none';
@@ -6525,16 +6525,6 @@ function buildToolbar() {
     L.DomEvent.disableClickPropagation(masterContainer);
     L.DomEvent.disableScrollPropagation(masterContainer);
 
-    // Setup drag — ribbon and left bar both serve as drag handles
-    setupBoxDrag(masterContainer, ribbon);
-
-    // Position top-left by default (CRC default), unless saved position exists
-    const savedPos = localStorage.getItem('boxPos_master-toolbar-container');
-    if (!savedPos) {
-        masterContainer.style.left = '8px';
-        masterContainer.style.top = '8px';
-    }
-
     // Update RANGE display when map zooms
     map.on('zoomend', () => {
         refreshAllButtons();
@@ -6546,11 +6536,11 @@ function toggleMasterToolbar() {
     const container = document.getElementById('master-toolbar-container');
     container.classList.toggle('tb-visible', tbState.masterVisible);
     document.getElementById('tb-tearoff-btn').classList.toggle('tb-active', tbState.masterVisible);
+    document.body.classList.toggle('tb-active', tbState.masterVisible);
 
     if (!tbState.masterVisible) {
         closeAllSubMenus();
     } else {
-        // Refresh all values on show
         refreshAllButtons();
     }
     window._tbVisible = tbState.masterVisible;
@@ -6571,6 +6561,7 @@ buildToolbar();
 // Apply initial visibility from URL
 if (tbState.masterVisible) {
     document.getElementById('master-toolbar-container').classList.add('tb-visible');
+    document.body.classList.add('tb-active');
     document.getElementById('tb-tearoff-btn').classList.add('tb-active');
     refreshAllButtons();
 }

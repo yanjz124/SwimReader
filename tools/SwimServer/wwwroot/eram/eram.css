@@ -470,13 +470,13 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     width: 14px; background: #444; flex-shrink: 0; cursor: move;
 }
 .tb-left-bar .tb-arrow-btn {
-    width: 14px; height: 34px; background: #555; border: 1px solid #666;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer; padding: 0;
+    width: 14px; height: 34px; background: #555; border: 1px solid #ccc;
+    display: flex; align-items: flex-end; justify-content: center;
+    cursor: pointer; padding: 0 0 3px 0;
 }
 .tb-left-bar .tb-arrow-btn:hover { background: #666; }
-/* Full arrow SVG (stem + head) */
-.tb-left-bar .tb-arrow-btn svg { width: 10px; height: 18px; }
+/* Arrow SVG sits in bottom half of button */
+.tb-left-bar .tb-arrow-btn svg { width: 8px; height: 14px; }
 /* Grey ribbon across top of toolbar (CRC header bar) — also serves as drag handle */
 .tb-ribbon {
     height: 34px; background: #444; width: 100%;

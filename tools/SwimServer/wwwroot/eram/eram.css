@@ -360,7 +360,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 #tb-tearoff-btn:hover { background: #007800; }
 #tb-tearoff-btn .tb-gold-strip {
-    width: 15px; background: #8b7a2e; flex-shrink: 0; cursor: move;
+    width: 13px; background: #666; flex-shrink: 0; cursor: move;
 }
 #tb-tearoff-btn .tb-tearoff-label {
     color: #ffffff; white-space: nowrap;
@@ -402,9 +402,9 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 .tb-btn:hover { background: #0000aa; }
 .tb-btn:active { background: #0000cc; }
 
-/* Gold tearoff strip on each button */
+/* Tearoff strip on each button — light grey */
 .tb-btn .tb-tear {
-    width: 15px; background: #8b7a2e; flex-shrink: 0;
+    width: 13px; background: #666; flex-shrink: 0;
 }
 
 /* Button content area (label + value) */
@@ -472,7 +472,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 /* Left/right grey bars flanking the button grid */
 .tb-side-bar {
     display: flex; flex-direction: column; justify-content: flex-end;
-    min-width: 14px; background: #444; flex-shrink: 0;
+    min-width: 14px; background: #555; flex-shrink: 0;
 }
 .tb-side-bar.tb-right { flex: 1; }
 .tb-side-bar .tb-arrow-btn {
@@ -488,5 +488,5 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 }
 .tb-master-grid {
     display: flex; flex-direction: column; flex-shrink: 0;
-    position: relative; background: #444;
+    position: relative; background: #555;
 }

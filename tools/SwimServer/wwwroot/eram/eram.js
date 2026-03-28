@@ -6325,8 +6325,8 @@ function refreshAllSubMenus() {
 function closeAllSubMenus() {
     tbState.openMenu = null;
     tbState.openSubMenu = null;
-    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; }
-    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; }
+    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; }
+    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; subSubMenuContainerEl.style.top = ''; }
     // Restore master panel visibility
     if (masterPanelEl) masterPanelEl.style.visibility = '';
     refreshAllButtons();
@@ -6372,9 +6372,9 @@ function openSubMenu(menuId, anchorEl) {
     if (subMenuContainerEl) {
         subMenuContainerEl.innerHTML = '';
         subMenuContainerEl.style.display = 'block';
-        // Position sub-menu at same left offset as the clicked button
+        // Position at the clicked button's left and top
         subMenuContainerEl.style.left = anchorEl.offsetLeft + 'px';
-        subMenuContainerEl.style.marginLeft = '';
+        subMenuContainerEl.style.top = anchorEl.closest('.tb-row').offsetTop + 'px';
         buildInlineSubMenu(menuSpec, menuId, subMenuContainerEl);
     }
     refreshAllButtons();
@@ -6388,11 +6388,8 @@ const MENU_LABELS = {
     'db-fields': 'DB\nFIELDS', 'radar-filter': 'RADAR\nFILTER',
 };
 
-// Build an inline sub-menu panel: pink parent button in row 0, then sub-menu items
+// Build sub-menu: [pink parent] + items extending right, additional rows below
 function buildInlineSubMenu(menuSpec, menuId, container) {
-    const panel = document.createElement('div');
-    panel.className = 'tb-submenu';
-
     for (let ri = 0; ri < menuSpec.rows.length; ri++) {
         const rowEl = document.createElement('div');
         rowEl.className = 'tb-row';
@@ -6410,10 +6407,8 @@ function buildInlineSubMenu(menuSpec, menuId, container) {
             const btnEl = createButton(menuSpec.rows[ri][ci], menuSpec.id, ri, ci);
             rowEl.appendChild(btnEl);
         }
-        panel.appendChild(rowEl);
+        container.appendChild(rowEl);
     }
-
-    container.appendChild(panel);
 }
 
 function handleBtnAction(spec, key, isMiddle) {

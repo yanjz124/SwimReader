@@ -276,6 +276,38 @@ const DB_POS = {
 const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
 const hiddenDbs = new Set();  // trackIds with hidden data blocks
 
+// ── LDR DIR (numpad data block positioning) ─────────────────────────────────
+// Numpad digit → compass direction (same layout as ERAM)
+const NUMPAD_TO_DIR = { 1:'SW', 2:'S', 3:'SE', 4:'W', 5:'NE', 6:'E', 7:'NW', 8:'N', 9:'NE' };
+let pendingLdrDir = null;  // null or digit 1-9
+
+const ldrOverlay = document.getElementById('ldr-dir-overlay');
+const ldrValueEl = document.getElementById('ldr-dir-value');
+
+function showLdrOverlay(digit) {
+    ldrValueEl.textContent = digit + '_';
+    ldrOverlay.style.display = 'block';
+}
+function hideLdrOverlay() {
+    pendingLdrDir = null;
+    ldrOverlay.style.display = 'none';
+}
+
+document.addEventListener('keydown', e => {
+    // Don't intercept if typing in an input field
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'Escape') {
+        if (pendingLdrDir !== null) { hideLdrOverlay(); e.preventDefault(); }
+        return;
+    }
+    const digit = parseInt(e.key);
+    if (digit >= 1 && digit <= 9) {
+        pendingLdrDir = digit;
+        showLdrOverlay(digit);
+        e.preventDefault();
+    }
+});
+
 // ── Data block drag (snap to 8 compass positions) ──────────────────────────
 let dragTid = null, dragOrigin = null;
 
@@ -388,7 +420,31 @@ document.addEventListener('touchend', e => {
         const dist = Math.hypot(touch.clientX - cx, touch.clientY - cy);
         if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = tid; }
     }
-    if (!bestTid) return;
+    if (!bestTid) {
+        if (pendingLdrDir !== null) hideLdrOverlay();
+        return;
+    }
+    // LDR DIR mode: apply numpad position instead of toggling visibility
+    if (pendingLdrDir !== null) {
+        const dir = NUMPAD_TO_DIR[pendingLdrDir];
+        dbPositions[bestTid] = dir;
+        hiddenDbs.delete(bestTid);
+        hashes[bestTid] = '';
+        const iconEl = markers[bestTid]?.getElement()?.querySelector('.ac-icon');
+        if (iconEl) {
+            const pos = DB_POS[dir];
+            const wrap = iconEl.querySelector('.db-wrap');
+            if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; wrap.style.display = ''; }
+            const line = iconEl.querySelector('.ldr line');
+            if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
+            const ldr = iconEl.querySelector('.ldr');
+            if (ldr) ldr.style.display = '';
+        }
+        hideLdrOverlay();
+        e.preventDefault();
+        return;
+    }
+    // Normal mode: toggle data block visibility
     if (hiddenDbs.has(bestTid)) hiddenDbs.delete(bestTid);
     else hiddenDbs.add(bestTid);
     const hidden = hiddenDbs.has(bestTid);
@@ -401,7 +457,7 @@ document.addEventListener('touchend', e => {
     e.preventDefault();
 });
 
-// ── Left-click target to toggle data block ──────────────────────────────────
+// ── Left-click target to toggle data block (or apply LDR DIR) ──────────────
 // Bypass DOM hit-testing entirely: on any click, find the nearest marker center
 // within the halo radius. This works regardless of overlapping data blocks.
 document.addEventListener('click', e => {
@@ -427,7 +483,36 @@ document.addEventListener('click', e => {
         }
     }
 
-    if (!bestTid) return;
+    if (!bestTid) {
+        // Clicked empty space — cancel LDR DIR if active
+        if (pendingLdrDir !== null) hideLdrOverlay();
+        return;
+    }
+
+    // LDR DIR mode: apply numpad position instead of toggling visibility
+    if (pendingLdrDir !== null) {
+        const dir = NUMPAD_TO_DIR[pendingLdrDir];
+        dbPositions[bestTid] = dir;
+        // Also ensure the data block is visible
+        hiddenDbs.delete(bestTid);
+        // Invalidate hash so icon rebuilds with new position
+        hashes[bestTid] = '';
+        // Update DOM immediately
+        const iconEl = markers[bestTid]?.getElement()?.querySelector('.ac-icon');
+        if (iconEl) {
+            const pos = DB_POS[dir];
+            const wrap = iconEl.querySelector('.db-wrap');
+            if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; wrap.style.display = ''; }
+            const line = iconEl.querySelector('.ldr line');
+            if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
+            const ldr = iconEl.querySelector('.ldr');
+            if (ldr) ldr.style.display = '';
+        }
+        hideLdrOverlay();
+        return;
+    }
+
+    // Normal mode: toggle data block visibility
     if (hiddenDbs.has(bestTid)) hiddenDbs.delete(bestTid);
     else hiddenDbs.add(bestTid);
     const hidden = hiddenDbs.has(bestTid);

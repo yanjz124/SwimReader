@@ -142,6 +142,14 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 .hb-nibble-gap { width: 4px; }
 .hb-byte-label { width: 100%; color: #555; font-size: 8px; margin-top: 4px; }
 
+/* ── LDR DIR overlay ── */
+#ldr-dir-overlay {
+    position: fixed; bottom: 32px; left: 12px; z-index: 700;
+    background: #111; border: 1px solid #cccc44; padding: 4px 10px;
+    font-family: 'Consolas', monospace; font-size: 12px; color: #cccc44;
+    line-height: 1.4; white-space: nowrap;
+}
+
 /* hide Leaflet attribution noise */
 .leaflet-control-attribution { display: none; }
 

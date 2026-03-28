@@ -5950,12 +5950,10 @@ const TB_BRIGHT = {
             incdec('BCKGRD', { getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { tbState.bright.bckgrd = Math.max(0, tbState.bright.bckgrd - 10); }, onInc: () => { tbState.bright.bckgrd = Math.min(100, tbState.bright.bckgrd + 10); } }),
             incdec('CURSOR', { getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); } }),
             incdec('TEXT', { getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); } }),
-            incdec('PR TGTR', { getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); } }),
+            incdec('PR TGT', { getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); } }),
             incdec('UNP TGT', { getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); } }),
-        ],
-        [
-            incdec('PR HIST', { getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
-            incdec('UNP HIST', { getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
+            incdec('PR HST', { getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
+            incdec('UNP HST', { getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
             incdec('LDB', {
                 getValue: () => getRangeVal('rng-ldb-brightness'),
                 formatValue: v => v,
@@ -5970,9 +5968,9 @@ const TB_BRIGHT = {
                 onDec: () => setRangeVal('rng-nx', Math.max(0, getRangeVal('rng-nx') - 10)),
                 onInc: () => setRangeVal('rng-nx', Math.min(100, getRangeVal('rng-nx') + 10)),
             }),
-            incdec('BCKLGHT', { getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { tbState.bright.bcklght = Math.max(0, tbState.bright.bcklght - 10); }, onInc: () => { tbState.bright.bcklght = Math.min(100, tbState.bright.bcklght + 10); } }),
         ],
         [
+            incdec('BCKLGHT', { getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { tbState.bright.bcklght = Math.max(0, tbState.bright.bcklght - 10); }, onInc: () => { tbState.bright.bcklght = Math.min(100, tbState.bright.bcklght + 10); } }),
             incdec('BUTTON', { getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); } }),
             incdec('BORDER', { getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); } }),
             incdec('TOOLBAR', { getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); } }),
@@ -5980,8 +5978,6 @@ const TB_BRIGHT = {
             nosim('AB BRDR'),
             incdec('FDB', { getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
             incdec('PORTAL', { getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
-        ],
-        [
             nosim('SATCOMM'),
             incdec('ON-FREQ', { getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); } }),
             incdec('LINE 4', { getValue: () => tbState.bright.line4b, formatValue: v => v, onDec: () => { tbState.bright.line4b = Math.max(0, tbState.bright.line4b - 10); }, onInc: () => { tbState.bright.line4b = Math.min(100, tbState.bright.line4b + 10); } }),
@@ -6348,7 +6344,11 @@ function openSubMenu(menuId, anchorEl) {
         if (subSubMenuContainerEl) {
             subSubMenuContainerEl.innerHTML = '';
             subSubMenuContainerEl.style.display = 'block';
-            // Build inline panel: [pink parent] + sub-menu rows
+            // Position at nested button's left edge within masterGrid
+            const gridRect = subSubMenuContainerEl.parentElement.getBoundingClientRect();
+            const anchorRect = anchorEl.getBoundingClientRect();
+            subSubMenuContainerEl.style.left = (anchorRect.left - gridRect.left) + 'px';
+            subSubMenuContainerEl.style.top = '0';
             buildInlineSubMenu(menuSpec, menuId, subSubMenuContainerEl);
         }
         refreshAllButtons();
@@ -6372,9 +6372,9 @@ function openSubMenu(menuId, anchorEl) {
     if (subMenuContainerEl) {
         subMenuContainerEl.innerHTML = '';
         subMenuContainerEl.style.display = 'block';
-        // Position at the clicked button's left and top
+        // Position at the clicked button's left, always top:0 (spans both rows)
         subMenuContainerEl.style.left = anchorEl.offsetLeft + 'px';
-        subMenuContainerEl.style.top = anchorEl.closest('.tb-row').offsetTop + 'px';
+        subMenuContainerEl.style.top = '0';
         buildInlineSubMenu(menuSpec, menuId, subMenuContainerEl);
     }
     refreshAllButtons();
@@ -6388,27 +6388,55 @@ const MENU_LABELS = {
     'db-fields': 'DB\nFIELDS', 'radar-filter': 'RADAR\nFILTER',
 };
 
-// Build sub-menu: [pink parent] + items extending right, additional rows below
+// Build sub-menu: [tall pink parent spanning both rows] + [2 rows of items to the right]
+// Always renders 2 rows to match master toolbar height, even if sub-menu has only 1 row.
 function buildInlineSubMenu(menuSpec, menuId, container) {
-    for (let ri = 0; ri < menuSpec.rows.length; ri++) {
+    // Wrapper: horizontal flex with [parent column] + [items column]
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex'; wrapper.style.flexDirection = 'row';
+
+    // Pink parent button — spans full height (both rows)
+    const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
+    const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
+    const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
+    parentBtn.classList.add('tb-menu-open');
+    parentBtn.style.height = '68px'; // 2 rows × 34px
+    wrapper.appendChild(parentBtn);
+
+    // Items column — always 2 rows
+    const itemsCol = document.createElement('div');
+    itemsCol.style.display = 'flex'; itemsCol.style.flexDirection = 'column';
+
+    for (let ri = 0; ri < 2; ri++) {
         const rowEl = document.createElement('div');
         rowEl.className = 'tb-row';
-
-        // First row gets the pink parent button as first item
-        if (ri === 0) {
-            const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
-            const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
-            const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
-            parentBtn.classList.add('tb-menu-open');
-            rowEl.appendChild(parentBtn);
+        const rowData = menuSpec.rows[ri];
+        if (rowData) {
+            for (let ci = 0; ci < rowData.length; ci++) {
+                const btnEl = createButton(rowData[ci], menuSpec.id, ri, ci);
+                rowEl.appendChild(btnEl);
+            }
         }
+        // If row is empty, add a spacer to maintain height
+        if (!rowData || rowData.length === 0) {
+            rowEl.style.height = '34px';
+        }
+        itemsCol.appendChild(rowEl);
+    }
 
+    // If more than 2 rows (rare), add them
+    for (let ri = 2; ri < menuSpec.rows.length; ri++) {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'tb-row';
         for (let ci = 0; ci < menuSpec.rows[ri].length; ci++) {
             const btnEl = createButton(menuSpec.rows[ri][ci], menuSpec.id, ri, ci);
             rowEl.appendChild(btnEl);
         }
-        container.appendChild(rowEl);
+        itemsCol.appendChild(rowEl);
     }
+
+    wrapper.appendChild(itemsCol);
+    container.appendChild(wrapper);
 }
 
 function handleBtnAction(spec, key, isMiddle) {

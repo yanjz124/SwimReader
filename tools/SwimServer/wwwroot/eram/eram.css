@@ -360,7 +360,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 #tb-tearoff-btn:hover { background: #007800; }
 #tb-tearoff-btn .tb-gold-strip {
-    width: 13px; background: #666; flex-shrink: 0; cursor: move;
+    width: 13px; background: #b8a040; flex-shrink: 0; cursor: move;
 }
 #tb-tearoff-btn .tb-tearoff-label {
     color: #ffffff; white-space: nowrap;
@@ -404,7 +404,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 
 /* Tearoff strip on each button — light grey */
 .tb-btn .tb-tear {
-    width: 13px; background: #666; flex-shrink: 0;
+    width: 13px; background: #b8a040; flex-shrink: 0;
 }
 
 /* Button content area (label + value) */

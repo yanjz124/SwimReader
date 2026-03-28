@@ -6326,8 +6326,13 @@ function closeAllSubMenus() {
     tbState.openSubMenu = null;
     if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; }
     if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; subSubMenuContainerEl.style.top = ''; }
-    // Restore master panel visibility
-    if (masterPanelEl) masterPanelEl.style.visibility = '';
+    // Restore all master buttons visibility and remove pink state
+    if (masterPanelEl) {
+        masterPanelEl.querySelectorAll('.tb-btn').forEach(btn => {
+            btn.style.visibility = '';
+            btn.classList.remove('tb-menu-open');
+        });
+    }
     refreshAllButtons();
 }
 
@@ -6364,24 +6369,32 @@ function openSubMenu(menuId, anchorEl) {
         return;
     }
 
-    // Open new menu: overlay sub-menu on top of master panel
+    // Open new menu: keep clicked button in place (turn pink), hide others,
+    // sub-menu items extend to the right of the clicked button.
     tbState.openMenu = menuId;
     tbState.openSubMenu = null;
     if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; }
 
-    // Hide master panel buttons (but keep grid for grey background + sizing)
-    if (masterPanelEl) masterPanelEl.style.visibility = 'hidden';
+    // Hide all master buttons except the clicked one (it stays in place, turns pink)
+    masterPanelEl.querySelectorAll('.tb-btn').forEach(btn => {
+        if (btn === anchorEl) {
+            btn.classList.add('tb-menu-open');
+        } else {
+            btn.style.visibility = 'hidden';
+        }
+    });
 
     if (subMenuContainerEl) {
         subMenuContainerEl.innerHTML = '';
         subMenuContainerEl.style.display = 'block';
-        // Position at the clicked button's left, always top:0 (spans both rows)
-        subMenuContainerEl.style.left = anchorEl.offsetLeft + 'px';
+        // Position sub-menu items to the RIGHT of the clicked button
+        subMenuContainerEl.style.left = (anchorEl.offsetLeft + anchorEl.offsetWidth) + 'px';
         subMenuContainerEl.style.top = '0';
-        // Determine which row the anchor button was on (0 or 1)
+        // Which row the button is on
         const anchorRow = anchorEl.closest('.tb-row');
         const parentRowIdx = anchorRow ? Array.from(anchorRow.parentElement.children).indexOf(anchorRow) : 0;
-        buildInlineSubMenu(menuSpec, menuId, subMenuContainerEl, parentRowIdx);
+        // Render just the items (no parent button — the real one is still visible)
+        buildSubMenuItems(menuSpec, menuId, subMenuContainerEl, parentRowIdx);
     }
     refreshAllButtons();
 }
@@ -6394,51 +6407,54 @@ const MENU_LABELS = {
     'db-fields': 'DB\nFIELDS', 'radar-filter': 'RADAR\nFILTER',
 };
 
-// Build sub-menu: pink parent stays at its original row, items extend right.
-// Always renders 2 rows to match master toolbar height.
-// parentRow = which visual row (0 or 1) the parent button should appear on.
-function buildInlineSubMenu(menuSpec, menuId, container, parentRow) {
+// Build sub-menu items only (no parent button — the real one stays in the master panel).
+// parentRow = which visual row the parent is on. Data row 0 goes on parentRow, row 1 on parentRow+1, etc.
+function buildSubMenuItems(menuSpec, menuId, container, parentRow) {
     if (parentRow === undefined) parentRow = 0;
     const totalRows = Math.max(2, menuSpec.rows.length + parentRow);
 
-    // Map sub-menu data rows to visual rows: data row 0 → visual parentRow, data row 1 → parentRow+1, etc.
     for (let vi = 0; vi < totalRows; vi++) {
         const rowEl = document.createElement('div');
         rowEl.className = 'tb-row';
         rowEl.style.height = '34px';
 
-        if (vi === parentRow) {
-            // This row gets the pink parent button
+        const dataIdx = vi - parentRow;
+        if (dataIdx >= 0 && dataIdx < menuSpec.rows.length) {
+            const rowData = menuSpec.rows[dataIdx];
+            for (let ci = 0; ci < rowData.length; ci++) {
+                rowEl.appendChild(createButton(rowData[ci], menuSpec.id, dataIdx, ci));
+            }
+        }
+        // Rows before parentRow or beyond data are empty spacers
+
+        container.appendChild(rowEl);
+    }
+}
+
+// Legacy wrapper for nested sub-menus (still creates a pink parent button)
+function buildInlineSubMenu(menuSpec, menuId, container, parentRow) {
+    if (parentRow === undefined) parentRow = 0;
+    const totalRows = Math.max(2, menuSpec.rows.length);
+
+    for (let ri = 0; ri < totalRows; ri++) {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'tb-row';
+        rowEl.style.height = '34px';
+
+        if (ri === 0) {
             const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
             const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
             const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
             parentBtn.classList.add('tb-menu-open');
             rowEl.appendChild(parentBtn);
+        }
 
-            // Data row 0 items extend right
-            const rowData = menuSpec.rows[0];
-            if (rowData) {
-                for (let ci = 0; ci < rowData.length; ci++) {
-                    rowEl.appendChild(createButton(rowData[ci], menuSpec.id, 0, ci));
-                }
-            }
-        } else if (vi > parentRow) {
-            // Data rows after the parent row
-            const dataIdx = vi - parentRow;
-            // Spacer for parent button column
-            const spacer = document.createElement('div');
-            spacer.style.width = '88px'; spacer.style.flexShrink = '0';
-            rowEl.appendChild(spacer);
-
-            const rowData = menuSpec.rows[dataIdx];
-            if (rowData) {
-                for (let ci = 0; ci < rowData.length; ci++) {
-                    rowEl.appendChild(createButton(rowData[ci], menuSpec.id, dataIdx, ci));
-                }
+        const rowData = menuSpec.rows[ri];
+        if (rowData) {
+            for (let ci = 0; ci < rowData.length; ci++) {
+                rowEl.appendChild(createButton(rowData[ci], menuSpec.id, ri, ci));
             }
         }
-        // Rows before parentRow are empty (just maintain height)
-
         container.appendChild(rowEl);
     }
 }

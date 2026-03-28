@@ -6189,18 +6189,27 @@ function createButton(spec, panelId, rowIdx, colIdx) {
 
     if (isNosim) el.classList.add('tb-nosim');
 
+    // Gold tearoff strip (every button has one, per CRC spec)
+    const tear = document.createElement('div');
+    tear.className = 'tb-tear';
+    el.appendChild(tear);
+
+    // Content area (label + value + indicator)
+    const content = document.createElement('div');
+    content.className = 'tb-content';
+
     // Label
     const labelDiv = document.createElement('div');
     labelDiv.className = 'tb-label';
     labelDiv.textContent = spec.label;
-    el.appendChild(labelDiv);
+    content.appendChild(labelDiv);
 
     // Value (for incdec)
     if (spec.type === 'incdec' && spec.getValue) {
         const valDiv = document.createElement('div');
         valDiv.className = 'tb-value';
         valDiv.textContent = spec.formatValue(spec.getValue());
-        el.appendChild(valDiv);
+        content.appendChild(valDiv);
     }
 
     // Menu indicator
@@ -6208,8 +6217,10 @@ function createButton(spec, panelId, rowIdx, colIdx) {
         const ind = document.createElement('div');
         ind.className = 'tb-menu-ind';
         ind.textContent = '\u25BC';
-        el.appendChild(ind);
+        content.appendChild(ind);
     }
+
+    el.appendChild(content);
 
     // Toggle state
     if (spec.type === 'toggle' && !isNosim && spec.isOn && spec.isOn()) {
@@ -6397,17 +6408,26 @@ function buildToolbar() {
     // ── Tearoff button ──
     const tearoffBtn = document.createElement('div');
     tearoffBtn.id = 'tb-tearoff-btn';
-    tearoffBtn.innerHTML = '<div class="tb-gold-strip"></div><div class="tb-tearoff-label">TOOLBAR</div>';
+    const goldStrip = document.createElement('div');
+    goldStrip.className = 'tb-gold-strip';
+    const tearLabel = document.createElement('div');
+    tearLabel.className = 'tb-tearoff-label';
+    tearLabel.textContent = 'TOOLBAR';
+    tearoffBtn.appendChild(goldStrip);
+    tearoffBtn.appendChild(tearLabel);
     tearoffContainer.appendChild(tearoffBtn);
 
     L.DomEvent.disableClickPropagation(tearoffContainer);
     L.DomEvent.disableScrollPropagation(tearoffContainer);
 
-    tearoffBtn.addEventListener('click', (e) => {
+    // Gold strip = reposition; label area = toggle toolbar
+    setupBoxDrag(tearoffContainer, goldStrip);
+
+    tearLabel.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleMasterToolbar();
     });
-    tearoffBtn.addEventListener('mousedown', (e) => {
+    tearLabel.addEventListener('mousedown', (e) => {
         if (e.button === 1) {
             e.preventDefault();
             e.stopPropagation();

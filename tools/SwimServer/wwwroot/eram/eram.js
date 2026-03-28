@@ -6502,9 +6502,9 @@ function buildToolbar() {
     masterPanelEl = renderPanel(TB_MASTER, masterGrid);
     masterRow.appendChild(masterGrid);
 
-    // Right grey bar (matching left)
+    // Right grey bar (extends to window edge)
     const rightBar = document.createElement('div');
-    rightBar.className = 'tb-side-bar';
+    rightBar.className = 'tb-side-bar tb-right';
     masterRow.appendChild(rightBar);
 
     masterContainer.appendChild(masterRow);

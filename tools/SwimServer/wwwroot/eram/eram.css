@@ -367,7 +367,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 
 #master-toolbar-container {
     position: absolute; z-index: 960;
-    top: 0; left: 0;
+    top: 0; left: 0; right: 0;
     user-select: none;
     display: none;
 }
@@ -468,8 +468,9 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 /* Left/right grey bars flanking the button grid */
 .tb-side-bar {
     display: flex; flex-direction: column; justify-content: flex-end;
-    width: 14px; background: #444; flex-shrink: 0;
+    min-width: 14px; background: #444; flex-shrink: 0;
 }
+.tb-side-bar.tb-right { flex: 1; }
 .tb-side-bar .tb-arrow-btn {
     width: 14px; height: 34px; background: #555; border: 1px solid #ccc;
     display: flex; align-items: flex-end; justify-content: center;

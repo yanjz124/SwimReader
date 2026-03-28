@@ -5745,16 +5745,18 @@ const TB_MASTER = {
             nosim('DRAW'),
             menu('ATC\nTOOLS', 'atc-tools'),
             incdec('RANGE', {
+                cls: 'tb-dark',
                 getValue: () => zoomToRange(map.getZoom()),
-                formatValue: v => v + ' NM',
-                onDec: () => map.zoomOut(1),   // zoom out = increase range
-                onInc: () => map.zoomIn(1),    // zoom in = decrease range
+                formatValue: v => String(v),
+                onDec: () => map.zoomOut(1),
+                onInc: () => map.zoomIn(1),
             }),
             menu('CURSOR', 'cursor'),
             menu('BRIGHT', 'bright'),
             menu('FONT', 'font'),
             menu('DB\nFIELDS', 'db-fields'),
             incdec('VECTOR', {
+                cls: 'tb-green',
                 getValue: () => parseInt(getSelectVal('sel-vector')),
                 formatValue: v => String(v),
                 onDec: () => {
@@ -5777,22 +5779,21 @@ const TB_MASTER = {
             nosim('COMMAND\nMENUS'),
             menu('MAP', 'geomap'),
             incdec('ALT LIM', {
+                cls: 'tb-dark',
                 getValue: () => {
                     const lo = document.getElementById('inp-alt-low')?.value || '0';
                     const hi = document.getElementById('inp-alt-high')?.value || '999';
                     return lo.padStart(3, '0') + 'B' + hi.padStart(3, '0');
                 },
                 formatValue: v => v,
-                onDec: () => {},  // display only for now
+                onDec: () => {},
                 onInc: () => {},
             }),
             menu('RADAR\nFILTER', 'radar-filter'),
             nosim('PREFSET'),
             cmd('DELETE\nTEAROFF', {
-                onCmd: () => {
-                    // Close all sub-menus (acts as a general tearoff delete)
-                    closeAllSubMenus();
-                },
+                cls: 'tb-teal',
+                onCmd: () => { closeAllSubMenus(); },
             }),
         ],
     ],
@@ -6188,6 +6189,7 @@ function createButton(spec, panelId, rowIdx, colIdx) {
     const isNosim = spec.type === 'nosim' || spec.nosim;
 
     if (isNosim) el.classList.add('tb-nosim');
+    if (spec.cls) el.classList.add(spec.cls);
 
     // Gold tearoff strip (every button has one, per CRC spec)
     const tear = document.createElement('div');
@@ -6316,24 +6318,26 @@ function refreshAllSubMenus() {
 }
 
 // ── Sub-menu management ──
+// CRC behavior: when a menu opens, the master toolbar disappears and is replaced
+// by a new toolbar: [pink parent button] + [sub-menu items extending right]
 
 function closeAllSubMenus() {
     tbState.openMenu = null;
     tbState.openSubMenu = null;
     if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; }
     if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+    // Show master panel again
+    if (masterPanelEl) masterPanelEl.style.display = '';
     refreshAllButtons();
 }
 
 function openSubMenu(menuId, anchorEl) {
-    // If this menu is a nested sub-menu, handle differently
     const menuSpec = SUB_MENUS[menuId];
     if (!menuSpec) return;
 
     if (menuSpec.parentMenu) {
-        // This is a nested sub-menu (e.g. weather under atc-tools)
+        // Nested sub-menu (e.g. weather under atc-tools, map-bright under bright)
         if (tbState.openSubMenu === menuId) {
-            // Close nested sub-menu
             tbState.openSubMenu = null;
             if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
             refreshAllButtons();
@@ -6343,11 +6347,8 @@ function openSubMenu(menuId, anchorEl) {
         if (subSubMenuContainerEl) {
             subSubMenuContainerEl.innerHTML = '';
             subSubMenuContainerEl.style.display = 'block';
-            renderPanel(menuSpec, subSubMenuContainerEl);
-            // Position: below sub-menu, left-aligned to anchor button
-            const anchorRect = anchorEl.getBoundingClientRect();
-            const containerRect = document.getElementById('master-toolbar-container').getBoundingClientRect();
-            subSubMenuContainerEl.style.left = (anchorRect.left - containerRect.left) + 'px';
+            // Build inline panel: [pink parent] + sub-menu rows
+            buildInlineSubMenu(menuSpec, menuId, subSubMenuContainerEl);
         }
         refreshAllButtons();
         return;
@@ -6355,25 +6356,61 @@ function openSubMenu(menuId, anchorEl) {
 
     // Top-level sub-menu
     if (tbState.openMenu === menuId) {
-        // Toggle off
         closeAllSubMenus();
         return;
     }
 
-    // Close any existing
+    // Open new menu: hide master, show sub-menu inline
     tbState.openMenu = menuId;
     tbState.openSubMenu = null;
     if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+
+    // Hide master toolbar panel
+    if (masterPanelEl) masterPanelEl.style.display = 'none';
+
     if (subMenuContainerEl) {
         subMenuContainerEl.innerHTML = '';
         subMenuContainerEl.style.display = 'block';
-        renderPanel(menuSpec, subMenuContainerEl);
-        // Position: left-aligned to anchor button
-        const anchorRect = anchorEl.getBoundingClientRect();
-        const containerRect = document.getElementById('master-toolbar-container').getBoundingClientRect();
-        subMenuContainerEl.style.left = (anchorRect.left - containerRect.left) + 'px';
+        // Build inline panel: [pink parent] + sub-menu rows
+        buildInlineSubMenu(menuSpec, menuId, subMenuContainerEl);
     }
     refreshAllButtons();
+}
+
+// Menu label lookup (maps menu ID → display label for the pink parent button)
+const MENU_LABELS = {
+    'atc-tools': 'ATC\nTOOLS', 'weather': 'WX', 'views': 'VIEWS',
+    'check-lists': 'CHECK\nLISTS', 'cursor': 'CURSOR', 'geomap': 'MAP',
+    'bright': 'BRIGHT', 'map-bright': 'MAP\nBRIGHT', 'font': 'FONT',
+    'db-fields': 'DB\nFIELDS', 'radar-filter': 'RADAR\nFILTER',
+};
+
+// Build an inline sub-menu panel: pink parent button in row 0, then sub-menu items
+function buildInlineSubMenu(menuSpec, menuId, container) {
+    const panel = document.createElement('div');
+    panel.className = 'tb-submenu';
+
+    for (let ri = 0; ri < menuSpec.rows.length; ri++) {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'tb-row';
+
+        // First row gets the pink parent button as first item
+        if (ri === 0) {
+            const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
+            const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
+            const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
+            parentBtn.classList.add('tb-menu-open');
+            rowEl.appendChild(parentBtn);
+        }
+
+        for (let ci = 0; ci < menuSpec.rows[ri].length; ci++) {
+            const btnEl = createButton(menuSpec.rows[ri][ci], menuSpec.id, ri, ci);
+            rowEl.appendChild(btnEl);
+        }
+        panel.appendChild(rowEl);
+    }
+
+    container.appendChild(panel);
 }
 
 function handleBtnAction(spec, key, isMiddle) {
@@ -6464,14 +6501,11 @@ function buildToolbar() {
     // Setup drag via existing setupBoxDrag
     setupBoxDrag(masterContainer, dragHandle);
 
-    // Center horizontally on first show (if no saved position)
+    // Position top-left by default (CRC default), unless saved position exists
     const savedPos = localStorage.getItem('boxPos_master-toolbar-container');
     if (!savedPos) {
-        requestAnimationFrame(() => {
-            const cRect = masterContainer.parentElement.getBoundingClientRect();
-            const eRect = masterContainer.getBoundingClientRect();
-            masterContainer.style.left = Math.max(0, (cRect.width - eRect.width) / 2) + 'px';
-        });
+        masterContainer.style.left = '8px';
+        masterContainer.style.top = '8px';
     }
 
     // Update RANGE display when map zooms

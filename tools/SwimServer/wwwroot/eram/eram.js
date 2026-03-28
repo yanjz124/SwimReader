@@ -6378,7 +6378,10 @@ function openSubMenu(menuId, anchorEl) {
         // Position at the clicked button's left, always top:0 (spans both rows)
         subMenuContainerEl.style.left = anchorEl.offsetLeft + 'px';
         subMenuContainerEl.style.top = '0';
-        buildInlineSubMenu(menuSpec, menuId, subMenuContainerEl);
+        // Determine which row the anchor button was on (0 or 1)
+        const anchorRow = anchorEl.closest('.tb-row');
+        const parentRowIdx = anchorRow ? Array.from(anchorRow.parentElement.children).indexOf(anchorRow) : 0;
+        buildInlineSubMenu(menuSpec, menuId, subMenuContainerEl, parentRowIdx);
     }
     refreshAllButtons();
 }
@@ -6391,36 +6394,51 @@ const MENU_LABELS = {
     'db-fields': 'DB\nFIELDS', 'radar-filter': 'RADAR\nFILTER',
 };
 
-// Build sub-menu: [pink parent on row 0] + [items extending right on each row]
+// Build sub-menu: pink parent stays at its original row, items extend right.
 // Always renders 2 rows to match master toolbar height.
-// Rows > 0 get a spacer in column 0 to keep items aligned under row 0 items.
-function buildInlineSubMenu(menuSpec, menuId, container) {
-    for (let ri = 0; ri < Math.max(2, menuSpec.rows.length); ri++) {
+// parentRow = which visual row (0 or 1) the parent button should appear on.
+function buildInlineSubMenu(menuSpec, menuId, container, parentRow) {
+    if (parentRow === undefined) parentRow = 0;
+    const totalRows = Math.max(2, menuSpec.rows.length + parentRow);
+
+    // Map sub-menu data rows to visual rows: data row 0 → visual parentRow, data row 1 → parentRow+1, etc.
+    for (let vi = 0; vi < totalRows; vi++) {
         const rowEl = document.createElement('div');
         rowEl.className = 'tb-row';
         rowEl.style.height = '34px';
 
-        if (ri === 0) {
-            // Row 0: pink parent button + items
+        if (vi === parentRow) {
+            // This row gets the pink parent button
             const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
             const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
             const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
             parentBtn.classList.add('tb-menu-open');
             rowEl.appendChild(parentBtn);
-        } else {
-            // Rows > 0: empty spacer to account for parent button column
+
+            // Data row 0 items extend right
+            const rowData = menuSpec.rows[0];
+            if (rowData) {
+                for (let ci = 0; ci < rowData.length; ci++) {
+                    rowEl.appendChild(createButton(rowData[ci], menuSpec.id, 0, ci));
+                }
+            }
+        } else if (vi > parentRow) {
+            // Data rows after the parent row
+            const dataIdx = vi - parentRow;
+            // Spacer for parent button column
             const spacer = document.createElement('div');
             spacer.style.width = '88px'; spacer.style.flexShrink = '0';
             rowEl.appendChild(spacer);
-        }
 
-        const rowData = menuSpec.rows[ri];
-        if (rowData) {
-            for (let ci = 0; ci < rowData.length; ci++) {
-                const btnEl = createButton(rowData[ci], menuSpec.id, ri, ci);
-                rowEl.appendChild(btnEl);
+            const rowData = menuSpec.rows[dataIdx];
+            if (rowData) {
+                for (let ci = 0; ci < rowData.length; ci++) {
+                    rowEl.appendChild(createButton(rowData[ci], menuSpec.id, dataIdx, ci));
+                }
             }
         }
+        // Rows before parentRow are empty (just maintain height)
+
         container.appendChild(rowEl);
     }
 }

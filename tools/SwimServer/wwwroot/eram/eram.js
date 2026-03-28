@@ -6479,12 +6479,21 @@ function buildToolbar() {
     const masterRow = document.createElement('div');
     masterRow.className = 'tb-master-row';
 
-    // Left grey bar (drag handle + down arrow)
+    // Left grey bar (drag handle + down arrow that toggles sidebar)
     const leftBar = document.createElement('div');
     leftBar.className = 'tb-left-bar';
     const arrowBtn = document.createElement('div');
     arrowBtn.className = 'tb-arrow-btn';
-    arrowBtn.textContent = '\u25BC'; // ▼ down arrow
+    arrowBtn.innerHTML = '<svg viewBox="0 0 10 18"><line x1="5" y1="2" x2="5" y2="14" stroke="#fff" stroke-width="1.5"/><polygon points="1,11 5,17 9,11" fill="#fff"/></svg>';
+    arrowBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Toggle sidebar visibility
+        const sidebar = document.getElementById('sidebar');
+        if (sidebar) sidebar.classList.toggle('collapsed');
+    });
+    arrowBtn.addEventListener('mousedown', (e) => {
+        if (e.button === 1) { e.preventDefault(); e.stopPropagation(); }
+    });
     leftBar.appendChild(arrowBtn);
     masterRow.appendChild(leftBar);
 

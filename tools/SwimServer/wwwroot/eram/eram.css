@@ -387,13 +387,14 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 /* Individual toolbar button — CRC: blue bg, white text */
 .tb-btn {
     display: flex; flex-direction: row; align-items: stretch;
-    min-width: 72px; height: 28px;
+    min-width: 72px; min-height: 28px;
     border: 1px solid #333;
     cursor: pointer;
     position: relative;
     white-space: nowrap;
     background: #000088;
 }
+.tb-row { align-items: stretch; }
 .tb-btn:hover { background: #0000aa; }
 .tb-btn:active { background: #0000cc; }
 
@@ -414,9 +415,9 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     line-height: 11px; white-space: pre;
 }
 
-/* Value text (for incdec buttons) — green */
+/* Value text (for incdec buttons) — white like labels */
 .tb-btn .tb-value {
-    color: #00cc00; font-size: 9px; text-align: center;
+    color: #ffffff; font-size: 9px; text-align: center;
     line-height: 10px; margin-top: 1px;
 }
 
@@ -462,7 +463,21 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     white-space: nowrap;
 }
 
-/* Drag handle at top of master toolbar */
-.tb-drag-handle {
-    height: 4px; background: #333; cursor: move;
+/* Left grey bar with raise/lower arrow (CRC: narrow grey column on left of toolbar) */
+.tb-left-bar {
+    display: flex; flex-direction: column; justify-content: flex-end;
+    width: 12px; background: #444; flex-shrink: 0; cursor: move;
+}
+.tb-left-bar .tb-arrow-btn {
+    width: 12px; height: 28px; background: #555; border: 1px solid #666;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; color: #fff; font-size: 10px; line-height: 1;
+}
+.tb-left-bar .tb-arrow-btn:hover { background: #666; }
+/* Master toolbar layout: left bar + button grid */
+.tb-master-row {
+    display: flex; flex-direction: row;
+}
+.tb-master-grid {
+    display: flex; flex-direction: column; flex: 1;
 }

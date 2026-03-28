@@ -5744,6 +5744,7 @@ const TB_MASTER = {
         [
             nosim('DRAW'),
             menu('ATC\nTOOLS', 'atc-tools'),
+            nosim('AB\nSETTING'),
             incdec('RANGE', {
                 cls: 'tb-dark',
                 getValue: () => zoomToRange(map.getZoom()),
@@ -6474,13 +6475,26 @@ function buildToolbar() {
     tearoffBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // ── Master toolbar container ──
-    // Drag handle
-    const dragHandle = document.createElement('div');
-    dragHandle.className = 'tb-drag-handle';
-    masterContainer.appendChild(dragHandle);
+    // Layout: [left grey bar (drag + arrow)] [button grid]
+    const masterRow = document.createElement('div');
+    masterRow.className = 'tb-master-row';
 
-    // Master panel
-    masterPanelEl = renderPanel(TB_MASTER, masterContainer);
+    // Left grey bar (drag handle + down arrow)
+    const leftBar = document.createElement('div');
+    leftBar.className = 'tb-left-bar';
+    const arrowBtn = document.createElement('div');
+    arrowBtn.className = 'tb-arrow-btn';
+    arrowBtn.textContent = '\u25BC'; // ▼ down arrow
+    leftBar.appendChild(arrowBtn);
+    masterRow.appendChild(leftBar);
+
+    // Button grid
+    const masterGrid = document.createElement('div');
+    masterGrid.className = 'tb-master-grid';
+    masterPanelEl = renderPanel(TB_MASTER, masterGrid);
+    masterRow.appendChild(masterGrid);
+
+    masterContainer.appendChild(masterRow);
 
     // Sub-menu container (appears below master)
     subMenuContainerEl = document.createElement('div');
@@ -6498,8 +6512,8 @@ function buildToolbar() {
     L.DomEvent.disableClickPropagation(masterContainer);
     L.DomEvent.disableScrollPropagation(masterContainer);
 
-    // Setup drag via existing setupBoxDrag
-    setupBoxDrag(masterContainer, dragHandle);
+    // Setup drag via existing setupBoxDrag (left bar is the drag handle)
+    setupBoxDrag(masterContainer, leftBar);
 
     // Position top-left by default (CRC default), unless saved position exists
     const savedPos = localStorage.getItem('boxPos_master-toolbar-container');

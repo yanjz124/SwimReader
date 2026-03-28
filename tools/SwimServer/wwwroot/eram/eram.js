@@ -5749,8 +5749,8 @@ const TB_MASTER = {
                 cls: 'tb-dark',
                 getValue: () => zoomToRange(map.getZoom()),
                 formatValue: v => String(v),
-                onDec: () => map.zoomOut(1),
-                onInc: () => map.zoomIn(1),
+                onDec: () => map.zoomOut(1),  // left-click = zoom out (more range)
+                onInc: () => map.zoomIn(1),   // middle-click = zoom in (less range)
             }),
             menu('CURSOR', 'cursor'),
             menu('BRIGHT', 'bright'),
@@ -6372,8 +6372,10 @@ function openSubMenu(menuId, anchorEl) {
     if (subMenuContainerEl) {
         subMenuContainerEl.innerHTML = '';
         subMenuContainerEl.style.display = 'block';
-        // Build inline panel: [pink parent] + sub-menu rows
+        // Position sub-menu so pink parent aligns with original button position
+        const anchorLeft = anchorEl.offsetLeft;
         buildInlineSubMenu(menuSpec, menuId, subMenuContainerEl);
+        subMenuContainerEl.style.marginLeft = anchorLeft + 'px';
     }
     refreshAllButtons();
 }

@@ -6325,8 +6325,8 @@ function refreshAllSubMenus() {
 function closeAllSubMenus() {
     tbState.openMenu = null;
     tbState.openSubMenu = null;
-    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; }
-    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.marginLeft = ''; }
+    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.marginLeft = ''; }
     // Show master panel again
     if (masterPanelEl) masterPanelEl.style.display = '';
     refreshAllButtons();
@@ -6498,10 +6498,23 @@ function buildToolbar() {
     leftBar.appendChild(arrowBtn);
     masterRow.appendChild(leftBar);
 
-    // Button grid
+    // Button grid — master panel + sub-menus live here (same vertical position)
     const masterGrid = document.createElement('div');
     masterGrid.className = 'tb-master-grid';
     masterPanelEl = renderPanel(TB_MASTER, masterGrid);
+
+    // Sub-menu container (replaces master panel in-place when menu is open)
+    subMenuContainerEl = document.createElement('div');
+    subMenuContainerEl.className = 'tb-submenu';
+    subMenuContainerEl.style.display = 'none';
+    masterGrid.appendChild(subMenuContainerEl);
+
+    // Sub-sub-menu container (for nested menus like weather)
+    subSubMenuContainerEl = document.createElement('div');
+    subSubMenuContainerEl.className = 'tb-submenu';
+    subSubMenuContainerEl.style.display = 'none';
+    masterGrid.appendChild(subSubMenuContainerEl);
+
     masterRow.appendChild(masterGrid);
 
     // Right grey bar (extends to window edge)
@@ -6510,18 +6523,6 @@ function buildToolbar() {
     masterRow.appendChild(rightBar);
 
     masterContainer.appendChild(masterRow);
-
-    // Sub-menu container (replaces master when menu is open)
-    subMenuContainerEl = document.createElement('div');
-    subMenuContainerEl.className = 'tb-submenu';
-    subMenuContainerEl.style.display = 'none';
-    masterContainer.appendChild(subMenuContainerEl);
-
-    // Sub-sub-menu container (for nested menus like weather)
-    subSubMenuContainerEl = document.createElement('div');
-    subSubMenuContainerEl.className = 'tb-submenu';
-    subSubMenuContainerEl.style.display = 'none';
-    masterContainer.appendChild(subSubMenuContainerEl);
 
     // Prevent map interactions
     L.DomEvent.disableClickPropagation(masterContainer);

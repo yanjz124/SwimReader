@@ -144,7 +144,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 
 /* ── LDR DIR overlay ── */
 #ldr-dir-overlay {
-    position: fixed; bottom: 32px; left: 12px; z-index: 700;
+    position: fixed; top: 12px; left: 12px; z-index: 700;
     background: #111; border: 1px solid #cccc44; padding: 4px 10px;
     font-family: 'Consolas', monospace; font-size: 12px; color: #cccc44;
     line-height: 1.4; white-space: nowrap;

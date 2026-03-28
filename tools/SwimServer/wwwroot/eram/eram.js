@@ -6475,6 +6475,11 @@ function buildToolbar() {
     tearoffBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // ── Master toolbar container ──
+    // Grey ribbon across top
+    const ribbon = document.createElement('div');
+    ribbon.className = 'tb-ribbon';
+    masterContainer.appendChild(ribbon);
+
     // Layout: [left grey bar (drag + arrow)] [button grid]
     const masterRow = document.createElement('div');
     masterRow.className = 'tb-master-row';
@@ -6487,7 +6492,6 @@ function buildToolbar() {
     arrowBtn.innerHTML = '<svg viewBox="0 0 10 18"><line x1="5" y1="2" x2="5" y2="14" stroke="#fff" stroke-width="1.5"/><polygon points="1,11 5,17 9,11" fill="#fff"/></svg>';
     arrowBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        // Toggle sidebar visibility
         const sidebar = document.getElementById('sidebar');
         if (sidebar) sidebar.classList.toggle('collapsed');
     });
@@ -6521,8 +6525,8 @@ function buildToolbar() {
     L.DomEvent.disableClickPropagation(masterContainer);
     L.DomEvent.disableScrollPropagation(masterContainer);
 
-    // Setup drag via existing setupBoxDrag (left bar is the drag handle)
-    setupBoxDrag(masterContainer, leftBar);
+    // Setup drag — ribbon and left bar both serve as drag handles
+    setupBoxDrag(masterContainer, ribbon);
 
     // Position top-left by default (CRC default), unless saved position exists
     const savedPos = localStorage.getItem('boxPos_master-toolbar-container');

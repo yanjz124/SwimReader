@@ -3325,6 +3325,7 @@ function loadSettingsFromUrl() {
         nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
     }
     if (params.has('nxbr')) nexradBrightness = parseInt(params.get('nxbr'));
+    if (params.get('tb') === '1') window._tbVisible = true;
 
     // Restore map position/zoom
     if (params.has('lat') && params.has('lng') && params.has('z')) {
@@ -3407,6 +3408,8 @@ function saveSettingsToUrl() {
     if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
     if (nexradLevel !== 3) params.set('nxlvl', nexradLevel === 0 ? '0' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '123');
     if (nexradBrightness !== 30) params.set('nxbr', nexradBrightness);
+    // Toolbar visibility (set by toolbar system via window._tbVisible)
+    if (window._tbVisible) params.set('tb', '1');
     // Map position/zoom
     const center = map.getCenter();
     params.set('lat', center.lat.toFixed(4));
@@ -5093,6 +5096,8 @@ window.addEventListener('resize', () => {
     clampBox(document.getElementById('time-view'));
     const fm = document.getElementById('field-menu');
     if (fm.style.display !== 'none') clampBox(fm);
+    const mtb = document.getElementById('master-toolbar-container');
+    if (mtb && mtb.classList.contains('tb-visible')) clampBox(mtb);
 });
 
 setupBoxDrag(document.getElementById('mca'));
@@ -5660,3 +5665,833 @@ document.getElementById('cmd-help-btn').onclick = () => {
     p.style.display = p.style.display === 'block' ? 'none' : 'block';
 };
 document.getElementById('numpad-inverted').addEventListener('change', saveSettingsToUrl);
+
+// ════════════════════════════════════════════════════════════════════════════
+// Master Toolbar System
+// ════════════════════════════════════════════════════════════════════════════
+(function () {
+
+// ── Toolbar state ──
+const tbState = {
+    masterVisible: false,
+    openMenu: null,       // currently open sub-menu id string
+    openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
+    // Brightness values (0-100) for buttons not yet wired
+    bright: {
+        bckgrd: 50, cursor: 50, text: 50, prTgtr: 50, unpTgt: 50,
+        prHist: 50, unpHist: 50, sldb: 50, bcklght: 50, button: 50,
+        border: 50, toolbar: 50, tbBrdr: 50, fdb: 50, portal: 50,
+        onFreq: 50, line4b: 50, dwell: 50, fence: 50,
+    },
+    // Cursor sub-menu
+    cursorSize: 1,
+};
+
+// ── Helper: approximate range NM from zoom ──
+function zoomToRange(z) {
+    // At zoom 6 ~300nm, zoom 10 ~20nm. Rough: 40000 / 2^zoom
+    return Math.round(40000 / Math.pow(2, z));
+}
+
+// ── Helper: get current value from an existing control ──
+function getSelectVal(id) {
+    const el = document.getElementById(id);
+    return el ? el.value : '';
+}
+function getRangeVal(id) {
+    const el = document.getElementById(id);
+    return el ? parseInt(el.value) : 0;
+}
+function setSelectVal(id, val) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = val;
+    el.dispatchEvent(new Event('change'));
+}
+function setRangeVal(id, val) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = val;
+    el.dispatchEvent(new Event('input'));
+}
+
+// ── Vector cycle values ──
+const VECTOR_STEPS = [0, 1, 2, 4, 8];
+
+// ── NX LVL cycle: select option values ──
+const NXLVL_STEPS = ['0', '3', '23', '123'];
+function nxlvlLabel(val) {
+    if (val === '0') return 'OFF';
+    return val;
+}
+
+// ── Font size steps ──
+const FONT_STEPS = [8, 9, 10, 11, 12, 14];
+
+// ── Button spec builder helpers ──
+function nosim(label) { return { label, type: 'nosim' }; }
+function menu(label, menuId) { return { label, type: 'menu', menu: menuId }; }
+function toggle(label, opts) { return { label, type: 'toggle', ...opts }; }
+function incdec(label, opts) { return { label, type: 'incdec', ...opts }; }
+function cmd(label, opts) { return { label, type: 'cmd', ...opts }; }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Button definitions — Master Toolbar
+// ════════════════════════════════════════════════════════════════════════════
+const TB_MASTER = {
+    id: 'master',
+    rows: [
+        [
+            nosim('DRAW'),
+            menu('ATC\nTOOLS', 'atc-tools'),
+            incdec('RANGE', {
+                getValue: () => zoomToRange(map.getZoom()),
+                formatValue: v => v + ' NM',
+                onDec: () => map.zoomOut(1),   // zoom out = increase range
+                onInc: () => map.zoomIn(1),    // zoom in = decrease range
+            }),
+            menu('CURSOR', 'cursor'),
+            menu('BRIGHT', 'bright'),
+            menu('FONT', 'font'),
+            menu('DB\nFIELDS', 'db-fields'),
+            incdec('VECTOR', {
+                getValue: () => parseInt(getSelectVal('sel-vector')),
+                formatValue: v => String(v),
+                onDec: () => {
+                    const cur = parseInt(getSelectVal('sel-vector'));
+                    const idx = VECTOR_STEPS.indexOf(cur);
+                    const next = idx > 0 ? VECTOR_STEPS[idx - 1] : VECTOR_STEPS[VECTOR_STEPS.length - 1];
+                    setSelectVal('sel-vector', next);
+                },
+                onInc: () => {
+                    const cur = parseInt(getSelectVal('sel-vector'));
+                    const idx = VECTOR_STEPS.indexOf(cur);
+                    const next = idx < VECTOR_STEPS.length - 1 ? VECTOR_STEPS[idx + 1] : VECTOR_STEPS[0];
+                    setSelectVal('sel-vector', next);
+                },
+            }),
+        ],
+        [
+            menu('VIEWS', 'views'),
+            menu('CHECK\nLISTS', 'check-lists'),
+            nosim('COMMAND\nMENUS'),
+            menu('MAP', 'geomap'),
+            incdec('ALT LIM', {
+                getValue: () => {
+                    const lo = document.getElementById('inp-alt-low')?.value || '0';
+                    const hi = document.getElementById('inp-alt-high')?.value || '999';
+                    return lo.padStart(3, '0') + 'B' + hi.padStart(3, '0');
+                },
+                formatValue: v => v,
+                onDec: () => {},  // display only for now
+                onInc: () => {},
+            }),
+            menu('RADAR\nFILTER', 'radar-filter'),
+            nosim('PREFSET'),
+            cmd('DELETE\nTEAROFF', {
+                onCmd: () => {
+                    // Close all sub-menus (acts as a general tearoff delete)
+                    closeAllSubMenus();
+                },
+            }),
+        ],
+    ],
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sub-menu definitions
+// ════════════════════════════════════════════════════════════════════════════
+
+const TB_ATC_TOOLS = {
+    id: 'atc-tools',
+    rows: [
+        [
+            { label: 'CRR FIX', type: 'toggle', nosim: true },
+            nosim('SPEED\nADVSRY'),
+            menu('WX', 'weather'),
+        ],
+    ],
+};
+
+const TB_WEATHER = {
+    id: 'weather',
+    parentMenu: 'atc-tools',
+    rows: [
+        [
+            nosim('NX 000'),
+            incdec('NX LVL', {
+                getValue: () => nxlvlLabel(getSelectVal('sel-nxlvl')),
+                formatValue: v => v,
+                onDec: () => {
+                    const cur = getSelectVal('sel-nxlvl');
+                    const idx = NXLVL_STEPS.indexOf(cur);
+                    const next = idx > 0 ? NXLVL_STEPS[idx - 1] : NXLVL_STEPS[NXLVL_STEPS.length - 1];
+                    setSelectVal('sel-nxlvl', next);
+                },
+                onInc: () => {
+                    const cur = getSelectVal('sel-nxlvl');
+                    const idx = NXLVL_STEPS.indexOf(cur);
+                    const next = idx < NXLVL_STEPS.length - 1 ? NXLVL_STEPS[idx + 1] : NXLVL_STEPS[0];
+                    setSelectVal('sel-nxlvl', next);
+                },
+            }),
+            nosim('WX1'),
+            nosim('WX2'),
+            nosim('WX3'),
+        ],
+    ],
+};
+
+const TB_VIEWS = {
+    id: 'views',
+    rows: [
+        [
+            { label: 'ALTIM\nSET', type: 'toggle', nosim: true },
+            nosim('AUTO HO\nINHIB'),
+            nosim('CFR'),
+            { label: 'CODE', type: 'toggle', nosim: true },
+            nosim('CONFLCT\nALERT'),
+            nosim('CPDLC\nADV'),
+            nosim('CPDLC\nHIST'),
+            nosim('CPDLC\nTOC SET'),
+            { label: 'CRR', type: 'toggle', nosim: true },
+        ],
+        [
+            nosim('DEPT\nLIST'),
+            nosim('FLIGHT\nEVENT'),
+            nosim('GROUP\nSUP'),
+            nosim('HOLD\nLIST'),
+            nosim('INBND\nLIST'),
+            nosim('MRP\nLIST'),
+            nosim('SSA\nFILTER'),
+            nosim('UA'),
+            { label: 'WX\nREPORT', type: 'toggle', nosim: true },
+        ],
+    ],
+};
+
+const TB_CHECK_LISTS = {
+    id: 'check-lists',
+    rows: [
+        [
+            { label: 'POS\nCHECK', type: 'toggle', nosim: true },
+            { label: 'EMERG\nCHECK', type: 'toggle', nosim: true },
+        ],
+    ],
+};
+
+const TB_CURSOR = {
+    id: 'cursor',
+    rows: [
+        [
+            nosim('SPEED'),
+            incdec('SIZE', {
+                nosim: true,
+                getValue: () => tbState.cursorSize,
+                formatValue: v => String(v),
+                onDec: () => { tbState.cursorSize = Math.max(1, tbState.cursorSize - 1); },
+                onInc: () => { tbState.cursorSize = Math.min(5, tbState.cursorSize + 1); },
+            }),
+            nosim('VOLUME'),
+        ],
+    ],
+};
+
+const TB_GEOMAP = {
+    id: 'geomap',
+    rows: [
+        [
+            toggle('UHI', {
+                isOn: () => getRangeVal('rng-bnd-uhi') > 0,
+                onToggle: (on) => setRangeVal('rng-bnd-uhi', on ? 60 : 0),
+            }),
+            toggle('HI', {
+                isOn: () => getRangeVal('rng-bnd-hi') > 0,
+                onToggle: (on) => setRangeVal('rng-bnd-hi', on ? 60 : 0),
+            }),
+            toggle('LO', {
+                isOn: () => getRangeVal('rng-bnd-lo') > 0,
+                onToggle: (on) => setRangeVal('rng-bnd-lo', on ? 60 : 0),
+            }),
+            toggle('APP', {
+                isOn: () => getRangeVal('rng-bnd-app') > 0,
+                onToggle: (on) => setRangeVal('rng-bnd-app', on ? 60 : 0),
+            }),
+        ],
+        [
+            toggle('HI AWY', {
+                isOn: () => getRangeVal('rng-jroutes') > 0,
+                onToggle: (on) => setRangeVal('rng-jroutes', on ? 60 : 0),
+            }),
+            toggle('LO AWY', {
+                isOn: () => getRangeVal('rng-vroutes') > 0,
+                onToggle: (on) => setRangeVal('rng-vroutes', on ? 60 : 0),
+            }),
+            toggle('VORs', {
+                isOn: () => getRangeVal('rng-vors') > 0,
+                onToggle: (on) => setRangeVal('rng-vors', on ? 60 : 0),
+            }),
+            toggle('APTs', {
+                isOn: () => getRangeVal('rng-airports') > 0,
+                onToggle: (on) => setRangeVal('rng-airports', on ? 60 : 0),
+            }),
+        ],
+    ],
+};
+
+const TB_BRIGHT = {
+    id: 'bright',
+    rows: [
+        [
+            menu('MAP\nBRIGHT', 'map-bright'),
+            nosim('CPDLC'),
+            incdec('BCKGRD', { getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { tbState.bright.bckgrd = Math.max(0, tbState.bright.bckgrd - 10); }, onInc: () => { tbState.bright.bckgrd = Math.min(100, tbState.bright.bckgrd + 10); } }),
+            incdec('CURSOR', { getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); } }),
+            incdec('TEXT', { getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); } }),
+            incdec('PR TGTR', { getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); } }),
+            incdec('UNP TGT', { getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); } }),
+        ],
+        [
+            incdec('PR HIST', { getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
+            incdec('UNP HIST', { getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
+            incdec('LDB', {
+                getValue: () => getRangeVal('rng-ldb-brightness'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-ldb-brightness', Math.max(0, getRangeVal('rng-ldb-brightness') - 10)),
+                onInc: () => setRangeVal('rng-ldb-brightness', Math.min(100, getRangeVal('rng-ldb-brightness') + 10)),
+            }),
+            incdec('SLDB', { getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); } }),
+            nosim('WX'),
+            incdec('NEXRAD', {
+                getValue: () => getRangeVal('rng-nx'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-nx', Math.max(0, getRangeVal('rng-nx') - 10)),
+                onInc: () => setRangeVal('rng-nx', Math.min(100, getRangeVal('rng-nx') + 10)),
+            }),
+            incdec('BCKLGHT', { getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { tbState.bright.bcklght = Math.max(0, tbState.bright.bcklght - 10); }, onInc: () => { tbState.bright.bcklght = Math.min(100, tbState.bright.bcklght + 10); } }),
+        ],
+        [
+            incdec('BUTTON', { getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); } }),
+            incdec('BORDER', { getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); } }),
+            incdec('TOOLBAR', { getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); } }),
+            incdec('TB BRDR', { getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); } }),
+            nosim('AB BRDR'),
+            incdec('FDB', { getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
+            incdec('PORTAL', { getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
+        ],
+        [
+            nosim('SATCOMM'),
+            incdec('ON-FREQ', { getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); } }),
+            incdec('LINE 4', { getValue: () => tbState.bright.line4b, formatValue: v => v, onDec: () => { tbState.bright.line4b = Math.max(0, tbState.bright.line4b - 10); }, onInc: () => { tbState.bright.line4b = Math.min(100, tbState.bright.line4b + 10); } }),
+            incdec('DWELL', { getValue: () => tbState.bright.dwell, formatValue: v => v, onDec: () => { tbState.bright.dwell = Math.max(0, tbState.bright.dwell - 10); }, onInc: () => { tbState.bright.dwell = Math.min(100, tbState.bright.dwell + 10); } }),
+            incdec('FENCE', { getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); } }),
+            nosim('DBFEL'),
+            nosim('OUTAGE'),
+        ],
+    ],
+};
+
+const TB_MAP_BRIGHT = {
+    id: 'map-bright',
+    parentMenu: 'bright',
+    rows: [
+        [
+            incdec('BCG 1', {
+                getValue: () => getRangeVal('rng-bnd-uhi'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-bnd-uhi', Math.max(0, getRangeVal('rng-bnd-uhi') - 10)),
+                onInc: () => setRangeVal('rng-bnd-uhi', Math.min(100, getRangeVal('rng-bnd-uhi') + 10)),
+            }),
+            incdec('BCG 2', {
+                getValue: () => getRangeVal('rng-bnd-hi'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-bnd-hi', Math.max(0, getRangeVal('rng-bnd-hi') - 10)),
+                onInc: () => setRangeVal('rng-bnd-hi', Math.min(100, getRangeVal('rng-bnd-hi') + 10)),
+            }),
+            incdec('BCG 3', {
+                getValue: () => getRangeVal('rng-bnd-lo'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-bnd-lo', Math.max(0, getRangeVal('rng-bnd-lo') - 10)),
+                onInc: () => setRangeVal('rng-bnd-lo', Math.min(100, getRangeVal('rng-bnd-lo') + 10)),
+            }),
+            incdec('BCG 4', {
+                getValue: () => getRangeVal('rng-bnd-app'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-bnd-app', Math.max(0, getRangeVal('rng-bnd-app') - 10)),
+                onInc: () => setRangeVal('rng-bnd-app', Math.min(100, getRangeVal('rng-bnd-app') + 10)),
+            }),
+            incdec('BCG 5', {
+                getValue: () => getRangeVal('rng-jroutes'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-jroutes', Math.max(0, getRangeVal('rng-jroutes') - 10)),
+                onInc: () => setRangeVal('rng-jroutes', Math.min(100, getRangeVal('rng-jroutes') + 10)),
+            }),
+            incdec('BCG 6', {
+                getValue: () => getRangeVal('rng-vroutes'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-vroutes', Math.max(0, getRangeVal('rng-vroutes') - 10)),
+                onInc: () => setRangeVal('rng-vroutes', Math.min(100, getRangeVal('rng-vroutes') + 10)),
+            }),
+            incdec('BCG 7', {
+                getValue: () => getRangeVal('rng-vors'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-vors', Math.max(0, getRangeVal('rng-vors') - 10)),
+                onInc: () => setRangeVal('rng-vors', Math.min(100, getRangeVal('rng-vors') + 10)),
+            }),
+            incdec('BCG 8', {
+                getValue: () => getRangeVal('rng-airports'),
+                formatValue: v => v,
+                onDec: () => setRangeVal('rng-airports', Math.max(0, getRangeVal('rng-airports') - 10)),
+                onInc: () => setRangeVal('rng-airports', Math.min(100, getRangeVal('rng-airports') + 10)),
+            }),
+        ],
+    ],
+};
+
+const TB_FONT = {
+    id: 'font',
+    rows: [
+        [
+            incdec('LINE 4', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
+            incdec('FDB', {
+                getValue: () => parseInt(getSelectVal('sel-fontsize')),
+                formatValue: v => v,
+                onDec: () => {
+                    const cur = parseInt(getSelectVal('sel-fontsize'));
+                    const idx = FONT_STEPS.indexOf(cur);
+                    if (idx > 0) setSelectVal('sel-fontsize', FONT_STEPS[idx - 1]);
+                },
+                onInc: () => {
+                    const cur = parseInt(getSelectVal('sel-fontsize'));
+                    const idx = FONT_STEPS.indexOf(cur);
+                    if (idx < FONT_STEPS.length - 1) setSelectVal('sel-fontsize', FONT_STEPS[idx + 1]);
+                },
+            }),
+            nosim('TOOLBAR'),
+            incdec('LDB', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
+            incdec('RDB', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
+            nosim('OUTAGE'),
+        ],
+    ],
+};
+
+// DB Fields sub-menu — DEST and TYPE are mutually exclusive toggles wired to sel-line4
+const TB_DB_FIELDS = {
+    id: 'db-fields',
+    rows: [
+        [
+            { label: 'NON-\nRVSM', type: 'toggle', nosim: true, isOn: () => true },
+            nosim('VRI'),
+            { label: 'CODE', type: 'toggle', nosim: true },
+            { label: 'SPEED', type: 'toggle', nosim: true },
+            toggle('DEST', {
+                isOn: () => getSelectVal('sel-line4') === 'DEST',
+                onToggle: (on) => {
+                    setSelectVal('sel-line4', on ? 'DEST' : 'OFF');
+                    refreshAllSubMenus();
+                },
+            }),
+            toggle('TYPE', {
+                isOn: () => getSelectVal('sel-line4') === 'TYPE',
+                onToggle: (on) => {
+                    setSelectVal('sel-line4', on ? 'TYPE' : 'OFF');
+                    refreshAllSubMenus();
+                },
+            }),
+            incdec('FDB LDR', {
+                getValue: () => 1,  // default leader length
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            { label: 'BCAST\nFLID', type: 'toggle', nosim: true },
+            { label: 'PORTAL\nFENCE', type: 'toggle', nosim: true },
+        ],
+        [
+            nosim('NON-\nADS-B'),
+            nosim('NONADSB'),
+            { label: 'SAT\nCOMM', type: 'toggle', nosim: true },
+            nosim('TFM\nREROUTE'),
+            { label: 'CRR\nRDB', type: 'toggle', nosim: true },
+            nosim('STA RDB'),
+            nosim('DELAY\nRDB'),
+            nosim('DELAY\nFORMAT'),
+        ],
+    ],
+};
+
+const TB_RADAR_FILTER = {
+    id: 'radar-filter',
+    rows: [
+        [
+            { label: 'ALL\nLDBS', type: 'toggle', nosim: true },
+            { label: 'PR LDB', type: 'toggle', nosim: true },
+            { label: 'UNP\nLDB', type: 'toggle', nosim: true },
+            { label: 'ALL\nPRIM', type: 'toggle', nosim: true },
+            { label: 'NON\nMODE C', type: 'toggle', nosim: true },
+        ],
+        [
+            { label: 'SELECT\nBEACON', type: 'toggle', nosim: true },
+            nosim('PERM\nECHO'),
+            nosim('STROBE\nLINES'),
+            incdec('HISTORY', {
+                getValue: () => parseInt(getSelectVal('sel-histcount')),
+                formatValue: v => v,
+                onDec: () => {
+                    const cur = parseInt(getSelectVal('sel-histcount'));
+                    if (cur > 0) setSelectVal('sel-histcount', cur - 1);
+                },
+                onInc: () => {
+                    const cur = parseInt(getSelectVal('sel-histcount'));
+                    if (cur < 10) setSelectVal('sel-histcount', cur + 1);
+                },
+            }),
+        ],
+    ],
+};
+
+// Registry of all sub-menus
+const SUB_MENUS = {
+    'atc-tools': TB_ATC_TOOLS,
+    'weather': TB_WEATHER,
+    'views': TB_VIEWS,
+    'check-lists': TB_CHECK_LISTS,
+    'cursor': TB_CURSOR,
+    'geomap': TB_GEOMAP,
+    'bright': TB_BRIGHT,
+    'map-bright': TB_MAP_BRIGHT,
+    'font': TB_FONT,
+    'db-fields': TB_DB_FIELDS,
+    'radar-filter': TB_RADAR_FILTER,
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Rendering
+// ════════════════════════════════════════════════════════════════════════════
+
+// Active DOM references for refresh
+const tbElements = new Map();  // btnKey → { el, spec }
+let masterPanelEl = null;
+let subMenuContainerEl = null;
+let subSubMenuContainerEl = null;
+
+function btnKey(panelId, rowIdx, colIdx) {
+    return panelId + ':' + rowIdx + ':' + colIdx;
+}
+
+function createButton(spec, panelId, rowIdx, colIdx) {
+    const el = document.createElement('div');
+    el.className = 'tb-btn';
+    const key = btnKey(panelId, rowIdx, colIdx);
+    el.dataset.tbKey = key;
+
+    const isNosim = spec.type === 'nosim' || spec.nosim;
+
+    if (isNosim) el.classList.add('tb-nosim');
+
+    // Label
+    const labelDiv = document.createElement('div');
+    labelDiv.className = 'tb-label';
+    labelDiv.textContent = spec.label;
+    el.appendChild(labelDiv);
+
+    // Value (for incdec)
+    if (spec.type === 'incdec' && spec.getValue) {
+        const valDiv = document.createElement('div');
+        valDiv.className = 'tb-value';
+        valDiv.textContent = spec.formatValue(spec.getValue());
+        el.appendChild(valDiv);
+    }
+
+    // Menu indicator
+    if (spec.type === 'menu') {
+        const ind = document.createElement('div');
+        ind.className = 'tb-menu-ind';
+        ind.textContent = '\u25BC';
+        el.appendChild(ind);
+    }
+
+    // Toggle state
+    if (spec.type === 'toggle' && !isNosim && spec.isOn && spec.isOn()) {
+        el.classList.add('tb-toggle-on');
+    }
+
+    // Store reference
+    tbElements.set(key, { el, spec });
+
+    // Event handling
+    if (!isNosim) {
+        // Left click
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleBtnAction(spec, key, false);
+        });
+
+        // Middle click via mousedown
+        el.addEventListener('mousedown', (e) => {
+            if (e.button === 1) {
+                e.preventDefault();
+                e.stopPropagation();
+                handleBtnAction(spec, key, true);
+            }
+        });
+
+        // Prevent context menu on right-click
+        el.addEventListener('contextmenu', (e) => e.preventDefault());
+    } else {
+        // nosim: prevent map interaction but no action
+        el.addEventListener('click', (e) => e.stopPropagation());
+        el.addEventListener('mousedown', (e) => {
+            if (e.button === 1) { e.preventDefault(); e.stopPropagation(); }
+        });
+        el.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    return el;
+}
+
+function renderPanel(spec, container) {
+    const panel = document.createElement('div');
+    panel.className = 'tb-panel';
+    panel.dataset.tbPanel = spec.id;
+
+    for (let ri = 0; ri < spec.rows.length; ri++) {
+        const row = spec.rows[ri];
+        const rowEl = document.createElement('div');
+        rowEl.className = 'tb-row';
+        for (let ci = 0; ci < row.length; ci++) {
+            const btnEl = createButton(row[ci], spec.id, ri, ci);
+            rowEl.appendChild(btnEl);
+        }
+        panel.appendChild(rowEl);
+    }
+
+    container.appendChild(panel);
+    return panel;
+}
+
+function refreshButton(key) {
+    const entry = tbElements.get(key);
+    if (!entry) return;
+    const { el, spec } = entry;
+    const isNosim = spec.type === 'nosim' || spec.nosim;
+
+    // Update value display
+    if (spec.type === 'incdec' && spec.getValue) {
+        const valEl = el.querySelector('.tb-value');
+        if (valEl) valEl.textContent = spec.formatValue(spec.getValue());
+    }
+
+    // Update toggle state
+    if (spec.type === 'toggle' && !isNosim && spec.isOn) {
+        el.classList.toggle('tb-toggle-on', spec.isOn());
+    }
+
+    // Update menu-open state
+    if (spec.type === 'menu') {
+        const isOpen = tbState.openMenu === spec.menu || tbState.openSubMenu === spec.menu;
+        el.classList.toggle('tb-menu-open', isOpen);
+    }
+}
+
+function refreshAllButtons() {
+    for (const key of tbElements.keys()) {
+        refreshButton(key);
+    }
+}
+
+function refreshAllSubMenus() {
+    refreshAllButtons();
+}
+
+// ── Sub-menu management ──
+
+function closeAllSubMenus() {
+    tbState.openMenu = null;
+    tbState.openSubMenu = null;
+    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; }
+    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+    refreshAllButtons();
+}
+
+function openSubMenu(menuId, anchorEl) {
+    // If this menu is a nested sub-menu, handle differently
+    const menuSpec = SUB_MENUS[menuId];
+    if (!menuSpec) return;
+
+    if (menuSpec.parentMenu) {
+        // This is a nested sub-menu (e.g. weather under atc-tools)
+        if (tbState.openSubMenu === menuId) {
+            // Close nested sub-menu
+            tbState.openSubMenu = null;
+            if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+            refreshAllButtons();
+            return;
+        }
+        tbState.openSubMenu = menuId;
+        if (subSubMenuContainerEl) {
+            subSubMenuContainerEl.innerHTML = '';
+            subSubMenuContainerEl.style.display = 'block';
+            renderPanel(menuSpec, subSubMenuContainerEl);
+            // Position: below sub-menu, left-aligned to anchor button
+            const anchorRect = anchorEl.getBoundingClientRect();
+            const containerRect = document.getElementById('master-toolbar-container').getBoundingClientRect();
+            subSubMenuContainerEl.style.left = (anchorRect.left - containerRect.left) + 'px';
+        }
+        refreshAllButtons();
+        return;
+    }
+
+    // Top-level sub-menu
+    if (tbState.openMenu === menuId) {
+        // Toggle off
+        closeAllSubMenus();
+        return;
+    }
+
+    // Close any existing
+    tbState.openMenu = menuId;
+    tbState.openSubMenu = null;
+    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+    if (subMenuContainerEl) {
+        subMenuContainerEl.innerHTML = '';
+        subMenuContainerEl.style.display = 'block';
+        renderPanel(menuSpec, subMenuContainerEl);
+        // Position: left-aligned to anchor button
+        const anchorRect = anchorEl.getBoundingClientRect();
+        const containerRect = document.getElementById('master-toolbar-container').getBoundingClientRect();
+        subMenuContainerEl.style.left = (anchorRect.left - containerRect.left) + 'px';
+    }
+    refreshAllButtons();
+}
+
+function handleBtnAction(spec, key, isMiddle) {
+    if (spec.type === 'menu') {
+        const entry = tbElements.get(key);
+        openSubMenu(spec.menu, entry.el);
+    } else if (spec.type === 'toggle') {
+        if (spec.isOn && spec.onToggle) {
+            spec.onToggle(!spec.isOn());
+        }
+        refreshAllButtons();
+    } else if (spec.type === 'incdec') {
+        if (isMiddle) {
+            if (spec.onInc) spec.onInc();
+        } else {
+            if (spec.onDec) spec.onDec();
+        }
+        refreshAllButtons();
+    } else if (spec.type === 'cmd') {
+        if (spec.onCmd) spec.onCmd();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Build the toolbar DOM
+// ════════════════════════════════════════════════════════════════════════════
+
+function buildToolbar() {
+    const tearoffContainer = document.getElementById('tb-tearoff');
+    const masterContainer = document.getElementById('master-toolbar-container');
+
+    // ── Tearoff button ──
+    const tearoffBtn = document.createElement('div');
+    tearoffBtn.id = 'tb-tearoff-btn';
+    tearoffBtn.innerHTML = '<div class="tb-gold-strip"></div><div class="tb-tearoff-label">TOOLBAR</div>';
+    tearoffContainer.appendChild(tearoffBtn);
+
+    L.DomEvent.disableClickPropagation(tearoffContainer);
+    L.DomEvent.disableScrollPropagation(tearoffContainer);
+
+    tearoffBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleMasterToolbar();
+    });
+    tearoffBtn.addEventListener('mousedown', (e) => {
+        if (e.button === 1) {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleMasterToolbar();
+        }
+    });
+    tearoffBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // ── Master toolbar container ──
+    // Drag handle
+    const dragHandle = document.createElement('div');
+    dragHandle.className = 'tb-drag-handle';
+    masterContainer.appendChild(dragHandle);
+
+    // Master panel
+    masterPanelEl = renderPanel(TB_MASTER, masterContainer);
+
+    // Sub-menu container (appears below master)
+    subMenuContainerEl = document.createElement('div');
+    subMenuContainerEl.className = 'tb-submenu';
+    subMenuContainerEl.style.display = 'none';
+    masterContainer.appendChild(subMenuContainerEl);
+
+    // Sub-sub-menu container (for nested menus like weather)
+    subSubMenuContainerEl = document.createElement('div');
+    subSubMenuContainerEl.className = 'tb-submenu';
+    subSubMenuContainerEl.style.display = 'none';
+    masterContainer.appendChild(subSubMenuContainerEl);
+
+    // Prevent map interactions
+    L.DomEvent.disableClickPropagation(masterContainer);
+    L.DomEvent.disableScrollPropagation(masterContainer);
+
+    // Setup drag via existing setupBoxDrag
+    setupBoxDrag(masterContainer, dragHandle);
+
+    // Center horizontally on first show (if no saved position)
+    const savedPos = localStorage.getItem('boxPos_master-toolbar-container');
+    if (!savedPos) {
+        requestAnimationFrame(() => {
+            const cRect = masterContainer.parentElement.getBoundingClientRect();
+            const eRect = masterContainer.getBoundingClientRect();
+            masterContainer.style.left = Math.max(0, (cRect.width - eRect.width) / 2) + 'px';
+        });
+    }
+
+    // Update RANGE display when map zooms
+    map.on('zoomend', () => {
+        refreshAllButtons();
+    });
+}
+
+function toggleMasterToolbar() {
+    tbState.masterVisible = !tbState.masterVisible;
+    const container = document.getElementById('master-toolbar-container');
+    container.classList.toggle('tb-visible', tbState.masterVisible);
+    document.getElementById('tb-tearoff-btn').classList.toggle('tb-active', tbState.masterVisible);
+
+    if (!tbState.masterVisible) {
+        closeAllSubMenus();
+    } else {
+        // Refresh all values on show
+        refreshAllButtons();
+    }
+    window._tbVisible = tbState.masterVisible;
+    saveSettingsToUrl();
+}
+
+// ── URL persistence for toolbar visibility ──
+// Read tb param on init
+const _tbInitParams = new URLSearchParams(window.location.hash.slice(1));
+if (_tbInitParams.get('tb') === '1') {
+    tbState.masterVisible = true;
+    window._tbVisible = true;
+}
+
+// ── Initialize ──
+buildToolbar();
+
+// Apply initial visibility from URL
+if (tbState.masterVisible) {
+    document.getElementById('master-toolbar-container').classList.add('tb-visible');
+    document.getElementById('tb-tearoff-btn').classList.add('tb-active');
+    refreshAllButtons();
+}
+
+})();  // end toolbar IIFE

@@ -112,8 +112,9 @@ var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history")
 // ASDE-X departure gate codes: airport → pattern → abbreviation (declared early for route lambdas)
 var gateCodesPath = Path.Combine(Directory.GetCurrentDirectory(), "asdex-gatecodes.json");
 var gateCodes = new ConcurrentDictionary<string, ConcurrentDictionary<string, string>>();
-// vNAS fix rules: ICAO airport → pattern → code (auto-fetched from data-api.vnas.vatsim.net)
-var vnasFixRules = new ConcurrentDictionary<string, ConcurrentDictionary<string, string>>();
+// vNAS fix rules: ICAO airport → ordered list of (pattern, code) (auto-fetched from data-api.vnas.vatsim.net)
+// Order matters — first match wins, so we preserve the API's rule ordering.
+var vnasFixRules = new ConcurrentDictionary<string, List<KeyValuePair<string, string>>>();
 
 // Initialize Solace SDK (once, before any thread or connection is created)
 {
@@ -1030,13 +1031,13 @@ app.MapPut("/api/asdex/{airport}/gatecodes", async (HttpContext ctx, string airp
     return Results.Ok();
 });
 
-// vNAS fix rules (auto-fetched, read-only)
+// vNAS fix rules (auto-fetched, read-only) — returned as ordered array to preserve rule priority
 app.MapGet("/api/asdex/{airport}/vnasrules", (string airport) =>
 {
     airport = airport.ToUpperInvariant();
     if (vnasFixRules.TryGetValue(airport, out var rules))
-        return Results.Json(rules.ToDictionary(kv => kv.Key, kv => kv.Value), jsonOpts);
-    return Results.Json(new Dictionary<string, string>(), jsonOpts);
+        return Results.Json(rules.Select(kv => new { pattern = kv.Key, code = kv.Value }), jsonOpts);
+    return Results.Json(Array.Empty<object>(), jsonOpts);
 });
 
 // Holdbar GeoJSON (vNAS runway safety logic geometry)
@@ -1545,18 +1546,18 @@ void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int tota
     {
         var facId = facility.GetProperty("id").GetString() ?? "";
         var icao = FaaToIcao(facId);
-        var map = new ConcurrentDictionary<string, string>();
+        var list = new List<KeyValuePair<string, string>>();
         foreach (var rule in fixRulesArr.EnumerateArray())
         {
             var pattern = rule.GetProperty("searchPattern").GetString()?.Trim().ToUpperInvariant();
             var code = rule.GetProperty("fixId").GetString()?.Trim().ToUpperInvariant();
             if (pattern is not null && code is not null && pattern.Length > 0 && code.Length > 0)
-                map[pattern] = code;
+                list.Add(new(pattern, code));
         }
-        if (!map.IsEmpty)
+        if (list.Count > 0)
         {
-            vnasFixRules[icao] = map;
-            Interlocked.Add(ref totalRules, map.Count);
+            vnasFixRules[icao] = list;
+            Interlocked.Add(ref totalRules, list.Count);
             Interlocked.Increment(ref totalAirports);
         }
     }
@@ -1581,9 +1582,9 @@ _ = Task.Run(async () =>
 });
 
 // Match route against a pattern→code map; returns first matching code or null
-string? MatchFixRules(ConcurrentDictionary<string, string> fixMap, string[] routeTokens, HashSet<string> routeSet)
+string? MatchFixRules(IEnumerable<KeyValuePair<string, string>> fixRules, string[] routeTokens, HashSet<string> routeSet)
 {
-    foreach (var (pattern, code) in fixMap)
+    foreach (var (pattern, code) in fixRules)
     {
         var patTokens = pattern.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries);
         var allMatch = true;
@@ -1605,11 +1606,11 @@ string? MatchFixRules(ConcurrentDictionary<string, string> fixMap, string[] rout
 }
 
 // Resolve departure gate code: manual gateCodes → vNAS fixRules → destination fallback
-string? ResolveGateCode(string airport, FlightState? fp)
+string? ResolveGateCode(string airport, string? route, string? destination)
 {
-    if (fp is null || fp.Route is null) return null;
+    if (route is null) return null;
 
-    var routeUpper = fp.Route.ToUpperInvariant();
+    var routeUpper = route.ToUpperInvariant();
     var routeTokens = routeUpper.Split(new[] { ' ', '.' }, StringSplitOptions.RemoveEmptyEntries);
     var routeSet = new HashSet<string>(routeTokens);
     foreach (var rt in routeTokens)
@@ -1626,15 +1627,15 @@ string? ResolveGateCode(string airport, FlightState? fp)
     }
 
     // Priority 2: vNAS fix rules (auto-fetched from data-api.vnas.vatsim.net)
-    if (vnasFixRules.TryGetValue(airport, out var vnasMap) && !vnasMap.IsEmpty)
+    if (vnasFixRules.TryGetValue(airport, out var vnasRules) && vnasRules.Count > 0)
     {
-        var result = MatchFixRules(vnasMap, routeTokens, routeSet);
+        var result = MatchFixRules(vnasRules, routeTokens, routeSet);
         if (result is not null) return result;
     }
 
     // Fallback: destination FAA LID (strip leading K/P for US airports)
-    var dest = fp.Destination;
-    if (dest is null) return null;
+    if (destination is null) return null;
+    var dest = destination;
     if (dest.Length == 4 && (dest[0] == 'K' || dest[0] == 'P')) dest = dest[1..];
     return dest;
 }
@@ -1738,18 +1739,8 @@ asdex.OnEnrich = (track) =>
     }
 
     // Resolve gate code: fix map match → best available destination as FAA LID
-    track.GateCode = ResolveGateCode(track.Airport, fp);
-
-    if (track.GateCode is null)
-    {
-        // Fallback: best available destination → FAA LID
-        var dest = track.FpDestination ?? track.AdDestination;
-        if (dest is not null)
-        {
-            if (dest.Length == 4 && (dest[0] == 'K' || dest[0] == 'P')) dest = dest[1..];
-            track.GateCode = dest;
-        }
-    }
+    // Uses track.FpRoute (populated from SFDPS or TFMS) so rules match regardless of data source
+    track.GateCode = ResolveGateCode(track.Airport, track.FpRoute, track.FpDestination ?? track.AdDestination);
 };
 
 // Save flight cache periodically (every 5 minutes)

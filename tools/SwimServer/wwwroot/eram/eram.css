@@ -215,7 +215,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     font-size: 18px; letter-spacing: 2px;
     color: #ffffff; background: rgba(0,0,0,0.6);
     padding: 2px 8px; cursor: move; user-select: none;
-    border: 1px solid transparent;
+    border: 1px solid transparent; white-space: nowrap;
     top: 10px; right: 60px;
 }
 #time-view.bordered { border-color: #555; }

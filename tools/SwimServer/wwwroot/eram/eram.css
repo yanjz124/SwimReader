@@ -367,12 +367,13 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 
 #master-toolbar-container {
     position: absolute; z-index: 960;
-    top: 8px; left: 8px;
+    top: 0; left: 0;
     user-select: none;
     display: none;
 }
 #master-toolbar-container.tb-visible { display: block; }
-#master-toolbar-container.box-dragging { outline: 2px solid #fff; cursor: move; }
+/* When toolbar is visible, push sidebar below it */
+body.tb-active #sidebar-wrapper { top: 70px; }
 
 /* Toolbar panel (master + sub-menus) */
 .tb-panel {
@@ -464,29 +465,22 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     white-space: nowrap;
 }
 
-/* Left grey bar with raise/lower arrow (CRC: narrow grey column on left of toolbar) */
-.tb-left-bar {
+/* Left/right grey bars flanking the button grid */
+.tb-side-bar {
     display: flex; flex-direction: column; justify-content: flex-end;
-    width: 14px; background: #444; flex-shrink: 0; cursor: move;
+    width: 14px; background: #444; flex-shrink: 0;
 }
-.tb-left-bar .tb-arrow-btn {
+.tb-side-bar .tb-arrow-btn {
     width: 14px; height: 34px; background: #555; border: 1px solid #ccc;
     display: flex; align-items: flex-end; justify-content: center;
     cursor: pointer; padding: 0 0 3px 0;
 }
-.tb-left-bar .tb-arrow-btn:hover { background: #666; }
-/* Arrow SVG sits in bottom half of button */
-.tb-left-bar .tb-arrow-btn svg { width: 8px; height: 14px; }
-/* Grey ribbon across top of toolbar (CRC header bar) — also serves as drag handle */
-.tb-ribbon {
-    height: 34px; background: #444; width: 100%;
-    border-bottom: 1px solid #555;
-    cursor: move;
-}
-/* Master toolbar layout: left bar + button grid */
+.tb-side-bar .tb-arrow-btn:hover { background: #666; }
+.tb-side-bar .tb-arrow-btn svg { width: 8px; height: 14px; }
+/* Master toolbar layout: [left bar] [button grid] [right bar] */
 .tb-master-row {
     display: flex; flex-direction: row;
 }
 .tb-master-grid {
-    display: flex; flex-direction: column; flex: 1;
+    display: flex; flex-direction: column;
 }

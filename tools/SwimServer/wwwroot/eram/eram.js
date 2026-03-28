@@ -6393,19 +6393,25 @@ const MENU_LABELS = {
 
 // Build sub-menu: [pink parent on row 0] + [items extending right on each row]
 // Always renders 2 rows to match master toolbar height.
+// Rows > 0 get a spacer in column 0 to keep items aligned under row 0 items.
 function buildInlineSubMenu(menuSpec, menuId, container) {
     for (let ri = 0; ri < Math.max(2, menuSpec.rows.length); ri++) {
         const rowEl = document.createElement('div');
         rowEl.className = 'tb-row';
         rowEl.style.height = '34px';
 
-        // Row 0 gets the pink parent button as first item
         if (ri === 0) {
+            // Row 0: pink parent button + items
             const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
             const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
             const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
             parentBtn.classList.add('tb-menu-open');
             rowEl.appendChild(parentBtn);
+        } else {
+            // Rows > 0: empty spacer to account for parent button column
+            const spacer = document.createElement('div');
+            spacer.style.width = '88px'; spacer.style.flexShrink = '0';
+            rowEl.appendChild(spacer);
         }
 
         const rowData = menuSpec.rows[ri];

@@ -3325,7 +3325,7 @@ function loadSettingsFromUrl() {
         nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
     }
     if (params.has('nxbr')) nexradBrightness = parseInt(params.get('nxbr'));
-    if (params.get('tb') === '1') window._tbVisible = true;
+    if (params.get('tb') === '0') window._tbVisible = false;
 
     // Restore map position/zoom
     if (params.has('lat') && params.has('lng') && params.has('z')) {
@@ -3408,8 +3408,8 @@ function saveSettingsToUrl() {
     if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
     if (nexradLevel !== 3) params.set('nxlvl', nexradLevel === 0 ? '0' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '123');
     if (nexradBrightness !== 30) params.set('nxbr', nexradBrightness);
-    // Toolbar visibility (set by toolbar system via window._tbVisible)
-    if (window._tbVisible) params.set('tb', '1');
+    // Toolbar visibility (default on; tb=0 to hide)
+    if (!window._tbVisible) params.set('tb', '0');
     // Map position/zoom
     const center = map.getCenter();
     params.set('lat', center.lat.toFixed(4));
@@ -6411,21 +6411,20 @@ const MENU_LABELS = {
 // parentRow = which visual row the parent is on. Data row 0 goes on parentRow, row 1 on parentRow+1, etc.
 function buildSubMenuItems(menuSpec, menuId, container, parentRow) {
     if (parentRow === undefined) parentRow = 0;
-    const totalRows = Math.max(2, menuSpec.rows.length + parentRow);
+    // Always render exactly 2 rows, data rows start at row 0 (top)
+    const totalRows = 2;
 
     for (let vi = 0; vi < totalRows; vi++) {
         const rowEl = document.createElement('div');
         rowEl.className = 'tb-row';
         rowEl.style.height = '34px';
 
-        const dataIdx = vi - parentRow;
-        if (dataIdx >= 0 && dataIdx < menuSpec.rows.length) {
-            const rowData = menuSpec.rows[dataIdx];
+        if (vi < menuSpec.rows.length) {
+            const rowData = menuSpec.rows[vi];
             for (let ci = 0; ci < rowData.length; ci++) {
-                rowEl.appendChild(createButton(rowData[ci], menuSpec.id, dataIdx, ci));
+                rowEl.appendChild(createButton(rowData[ci], menuSpec.id, vi, ci));
             }
         }
-        // Rows before parentRow or beyond data are empty spacers
 
         container.appendChild(rowEl);
     }
@@ -6594,9 +6593,9 @@ function toggleMasterToolbar() {
 }
 
 // ── URL persistence for toolbar visibility ──
-// Read tb param on init
+// Default to on; tb=0 in URL to hide
 const _tbInitParams = new URLSearchParams(window.location.hash.slice(1));
-if (_tbInitParams.get('tb') === '1') {
+if (_tbInitParams.get('tb') !== '0') {
     tbState.masterVisible = true;
     window._tbVisible = true;
 }

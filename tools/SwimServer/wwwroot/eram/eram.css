@@ -379,7 +379,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 
 /* Toolbar panel (master + sub-menus) */
 .tb-panel {
-    background: #000; border: 1px solid #333;
+    background: transparent;
     font-family: 'ERAM', 'Consolas', monospace;
     font-size: 10px; line-height: 1;
 }

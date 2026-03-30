@@ -59,6 +59,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     padding: 0 2px;
     pointer-events: auto;
     cursor: none;
+    user-select: none;
 }
 .db-line2 { color: #00cc00; }
 .db-extra { color: #00cc00; }
@@ -144,9 +145,8 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 
 /* ── LDR DIR overlay ── */
 #ldr-dir-overlay {
-    position: fixed; top: 12px; left: 12px; z-index: 700;
-    background: #111; border: 1px solid #cccc44; padding: 4px 10px;
-    font-family: 'Consolas', monospace; font-size: 12px; color: #cccc44;
+    position: fixed; top: 40px; left: 40px; z-index: 700;
+    font-family: 'Consolas', monospace; font-size: 13px; color: #00cc00;
     line-height: 1.4; white-space: nowrap;
 }
 

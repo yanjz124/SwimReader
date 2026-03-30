@@ -175,7 +175,7 @@ document.title = 'ASDE-X ' + AIRPORT;
 const map = L.map('map', {
     center: [38.85, -77.04],
     zoom: 14,
-    zoomControl: true,
+    zoomControl: false,
     zoomSnap: 0.25,
     zoomDelta: 0.25,
     attributionControl: false,

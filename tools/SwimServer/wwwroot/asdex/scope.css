@@ -157,7 +157,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 #map { cursor: none !important; }
 .leaflet-container { cursor: none !important; }
 .leaflet-grab, .leaflet-dragging { cursor: none !important; }
-.leaflet-marker-icon { cursor: none !important; }
+.leaflet-marker-icon { cursor: none !important; overflow: visible !important; }
 #crosshair {
     position: fixed; pointer-events: none; z-index: 9999; display: none;
 }

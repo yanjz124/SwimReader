@@ -6731,28 +6731,28 @@ const replayRangeEl = document.getElementById('replay-range');
 let replayWs = null;
 let replayActive = false;
 let replayPaused = false;
-let replayPendingBatch = null; // buffer: only process latest batch per render frame
-let replayPendingRemoves = []; // buffer removes to apply with batch
+let replayPendingFlights = new Map(); // gufi → latest flight object (merged across batches)
+let replayPendingRemoves = []; // gufi list
 let replayRafId = null;
 
 function replayFlush() {
     replayRafId = null;
     // Apply pending removes
     for (const gufi of replayPendingRemoves) {
+        replayPendingFlights.delete(gufi);
         flights.delete(gufi);
         flightHistory.delete(gufi);
         const m = markers.get(gufi);
         if (m) { map.removeLayer(m); markers.delete(gufi); }
     }
     replayPendingRemoves = [];
-    // Apply latest batch (skip all intermediate ones)
-    if (replayPendingBatch) {
-        const batch = replayPendingBatch;
-        replayPendingBatch = null;
-        for (const f of batch) {
+    // Apply merged flights — each gufi processed exactly once with its latest state
+    if (replayPendingFlights.size > 0) {
+        for (const [, f] of replayPendingFlights) {
             processFlightUpdate(f);
         }
         replayStatusEl.textContent = `Playing — ${flights.size} flights`;
+        replayPendingFlights.clear();
     }
 }
 
@@ -6868,8 +6868,10 @@ function startReplay(startTime) {
             }
             replayStatusEl.textContent = `Playing — ${flights.size} flights`;
         } else if (msg.type === 'batch') {
-            // Buffer: only keep latest batch, process on next animation frame
-            replayPendingBatch = msg.data;
+            // Merge into pending map — latest update per gufi wins
+            for (const f of msg.data) {
+                if (f.gufi) replayPendingFlights.set(f.gufi, f);
+            }
             if (!replayRafId) replayRafId = requestAnimationFrame(replayFlush);
         } else if (msg.type === 'remove') {
             replayPendingRemoves.push(msg.data.gufi);
@@ -6913,7 +6915,7 @@ replayStopBtn.addEventListener('click', stopReplay);
 
 function stopReplay() {
     replayActive = false;
-    replayPendingBatch = null;
+    replayPendingFlights.clear();
     replayPendingRemoves = [];
     if (replayRafId) { cancelAnimationFrame(replayRafId); replayRafId = null; }
     if (replayWs) { replayWs.onclose = null; replayWs.close(); replayWs = null; }

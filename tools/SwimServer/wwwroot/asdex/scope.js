@@ -1067,6 +1067,8 @@ rpGoBtn.onclick = () => {
 };
 
 function startReplay(startTime) {
+    // Close any existing replay connection first
+    if (rpWs) { rpWs.onclose = null; rpWs.close(); rpWs = null; }
     // Disconnect live
     if (ws) { ws.onclose = null; ws.close(); ws = null; }
     if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }

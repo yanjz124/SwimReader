@@ -6779,6 +6779,8 @@ replayGoBtn.addEventListener('click', () => {
 });
 
 function startReplay(startTime) {
+    // Close any existing replay connection first
+    if (replayWs) { replayWs.onclose = null; replayWs.close(); replayWs = null; }
     // Disconnect live WS
     if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
     wsConnected = false;

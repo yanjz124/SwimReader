@@ -840,7 +840,7 @@ function targetCategory(t) {
 
 // ── SVG path for airplane (pointing up = heading 0°) ─────────────────────────
 // Aircraft: clean top-down silhouette matching CRC ASDE-X reference
-const PLANE_PATH = 'M 0 -8 L 1 -6 L 1 -1.5 L 7.5 1.5 L 7.5 3 L 1 1 L 1 5.5 L 3.5 7 L 3.5 8 L 0 7 L -3.5 8 L -3.5 7 L -1 5.5 L -1 1 L -7.5 3 L -7.5 1.5 L -1 -1.5 L -1 -6 Z';
+const PLANE_PATH = 'M 0 -8 L 1.4 -6 L 1.4 -1.5 L 7.5 1.5 L 7.5 3 L 1.4 1 L 1.4 5.5 L 3.5 7 L 3.5 8 L 0 7 L -3.5 8 L -3.5 7 L -1.4 5.5 L -1.4 1 L -7.5 3 L -7.5 1.5 L -1.4 -1.5 L -1.4 -6 Z';
 // Unknown: tall pointed kite/diamond (point at top, wider at bottom half)
 const DIAMOND_PATH = 'M 0 -5.5 L 3 1 L 0 5 L -3 1 Z';
 // Vehicle: small square

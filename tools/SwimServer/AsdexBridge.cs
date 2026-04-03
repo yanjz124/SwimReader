@@ -393,6 +393,17 @@ class AsdexBridge
         return null;
     }
 
+    public void ResetHoldbarMapping(string airport)
+    {
+        if (_holdbarMappers.TryRemove(airport, out _) && _webRootPath is not null)
+        {
+            var saveDir = Path.Combine(Path.GetDirectoryName(_webRootPath)!, "holdbar-map");
+            var savePath = Path.Combine(saveDir, airport + ".json");
+            if (File.Exists(savePath)) File.Delete(savePath);
+            Console.WriteLine($"[HOLDBAR-MAP] {airport}: reset — deleted mapping file");
+        }
+    }
+
     private static int CountBits(string hex)
     {
         int count = 0;
@@ -711,8 +722,8 @@ class HoldbarMapper
     // bit → lineIndex → observation count
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<int, int>> _observations = new();
 
-    // Minimum distance threshold in meters for a correlation to be recorded
-    private const double MaxCorrelationDistanceMeters = 300;
+    // Correlation threshold: aircraft must be within this distance of a hold bar line
+    private const double MaxCorrelationDistanceMeters = 60;
 
     // Save at most once per 30 seconds
     private DateTime _lastSave = DateTime.MinValue;
@@ -782,31 +793,55 @@ class HoldbarMapper
     }
 
     /// <summary>
-    /// For each newly activated bit, find the GeoJSON line closest to any track.
-    /// Record the association if within threshold distance.
+    /// For each newly activated bit, find which hold bar lines have an aircraft nearby.
+    /// Only records a strong signal: exactly one line has an aircraft within threshold.
+    /// This filters out noise from distant aircraft on other taxiways.
     /// </summary>
     public void Correlate(List<int> newlyActiveBits, AsdexTrack[] tracks)
     {
         bool changed = false;
+
+        // Pre-compute: for each line, find the closest track distance
+        var lineMinDist = new double[_lines.Count];
+        for (int li = 0; li < _lines.Count; li++)
+        {
+            var (lat1, lon1, lat2, lon2) = _lines[li];
+            double minDist = double.MaxValue;
+            foreach (var t in tracks)
+            {
+                var dist = PointToSegmentDistanceMeters(t.Latitude, t.Longitude, lat1, lon1, lat2, lon2);
+                if (dist < minDist) minDist = dist;
+            }
+            lineMinDist[li] = minDist;
+        }
+
         foreach (var bit in newlyActiveBits)
         {
-            // Find the GeoJSON line closest to any track
-            int bestLine = -1;
-            double bestDist = double.MaxValue;
+            // Find all lines that have an aircraft within threshold
+            int nearLine = -1;
+            double nearDist = double.MaxValue;
+            int nearCount = 0;
             for (int li = 0; li < _lines.Count; li++)
             {
-                var (lat1, lon1, lat2, lon2) = _lines[li];
-                foreach (var t in tracks)
+                if (lineMinDist[li] < MaxCorrelationDistanceMeters)
                 {
-                    var dist = PointToSegmentDistanceMeters(t.Latitude, t.Longitude, lat1, lon1, lat2, lon2);
-                    if (dist < bestDist) { bestDist = dist; bestLine = li; }
+                    nearCount++;
+                    if (lineMinDist[li] < nearDist)
+                    {
+                        nearDist = lineMinDist[li];
+                        nearLine = li;
+                    }
                 }
             }
 
-            if (bestLine >= 0 && bestDist < MaxCorrelationDistanceMeters)
+            // Strong signal: only 1-2 lines have a nearby aircraft (unambiguous)
+            // Also accept the closest line if it's much closer than others
+            if (nearLine >= 0 && nearCount <= 3)
             {
+                // Weight by inverse distance — closer aircraft = stronger observation
+                int weight = nearDist < 20 ? 5 : nearDist < 40 ? 3 : 1;
                 var bitObs = _observations.GetOrAdd(bit, _ => new ConcurrentDictionary<int, int>());
-                bitObs.AddOrUpdate(bestLine, 1, (_, v) => v + 1);
+                bitObs.AddOrUpdate(nearLine, weight, (_, v) => v + weight);
                 changed = true;
             }
         }

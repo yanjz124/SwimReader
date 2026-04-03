@@ -1066,6 +1066,15 @@ app.MapGet("/api/asdex/{airport}/holdbar-map", (string airport) =>
     return Results.Json(mapping.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value), jsonOpts);
 });
 
+// Reset holdbar mapping for an airport (wipe learned data, start fresh)
+app.MapDelete("/api/asdex/{airport}/holdbar-map", (string airport) =>
+{
+    var icao = airport.ToUpperInvariant();
+    if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
+    asdex.ResetHoldbarMapping(icao);
+    return Results.Ok(new { reset = icao });
+});
+
 // TDLS directory and detail
 app.MapGet("/api/tdls", () => Results.Json(tdls.GetDirectory(), jsonOpts));
 app.MapGet("/api/tdls/{airport}", (string airport) =>

@@ -220,6 +220,28 @@ class AsdexBridge
 
                 var track = airportTracks.GetOrAdd(trackId,
                     id => new AsdexTrack { Airport = airport, TrackId = id });
+
+                // If this AT track just gained a callsign, absorb any standalone AD track
+                // with the same callsign (AT+AD dedup — reverse direction of the AD→AT merge below)
+                if (callsign is not null && track.Callsign is null)
+                {
+                    var adDupe = airportTracks.Values.FirstOrDefault(t =>
+                        t.TrackId != trackId &&
+                        string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase));
+                    if (adDupe is not null)
+                    {
+                        // Absorb enrichment from the AD track
+                        if (adDupe.AircraftType is not null && acType is null) acType = adDupe.AircraftType;
+                        if (adDupe.Squawk is not null && squawk is null) squawk = adDupe.Squawk;
+                        if (adDupe.EramGufi is not null) track.EramGufi = adDupe.EramGufi;
+                        if (adDupe.SfdpsGufi is not null) track.SfdpsGufi = adDupe.SfdpsGufi;
+                        if (adDupe.AdDeparture is not null) track.AdDeparture = adDupe.AdDeparture;
+                        if (adDupe.AdDestination is not null) track.AdDestination = adDupe.AdDestination;
+                        // Remove the now-redundant AD track
+                        airportTracks.TryRemove(adDupe.TrackId, out _);
+                    }
+                }
+
                 track.MergeFrom(lat, lon, callsign, squawk, acType, tgtType, alt, speed, hdg, eramGufi, wake);
                 changed = true;
             }
@@ -269,7 +291,7 @@ class AsdexBridge
                 }
                 if (track is not null)
                 {
-                    // Merge enrichment fields only (position comes from AT reports)
+                    // Merge enrichment fields into the AT track (position comes from AT reports)
                     if (adAcType   is not null) track.AircraftType = adAcType;
                     if (adSquawk   is not null) track.Squawk       = adSquawk;
                     if (eramGufi   is not null) track.EramGufi     = eramGufi;
@@ -277,10 +299,12 @@ class AsdexBridge
                     if (adDep      is not null) track.AdDeparture  = adDep;
                     if (adDest     is not null) track.AdDestination = adDest;
                     track.LastSeen = DateTime.UtcNow;
+                    // Remove any standalone AD track for this ID (now merged into AT)
+                    airportTracks.TryRemove(trackId, out _);
                 }
                 else
                 {
-                    // No matching AT track — create/update AD track as before
+                    // No matching AT track — create/update AD track
                     track = airportTracks.GetOrAdd(trackId,
                         id => new AsdexTrack { Airport = airport, TrackId = id });
                     track.MergeFrom(lat, lon, adCallsign, adSquawk, adAcType, adTgtType, null, null, null, eramGufi,

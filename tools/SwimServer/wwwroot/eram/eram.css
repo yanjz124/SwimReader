@@ -292,13 +292,17 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 /* ── Target symbols are drawn as inline geometric divs (no font metrics dependency) ── */
 
 /* ── MCA (Message Composition Area) ── */
-#mca {
+#mca-ra-stack {
     position: absolute; z-index: 1000;
-    bottom: 170px; right: 30px;
+    bottom: 30px; right: 30px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 0;
+}
+#mca {
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     user-select: none;
+    position: relative;
 }
-#mca.box-dragging { outline: 2px solid #fff; cursor: move; }
+#mca-ra-stack.box-dragging { outline: 2px solid #fff; cursor: move; }
 #mca-preview {
     background: #000000; border: 1px solid #888; color: #ffffff;
     padding: 3px 6px; min-width: 400px;
@@ -330,13 +334,11 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 
 /* ── RA (Response Area) ── */
 #ra {
-    position: absolute; z-index: 1000;
-    bottom: 30px; right: 30px;
     max-width: calc(100vw - 60px);
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     user-select: none;
+    position: relative;
 }
-#ra.box-dragging { outline: 2px solid #fff; cursor: move; }
 #ra-content {
     background: #000000; border: 1px solid #888; color: #ffffff;
     padding: 3px 6px; width: 500px; min-height: 100px;

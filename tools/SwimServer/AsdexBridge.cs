@@ -723,7 +723,9 @@ class HoldbarMapper
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<int, int>> _observations = new();
 
     // Correlation threshold: aircraft must be within this distance of a hold bar line
-    private const double MaxCorrelationDistanceMeters = 60;
+    private const double MaxCorrelationDistanceMeters = 30;
+    // Speed filter: only consider aircraft taxiing slowly (stopped at hold bar)
+    private const int MaxCorrelationSpeedKts = 15;
 
     // Save at most once per 30 seconds
     private DateTime _lastSave = DateTime.MinValue;
@@ -793,21 +795,26 @@ class HoldbarMapper
     }
 
     /// <summary>
-    /// For each newly activated bit, find which hold bar lines have an aircraft nearby.
-    /// Only records a strong signal: exactly one line has an aircraft within threshold.
-    /// This filters out noise from distant aircraft on other taxiways.
+    /// For each newly activated bit, find which hold bar lines have a slow aircraft nearby.
+    /// Only records a strong signal: exactly one line has a slow aircraft within 30m.
+    /// Speed filter (&lt;15 kts) eliminates aircraft rolling on runways or taxiing past.
     /// </summary>
     public void Correlate(List<int> newlyActiveBits, AsdexTrack[] tracks)
     {
         bool changed = false;
 
-        // Pre-compute: for each line, find the closest track distance
+        // Filter to slow-moving aircraft only (stopped/creeping at hold bar)
+        var slowTracks = tracks.Where(t =>
+            t.SpeedKts is null or (<= MaxCorrelationSpeedKts)).ToArray();
+        if (slowTracks.Length == 0) return;
+
+        // Pre-compute: for each line, find the closest slow track distance
         var lineMinDist = new double[_lines.Count];
         for (int li = 0; li < _lines.Count; li++)
         {
             var (lat1, lon1, lat2, lon2) = _lines[li];
             double minDist = double.MaxValue;
-            foreach (var t in tracks)
+            foreach (var t in slowTracks)
             {
                 var dist = PointToSegmentDistanceMeters(t.Latitude, t.Longitude, lat1, lon1, lat2, lon2);
                 if (dist < minDist) minDist = dist;
@@ -817,7 +824,7 @@ class HoldbarMapper
 
         foreach (var bit in newlyActiveBits)
         {
-            // Find all lines that have an aircraft within threshold
+            // Find all lines that have a slow aircraft within threshold
             int nearLine = -1;
             double nearDist = double.MaxValue;
             int nearCount = 0;
@@ -834,12 +841,11 @@ class HoldbarMapper
                 }
             }
 
-            // Strong signal: only 1-2 lines have a nearby aircraft (unambiguous)
-            // Also accept the closest line if it's much closer than others
-            if (nearLine >= 0 && nearCount <= 3)
+            // Strong signal: only 1-2 lines have a nearby slow aircraft (unambiguous)
+            if (nearLine >= 0 && nearCount <= 2)
             {
-                // Weight by inverse distance — closer aircraft = stronger observation
-                int weight = nearDist < 20 ? 5 : nearDist < 40 ? 3 : 1;
+                // Weight by inverse distance — closer = stronger
+                int weight = nearDist < 10 ? 10 : nearDist < 20 ? 5 : 1;
                 var bitObs = _observations.GetOrAdd(bit, _ => new ConcurrentDictionary<int, int>());
                 bitObs.AddOrUpdate(nearLine, weight, (_, v) => v + weight);
                 changed = true;

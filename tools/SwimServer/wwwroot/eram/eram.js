@@ -3410,6 +3410,12 @@ function saveSettingsToUrl() {
     if (nexradBrightness !== 30) params.set('nxbr', nexradBrightness);
     // Toolbar visibility (default on; tb=0 to hide)
     if (!window._tbVisible) params.set('tb', '0');
+    // Replay state
+    if (replayActive && replayCurrentTime) {
+        params.set('replay', replayCurrentTime);
+        const spd = replaySpeedSel?.value;
+        if (spd && spd !== '1') params.set('rspd', spd);
+    }
     // Map position/zoom
     const center = map.getCenter();
     params.set('lat', center.lat.toFixed(4));
@@ -6731,6 +6737,7 @@ const replayRangeEl = document.getElementById('replay-range');
 let replayWs = null;
 let replayActive = false;
 let replayPaused = false;
+let replayCurrentTime = null; // ISO string of current replay position
 let replayPendingFlights = new Map(); // gufi → latest flight object (merged across batches)
 let replayPendingRemoves = []; // gufi list
 let replayRafId = null;
@@ -6841,10 +6848,12 @@ function startReplay(startTime) {
     replayWs.onmessage = (evt) => {
         const msg = JSON.parse(evt.data);
 
-        // Update replay time display
+        // Update replay time display + URL
         if (msg.replayTime) {
+            replayCurrentTime = msg.replayTime;
             const t = new Date(msg.replayTime);
             replayTimeEl.textContent = t.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+            replayThrottleSave();
         }
 
         if (msg.type === 'snapshot') {
@@ -6915,6 +6924,7 @@ replayStopBtn.addEventListener('click', stopReplay);
 
 function stopReplay() {
     replayActive = false;
+    replayCurrentTime = null;
     replayPendingFlights.clear();
     replayPendingRemoves = [];
     if (replayRafId) { cancelAnimationFrame(replayRafId); replayRafId = null; }
@@ -6922,9 +6932,34 @@ function stopReplay() {
     replayBar.style.display = 'none';
     replayStatusEl.textContent = '';
     replayTimeEl.textContent = '';
+    saveSettingsToUrl();
 
     // Reconnect to live
     connectWs();
+}
+
+// Throttled URL save during replay (every 3 seconds)
+let _replaySaveTimer = null;
+function replayThrottleSave() {
+    if (_replaySaveTimer) return;
+    _replaySaveTimer = setTimeout(() => {
+        _replaySaveTimer = null;
+        saveSettingsToUrl();
+    }, 3000);
+}
+
+// Auto-start replay from URL params
+{
+    const initParams = new URLSearchParams(window.location.hash.slice(1));
+    const replayParam = initParams.get('replay');
+    if (replayParam) {
+        const rspd = initParams.get('rspd');
+        if (rspd) replaySpeedSel.value = rspd;
+        replaySection.style.display = '';
+        replayToggleBtn.style.color = '#cccc44';
+        // Delay slightly to let the live WS connect first, then override
+        setTimeout(() => startReplay(replayParam), 500);
+    }
 }
 
 })();  // end replay IIFE

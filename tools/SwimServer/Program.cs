@@ -108,7 +108,7 @@ var jsonOpts = new JsonSerializerOptions
 
 // Replay recorders — capture real-time data for later playback
 var replayDir = Path.Combine(Directory.GetCurrentDirectory(), "replay");
-var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), TimeSpan.FromHours(72));
+var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"));
 var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
 
 // Flight history directory (declared early so route lambdas can capture it)

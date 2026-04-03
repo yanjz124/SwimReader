@@ -14,12 +14,12 @@ public sealed class ReplayRecorder : IDisposable
     private readonly Channel<RecordEntry> _channel;
     private readonly Task _writerTask;
     private readonly CancellationTokenSource _cts = new();
-    private readonly TimeSpan _maxRetention;
+    private readonly long _maxTotalBytes;
 
-    public ReplayRecorder(string baseDir, TimeSpan? maxRetention = null)
+    public ReplayRecorder(string baseDir, long maxTotalBytes = 0)
     {
         _baseDir = baseDir;
-        _maxRetention = maxRetention ?? TimeSpan.FromHours(72);
+        _maxTotalBytes = maxTotalBytes > 0 ? maxTotalBytes : 30L * 1024 * 1024 * 1024; // default 30 GB
         Directory.CreateDirectory(_baseDir);
 
         _channel = Channel.CreateBounded<RecordEntry>(
@@ -191,19 +191,22 @@ public sealed class ReplayRecorder : IDisposable
     {
         try
         {
-            var cutoff = DateTime.UtcNow - _maxRetention;
-            // Clean base dir and all subdirs
-            foreach (var file in Directory.GetFiles(_baseDir, "*.jsonl.gz", SearchOption.AllDirectories))
+            // Size-based retention: delete oldest files until total is under budget
+            var files = Directory.GetFiles(_baseDir, "*.jsonl.gz", SearchOption.AllDirectories)
+                .Select(f => new FileInfo(f))
+                .OrderBy(f => f.Name) // chronological by filename (yyyy-MM-ddTHH)
+                .ToList();
+
+            var totalBytes = files.Sum(f => f.Length);
+            if (totalBytes <= _maxTotalBytes) return;
+
+            Console.WriteLine($"[REPLAY] Cleanup: {totalBytes / (1024 * 1024)} MB exceeds {_maxTotalBytes / (1024 * 1024)} MB budget");
+            foreach (var fi in files)
             {
-                var name = Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(file)); // strip .jsonl.gz
-                if (DateTime.TryParseExact(name, "yyyy-MM-dd'T'HH",
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
-                    out var hour) && hour < cutoff)
-                {
-                    File.Delete(file);
-                    Console.WriteLine($"[REPLAY] Deleted old file: {Path.GetRelativePath(_baseDir, file)}");
-                }
+                if (totalBytes <= _maxTotalBytes) break;
+                totalBytes -= fi.Length;
+                fi.Delete();
+                Console.WriteLine($"[REPLAY] Deleted: {Path.GetRelativePath(_baseDir, fi.FullName)} ({fi.Length / 1024} KB)");
             }
         }
         catch (Exception ex)

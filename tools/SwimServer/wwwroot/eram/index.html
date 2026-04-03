@@ -6,8 +6,8 @@
 <title>SFDPS ERAM</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="/shared/common.css?v=5">
-<link rel="stylesheet" href="/eram/eram.css?v=5">
+<link rel="stylesheet" href="/shared/common.css?v=6">
+<link rel="stylesheet" href="/eram/eram.css?v=6">
 </head>
 <body>
 <div id="app">
@@ -297,14 +297,16 @@
     </div>
     <div id="map-container">
         <div id="map"></div>
-        <div id="mca">
-            <div id="mca-preview"><span class="mca-cursor">_</span></div>
-            <div id="mca-feedback"></div>
-            <button id="mca-kb-btn" title="Open on-screen keyboard (for touchscreen MCA input)" aria-label="Open keyboard">&#9000;&#xFE0E;</button>
-            <input id="mca-mobile-input" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">
-        </div>
-        <div id="ra">
-            <div id="ra-content"></div>
+        <div id="mca-ra-stack">
+            <div id="ra">
+                <div id="ra-content"></div>
+            </div>
+            <div id="mca">
+                <div id="mca-preview"><span class="mca-cursor">_</span></div>
+                <div id="mca-feedback"></div>
+                <button id="mca-kb-btn" title="Open on-screen keyboard (for touchscreen MCA input)" aria-label="Open keyboard">&#9000;&#xFE0E;</button>
+                <input id="mca-mobile-input" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">
+            </div>
         </div>
         <div id="po-menu" style="display:none;">
             <div id="po-menu-title">
@@ -327,7 +329,7 @@
     </div>
 </div>
 
-<script src="/eram/eram.js?v=5"></script>
-<script src="/idle-timer.js?v=5"></script>
+<script src="/eram/eram.js?v=6"></script>
+<script src="/idle-timer.js?v=6"></script>
 </body>
 </html>

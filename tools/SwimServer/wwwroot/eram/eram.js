@@ -5189,8 +5189,7 @@ document.addEventListener('mousedown', e => {
 
 // Re-clamp on window resize
 window.addEventListener('resize', () => {
-    clampBox(document.getElementById('mca'));
-    clampBox(document.getElementById('ra'));
+    clampBox(document.getElementById('mca-ra-stack'));
     const poMenu = document.getElementById('po-menu');
     if (poMenu.style.display !== 'none') clampBox(poMenu);
     clampBox(document.getElementById('time-view'));
@@ -5200,8 +5199,7 @@ window.addEventListener('resize', () => {
     if (mtb && mtb.classList.contains('tb-visible')) clampBox(mtb);
 });
 
-setupBoxDrag(document.getElementById('mca'));
-setupBoxDrag(document.getElementById('ra'));
+setupBoxDrag(document.getElementById('mca-ra-stack'));
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
 
 // Point-out menu: close button (left + middle click)

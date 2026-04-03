@@ -53,7 +53,7 @@ class AsdexBridge
     {
         if (_replayBaseDir == null) return null;
         return _recorders.GetOrAdd(airport, a =>
-            new SwimServer.ReplayRecorder(Path.Combine(_replayBaseDir, a), TimeSpan.FromHours(72)));
+            new SwimServer.ReplayRecorder(Path.Combine(_replayBaseDir, a)));
     }
 
     public AsdexBridge(string user, string pass, string queue, string host, string vpn,

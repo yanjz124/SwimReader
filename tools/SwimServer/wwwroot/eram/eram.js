@@ -4831,6 +4831,106 @@ function processCommand(cmd) {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // XX — Facility/sector selection
+    // XX FAC ZDC — select facility
+    // XX SEC 01 02 — select sectors
+    // XX FAC ZDC SEC 03 05 — select facility + sectors
+    // XX SEC +02 — add sector
+    // XX SEC -03 — remove sector
+    // XX SEC NONE — deselect all sectors
+    // XX SEC ALL — select all sectors
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'XX') {
+        const args = parts.slice(1).map(s => s.toUpperCase());
+        if (args.length === 0) return { feedback: [{ type: 'err', text: 'XX FAC <id> | XX SEC <sectors>' }] };
+
+        let newFacility = null;
+        let secArgs = null;
+        const secIdx = args.indexOf('SEC');
+        const facIdx = args.indexOf('FAC');
+
+        if (facIdx >= 0) {
+            if (facIdx + 1 >= args.length || args[facIdx + 1] === 'SEC')
+                return { feedback: [{ type: 'err', text: 'XX FAC REQUIRES FACILITY ID' }] };
+            newFacility = args[facIdx + 1];
+        }
+        if (secIdx >= 0) {
+            secArgs = args.slice(secIdx + 1).filter(s => s !== 'FAC' && s !== newFacility);
+        }
+        if (facIdx < 0 && secIdx < 0) {
+            return { feedback: [{ type: 'err', text: 'XX FAC <id> | XX SEC <sectors>' }] };
+        }
+
+        // Apply facility change
+        if (newFacility !== null) {
+            // Check if facility exists in known facilities or the dropdown
+            const facSelect = document.getElementById('sel-facility');
+            const facOptions = [...facSelect.options].map(o => o.value.toUpperCase());
+            if (!facOptions.includes(newFacility) && !knownFacilities.has(newFacility)) {
+                return { feedback: [{ type: 'err', text: `FACILITY ${newFacility} NOT FOUND` }] };
+            }
+            facSelect.value = newFacility;
+            myFacility = newFacility;
+            mySectors.clear();
+            fdbOverrides.clear();
+            quickLookSectors.clear();
+            quickLookDests.clear();
+            wasOwnOrHo.clear();
+            manuallyHidden.clear();
+            pointoutBlocked.clear();
+            closePointoutMenu();
+            rebuildSectorCheckboxes();
+            showBoundariesForFacility(myFacility);
+            zoomToFacility(myFacility);
+        }
+
+        // Apply sector selection
+        const feedback = [];
+        if (secArgs !== null && secArgs.length > 0) {
+            if (!myFacility) {
+                return { feedback: [{ type: 'err', text: 'SELECT FACILITY FIRST' }] };
+            }
+            const knownSecs = knownFacilities.has(myFacility) ? knownFacilities.get(myFacility) : new Set();
+
+            if (secArgs[0] === 'NONE') {
+                mySectors.clear();
+                feedback.push({ type: 'info', text: 'SECTORS: NONE' });
+            } else if (secArgs[0] === 'ALL') {
+                mySectors.clear();
+                for (const s of knownSecs) mySectors.add(s);
+                feedback.push({ type: 'info', text: `SECTORS: ALL (${mySectors.size})` });
+            } else {
+                // If any arg uses +/- prefix, keep existing sectors and modify; otherwise replace all
+                const isIncremental = secArgs.some(s => s.startsWith('+') || s.startsWith('-'));
+                if (!isIncremental) mySectors.clear();
+                for (const s of secArgs) {
+                    if (s.startsWith('+')) {
+                        mySectors.add(s.slice(1));
+                    } else if (s.startsWith('-')) {
+                        const sec = s.slice(1);
+                        mySectors.delete(sec);
+                        demoteSectorFlights(sec);
+                    } else {
+                        mySectors.add(s);
+                    }
+                }
+                feedback.push({ type: 'info', text: `SECTORS: ${[...mySectors].sort().join(' ') || 'NONE'}` });
+            }
+            rebuildSectorCheckboxes();
+        } else if (secArgs !== null) {
+            // XX SEC with no args
+            feedback.push({ type: 'info', text: `SECTORS: ${[...mySectors].sort().join(' ') || 'NONE'}` });
+        }
+
+        invalidateAllMarkers();
+        saveSettingsToUrl();
+
+        feedback.unshift({ type: 'ok', text: 'ACCEPT' });
+        if (myFacility) feedback.splice(1, 0, { type: 'info', text: `FAC: ${myFacility}` });
+        return { feedback };
+    }
+
     return { feedback: [{ type: 'err', text: 'INVALID ENTRY' }] };
 }
 

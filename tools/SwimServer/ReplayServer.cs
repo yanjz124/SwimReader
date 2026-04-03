@@ -365,8 +365,9 @@ public class ReplayServer
                     var waitMs = (int)(deltaMs / spd);
                     // Cap max wait to 5 seconds (skip gaps)
                     if (waitMs > 5000) waitMs = 100;
-                    if (waitMs > 10)
-                        await Task.Delay(waitMs, ct);
+                    // Floor: never send faster than ~30 fps (33ms) to avoid overwhelming the client
+                    if (waitMs < 33) waitMs = 33;
+                    await Task.Delay(waitMs, ct);
                 }
             }
 

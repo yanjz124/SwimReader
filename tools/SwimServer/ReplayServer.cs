@@ -286,12 +286,11 @@ public class ReplayServer
             }
             else
             {
-                // We've passed the start time — send the snapshot + fast-forward + then this record
+                // We've passed the start time — send just the snapshot (full state),
+                // skip intermediate batches to avoid flooding the client
                 if (foundSnapshot && lastSnapshotLine != null)
                 {
                     await SendReplayRecord(ws, lastSnapshotLine, ct);
-                    foreach (var (_, postLine) in postSnapshotLines)
-                        await SendReplayRecord(ws, postLine, ct);
                 }
 
                 // Now play this record and continue in real-time
@@ -322,12 +321,9 @@ public class ReplayServer
         }
         else if (lastSentTime == DateTimeOffset.MinValue && foundSnapshot)
         {
-            // All records were before startTime — send snapshot and post-snapshot as catchup
+            // All records were before startTime — send just the snapshot (full state)
             await SendReplayRecord(ws, lastSnapshotLine!, ct);
-            foreach (var (_, postLine) in postSnapshotLines)
-                await SendReplayRecord(ws, postLine, ct);
-            lastSentTime = DateTimeOffset.FromUnixTimeMilliseconds(
-                postSnapshotLines.Count > 0 ? postSnapshotLines[^1].millis : lastSnapshotMillis);
+            lastSentTime = DateTimeOffset.FromUnixTimeMilliseconds(lastSnapshotMillis);
         }
 
         // Phase 2: Real-time paced playback of remaining lines

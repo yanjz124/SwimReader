@@ -1030,6 +1030,7 @@ const rpRangeEl = document.getElementById('rp-range');
 let rpWs = null;
 let rpActive = false;
 let rpPaused = false;
+let rpCurrentTime = null;
 
 rpBtn.onclick = () => {
     const vis = rpPanel.style.display === 'none' || !rpPanel.style.display;
@@ -1099,8 +1100,10 @@ function startReplay(startTime) {
         try { msg = JSON.parse(ev.data); } catch { return; }
 
         if (msg.replayTime) {
+            rpCurrentTime = msg.replayTime;
             const t = new Date(msg.replayTime);
             rpTimeEl.textContent = t.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+            rpThrottleSave();
         }
 
         if (msg.type === 'snapshot') {
@@ -1146,12 +1149,48 @@ rpSpeedSel.onchange = () => {
 
 rpStopBtn.onclick = () => {
     rpActive = false;
+    rpCurrentTime = null;
     if (rpWs) { rpWs.onclose = null; rpWs.close(); rpWs = null; }
     rpControls.style.display = 'none';
     rpTimeEl.textContent = '';
     rpStatusEl.textContent = '';
     connEl.style.color = '';
+    rpSaveUrl();
     connect();
 };
+
+// URL persistence for replay state
+function rpSaveUrl() {
+    const params = new URLSearchParams(window.location.hash.slice(1));
+    if (rpActive && rpCurrentTime) {
+        params.set('replay', rpCurrentTime);
+        const spd = rpSpeedSel.value;
+        if (spd && spd !== '1') params.set('rspd', spd);
+    } else {
+        params.delete('replay');
+        params.delete('rspd');
+    }
+    const hash = params.toString();
+    history.replaceState(null, '', hash ? '#' + hash : window.location.pathname);
+}
+
+let _rpSaveTimer = null;
+function rpThrottleSave() {
+    if (_rpSaveTimer) return;
+    _rpSaveTimer = setTimeout(() => { _rpSaveTimer = null; rpSaveUrl(); }, 3000);
+}
+
+// Auto-start replay from URL params
+{
+    const p = new URLSearchParams(window.location.hash.slice(1));
+    const rp = p.get('replay');
+    if (rp) {
+        const spd = p.get('rspd');
+        if (spd) rpSpeedSel.value = spd;
+        rpPanel.style.display = 'block';
+        rpBtn.style.color = '#ff8c00';
+        setTimeout(() => startReplay(rp), 500);
+    }
+}
 
 })();

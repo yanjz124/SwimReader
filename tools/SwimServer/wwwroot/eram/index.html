@@ -6,8 +6,8 @@
 <title>SFDPS ERAM</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="/shared/common.css?v=3">
-<link rel="stylesheet" href="/eram/eram.css?v=3">
+<link rel="stylesheet" href="/shared/common.css?v=4">
+<link rel="stylesheet" href="/eram/eram.css?v=4">
 </head>
 <body>
 <div id="app">
@@ -199,12 +199,42 @@
             <div id="fd-body"></div>
         </div>
 
+        <div class="panel-section" id="replay-section" style="display:none;">
+            <div class="panel-label">REPLAY</div>
+            <div id="replay-controls">
+                <div class="ctrl-row" style="flex-wrap:wrap;gap:4px;">
+                    <input type="datetime-local" id="replay-start" step="1"
+                        style="flex:1;min-width:140px;background:#1a1a1a;color:#cccc44;border:1px solid #333;padding:2px 4px;font-family:inherit;font-size:10px;">
+                    <button id="replay-go" style="background:#006800;color:#fff;border:1px solid #333;padding:2px 8px;font-family:inherit;font-size:10px;cursor:pointer;">GO</button>
+                </div>
+                <div id="replay-bar" style="display:none;margin-top:6px;">
+                    <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+                        <button id="replay-pause" style="background:#333;color:#fff;border:1px solid #555;padding:1px 6px;font-family:inherit;font-size:10px;cursor:pointer;">&#10074;&#10074;</button>
+                        <select id="replay-speed" style="background:#1a1a1a;color:#cccc44;border:1px solid #333;font-family:inherit;font-size:10px;">
+                            <option value="0.5">0.5x</option>
+                            <option value="1" selected>1x</option>
+                            <option value="2">2x</option>
+                            <option value="4">4x</option>
+                            <option value="8">8x</option>
+                            <option value="16">16x</option>
+                            <option value="60">60x</option>
+                        </select>
+                        <span id="replay-time" style="color:#cccc44;font-size:10px;flex:1;text-align:right;"></span>
+                    </div>
+                    <div id="replay-status" style="color:#888;font-size:10px;"></div>
+                    <button id="replay-stop" style="background:#880000;color:#fff;border:1px solid #333;padding:1px 8px;font-family:inherit;font-size:10px;cursor:pointer;margin-top:4px;">LIVE</button>
+                </div>
+            </div>
+            <div id="replay-range" style="color:#666;font-size:9px;margin-top:4px;"></div>
+        </div>
+
         <div id="sidebar-footer">
             <span id="stat-rate">0</span> msg/s &middot;
             <span id="stat-flights">0</span> flights &middot;
             <span id="stat-uptime">00:00:00</span>
             <br><span id="stat-fp" style="color:#888;font-size:0.85em;"></span>
             <br><button id="cmd-help-btn">COMMANDS</button>
+            <button id="replay-toggle-btn" style="margin-left:4px;">REPLAY</button>
             <label style="display:block;margin-top:6px;font-size:10px;color:#888;cursor:pointer">
                 <input type="checkbox" id="numpad-inverted" checked style="vertical-align:middle"> Std numpad (789 top)
             </label>
@@ -297,7 +327,7 @@
     </div>
 </div>
 
-<script src="/eram/eram.js?v=3"></script>
-<script src="/idle-timer.js?v=3"></script>
+<script src="/eram/eram.js?v=4"></script>
+<script src="/idle-timer.js?v=4"></script>
 </body>
 </html>

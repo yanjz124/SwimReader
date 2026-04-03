@@ -106,6 +106,11 @@ var jsonOpts = new JsonSerializerOptions
     // detect cleared fields (e.g., interimAltitude null after OH/FH clears it)
 };
 
+// Replay recorders — capture real-time data for later playback
+var replayDir = Path.Combine(Directory.GetCurrentDirectory(), "replay");
+var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), TimeSpan.FromHours(72));
+var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
+
 // Flight history directory (declared early so route lambdas can capture it)
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
 
@@ -180,6 +185,7 @@ asdex.OnOtherMessage = (topic, body) =>
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:5001");
 asdex.SetWebRoot(builder.Environment.WebRootPath);
+asdex.SetReplayDir(Path.Combine(replayDir, "asdex"));
 var app = builder.Build();
 
 app.UseDefaultFiles();
@@ -1756,6 +1762,7 @@ var purgeTimer = new Timer(_ =>
         if (f.LastSeen < cutoff)
         {
             flights.TryRemove(gufi, out FlightState? _);
+            eramRecorder.RecordRemove(new { gufi }, DateTime.UtcNow);
             Broadcast(new WsMsg("remove", new { gufi }));
             // Persist to daily history file before discarding
             Task.Run(() => SaveFlightHistory(f));
@@ -1818,6 +1825,29 @@ var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSecond
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
 
+// Replay: periodic ERAM snapshots for seek support (every 5 minutes)
+var eramSnapshotTimer = new Timer(_ =>
+{
+    try
+    {
+        var now = DateTime.UtcNow;
+        var summaries = flights.Values
+            .Where(f => f.Latitude.HasValue && f.FlightStatus != "CANCELLED")
+            .Select(f => f.ToSummary())
+            .ToArray();
+        if (summaries.Length > 0)
+            eramRecorder.RecordSnapshot(summaries, now);
+    }
+    catch (Exception ex) { Console.WriteLine($"[REPLAY] ERAM snapshot error: {ex.Message}"); }
+}, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(5));
+
+// Replay: periodic ASDE-X snapshots for seek support (every 2 minutes)
+var asdexSnapshotTimer = new Timer(_ =>
+{
+    try { asdex.WriteReplaySnapshots(); }
+    catch (Exception ex) { Console.WriteLine($"[REPLAY] ASDE-X snapshot error: {ex.Message}"); }
+}, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2));
+
 // Investigation: flush queued log entries to disk (uncomment with investigation logger vars)
 // var investigationFlushTimer = new Timer(_ =>
 // {
@@ -1846,8 +1876,11 @@ var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHo
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, historyCleanupTimer, csIndexTimer /*, poFlushTimer, investigationFlushTimer */ };
-app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); });
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, historyCleanupTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer /*, poFlushTimer, investigationFlushTimer */ };
+app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); });
+
+// Replay endpoints (WebSocket + REST)
+replayServer.MapEndpoints(app);
 
 await solaceReady.Task;
 Console.WriteLine("[Web] Starting on http://localhost:5001");
@@ -2694,7 +2727,7 @@ void Broadcast(WsMsg msg)
 
 void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
 {
-    if (dirtySet.IsEmpty || clients.IsEmpty) return;
+    if (dirtySet.IsEmpty) return;
     // Drain the dirty set atomically
     var gufis = dirtySet.Keys.ToArray();
     foreach (var g in gufis) dirtySet.TryRemove(g, out _);
@@ -2707,7 +2740,12 @@ void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
             summaries.Add(f.ToSummary());
     }
     if (summaries.Count == 0) return;
-    Broadcast(new WsMsg("batch", summaries));
+
+    // Record for replay (always, regardless of connected clients)
+    eramRecorder.RecordBatch(summaries.ToArray(), DateTime.UtcNow);
+
+    if (!clients.IsEmpty)
+        Broadcast(new WsMsg("batch", summaries));
 }
 
 // ── NASR data loading & route resolution ─────────────────────────────────────

@@ -1011,3 +1011,145 @@ window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null;
 window.idleOnResume = () => { connect(); };
 
 connect();
+
+// ── Replay system ──────────────────────────────────────────────────────────
+(function() {
+
+const rpPanel = document.getElementById('replay-panel');
+const rpBtn = document.getElementById('replay-btn');
+const rpStartInput = document.getElementById('rp-start');
+const rpGoBtn = document.getElementById('rp-go');
+const rpControls = document.getElementById('rp-controls');
+const rpPauseBtn = document.getElementById('rp-pause');
+const rpSpeedSel = document.getElementById('rp-speed');
+const rpTimeEl = document.getElementById('rp-time');
+const rpStatusEl = document.getElementById('rp-status');
+const rpStopBtn = document.getElementById('rp-stop');
+const rpRangeEl = document.getElementById('rp-range');
+
+let rpWs = null;
+let rpActive = false;
+let rpPaused = false;
+
+rpBtn.onclick = () => {
+    const vis = rpPanel.style.display === 'none' || !rpPanel.style.display;
+    rpPanel.style.display = vis ? 'block' : 'none';
+    rpBtn.style.color = vis ? '#ff8c00' : '#ccc';
+    if (vis) fetchRange();
+};
+
+async function fetchRange() {
+    try {
+        const resp = await fetch('/api/replay/range');
+        const data = await resp.json();
+        const k = data.asdex?.[AIRPORT.toUpperCase()];
+        if (k) {
+            rpRangeEl.textContent = `${k.hours}h avail, ${k.totalSizeMB.toFixed(1)} MB`;
+            const def = new Date(Date.now() - 3600000);
+            rpStartInput.value = toLocal(def);
+        } else {
+            rpRangeEl.textContent = 'No data yet';
+        }
+    } catch(e) {
+        rpRangeEl.textContent = 'Error';
+    }
+}
+
+function toLocal(d) {
+    const off = d.getTimezoneOffset();
+    return new Date(d.getTime() - off * 60000).toISOString().slice(0, 19);
+}
+
+rpGoBtn.onclick = () => {
+    const val = rpStartInput.value;
+    if (!val) return;
+    startReplay(new Date(val).toISOString());
+};
+
+function startReplay(startTime) {
+    // Disconnect live
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
+
+    // Clear
+    for (const tid of Object.keys(markers)) removeTrack(tid);
+    updateCount();
+
+    rpActive = true;
+    rpPaused = false;
+    rpPauseBtn.textContent = '\u23F8';
+    rpControls.style.display = '';
+    rpStatusEl.textContent = 'Connecting...';
+    connEl.textContent = 'REPLAY';
+    connEl.className = '';
+    connEl.style.color = '#ff8c00';
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const icao = AIRPORT.toUpperCase();
+    const speed = rpSpeedSel.value || '1';
+    rpWs = new WebSocket(`${proto}//${location.host}/replay/asdex/ws/${icao}?start=${encodeURIComponent(startTime)}&speed=${speed}`);
+
+    rpWs.onopen = () => { rpStatusEl.textContent = 'Loading...'; };
+    rpWs.onclose = () => { if (rpActive) rpStatusEl.textContent = 'Disconnected'; };
+
+    rpWs.onmessage = ev => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+
+        if (msg.replayTime) {
+            const t = new Date(msg.replayTime);
+            rpTimeEl.textContent = t.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+        }
+
+        if (msg.type === 'snapshot') {
+            for (const tid of Object.keys(markers)) removeTrack(tid);
+            for (const t of (msg.data || [])) applyTrack(t);
+            updateCount();
+            rpStatusEl.textContent = `${Object.keys(markers).length} tracks`;
+        } else if (msg.type === 'batch') {
+            const batchIds = new Set((msg.data || []).map(t => t.trackId));
+            for (const tid of Object.keys(markers)) {
+                if (!batchIds.has(tid)) removeTrack(tid);
+            }
+            for (const t of (msg.data || [])) applyTrack(t);
+            updateCount();
+            rpStatusEl.textContent = `${Object.keys(markers).length} tracks`;
+        } else if (msg.type === 'remove') {
+            removeTrack(msg.data.trackId);
+            updateCount();
+        } else if (msg.type === 'holdbar') {
+            renderHoldBar(msg.data);
+        } else if (msg.type === 'replay_seek') {
+            for (const tid of Object.keys(markers)) removeTrack(tid);
+            rpStatusEl.textContent = 'Seeking...';
+        } else if (msg.type === 'replay_end') {
+            rpStatusEl.textContent = 'End of data';
+        } else if (msg.type === 'replay_error') {
+            rpStatusEl.textContent = msg.message || 'Error';
+        }
+    };
+}
+
+rpPauseBtn.onclick = () => {
+    if (!rpWs || rpWs.readyState !== WebSocket.OPEN) return;
+    rpPaused = !rpPaused;
+    rpWs.send(JSON.stringify({ cmd: rpPaused ? 'pause' : 'resume' }));
+    rpPauseBtn.textContent = rpPaused ? '\u25B6' : '\u23F8';
+};
+
+rpSpeedSel.onchange = () => {
+    if (!rpWs || rpWs.readyState !== WebSocket.OPEN) return;
+    rpWs.send(JSON.stringify({ cmd: 'speed', value: parseFloat(rpSpeedSel.value) }));
+};
+
+rpStopBtn.onclick = () => {
+    rpActive = false;
+    if (rpWs) { rpWs.onclose = null; rpWs.close(); rpWs = null; }
+    rpControls.style.display = 'none';
+    rpTimeEl.textContent = '';
+    rpStatusEl.textContent = '';
+    connEl.style.color = '';
+    connect();
+};
+
+})();

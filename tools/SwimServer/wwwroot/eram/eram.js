@@ -6731,6 +6731,30 @@ const replayRangeEl = document.getElementById('replay-range');
 let replayWs = null;
 let replayActive = false;
 let replayPaused = false;
+let replayPendingBatch = null; // buffer: only process latest batch per render frame
+let replayPendingRemoves = []; // buffer removes to apply with batch
+let replayRafId = null;
+
+function replayFlush() {
+    replayRafId = null;
+    // Apply pending removes
+    for (const gufi of replayPendingRemoves) {
+        flights.delete(gufi);
+        flightHistory.delete(gufi);
+        const m = markers.get(gufi);
+        if (m) { map.removeLayer(m); markers.delete(gufi); }
+    }
+    replayPendingRemoves = [];
+    // Apply latest batch (skip all intermediate ones)
+    if (replayPendingBatch) {
+        const batch = replayPendingBatch;
+        replayPendingBatch = null;
+        for (const f of batch) {
+            processFlightUpdate(f);
+        }
+        replayStatusEl.textContent = `Playing — ${flights.size} flights`;
+    }
+}
 
 // Toggle replay section visibility
 replayToggleBtn.addEventListener('click', () => {
@@ -6844,15 +6868,12 @@ function startReplay(startTime) {
             }
             replayStatusEl.textContent = `Playing — ${flights.size} flights`;
         } else if (msg.type === 'batch') {
-            for (const f of msg.data) {
-                processFlightUpdate(f);
-            }
-            replayStatusEl.textContent = `Playing — ${flights.size} flights`;
+            // Buffer: only keep latest batch, process on next animation frame
+            replayPendingBatch = msg.data;
+            if (!replayRafId) replayRafId = requestAnimationFrame(replayFlush);
         } else if (msg.type === 'remove') {
-            flights.delete(msg.data.gufi);
-            flightHistory.delete(msg.data.gufi);
-            const m = markers.get(msg.data.gufi);
-            if (m) { map.removeLayer(m); markers.delete(msg.data.gufi); }
+            replayPendingRemoves.push(msg.data.gufi);
+            if (!replayRafId) replayRafId = requestAnimationFrame(replayFlush);
         } else if (msg.type === 'replay_start') {
             replayStatusEl.textContent = 'Seeking...';
         } else if (msg.type === 'replay_seek') {
@@ -6892,6 +6913,9 @@ replayStopBtn.addEventListener('click', stopReplay);
 
 function stopReplay() {
     replayActive = false;
+    replayPendingBatch = null;
+    replayPendingRemoves = [];
+    if (replayRafId) { cancelAnimationFrame(replayRafId); replayRafId = null; }
     if (replayWs) { replayWs.onclose = null; replayWs.close(); replayWs = null; }
     replayBar.style.display = 'none';
     replayStatusEl.textContent = '';

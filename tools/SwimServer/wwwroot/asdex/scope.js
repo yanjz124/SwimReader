@@ -16,7 +16,7 @@ document.addEventListener('mousemove', e => {
         const el = marker.getElement();
         if (!el) continue;
         const rect = el.getBoundingClientRect();
-        const dist = Math.hypot(e.clientX - (rect.left + 9), e.clientY - (rect.top + 9));
+        const dist = Math.hypot(e.clientX - (rect.left + 10), e.clientY - (rect.top + 10));
         if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = tid; }
     }
     if (bestTid !== haloTid) {
@@ -264,14 +264,14 @@ let   centeredOnce = false;
 // ── Data block positions (8 compass points) ─────────────────────────────────
 const DB_ORDERS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const DB_POS = {
-    N:  { wl: -5,  wt: -43, lx: 9,   ly: -16 },
-    NE: { wl: 26,  wt: -24, lx: 26,  ly: -8 },
-    E:  { wl: 26,  wt: -7,  lx: 26,  ly: 9 },
-    SE: { wl: 26,  wt: 10,  lx: 26,  ly: 26 },
-    S:  { wl: -5,  wt: 33,  lx: 9,   ly: 30 },
-    SW: { wl: -83, wt: 10,  lx: -8,  ly: 26 },
-    W:  { wl: -83, wt: -7,  lx: -8,  ly: 9 },
-    NW: { wl: -83, wt: -24, lx: -8,  ly: -8 },
+    N:  { wl: -5,  wt: -43, lx: 10,  ly: -16 },
+    NE: { wl: 27,  wt: -24, lx: 27,  ly: -7 },
+    E:  { wl: 27,  wt: -7,  lx: 27,  ly: 10 },
+    SE: { wl: 27,  wt: 10,  lx: 27,  ly: 27 },
+    S:  { wl: -5,  wt: 33,  lx: 10,  ly: 31 },
+    SW: { wl: -83, wt: 10,  lx: -7,  ly: 27 },
+    W:  { wl: -83, wt: -7,  lx: -7,  ly: 10 },
+    NW: { wl: -83, wt: -24, lx: -7,  ly: -7 },
 };
 const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
 const hiddenDbs = new Set();  // trackIds with hidden data blocks
@@ -323,7 +323,7 @@ document.addEventListener('mousedown', e => {
     const el = m.getElement();
     if (!el) { dragTid = null; return; }
     const rect = el.getBoundingClientRect();
-    dragOrigin = { x: rect.left + 9, y: rect.top + 9 };
+    dragOrigin = { x: rect.left + 10, y: rect.top + 10 };
     e.preventDefault();
     e.stopPropagation();
 });
@@ -371,7 +371,7 @@ document.addEventListener('touchstart', e => {
         const el = m.getElement();
         if (!el) { touchDragTid = null; return; }
         const rect = el.getBoundingClientRect();
-        touchOrigin = { x: rect.left + 9, y: rect.top + 9 };
+        touchOrigin = { x: rect.left + 10, y: rect.top + 10 };
         touchMoved = false;
         e.preventDefault();
         return;
@@ -416,7 +416,7 @@ document.addEventListener('touchend', e => {
         const el = marker.getElement();
         if (!el) continue;
         const rect = el.getBoundingClientRect();
-        const cx = rect.left + 9, cy = rect.top + 9;
+        const cx = rect.left + 10, cy = rect.top + 10;
         const dist = Math.hypot(touch.clientX - cx, touch.clientY - cy);
         if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = tid; }
     }
@@ -472,8 +472,8 @@ document.addEventListener('click', e => {
         if (!el) continue;
         const rect = el.getBoundingClientRect();
         // Marker anchor is at (9, 9) within the icon
-        const cx = rect.left + 9;
-        const cy = rect.top + 9;
+        const cx = rect.left + 10;
+        const cy = rect.top + 10;
         const dx = clickPt.x - cx;
         const dy = clickPt.y - cy;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -893,17 +893,17 @@ function makeIcon(t) {
     const pos = DB_POS[posKey];
     const hideStyle = hiddenDbs.has(t.trackId) ? ';display:none' : '';
     const showLdr = cs && cat !== 'unknown';
-    const ldrHtml = showLdr ? `<svg class="ldr" width="18" height="18" viewBox="0 0 18 18" style="position:absolute;left:0;top:0;overflow:visible${hideStyle}">
-            <line x1="9" y1="9" x2="${pos.lx}" y2="${pos.ly}" stroke="#00cc00" stroke-width="0.5" opacity="0.6"/>
+    const ldrHtml = showLdr ? `<svg class="ldr" width="20" height="20" viewBox="0 0 20 20" style="position:absolute;left:0;top:0;overflow:visible${hideStyle}">
+            <line x1="10" y1="10" x2="${pos.lx}" y2="${pos.ly}" stroke="#00cc00" stroke-width="0.5" opacity="0.6"/>
         </svg>` : '';
 
     const html = `<div class="ac-icon" data-tid="${t.trackId}">
-        <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block"><circle cx="0" cy="0" r="14" fill="transparent"/>${symHtml}<circle class="halo" cx="0" cy="0" r="11" fill="none" stroke="#fff" stroke-width="1"/></svg>
+        <svg class="sym" width="20" height="20" viewBox="-8 -8 16 16" style="display:block"><circle cx="0" cy="0" r="14" fill="transparent"/>${symHtml}<circle class="halo" cx="0" cy="0" r="11" fill="none" stroke="#fff" stroke-width="1"/></svg>
         ${ldrHtml}
         <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px${hideStyle}">${dbHtml}</div>
     </div>`;
 
-    return L.divIcon({ className: '', html, iconSize: [200, 18], iconAnchor: [9, 9] });
+    return L.divIcon({ className: '', html, iconSize: [200, 20], iconAnchor: [10, 10] });
 }
 
 function trackHash(t) {

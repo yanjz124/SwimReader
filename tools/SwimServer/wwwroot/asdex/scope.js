@@ -839,10 +839,10 @@ function targetCategory(t) {
 }
 
 // ── SVG path for airplane (pointing up = heading 0°) ─────────────────────────
-// Fuselage + swept wings + V-tail. ViewBox centered on 0,0, nose at top.
-const PLANE_PATH = 'M 0 -8 L 1.3 -5 L 1.3 -1 L 8 2 L 7.5 3 L 1.8 1.5 L 1.8 5 L 4 7 L 0 6 L -4 7 L -1.8 5 L -1.8 1.5 L -7.5 3 L -8 2 L -1.3 -1 L -1.3 -5 Z';
-// Kite shape (unknown): pointy bottom, wide top — smaller than aircraft
-const DIAMOND_PATH = 'M 0 3.5 L 2.5 0.5 L 0 -4.5 L -2.5 0.5 Z';
+// Aircraft: clean top-down silhouette matching CRC ASDE-X reference
+const PLANE_PATH = 'M 0 -8 L 1 -6 L 1 -1.5 L 7.5 1.5 L 7.5 3 L 1 1 L 1 5.5 L 3.5 7 L 3.5 8 L 0 7 L -3.5 8 L -3.5 7 L -1 5.5 L -1 1 L -7.5 3 L -7.5 1.5 L -1 -1.5 L -1 -6 Z';
+// Unknown: tall pointed kite/diamond (point at top, wider at bottom half)
+const DIAMOND_PATH = 'M 0 -5.5 L 3 1 L 0 5 L -3 1 Z';
 // Vehicle: small square
 const VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z';
 

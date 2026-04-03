@@ -6612,3 +6612,193 @@ if (tbState.masterVisible) {
 }
 
 })();  // end toolbar IIFE
+
+// ════════════════════════════════════════════════════════════════════════════
+// Replay system
+// ════════════════════════════════════════════════════════════════════════════
+(function() {
+
+const replaySection = document.getElementById('replay-section');
+const replayToggleBtn = document.getElementById('replay-toggle-btn');
+const replayGoBtn = document.getElementById('replay-go');
+const replayStartInput = document.getElementById('replay-start');
+const replayBar = document.getElementById('replay-bar');
+const replayPauseBtn = document.getElementById('replay-pause');
+const replaySpeedSel = document.getElementById('replay-speed');
+const replayTimeEl = document.getElementById('replay-time');
+const replayStatusEl = document.getElementById('replay-status');
+const replayStopBtn = document.getElementById('replay-stop');
+const replayRangeEl = document.getElementById('replay-range');
+
+let replayWs = null;
+let replayActive = false;
+let replayPaused = false;
+
+// Toggle replay section visibility
+replayToggleBtn.addEventListener('click', () => {
+    const vis = replaySection.style.display === 'none';
+    replaySection.style.display = vis ? '' : 'none';
+    replayToggleBtn.style.color = vis ? '#cccc44' : '';
+    if (vis) fetchReplayRange();
+});
+
+// Fetch available replay range
+async function fetchReplayRange() {
+    try {
+        const resp = await fetch('/api/replay/range');
+        const data = await resp.json();
+        if (data.eram) {
+            const s = new Date(data.eram.start);
+            const e = new Date(data.eram.end);
+            replayRangeEl.textContent = `Available: ${fmtDt(s)} — ${fmtDt(e)} (${data.eram.hours}h, ${data.eram.totalSizeMB.toFixed(1)} MB)`;
+            // Default start input to 1 hour ago
+            const def = new Date(Date.now() - 3600000);
+            replayStartInput.value = toLocalISOString(def);
+        } else {
+            replayRangeEl.textContent = 'No replay data yet (recording...)';
+        }
+    } catch(e) {
+        replayRangeEl.textContent = 'Error fetching replay range';
+    }
+}
+
+function fmtDt(d) {
+    return d.toISOString().replace('T', ' ').slice(0, 16) + 'Z';
+}
+
+function toLocalISOString(d) {
+    const off = d.getTimezoneOffset();
+    const local = new Date(d.getTime() - off * 60000);
+    return local.toISOString().slice(0, 19);
+}
+
+// Start replay
+replayGoBtn.addEventListener('click', () => {
+    const val = replayStartInput.value;
+    if (!val) return;
+    const startTime = new Date(val).toISOString();
+    startReplay(startTime);
+});
+
+function startReplay(startTime) {
+    // Disconnect live WS
+    if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
+    wsConnected = false;
+
+    // Clear current state
+    for (const [, m] of markers) map.removeLayer(m);
+    markers.clear();
+    flights.clear();
+    flightHistory.clear();
+
+    replayActive = true;
+    replayPaused = false;
+    replayPauseBtn.textContent = '\u23F8'; // pause icon
+    replayBar.style.display = '';
+    replayStatusEl.textContent = 'Connecting...';
+
+    document.getElementById('connection-status').textContent = 'REPLAY';
+    document.getElementById('connection-status').style.color = '#ff8c00';
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const speed = replaySpeedSel.value || '1';
+    replayWs = new WebSocket(`${proto}//${location.host}/replay/ws?start=${encodeURIComponent(startTime)}&speed=${speed}`);
+
+    replayWs.onopen = () => {
+        replayStatusEl.textContent = 'Loading...';
+    };
+
+    replayWs.onclose = () => {
+        if (replayActive) {
+            replayStatusEl.textContent = 'Disconnected';
+        }
+    };
+
+    replayWs.onmessage = (evt) => {
+        const msg = JSON.parse(evt.data);
+
+        // Update replay time display
+        if (msg.replayTime) {
+            const t = new Date(msg.replayTime);
+            replayTimeEl.textContent = t.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+        }
+
+        if (msg.type === 'snapshot') {
+            for (const [, m] of markers) map.removeLayer(m);
+            markers.clear();
+            flights.clear();
+            flightHistory.clear();
+            for (const f of msg.data) {
+                f._clientLastUpdate = performance.now();
+                if (f.assignedAltitude != null && f.reportedAltitude != null) {
+                    const aAlt = Math.round(f.assignedAltitude / 100);
+                    const rAlt = Math.round(f.reportedAltitude / 100);
+                    const d = rAlt - aAlt;
+                    f._altInitialSide = Math.abs(d) <= 2 ? 0 : (d < 0 ? -1 : 1);
+                }
+                flights.set(f.gufi, f);
+                trackFacility(f);
+                if (f.clearanceHeading || f.clearanceSpeed || f.clearanceText) {
+                    hsfShowMap.add(f.gufi);
+                }
+            }
+            replayStatusEl.textContent = `Playing — ${flights.size} flights`;
+        } else if (msg.type === 'batch') {
+            for (const f of msg.data) {
+                processFlightUpdate(f);
+            }
+            replayStatusEl.textContent = `Playing — ${flights.size} flights`;
+        } else if (msg.type === 'remove') {
+            flights.delete(msg.data.gufi);
+            flightHistory.delete(msg.data.gufi);
+            const m = markers.get(msg.data.gufi);
+            if (m) { map.removeLayer(m); markers.delete(msg.data.gufi); }
+        } else if (msg.type === 'replay_start') {
+            replayStatusEl.textContent = 'Seeking...';
+        } else if (msg.type === 'replay_seek') {
+            // Clear state on seek
+            for (const [, m] of markers) map.removeLayer(m);
+            markers.clear();
+            flights.clear();
+            flightHistory.clear();
+            replayStatusEl.textContent = 'Seeking...';
+        } else if (msg.type === 'replay_gap') {
+            replayStatusEl.textContent = `Gap: ${msg.from?.slice(11,19) || ''} — ${msg.to?.slice(11,19) || ''}`;
+        } else if (msg.type === 'replay_end') {
+            replayStatusEl.textContent = 'End of replay data';
+        } else if (msg.type === 'replay_error') {
+            replayStatusEl.textContent = msg.message || 'Error';
+        }
+    };
+}
+
+// Pause/resume
+replayPauseBtn.addEventListener('click', () => {
+    if (!replayWs || replayWs.readyState !== WebSocket.OPEN) return;
+    replayPaused = !replayPaused;
+    replayWs.send(JSON.stringify({ cmd: replayPaused ? 'pause' : 'resume' }));
+    replayPauseBtn.textContent = replayPaused ? '\u25B6' : '\u23F8';
+    replayStatusEl.textContent = replayPaused ? 'Paused' : `Playing — ${flights.size} flights`;
+});
+
+// Speed change
+replaySpeedSel.addEventListener('change', () => {
+    if (!replayWs || replayWs.readyState !== WebSocket.OPEN) return;
+    replayWs.send(JSON.stringify({ cmd: 'speed', value: parseFloat(replaySpeedSel.value) }));
+});
+
+// Stop replay → back to live
+replayStopBtn.addEventListener('click', stopReplay);
+
+function stopReplay() {
+    replayActive = false;
+    if (replayWs) { replayWs.onclose = null; replayWs.close(); replayWs = null; }
+    replayBar.style.display = 'none';
+    replayStatusEl.textContent = '';
+    replayTimeEl.textContent = '';
+
+    // Reconnect to live
+    connectWs();
+}
+
+})();  // end replay IIFE

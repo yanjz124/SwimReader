@@ -42,6 +42,20 @@ class AsdexBridge
     /// <summary>Called for each track during FlushDirty to enrich with SFDPS/TDLS data. Set before Start().</summary>
     public Action<AsdexTrack>? OnEnrich { get; set; }
 
+    // Replay recording — per-airport recorders created on demand
+    private readonly ConcurrentDictionary<string, SwimServer.ReplayRecorder> _recorders = new();
+    private string? _replayBaseDir;
+
+    /// <summary>Enable replay recording. Call before Start().</summary>
+    public void SetReplayDir(string baseDir) => _replayBaseDir = baseDir;
+
+    private SwimServer.ReplayRecorder? GetRecorder(string airport)
+    {
+        if (_replayBaseDir == null) return null;
+        return _recorders.GetOrAdd(airport, a =>
+            new SwimServer.ReplayRecorder(Path.Combine(_replayBaseDir, a), TimeSpan.FromHours(72)));
+    }
+
     public AsdexBridge(string user, string pass, string queue, string host, string vpn,
         JsonSerializerOptions jsonOpts)
     {
@@ -333,6 +347,9 @@ class AsdexBridge
         var activeBits = CountBits(status);
         Console.WriteLine($"[HOLDBAR] {airport} ctrl={state.Control} bits={activeBits} status={status}");
 
+        // Record holdbar state for replay
+        GetRecorder(airport)?.RecordHoldbar(state.ToJson(), DateTime.UtcNow);
+
         // Broadcast to connected clients for this airport
         if (_clients.TryGetValue(airport, out var airportClients) && !airportClients.IsEmpty)
         {
@@ -421,9 +438,14 @@ class AsdexBridge
             if (OnEnrich is not null)
                 foreach (var t in tracks.Values) OnEnrich(t);
 
-            // Only serialize + broadcast if there are connected clients
-            if (!_clients.TryGetValue(airport, out var airportClients) || airportClients.IsEmpty) continue;
+            // Serialize tracks (needed for both replay recording and client broadcast)
             var arr = DeduplicateByCallsign(tracks.Values).Select(t => t.ToJson()).ToArray();
+
+            // Record for replay (always, regardless of connected clients)
+            GetRecorder(airport)?.RecordBatch(arr, DateTime.UtcNow);
+
+            // Only broadcast if there are connected clients
+            if (!_clients.TryGetValue(airport, out var airportClients) || airportClients.IsEmpty) continue;
             var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("batch", arr), _jsonOpts);
             foreach (var (_, client) in airportClients)
             {
@@ -444,6 +466,7 @@ class AsdexBridge
             foreach (var trackId in stale)
             {
                 tracks.TryRemove(trackId, out _);
+                GetRecorder(airport)?.RecordRemove(new { airport, trackId }, DateTime.UtcNow);
                 if (_clients.TryGetValue(airport, out var ac))
                 {
                     var json = JsonSerializer.SerializeToUtf8Bytes(
@@ -453,6 +476,23 @@ class AsdexBridge
             }
             if (tracks.IsEmpty) _state.TryRemove(airport, out _);
         }
+    }
+
+    /// <summary>Write snapshots for all active airports (call from a timer, e.g. every 2 min).</summary>
+    public void WriteReplaySnapshots()
+    {
+        foreach (var (airport, tracks) in _state)
+        {
+            if (tracks.IsEmpty) continue;
+            var arr = DeduplicateByCallsign(tracks.Values).Select(t => t.ToJson()).ToArray();
+            GetRecorder(airport)?.RecordSnapshot(arr, DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>Dispose all per-airport replay recorders.</summary>
+    public void DisposeRecorders()
+    {
+        foreach (var (_, r) in _recorders) r.Dispose();
     }
 
     // ── WebSocket client management ──────────────────────────────────────────

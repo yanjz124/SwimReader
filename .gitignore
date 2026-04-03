@@ -53,6 +53,9 @@ flight-cache/
 ## Learned holdbar bit mappings (per-deployment)
 holdbar-map/
 
+## Replay recordings (per-deployment, up to 72h)
+replay/
+
 ## IDE
 .idea/
 *.swp

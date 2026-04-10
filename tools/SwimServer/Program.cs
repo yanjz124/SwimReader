@@ -1331,7 +1331,20 @@ void LoadFlightCache()
 LoadFlightCache();
 
 // ── Flight history persistence (save purged flights to daily JSONL files) ─────
-const long MaxHistoryBytes = 14L * 1024 * 1024 * 1024; // 14 GB (2 GB headroom from 16 GB budget)
+// History budget: keep total disk usage under 85%. Calculated dynamically each cleanup cycle.
+long GetMaxHistoryBytes()
+{
+    try
+    {
+        var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(historyDir)) ?? "/");
+        long historySize = Directory.Exists(historyDir)
+            ? Directory.GetFiles(historyDir, "*.jsonl").Sum(f => new FileInfo(f).Length) : 0;
+        var usedNonHistory = drive.TotalSize - drive.TotalFreeSpace - historySize;
+        var budget = Math.Max(0, (long)(drive.TotalSize * 0.85) - usedNonHistory);
+        return budget;
+    }
+    catch { return 2L * 1024 * 1024 * 1024; }
+}
 var historyJsonOpts = new JsonSerializerOptions
 {
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -1378,7 +1391,9 @@ void CleanupHistory()
         if (!Directory.Exists(historyDir)) return;
         var files = Directory.GetFiles(historyDir, "*.jsonl").OrderBy(f => f).ToList();
         long total = files.Sum(f => new FileInfo(f).Length);
-        while (total > MaxHistoryBytes && files.Count > 1)
+        long maxBytes = GetMaxHistoryBytes();
+        Console.WriteLine($"[History] {files.Count} files, {total / 1024 / 1024}MB used, {maxBytes / 1024 / 1024}MB budget (85% disk)");
+        while (total > maxBytes && files.Count > 1)
         {
             var oldest = files[0];
             var size = new FileInfo(oldest).Length;

@@ -45,15 +45,20 @@ class AsdexBridge
     // Replay recording — per-airport recorders created on demand
     private readonly ConcurrentDictionary<string, SwimServer.ReplayRecorder> _recorders = new();
     private string? _replayBaseDir;
+    private long _replayBudget;
 
     /// <summary>Enable replay recording. Call before Start().</summary>
-    public void SetReplayDir(string baseDir) => _replayBaseDir = baseDir;
+    public void SetReplayDir(string baseDir, long budgetBytes = 0)
+    {
+        _replayBaseDir = baseDir;
+        _replayBudget = budgetBytes > 0 ? budgetBytes : 5L * 1024 * 1024 * 1024;
+    }
 
     private SwimServer.ReplayRecorder? GetRecorder(string airport)
     {
         if (_replayBaseDir == null) return null;
         return _recorders.GetOrAdd(airport, a =>
-            new SwimServer.ReplayRecorder(Path.Combine(_replayBaseDir, a)));
+            new SwimServer.ReplayRecorder(Path.Combine(_replayBaseDir, a), _replayBudget));
     }
 
     public AsdexBridge(string user, string pass, string queue, string host, string vpn,

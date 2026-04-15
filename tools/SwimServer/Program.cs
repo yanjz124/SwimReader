@@ -107,24 +107,23 @@ var jsonOpts = new JsonSerializerOptions
 };
 
 // Replay recorders — capture real-time data for later playback
-// Budget: 85% of total disk minus non-SwimServer usage, split across eram + asdex recorders
+// Shared budget: 85% of total disk minus non-replay usage, enforced across ALL recorders combined
 var replayDir = Path.Combine(Directory.GetCurrentDirectory(), "replay");
-long replayBudgetPerRecorder;
+long totalReplayBudget;
 try
 {
     var drv = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(replayDir)) ?? "/");
     var maxDisk85 = (long)(drv.TotalSize * 0.85);
     var usedTotal = drv.TotalSize - drv.TotalFreeSpace;
-    // How much replay is already using
     long replayUsed = Directory.Exists(replayDir)
         ? Directory.GetFiles(replayDir, "*.jsonl.gz", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) : 0;
     var nonReplayUsed = usedTotal - replayUsed;
-    var totalReplayBudget = Math.Max(0, maxDisk85 - nonReplayUsed);
-    replayBudgetPerRecorder = totalReplayBudget / 2; // split between eram + asdex
-    Console.WriteLine($"[REPLAY] Disk {drv.TotalSize / (1024 * 1024 * 1024)}GB, 85% cap={maxDisk85 / (1024 * 1024 * 1024)}GB, replay budget={totalReplayBudget / (1024 * 1024 * 1024)}GB ({replayBudgetPerRecorder / (1024 * 1024 * 1024)}GB each)");
+    totalReplayBudget = Math.Max(0, maxDisk85 - nonReplayUsed);
+    Console.WriteLine($"[REPLAY] Disk {drv.TotalSize / (1024 * 1024 * 1024)}GB, 85% cap={maxDisk85 / (1024 * 1024 * 1024)}GB, shared replay budget={totalReplayBudget / (1024 * 1024 * 1024)}GB (across all recorders)");
 }
-catch { replayBudgetPerRecorder = 5L * 1024 * 1024 * 1024; } // fallback 5 GB each
-var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), replayBudgetPerRecorder);
+catch { totalReplayBudget = 10L * 1024 * 1024 * 1024; }
+// All recorders share the SAME total budget, cleanup scans the entire replay dir
+var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), totalReplayBudget, replayDir);
 var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
 
 // Flight history directory (declared early so route lambdas can capture it)
@@ -201,7 +200,7 @@ asdex.OnOtherMessage = (topic, body) =>
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:5001");
 asdex.SetWebRoot(builder.Environment.WebRootPath);
-asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), replayBudgetPerRecorder);
+asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), totalReplayBudget, replayDir);
 var app = builder.Build();
 
 app.UseDefaultFiles();

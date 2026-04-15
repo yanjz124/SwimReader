@@ -11,14 +11,16 @@ namespace SwimServer;
 public sealed class ReplayRecorder : IDisposable
 {
     private readonly string _baseDir;
+    private readonly string _cleanupDir;  // dir to enforce budget on (may be parent for shared budget)
     private readonly Channel<RecordEntry> _channel;
     private readonly Task _writerTask;
     private readonly CancellationTokenSource _cts = new();
     private readonly long _maxTotalBytes;
 
-    public ReplayRecorder(string baseDir, long maxTotalBytes = 0)
+    public ReplayRecorder(string baseDir, long maxTotalBytes = 0, string? cleanupDir = null)
     {
         _baseDir = baseDir;
+        _cleanupDir = cleanupDir ?? baseDir;
         _maxTotalBytes = maxTotalBytes > 0 ? maxTotalBytes : 30L * 1024 * 1024 * 1024; // default 30 GB
         Directory.CreateDirectory(_baseDir);
 
@@ -191,8 +193,9 @@ public sealed class ReplayRecorder : IDisposable
     {
         try
         {
-            // Size-based retention: delete oldest files until total is under budget
-            var files = Directory.GetFiles(_baseDir, "*.jsonl.gz", SearchOption.AllDirectories)
+            // Size-based retention: delete oldest files across ALL sibling recorders (shared budget)
+            if (!Directory.Exists(_cleanupDir)) return;
+            var files = Directory.GetFiles(_cleanupDir, "*.jsonl.gz", SearchOption.AllDirectories)
                 .Select(f => new FileInfo(f))
                 .OrderBy(f => f.Name) // chronological by filename (yyyy-MM-ddTHH)
                 .ToList();
@@ -200,13 +203,13 @@ public sealed class ReplayRecorder : IDisposable
             var totalBytes = files.Sum(f => f.Length);
             if (totalBytes <= _maxTotalBytes) return;
 
-            Console.WriteLine($"[REPLAY] Cleanup: {totalBytes / (1024 * 1024)} MB exceeds {_maxTotalBytes / (1024 * 1024)} MB budget");
+            Console.WriteLine($"[REPLAY] Cleanup: {totalBytes / (1024 * 1024)} MB exceeds {_maxTotalBytes / (1024 * 1024)} MB budget in {_cleanupDir}");
             foreach (var fi in files)
             {
                 if (totalBytes <= _maxTotalBytes) break;
                 totalBytes -= fi.Length;
-                fi.Delete();
-                Console.WriteLine($"[REPLAY] Deleted: {Path.GetRelativePath(_baseDir, fi.FullName)} ({fi.Length / 1024} KB)");
+                try { fi.Delete(); Console.WriteLine($"[REPLAY] Deleted: {Path.GetRelativePath(_cleanupDir, fi.FullName)} ({fi.Length / 1024} KB)"); }
+                catch (Exception ex) { Console.WriteLine($"[REPLAY] Delete failed {fi.FullName}: {ex.Message}"); }
             }
         }
         catch (Exception ex)

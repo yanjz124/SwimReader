@@ -853,7 +853,9 @@ function makeIcon(t) {
     let fill, symHtml;
     if (cat === 'unknown') {
         fill = '#00ffff';
-        symHtml = `<path d="${DIAMOND_PATH}" fill="${fill}" fill-opacity="0.9"/>`;
+        // Rotate kite if heading is available (server derives it from position delta for primaries)
+        const inner = `<path d="${DIAMOND_PATH}" fill="${fill}" fill-opacity="0.9"/>`;
+        symHtml = t.hdg != null ? `<g transform="rotate(${hdg})">${inner}</g>` : inner;
     } else if (cat === 'vehicle') {
         fill = '#00cccc';
         symHtml = `<path d="${VEHICLE_PATH}" fill="${fill}" fill-opacity="0.75"/>`;

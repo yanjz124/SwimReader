@@ -300,33 +300,23 @@ public class ReplayServer
             }
         }
 
-        // If we never found a record after startTime but have a snapshot, send it
-        if (!foundSnapshot && lastSnapshotLine == null)
+        // All records in this file were before startTime, but we have a snapshot → send it as catchup.
+        // The outer loop will then move to the next hour file.
+        if (lastSentTime == DateTimeOffset.MinValue && foundSnapshot)
         {
-            // No snapshot found — start from beginning of file
-            fs.Seek(0, SeekOrigin.Begin);
-            using var gz2 = new GZipStream(fs, CompressionMode.Decompress);
-            using var sr2 = new StreamReader(gz2);
-            // Re-read and play from start
-            line = await sr2.ReadLineAsync(ct);
-            if (line != null)
-            {
-                var (m, k) = ParseRecordHeader(line);
-                await SendReplayRecord(ws, line, ct);
-                lastSentTime = DateTimeOffset.FromUnixTimeMilliseconds(m);
-            }
-            // Continue reading from sr2 for the rest
-            await PlayRemainingLines(ws, sr2, lastSentTime, getSpeed, isPaused, consumeSeek, ct);
-            return DateTimeOffset.UtcNow.UtcDateTime; // approximate
-        }
-        else if (lastSentTime == DateTimeOffset.MinValue && foundSnapshot)
-        {
-            // All records were before startTime — send just the snapshot (full state)
             await SendReplayRecord(ws, lastSnapshotLine!, ct);
             lastSentTime = DateTimeOffset.FromUnixTimeMilliseconds(lastSnapshotMillis);
+            return lastSentTime.UtcDateTime;
         }
 
-        // Phase 2: Real-time paced playback of remaining lines
+        // No snapshot AND no records after startTime → nothing to play in this file.
+        // Return startFrom so the outer loop advances to the next hour.
+        if (lastSentTime == DateTimeOffset.MinValue)
+        {
+            return startFrom;
+        }
+
+        // Phase 2: Real-time paced playback of remaining lines (after the first record we already sent)
         var endTime = await PlayRemainingLines(ws, sr, lastSentTime, getSpeed, isPaused, consumeSeek, ct);
         return DateTimeOffset.FromUnixTimeMilliseconds(endTime).UtcDateTime;
     }
@@ -422,21 +412,27 @@ public class ReplayServer
 
     private static (long millis, string kind) ParseRecordHeader(string line)
     {
-        // Quick parse of {"t":123456,"k":"B",...} without full deserialization
+        // Parse {"t":123456,"k":"B",...} using Utf8JsonReader — tolerates whitespace
+        // and property ordering changes, and skips malformed lines without throwing.
         try
         {
-            var tIdx = line.IndexOf("\"t\":", StringComparison.Ordinal);
-            var kIdx = line.IndexOf("\"k\":\"", StringComparison.Ordinal);
-            if (tIdx < 0 || kIdx < 0) return (0, "");
-
-            var tStart = tIdx + 4;
-            var tEnd = line.IndexOf(',', tStart);
-            if (tEnd < 0) tEnd = line.IndexOf('}', tStart);
-            var millis = long.Parse(line.AsSpan(tStart, tEnd - tStart));
-
-            var kStart = kIdx + 5;
-            var kind = line.Substring(kStart, 1);
-
+            var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(line));
+            long millis = 0;
+            string kind = "";
+            while (reader.Read())
+            {
+                if (reader.TokenType != JsonTokenType.PropertyName) continue;
+                var prop = reader.GetString();
+                reader.Read();
+                if (prop == "t" && reader.TokenType == JsonTokenType.Number)
+                    millis = reader.GetInt64();
+                else if (prop == "k" && reader.TokenType == JsonTokenType.String)
+                    kind = reader.GetString() ?? "";
+                if (millis != 0 && kind.Length > 0) break;
+                // Skip nested structures to avoid wasted work
+                if (reader.TokenType == JsonTokenType.StartObject || reader.TokenType == JsonTokenType.StartArray)
+                    reader.Skip();
+            }
             return (millis, kind);
         }
         catch

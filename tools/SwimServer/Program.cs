@@ -1618,11 +1618,11 @@ void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int tota
 // Fetch vNAS fix rules on startup (background) and refresh daily
 _ = Task.Run(async () =>
 {
-    await FetchVnasFixRules();
     while (true)
     {
+        try { await FetchVnasFixRules(); }
+        catch (Exception ex) { Console.WriteLine($"[vNAS] Rule fetch error: {ex.Message}"); }
         await Task.Delay(TimeSpan.FromHours(24));
-        await FetchVnasFixRules();
     }
 });
 

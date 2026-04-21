@@ -344,39 +344,41 @@ class AsdexBridge
 
         var prev = _holdBars.GetValueOrDefault(airport);
         _holdBars[airport] = state;
+        var statusChanged = prev?.Status != status;
 
-        // Only broadcast if status changed
-        if (prev?.Status == status) return;
-
-        // Empirical holdbar bit correlation: detect 0→1 transitions and match with nearby tracks
-        if (prev is not null && _webRootPath is not null)
+        // Empirical holdbar bit correlation:
+        // Continuously sample correlations for ALL currently-active bits on EVERY message.
+        // This accumulates many more data points than transition-only detection, so busy airports
+        // (ATL, ORD, DFW) can statistically sort out which line a bit really corresponds to.
+        if (_webRootPath is not null)
         {
             var mapper = _holdbarMappers.GetOrAdd(airport,
                 a => HoldbarMapper.Load(a, _webRootPath));
             if (mapper.HasGeo)
             {
-                var prevBits = ParseBits(prev.Status);
                 var newBits = ParseBits(status);
-                var newlyActive = new List<int>();
+                var activeBits = new List<int>();
                 for (int i = 0; i < 256 && i < newBits.Length; i++)
                 {
-                    if (newBits[i] && (i >= prevBits.Length || !prevBits[i]))
-                        newlyActive.Add(i);
+                    if (newBits[i]) activeBits.Add(i);
                 }
-                if (newlyActive.Count > 0 && _state.TryGetValue(airport, out var tracks))
+                if (activeBits.Count > 0 && _state.TryGetValue(airport, out var tracks))
                 {
                     var trackList = tracks.Values
                         .Where(t => (DateTime.UtcNow - t.LastSeen).TotalSeconds < 10)
                         .ToArray();
                     if (trackList.Length > 0)
-                        mapper.Correlate(newlyActive, trackList);
+                        mapper.Correlate(activeBits, trackList);
                 }
             }
         }
 
+        // Only broadcast/log/record when status actually changed
+        if (!statusChanged) return;
+
         // Count active bits
-        var activeBits = CountBits(status);
-        Console.WriteLine($"[HOLDBAR] {airport} ctrl={state.Control} bits={activeBits} status={status}");
+        var activeBitCount = CountBits(status);
+        Console.WriteLine($"[HOLDBAR] {airport} ctrl={state.Control} bits={activeBitCount} status={status}");
 
         // Record holdbar state for replay
         GetRecorder(airport)?.RecordHoldbar(state.ToJson(), DateTime.UtcNow);

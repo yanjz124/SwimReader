@@ -643,9 +643,13 @@ class AsdexTrack
     public double  Longitude { get; set; }
     public double? AltitudeFeet   { get; set; }
     public int?    SpeedKts       { get; set; }
-    public double? HeadingDegrees { get; set; }
+    public double? HeadingDegrees { get; set; }   // From SMES, OR derived from position delta
     public string? EramGufi { get; set; }
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
+
+    // Previous position used to derive heading when SMES doesn't provide it (unknowns/primaries)
+    private double? _prevLat, _prevLon;
+    private const double MinMovementMeters = 2.0;  // below this, position noise dominates
 
     // From AD enhanced data (ADS-B reports)
     public string? SfdpsGufi      { get; set; }  // for SFDPS flight lookup
@@ -674,6 +678,22 @@ class AsdexTrack
         double? alt, int? speed, double? heading, string? eramGufi, string? wake = null,
         string? sfdpsGufi = null, string? adDep = null, string? adDest = null)
     {
+        // Derive heading from position delta when SMES doesn't provide one
+        // (typical for unknown/primary targets). Requires a previous position and
+        // enough movement to avoid noise.
+        if (!heading.HasValue && _prevLat.HasValue && _prevLon.HasValue)
+        {
+            var movement = DistanceMeters(_prevLat.Value, _prevLon.Value, lat, lon);
+            if (movement >= MinMovementMeters)
+                HeadingDegrees = BearingDegrees(_prevLat.Value, _prevLon.Value, lat, lon);
+        }
+        // Update previous position reference only when we actually moved (avoid tiny noise accumulating)
+        if (!_prevLat.HasValue || DistanceMeters(_prevLat.Value, _prevLon!.Value, lat, lon) >= MinMovementMeters)
+        {
+            _prevLat = lat;
+            _prevLon = lon;
+        }
+
         Latitude  = lat;
         Longitude = lon;
         if (callsign is not null) Callsign    = callsign;
@@ -689,6 +709,27 @@ class AsdexTrack
         if (adDep      is not null) AdDeparture   = adDep;
         if (adDest     is not null) AdDestination = adDest;
         LastSeen = DateTime.UtcNow;
+    }
+
+    private static double DistanceMeters(double lat1, double lon1, double lat2, double lon2)
+    {
+        // Flat-earth approximation, fine at airport scale
+        const double metersPerDegLat = 111_111.0;
+        var avgLatRad = (lat1 + lat2) * 0.5 * Math.PI / 180.0;
+        var dy = (lat2 - lat1) * metersPerDegLat;
+        var dx = (lon2 - lon1) * metersPerDegLat * Math.Cos(avgLatRad);
+        return Math.Sqrt(dx * dx + dy * dy);
+    }
+
+    private static double BearingDegrees(double lat1, double lon1, double lat2, double lon2)
+    {
+        var lat1R = lat1 * Math.PI / 180.0;
+        var lat2R = lat2 * Math.PI / 180.0;
+        var dLonR = (lon2 - lon1) * Math.PI / 180.0;
+        var y = Math.Sin(dLonR) * Math.Cos(lat2R);
+        var x = Math.Cos(lat1R) * Math.Sin(lat2R) - Math.Sin(lat1R) * Math.Cos(lat2R) * Math.Cos(dLonR);
+        var brg = Math.Atan2(y, x) * 180.0 / Math.PI;
+        return (brg + 360.0) % 360.0;
     }
 
     /// <summary>JSON-serializable representation for WebSocket / REST.</summary>

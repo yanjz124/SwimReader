@@ -347,31 +347,28 @@ class AsdexBridge
         var statusChanged = prev?.Status != status;
 
         // Empirical holdbar bit correlation:
-        // Only credit on 0→1 transitions — a bit TURNING ON means an aircraft just
-        // caused it (arrived at the hold bar). Continuous crediting overfits because
-        // every active bit gets credited to whichever aircraft happens to be stopped,
-        // regardless of which bar they're actually at.
-        if (statusChanged && prev is not null && _webRootPath is not null)
+        // Continuously correlate ALL currently-active bits with runway-occupying aircraft
+        // (fast on ground, or airborne). The Correlate() method itself filters out taxiing
+        // and parked aircraft, so only real runway traffic contributes to the mapping.
+        if (_webRootPath is not null)
         {
             var mapper = _holdbarMappers.GetOrAdd(airport,
                 a => HoldbarMapper.Load(a, _webRootPath));
             if (mapper.HasGeo)
             {
-                var prevBits = ParseBits(prev.Status);
                 var newBits = ParseBits(status);
-                var newlyActive = new List<int>();
+                var activeBits = new List<int>();
                 for (int i = 0; i < 256 && i < newBits.Length; i++)
                 {
-                    if (newBits[i] && (i >= prevBits.Length || !prevBits[i]))
-                        newlyActive.Add(i);
+                    if (newBits[i]) activeBits.Add(i);
                 }
-                if (newlyActive.Count > 0 && _state.TryGetValue(airport, out var tracks))
+                if (activeBits.Count > 0 && _state.TryGetValue(airport, out var tracks))
                 {
                     var trackList = tracks.Values
                         .Where(t => (DateTime.UtcNow - t.LastSeen).TotalSeconds < 10)
                         .ToArray();
                     if (trackList.Length > 0)
-                        mapper.Correlate(newlyActive, trackList);
+                        mapper.Correlate(activeBits, trackList);
                 }
             }
         }
@@ -799,10 +796,15 @@ class HoldbarMapper
     // bit → lineIndex → observation count
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<int, int>> _observations = new();
 
-    // Correlation threshold: aircraft must be within this distance of a hold bar line
-    private const double MaxCorrelationDistanceMeters = 30;
-    // Speed filter: only consider aircraft taxiing slowly (stopped at hold bar)
-    private const int MaxCorrelationSpeedKts = 15;
+    // Correlation threshold: aircraft must be within this distance of a hold bar line.
+    // Wide enough to catch an aircraft anywhere along the protected runway (hold bars
+    // sit at runway thresholds/crossings, but the runway-occupancy aircraft is
+    // typically somewhere along the runway, up to ~1.5 km away).
+    private const double MaxCorrelationDistanceMeters = 400;
+    // Speed filter: hold bars react to runway occupancy — aircraft taking off, landing,
+    // on short final. All fast. Slow aircraft (<30 kts) are taxiing or parked and
+    // never activate hold bars by themselves.
+    private const int MinCorrelationSpeedKts = 30;
 
     // Save at most once per 30 seconds
     private DateTime _lastSave = DateTime.MinValue;
@@ -872,26 +874,30 @@ class HoldbarMapper
     }
 
     /// <summary>
-    /// For each newly activated bit, find which hold bar lines have a slow aircraft nearby.
-    /// Only records a strong signal: exactly one line has a slow aircraft within 30m.
-    /// Speed filter (&lt;15 kts) eliminates aircraft rolling on runways or taxiing past.
+    /// For each newly activated bit, find which hold bar lines have a RUNWAY-OCCUPYING
+    /// aircraft nearby. Hold bars activate because of fast/airborne traffic on the
+    /// protected runway — not because of a plane slowly rolling up to hold. We therefore
+    /// filter to aircraft that are either fast (&gt;=30 kts, on a runway rolling) or
+    /// airborne (altitude set, on approach).
     /// </summary>
     public void Correlate(List<int> newlyActiveBits, AsdexTrack[] tracks)
     {
         bool changed = false;
 
-        // Filter to slow-moving aircraft only (stopped/creeping at hold bar)
-        var slowTracks = tracks.Where(t =>
-            t.SpeedKts is null or (<= MaxCorrelationSpeedKts)).ToArray();
-        if (slowTracks.Length == 0) return;
+        // Runway-occupancy aircraft: fast on the ground, or airborne on approach.
+        // Everything else (taxiing, parked at gate) is irrelevant to hold bar activation.
+        var runwayTracks = tracks.Where(t =>
+            (t.SpeedKts.HasValue && t.SpeedKts.Value >= MinCorrelationSpeedKts)
+            || (t.AltitudeFeet.HasValue && t.AltitudeFeet.Value > 50)).ToArray();
+        if (runwayTracks.Length == 0) return;
 
-        // Pre-compute: for each line, find the closest slow track distance
+        // Pre-compute: for each line, find the closest runway-occupying track distance
         var lineMinDist = new double[_lines.Count];
         for (int li = 0; li < _lines.Count; li++)
         {
             var (lat1, lon1, lat2, lon2) = _lines[li];
             double minDist = double.MaxValue;
-            foreach (var t in slowTracks)
+            foreach (var t in runwayTracks)
             {
                 var dist = PointToSegmentDistanceMeters(t.Latitude, t.Longitude, lat1, lon1, lat2, lon2);
                 if (dist < minDist) minDist = dist;
@@ -901,7 +907,7 @@ class HoldbarMapper
 
         foreach (var bit in newlyActiveBits)
         {
-            // Find all lines that have a slow aircraft within threshold
+            // Find all lines that have a runway aircraft within threshold
             int nearLine = -1;
             double nearDist = double.MaxValue;
             int nearCount = 0;
@@ -918,11 +924,11 @@ class HoldbarMapper
                 }
             }
 
-            // Strong signal: only 1-2 lines have a nearby slow aircraft (unambiguous)
-            if (nearLine >= 0 && nearCount <= 2)
+            // Strong signal: only 1-3 lines have a nearby runway aircraft (unambiguous)
+            if (nearLine >= 0 && nearCount <= 3)
             {
                 // Weight by inverse distance — closer = stronger
-                int weight = nearDist < 10 ? 10 : nearDist < 20 ? 5 : 1;
+                int weight = nearDist < 100 ? 5 : nearDist < 200 ? 3 : 1;
                 var bitObs = _observations.GetOrAdd(bit, _ => new ConcurrentDictionary<int, int>());
                 bitObs.AddOrUpdate(nearLine, weight, (_, v) => v + weight);
                 changed = true;

@@ -347,28 +347,31 @@ class AsdexBridge
         var statusChanged = prev?.Status != status;
 
         // Empirical holdbar bit correlation:
-        // Continuously sample correlations for ALL currently-active bits on EVERY message.
-        // This accumulates many more data points than transition-only detection, so busy airports
-        // (ATL, ORD, DFW) can statistically sort out which line a bit really corresponds to.
-        if (_webRootPath is not null)
+        // Only credit on 0→1 transitions — a bit TURNING ON means an aircraft just
+        // caused it (arrived at the hold bar). Continuous crediting overfits because
+        // every active bit gets credited to whichever aircraft happens to be stopped,
+        // regardless of which bar they're actually at.
+        if (statusChanged && prev is not null && _webRootPath is not null)
         {
             var mapper = _holdbarMappers.GetOrAdd(airport,
                 a => HoldbarMapper.Load(a, _webRootPath));
             if (mapper.HasGeo)
             {
+                var prevBits = ParseBits(prev.Status);
                 var newBits = ParseBits(status);
-                var activeBits = new List<int>();
+                var newlyActive = new List<int>();
                 for (int i = 0; i < 256 && i < newBits.Length; i++)
                 {
-                    if (newBits[i]) activeBits.Add(i);
+                    if (newBits[i] && (i >= prevBits.Length || !prevBits[i]))
+                        newlyActive.Add(i);
                 }
-                if (activeBits.Count > 0 && _state.TryGetValue(airport, out var tracks))
+                if (newlyActive.Count > 0 && _state.TryGetValue(airport, out var tracks))
                 {
                     var trackList = tracks.Values
                         .Where(t => (DateTime.UtcNow - t.LastSeen).TotalSeconds < 10)
                         .ToArray();
                     if (trackList.Length > 0)
-                        mapper.Correlate(activeBits, trackList);
+                        mapper.Correlate(newlyActive, trackList);
                 }
             }
         }

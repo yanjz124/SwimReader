@@ -792,6 +792,10 @@ class HoldbarMapper
 
     // GeoJSON line geometries: each is a pair of (lat, lon) endpoints
     private readonly List<(double lat1, double lon1, double lat2, double lon2)> _lines = new();
+    // Parallel to _lines: which runway each line protects (from GeoJSON runwayId property, may be null)
+    private readonly List<string?> _lineRunways = new();
+    // Runway polygons: name → list of (lat, lon) vertices
+    private readonly List<(string name, List<(double lat, double lon)> poly)> _runwayPolys = new();
 
     // bit → lineIndex → observation count
     private readonly ConcurrentDictionary<int, ConcurrentDictionary<int, int>> _observations = new();
@@ -827,7 +831,9 @@ class HoldbarMapper
         var savePath = Path.Combine(saveDir, airport.ToUpperInvariant() + ".json");
         var mapper = new HoldbarMapper(airport, savePath);
 
-        // Load GeoJSON lines
+        // Load GeoJSON geometry:
+        //   LineString with runwayId property = hold bar line (on that runway)
+        //   Polygon with id property like "9L - 27R" = runway surface polygon
         var geoPath = Path.Combine(webRootPath, "asdex", "holdbar-geo", icao + ".geojson");
         if (File.Exists(geoPath))
         {
@@ -836,15 +842,45 @@ class HoldbarMapper
                 using var doc = JsonDocument.Parse(File.ReadAllText(geoPath));
                 foreach (var feat in doc.RootElement.GetProperty("features").EnumerateArray())
                 {
+                    var props = feat.TryGetProperty("properties", out var p) ? p : default;
                     var geom = feat.GetProperty("geometry");
-                    if (geom.GetProperty("type").GetString() != "LineString") continue;
-                    var coords = geom.GetProperty("coordinates");
-                    if (coords.GetArrayLength() < 2) continue;
-                    var c0 = coords[0]; var c1 = coords[coords.GetArrayLength() - 1];
-                    mapper._lines.Add((
-                        c0[1].GetDouble(), c0[0].GetDouble(),
-                        c1[1].GetDouble(), c1[0].GetDouble()));
+                    var type = geom.GetProperty("type").GetString();
+
+                    if (type == "LineString")
+                    {
+                        var coords = geom.GetProperty("coordinates");
+                        if (coords.GetArrayLength() < 2) continue;
+                        var c0 = coords[0]; var c1 = coords[coords.GetArrayLength() - 1];
+                        mapper._lines.Add((
+                            c0[1].GetDouble(), c0[0].GetDouble(),
+                            c1[1].GetDouble(), c1[0].GetDouble()));
+                        string? rwy = null;
+                        if (props.ValueKind == JsonValueKind.Object
+                            && props.TryGetProperty("runwayId", out var rwyProp)
+                            && rwyProp.ValueKind == JsonValueKind.String)
+                            rwy = rwyProp.GetString();
+                        mapper._lineRunways.Add(rwy);
+                    }
+                    else if (type == "Polygon")
+                    {
+                        // Runway polygon — identified by the "id" property (e.g. "9L - 27R")
+                        string? name = null;
+                        if (props.ValueKind == JsonValueKind.Object
+                            && props.TryGetProperty("id", out var idProp)
+                            && idProp.ValueKind == JsonValueKind.String)
+                            name = idProp.GetString();
+                        if (name is null) continue;
+
+                        var rings = geom.GetProperty("coordinates");
+                        if (rings.GetArrayLength() == 0) continue;
+                        var outer = rings[0];
+                        var poly = new List<(double lat, double lon)>(outer.GetArrayLength());
+                        foreach (var pt in outer.EnumerateArray())
+                            poly.Add((pt[1].GetDouble(), pt[0].GetDouble()));
+                        if (poly.Count >= 3) mapper._runwayPolys.Add((name, poly));
+                    }
                 }
+                Console.WriteLine($"[HOLDBAR-MAP] {airport}: loaded {mapper._lines.Count} lines, {mapper._runwayPolys.Count} runway polygons");
             }
             catch (Exception ex) { Console.Error.WriteLine($"[HOLDBAR-MAP] GeoJSON parse error: {ex.Message}"); }
         }
@@ -874,63 +910,69 @@ class HoldbarMapper
     }
 
     /// <summary>
-    /// For each newly activated bit, find which hold bar lines have a RUNWAY-OCCUPYING
-    /// aircraft nearby. Hold bars activate because of fast/airborne traffic on the
-    /// protected runway — not because of a plane slowly rolling up to hold. We therefore
-    /// filter to aircraft that are either fast (&gt;=30 kts, on a runway rolling) or
-    /// airborne (altitude set, on approach).
+    /// For each active bit, identify which RUNWAY has an aircraft on it (via polygon
+    /// containment), then credit the bit to hold bar lines tagged with that runway's ID.
+    /// Hold bars activate because of runway occupancy — fast aircraft on the runway surface
+    /// or airborne aircraft on short final.
     /// </summary>
     public void Correlate(List<int> newlyActiveBits, AsdexTrack[] tracks)
     {
         bool changed = false;
 
         // Runway-occupancy aircraft: fast on the ground, or airborne on approach.
-        // Everything else (taxiing, parked at gate) is irrelevant to hold bar activation.
         var runwayTracks = tracks.Where(t =>
             (t.SpeedKts.HasValue && t.SpeedKts.Value >= MinCorrelationSpeedKts)
             || (t.AltitudeFeet.HasValue && t.AltitudeFeet.Value > 50)).ToArray();
         if (runwayTracks.Length == 0) return;
 
-        // Pre-compute: for each line, find the closest runway-occupying track distance
-        var lineMinDist = new double[_lines.Count];
-        for (int li = 0; li < _lines.Count; li++)
+        // Identify which runway(s) currently have an occupying aircraft.
+        // For each runway polygon, check if any runway-track is inside it.
+        var occupiedRunways = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, poly) in _runwayPolys)
         {
-            var (lat1, lon1, lat2, lon2) = _lines[li];
-            double minDist = double.MaxValue;
             foreach (var t in runwayTracks)
             {
-                var dist = PointToSegmentDistanceMeters(t.Latitude, t.Longitude, lat1, lon1, lat2, lon2);
-                if (dist < minDist) minDist = dist;
-            }
-            lineMinDist[li] = minDist;
-        }
-
-        foreach (var bit in newlyActiveBits)
-        {
-            // Find all lines that have a runway aircraft within threshold
-            int nearLine = -1;
-            double nearDist = double.MaxValue;
-            int nearCount = 0;
-            for (int li = 0; li < _lines.Count; li++)
-            {
-                if (lineMinDist[li] < MaxCorrelationDistanceMeters)
+                if (PointInPolygon(t.Latitude, t.Longitude, poly))
                 {
-                    nearCount++;
-                    if (lineMinDist[li] < nearDist)
-                    {
-                        nearDist = lineMinDist[li];
-                        nearLine = li;
-                    }
+                    occupiedRunways.Add(name);
+                    break;
                 }
             }
+        }
 
-            // Strong signal: only 1-3 lines have a nearby runway aircraft (unambiguous)
-            if (nearLine >= 0 && nearCount <= 3)
+        // If we have runway polygons but nobody's inside any of them, there's nothing
+        // to credit. (We could fall back to distance-based, but that's what caused the
+        // previous overfitting.)
+        if (_runwayPolys.Count > 0 && occupiedRunways.Count == 0) return;
+
+        // Without runway polygons, fall back to distance-based correlation (legacy behavior)
+        if (_runwayPolys.Count == 0)
+        {
+            CorrelateByDistance(newlyActiveBits, runwayTracks, ref changed);
+        }
+        else
+        {
+            foreach (var bit in newlyActiveBits)
             {
-                // Weight by inverse distance — closer = stronger
-                int weight = nearDist < 100 ? 5 : nearDist < 200 ? 3 : 1;
+                // Find candidate lines whose runwayId matches an occupied runway
+                var candidates = new List<int>();
+                for (int li = 0; li < _lines.Count; li++)
+                {
+                    var rwy = _lineRunways[li];
+                    if (rwy is not null && occupiedRunways.Contains(rwy))
+                        candidates.Add(li);
+                }
+
+                // Only credit if we have a manageable number of candidates
+                if (candidates.Count == 0 || candidates.Count > 40) continue;
+
+                // Credit all candidate lines equally — over many observations, the bits
+                // that belong to this runway will get boosted while others stay flat.
+                // The statistical signal comes from "this bit is ON whenever this runway
+                // has traffic" rather than "this bit is close to this line".
                 var bitObs = _observations.GetOrAdd(bit, _ => new ConcurrentDictionary<int, int>());
-                bitObs.AddOrUpdate(nearLine, weight, (_, v) => v + weight);
+                foreach (var li in candidates)
+                    bitObs.AddOrUpdate(li, 1, (_, v) => v + 1);
                 changed = true;
             }
         }
@@ -995,7 +1037,62 @@ class HoldbarMapper
         catch (Exception ex) { Console.Error.WriteLine($"[HOLDBAR-MAP] Save error: {ex.Message}"); }
     }
 
+    // ── Legacy distance-based correlation (fallback when no runway polygons available) ──
+    private void CorrelateByDistance(List<int> newlyActiveBits, AsdexTrack[] runwayTracks, ref bool changed)
+    {
+        var lineMinDist = new double[_lines.Count];
+        for (int li = 0; li < _lines.Count; li++)
+        {
+            var (lat1, lon1, lat2, lon2) = _lines[li];
+            double minDist = double.MaxValue;
+            foreach (var t in runwayTracks)
+            {
+                var dist = PointToSegmentDistanceMeters(t.Latitude, t.Longitude, lat1, lon1, lat2, lon2);
+                if (dist < minDist) minDist = dist;
+            }
+            lineMinDist[li] = minDist;
+        }
+
+        foreach (var bit in newlyActiveBits)
+        {
+            int nearLine = -1;
+            double nearDist = double.MaxValue;
+            int nearCount = 0;
+            for (int li = 0; li < _lines.Count; li++)
+            {
+                if (lineMinDist[li] < MaxCorrelationDistanceMeters)
+                {
+                    nearCount++;
+                    if (lineMinDist[li] < nearDist) { nearDist = lineMinDist[li]; nearLine = li; }
+                }
+            }
+            if (nearLine >= 0 && nearCount <= 3)
+            {
+                int weight = nearDist < 100 ? 5 : nearDist < 200 ? 3 : 1;
+                var bitObs = _observations.GetOrAdd(bit, _ => new ConcurrentDictionary<int, int>());
+                bitObs.AddOrUpdate(nearLine, weight, (_, v) => v + weight);
+                changed = true;
+            }
+        }
+    }
+
     // ── Geo math ──
+
+    private static bool PointInPolygon(double lat, double lon, List<(double lat, double lon)> poly)
+    {
+        // Standard ray-casting algorithm
+        bool inside = false;
+        int n = poly.Count;
+        for (int i = 0, j = n - 1; i < n; j = i++)
+        {
+            var (yi, xi) = poly[i];
+            var (yj, xj) = poly[j];
+            if (((yi > lat) != (yj > lat)) &&
+                (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi))
+                inside = !inside;
+        }
+        return inside;
+    }
 
     private static double PointToSegmentDistanceMeters(
         double pLat, double pLon, double aLat, double aLon, double bLat, double bLon)

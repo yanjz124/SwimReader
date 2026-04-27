@@ -297,6 +297,21 @@ class AsdexBridge
                         t.TrackId != trackId &&
                         string.Equals(t.Callsign, adCallsign, StringComparison.OrdinalIgnoreCase));
                 }
+                // Fallback: when an aircraft just turned its transponder on, the AD report
+                // arrives with a callsign before the AT primary track has been tagged. Match
+                // by proximity (same airport, within ~50m) to a nearby untagged AT track.
+                if (track is null && adCallsign is not null)
+                {
+                    track = airportTracks.Values.FirstOrDefault(t =>
+                        t.TrackId != trackId &&
+                        t.Callsign is null &&
+                        IsClose(t.Latitude, t.Longitude, lat, lon));
+                    if (track is not null)
+                    {
+                        // Adopt AD's callsign onto the AT track
+                        track.Callsign = adCallsign;
+                    }
+                }
                 if (track is not null)
                 {
                     // Merge enrichment fields into the AT track (position comes from AT reports)
@@ -466,6 +481,17 @@ class AsdexBridge
     private static int? ParseInt(string? v) => int.TryParse(v, out var i) ? i : null;
     private static double? ParseDouble(string? v) =>
         double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;
+
+    // Surface-radar proximity check: ~50m horizontal. Used to merge AT/AD tracks
+    // for the same aircraft when one has callsign and the other doesn't.
+    private static bool IsClose(double aLat, double aLon, double bLat, double bLon)
+    {
+        if (aLat == 0 && aLon == 0) return false;
+        if (bLat == 0 && bLon == 0) return false;
+        const double maxLatDeg = 0.00045;  // ~50m latitude
+        const double maxLonDeg = 0.00060;  // ~50m longitude at ~40°N (slightly looser is fine)
+        return Math.Abs(aLat - bLat) < maxLatDeg && Math.Abs(aLon - bLon) < maxLonDeg;
+    }
 
     // ── Timer callbacks ──────────────────────────────────────────────────────
 

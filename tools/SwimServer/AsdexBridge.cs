@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using SolaceSystems.Solclient.Messaging;
+using SwimServer;
 
 /// <summary>
 /// Manages STDDS/SMES (ASDE-X) data ingestion and WebSocket broadcasting.

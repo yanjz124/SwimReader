@@ -404,85 +404,14 @@ FlightCacheService.Load(flights, cacheDir, cacheJsonOpts);
 
 // ── Flight history persistence (save purged flights to daily JSONL files) ─────
 // History budget: keep total disk usage under 85%. Calculated dynamically each cleanup cycle.
-long GetMaxHistoryBytes()
-{
-    try
-    {
-        var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(historyDir)) ?? "/");
-        long historySize = Directory.Exists(historyDir)
-            ? Directory.GetFiles(historyDir, "*.jsonl").Sum(f => new FileInfo(f).Length) : 0;
-        var usedNonHistory = drive.TotalSize - drive.TotalFreeSpace - historySize;
-        var budget = Math.Max(0, (long)(drive.TotalSize * 0.85) - usedNonHistory);
-        return budget;
-    }
-    catch { return 2L * 1024 * 1024 * 1024; }
-}
 var historyJsonOpts = new JsonSerializerOptions
 {
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 };
 
-void SaveFlightHistory(FlightState f)
-{
-    try
-    {
-        Directory.CreateDirectory(historyDir);
-        var datePart = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        var filePath = Path.Combine(historyDir, $"{datePart}.jsonl");
-        var record = new
-        {
-            f.Gufi, f.FdpsGufi, f.Callsign, f.ComputerId, f.Operator, f.Originator, f.FlightStatus,
-            f.Origin, f.Destination, f.AircraftType, f.Registration, f.WakeCategory,
-            f.ModeSCode, f.EquipmentQualifier, f.AircraftPerformance, f.Squawk, f.AssignedSquawk, f.FlightRules, f.FlightType,
-            f.Route, f.STAR, f.Remarks,
-            f.AssignedAltitude, f.AssignedVfr, f.BlockFloor, f.BlockCeiling,
-            f.InterimAltitude, f.ReportedAltitude,
-            f.Latitude, f.Longitude, f.GroundSpeed,
-            f.ControllingFacility, f.ControllingSector, f.ReportingFacility,
-            f.DataLinkCode, f.CommunicationCode,
-            LastSeen = f.LastSeen.ToString("o"),
-            Events = f.GetAllEvents().Select(e => new { e.Time, e.Source, e.Centre, e.Summary }).ToArray()
-        };
-        var line = JsonSerializer.Serialize(record, historyJsonOpts);
-        lock (historyDir) // serialize writes to same file
-        {
-            File.AppendAllText(filePath, line + "\n");
-        }
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[History] Save error for {f.Gufi}: {ex.Message}");
-    }
-}
-
-void CleanupHistory()
-{
-    try
-    {
-        if (!Directory.Exists(historyDir)) return;
-        var files = Directory.GetFiles(historyDir, "*.jsonl").OrderBy(f => f).ToList();
-        long total = files.Sum(f => new FileInfo(f).Length);
-        long maxBytes = GetMaxHistoryBytes();
-        Console.WriteLine($"[History] {files.Count} files, {total / 1024 / 1024}MB used, {maxBytes / 1024 / 1024}MB budget (85% disk)");
-        while (total > maxBytes && files.Count > 1)
-        {
-            var oldest = files[0];
-            var size = new FileInfo(oldest).Length;
-            File.Delete(oldest);
-            Console.WriteLine($"[History] Deleted {Path.GetFileName(oldest)} ({size / 1024 / 1024}MB) to stay under budget");
-            files.RemoveAt(0);
-            total -= size;
-        }
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[History] Cleanup error: {ex.Message}");
-    }
-}
-
 // Run cleanup on startup
-CleanupHistory();
+FlightHistoryService.Cleanup(historyDir);
 
 // Save flight cache on graceful shutdown (SIGTERM from systemd)
 var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
@@ -891,7 +820,7 @@ var purgeTimer = new Timer(_ =>
             eramRecorder.RecordRemove(new { gufi }, DateTime.UtcNow);
             Broadcast(new WsMsg("remove", new { gufi }));
             // Persist to daily history file before discarding
-            Task.Run(() => SaveFlightHistory(f));
+            Task.Run(() => FlightHistoryService.Save(f, historyDir, historyJsonOpts));
         }
         // Expire point-out data after 3 minutes (SFDPS doesn't send clear signals)
         // Also clear legacy data with no timestamp (e.g. from cache before this fix)
@@ -949,7 +878,7 @@ var taisFlushTimer = new Timer(_ => tais.FlushDirty(), null, TimeSpan.FromSecond
 var taisPurgeTimer = new Timer(_ => tais.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
-var historyCleanupTimer = new Timer(_ => CleanupHistory(), null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
+var historyCleanupTimer = new Timer(_ => FlightHistoryService.Cleanup(historyDir), null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
 
 // Replay: periodic ERAM snapshots for seek support (every 5 minutes)
 var eramSnapshotTimer = new Timer(_ =>

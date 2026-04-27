@@ -1132,7 +1132,7 @@ void ProcessFlight(XElement flight, string rawXml)
     // XML element discovery: walk the flight element tree (first 10K messages only to minimize overhead)
     if (Interlocked.Read(ref _procCount) < 10_000)
     {
-        WalkElements(flight, "flight", source);
+        EventSummaryBuilder.WalkElements(flight, "flight", source, xmlElements);
         xmlSampleStore[source] = rawXml;
     }
 
@@ -1452,8 +1452,8 @@ void ProcessFlight(XElement flight, string rawXml)
         if (po is not null)
         {
             var origUnit = po.Elements().FirstOrDefault(e => e.Name.LocalName == "originatingUnit");
-            var recvUnits = po.Elements().Where(e => e.Name.LocalName == "receivingUnit").Select(FormatUnit).ToArray();
-            if (origUnit is not null) state.PointoutOriginatingUnit = FormatUnit(origUnit);
+            var recvUnits = po.Elements().Where(e => e.Name.LocalName == "receivingUnit").Select(EventSummaryBuilder.FormatUnit).ToArray();
+            if (origUnit is not null) state.PointoutOriginatingUnit = EventSummaryBuilder.FormatUnit(origUnit);
             if (recvUnits.Length > 0) state.PointoutReceivingUnit = string.Join(",", recvUnits);
             state.PointoutTimestamp = DateTime.UtcNow;
         }
@@ -1531,9 +1531,9 @@ void ProcessFlight(XElement flight, string rawXml)
                 state.HandoffForced = source == "AH" &&
                     (evtUpper.StartsWith("ACCEPT") || evtUpper == "EXECUTION");
             }
-            if (recv is not null) state.HandoffReceiving = FormatUnit(recv);
-            if (xfer is not null) state.HandoffTransferring = FormatUnit(xfer);
-            if (acpt is not null) state.HandoffAccepting = FormatUnit(acpt);
+            if (recv is not null) state.HandoffReceiving = EventSummaryBuilder.FormatUnit(recv);
+            if (xfer is not null) state.HandoffTransferring = EventSummaryBuilder.FormatUnit(xfer);
+            if (acpt is not null) state.HandoffAccepting = EventSummaryBuilder.FormatUnit(acpt);
         }
     }
     else if (source == "HF" && (!string.IsNullOrEmpty(state.ClearanceHeading) || !string.IsNullOrEmpty(state.ClearanceSpeed) || !string.IsNullOrEmpty(state.ClearanceText)))
@@ -1678,7 +1678,7 @@ void ProcessFlight(XElement flight, string rawXml)
         Time = timestamp ?? DateTime.UtcNow.ToString("o"),
         Source = source,
         Centre = centre,
-        Summary = BuildEventSummary(source, flight),
+        Summary = EventSummaryBuilder.BuildEventSummary(source, flight),
         RawXml = source is not "TH" and not "HZ" ? rawXml : null
     });
 
@@ -1758,136 +1758,6 @@ void ProcessFlight(XElement flight, string rawXml)
 
     // Mark flight dirty for batched broadcast (all updates batched every 1s)
     _dirty.TryAdd(gufi, 0);
-}
-
-string FormatUnit(XElement unit)
-{
-    var id = unit.Attribute("unitIdentifier")?.Value ?? "";
-    var sec = unit.Attribute("sectorIdentifier")?.Value ?? "";
-    return string.IsNullOrEmpty(sec) ? id : $"{id}/{sec}";
-}
-
-void WalkElements(XElement el, string path, string source)
-{
-    var key = $"{path}";
-    xmlElements.AddOrUpdate(key, 1, (_, v) => v + 1);
-
-    // Also record attributes at this path
-    foreach (var attr in el.Attributes())
-    {
-        var attrKey = $"{path}/@{attr.Name.LocalName}";
-        xmlElements.AddOrUpdate(attrKey, 1, (_, v) => v + 1);
-    }
-
-    foreach (var child in el.Elements())
-    {
-        var childName = child.Name.LocalName;
-        WalkElements(child, $"{path}/{childName}", source);
-    }
-}
-
-string BuildEventSummary(string source, XElement flight)
-{
-    return source switch
-    {
-        "TH" => "Track history update",
-        "HZ" => BuildHzSummary(flight),
-        "OH" => BuildOhSummary(flight),
-        "FH" => BuildFhSummary(flight),
-        "HP" => "Handoff proposal",
-        "HU" => "Handoff update",
-        "AH" => "Assumed/amended handoff",
-        "HX" => "Handoff execution (route transfer)",
-        "CL" => "Flight plan cancellation/clearance",
-        "LH" => BuildLhSummary(flight),
-        "NP" => "New flight plan",
-        "PT" => BuildPtSummary(flight),
-        "HT" => BuildPtSummary(flight),
-        "DH" => "Departure handoff",
-        "BA" => "Beacon code assignment",
-        "RE" => "Beacon code reassignment",
-        "RH" => "Radar handoff (drop)",
-        "HV" => "Handoff void/complete",
-        "HF" => "Handoff failure",
-        _ => $"Message type: {source}"
-    };
-}
-
-string BuildHzSummary(XElement flight)
-{
-    var pos = flight.Descendants().FirstOrDefault(e => e.Name.LocalName == "pos");
-    var alt = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "assignedAltitude");
-    var altVal = alt?.Descendants().FirstOrDefault(e => e.Name.LocalName == "simple")?.Value;
-    if (altVal is not null && double.TryParse(altVal, out var a))
-        return $"Position update — assigned FL{a / 100:F0}";
-    return "Position update";
-}
-
-string BuildOhSummary(XElement flight)
-{
-    var ho = flight.Descendants().FirstOrDefault(e => e.Name.LocalName == "handoff");
-    if (ho is null) return "Handoff";
-    var evt = ho.Attribute("event")?.Value ?? "";
-    var recv = ho.Elements().FirstOrDefault(e => e.Name.LocalName == "receivingUnit");
-    var xfer = ho.Elements().FirstOrDefault(e => e.Name.LocalName == "transferringUnit");
-    return $"Handoff {evt}: {FormatUnit(xfer!)} → {FormatUnit(recv!)}";
-}
-
-string BuildLhSummary(XElement flight)
-{
-    var ia = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "interimAltitude");
-    XNamespace xsiNs2 = "http://www.w3.org/2001/XMLSchema-instance";
-    if (ia is not null)
-    {
-        var isNil = string.Equals(ia.Attribute(xsiNs2 + "nil")?.Value, "true", StringComparison.OrdinalIgnoreCase)
-                 || string.Equals(ia.Attribute("nil")?.Value, "true", StringComparison.OrdinalIgnoreCase);
-        if (isNil) return "Interim altitude cleared (nil)";
-        if (double.TryParse(ia.Value, out var alt))
-            return $"Interim altitude set: {alt:F0} ft";
-    }
-    return "Local handoff / interim altitude cleared";
-}
-
-string BuildFhSummary(XElement flight)
-{
-    var parts = new List<string>();
-    var ft = flight.Attribute("flightType")?.Value;
-    if (ft is not null) parts.Add($"[{ft}]");
-
-    var acType = flight.Descendants()
-        .FirstOrDefault(e => e.Name.LocalName == "icaoModelIdentifier")?.Value;
-    if (acType is not null) parts.Add(acType);
-
-    var dep = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "departure")
-        ?.Attribute("departurePoint")?.Value;
-    var arr = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "arrival")
-        ?.Attribute("arrivalPoint")?.Value;
-    if (dep is not null || arr is not null)
-        parts.Add($"{dep ?? "?"}-{arr ?? "?"}");
-
-    var simple = flight.Descendants()
-        .FirstOrDefault(e => e.Name.LocalName == "assignedAltitude")
-        ?.Descendants().FirstOrDefault(e => e.Name.LocalName == "simple")?.Value;
-    if (simple is not null && double.TryParse(simple, out var alt))
-        parts.Add(alt >= 18000 ? $"FL{alt / 100:F0}" : $"{alt:F0}ft");
-
-    var star = flight.Descendants()
-        .FirstOrDefault(e => e.Name.LocalName == "nasadaptedArrivalRoute")
-        ?.Attribute("nasRouteIdentifier")?.Value;
-    if (star is not null) parts.Add(star);
-
-    return parts.Count > 0 ? $"FP: {string.Join(" ", parts)}" : "Flight plan update";
-}
-
-string BuildPtSummary(XElement flight)
-{
-    var po = flight.Descendants().FirstOrDefault(e => e.Name.LocalName == "pointout");
-    if (po is null) return "Point-out";
-    var orig = po.Elements().FirstOrDefault(e => e.Name.LocalName == "originatingUnit");
-    var recv = po.Elements().FirstOrDefault(e => e.Name.LocalName == "receivingUnit");
-    if (orig is not null && recv is not null)
-        return $"Point-out: {FormatUnit(orig)} → {FormatUnit(recv)}";
-    return "Point-out";
 }
 
 void SendSnapshot(WsClient client)

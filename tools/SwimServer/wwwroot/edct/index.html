@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EDCT — SwimReader</title>
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<link rel="stylesheet" href="/edct/edct.css?v=1">
+</head>
+<body>
+
+<header>
+    <h1>EDCT</h1>
+    <span class="sub">EXPECTED DEPARTURE CLEARANCE TIMES</span>
+    <div class="status-bar">
+        <span id="count">--</span>
+        <span class="dot">•</span>
+        <span id="updated">--</span>
+        <span class="dot">•</span>
+        <a href="/" class="home-link">home</a>
+    </div>
+</header>
+
+<div class="filter-row">
+    <input type="text" id="searchInput" placeholder="Filter (callsign / origin / dest / type / sector)...">
+    <label>Origin</label>
+    <select id="originFilter"><option value="">ALL</option></select>
+    <label>Destination</label>
+    <select id="destFilter"><option value="">ALL</option></select>
+    <label>Status</label>
+    <select id="statusFilter">
+        <option value="all">ALL</option>
+        <option value="pending" selected>Pending only (not departed)</option>
+        <option value="departed">Departed</option>
+        <option value="upcoming30">Upcoming &lt;30 min</option>
+        <option value="overdue">Overdue (past EDCT)</option>
+    </select>
+    <label class="sort-label">Sort</label>
+    <select id="sortBy">
+        <option value="edct" selected>EDCT</option>
+        <option value="callsign">Callsign</option>
+        <option value="origin">Origin</option>
+        <option value="dest">Destination</option>
+        <option value="delay">Delay (min until)</option>
+    </select>
+</div>
+
+<table class="edct-table">
+    <thead>
+        <tr>
+            <th class="col-cs">CALLSIGN</th>
+            <th class="col-tp">TYPE</th>
+            <th class="col-ap">ORIG</th>
+            <th class="col-ap">DEST</th>
+            <th class="col-tm">EDCT (Z)</th>
+            <th class="col-tu">IN</th>
+            <th class="col-tm">ACTUAL OFF</th>
+            <th class="col-tm">ETA</th>
+            <th class="col-fac">SECTOR</th>
+            <th class="col-st">STATUS</th>
+        </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+</table>
+
+<div id="empty" class="empty">No flights with EDCT assignments. EDCTs appear during Ground Delay Programs, CTOPs, and Ground Stops.</div>
+
+<script src="/edct/edct.js?v=1"></script>
+</body>
+</html>

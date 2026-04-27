@@ -57,6 +57,8 @@ class FlightState
     public string? ETA { get; set; }
     public string? CoordinationTime { get; set; }
     public string? CoordinationFix { get; set; }
+    /// <summary>EDCT (Expected Departure Clearance Time) — assigned by GDP/CTOP/Ground Stop. ISO 8601 string.</summary>
+    public string? EdctTime { get; set; }
 
     // Ownership / handoff
     public string? ReportingFacility { get; set; }
@@ -217,7 +219,7 @@ class FlightState
         Latitude = Latitude, Longitude = Longitude,
         GroundSpeed = GroundSpeed, RequestedSpeed = RequestedSpeed,
         TrackVelocityX = TrackVelocityX, TrackVelocityY = TrackVelocityY,
-        ActualDepartureTime = ActualDepartureTime, ETA = ETA,
+        ActualDepartureTime = ActualDepartureTime, ETA = ETA, EdctTime = EdctTime,
         CoordinationTime = CoordinationTime, CoordinationFix = CoordinationFix,
         ReportingFacility = ReportingFacility,
         ControllingFacility = ControllingFacility, ControllingSector = ControllingSector,
@@ -258,7 +260,7 @@ class FlightState
             Latitude = s.Latitude, Longitude = s.Longitude,
             GroundSpeed = s.GroundSpeed, RequestedSpeed = s.RequestedSpeed,
             TrackVelocityX = s.TrackVelocityX, TrackVelocityY = s.TrackVelocityY,
-            ActualDepartureTime = s.ActualDepartureTime, ETA = s.ETA,
+            ActualDepartureTime = s.ActualDepartureTime, ETA = s.ETA, EdctTime = s.EdctTime,
             CoordinationTime = s.CoordinationTime, CoordinationFix = s.CoordinationFix,
             ReportingFacility = s.ReportingFacility,
             ControllingFacility = s.ControllingFacility, ControllingSector = s.ControllingSector,
@@ -310,7 +312,7 @@ class FlightState
         Registration, EquipmentQualifier, AircraftPerformance, RequestedSpeed,
         OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
         CoordinationFix, CoordinationTime,
-        ETA, ActualDepartureTime,
+        ETA, ActualDepartureTime, EdctTime,
         LastMsgSource,
         LastSeen = LastSeen.ToString("HH:mm:ss"),
         PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
@@ -348,7 +350,7 @@ class FlightState
             AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
             InterimAltitude, ReportedAltitude,
             Latitude, Longitude, GroundSpeed, RequestedSpeed,
-            ActualDepartureTime, ETA, CoordinationTime, CoordinationFix,
+            ActualDepartureTime, ETA, EdctTime, CoordinationTime, CoordinationFix,
             ReportingFacility, ControllingFacility, ControllingSector,
             HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
             PointoutOriginatingUnit, PointoutReceivingUnit,
@@ -414,6 +416,7 @@ class FlightSnapshot
     public double? TrackVelocityY { get; set; }
     public string? ActualDepartureTime { get; set; }
     public string? ETA { get; set; }
+    public string? EdctTime { get; set; }
     public string? CoordinationTime { get; set; }
     public string? CoordinationFix { get; set; }
     public string? ReportingFacility { get; set; }

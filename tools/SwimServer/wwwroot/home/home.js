@@ -196,6 +196,16 @@ async function refreshStats() {
                 `${(ts.flightCount || 0).toLocaleString()} flights  ${(ts.tmiCount || 0)} TMIs`;
         }
     } catch {}
+
+    try {
+        // EDCT count
+        const er = await fetch('/api/edct');
+        if (er.ok) {
+            const ed = await er.json();
+            const el = document.getElementById('edctCount');
+            if (el) el.textContent = (ed.count || 0) + ' EDCTs';
+        }
+    } catch {}
 }
 
 refreshStats();

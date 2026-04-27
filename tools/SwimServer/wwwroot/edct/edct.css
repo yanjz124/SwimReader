@@ -1,0 +1,61 @@
+html, body {
+    background: #000; color: #ccc; font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 12px; height: 100%; overflow: hidden; display: flex; flex-direction: column;
+}
+body { overflow: auto; }
+
+header {
+    background: #0a0a0a; border-bottom: 1px solid #333;
+    padding: 8px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header .sub { font-size: 11px; color: #555; }
+.status-bar { margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 8px; }
+.status-bar .dot { color: #444; }
+.status-bar #count { color: #cccc44; }
+.home-link { color: #888; text-decoration: none; }
+.home-link:hover { color: #cccc44; }
+
+.filter-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; border-bottom: 1px solid #222; background: #050505;
+    flex-wrap: wrap;
+}
+.filter-row input {
+    background: #111; border: 1px solid #333; color: #ccc;
+    padding: 5px 10px; font-family: inherit; font-size: 12px; width: 280px; outline: none;
+}
+.filter-row input:focus { border-color: #cccc44; }
+.filter-row label { font-size: 11px; color: #666; }
+.filter-row select {
+    background: #111; border: 1px solid #333; color: #ccc;
+    padding: 4px 8px; font-family: inherit; font-size: 11px; outline: none;
+}
+.filter-row .sort-label { margin-left: 12px; }
+
+.edct-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.edct-table thead th {
+    background: #1a1a1a; color: #888; font-weight: normal;
+    padding: 6px 10px; text-align: left; border-bottom: 1px solid #333;
+    position: sticky; top: 0; z-index: 1;
+    font-size: 10px; letter-spacing: 1px;
+}
+.edct-table tbody td {
+    padding: 5px 10px; border-bottom: 1px solid #1a1a1a;
+}
+.edct-table tbody tr:hover { background: #0a0a0a; }
+.edct-table tbody tr.departed { color: #555; }
+.edct-table tbody tr.overdue td.col-tu { color: #ff4444; font-weight: bold; }
+.edct-table tbody tr.upcoming td.col-tu { color: #ff8c00; }
+
+.col-cs { color: #cccc44; font-weight: bold; }
+.col-tm { color: #4eaaff; }
+.col-tu { color: #888; text-align: right; min-width: 60px; }
+.col-fac { color: #aaa; }
+.col-st { color: #888; font-size: 11px; }
+
+.empty {
+    padding: 32px; text-align: center; color: #555; font-size: 13px;
+}

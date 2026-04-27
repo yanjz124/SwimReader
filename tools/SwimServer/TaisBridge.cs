@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Xml.Linq;
+using SwimServer;
 
 /// <summary>
 /// Manages TAIS (Terminal Automation Information Service) data: STARS terminal

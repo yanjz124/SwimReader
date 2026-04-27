@@ -400,79 +400,7 @@ var cacheJsonOpts = new JsonSerializerOptions
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 };
 
-void SaveFlightCache()
-{
-    try
-    {
-        Directory.CreateDirectory(cacheDir);
-        // Backfill fields from stored event XML before snapshotting
-        foreach (var f in flights.Values) f.BackfillFromEvents();
-        var cache = new FlightCache
-        {
-            SavedAt = DateTime.UtcNow,
-            Flights = flights.Values
-                .Where(f => f.FlightStatus != "CANCELLED")
-                .Select(f => f.ToSnapshot())
-                .ToList()
-        };
-        var tmpPath = Path.Combine(cacheDir, "flights.json.tmp");
-        var finalPath = Path.Combine(cacheDir, "flights.json");
-        using (var fs = File.Create(tmpPath))
-            JsonSerializer.Serialize(fs, cache, cacheJsonOpts);
-        File.Move(tmpPath, finalPath, overwrite: true);
-        Console.WriteLine($"[Cache] Saved {cache.Flights.Count} flights ({new FileInfo(finalPath).Length / 1024}KB)");
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[Cache] Save error: {ex.Message}");
-    }
-}
-
-void LoadFlightCache()
-{
-    try
-    {
-        var cachePath = Path.Combine(cacheDir, "flights.json");
-        if (!File.Exists(cachePath))
-        {
-            Console.WriteLine("[Cache] No cached flight data found");
-            return;
-        }
-        var ageMinutes = (DateTime.UtcNow - File.GetLastWriteTimeUtc(cachePath)).TotalMinutes;
-        if (ageMinutes > 60)
-        {
-            Console.WriteLine($"[Cache] Cache is {ageMinutes:F0} min old, skipping (stale)");
-            return;
-        }
-        using var fs = File.OpenRead(cachePath);
-        var cache = JsonSerializer.Deserialize<FlightCache>(fs, cacheJsonOpts);
-        if (cache?.Flights is null || cache.Flights.Count == 0)
-        {
-            Console.WriteLine("[Cache] Cache file empty");
-            return;
-        }
-        int loaded = 0;
-        foreach (var snapshot in cache.Flights)
-        {
-            if (string.IsNullOrEmpty(snapshot.Gufi)) continue;
-            flights[snapshot.Gufi] = FlightState.FromSnapshot(snapshot);
-            loaded++;
-        }
-        // Backfill FlightType from event summaries (survives cache via [TYPE] in summary text)
-        int backfilled = 0;
-        foreach (var f in flights.Values)
-        {
-            if (f.FlightType is null) { f.BackfillFromEvents(); if (f.FlightType is not null) backfilled++; }
-        }
-        Console.WriteLine($"[Cache] Restored {loaded} flights (saved {ageMinutes:F0} min ago){(backfilled > 0 ? $", backfilled {backfilled} flight types" : "")}");
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[Cache] Load error: {ex.Message}");
-    }
-}
-
-LoadFlightCache();
+FlightCacheService.Load(flights, cacheDir, cacheJsonOpts);
 
 // ── Flight history persistence (save purged flights to daily JSONL files) ─────
 // History budget: keep total disk usage under 85%. Calculated dynamically each cleanup cycle.
@@ -561,7 +489,7 @@ var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
 lifetime.ApplicationStopping.Register(() =>
 {
     Console.WriteLine("[Cache] Shutdown — saving flight state...");
-    SaveFlightCache();
+    FlightCacheService.Save(flights, cacheDir, cacheJsonOpts);
 
     // Investigation: flush remaining log entries (uncomment with investigation logger)
     // var remaining = new List<string>();
@@ -948,7 +876,7 @@ asdex.OnEnrich = (track) =>
 };
 
 // Save flight cache periodically (every 5 minutes)
-var cacheTimer = new Timer(_ => SaveFlightCache(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+var cacheTimer = new Timer(_ => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 
 // Purge stale flights every 60 seconds
 var purgeTimer = new Timer(_ =>

@@ -966,28 +966,33 @@ class TfmsBridge
     /// matches the given airport. Falls back to the index entry if none match.</summary>
     public TfmsFlight? FindByCallsign(string callsign, string airportFaaOrIcao)
     {
-        // Strip K/P prefix to compare both FAA LID and ICAO forms
+        // Common-case fast path: check the indexed entry first to avoid O(n) scan.
+        var indexed = FindByCallsign(callsign);
+        if (indexed is null) return null;
+
         string apt = airportFaaOrIcao;
         string aptShort = apt.Length == 4 && (apt[0] == 'K' || apt[0] == 'P') ? apt[1..] : apt;
-        // Scan all flights with matching callsign for one that matches airport
+        bool matches(TfmsFlight f) =>
+            (f.DepArpt is not null &&
+                (f.DepArpt.Equals(apt, StringComparison.OrdinalIgnoreCase) ||
+                 f.DepArpt.Equals(aptShort, StringComparison.OrdinalIgnoreCase))) ||
+            (f.ArrArpt is not null &&
+                (f.ArrArpt.Equals(apt, StringComparison.OrdinalIgnoreCase) ||
+                 f.ArrArpt.Equals(aptShort, StringComparison.OrdinalIgnoreCase)));
+
+        // If the indexed flight matches the airport, return it (O(1) common case)
+        if (matches(indexed)) return indexed;
+
+        // Otherwise scan for a sibling with same callsign + matching airport.
+        // This is O(n) but only fires when the indexed entry was the wrong leg.
         TfmsFlight? best = null;
         foreach (var f in _flights.Values)
         {
             if (!string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase)) continue;
-            bool dep = f.DepArpt is not null && (
-                f.DepArpt.Equals(apt, StringComparison.OrdinalIgnoreCase) ||
-                f.DepArpt.Equals(aptShort, StringComparison.OrdinalIgnoreCase));
-            bool arr = f.ArrArpt is not null && (
-                f.ArrArpt.Equals(apt, StringComparison.OrdinalIgnoreCase) ||
-                f.ArrArpt.Equals(aptShort, StringComparison.OrdinalIgnoreCase));
-            if (dep || arr)
-            {
-                if (best is null || f.LastSeen > best.LastSeen) best = f;
-            }
+            if (!matches(f)) continue;
+            if (best is null || f.LastSeen > best.LastSeen) best = f;
         }
-        if (best is not null) return best;
-        // Fall back to whatever the index has
-        return FindByCallsign(callsign);
+        return best ?? indexed;
     }
 
     /// <summary>Get all flights transiting a sector (predicted).</summary>

@@ -1707,25 +1707,32 @@ asdex.OnEnrich = (track) =>
             string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase);
         bool destMatch(FlightState f) =>
             string.Equals(f.Destination, track.Airport, StringComparison.OrdinalIgnoreCase);
+        bool airportMatch(FlightState f) => originMatch(f) || destMatch(f);
         bool adDestMatch(FlightState f) => track.AdDestination is not null
             && string.Equals(f.Destination, track.AdDestination, StringComparison.OrdinalIgnoreCase);
         bool adDepMatch(FlightState f) => track.AdDeparture is not null
             && string.Equals(f.Origin, track.AdDeparture, StringComparison.OrdinalIgnoreCase);
+        bool hasPosition(FlightState f) => f.Latitude != 0 && f.Longitude != 0;
 
-        // Priority 1: squawk + origin/destination match this airport (strongest)
-        fp = candidates.FirstOrDefault(f => sqMatch(f) && (originMatch(f) || destMatch(f)));
-        // Priority 2: origin matches airport AND destination matches AD ADS-B destination (departure leg)
+        // Priority 1: squawk + airport match (origin or destination) — strongest signal
+        fp = candidates.Where(f => sqMatch(f) && airportMatch(f))
+                       .OrderByDescending(f => f.LastSeen).FirstOrDefault();
+        // Priority 2: origin matches AND ADS-B destination matches FP destination (departure leg)
         fp ??= candidates.FirstOrDefault(f => originMatch(f) && adDestMatch(f));
-        // Priority 3: destination matches airport AND origin matches AD ADS-B origin (arrival leg)
+        // Priority 3: destination matches AND ADS-B origin matches FP origin (arrival leg)
         fp ??= candidates.FirstOrDefault(f => destMatch(f) && adDepMatch(f));
-        // Priority 4: squawk match alone (track may have wrong airport association early)
-        fp ??= candidates.FirstOrDefault(f => sqMatch(f));
-        // Priority 5: origin matches airport (departure leg on surface) — pick most recent
+        // Priority 4: airport matches AND flight has a live radar position (active leg)
+        fp ??= candidates.Where(f => airportMatch(f) && hasPosition(f))
+                         .OrderByDescending(f => f.LastSeen).FirstOrDefault();
+        // Priority 5: airport matches at all (origin first, then destination)
         fp ??= candidates.Where(originMatch).OrderByDescending(f => f.LastSeen).FirstOrDefault();
-        // Priority 6: destination matches airport (arrival leg approaching)
         fp ??= candidates.Where(destMatch).OrderByDescending(f => f.LastSeen).FirstOrDefault();
-        // Last resort: most-recently-updated active flight with that callsign
-        fp ??= candidates.OrderByDescending(f => f.LastSeen).FirstOrDefault();
+        // Priority 6: squawk match + has live position (callsign+squawk reuse but currently flying)
+        fp ??= candidates.Where(f => sqMatch(f) && hasPosition(f))
+                         .OrderByDescending(f => f.LastSeen).FirstOrDefault();
+        // No further fallback. A callsign-only match without airport/squawk/position context
+        // is more likely wrong than right (callsign reuse for back-to-back legs). Leave fp null
+        // and let TFMS/AD data fill destination — better to show no destination than the wrong one.
     }
 
     // Path 2a: SFDPS via squawk (beacon code index)

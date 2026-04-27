@@ -1483,7 +1483,7 @@ var csIndexTimer = new Timer(_ =>
         sqIndex = sqIdx;
     }
     catch { /* best-effort */ }
-}, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+}, null, TimeSpan.Zero, TimeSpan.FromSeconds(5));
 
 // Gate codes: load pattern→code mappings from disk on startup
 try
@@ -1698,19 +1698,34 @@ asdex.OnEnrich = (track) =>
 
     // Path 2: SFDPS via callsign (index lookup)
     // Airlines reuse callsigns for turnover legs (e.g., DAL123 ORD→IAD then IAD→DFW).
-    // Use squawk to disambiguate, then prefer origin match, then positioned, then first.
+    // Disambiguate with multiple signals; prefer the leg that actually matches this airport.
     if (fp is null && track.Callsign is not null && csIndex.TryGetValue(track.Callsign, out var candidates))
     {
-        // Best match: squawk matches (transponder code is unique per active flight plan)
-        if (track.Squawk is not null)
-            fp = candidates.FirstOrDefault(f =>
-                !string.IsNullOrEmpty(f.Squawk) && f.Squawk == track.Squawk);
-        // Fallback: origin matches airport (departure leg on surface)
-        fp ??= candidates.FirstOrDefault(f =>
-                string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase));
-        // Fallback: has radar position (active flight, not just a filed plan)
-        fp ??= candidates.FirstOrDefault(f => f.Latitude != 0);
-        fp ??= candidates.FirstOrDefault();
+        bool sqMatch(FlightState f) => track.Squawk is not null
+            && !string.IsNullOrEmpty(f.Squawk) && f.Squawk == track.Squawk;
+        bool originMatch(FlightState f) =>
+            string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase);
+        bool destMatch(FlightState f) =>
+            string.Equals(f.Destination, track.Airport, StringComparison.OrdinalIgnoreCase);
+        bool adDestMatch(FlightState f) => track.AdDestination is not null
+            && string.Equals(f.Destination, track.AdDestination, StringComparison.OrdinalIgnoreCase);
+        bool adDepMatch(FlightState f) => track.AdDeparture is not null
+            && string.Equals(f.Origin, track.AdDeparture, StringComparison.OrdinalIgnoreCase);
+
+        // Priority 1: squawk + origin/destination match this airport (strongest)
+        fp = candidates.FirstOrDefault(f => sqMatch(f) && (originMatch(f) || destMatch(f)));
+        // Priority 2: origin matches airport AND destination matches AD ADS-B destination (departure leg)
+        fp ??= candidates.FirstOrDefault(f => originMatch(f) && adDestMatch(f));
+        // Priority 3: destination matches airport AND origin matches AD ADS-B origin (arrival leg)
+        fp ??= candidates.FirstOrDefault(f => destMatch(f) && adDepMatch(f));
+        // Priority 4: squawk match alone (track may have wrong airport association early)
+        fp ??= candidates.FirstOrDefault(f => sqMatch(f));
+        // Priority 5: origin matches airport (departure leg on surface) — pick most recent
+        fp ??= candidates.Where(originMatch).OrderByDescending(f => f.LastSeen).FirstOrDefault();
+        // Priority 6: destination matches airport (arrival leg approaching)
+        fp ??= candidates.Where(destMatch).OrderByDescending(f => f.LastSeen).FirstOrDefault();
+        // Last resort: most-recently-updated active flight with that callsign
+        fp ??= candidates.OrderByDescending(f => f.LastSeen).FirstOrDefault();
     }
 
     // Path 2a: SFDPS via squawk (beacon code index)
@@ -1728,11 +1743,17 @@ asdex.OnEnrich = (track) =>
         bool matchesAirport(FlightState f) =>
             string.Equals(f.Origin, track.Airport, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(f.Destination, track.Airport, StringComparison.OrdinalIgnoreCase);
+        bool matchesAdDest(FlightState f) => track.AdDestination is not null
+            && string.Equals(f.Destination, track.AdDestination, StringComparison.OrdinalIgnoreCase);
+        bool matchesAdDep(FlightState f) => track.AdDeparture is not null
+            && string.Equals(f.Origin, track.AdDeparture, StringComparison.OrdinalIgnoreCase);
 
-        // Best: origin or destination matches this airport
-        fp = sqCandidates.FirstOrDefault(f => matchesAirport(f));
+        // Best: this airport AND ADS-B endpoints match (very strong signal)
+        fp = sqCandidates.FirstOrDefault(f => matchesAirport(f) && (matchesAdDest(f) || matchesAdDep(f)));
+        // Next: this airport matches origin or destination — pick most recent
+        fp ??= sqCandidates.Where(matchesAirport).OrderByDescending(f => f.LastSeen).FirstOrDefault();
         // Fallback: nearby flight (within 200nm — same region, not across the US)
-        fp ??= sqCandidates.FirstOrDefault(f => isNearby(f));
+        fp ??= sqCandidates.Where(isNearby).OrderByDescending(f => f.LastSeen).FirstOrDefault();
     }
 
     // Apply SFDPS flight plan data
@@ -1751,9 +1772,11 @@ asdex.OnEnrich = (track) =>
     }
 
     // Path 2b: TFMS via callsign (fills gaps SFDPS doesn't have — route, STAR, ETA)
+    // Prefer the leg whose origin or destination matches this airport, to avoid
+    // matching the wrong reused-callsign leg (e.g., RPA3477 EWR→PIT vs SFO leg).
     if (track.Callsign is not null)
     {
-        var tfmsFlight = tfms.FindByCallsign(track.Callsign);
+        var tfmsFlight = tfms.FindByCallsign(track.Callsign, track.Airport);
         if (tfmsFlight is not null)
         {
             if (track.FpDestination is null && tfmsFlight.ArrArpt is not null)

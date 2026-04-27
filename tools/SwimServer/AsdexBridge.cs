@@ -699,7 +699,18 @@ class AsdexTrack
         if (callsign is not null) Callsign    = callsign;
         if (squawk   is not null) Squawk      = squawk;
         if (acType   is not null) AircraftType = acType;
-        if (tgtType  is not null) TargetType   = tgtType;
+        // Target type: never downgrade from aircraft/vehicle back to unknown.
+        // SMES occasionally reclassifies a fully identified track as unknown for a few
+        // cycles; we keep the previously-known type to avoid flickering.
+        if (tgtType is not null)
+        {
+            if (TargetType is null
+                || TargetType.Equals("unknown", StringComparison.OrdinalIgnoreCase)
+                || !tgtType.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                TargetType = tgtType;
+            }
+        }
         if (alt.HasValue)     AltitudeFeet   = alt;
         if (speed.HasValue)   SpeedKts        = speed;
         if (heading.HasValue) HeadingDegrees  = heading;

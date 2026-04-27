@@ -695,6 +695,27 @@ class TfmsBridge
         var msgType = msg.Attribute("msgType")?.Value;
         var sourceTs = msg.Attribute("sourceTimeStamp")?.Value;
 
+        // Element discovery: capture unique XML paths from first 500 fiMessages.
+        // Stored under "fiMessage:<msgType>" raw samples and into _elementPaths.
+        if (_rawSampleCount < 500)
+        {
+            Interlocked.Increment(ref _rawSampleCount);
+            void DiscoverPaths(XElement el, string prefix)
+            {
+                var path = prefix + "/" + el.Name.LocalName;
+                foreach (var attr in el.Attributes())
+                    _elementPaths.TryAdd(path + "/@" + attr.Name.LocalName, attr.Value);
+                if (!el.HasElements && !string.IsNullOrEmpty(el.Value))
+                    _elementPaths.TryAdd(path, el.Value);
+                foreach (var child in el.Elements())
+                    DiscoverPaths(child, path);
+            }
+            DiscoverPaths(msg, "fiMessage");
+            var key = "fi:" + (msgType ?? "?");
+            if (!_rawSamples.ContainsKey(key))
+                _rawSamples[key] = msg.ToString();
+        }
+
         // TMI_FLIGHT_LIST — flights affected by a TMI
         var tmiFlightDataList = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "tmiFlightDataList");
         if (tmiFlightDataList is not null)

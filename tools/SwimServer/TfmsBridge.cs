@@ -250,6 +250,16 @@ class TfmsBridge
         var key = flightRef ?? acid;
         var flight = _flights.GetOrAdd(key, _ => new TfmsFlight { FlightRef = flightRef ?? "" });
 
+        // If the flight's callsign changed (amendment), remove the old index entry
+        // so old-callsign lookups don't return this flight under its new identity.
+        var prevCallsign = flight.Callsign;
+        if (prevCallsign is not null
+            && !string.Equals(prevCallsign, acid, StringComparison.OrdinalIgnoreCase)
+            && _callsignIndex.TryGetValue(prevCallsign, out var prevKey)
+            && prevKey == key)
+        {
+            _callsignIndex.TryRemove(prevCallsign, out _);
+        }
         flight.Callsign = acid;
         _callsignIndex[acid] = key;  // O(1) callsign lookup
         flight.Airline = airline;
@@ -881,7 +891,14 @@ class TfmsBridge
             if (f.LastSeen < cutoff)
             {
                 _flights.TryRemove(key, out _);
-                if (f.Callsign is not null) _callsignIndex.TryRemove(f.Callsign, out _);
+                // Only remove the callsign index entry if it still points to THIS flight.
+                // Another flight may have reused the callsign and rebound the index.
+                if (f.Callsign is not null
+                    && _callsignIndex.TryGetValue(f.Callsign, out var indexedKey)
+                    && indexedKey == key)
+                {
+                    _callsignIndex.TryRemove(f.Callsign, out _);
+                }
             }
         }
 

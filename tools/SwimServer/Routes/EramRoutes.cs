@@ -78,5 +78,46 @@ static class EramRoutes
 
         // REST API for stats
         app.MapGet("/api/stats", () => Results.Json(ctx.Stats.Snapshot(ctx.Flights.Count), ctx.JsonOpts));
+
+        // EDCT (Expected Departure Clearance Time) — flights currently under a GDP/CTOP/Ground Stop slot.
+        // Returns ALL flights with EdctTime set, regardless of whether they've already departed.
+        // Client can filter as needed.
+        app.MapGet("/api/edct", () =>
+        {
+            var now = DateTime.UtcNow;
+            var rows = new List<object>();
+            foreach (var f in ctx.Flights.Values)
+            {
+                if (string.IsNullOrEmpty(f.EdctTime)) continue;
+                DateTime? edctDt = null;
+                if (DateTime.TryParse(f.EdctTime, null,
+                    System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                    out var dt)) edctDt = dt;
+                bool departed = !string.IsNullOrEmpty(f.ActualDepartureTime);
+                int? minutesUntil = edctDt.HasValue ? (int)(edctDt.Value - now).TotalMinutes : null;
+                rows.Add(new
+                {
+                    gufi = f.Gufi,
+                    callsign = f.Callsign,
+                    origin = f.Origin,
+                    destination = f.Destination,
+                    aircraftType = f.AircraftType,
+                    edct = f.EdctTime,
+                    minutesUntil,
+                    actualDeparture = f.ActualDepartureTime,
+                    departed,
+                    eta = f.ETA,
+                    route = f.Route,
+                    star = f.STAR,
+                    controllingFacility = f.ControllingFacility,
+                    controllingSector = f.ControllingSector,
+                    flightStatus = f.FlightStatus,
+                    lastSeen = f.LastSeen.ToString("o")
+                });
+            }
+            // Sort by EDCT ascending (soonest first)
+            rows = rows.OrderBy(r => ((dynamic)r).edct as string).ToList();
+            return Results.Json(new { count = rows.Count, flights = rows }, ctx.JsonOpts);
+        });
     }
 }

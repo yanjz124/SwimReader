@@ -1064,8 +1064,20 @@ void ProcessFlight(XElement flight, string rawXml)
     {
         var pt = dep.Attribute("departurePoint")?.Value;
         if (!string.IsNullOrEmpty(pt)) state.Origin = pt;
-        var actTime = dep.Descendants().FirstOrDefault(e => e.Name.LocalName == "actual")?.Attribute("time")?.Value;
-        if (!string.IsNullOrEmpty(actTime)) state.ActualDepartureTime = actTime;
+        var rwyPos = dep.Elements().FirstOrDefault(e => e.Name.LocalName == "runwayPositionAndTime");
+        var rwyTime = rwyPos?.Elements().FirstOrDefault(e => e.Name.LocalName == "runwayTime");
+        if (rwyTime is not null)
+        {
+            var actTime = rwyTime.Elements().FirstOrDefault(e => e.Name.LocalName == "actual")?.Attribute("time")?.Value;
+            if (!string.IsNullOrEmpty(actTime)) state.ActualDepartureTime = actTime;
+            // EDCT (Expected Departure Clearance Time) — assigned by GDP/CTOP/Ground Stop
+            var ctlTime = rwyTime.Elements().FirstOrDefault(e => e.Name.LocalName == "controlled")?.Attribute("time")?.Value;
+            state.EdctTime = string.IsNullOrEmpty(ctlTime) ? null : ctlTime;
+        }
+        else
+        {
+            // FH/AH messages without runwayPositionAndTime → keep prior values (don't clear)
+        }
     }
     var arr = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "arrival");
     if (arr is not null)

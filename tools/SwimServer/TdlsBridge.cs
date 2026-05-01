@@ -28,6 +28,9 @@ class TdlsBridge
     // airport → list of new messages since last FlushDirty()
     private readonly ConcurrentDictionary<string, ConcurrentBag<TdlsMessage>> _pending = new();
 
+    /// <summary>If set, every incoming message is appended to a daily JSONL file under this dir.</summary>
+    public string? HistoryDir { get; set; }
+
     public TdlsBridge(JsonSerializerOptions jsonOpts) => _jsonOpts = jsonOpts;
 
     // ── Message processing ─────────────────────────────────────────────────────
@@ -149,6 +152,9 @@ class TdlsBridge
         if (msg.BeaconCode is not null) aircraft.BeaconCode = msg.BeaconCode;
 
         _pending.GetOrAdd(airport, _ => new ConcurrentBag<TdlsMessage>()).Add(msg);
+
+        // Persist to disk for historical search (PersistenceBudget enforces global cap)
+        if (HistoryDir is not null) TdlsHistoryService.Append(msg, HistoryDir);
     }
 
     // ── XML helpers ────────────────────────────────────────────────────────────

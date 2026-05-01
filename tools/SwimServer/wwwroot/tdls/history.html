@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TDLS History | swim.vncrcc.org</title>
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<link rel="stylesheet" href="/tdls/history.css?v=1">
+</head>
+<body>
+<header>
+    <h1>TDLS HISTORY</h1>
+    <span class="sub">CPDLC + DEPARTURES — searchable archive</span>
+    <div class="status-bar">
+        <span id="count">--</span>
+        <span class="dot">•</span>
+        <a class="home-link" href="/tdls">live</a>
+        <span class="dot">•</span>
+        <a class="home-link" href="/">home</a>
+    </div>
+</header>
+
+<div class="filter-row">
+    <label>Date</label>
+    <select id="dateSel"></select>
+    <label>Type</label>
+    <select id="typeSel">
+        <option value="">ALL</option>
+        <option value="CPDLC">CPDLC</option>
+        <option value="DEPART">DEPART</option>
+    </select>
+    <label>Airport</label>
+    <input type="text" id="airportInput" placeholder="ICAO" maxlength="4" style="width:60px;text-transform:uppercase;">
+    <input type="text" id="qInput" placeholder="Search (callsign / dest / runway / dataBody / gate)..." style="flex:1;min-width:280px;">
+    <button id="goBtn">SEARCH</button>
+</div>
+
+<table class="hist-table">
+    <thead>
+        <tr>
+            <th class="col-tm">TIME (Z)</th>
+            <th class="col-tp">TYPE</th>
+            <th class="col-ap">AP</th>
+            <th class="col-cs">AIRCRAFT</th>
+            <th class="col-bcn">BCN</th>
+            <th class="col-tp">TYPE</th>
+            <th class="col-ap">DEST</th>
+            <th class="col-detail">DETAIL</th>
+        </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+</table>
+
+<div id="empty" class="empty">Pick a date and hit SEARCH.</div>
+
+<script src="/tdls/history.js?v=1"></script>
+</body>
+</html>

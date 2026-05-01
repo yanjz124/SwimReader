@@ -16,6 +16,19 @@ static class TdlsRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "tdls", "directory.html"));
         });
 
+        // TDLS history page (registered BEFORE /tdls/{airport} so the literal segment wins)
+        app.MapGet("/tdls/history", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "tdls", "history.html"));
+        });
+
+        // History API: list dates and search
+        app.MapGet("/api/tdls/history/dates", () =>
+            Results.Json(TdlsHistoryService.ListDates(ctx.TdlsHistoryDir), ctx.JsonOpts));
+        app.MapGet("/api/tdls/history", (string? date, string? q, string? type, string? airport, int? limit) =>
+            Results.Json(TdlsHistoryService.Search(ctx.TdlsHistoryDir, date, q, type, airport, limit ?? 500), ctx.JsonOpts));
+
         // /tdls/ws/{airport} BEFORE /tdls/{airport} so the literal segment wins
         app.Map("/tdls/ws/{airport:regex(^[A-Za-z0-9]+$)}", async (HttpContext c, string airport) =>
         {

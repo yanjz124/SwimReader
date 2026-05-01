@@ -1,0 +1,54 @@
+html, body {
+    background: #000; color: #ccc; font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 12px; min-height: 100%;
+}
+
+header {
+    background: #0a0a0a; border-bottom: 1px solid #333;
+    padding: 8px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header .sub { font-size: 11px; color: #555; }
+.status-bar { margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 8px; }
+.status-bar .dot { color: #444; }
+.status-bar #count { color: #cccc44; }
+.home-link { color: #888; text-decoration: none; }
+.home-link:hover { color: #cccc44; }
+
+.filter-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; border-bottom: 1px solid #222; background: #050505;
+    flex-wrap: wrap;
+}
+.filter-row input, .filter-row select {
+    background: #111; border: 1px solid #333; color: #ccc;
+    padding: 5px 10px; font-family: inherit; font-size: 12px; outline: none;
+}
+.filter-row input:focus, .filter-row select:focus { border-color: #cccc44; }
+.filter-row label { font-size: 11px; color: #666; }
+.filter-row button {
+    background: #1a1a1a; border: 1px solid #444; color: #cccc44;
+    padding: 5px 14px; font-family: inherit; font-size: 12px; cursor: pointer;
+}
+.filter-row button:hover { background: #222; }
+
+.hist-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.hist-table thead th {
+    background: #1a1a1a; color: #888; font-weight: normal;
+    padding: 6px 10px; text-align: left; border-bottom: 1px solid #333;
+    position: sticky; top: 0; z-index: 1; font-size: 10px; letter-spacing: 1px;
+}
+.hist-table tbody td {
+    padding: 5px 10px; border-bottom: 1px solid #1a1a1a; vertical-align: top;
+}
+.hist-table tbody tr:hover { background: #0a0a0a; }
+.col-tm { color: #4eaaff; white-space: nowrap; }
+.col-tp { color: #aaa; }
+.col-ap { color: #aaa; }
+.col-cs { color: #cccc44; font-weight: bold; }
+.col-bcn { color: #888; }
+.col-detail { color: #ccc; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-width: 60vw; }
+
+.empty {
+    padding: 32px; text-align: center; color: #555; font-size: 13px;
+}

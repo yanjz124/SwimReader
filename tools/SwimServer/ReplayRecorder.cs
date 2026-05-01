@@ -166,12 +166,7 @@ public sealed class ReplayRecorder : IDisposable
                     lastFlush = now;
                 }
 
-                // Cleanup old files every hour
-                if ((now - lastCleanup).TotalHours >= 1)
-                {
-                    CleanupOldFiles();
-                    lastCleanup = now;
-                }
+                // Disk budget enforcement is centralized in PersistenceBudget — no per-recorder cleanup.
             }
         }
         catch (OperationCanceledException) { }

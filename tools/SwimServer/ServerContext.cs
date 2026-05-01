@@ -43,6 +43,7 @@ class ServerContext
     // ── Filesystem paths ────────────────────────────────────────────────────
     public required string WebRootPath { get; init; }
     public required string HistoryDir { get; init; }
+    public required string TdlsHistoryDir { get; init; }
     public required string RepoRoot { get; init; }
 
     // ── ASDE-X scratchpad / vNAS rules ──────────────────────────────────────

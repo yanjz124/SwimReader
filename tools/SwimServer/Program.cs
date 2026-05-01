@@ -106,26 +106,25 @@ var jsonOpts = new JsonSerializerOptions
 
 // Replay recorders — capture real-time data for later playback
 // Shared budget: 85% of total disk minus non-replay usage, enforced across ALL recorders combined
+// All persisted data shares ONE hard cap. Override with PERSISTENCE_CAP_GB env var.
+var capGb = long.TryParse(Environment.GetEnvironmentVariable("PERSISTENCE_CAP_GB"), out var g) && g > 0 ? g : 80;
+var persistenceCap = capGb * 1024L * 1024 * 1024;
+PersistenceBudget.SetCap(persistenceCap);
+Console.WriteLine($"[BUDGET] Hard cap: {capGb} GB shared across replay + flight-history + tdls-history");
+
 var replayDir = Path.Combine(Directory.GetCurrentDirectory(), "replay");
-long totalReplayBudget;
-try
-{
-    var drv = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(replayDir)) ?? "/");
-    var maxDisk85 = (long)(drv.TotalSize * 0.85);
-    var usedTotal = drv.TotalSize - drv.TotalFreeSpace;
-    long replayUsed = Directory.Exists(replayDir)
-        ? Directory.GetFiles(replayDir, "*.jsonl.gz", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length) : 0;
-    var nonReplayUsed = usedTotal - replayUsed;
-    totalReplayBudget = Math.Max(0, maxDisk85 - nonReplayUsed);
-    Console.WriteLine($"[REPLAY] Disk {drv.TotalSize / (1024 * 1024 * 1024)}GB, 85% cap={maxDisk85 / (1024 * 1024 * 1024)}GB, shared replay budget={totalReplayBudget / (1024 * 1024 * 1024)}GB (across all recorders)");
-}
-catch { totalReplayBudget = 10L * 1024 * 1024 * 1024; }
-// All recorders share the SAME total budget, cleanup scans the entire replay dir
-var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), totalReplayBudget, replayDir);
+PersistenceBudget.Watch(replayDir, "*.jsonl.gz");
+// Recorders pass long.MaxValue so their internal cleanup never triggers — central enforcer owns it.
+var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), long.MaxValue, replayDir);
 var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
 
 // Flight history directory (declared early so route lambdas can capture it)
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
+PersistenceBudget.Watch(historyDir, "*.jsonl");
+
+// TDLS history directory
+var tdlsHistoryDir = Path.Combine(Directory.GetCurrentDirectory(), "tdls-history");
+PersistenceBudget.Watch(tdlsHistoryDir, "*.jsonl");
 
 // ASDE-X departure gate codes: airport → pattern → abbreviation (declared early for route lambdas)
 var gateCodesPath = Path.Combine(Directory.GetCurrentDirectory(), "asdex-gatecodes.json");
@@ -145,7 +144,7 @@ var vnasFixRules = new ConcurrentDictionary<string, List<KeyValuePair<string, st
 var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVpn, jsonOpts);
 
 // TDLS bridge — receives forwarded TDES messages from ASDEX bridge (shared Solace session)
-var tdls = new TdlsBridge(jsonOpts);
+var tdls = new TdlsBridge(jsonOpts) { HistoryDir = tdlsHistoryDir };
 // TAIS bridge — receives forwarded TAIS messages from ASDEX bridge (shared Solace session)
 var tais = new TaisBridge(jsonOpts);
 // TFMS bridge — own Solace session for Traffic Flow Management data
@@ -198,7 +197,7 @@ asdex.OnOtherMessage = (topic, body) =>
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://0.0.0.0:5001");
 asdex.SetWebRoot(builder.Environment.WebRootPath);
-asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), totalReplayBudget, replayDir);
+asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), long.MaxValue, replayDir);
 var app = builder.Build();
 
 app.UseDefaultFiles();
@@ -248,6 +247,7 @@ var serverCtx = new ServerContext
     ReplayServer = replayServer,
     WebRootPath = builder.Environment.WebRootPath,
     HistoryDir = historyDir,
+    TdlsHistoryDir = tdlsHistoryDir,
     RepoRoot = repoRoot,
     GateCodes = gateCodes,
     VnasFixRules = vnasFixRules,
@@ -407,8 +407,7 @@ var historyJsonOpts = new JsonSerializerOptions
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 };
 
-// Run cleanup on startup
-FlightHistoryService.Cleanup(historyDir);
+// (Per-service cleanup removed — PersistenceBudget enforces a single shared cap.)
 
 // Save flight cache on graceful shutdown (SIGTERM from systemd)
 var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
@@ -885,7 +884,8 @@ var taisFlushTimer = new Timer(_ => tais.FlushDirty(), null, TimeSpan.FromSecond
 var taisPurgeTimer = new Timer(_ => tais.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
-var historyCleanupTimer = new Timer(_ => FlightHistoryService.Cleanup(historyDir), null, TimeSpan.FromHours(1), TimeSpan.FromHours(1));
+// Centralized disk-budget enforcement across all persisted data (replay + flight-history + tdls-history).
+var budgetTimer = new Timer(_ => PersistenceBudget.Enforce(), null, TimeSpan.FromMinutes(2), TimeSpan.FromHours(1));
 
 // Replay: periodic ERAM snapshots for seek support (every 5 minutes)
 var eramSnapshotTimer = new Timer(_ =>
@@ -938,7 +938,7 @@ var asdexSnapshotTimer = new Timer(_ =>
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, historyCleanupTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer /*, poFlushTimer, investigationFlushTimer */ };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer /*, poFlushTimer, investigationFlushTimer */ };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); });
 
 // Replay endpoints (WebSocket + REST)

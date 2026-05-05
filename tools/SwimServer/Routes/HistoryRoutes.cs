@@ -9,31 +9,60 @@ static class HistoryRoutes
 {
     public static void Register(WebApplication app, ServerContext ctx)
     {
-        // Search history by callsign prefix / origin / destination / registration / CID.
-        // Field-scoped match — avoids false positives where the query happens to appear
-        // inside route strings, GUFIs, or other freeform text on the JSON line.
+        // Search history with field-scoped query syntax:
+        //   bare value       — default fields (callsign starts-with, origin/dest, reg, cid)
+        //   field:value      — match a specific field
+        //   value with *     — wildcard (foo*, *foo, *foo*)
+        //   multiple terms   — AND'ed together (whitespace-separated)
+        //
+        // Supported field aliases:
+        //   cs/callsign, op/operator, origin/org, dest/destination,
+        //   reg/registration, cid/computerId, type/actype/aircraftType,
+        //   sq/squawk, route, rmk/remarks, star, status/flightStatus,
+        //   fac/facility/controllingFacility, sector/controllingSector,
+        //   gufi, alt/altitude/assignedAltitude
         app.MapGet("/api/history", (string? q, string? date) =>
         {
             var dir = ctx.HistoryDir;
             if (!Directory.Exists(dir)) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
-            var query = (q ?? "").Trim().ToUpperInvariant();
-            if (query.Length == 0) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
+            var raw = (q ?? "").Trim();
+            if (raw.Length == 0) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
+
+            var clauses = ParseQuery(raw);
+            if (clauses.Count == 0) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
 
             var datePart = date ?? DateTime.UtcNow.ToString("yyyy-MM-dd");
             var filePath = Path.Combine(dir, $"{datePart}.jsonl");
             if (!File.Exists(filePath)) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
 
+            // Cheap line-level pre-filter: every clause's literal portion (with wildcards
+            // stripped) must appear somewhere in the line. Field-scoped match decides inclusion.
+            var preFilters = clauses.Select(c => c.Pattern.Replace("*", "").ToUpperInvariant())
+                                    .Where(s => s.Length > 0)
+                                    .ToList();
+
             var results = new List<JsonElement>();
             foreach (var line in File.ReadLines(filePath))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
-                // Cheap pre-filter: skip lines that don't contain the query anywhere
-                if (!line.Contains(query, StringComparison.OrdinalIgnoreCase)) continue;
+                bool prePass = true;
+                foreach (var p in preFilters)
+                {
+                    if (!line.Contains(p, StringComparison.OrdinalIgnoreCase)) { prePass = false; break; }
+                }
+                if (!prePass) continue;
+
                 JsonElement el;
                 try { el = JsonSerializer.Deserialize<JsonElement>(line); }
                 catch { continue; }
 
-                if (!HistoryMatches(el, query)) continue;
+                bool allMatch = true;
+                foreach (var c in clauses)
+                {
+                    if (!ClauseMatches(el, c)) { allMatch = false; break; }
+                }
+                if (!allMatch) continue;
+
                 results.Add(el);
                 if (results.Count >= 100) break;
             }
@@ -55,29 +84,164 @@ static class HistoryRoutes
         });
     }
 
-    // Match a history record against an uppercased query.
-    // Matches: callsign starts-with, origin/destination (FAA LID or ICAO), registration prefix, CID exact.
-    private static bool HistoryMatches(JsonElement el, string query)
+    // ── Query parsing ───────────────────────────────────────────────────────
+
+    /// <summary>One parsed search clause: a field name (or null = default fields)
+    /// and a pattern that may contain * wildcards.</summary>
+    private record SearchClause(string? Field, string Pattern);
+
+    /// <summary>Tokenize query into clauses. Whitespace-separated; quoted strings
+    /// preserved as a single token (e.g. remarks:"new pilot" is one clause).</summary>
+    private static List<SearchClause> ParseQuery(string raw)
     {
-        if (TryStr(el, "callsign", out var cs) && cs.StartsWith(query, StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (TryStr(el, "origin", out var or) && AirportMatches(or, query)) return true;
-        if (TryStr(el, "destination", out var dst) && AirportMatches(dst, query)) return true;
-        if (TryStr(el, "registration", out var reg) && reg.StartsWith(query, StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (TryStr(el, "computerId", out var cid) && cid.Equals(query, StringComparison.OrdinalIgnoreCase))
-            return true;
+        var tokens = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        bool inQuotes = false;
+        foreach (var c in raw)
+        {
+            if (c == '"') { inQuotes = !inQuotes; continue; }
+            if (!inQuotes && char.IsWhiteSpace(c))
+            {
+                if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+            }
+            else sb.Append(c);
+        }
+        if (sb.Length > 0) tokens.Add(sb.ToString());
+
+        var clauses = new List<SearchClause>();
+        foreach (var t in tokens)
+        {
+            if (t.Length == 0) continue;
+            var colon = t.IndexOf(':');
+            if (colon > 0 && colon < t.Length - 1)
+            {
+                clauses.Add(new SearchClause(t[..colon], t[(colon + 1)..]));
+            }
+            else
+            {
+                clauses.Add(new SearchClause(null, t));
+            }
+        }
+        return clauses;
+    }
+
+    // Map field aliases (case-insensitive) to actual JSON property names.
+    private static readonly Dictionary<string, string> FieldAlias =
+        new(StringComparer.OrdinalIgnoreCase)
+    {
+        { "cs", "callsign" }, { "callsign", "callsign" },
+        { "op", "operator" }, { "operator", "operator" }, { "airline", "operator" },
+        { "org", "origin" }, { "origin", "origin" }, { "from", "origin" }, { "dep", "origin" },
+        { "dest", "destination" }, { "destination", "destination" }, { "to", "destination" }, { "arr", "destination" },
+        { "alt", "alternateAerodrome" }, { "alternate", "alternateAerodrome" },
+        { "type", "aircraftType" }, { "actype", "aircraftType" }, { "aircraftType", "aircraftType" }, { "ac", "aircraftType" },
+        { "reg", "registration" }, { "registration", "registration" },
+        { "wake", "wakeCategory" }, { "wakeCategory", "wakeCategory" },
+        { "modes", "modeSCode" }, { "modeS", "modeSCode" }, { "modeSCode", "modeSCode" },
+        { "equip", "equipmentQualifier" }, { "equipment", "equipmentQualifier" },
+        { "sq", "squawk" }, { "squawk", "squawk" }, { "beacon", "squawk" },
+        { "bcn", "assignedSquawk" }, { "assignedSquawk", "assignedSquawk" },
+        { "rules", "flightRules" }, { "flightRules", "flightRules" },
+        { "ftype", "flightType" }, { "flightType", "flightType" },
+        { "route", "route" }, { "rte", "route" },
+        { "originalRoute", "originalRoute" },
+        { "star", "STAR" }, { "STAR", "STAR" },
+        { "rmk", "remarks" }, { "remarks", "remarks" }, { "rmks", "remarks" },
+        { "altitude", "assignedAltitude" }, { "assignedAltitude", "assignedAltitude" },
+        { "status", "flightStatus" }, { "flightStatus", "flightStatus" },
+        { "cid", "computerId" }, { "computerId", "computerId" },
+        { "fac", "controllingFacility" }, { "facility", "controllingFacility" }, { "controllingFacility", "controllingFacility" },
+        { "sector", "controllingSector" }, { "controllingSector", "controllingSector" },
+        { "ho", "handoffEvent" }, { "handoff", "handoffEvent" }, { "handoffEvent", "handoffEvent" },
+        { "po", "pointoutOriginatingUnit" }, { "pointout", "pointoutOriginatingUnit" },
+        { "hdg", "clearanceHeading" }, { "heading", "clearanceHeading" },
+        { "speed", "clearanceSpeed" }, { "clearanceSpeed", "clearanceSpeed" },
+        { "text", "clearanceText" }, { "clearanceText", "clearanceText" },
+        { "tmi", "tmiIds" }, { "tmiIds", "tmiIds" },
+        { "datalink", "dataLinkCode" }, { "cpdlc", "dataLinkCode" }, { "dataLinkCode", "dataLinkCode" },
+        { "gufi", "gufi" }, { "fdpsGufi", "fdpsGufi" },
+    };
+
+    /// <summary>Default fields searched when a clause has no explicit field prefix.
+    /// Each entry is (json field name, match style).</summary>
+    private static readonly (string field, MatchStyle style)[] DefaultFields = new[]
+    {
+        ("callsign", MatchStyle.StartsWith),
+        ("origin", MatchStyle.Airport),
+        ("destination", MatchStyle.Airport),
+        ("registration", MatchStyle.StartsWith),
+        ("computerId", MatchStyle.Exact),
+    };
+
+    private enum MatchStyle { StartsWith, Exact, Contains, Airport }
+
+    private static bool ClauseMatches(JsonElement el, SearchClause c)
+    {
+        // Field-scoped clause
+        if (c.Field is not null)
+        {
+            if (!FieldAlias.TryGetValue(c.Field, out var jsonField)) return false;
+            if (!TryStr(el, jsonField, out var v)) return false;
+            return WildcardMatch(v, c.Pattern, defaultStyle: MatchStyle.Contains);
+        }
+
+        // Bare clause: try each default field
+        foreach (var (jf, style) in DefaultFields)
+        {
+            if (TryStr(el, jf, out var v) && WildcardMatch(v, c.Pattern, style))
+                return true;
+        }
         return false;
     }
 
-    // Airport code matches if equal, or if it's the 4-letter ICAO with K/P prefix and the rest equals query.
+    /// <summary>Match value against a pattern that may contain * wildcards.
+    /// If pattern has no wildcards, defaultStyle determines how to match
+    /// (StartsWith, Exact, Contains, or Airport with K/P prefix tolerance).</summary>
+    private static bool WildcardMatch(string value, string pattern, MatchStyle defaultStyle)
+    {
+        if (pattern.Contains('*'))
+        {
+            // *foo* = contains, foo* = starts-with, *foo = ends-with
+            var leading = pattern.StartsWith('*');
+            var trailing = pattern.EndsWith('*');
+            var core = pattern.Trim('*');
+            if (core.Length == 0) return value.Length > 0;
+            if (leading && trailing) return value.Contains(core, StringComparison.OrdinalIgnoreCase);
+            if (leading) return value.EndsWith(core, StringComparison.OrdinalIgnoreCase);
+            if (trailing) return value.StartsWith(core, StringComparison.OrdinalIgnoreCase);
+            // Wildcards only in the middle (e.g. AAL*23): regex-style with literal escape
+            var parts = pattern.Split('*');
+            int idx = 0;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (parts[i].Length == 0) continue;
+                var found = value.IndexOf(parts[i], idx, StringComparison.OrdinalIgnoreCase);
+                if (found < 0) return false;
+                if (i == 0 && found != 0) return false; // first segment must anchor at start
+                idx = found + parts[i].Length;
+            }
+            // Last segment must anchor at end
+            if (parts[^1].Length > 0 && !value.EndsWith(parts[^1], StringComparison.OrdinalIgnoreCase)) return false;
+            return true;
+        }
+
+        return defaultStyle switch
+        {
+            MatchStyle.StartsWith => value.StartsWith(pattern, StringComparison.OrdinalIgnoreCase),
+            MatchStyle.Exact => value.Equals(pattern, StringComparison.OrdinalIgnoreCase),
+            MatchStyle.Contains => value.Contains(pattern, StringComparison.OrdinalIgnoreCase),
+            MatchStyle.Airport => AirportMatches(value, pattern),
+            _ => false,
+        };
+    }
+
+    // Airport code matches if equal, or if 4-letter ICAO with K/P prefix and rest matches.
     private static bool AirportMatches(string field, string query)
     {
         if (field.Equals(query, StringComparison.OrdinalIgnoreCase)) return true;
         if (field.Length == 4 && (field[0] == 'K' || field[0] == 'P') &&
             field.AsSpan(1).Equals(query.AsSpan(), StringComparison.OrdinalIgnoreCase))
             return true;
-        // Reverse: query is 4-letter ICAO, field is 3-letter LID
         if (query.Length == 4 && (query[0] == 'K' || query[0] == 'P') &&
             field.AsSpan().Equals(query.AsSpan(1), StringComparison.OrdinalIgnoreCase))
             return true;
@@ -86,10 +250,18 @@ static class HistoryRoutes
 
     private static bool TryStr(JsonElement el, string name, out string value)
     {
-        if (el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String)
+        if (el.TryGetProperty(name, out var p))
         {
-            var v = p.GetString();
-            if (v is not null) { value = v; return true; }
+            if (p.ValueKind == JsonValueKind.String)
+            {
+                var v = p.GetString();
+                if (v is not null) { value = v; return true; }
+            }
+            else if (p.ValueKind == JsonValueKind.Number)
+            {
+                value = p.ToString();
+                return true;
+            }
         }
         value = "";
         return false;

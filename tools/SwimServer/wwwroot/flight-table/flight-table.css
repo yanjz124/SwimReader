@@ -79,7 +79,7 @@ body {
 /* Column header */
 .col-header {
     display: grid;
-    grid-template-columns: 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
+    grid-template-columns: 22px 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
     gap: 6px;
     padding: 6px 12px;
     font-size: 10px;
@@ -99,7 +99,7 @@ body {
 /* Flight row */
 .flight-row {
     display: grid;
-    grid-template-columns: 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
+    grid-template-columns: 22px 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
     gap: 6px;
     padding: 5px 12px;
     font-size: 12px;
@@ -120,6 +120,43 @@ body {
 .flight-row .dl { font-size: 10px; }
 .flight-row .dl.yes { color: #44aa44; }
 .flight-row .dl.no { color: #333; }
+.flight-row .pin {
+    color: #444; cursor: pointer; font-size: 13px; line-height: 1;
+    text-align: center; user-select: none; transition: color 0.1s;
+}
+.flight-row .pin:hover { color: #888; }
+.flight-row .pin.pinned { color: #cccc44; }
+.flight-row .pin.pinned:hover { color: #ffff66; }
+.flight-row .pin.grace { color: #886600; }
+.col-header .pin-col { color: #555; }
+
+/* Export CSV button (top bar) */
+.export-btn {
+    background: #1a1a1a; color: #cccc44; border: 1px solid #444;
+    padding: 4px 10px; font-family: 'Consolas', monospace; font-size: 11px;
+    cursor: pointer; margin-left: 8px;
+}
+.export-btn:hover { background: #333; border-color: #cccc44; }
+
+/* Confirmation modal */
+.confirm-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 9999;
+    display: flex; align-items: center; justify-content: center;
+}
+.confirm-box {
+    background: #1a1a1a; border: 1px solid #cccc44; padding: 18px 22px;
+    color: #ddd; font-family: 'Consolas', monospace; font-size: 12px;
+    max-width: 420px; line-height: 1.5;
+}
+.confirm-box h3 { color: #cccc44; margin-bottom: 10px; font-size: 13px; }
+.confirm-box .actions { margin-top: 14px; text-align: right; }
+.confirm-box button {
+    background: #1a1a1a; color: #cccc44; border: 1px solid #444;
+    padding: 4px 12px; font-family: inherit; font-size: 11px; cursor: pointer; margin-left: 6px;
+}
+.confirm-box button:hover { border-color: #cccc44; }
+.confirm-box button.danger { color: #ff8844; border-color: #663322; }
+.confirm-box button.danger:hover { border-color: #ff8844; background: #221008; }
 .flight-row .st { width: 8px; height: 8px; border-radius: 50%; margin-top: 3px; }
 .flight-row .st.active { background: #44aa44; }
 .flight-row .st.dropped { background: #ff4444; }

@@ -69,11 +69,12 @@ static class HistoryRoutes
             return Results.Json(results, ctx.JsonOpts);
         });
 
-        // List available history dates with file sizes
+        // Filter out 'pinned.jsonl' from the dates list — it's not a date file.
         app.MapGet("/api/history/dates", () =>
         {
             if (!Directory.Exists(ctx.HistoryDir)) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
             var files = Directory.GetFiles(ctx.HistoryDir, "*.jsonl")
+                .Where(f => !Path.GetFileName(f).Equals("pinned.jsonl", StringComparison.OrdinalIgnoreCase))
                 .Select(f => new {
                     date = Path.GetFileNameWithoutExtension(f),
                     sizeMb = Math.Round(new FileInfo(f).Length / 1024.0 / 1024.0, 1)
@@ -81,6 +82,109 @@ static class HistoryRoutes
                 .OrderByDescending(x => x.date)
                 .ToArray();
             return Results.Json(files, ctx.JsonOpts);
+        });
+
+        // ── Pinned flights: server-side, persists across restarts and disk cleanup ──
+
+        // List all pin entries (active + within grace period). Returns:
+        //   { gufi: { pinned: bool, pinnedAt: iso, unpinnedAt: iso?, callsign, origin, destination } }
+        app.MapGet("/api/history/pins", () =>
+        {
+            var dict = FlightPinService.GetAll().ToDictionary(kv => kv.Key, kv => (object)kv.Value);
+            return Results.Json(dict, ctx.JsonOpts);
+        });
+
+        // Full pinned-flight content (records as stored in pinned.jsonl).
+        // Frontend uses this to populate historical pins regardless of date.
+        app.MapGet("/api/history/pinned", () =>
+        {
+            return Results.Json(FlightPinService.ReadAllRecords(), ctx.JsonOpts);
+        });
+
+        // Pin a flight. Body: { gufi, record? }
+        // If record is omitted, the server tries to look it up in the live flights dict.
+        app.MapPost("/api/history/pin", async (HttpContext http) =>
+        {
+            using var doc = await JsonDocument.ParseAsync(http.Request.Body);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("gufi", out var gufiEl) || gufiEl.ValueKind != JsonValueKind.String)
+                return Results.BadRequest(new { error = "gufi required" });
+            var gufi = gufiEl.GetString()!;
+
+            string? recordJson = null;
+            string? callsign = null, origin = null, destination = null;
+            DateTime? lastSeen = null;
+
+            // Path A: caller passed the record body
+            if (root.TryGetProperty("record", out var recEl) && recEl.ValueKind == JsonValueKind.Object)
+            {
+                recordJson = recEl.GetRawText();
+                if (recEl.TryGetProperty("callsign", out var c) && c.ValueKind == JsonValueKind.String) callsign = c.GetString();
+                if (recEl.TryGetProperty("origin", out var o) && o.ValueKind == JsonValueKind.String) origin = o.GetString();
+                if (recEl.TryGetProperty("destination", out var d) && d.ValueKind == JsonValueKind.String) destination = d.GetString();
+                if (recEl.TryGetProperty("lastSeen", out var ls) && ls.ValueKind == JsonValueKind.String &&
+                    DateTime.TryParse(ls.GetString(), out var parsed)) lastSeen = parsed;
+            }
+
+            // Path B: live flight in the in-memory dict
+            if (recordJson is null && ctx.Flights.TryGetValue(gufi, out var fp))
+            {
+                recordJson = JsonSerializer.Serialize(fp.ToSummary(true), ctx.JsonOpts);
+                callsign = fp.Callsign;
+                origin = fp.Origin;
+                destination = fp.Destination;
+                lastSeen = fp.LastSeen;
+            }
+
+            // Path C: scan flight-history files for this GUFI (last week of files)
+            if (recordJson is null && Directory.Exists(ctx.HistoryDir))
+            {
+                var needle = $"\"gufi\":\"{gufi}\"";
+                var files = Directory.GetFiles(ctx.HistoryDir, "*.jsonl")
+                    .Where(f => !Path.GetFileName(f).Equals("pinned.jsonl", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(f => f).Take(7);
+                foreach (var file in files)
+                {
+                    foreach (var line in File.ReadLines(file))
+                    {
+                        if (!line.Contains(needle, StringComparison.OrdinalIgnoreCase)) continue;
+                        try
+                        {
+                            var el = JsonSerializer.Deserialize<JsonElement>(line);
+                            if (el.TryGetProperty("gufi", out var g) && g.GetString() == gufi)
+                            {
+                                recordJson = line;
+                                if (el.TryGetProperty("callsign", out var c) && c.ValueKind == JsonValueKind.String) callsign = c.GetString();
+                                if (el.TryGetProperty("origin", out var o) && o.ValueKind == JsonValueKind.String) origin = o.GetString();
+                                if (el.TryGetProperty("destination", out var d) && d.ValueKind == JsonValueKind.String) destination = d.GetString();
+                                if (el.TryGetProperty("lastSeen", out var ls) && ls.ValueKind == JsonValueKind.String &&
+                                    DateTime.TryParse(ls.GetString(), out var parsed)) lastSeen = parsed;
+                                break;
+                            }
+                        }
+                        catch { }
+                    }
+                    if (recordJson is not null) break;
+                }
+            }
+
+            if (recordJson is null)
+                return Results.NotFound(new { error = "flight not found in live or history" });
+
+            FlightPinService.Pin(gufi, recordJson, callsign, origin, destination, lastSeen);
+            return Results.Ok(new { pinned = true, gufi });
+        });
+
+        // Unpin a flight. Body: { gufi }. Record stays for grace period.
+        app.MapPost("/api/history/unpin", async (HttpContext http) =>
+        {
+            using var doc = await JsonDocument.ParseAsync(http.Request.Body);
+            if (!doc.RootElement.TryGetProperty("gufi", out var gufiEl) || gufiEl.ValueKind != JsonValueKind.String)
+                return Results.BadRequest(new { error = "gufi required" });
+            var gufi = gufiEl.GetString()!;
+            var ok = FlightPinService.Unpin(gufi);
+            if (!ok) return Results.NotFound(new { error = "not pinned" });
+            return Results.Ok(new { pinned = false, gufi });
         });
     }
 

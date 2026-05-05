@@ -52,11 +52,13 @@
     </select>
     <div class="filter-sep"></div>
     <span class="result-count" id="resultCount"></span>
+    <button class="export-btn" id="exportCsv" title="Download all visible (filtered) flights as a CSV file">EXPORT CSV</button>
 </div>
 
 <div class="main">
     <div class="flight-list" id="flightList">
         <div class="col-header" id="colHeader">
+            <span class="pin-col" title="Pin to protect from history cleanup">★</span>
             <span data-col="callsign" class="sorted">CALLSIGN</span>
             <span data-col="aircraftType">TYPE</span>
             <span data-col="origin">DEP</span>

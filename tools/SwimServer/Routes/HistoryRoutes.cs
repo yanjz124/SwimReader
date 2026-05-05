@@ -126,6 +126,8 @@ static class HistoryRoutes
     }
 
     // Map field aliases (case-insensitive) to actual JSON property names.
+    // Keys are unique lowercase forms. Long names are also accepted via the
+    // dictionary's case-insensitive comparer, so 'callsign', 'CALLSIGN', etc. all work.
     private static readonly Dictionary<string, string> FieldAlias =
         new(StringComparer.OrdinalIgnoreCase)
     {
@@ -133,33 +135,33 @@ static class HistoryRoutes
         { "op", "operator" }, { "operator", "operator" }, { "airline", "operator" },
         { "org", "origin" }, { "origin", "origin" }, { "from", "origin" }, { "dep", "origin" },
         { "dest", "destination" }, { "destination", "destination" }, { "to", "destination" }, { "arr", "destination" },
-        { "alt", "alternateAerodrome" }, { "alternate", "alternateAerodrome" },
-        { "type", "aircraftType" }, { "actype", "aircraftType" }, { "aircraftType", "aircraftType" }, { "ac", "aircraftType" },
+        { "alternate", "alternateAerodrome" }, { "altdest", "alternateAerodrome" },
+        { "type", "aircraftType" }, { "actype", "aircraftType" }, { "ac", "aircraftType" },
         { "reg", "registration" }, { "registration", "registration" },
-        { "wake", "wakeCategory" }, { "wakeCategory", "wakeCategory" },
-        { "modes", "modeSCode" }, { "modeSCode", "modeSCode" },
+        { "wake", "wakeCategory" },
+        { "modes", "modeSCode" },
         { "equip", "equipmentQualifier" }, { "equipment", "equipmentQualifier" },
         { "sq", "squawk" }, { "squawk", "squawk" }, { "beacon", "squawk" },
-        { "bcn", "assignedSquawk" }, { "assignedSquawk", "assignedSquawk" },
-        { "rules", "flightRules" }, { "flightRules", "flightRules" },
-        { "ftype", "flightType" }, { "flightType", "flightType" },
+        { "bcn", "assignedSquawk" },
+        { "rules", "flightRules" },
+        { "ftype", "flightType" },
         { "route", "route" }, { "rte", "route" },
-        { "originalRoute", "originalRoute" },
-        { "star", "STAR" }, { "STAR", "STAR" },
+        { "origroute", "originalRoute" },
+        { "star", "STAR" },
         { "rmk", "remarks" }, { "remarks", "remarks" }, { "rmks", "remarks" },
-        { "altitude", "assignedAltitude" }, { "assignedAltitude", "assignedAltitude" },
-        { "status", "flightStatus" }, { "flightStatus", "flightStatus" },
-        { "cid", "computerId" }, { "computerId", "computerId" },
-        { "fac", "controllingFacility" }, { "facility", "controllingFacility" }, { "controllingFacility", "controllingFacility" },
-        { "sector", "controllingSector" }, { "controllingSector", "controllingSector" },
-        { "ho", "handoffEvent" }, { "handoff", "handoffEvent" }, { "handoffEvent", "handoffEvent" },
+        { "alt", "assignedAltitude" }, { "altitude", "assignedAltitude" },
+        { "status", "flightStatus" },
+        { "cid", "computerId" },
+        { "fac", "controllingFacility" }, { "facility", "controllingFacility" },
+        { "sector", "controllingSector" },
+        { "ho", "handoffEvent" }, { "handoff", "handoffEvent" },
         { "po", "pointoutOriginatingUnit" }, { "pointout", "pointoutOriginatingUnit" },
         { "hdg", "clearanceHeading" }, { "heading", "clearanceHeading" },
-        { "speed", "clearanceSpeed" }, { "clearanceSpeed", "clearanceSpeed" },
-        { "text", "clearanceText" }, { "clearanceText", "clearanceText" },
-        { "tmi", "tmiIds" }, { "tmiIds", "tmiIds" },
-        { "datalink", "dataLinkCode" }, { "cpdlc", "dataLinkCode" }, { "dataLinkCode", "dataLinkCode" },
-        { "gufi", "gufi" }, { "fdpsGufi", "fdpsGufi" },
+        { "speed", "clearanceSpeed" },
+        { "text", "clearanceText" },
+        { "tmi", "tmiIds" },
+        { "datalink", "dataLinkCode" }, { "cpdlc", "dataLinkCode" },
+        { "gufi", "gufi" }, { "fdpsgufi", "fdpsGufi" },
     };
 
     /// <summary>Default fields searched when a clause has no explicit field prefix.

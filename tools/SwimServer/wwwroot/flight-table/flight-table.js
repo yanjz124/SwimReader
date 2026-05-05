@@ -818,12 +818,65 @@ document.getElementById('colHeader').addEventListener('click', (e) => {
     scheduleRender();
 });
 
+// ── Historical flight search ─────────────────────────────────
+// On-disk JSONL history (flight-history/YYYY-MM-DD.jsonl) is queried by the
+// /api/history endpoint. We load matching records into allFlights with
+// _historical=true so they appear alongside live flights.
+let historyDates = [];
+const historyLoaded = new Set();  // `${term}:${date}` keys, to avoid duplicate fetches
+const HIST_MAX_DATES = 7;          // search at most this many recent dates per query
+
+async function loadHistoryDates() {
+    try {
+        const r = await fetch('/api/history/dates');
+        if (!r.ok) return;
+        const arr = await r.json();
+        historyDates = arr.map(d => d.date).slice(0, HIST_MAX_DATES);
+    } catch {}
+}
+loadHistoryDates();
+
+async function searchHistory(query) {
+    if (query.length < 2 || historyDates.length === 0) return;
+    const dates = historyDates.filter(d => !historyLoaded.has(`${query}:${d}`));
+    if (dates.length === 0) return;
+    const fetches = dates.map(d => {
+        historyLoaded.add(`${query}:${d}`);
+        return fetch(`/api/history?q=${encodeURIComponent(query)}&date=${d}`)
+            .then(r => r.ok ? r.json() : [])
+            .catch(() => []);
+    });
+    const results = await Promise.all(fetches);
+    let added = 0;
+    for (const dayResults of results) {
+        if (!Array.isArray(dayResults)) continue;
+        for (const f of dayResults) {
+            if (!f.gufi) continue;
+            // Don't overwrite a live flight with a historical record
+            const existing = allFlights.get(f.gufi);
+            if (existing && !existing._historical) continue;
+            f._historical = true;
+            f._removedAt = f.lastSeen ? new Date(f.lastSeen).getTime() : 0;
+            f._histBytes = JSON.stringify(f).length;
+            if (!existing) historicalBytes += f._histBytes;
+            allFlights.set(f.gufi, f);
+            noteFacility(f);
+            added++;
+        }
+    }
+    if (added) {
+        trimHistorical();
+        scheduleRender();
+    }
+}
+
 // ── Filter events ────────────────────────────────────────────
 let searchTimeout;
 searchEl.addEventListener('input', () => {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
         searchTerm = searchEl.value.trim();
+        if (searchTerm.length >= 2) searchHistory(searchTerm.toUpperCase());
         scheduleRender();
     }, 200);
 });

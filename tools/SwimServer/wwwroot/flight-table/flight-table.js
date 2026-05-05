@@ -146,7 +146,15 @@ function render() {
     rowsEl.innerHTML = html.join('');
 
     rowsEl.querySelectorAll('.flight-row').forEach(el => {
-        el.addEventListener('click', () => selectFlight(el.dataset.gufi));
+        el.addEventListener('click', (e) => {
+            // Pin star click is handled separately
+            if (e.target.dataset && e.target.dataset.action === 'pin') {
+                e.stopPropagation();
+                handlePinClick(el.dataset.gufi);
+                return;
+            }
+            selectFlight(el.dataset.gufi);
+        });
     });
 }
 
@@ -335,7 +343,16 @@ function renderRow(f, selClass) {
         : '';
     const histCls = f._historical ? ' historical' : '';
     const stCls = f._historical ? 'historical' : (f.flightStatus || '').toLowerCase();
+    const pinState = pinRecords.get(f.gufi);
+    const pinCls = !pinState ? '' : (pinState.pinned ? ' pinned' : ' grace');
+    const pinChar = pinState && pinState.pinned ? '★' : '☆';
+    const pinTitle = !pinState
+        ? 'Pin to protect from history cleanup'
+        : pinState.pinned
+            ? 'Unpin (will be kept ≥24h after unpin)'
+            : 'Recently unpinned — click to re-pin';
     return `<div class="flight-row${selClass}${histCls}" data-gufi="${f.gufi}">
+        <span class="pin${pinCls}" data-action="pin" title="${pinTitle}">${pinChar}</span>
         <span class="cs">${f.callsign || '????'}</span>
         <span>${f.aircraftType || ''}</span>
         <span class="dep">${f.origin || ''}</span>
@@ -1052,6 +1069,180 @@ if (searchFieldEl) {
 filterStatus.addEventListener('change', scheduleRender);
 filterFacility.addEventListener('change', scheduleRender);
 filterRules.addEventListener('change', scheduleRender);
+
+// ── Pin / unpin (server-side, persists across users + restarts) ─
+// Map gufi → { pinned, pinnedAt, unpinnedAt, callsign, origin, destination }
+const pinRecords = new Map();
+
+async function loadPinState() {
+    try {
+        const r = await fetch('/api/history/pins');
+        if (!r.ok) return;
+        const obj = await r.json();
+        pinRecords.clear();
+        for (const [gufi, rec] of Object.entries(obj)) pinRecords.set(gufi, rec);
+        // Also fetch full pinned-flight records and merge into table
+        const pr = await fetch('/api/history/pinned');
+        if (pr.ok) {
+            const pinnedFlights = await pr.json();
+            if (Array.isArray(pinnedFlights)) {
+                for (const f of pinnedFlights) {
+                    if (!f.gufi) continue;
+                    const existing = allFlights.get(f.gufi);
+                    if (existing && !existing._historical) continue;  // live wins
+                    f._historical = true;
+                    f._pinned = true;
+                    f._removedAt = f.lastSeen ? new Date(f.lastSeen).getTime() : 0;
+                    f._histBytes = JSON.stringify(f).length;
+                    if (!existing) historicalBytes += f._histBytes;
+                    allFlights.set(f.gufi, f);
+                    noteFacility(f);
+                }
+                trimHistorical();
+            }
+        }
+        scheduleRender();
+    } catch (e) { console.error('loadPinState failed', e); }
+}
+// Refresh pin state every 60s so multiple users stay in sync
+setInterval(loadPinState, 60000);
+loadPinState();
+
+function showConfirm(title, body, onConfirm, dangerLabel) {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-overlay';
+    overlay.innerHTML = `
+        <div class="confirm-box">
+            <h3>${title}</h3>
+            <div>${body}</div>
+            <div class="actions">
+                <button data-action="cancel">Cancel</button>
+                <button data-action="confirm" class="danger">${dangerLabel || 'Confirm'}</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) document.body.removeChild(overlay);
+        if (e.target.dataset?.action === 'cancel') document.body.removeChild(overlay);
+        if (e.target.dataset?.action === 'confirm') {
+            document.body.removeChild(overlay);
+            onConfirm();
+        }
+    });
+}
+
+async function handlePinClick(gufi) {
+    const existing = pinRecords.get(gufi);
+    const isPinnedActive = existing && existing.pinned;
+    const flight = allFlights.get(gufi);
+
+    if (isPinnedActive) {
+        // Unpin → confirm
+        const cs = flight?.callsign || existing.callsign || gufi.slice(0, 8);
+        showConfirm(
+            'Unpin flight?',
+            `<b>${cs}</b> will no longer be protected from automatic history cleanup. ` +
+            `It will be kept for at least <b>24 hours</b>, and up to 4 days if disk space allows. ` +
+            `After that it may be removed.`,
+            async () => {
+                try {
+                    const r = await fetch('/api/history/unpin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ gufi })
+                    });
+                    if (r.ok) {
+                        existing.pinned = false;
+                        existing.unpinnedAt = new Date().toISOString();
+                        scheduleRender();
+                    }
+                } catch (e) { console.error('unpin failed', e); }
+            },
+            'Unpin'
+        );
+        return;
+    }
+
+    // Pin (or re-pin if in grace period)
+    const body = { gufi };
+    if (flight) body.record = flight;
+    try {
+        const r = await fetch('/api/history/pin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (r.ok) {
+            pinRecords.set(gufi, {
+                pinned: true,
+                pinnedAt: new Date().toISOString(),
+                callsign: flight?.callsign,
+                origin: flight?.origin,
+                destination: flight?.destination
+            });
+            scheduleRender();
+        } else {
+            const err = await r.json().catch(() => ({}));
+            alert('Pin failed: ' + (err.error || r.status));
+        }
+    } catch (e) { console.error('pin failed', e); alert('Pin failed: ' + e.message); }
+}
+
+// ── CSV export ────────────────────────────────────────────────
+const exportBtn = document.getElementById('exportCsv');
+if (exportBtn) {
+    exportBtn.addEventListener('click', () => {
+        // Re-run the same filter as render() to get visible rows
+        const fStatus = filterStatus.value;
+        const fFacility = filterFacility.value;
+        const fRules = filterRules.value;
+        const q = searchTerm.toUpperCase();
+
+        const rows = [];
+        for (const f of allFlights.values()) {
+            if (fStatus === 'historical' && !f._historical) continue;
+            if (fStatus === 'active' && (f.flightStatus !== 'ACTIVE' || f._historical)) continue;
+            if (fStatus === 'dropped' && (f.flightStatus !== 'DROPPED' || f._historical)) continue;
+            if (fFacility && f.reportingFacility !== fFacility) continue;
+            if (fRules && f.flightRules !== fRules) continue;
+            if (q && !matchesSearch(f, q)) continue;
+            rows.push(f);
+        }
+
+        const cols = [
+            'gufi','callsign','aircraftType','origin','destination','assignedAltitude',
+            'interimAltitude','flightRules','flightType','controllingFacility','controllingSector',
+            'squawk','assignedSquawk','dataLinkCode','flightStatus','registration','wakeCategory',
+            'route','star','remarks','clearanceHeading','clearanceSpeed','clearanceText',
+            'reportingFacility','operator','originator','equipmentQualifier','tmiIds',
+            'latitude','longitude','groundSpeed','lastSeen','lastMsgSource'
+        ];
+        const esc = v => {
+            if (v === null || v === undefined) return '';
+            const s = String(v);
+            if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+            return s;
+        };
+        const lines = [
+            ['#pinned', ...cols].join(','),  // first column is pinned flag
+            ...rows.map(f => [
+                pinRecords.get(f.gufi)?.pinned ? '1' : '',
+                ...cols.map(c => esc(f[c]))
+            ].join(','))
+        ];
+        const csv = lines.join('\r\n');
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `flights-${stamp}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    });
+}
 
 // ── Auto-refresh selected flight every 3s ────────────────────
 const _fdioDetailRefresh = () => { if (selectedGufi && !(currentDetail && currentDetail._purged)) fetch(`/api/flights/${encodeURIComponent(selectedGufi)}`).then(r => r.ok ? r.json() : null).then(d => { if (d) { currentDetail = d; currentDetail._purged = false; renderDetailHeader(d); renderActiveTab(); } }).catch(() => {}); };

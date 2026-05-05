@@ -407,6 +407,9 @@ var historyJsonOpts = new JsonSerializerOptions
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
 };
 
+// Initialize flight pinning (server-side persistence of user-protected flights)
+FlightPinService.Initialize(historyDir, historyJsonOpts);
+
 // (Per-service cleanup removed — PersistenceBudget enforces a single shared cap.)
 
 // Save flight cache on graceful shutdown (SIGTERM from systemd)
@@ -886,6 +889,8 @@ var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSecond
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 // Centralized disk-budget enforcement across all persisted data (replay + flight-history + tdls-history).
 var budgetTimer = new Timer(_ => PersistenceBudget.Enforce(), null, TimeSpan.FromMinutes(2), TimeSpan.FromHours(1));
+// Hourly pin grace-period cleanup (24h floor, 4-day soft retention).
+var pinCleanupTimer = new Timer(_ => FlightPinService.CleanupExpired(), null, TimeSpan.FromMinutes(5), TimeSpan.FromHours(1));
 
 // Replay: periodic ERAM snapshots for seek support (every 5 minutes)
 var eramSnapshotTimer = new Timer(_ =>

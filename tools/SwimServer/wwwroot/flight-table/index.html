@@ -16,7 +16,22 @@
 </div>
 
 <div class="filterbar">
-    <input type="text" class="search-box" id="search" placeholder="Search:  NKS  |  cs:NKS9*  |  route:BOSOX  |  rmk:medevac  |  dest:KORD type:A320" title="Bare term: callsign/origin/dest/reg/CID. Field-scoped: cs: op: org: dest: route: rmk: type: reg: status: sector: tmi: squawk:. Wildcards: foo* / *foo / *foo*. Multiple terms = AND.">
+    <select class="filter-select" id="searchField" title="Field to search. 'All' searches callsign, type, airport, route, remarks, squawk, registration, CID.">
+        <option value="all">All</option>
+        <option value="callsign">Callsign</option>
+        <option value="aircraftType">Type</option>
+        <option value="airport">Airport (orig/dest)</option>
+        <option value="origin">Origin</option>
+        <option value="destination">Destination</option>
+        <option value="route">Route</option>
+        <option value="remarks">Remarks</option>
+        <option value="squawk">Squawk</option>
+        <option value="registration">Registration</option>
+        <option value="computerId">CID</option>
+        <option value="controllingSector">Sector</option>
+        <option value="tmiIds">TMI</option>
+    </select>
+    <input type="text" class="search-box" id="search" placeholder="Search… (wildcards: foo*, *foo*, multi-word AND)" title="Picks the field from the dropdown. You can also type field:value (cs:NKS9*, dest:KORD), with * wildcards, multiple terms AND'd together. e.g. dest:KORD type:A320">
     <div class="filter-sep"></div>
     <span class="filter-label">STATUS</span>
     <select class="filter-select" id="filterStatus">

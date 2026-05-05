@@ -179,13 +179,48 @@ const FIELD_ALIAS = {
     datalink: 'dataLinkCode', cpdlc: 'dataLinkCode',
     gufi: 'gufi', fdpsgufi: 'fdpsGufi'
 };
-const DEFAULT_FIELDS = [
-    { f: 'callsign',     style: 'startsWith' },
-    { f: 'origin',       style: 'airport' },
-    { f: 'destination',  style: 'airport' },
-    { f: 'registration', style: 'startsWith' },
-    { f: 'computerId',   style: 'exact' }
+// "All" mode default fields — broad match across the most useful fields.
+const DEFAULT_FIELDS_ALL = [
+    { f: 'callsign',            style: 'startsWith' },
+    { f: 'origin',              style: 'airport' },
+    { f: 'destination',         style: 'airport' },
+    { f: 'aircraftType',        style: 'contains' },
+    { f: 'route',               style: 'contains' },
+    { f: 'remarks',             style: 'contains' },
+    { f: 'squawk',              style: 'contains' },
+    { f: 'registration',        style: 'startsWith' },
+    { f: 'computerId',          style: 'exact' },
+    { f: 'controllingFacility', style: 'contains' },
+    { f: 'controllingSector',   style: 'contains' }
 ];
+
+// Per-field default search style when the dropdown selects a single field
+const SINGLE_FIELD_STYLE = {
+    callsign:           'startsWith',
+    aircraftType:       'contains',
+    origin:             'airport',
+    destination:        'airport',
+    airport:            'airport',  // virtual: matches origin OR destination
+    route:              'contains',
+    remarks:            'contains',
+    squawk:             'contains',
+    registration:       'startsWith',
+    computerId:         'exact',
+    controllingSector:  'contains',
+    tmiIds:             'contains'
+};
+
+let searchField = 'all';   // current dropdown selection
+
+function defaultFieldsForCurrent() {
+    if (searchField === 'all') return DEFAULT_FIELDS_ALL;
+    if (searchField === 'airport')
+        return [
+            { f: 'origin',      style: 'airport' },
+            { f: 'destination', style: 'airport' }
+        ];
+    return [{ f: searchField, style: SINGLE_FIELD_STYLE[searchField] || 'contains' }];
+}
 
 function parseQuery(raw) {
     const tokens = [];
@@ -253,7 +288,7 @@ function matchesClause(f, c) {
         if (v === undefined || v === null) return false;
         return wildcardMatch(String(v), c.pat, 'contains');
     }
-    for (const { f: jf, style } of DEFAULT_FIELDS) {
+    for (const { f: jf, style } of defaultFieldsForCurrent()) {
         const v = f[jf];
         if (v && wildcardMatch(String(v), c.pat, style)) return true;
     }
@@ -949,11 +984,21 @@ loadHistoryDates();
 
 async function searchHistory(query) {
     if (query.length < 2 || historyDates.length === 0) return;
-    const dates = historyDates.filter(d => !historyLoaded.has(`${query}:${d}`));
+    // If the dropdown selected a specific field and the user didn't already type
+    // a field:value clause, scope the history query to that field.
+    let apiQuery = query;
+    if (searchField !== 'all' && !query.includes(':')) {
+        const fieldKey = (searchField === 'airport') ? 'origin' : searchField;
+        apiQuery = `${fieldKey}:${query}`;
+        // For 'airport' we'd ideally OR origin/destination — backend doesn't support OR yet,
+        // so we accept origin-only; user can type dest:KORD explicitly for arrival queries.
+    }
+    const cacheKey = apiQuery;
+    const dates = historyDates.filter(d => !historyLoaded.has(`${cacheKey}:${d}`));
     if (dates.length === 0) return;
     const fetches = dates.map(d => {
-        historyLoaded.add(`${query}:${d}`);
-        return fetch(`/api/history?q=${encodeURIComponent(query)}&date=${d}`)
+        historyLoaded.add(`${cacheKey}:${d}`);
+        return fetch(`/api/history?q=${encodeURIComponent(apiQuery)}&date=${d}`)
             .then(r => r.ok ? r.json() : [])
             .catch(() => []);
     });
@@ -982,15 +1027,28 @@ async function searchHistory(query) {
 }
 
 // ── Filter events ────────────────────────────────────────────
+const searchFieldEl = document.getElementById('searchField');
 let searchTimeout;
 searchEl.addEventListener('input', () => {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(() => {
         searchTerm = searchEl.value.trim();
         if (searchTerm.length >= 2) searchHistory(searchTerm.toUpperCase());
+        // Invalidate the parsed-clauses cache when query changes
+        matchesSearch._lastQ = null;
         scheduleRender();
     }, 200);
 });
+if (searchFieldEl) {
+    searchFieldEl.addEventListener('change', () => {
+        searchField = searchFieldEl.value;
+        // Force re-parse since DEFAULT fields changed
+        matchesSearch._lastQ = null;
+        // Re-fetch history with the new scope if there's a search term
+        if (searchTerm.length >= 2) searchHistory(searchTerm.toUpperCase());
+        scheduleRender();
+    });
+}
 filterStatus.addEventListener('change', scheduleRender);
 filterFacility.addEventListener('change', scheduleRender);
 filterRules.addEventListener('change', scheduleRender);

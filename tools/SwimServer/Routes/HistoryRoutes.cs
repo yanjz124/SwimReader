@@ -137,7 +137,7 @@ static class HistoryRoutes
         { "type", "aircraftType" }, { "actype", "aircraftType" }, { "aircraftType", "aircraftType" }, { "ac", "aircraftType" },
         { "reg", "registration" }, { "registration", "registration" },
         { "wake", "wakeCategory" }, { "wakeCategory", "wakeCategory" },
-        { "modes", "modeSCode" }, { "modeS", "modeSCode" }, { "modeSCode", "modeSCode" },
+        { "modes", "modeSCode" }, { "modeSCode", "modeSCode" },
         { "equip", "equipmentQualifier" }, { "equipment", "equipmentQualifier" },
         { "sq", "squawk" }, { "squawk", "squawk" }, { "beacon", "squawk" },
         { "bcn", "assignedSquawk" }, { "assignedSquawk", "assignedSquawk" },

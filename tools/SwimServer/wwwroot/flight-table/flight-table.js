@@ -150,17 +150,128 @@ function render() {
     });
 }
 
+// Field-scoped search syntax (mirrors backend /api/history):
+//   bare value         → matches default fields (callsign starts-with, origin/dest, reg, cid)
+//   field:value        → matches a specific field (contains)
+//   value with *       → wildcard (foo*, *foo, *foo*)
+//   multiple terms     → AND'ed together (whitespace-separated)
+const FIELD_ALIAS = {
+    cs: 'callsign', callsign: 'callsign',
+    op: 'operator', operator: 'operator', airline: 'operator',
+    org: 'origin', origin: 'origin', from: 'origin', dep: 'origin',
+    dest: 'destination', destination: 'destination', to: 'destination', arr: 'destination',
+    type: 'aircraftType', actype: 'aircraftType', aircrafttype: 'aircraftType', ac: 'aircraftType',
+    reg: 'registration', registration: 'registration',
+    sq: 'squawk', squawk: 'squawk', beacon: 'squawk',
+    rules: 'flightRules', flightrules: 'flightRules',
+    ftype: 'flightType', flighttype: 'flightType',
+    route: 'route', rte: 'route',
+    star: 'star',
+    rmk: 'remarks', remarks: 'remarks', rmks: 'remarks',
+    altitude: 'assignedAltitude', alt: 'assignedAltitude',
+    status: 'flightStatus', flightstatus: 'flightStatus',
+    cid: 'computerId', computerid: 'computerId',
+    fac: 'controllingFacility', facility: 'controllingFacility', controllingfacility: 'controllingFacility',
+    sector: 'controllingSector', controllingsector: 'controllingSector',
+    ho: 'handoffEvent', handoff: 'handoffEvent',
+    text: 'clearanceText', clearancetext: 'clearanceText',
+    tmi: 'tmiIds', tmiids: 'tmiIds',
+    datalink: 'dataLinkCode', cpdlc: 'dataLinkCode',
+    gufi: 'gufi', fdpsgufi: 'fdpsGufi'
+};
+const DEFAULT_FIELDS = [
+    { f: 'callsign',     style: 'startsWith' },
+    { f: 'origin',       style: 'airport' },
+    { f: 'destination',  style: 'airport' },
+    { f: 'registration', style: 'startsWith' },
+    { f: 'computerId',   style: 'exact' }
+];
+
+function parseQuery(raw) {
+    const tokens = [];
+    let buf = '', inQ = false;
+    for (const c of raw) {
+        if (c === '"') { inQ = !inQ; continue; }
+        if (!inQ && /\s/.test(c)) {
+            if (buf) { tokens.push(buf); buf = ''; }
+        } else buf += c;
+    }
+    if (buf) tokens.push(buf);
+    return tokens.map(t => {
+        const i = t.indexOf(':');
+        if (i > 0 && i < t.length - 1) return { field: t.slice(0, i).toLowerCase(), pat: t.slice(i + 1) };
+        return { field: null, pat: t };
+    });
+}
+
+function airportMatches(field, q) {
+    field = (field || '').toUpperCase();
+    q = (q || '').toUpperCase();
+    if (field === q) return true;
+    if (field.length === 4 && (field[0] === 'K' || field[0] === 'P') && field.slice(1) === q) return true;
+    if (q.length === 4 && (q[0] === 'K' || q[0] === 'P') && field === q.slice(1)) return true;
+    return false;
+}
+
+function wildcardMatch(value, pattern, defaultStyle) {
+    value = String(value || '').toUpperCase();
+    pattern = pattern.toUpperCase();
+    if (pattern.indexOf('*') >= 0) {
+        const lead = pattern.startsWith('*'), trail = pattern.endsWith('*');
+        const core = pattern.replace(/^\*+|\*+$/g, '');
+        if (!core) return value.length > 0;
+        if (lead && trail) return value.includes(core);
+        if (lead) return value.endsWith(core);
+        if (trail) return value.startsWith(core);
+        // Mid wildcards: split, anchor first/last
+        const parts = pattern.split('*');
+        let idx = 0;
+        for (let i = 0; i < parts.length; i++) {
+            if (!parts[i]) continue;
+            const found = value.indexOf(parts[i], idx);
+            if (found < 0) return false;
+            if (i === 0 && found !== 0) return false;
+            idx = found + parts[i].length;
+        }
+        if (parts[parts.length - 1] && !value.endsWith(parts[parts.length - 1])) return false;
+        return true;
+    }
+    switch (defaultStyle) {
+        case 'startsWith': return value.startsWith(pattern);
+        case 'exact':      return value === pattern;
+        case 'airport':    return airportMatches(value, pattern);
+        case 'contains':
+        default:           return value.includes(pattern);
+    }
+}
+
+function matchesClause(f, c) {
+    if (c.field) {
+        const jsonField = FIELD_ALIAS[c.field];
+        if (!jsonField) return false;
+        const v = f[jsonField];
+        if (v === undefined || v === null) return false;
+        return wildcardMatch(String(v), c.pat, 'contains');
+    }
+    for (const { f: jf, style } of DEFAULT_FIELDS) {
+        const v = f[jf];
+        if (v && wildcardMatch(String(v), c.pat, style)) return true;
+    }
+    return false;
+}
+
 function matchesSearch(f, q) {
-    return (f.callsign || '').includes(q)
-        || (f.computerId || '').includes(q)
-        || (f.origin || '').includes(q)
-        || (f.destination || '').includes(q)
-        || (f.aircraftType || '').includes(q)
-        || (f.squawk || '').includes(q)
-        || (f.route || '').toUpperCase().includes(q)
-        || (f.controllingFacility || '').includes(q)
-        || (f.registration || '').toUpperCase().includes(q)
-        || (f.remarks || '').toUpperCase().includes(q);
+    // Cache parsed clauses per query string to avoid re-parsing every flight
+    if (matchesSearch._lastQ !== q) {
+        matchesSearch._lastQ = q;
+        matchesSearch._clauses = parseQuery(q);
+    }
+    const clauses = matchesSearch._clauses;
+    if (clauses.length === 0) return true;
+    for (const c of clauses) {
+        if (!matchesClause(f, c)) return false;
+    }
+    return true;
 }
 
 function getSortValue(f, col) {

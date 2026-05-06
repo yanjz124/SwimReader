@@ -4,7 +4,10 @@ const theadEl = $('thead-row');
 const searchEl = $('searchInput'), statusEl = $('statusFilter'),
       depEl = $('depInput'), arrEl = $('arrInput'), sortEl = $('sortBy'),
       presetEl = $('presetSel');
-const dlg = $('detailDialog'), detailBody = $('detailBody'), closeBtn = $('closeDetail');
+const detailPanel = $('detailPanel'), detailBody = $('detailBody'),
+      detailCallsign = $('detailCallsign'), detailType = $('detailType'),
+      detailStatus = $('detailStatus'), detailClose = $('detailClose');
+let selectedRef = null;
 
 let allFlights = [];
 
@@ -157,51 +160,86 @@ function render(list) {
     }).join('');
     rowsEl.innerHTML = html;
     rowsEl.querySelectorAll('tr').forEach(tr => {
+        if (tr.dataset.ref === selectedRef) tr.classList.add('selected');
         tr.addEventListener('click', () => showDetail(tr.dataset.ref));
     });
 }
 
+const TIME_KEYS = new Set(['igtd','etd','eta','originalDeparture','originalArrival',
+    'gateDeparture','gateArrival','runwayDeparture','runwayArrival',
+    'airlineOutTime','airlineOffTime','airlineOnTime','airlineInTime',
+    'flightCreation','boundaryCrossingTime','arrivalFixTime','departureFixTime',
+    'coordinationTime','positionTime']);
+
+function renderField(k, v) {
+    const isTime = TIME_KEYS.has(k);
+    const display = isTime ? fmtTime(v) || esc(v) : esc(v);
+    const cls = isTime ? 'tm' : (k === 'callsign' ? 'cs' : '');
+    const longCls = (typeof v === 'string' && v.length > 60) ? ' long' : '';
+    return `<div class="field-label">${esc(k)}</div><div class="field-value ${cls}${longCls}">${display}</div>`;
+}
+
 async function showDetail(ref) {
     if (!ref) return;
+    selectedRef = ref;
+    rowsEl.querySelectorAll('tr').forEach(tr => {
+        tr.classList.toggle('selected', tr.dataset.ref === ref);
+    });
+    detailPanel.classList.remove('collapsed');
+    detailBody.innerHTML = '<div style="color:#666;padding:20px">Loading...</div>';
     try {
         const resp = await fetch('/api/tfms/flights/' + encodeURIComponent(ref));
-        if (!resp.ok) { detailBody.innerHTML = `<h2>${esc(ref)}</h2><div style="color:#888">No detail available</div>`; dlg.showModal(); return; }
+        if (!resp.ok) { detailBody.innerHTML = '<div style="color:#888;padding:20px">No detail available</div>'; return; }
         const f = await resp.json();
+        detailCallsign.textContent = f.callsign || ref;
+        detailType.textContent = f.acType || '';
+        const st = (f.status || '').toLowerCase();
+        detailStatus.textContent = f.status || '';
+        detailStatus.className = 'status-badge ' + st;
+
         const groups = {
-            'Identity': ['flightRef','callsign','airline','gufi','facility','cid','category','userCategory','status'],
+            'Identity': ['flightRef','airline','gufi','facility','cid','category','userCategory','sourceFacility'],
             'Aircraft': ['acType','acModel','aircraftEngineClass','specialAircraftQualifier'],
-            'Flight Plan': ['depArpt','arrArpt','requestedAltitude','assignedAlt','assignedBeaconCode','filedTrueAirSpeed','filedMach','star','starTransitionFix','dpName','dpType','dpTransitionFix','depFix','arrFix','route','routeOfFlight','coordinationFix','coordinationTime'],
-            'Times': ['igtd','etd','eta','originalDeparture','originalArrival','gateDeparture','gateArrival','runwayDeparture','runwayArrival','airlineOutTime','airlineOffTime','airlineOnTime','airlineInTime','flightCreation','boundaryCrossingTime','arrivalFixTime','departureFixTime'],
-            'Track': ['lat','lon','speed','altitude','reportedAltitudeRaw','positionTime','groundSpeed'],
-            'Boundary': ['boundaryFix','boundaryRadial','boundaryDistance'],
-            'Source': ['fdTrigger','sensitivity','cdmPart','sourceFacility','diversionIndicator'],
+            'Flight Plan': ['depArpt','arrArpt','requestedAltitude','assignedAltitude','assignedBeaconCode','filedTrueAirSpeed','filedMach','star','starTransitionFix','dpName','dpType','dpTransitionFix','depFix','arrFix','routeOfFlight'],
+            'Coordination': ['coordinationFix','coordinationTime','boundaryFix','boundaryCrossingTime','boundaryRadial','boundaryDistance'],
+            'Times': ['igtd','etd','eta','originalDeparture','originalArrival','gateDeparture','gateArrival','runwayDeparture','runwayArrival','airlineOutTime','airlineOffTime','airlineOnTime','airlineInTime','arrivalFixTime','departureFixTime','flightCreation'],
+            'Track': ['lat','lon','speed','altitude','reportedAltitudeRaw','groundSpeed','positionTime','nextEventLat','nextEventLon'],
+            'Message': ['fdTrigger','sensitivity','cdmPart','diversionIndicator'],
         };
-        const seen = new Set();
-        let html = `<h2>${esc(f.callsign || ref)}</h2>`;
+        const seen = new Set(['callsign','acType','status']);
+        let html = '';
         for (const [grp, keys] of Object.entries(groups)) {
-            const rows = keys.filter(k => f[k] != null && f[k] !== '' && typeof f[k] !== 'object')
-                .map(k => { seen.add(k); return `<div class="field"><span class="label">${esc(k)}</span><span class="value">${esc(f[k])}</span></div>`; })
-                .join('');
-            if (rows) html += `<h3>${esc(grp)}</h3>${rows}`;
+            const fields = keys.filter(k => f[k] != null && f[k] !== '' && typeof f[k] !== 'object');
+            if (fields.length === 0) continue;
+            const rows = fields.map(k => { seen.add(k); return renderField(k, f[k]); }).join('');
+            html += `<div class="section"><h3>${esc(grp)}</h3><div class="field-grid">${rows}</div></div>`;
         }
         const extras = Object.entries(f)
             .filter(([k, v]) => !seen.has(k) && v != null && v !== '' && typeof v !== 'object')
-            .map(([k, v]) => `<div class="field"><span class="label">${esc(k)}</span><span class="value">${esc(v)}</span></div>`)
+            .map(([k, v]) => renderField(k, v))
             .join('');
-        if (extras) html += `<h3>Other</h3>${extras}`;
-        // List collections (centers/sectors/waypoints/airways/fixes)
+        if (extras) html += `<div class="section"><h3>Other</h3><div class="field-grid">${extras}</div></div>`;
+        // Collections (centers, sectors, waypoints, airways, fixes)
         for (const k of ['centers','sectors','airways','fixes','waypoints']) {
             const arr = f[k];
             if (Array.isArray(arr) && arr.length) {
-                html += `<h3>${esc(k)} (${arr.length})</h3><div class="value" style="font-size:11px">${arr.map(item =>
-                    typeof item === 'object' ? esc(JSON.stringify(item)) : esc(item)).join('<br>')}</div>`;
+                const items = arr.map(item =>
+                    typeof item === 'object' ? esc(JSON.stringify(item)) : esc(item))
+                    .join('<br>');
+                html += `<div class="section"><h3>${esc(k)} (${arr.length})</h3>` +
+                    `<div class="field-value long">${items}</div></div>`;
             }
         }
         detailBody.innerHTML = html;
-        dlg.showModal();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+        detailBody.innerHTML = '<div style="color:#a44;padding:20px">' + esc(e.message) + '</div>';
+    }
 }
-closeBtn.addEventListener('click', () => dlg.close());
+detailClose.addEventListener('click', () => {
+    detailPanel.classList.add('collapsed');
+    selectedRef = null;
+    rowsEl.querySelectorAll('tr.selected').forEach(tr => tr.classList.remove('selected'));
+});
 
 async function refresh() {
     try {

@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TFM FIDO — R14 Flight Data | swim.vncrcc.org</title>
-<link rel="stylesheet" href="/shared/common.css?v=2">
-<link rel="stylesheet" href="/tfm/fido.css?v=1">
+<link rel="stylesheet" href="/shared/common.css?v=3">
+<link rel="stylesheet" href="/tfm/fido.css?v=3">
 </head>
 <body>
 <a class="nav-home" href="/">&larr; HOME</a>
@@ -19,16 +19,16 @@
         <span class="dot">•</span>
         <a class="home-link" href="/tfm">tfm</a>
         <span class="dot">•</span>
+        <a class="home-link" href="/tfm/aptc">aptc</a>
+        <span class="dot">•</span>
         <a class="home-link" href="/">home</a>
     </div>
 </header>
 
 <div class="filter-row">
-    <input type="text" id="searchInput" placeholder="Search (callsign / airline / cid / dep / arr / type / route / facility)..." style="flex:1;min-width:280px;">
+    <input type="text" id="searchInput" placeholder="Search (callsign / route / CID / airport / type / facility / fix)..." style="flex:1;min-width:280px;">
     <label>Status</label>
-    <select id="statusFilter">
-        <option value="">ALL</option>
-    </select>
+    <select id="statusFilter"><option value="">ALL</option></select>
     <label>Dep</label>
     <input type="text" id="depInput" maxlength="4" style="width:60px;text-transform:uppercase;">
     <label>Arr</label>
@@ -38,35 +38,26 @@
         <option value="igtd" selected>IGTD</option>
         <option value="etd">ETD</option>
         <option value="callsign">Callsign</option>
-        <option value="dep">Departure</option>
-        <option value="arr">Arrival</option>
+        <option value="dep">Dep</option>
+        <option value="arr">Arr</option>
         <option value="status">Status</option>
-        <option value="age">Age (newest)</option>
+        <option value="age">Age</option>
+    </select>
+    <label class="cols-label">Columns</label>
+    <select id="presetSel">
+        <option value="strip" selected>Flight Strip</option>
+        <option value="oooi">+OOOI</option>
+        <option value="track">Track</option>
+        <option value="everything">Everything</option>
     </select>
 </div>
 
-<table class="fido-table">
-    <thead>
-        <tr>
-            <th>CALLSIGN</th>
-            <th>STATUS</th>
-            <th>TYPE</th>
-            <th>DEP</th>
-            <th>ARR</th>
-            <th title="Initial Gate Time of Departure">IGTD</th>
-            <th>ETD</th>
-            <th>RWY OFF</th>
-            <th>ETA</th>
-            <th>ALT</th>
-            <th title="Speed (knots)">SPD</th>
-            <th>BCN</th>
-            <th>STAR</th>
-            <th>FAC/CID</th>
-            <th>SRC</th>
-        </tr>
-    </thead>
-    <tbody id="rows"></tbody>
-</table>
+<div class="table-wrap">
+    <table class="fido-table">
+        <thead><tr id="thead-row"></tr></thead>
+        <tbody id="rows"></tbody>
+    </table>
+</div>
 
 <div id="empty" class="empty">Loading...</div>
 
@@ -75,6 +66,6 @@
     <button id="closeDetail">CLOSE</button>
 </dialog>
 
-<script src="/tfm/fido.js?v=1"></script>
+<script src="/tfm/fido.js?v=3"></script>
 </body>
 </html>

@@ -110,12 +110,20 @@ function rebuildFacilityDropdown() {
 let renderPending = false;
 const RENDER_THROTTLE_MS = 500;
 let lastRenderAt = 0;
+let renderTimer = null;
 function scheduleRender() {
     if (renderPending) return;
     renderPending = true;
     const elapsed = Date.now() - lastRenderAt;
     const wait = Math.max(0, RENDER_THROTTLE_MS - elapsed);
-    setTimeout(() => requestAnimationFrame(render), wait);
+    renderTimer = setTimeout(() => requestAnimationFrame(render), wait);
+}
+// Bypass the throttle for user actions (typing, dropdowns, sort clicks) — those
+// must feel instant even if the WS just rendered 200ms ago.
+function renderNow() {
+    if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+    renderPending = false;
+    requestAnimationFrame(render);
 }
 
 function render() {
@@ -126,17 +134,26 @@ function render() {
     const fRules = filterRules.value;
     const q = searchTerm.toUpperCase();
 
+    // When the user is actively searching, always include matches from history
+    // even if the status filter is Active/Dropped — otherwise typing "NKS" with
+    // the default "Active" filter hides perfectly-good historical results.
+    const searching = q.length > 0;
+
     let filtered = [];
     let histCount = 0;
     for (const f of allFlights.values()) {
         if (f._historical) histCount++;
+        const matchesQuery = !q || matchesSearch(f, q);
+        // Status filter — but allow historical search hits through when searching
         if (fStatus === 'historical' && !f._historical) continue;
-        if (fStatus === 'active' && (f.flightStatus !== 'ACTIVE' || f._historical)) continue;
-        if (fStatus === 'dropped' && (f.flightStatus !== 'DROPPED' || f._historical)) continue;
+        if (fStatus === 'active' && f.flightStatus !== 'ACTIVE' && !(searching && f._historical && matchesQuery)) continue;
+        if (fStatus === 'active' && f._historical && !(searching && matchesQuery)) continue;
+        if (fStatus === 'dropped' && f.flightStatus !== 'DROPPED' && !(searching && f._historical && matchesQuery)) continue;
+        if (fStatus === 'dropped' && f._historical && !(searching && matchesQuery)) continue;
         // fStatus === '' (All) shows everything including historical
         if (fFacility && f.reportingFacility !== fFacility) continue;
         if (fRules && f.flightRules !== fRules) continue;
-        if (q && !matchesSearch(f, q)) continue;
+        if (q && !matchesQuery) continue;
         filtered.push(f);
     }
 
@@ -1053,7 +1070,7 @@ async function searchHistory(query) {
     }
     if (added) {
         trimHistorical();
-        scheduleRender();
+        renderNow();   // history results just arrived — show immediately
     }
 }
 
@@ -1067,22 +1084,20 @@ searchEl.addEventListener('input', () => {
         if (searchTerm.length >= 2) searchHistory(searchTerm.toUpperCase());
         // Invalidate the parsed-clauses cache when query changes
         matchesSearch._lastQ = null;
-        scheduleRender();
+        renderNow();   // user typed — show new filter immediately
     }, 200);
 });
 if (searchFieldEl) {
     searchFieldEl.addEventListener('change', () => {
         searchField = searchFieldEl.value;
-        // Force re-parse since DEFAULT fields changed
         matchesSearch._lastQ = null;
-        // Re-fetch history with the new scope if there's a search term
         if (searchTerm.length >= 2) searchHistory(searchTerm.toUpperCase());
-        scheduleRender();
+        renderNow();
     });
 }
-filterStatus.addEventListener('change', scheduleRender);
-filterFacility.addEventListener('change', scheduleRender);
-filterRules.addEventListener('change', scheduleRender);
+filterStatus.addEventListener('change', renderNow);
+filterFacility.addEventListener('change', renderNow);
+filterRules.addEventListener('change', renderNow);
 
 // ── Pin / unpin (server-side, persists across users + restarts) ─
 // Map gufi → { pinned, pinnedAt, unpinnedAt, callsign, origin, destination }

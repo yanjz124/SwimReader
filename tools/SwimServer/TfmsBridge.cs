@@ -240,7 +240,10 @@ class TfmsBridge
 
         var qid = info.Elements().FirstOrDefault(e => e.Name.LocalName == "qualifiedAircraftId");
         var gufi = qid?.Elements().FirstOrDefault(e => e.Name.LocalName == "gufi")?.Value;
-        var igtd = qid?.Elements().FirstOrDefault(e => e.Name.LocalName == "igtd")?.Value;
+        var igtdStr = qid?.Elements().FirstOrDefault(e => e.Name.LocalName == "igtd")?.Value;
+        DateTime? igtd = null;
+        if (igtdStr is not null && DateTime.TryParse(igtdStr, null, DateTimeStyles.AdjustToUniversal, out var igtdT))
+            igtd = igtdT;
         var category = qid?.Attribute("aircraftCategory")?.Value;
         var userCategory = qid?.Attribute("userCategory")?.Value;
         var cid = qid?.Elements().FirstOrDefault(e => e.Name.LocalName == "computerId");
@@ -295,6 +298,7 @@ class TfmsBridge
             }
         }
         if (!string.IsNullOrEmpty(acType)) flight.AircraftType = acType;
+        if (igtd is not null) flight.Igtd = igtd;
 
         // Message-level attributes
         if (fdTrigger is not null) flight.FdTrigger = fdTrigger;
@@ -952,6 +956,50 @@ class TfmsBridge
         .Select(f => f.ToJson())
         .ToArray();
 
+    /// <summary>
+    /// Return ALL TFMS flights (including prefiled with no position yet) with the rich
+    /// fields most useful for a FIDO-style table.
+    /// </summary>
+    public object[] GetAllFlights() => _flights.Values
+        .OrderBy(f => f.Igtd ?? f.Etd ?? DateTime.MaxValue)
+        .Select(f => new
+        {
+            flightRef = f.FlightRef,
+            callsign = f.Callsign,
+            airline = f.Airline,
+            depArpt = f.DepArpt,
+            arrArpt = f.ArrArpt,
+            acType = f.AircraftType,
+            acModel = f.AircraftModel,
+            category = f.AircraftCategory,
+            userCategory = f.UserCategory,
+            facility = f.Facility,
+            cid = f.IdNumber,
+            status = f.FlightStatus,
+            lat = f.Latitude == 0 ? (double?)null : f.Latitude,
+            lon = f.Longitude == 0 ? (double?)null : f.Longitude,
+            altitude = f.Altitude,
+            speed = f.Speed,
+            assignedAlt = f.AssignedAltitude,
+            requestedAlt = f.RequestedAltitude,
+            beaconCode = f.AssignedBeaconCode,
+            igtd = f.Igtd?.ToString("o"),
+            etd = f.Etd?.ToString("o"),
+            eta = f.Eta?.ToString("o"),
+            originalDeparture = f.OriginalDeparture?.ToString("o"),
+            gateDeparture = f.GateDeparture?.ToString("o"),
+            runwayDeparture = f.RunwayDeparture?.ToString("o"),
+            airlineOutTime = f.AirlineOutTime?.ToString("o"),
+            airlineOffTime = f.AirlineOffTime?.ToString("o"),
+            star = f.Star,
+            route = f.RouteOfFlight,
+            depFix = f.DepartureFix,
+            arrFix = f.ArrivalFix,
+            sourceFacility = f.SourceFacility,
+            ageSec = (int)(DateTime.UtcNow - f.LastSeen).TotalSeconds
+        })
+        .ToArray();
+
     public object? GetFlight(string key)
     {
         if (_flights.TryGetValue(key, out var f)) return f.ToDetailJson();
@@ -1105,6 +1153,8 @@ class TfmsFlight
     public DateTime? PositionTime { get; set; }
     public DateTime? Etd { get; set; }
     public DateTime? Eta { get; set; }
+    /// <summary>Initial Gate Time of Departure — from TFMS qualifiedAircraftId/igtd. Filed/intended departure time.</summary>
+    public DateTime? Igtd { get; set; }
     public string? Star { get; set; }
     public string? StarTransitionFix { get; set; }
     public string? RouteOfFlight { get; set; }

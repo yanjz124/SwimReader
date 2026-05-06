@@ -93,6 +93,8 @@ static class TfmsRoutes
         // REST API
         app.MapGet("/api/tfms/stats", () => Results.Json(ctx.Tfms.GetStats(), ctx.JsonOpts));
         app.MapGet("/api/tfms/flights", () => Results.Json(ctx.Tfms.GetFlights(), ctx.JsonOpts));
+        // All flights including prefiled / no-position — for FIDO-style table
+        app.MapGet("/api/tfms/all", () => Results.Json(ctx.Tfms.GetAllFlights(), ctx.JsonOpts));
         app.MapGet("/api/tfms/flights/{key}", (string key) =>
         {
             var f = ctx.Tfms.GetFlight(key);

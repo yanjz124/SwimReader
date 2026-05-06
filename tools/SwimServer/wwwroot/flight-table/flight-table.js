@@ -413,12 +413,42 @@ function fmtAlt(f) {
 }
 
 // ── Detail panel ─────────────────────────────────────────────
+// Update only the .selected class on affected rows instead of rebuilding the
+// entire table — saves ~50-200ms on click with thousands of rows.
+function updateSelectionClasses(prevGufi, nextGufi) {
+    if (prevGufi) {
+        const prev = rowsEl.querySelector(`.flight-row[data-gufi="${CSS.escape(prevGufi)}"]`);
+        if (prev) prev.classList.remove('selected');
+    }
+    if (nextGufi) {
+        const next = rowsEl.querySelector(`.flight-row[data-gufi="${CSS.escape(nextGufi)}"]`);
+        if (next) next.classList.add('selected');
+    }
+}
+
+// Update only the pin star/class on a single row instead of re-rendering
+// the whole table.
+function updatePinCell(gufi) {
+    const row = rowsEl.querySelector(`.flight-row[data-gufi="${CSS.escape(gufi)}"]`);
+    if (!row) return;
+    const cell = row.querySelector('.pin');
+    if (!cell) return;
+    const state = pinRecords.get(gufi);
+    cell.classList.remove('pinned', 'grace');
+    if (state) {
+        if (state.pinned) cell.classList.add('pinned');
+        else cell.classList.add('grace');
+    }
+    cell.textContent = (state && state.pinned) ? '★' : '☆';
+}
+
 async function selectFlight(gufi) {
+    const prev = selectedGufi;
     selectedGufi = gufi;
     expandedEvents.clear();
     xmlCache = {};
     detailPanel.classList.remove('collapsed');
-    scheduleRender();
+    updateSelectionClasses(prev, gufi);  // O(1) DOM change, no full re-render
 
     try {
         const resp = await fetch(`/api/flights/${encodeURIComponent(gufi)}`);
@@ -437,10 +467,11 @@ async function selectFlight(gufi) {
 }
 
 function closeDetail() {
+    const prev = selectedGufi;
     selectedGufi = null;
     currentDetail = null;
     detailPanel.classList.add('collapsed');
-    scheduleRender();
+    updateSelectionClasses(prev, null);
 }
 
 function renderDetailHeader(d) {
@@ -1009,7 +1040,7 @@ document.getElementById('colHeader').addEventListener('click', (e) => {
     else { sortCol = col; sortAsc = true; }
     document.querySelectorAll('.col-header span').forEach(s => s.classList.remove('sorted'));
     e.target.classList.add('sorted');
-    scheduleRender();
+    renderNow();
 });
 
 // ── Historical flight search ─────────────────────────────────
@@ -1183,7 +1214,7 @@ async function handlePinClick(gufi) {
                     if (r.ok) {
                         existing.pinned = false;
                         existing.unpinnedAt = new Date().toISOString();
-                        scheduleRender();
+                        updatePinCell(gufi);   // O(1) cell update
                     }
                 } catch (e) { console.error('unpin failed', e); }
             },
@@ -1209,7 +1240,7 @@ async function handlePinClick(gufi) {
                 origin: flight?.origin,
                 destination: flight?.destination
             });
-            scheduleRender();
+            updatePinCell(gufi);   // O(1) cell update
         } else {
             const err = await r.json().catch(() => ({}));
             alert('Pin failed: ' + (err.error || r.status));

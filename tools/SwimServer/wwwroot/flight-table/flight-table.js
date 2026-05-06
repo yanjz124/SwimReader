@@ -451,33 +451,43 @@ async function selectFlight(gufi) {
     updateSelectionClasses(prev, gufi);  // O(1) DOM change, no full re-render
 
     const local = allFlights.get(gufi);
-    // Fast path: render local data immediately so the panel shows up
-    // without waiting for the network. Historical flights skip the API
-    // call entirely (server's /api/flights only knows live flights).
+    // Fast path: render local data immediately so the panel appears
+    // without waiting for the network. For historical flights this is
+    // the only data we'll ever have — server's /api/flights only knows
+    // live flights and would 404 (50-200ms wasted round-trip).
     if (local) {
         currentDetail = Object.assign({}, local, {
-            _purged: !!local._historical,
+            // _historical: came from /api/history (has events without XML)
+            // _purged: live flight that 404'd (no events at all)
+            // Don't mark historical as _purged — it has real (limited) events.
+            _historical: !!local._historical,
+            _purged: false,
             events: local.events || []
         });
         renderDetailHeader(currentDetail);
         renderActiveTab();
     }
-    // For non-historical flights, fetch fresh detail (full event list, etc.)
-    // and re-render. Historical flights skip this — no point hitting a 404.
+    // Historical flights: skip the API call (server has no record).
     if (local && local._historical) return;
     try {
         const resp = await fetch(`/api/flights/${encodeURIComponent(gufi)}`);
+        if (selectedGufi !== gufi) return;  // user clicked another row mid-fetch
         if (resp.ok) {
-            // Make sure we're still selected (user may have clicked another row)
-            const fresh = await resp.json();
-            if (selectedGufi !== gufi) return;
-            currentDetail = fresh;
+            currentDetail = await resp.json();
             currentDetail._purged = false;
             renderDetailHeader(currentDetail);
             renderActiveTab();
         } else if (!local) {
             // 404 and no local fallback — nothing to show
+            currentDetail = null;
             return;
+        } else {
+            // 404 but we already showed local data — flag as purged so the
+            // events tab shows the banner (live-without-history case).
+            currentDetail._purged = true;
+            renderDetailHeader(currentDetail);
+            // Re-render active tab only if user is on events
+            if (activeTab !== 'plan') renderActiveTab();
         }
     } catch {}
 }
@@ -494,7 +504,7 @@ function renderDetailHeader(d) {
     document.getElementById('detailCallsign').textContent = d.callsign || '????';
     document.getElementById('detailType').textContent = [d.aircraftType, d.wakeCategory].filter(Boolean).join('/');
     const statEl = document.getElementById('detailStatus');
-    if (d._purged) {
+    if (d._purged || d._historical) {
         statEl.textContent = 'HISTORICAL';
         statEl.className = 'status-badge historical';
     } else {
@@ -509,10 +519,18 @@ function renderActiveTab() {
     if (activeTab === 'plan') {
         detailBody.innerHTML = renderFlightPlan(currentDetail);
     } else {
-        if (currentDetail._purged) {
+        // Historical flights have events from /api/history (no XML expansion);
+        // _purged means the live flight was 404'd with nothing in our local cache.
+        const hasEvents = Array.isArray(currentDetail.events) && currentDetail.events.length > 0;
+        if (currentDetail._purged && !hasEvents) {
             detailBody.innerHTML = '<div class="purge-banner">PURGED FROM SERVER &mdash; EVENT LOG UNAVAILABLE</div>';
+        } else if (!hasEvents) {
+            detailBody.innerHTML = '<div class="loading">No events recorded</div>';
         } else {
-            detailBody.innerHTML = renderEventLog(currentDetail);
+            const banner = currentDetail._historical
+                ? '<div class="purge-banner">HISTORICAL &mdash; XML NOT AVAILABLE FOR ARCHIVED EVENTS</div>'
+                : '';
+            detailBody.innerHTML = banner + renderEventLog(currentDetail);
             attachEventHandlers();
         }
     }
@@ -804,7 +822,9 @@ function renderFlightPlan(d) {
         : '';
     const purgeBanner = d._purged
         ? '<div class="purge-banner">PURGED FROM SERVER &mdash; SHOWING LAST KNOWN DATA</div>'
-        : '';
+        : (d._historical
+            ? '<div class="purge-banner">HISTORICAL &mdash; loaded from saved history</div>'
+            : '');
 
     // ICAO FPL toggle
     lastIcaoText = buildIcaoFpl(d);

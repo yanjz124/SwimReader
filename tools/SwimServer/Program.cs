@@ -221,6 +221,12 @@ var repoRoot = FindRepoRoot(app.Environment.ContentRootPath);
 var nexradHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
 nexradHttp.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader/1.0");
 
+// SFDPS callsign / squawk indices — declared early so ServerContext can capture
+// (rebuilt every 5s by csIndexTimer below). Closures over the variables read the
+// current dictionary reference each call.
+var csIndex = new Dictionary<string, List<FlightState>>();
+var sqIndex = new Dictionary<string, List<FlightState>>();
+
 // Build the shared ServerContext that gets passed to each route registrar.
 // Helper local functions (SendSnapshot, SaveGateCodes, LookupPoint, LookupAirport,
 // ResolveRoute) are forward-referenceable here because top-level local functions
@@ -436,9 +442,7 @@ asdex.Start();
 tfms.Start();
 
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
-// Callsign → FlightState list (rebuilt every 30s; multiple flights per callsign for turnover legs)
-var csIndex = new Dictionary<string, List<FlightState>>();
-var sqIndex = new Dictionary<string, List<FlightState>>(); // squawk → flights (for ASDE-X enrichment)
+// (csIndex/sqIndex declared above so ServerContext can capture; rebuilt below)
 var csIndexTimer = new Timer(_ =>
 {
     try

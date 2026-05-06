@@ -329,8 +329,14 @@ class TfmsBridge
         // CDM airline times from ncsmFlightModify/airlineData
         if (modInfo is not null) ParseCdmTimes(flight, modInfo);
 
-        // Flight plan extras from flightPlanInformation / amendmentData
-        if (planInfo is not null) ParseFlightPlanExtras(flight, planInfo);
+        // Flight plan extras — these can appear in any of these message blocks.
+        // ParseFlightPlanExtras only writes fields it finds, so it's safe to call
+        // on every block (later blocks won't clobber earlier extracted values
+        // unless they actually have new data for those fields).
+        foreach (var block in new[] { planInfo, depInfo, modInfo, routeInfo, timesInfo, trackInfo })
+        {
+            if (block is not null) ParseFlightPlanExtras(flight, block);
+        }
         if (amendInfo is not null)
         {
             var amendData = amendInfo.Elements().FirstOrDefault(e => e.Name.LocalName == "amendmentData");
@@ -453,6 +459,20 @@ class TfmsBridge
         // Star transition fix
         var starTrans = routeData.Elements().FirstOrDefault(e => e.Name.LocalName == "starTransitionFix")?.Value;
         if (starTrans is not null) flight.StarTransitionFix = starTrans;
+
+        // Departure procedure (sibling of star inside ncsmRouteData):
+        //   <dp routeName="ALTNN2" routeType="DIRECT" />
+        //   <dpTransitionFix>DUCEN</dpTransitionFix>
+        var dp = routeData.Elements().FirstOrDefault(e => e.Name.LocalName == "dp");
+        if (dp is not null)
+        {
+            var dpName = dp.Attribute("routeName")?.Value;
+            if (!string.IsNullOrEmpty(dpName)) flight.DpName = dpName;
+            var dpType = dp.Attribute("routeType")?.Value;
+            if (!string.IsNullOrEmpty(dpType)) flight.DpType = dpType;
+        }
+        var dpTrans = routeData.Elements().FirstOrDefault(e => e.Name.LocalName == "dpTransitionFix")?.Value;
+        if (!string.IsNullOrEmpty(dpTrans)) flight.DpTransitionFix = dpTrans;
 
         // Route of flight (legacyFormat attribute is the human-readable string,
         // e.g. "KDFW.JASPA7.WINDU.QERVO3.KSAT/2051"). Element text is empty.
@@ -632,31 +652,42 @@ class TfmsBridge
 
     private void ParseFlightPlanExtras(TfmsFlight flight, XElement planBlock)
     {
-        // Requested altitude
-        var reqAlt = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "requestedAltitude")?.Value;
-        if (reqAlt is not null)
+        // Altitudes are nested as: planBlock/altitude/requestedAltitude/simpleAltitude
+        // Amendments use:           planBlock/newAltitude/assignedAltitude/simpleAltitude
+        // Track info uses:          trackInformation/reportedAltitude/assignedAltitude/simpleAltitude
+        // Use Descendants() to walk through the nested wrappers.
+        string? AltText(string elementName)
         {
-            var clean = reqAlt.TrimEnd('C', 'D', 'A');
-            if (int.TryParse(clean, out var ra)) flight.RequestedAltitude = ra * 100;
+            var el = planBlock.Descendants().FirstOrDefault(e => e.Name.LocalName == elementName);
+            if (el is null) return null;
+            // simpleAltitude under it (preferred), else element's text value
+            var simple = el.Descendants().FirstOrDefault(e => e.Name.LocalName == "simpleAltitude")?.Value;
+            return !string.IsNullOrEmpty(simple) ? simple : el.Value;
+        }
+        int? AltFeet(string elementName)
+        {
+            var v = AltText(elementName);
+            if (string.IsNullOrEmpty(v)) return null;
+            // Trim suffix letters like "C" (cleared), "D" (descend), "A" (assigned)
+            var clean = new string(v.TrimEnd().TakeWhile(char.IsDigit).ToArray());
+            if (int.TryParse(clean, out var n)) return n * 100;
+            return null;
         }
 
-        // Assigned altitude
-        var assAlt = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "assignedAltitude")?.Value;
-        if (assAlt is not null)
-        {
-            var clean = assAlt.TrimEnd('C', 'D', 'A');
-            if (int.TryParse(clean, out var aa)) flight.AssignedAltitude = aa * 100;
-        }
+        var req = AltFeet("requestedAltitude");
+        if (req.HasValue) flight.RequestedAltitude = req.Value;
+        var asg = AltFeet("assignedAltitude");
+        if (asg.HasValue) flight.AssignedAltitude = asg.Value;
 
         // Coordination point
-        var coordPt = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "coordinationPoint");
+        var coordPt = planBlock.Descendants().FirstOrDefault(e => e.Name.LocalName == "coordinationPoint");
         if (coordPt is not null)
         {
-            var fix = coordPt.Elements().FirstOrDefault(e => e.Name.LocalName == "fixRadialDistance")
-                ?? coordPt.Elements().FirstOrDefault(e => e.Name.LocalName == "fix");
+            var fix = coordPt.Descendants().FirstOrDefault(e => e.Name.LocalName == "fixRadialDistance")
+                ?? coordPt.Descendants().FirstOrDefault(e => e.Name.LocalName == "fix");
             flight.CoordinationFix = fix?.Value ?? coordPt.Value;
         }
-        var coordTime = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "coordinationTime");
+        var coordTime = planBlock.Descendants().FirstOrDefault(e => e.Name.LocalName == "coordinationTime");
         if (coordTime is not null)
         {
             var tv = coordTime.Attribute("timeValue")?.Value ?? coordTime.Value;
@@ -664,13 +695,28 @@ class TfmsBridge
                 flight.CoordinationTime = ct;
         }
 
-        // Filed TAS
-        var tasStr = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "filedTrueAirSpeed")?.Value;
+        // Speed nested as: planBlock/speed/filedTrueAirSpeed (or under newSpeed for amendments)
+        var tasStr = planBlock.Descendants().FirstOrDefault(e => e.Name.LocalName == "filedTrueAirSpeed")?.Value;
         if (int.TryParse(tasStr, out var tas)) flight.FiledTrueAirSpeed = tas;
 
-        // Filed Mach
-        var machStr = planBlock.Elements().FirstOrDefault(e => e.Name.LocalName == "filedMach")?.Value;
-        if (machStr is not null) flight.FiledMach = machStr;
+        var machStr = planBlock.Descendants().FirstOrDefault(e => e.Name.LocalName == "filedMach")?.Value;
+        if (!string.IsNullOrEmpty(machStr)) flight.FiledMach = machStr;
+
+        // Equipment qualifier — on flightAircraftSpecs/@equipmentQualifier (or newFlightAircraftSpecs)
+        var specsEl = planBlock.Descendants()
+            .FirstOrDefault(e => e.Name.LocalName == "flightAircraftSpecs" || e.Name.LocalName == "newFlightAircraftSpecs");
+        var eq = specsEl?.Attribute("equipmentQualifier")?.Value;
+        if (!string.IsNullOrEmpty(eq)) flight.EquipmentQualifier = eq;
+
+        // Aircraft engine class — under aircraftSpecification (in ncsm blocks)
+        var engineClass = planBlock.Descendants()
+            .FirstOrDefault(e => e.Name.LocalName == "aircraftSpecification")?.Attribute("aircraftEngineClass")?.Value;
+        if (!string.IsNullOrEmpty(engineClass)) flight.AircraftEngineClass = engineClass;
+
+        // Beacon code — assignedBeaconCode / beaconCode appears in flightPlan messages
+        var bcn = planBlock.Descendants()
+            .FirstOrDefault(e => e.Name.LocalName == "assignedBeaconCode" || e.Name.LocalName == "beaconCode")?.Value;
+        if (!string.IsNullOrEmpty(bcn)) flight.AssignedBeaconCode = bcn;
     }
 
     private void ParseBoundaryCrossing(TfmsFlight flight, XElement bc)
@@ -1017,6 +1063,7 @@ class TfmsBridge
             acModel = f.AircraftModel,
             engineClass = f.AircraftEngineClass,
             specialQual = f.SpecialAircraftQualifier,
+            equipmentQualifier = f.EquipmentQualifier,
             category = f.AircraftCategory,
             userCategory = f.UserCategory,
             // Identity & ownership
@@ -1270,6 +1317,8 @@ class TfmsFlight
     public string? AircraftModel { get; set; }
     public string? SpecialAircraftQualifier { get; set; }
     public string? AircraftEngineClass { get; set; }
+    /// <summary>Equipment qualifier code (L/H/X/etc) — single-letter ICAO equipment suffix.</summary>
+    public string? EquipmentQualifier { get; set; }
 
     // Flight plan extras
     public int? RequestedAltitude { get; set; }
@@ -1374,6 +1423,7 @@ class TfmsFlight
         flightStatus = FlightStatus,
         specialAircraftQualifier = SpecialAircraftQualifier,
         aircraftEngineClass = AircraftEngineClass,
+        equipmentQualifier = EquipmentQualifier,
         // Flight plan extras
         requestedAltitude = RequestedAltitude,
         coordinationFix = CoordinationFix,

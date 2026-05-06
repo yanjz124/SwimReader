@@ -95,6 +95,8 @@ static class TfmsRoutes
         app.MapGet("/api/tfms/flights", () => Results.Json(ctx.Tfms.GetFlights(), ctx.JsonOpts));
         // All flights including prefiled / no-position — for FIDO-style table
         app.MapGet("/api/tfms/all", () => Results.Json(ctx.Tfms.GetAllFlights(), ctx.JsonOpts));
+        // Airport configurations from APTC messages (current AAR/ADR, runway config, weather)
+        app.MapGet("/api/tfms/aptc", () => Results.Json(ctx.Tfms.GetAirportConfigs(), ctx.JsonOpts));
         app.MapGet("/api/tfms/flights/{key}", (string key) =>
         {
             var f = ctx.Tfms.GetFlight(key);

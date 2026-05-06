@@ -49,6 +49,9 @@ class TfmsBridge
     private int _rawSampleCount = 0;
     private readonly ConcurrentDictionary<string, string> _rawSamples = new(); // msgType → XML sample
 
+    // APTC airport configuration: airport (FAA LID, e.g. "ATL") → latest config
+    private readonly ConcurrentDictionary<string, AirportConfig> _aptc = new();
+
     public TfmsBridge(string user, string pass, string queue, string host, string vpn,
         JsonSerializerOptions jsonOpts)
     {
@@ -720,6 +723,38 @@ class TfmsBridge
                 _rawSamples[key] = msg.ToString();
         }
 
+        // APTC — Airport Configuration message (current AAR/ADR rates, runway config, weather)
+        var apt = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "airportConfigMessage");
+        if (apt is not null)
+        {
+            string? El(string n) => apt.Elements().FirstOrDefault(e => e.Name.LocalName == n)?.Value;
+            int? IntEl(string n) => int.TryParse(El(n), out var v) ? v : null;
+            DateTime? TimeEl(string n) => DateTime.TryParse(El(n), null, DateTimeStyles.AdjustToUniversal, out var v) ? v : null;
+            var airport = El("airport");
+            if (!string.IsNullOrEmpty(airport))
+            {
+                var cfg = _aptc.GetOrAdd(airport, _ => new AirportConfig { Airport = airport });
+                cfg.Facility = El("facility") ?? cfg.Facility;
+                cfg.EnteringFacility = El("enteringFacility") ?? cfg.EnteringFacility;
+                cfg.ArrRate = IntEl("arrRate") ?? cfg.ArrRate;
+                cfg.DepRate = IntEl("depRate") ?? cfg.DepRate;
+                cfg.ArrRunwayConf = El("arrRunwayConf") ?? cfg.ArrRunwayConf;
+                cfg.DepRunwayConf = El("depRunwayConf") ?? cfg.DepRunwayConf;
+                cfg.StratAar = IntEl("stratAar") ?? cfg.StratAar;
+                cfg.Weather = El("weather") ?? cfg.Weather;
+                cfg.ArrUserSpecified = El("arrUserSpecified");
+                cfg.DepUserSpecified = El("depUserSpecified");
+                cfg.AdrEnteredOnPanel = El("adrEnteredOnPanel");
+                cfg.DynArrEnteredOnPanel = El("dynArrEnteredOnPanel");
+                cfg.AirportInFile = El("airportInFile");
+                cfg.RemarksGroupColor = El("remarksGroupColor");
+                cfg.EventTime = TimeEl("eventTime") ?? cfg.EventTime;
+                cfg.EntryTime = TimeEl("entryTime") ?? cfg.EntryTime;
+                cfg.UpdateTime = TimeEl("updateTime") ?? cfg.UpdateTime;
+                cfg.LastSeen = DateTime.UtcNow;
+            }
+        }
+
         // TMI_FLIGHT_LIST — flights affected by a TMI
         var tmiFlightDataList = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "tmiFlightDataList");
         if (tmiFlightDataList is not null)
@@ -967,35 +1002,69 @@ class TfmsBridge
             flightRef = f.FlightRef,
             callsign = f.Callsign,
             airline = f.Airline,
+            gufi = f.Gufi,
             depArpt = f.DepArpt,
             arrArpt = f.ArrArpt,
+            // Aircraft (full strip-equivalent set)
             acType = f.AircraftType,
             acModel = f.AircraftModel,
+            engineClass = f.AircraftEngineClass,
+            specialQual = f.SpecialAircraftQualifier,
             category = f.AircraftCategory,
             userCategory = f.UserCategory,
+            // Identity & ownership
             facility = f.Facility,
             cid = f.IdNumber,
             status = f.FlightStatus,
+            sourceFacility = f.SourceFacility,
+            // Position & speed
             lat = f.Latitude == 0 ? (double?)null : f.Latitude,
             lon = f.Longitude == 0 ? (double?)null : f.Longitude,
             altitude = f.Altitude,
+            reportedAlt = f.ReportedAltitudeRaw,
             speed = f.Speed,
+            groundSpeed = f.GroundSpeed,
+            // Filed / assigned
             assignedAlt = f.AssignedAltitude,
             requestedAlt = f.RequestedAltitude,
             beaconCode = f.AssignedBeaconCode,
+            filedTas = f.FiledTrueAirSpeed,
+            filedMach = f.FiledMach,
+            // Procedures
+            dpName = f.DpName,
+            dpType = f.DpType,
+            dpTransitionFix = f.DpTransitionFix,
+            star = f.Star,
+            starTransitionFix = f.StarTransitionFix,
+            depFix = f.DepartureFix,
+            arrFix = f.ArrivalFix,
+            route = f.RouteOfFlight,
+            // Coordination
+            coordinationFix = f.CoordinationFix,
+            coordinationTime = f.CoordinationTime?.ToString("o"),
+            boundaryFix = f.BoundaryFix,
+            boundaryCrossingTime = f.BoundaryCrossingTime?.ToString("o"),
+            // Times
             igtd = f.Igtd?.ToString("o"),
             etd = f.Etd?.ToString("o"),
             eta = f.Eta?.ToString("o"),
             originalDeparture = f.OriginalDeparture?.ToString("o"),
+            originalArrival = f.OriginalArrival?.ToString("o"),
             gateDeparture = f.GateDeparture?.ToString("o"),
+            gateArrival = f.GateArrival?.ToString("o"),
             runwayDeparture = f.RunwayDeparture?.ToString("o"),
+            runwayArrival = f.RunwayArrival?.ToString("o"),
             airlineOutTime = f.AirlineOutTime?.ToString("o"),
             airlineOffTime = f.AirlineOffTime?.ToString("o"),
-            star = f.Star,
-            route = f.RouteOfFlight,
-            depFix = f.DepartureFix,
-            arrFix = f.ArrivalFix,
-            sourceFacility = f.SourceFacility,
+            airlineOnTime = f.AirlineOnTime?.ToString("o"),
+            airlineInTime = f.AirlineInTime?.ToString("o"),
+            departureFixTime = f.DepartureFixTime?.ToString("o"),
+            arrivalFixTime = f.ArrivalFixTime?.ToString("o"),
+            flightCreation = f.FlightCreation?.ToString("o"),
+            // Misc
+            diversionIndicator = f.DiversionIndicator,
+            fdTrigger = f.FdTrigger,
+            cdmPart = f.CdmPart,
             ageSec = (int)(DateTime.UtcNow - f.LastSeen).TotalSeconds
         })
         .ToArray();
@@ -1008,6 +1077,12 @@ class TfmsBridge
             string.Equals(f2.Callsign, key, StringComparison.OrdinalIgnoreCase));
         return byCs?.ToDetailJson();
     }
+
+    /// <summary>Latest APTC airport configuration for every airport reporting one.</summary>
+    public object[] GetAirportConfigs() => _aptc.Values
+        .OrderBy(c => c.Airport)
+        .Select(c => c.ToJson())
+        .ToArray();
 
     public object[] GetTmis() => _tmis.Values
         .OrderByDescending(t => t.Flights.Count)
@@ -1388,4 +1463,50 @@ class TfmsTmiFlight
     public DateTime? ExitTime { get; set; }
     public double? EntryLat { get; set; }
     public double? EntryLon { get; set; }
+}
+
+class AirportConfig
+{
+    public string Airport { get; set; } = "";
+    public string? Facility { get; set; }
+    public string? EnteringFacility { get; set; }
+    public int? ArrRate { get; set; }
+    public int? DepRate { get; set; }
+    public string? ArrRunwayConf { get; set; }
+    public string? DepRunwayConf { get; set; }
+    public int? StratAar { get; set; }
+    public string? Weather { get; set; }
+    public string? ArrUserSpecified { get; set; }
+    public string? DepUserSpecified { get; set; }
+    public string? AdrEnteredOnPanel { get; set; }
+    public string? DynArrEnteredOnPanel { get; set; }
+    public string? AirportInFile { get; set; }
+    public string? RemarksGroupColor { get; set; }
+    public DateTime? EventTime { get; set; }
+    public DateTime? EntryTime { get; set; }
+    public DateTime? UpdateTime { get; set; }
+    public DateTime LastSeen { get; set; } = DateTime.UtcNow;
+
+    public object ToJson() => new
+    {
+        airport = Airport,
+        facility = Facility,
+        enteringFacility = EnteringFacility,
+        arrRate = ArrRate,
+        depRate = DepRate,
+        arrRunwayConf = ArrRunwayConf,
+        depRunwayConf = DepRunwayConf,
+        stratAar = StratAar,
+        weather = Weather,
+        arrUserSpecified = ArrUserSpecified,
+        depUserSpecified = DepUserSpecified,
+        adrEnteredOnPanel = AdrEnteredOnPanel,
+        dynArrEnteredOnPanel = DynArrEnteredOnPanel,
+        airportInFile = AirportInFile,
+        remarksGroupColor = RemarksGroupColor,
+        eventTime = EventTime?.ToString("o"),
+        entryTime = EntryTime?.ToString("o"),
+        updateTime = UpdateTime?.ToString("o"),
+        ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
+    };
 }

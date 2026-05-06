@@ -93,7 +93,7 @@ static class TfmsRoutes
         // REST API
         app.MapGet("/api/tfms/stats", () => Results.Json(ctx.Tfms.GetStats(), ctx.JsonOpts));
         app.MapGet("/api/tfms/flights", () => Results.Json(ctx.Tfms.GetFlights(), ctx.JsonOpts));
-        // All flights including prefiled / no-position — for FIDO-style table
+        // All flights including prefiled / no-position — pure TFMS data, no merge.
         app.MapGet("/api/tfms/all", () => Results.Json(ctx.Tfms.GetAllFlights(), ctx.JsonOpts));
         // Airport configurations from APTC messages (current AAR/ADR, runway config, weather)
         app.MapGet("/api/tfms/aptc", () => Results.Json(ctx.Tfms.GetAirportConfigs(), ctx.JsonOpts));

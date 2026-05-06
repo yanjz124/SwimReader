@@ -67,11 +67,12 @@ static class StaticRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "tfm", "sectors.html"));
         });
 
-        app.MapGet("/tfm/fido", async (HttpContext c) =>
-        {
-            c.Response.ContentType = "text/html";
-            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "tfm", "fido.html"));
-        });
+        // FIDO page intentionally unwired — keep files in wwwroot/tfm/fido.* for future work
+        // app.MapGet("/tfm/fido", async (HttpContext c) =>
+        // {
+        //     c.Response.ContentType = "text/html";
+        //     await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "tfm", "fido.html"));
+        // });
 
         app.MapGet("/tfm/aptc", async (HttpContext c) =>
         {

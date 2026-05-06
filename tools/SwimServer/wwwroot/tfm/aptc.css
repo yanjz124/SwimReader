@@ -1,7 +1,9 @@
 html, body {
     background: #000; color: #ccc; font-family: 'Consolas', 'Courier New', monospace;
-    font-size: 12px; min-height: 100%;
+    font-size: 12px; height: 100vh; margin: 0; overflow: hidden;
 }
+body { display: flex; flex-direction: column; }
+
 header {
     background: #0a0a0a; border-bottom: 1px solid #333;
     padding: 8px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
@@ -16,42 +18,54 @@ header .sub { font-size: 11px; color: #555; }
 
 .filter-row {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px 16px; border-bottom: 1px solid #222; background: #050505;
-    flex-wrap: wrap;
+    padding: 8px 16px; border-bottom: 1px solid #222; background: #050505; flex-shrink: 0;
 }
 .filter-row input, .filter-row select {
     background: #111; border: 1px solid #333; color: #ccc;
     padding: 5px 10px; font-family: inherit; font-size: 12px; outline: none;
 }
+.filter-row input:focus, .filter-row select:focus { border-color: #cccc44; }
 .filter-row label { font-size: 11px; color: #666; }
 
-.grid {
-    display: grid; gap: 10px; padding: 12px;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+.table-wrap { flex: 1; overflow: auto; }
+
+.ois-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ois-table thead th {
+    background: #1a1a1a; color: #888; font-weight: normal; padding: 6px 12px;
+    text-align: left; border-bottom: 1px solid #444; position: sticky; top: 0;
+    z-index: 1; font-size: 10px; letter-spacing: 1px; white-space: nowrap;
 }
+/* Right-align numeric column headers so they align with their values */
+.ois-table thead th.num { text-align: right; }
+.ois-table thead th.sortable { cursor: pointer; user-select: none; }
+.ois-table thead th.sortable:hover { color: #cccc44; }
+.ois-table thead th.sort-active { color: #cccc44; }
+.ois-table thead th.sort-active::after { content: ' ▾'; font-size: 9px; }
+.ois-table thead th.sort-active.asc::after { content: ' ▴'; }
 
-.card {
-    background: #0a0a0a; border: 1px solid #1a1a1a; padding: 10px 12px;
-    border-radius: 2px;
+.ois-table tbody tr { border-bottom: 1px solid #1a1a1a; }
+.ois-table tbody tr:hover { background: #0a0a0a; }
+.ois-table tbody tr.stale { opacity: 0.5; }
+
+.ois-table tbody td { padding: 5px 12px; white-space: nowrap; vertical-align: middle; }
+
+td.col-ap { color: #cccc44; font-weight: bold; font-size: 14px; letter-spacing: 1px; }
+td.col-fac { color: #888; }
+td.col-wx { font-size: 10px; padding: 2px 6px; }
+td.col-rwy { color: #aaa; font-family: 'Consolas', monospace; }
+td.col-rate {
+    color: #4eaaff; font-weight: bold; font-size: 14px; text-align: right;
 }
-.card .ap { font-size: 18px; color: #cccc44; letter-spacing: 2px; font-weight: bold; }
-.card .ap .fac { color: #666; font-size: 11px; margin-left: 6px; letter-spacing: 0; font-weight: normal; }
-.card .wx { float: right; padding: 1px 6px; font-size: 11px; border: 1px solid #333; }
-.card .wx.VMC { color: #44cc44; border-color: #2a4; }
-.card .wx.IMC { color: #ff8c00; border-color: #a52; }
+td.col-rate.combined { color: #888; font-size: 12px; }
+td.col-strat { color: #666; font-size: 11px; text-align: right; }
+td.col-tm { color: #888; font-size: 11px; }
+td.col-age { color: #666; font-size: 11px; text-align: right; }
+td.col-age.fresh { color: #44cc44; }
+td.col-age.warn { color: #ff8c00; }
 
-.rates { display: flex; gap: 12px; margin-top: 10px; padding: 6px 0; border-top: 1px solid #1a1a1a; border-bottom: 1px solid #1a1a1a; }
-.rate { flex: 1; text-align: center; }
-.rate .label { font-size: 10px; color: #666; letter-spacing: 1px; }
-.rate .value { font-size: 22px; color: #4eaaff; font-weight: bold; }
-.rate .strat { font-size: 10px; color: #555; }
-
-.rwy { display: flex; gap: 8px; margin-top: 8px; font-size: 11px; }
-.rwy .col { flex: 1; }
-.rwy .col .label { color: #666; font-size: 10px; }
-.rwy .col .value { color: #aaa; font-family: 'Consolas', monospace; }
-
-.meta { margin-top: 8px; font-size: 10px; color: #555; display: flex; justify-content: space-between; }
-.meta .age.stale { color: #ff8c00; }
+.wx-badge { padding: 1px 6px; border: 1px solid #333; font-size: 10px; }
+.wx-badge.VMC { color: #44cc44; border-color: #2a4; }
+.wx-badge.IMC { color: #ff8c00; border-color: #a52; }
+.wx-badge.MVFR { color: #ffcc44; border-color: #a82; }
 
 .empty { padding: 32px; text-align: center; color: #555; font-size: 13px; }

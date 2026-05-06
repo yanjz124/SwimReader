@@ -454,9 +454,16 @@ class TfmsBridge
         var starTrans = routeData.Elements().FirstOrDefault(e => e.Name.LocalName == "starTransitionFix")?.Value;
         if (starTrans is not null) flight.StarTransitionFix = starTrans;
 
-        // Route of flight (text)
-        var routeText = routeData.Elements().FirstOrDefault(e => e.Name.LocalName == "routeOfFlight")?.Value;
-        if (routeText is not null) flight.RouteOfFlight = routeText;
+        // Route of flight (legacyFormat attribute is the human-readable string,
+        // e.g. "KDFW.JASPA7.WINDU.QERVO3.KSAT/2051"). Element text is empty.
+        var routeOfFlightEl = routeData.Elements().FirstOrDefault(e => e.Name.LocalName == "routeOfFlight");
+        var routeText = routeOfFlightEl?.Attribute("legacyFormat")?.Value;
+        if (string.IsNullOrEmpty(routeText)) routeText = routeOfFlightEl?.Value;
+        if (!string.IsNullOrEmpty(routeText)) flight.RouteOfFlight = routeText;
+        // Amendments use newRouteOfFlight under flightPlanAmendmentInformation/amendmentData
+        var amendData = routeData.Parent?.Elements().FirstOrDefault(e => e.Name.LocalName == "amendmentData");
+        var newRoute = amendData?.Elements().FirstOrDefault(e => e.Name.LocalName == "newRouteOfFlight")?.Attribute("legacyFormat")?.Value;
+        if (!string.IsNullOrEmpty(newRoute)) flight.RouteOfFlight = newRoute;
 
         // Arrival fix + time
         var arrFix = routeData.Elements().FirstOrDefault(e => e.Name.LocalName == "arrivalFixAndTime");

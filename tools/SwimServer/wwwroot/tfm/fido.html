@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TFM FIDO — R14 Flight Data | swim.vncrcc.org</title>
-<link rel="stylesheet" href="/shared/common.css?v=3">
-<link rel="stylesheet" href="/tfm/fido.css?v=3">
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<link rel="stylesheet" href="/tfm/fido.css?v=4">
 </head>
 <body>
 <a class="nav-home" href="/">&larr; HOME</a>
@@ -52,20 +52,25 @@
     </select>
 </div>
 
-<div class="table-wrap">
-    <table class="fido-table">
-        <thead><tr id="thead-row"></tr></thead>
-        <tbody id="rows"></tbody>
-    </table>
+<div class="main">
+    <div class="table-wrap">
+        <table class="fido-table">
+            <thead><tr id="thead-row"></tr></thead>
+            <tbody id="rows"></tbody>
+        </table>
+        <div id="empty" class="empty">Loading...</div>
+    </div>
+    <div class="detail-panel collapsed" id="detailPanel">
+        <div class="detail-header">
+            <span class="cs-big" id="detailCallsign"></span>
+            <span class="type-badge" id="detailType"></span>
+            <span class="status-badge" id="detailStatus"></span>
+            <span class="detail-close" id="detailClose">&times;</span>
+        </div>
+        <div class="detail-body" id="detailBody"></div>
+    </div>
 </div>
 
-<div id="empty" class="empty">Loading...</div>
-
-<dialog id="detailDialog">
-    <div id="detailBody"></div>
-    <button id="closeDetail">CLOSE</button>
-</dialog>
-
-<script src="/tfm/fido.js?v=3"></script>
+<script src="/tfm/fido.js?v=4"></script>
 </body>
 </html>

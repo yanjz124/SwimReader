@@ -450,19 +450,35 @@ async function selectFlight(gufi) {
     detailPanel.classList.remove('collapsed');
     updateSelectionClasses(prev, gufi);  // O(1) DOM change, no full re-render
 
+    const local = allFlights.get(gufi);
+    // Fast path: render local data immediately so the panel shows up
+    // without waiting for the network. Historical flights skip the API
+    // call entirely (server's /api/flights only knows live flights).
+    if (local) {
+        currentDetail = Object.assign({}, local, {
+            _purged: !!local._historical,
+            events: local.events || []
+        });
+        renderDetailHeader(currentDetail);
+        renderActiveTab();
+    }
+    // For non-historical flights, fetch fresh detail (full event list, etc.)
+    // and re-render. Historical flights skip this — no point hitting a 404.
+    if (local && local._historical) return;
     try {
         const resp = await fetch(`/api/flights/${encodeURIComponent(gufi)}`);
         if (resp.ok) {
-            currentDetail = await resp.json();
+            // Make sure we're still selected (user may have clicked another row)
+            const fresh = await resp.json();
+            if (selectedGufi !== gufi) return;
+            currentDetail = fresh;
             currentDetail._purged = false;
-        } else {
-            // 404 — flight purged from server, use last known data from Map
-            const f = allFlights.get(gufi);
-            if (!f) return;
-            currentDetail = Object.assign({}, f, { _purged: true, events: [] });
+            renderDetailHeader(currentDetail);
+            renderActiveTab();
+        } else if (!local) {
+            // 404 and no local fallback — nothing to show
+            return;
         }
-        renderDetailHeader(currentDetail);
-        renderActiveTab();
     } catch {}
 }
 

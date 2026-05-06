@@ -53,13 +53,17 @@ function connect() {
 
     ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
+        let dataChanged = false;
         if (msg.type === 'snapshot') {
             for (const f of msg.data) { allFlights.set(f.gufi, f); noteFacility(f); }
+            dataChanged = true;
         } else if (msg.type === 'batch') {
             for (const f of msg.data) { allFlights.set(f.gufi, f); noteFacility(f); }
+            dataChanged = true;
         } else if (msg.type === 'update') {
             allFlights.set(msg.data.gufi, msg.data);
             noteFacility(msg.data);
+            dataChanged = true;
         } else if (msg.type === 'remove') {
             const rf = allFlights.get(msg.data.gufi);
             if (rf && !rf._historical) {
@@ -69,10 +73,12 @@ function connect() {
                 historicalBytes += rf._histBytes;
                 trimHistorical();
             }
+            dataChanged = true;
         } else if (msg.type === 'stats') {
+            // Stats updates the small status label only — no need to re-render the table.
             statsEl.textContent = `${(msg.data.flights || 0).toLocaleString()} flights  ${(msg.data.rate || 0).toFixed(0)} msg/s`;
         }
-        scheduleRender();
+        if (dataChanged) scheduleRender();
     };
 
     ws.onclose = () => {
@@ -97,16 +103,24 @@ function rebuildFacilityDropdown() {
         sorted.map(f => `<option value="${f}"${f === current ? ' selected' : ''}>${f}</option>`).join('');
 }
 
-// ── Render (throttled) ───────────────────────────────────────
+// ── Render (throttled — 500ms cap so 1Hz WS batches don't flood) ──
+// Building an HTML string for thousands of rows + setting innerHTML is
+// the dominant cost. Render at most twice per second; user interactions
+// (sort/filter) bypass the throttle via renderNow().
 let renderPending = false;
+const RENDER_THROTTLE_MS = 500;
+let lastRenderAt = 0;
 function scheduleRender() {
     if (renderPending) return;
     renderPending = true;
-    requestAnimationFrame(render);
+    const elapsed = Date.now() - lastRenderAt;
+    const wait = Math.max(0, RENDER_THROTTLE_MS - elapsed);
+    setTimeout(() => requestAnimationFrame(render), wait);
 }
 
 function render() {
     renderPending = false;
+    lastRenderAt = Date.now();
     const fStatus = filterStatus.value;
     const fFacility = filterFacility.value;
     const fRules = filterRules.value;

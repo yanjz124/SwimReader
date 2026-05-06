@@ -702,21 +702,25 @@ class TfmsBridge
         var machStr = planBlock.Descendants().FirstOrDefault(e => e.Name.LocalName == "filedMach")?.Value;
         if (!string.IsNullOrEmpty(machStr)) flight.FiledMach = machStr;
 
-        // Equipment qualifier — on flightAircraftSpecs/@equipmentQualifier (or newFlightAircraftSpecs)
+        // Equipment qualifier + special aircraft qualifier — both ATTRIBUTES on
+        // flightAircraftSpecs (or newFlightAircraftSpecs in amendments).
+        //   <flightAircraftSpecs equipmentQualifier="L" specialAircraftQualifier="HEAVY JET">A319</flightAircraftSpecs>
         var specsEl = planBlock.Descendants()
             .FirstOrDefault(e => e.Name.LocalName == "flightAircraftSpecs" || e.Name.LocalName == "newFlightAircraftSpecs");
-        var eq = specsEl?.Attribute("equipmentQualifier")?.Value;
-        if (!string.IsNullOrEmpty(eq)) flight.EquipmentQualifier = eq;
+        if (specsEl is not null)
+        {
+            var eq = specsEl.Attribute("equipmentQualifier")?.Value;
+            if (!string.IsNullOrEmpty(eq)) flight.EquipmentQualifier = eq;
+            var saq = specsEl.Attribute("specialAircraftQualifier")?.Value;
+            if (!string.IsNullOrEmpty(saq)) flight.SpecialAircraftQualifier = saq;
+        }
 
         // Aircraft engine class — under aircraftSpecification (in ncsm blocks)
         var engineClass = planBlock.Descendants()
             .FirstOrDefault(e => e.Name.LocalName == "aircraftSpecification")?.Attribute("aircraftEngineClass")?.Value;
         if (!string.IsNullOrEmpty(engineClass)) flight.AircraftEngineClass = engineClass;
 
-        // Beacon code — assignedBeaconCode / beaconCode appears in flightPlan messages
-        var bcn = planBlock.Descendants()
-            .FirstOrDefault(e => e.Name.LocalName == "assignedBeaconCode" || e.Name.LocalName == "beaconCode")?.Value;
-        if (!string.IsNullOrEmpty(bcn)) flight.AssignedBeaconCode = bcn;
+        // Note: TFMS R14 does NOT publish beacon codes — they live in SFDPS only.
     }
 
     private void ParseBoundaryCrossing(TfmsFlight flight, XElement bc)

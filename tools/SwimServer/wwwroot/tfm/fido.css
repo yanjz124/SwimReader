@@ -1,0 +1,64 @@
+html, body {
+    background: #000; color: #ccc; font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 12px; min-height: 100%;
+}
+
+header {
+    background: #0a0a0a; border-bottom: 1px solid #333;
+    padding: 8px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header .sub { font-size: 11px; color: #555; }
+.status-bar { margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 8px; }
+.status-bar .dot { color: #444; }
+.status-bar #count { color: #cccc44; }
+.home-link { color: #888; text-decoration: none; }
+.home-link:hover { color: #cccc44; }
+
+.filter-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; border-bottom: 1px solid #222; background: #050505;
+    flex-wrap: wrap;
+}
+.filter-row input, .filter-row select {
+    background: #111; border: 1px solid #333; color: #ccc;
+    padding: 5px 10px; font-family: inherit; font-size: 12px; outline: none;
+}
+.filter-row input:focus, .filter-row select:focus { border-color: #cccc44; }
+.filter-row label { font-size: 11px; color: #666; }
+
+.fido-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.fido-table thead th {
+    background: #1a1a1a; color: #888; font-weight: normal;
+    padding: 5px 8px; text-align: left; border-bottom: 1px solid #333;
+    position: sticky; top: 0; z-index: 1; font-size: 10px; letter-spacing: 0.5px;
+}
+.fido-table tbody td {
+    padding: 4px 8px; border-bottom: 1px solid #1a1a1a; white-space: nowrap;
+}
+.fido-table tbody tr { cursor: pointer; }
+.fido-table tbody tr:hover { background: #0a0a0a; }
+.fido-table tbody tr.completed { color: #555; }
+.fido-table tbody tr.planned td.col-status { color: #ff8c00; }
+.fido-table tbody tr.active td.col-status { color: #44cc44; }
+.fido-table tbody tr.cancelled { color: #555; text-decoration: line-through; }
+
+.col-cs { color: #cccc44; font-weight: bold; }
+.col-tm { color: #4eaaff; }
+.col-ap { color: #aaa; }
+
+.empty { padding: 32px; text-align: center; color: #555; font-size: 13px; }
+
+dialog {
+    background: #0a0a0a; color: #ccc; border: 1px solid #cccc44;
+    padding: 16px; max-width: 700px; max-height: 85vh; overflow: auto;
+    font-family: inherit; font-size: 12px;
+}
+dialog::backdrop { background: rgba(0,0,0,0.8); }
+dialog h2 { color: #cccc44; font-size: 14px; margin-bottom: 8px; font-weight: normal; }
+dialog .field { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid #1a1a1a; }
+dialog .field .label { color: #666; min-width: 140px; }
+dialog .field .value { color: #ccc; word-break: break-word; }
+dialog button { background: #1a1a1a; color: #cccc44; border: 1px solid #444;
+    padding: 5px 14px; font-family: inherit; font-size: 12px; cursor: pointer; margin-top: 12px; }
+dialog button:hover { background: #222; }

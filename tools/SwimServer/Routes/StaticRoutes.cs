@@ -67,6 +67,12 @@ static class StaticRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "tfm", "sectors.html"));
         });
 
+        app.MapGet("/tfm/fido", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "tfm", "fido.html"));
+        });
+
         // EDCT (Expected Departure Clearance Times) page
         app.MapGet("/edct", async (HttpContext c) =>
         {

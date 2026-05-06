@@ -2,9 +2,18 @@ const HALO_RADIUS = 14; // px — match the halo circle radius for click + hover
 
 // ── Crosshair cursor + proximity halo ───────────────────────────────────────
 const ch = document.getElementById('crosshair');
+const statusBar = document.getElementById('statusbar');
 let haloTid = null; // trackId of currently highlighted halo
 
 document.addEventListener('mousemove', e => {
+    // Hide crosshair if over status bar, UI panels, or popups
+    const overUI = e.target.closest('.nav-home, #statusbar, #gatecode-popup, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay');
+    
+    if (overUI) {
+        ch.style.display = 'none';
+        return;
+    }
+    
     ch.style.left = e.clientX + 'px';
     ch.style.top  = e.clientY + 'px';
     ch.style.display = 'block';
@@ -73,6 +82,7 @@ let dbShowSens = false;  // Field E: Sensors (FUS/CST)
 let dbShowCat  = false;  // Field G: Wake category
 let dbShowFix  = true;   // Field H: Fix/destination
 let dbShowVel  = true;   // Field I: Velocity
+let dbShowUnk  = true;   // Show unknown targets (no callsign/squawk)
 let dbToggleVer = 0;     // bumped on any toggle change to invalidate hashes
 
 // Restore from localStorage
@@ -84,12 +94,13 @@ try {
     if (saved.cat  !== undefined) dbShowCat  = saved.cat;
     if (saved.fix  !== undefined) dbShowFix  = saved.fix;
     if (saved.vel  !== undefined) dbShowVel  = saved.vel;
+    if (saved.unk  !== undefined) dbShowUnk  = saved.unk;
 } catch(e) {}
 
 function saveDbToggles() {
     localStorage.setItem('asdex-db-toggles', JSON.stringify({
         alt: dbShowAlt, type: dbShowType, sens: dbShowSens,
-        cat: dbShowCat, fix: dbShowFix, vel: dbShowVel
+        cat: dbShowCat, fix: dbShowFix, vel: dbShowVel, unk: dbShowUnk
     }));
     dbToggleVer++;
     // Invalidate all hashes so icons rebuild
@@ -97,8 +108,8 @@ function saveDbToggles() {
 }
 
 // Toggle button wiring
-const dbTogMap = { alt: () => dbShowAlt, type: () => dbShowType, sens: () => dbShowSens, cat: () => dbShowCat, fix: () => dbShowFix, vel: () => dbShowVel };
-const dbTogSet = { alt: v => dbShowAlt=v, type: v => dbShowType=v, sens: v => dbShowSens=v, cat: v => dbShowCat=v, fix: v => dbShowFix=v, vel: v => dbShowVel=v };
+const dbTogMap = { alt: () => dbShowAlt, type: () => dbShowType, sens: () => dbShowSens, cat: () => dbShowCat, fix: () => dbShowFix, vel: () => dbShowVel, unk: () => dbShowUnk };
+const dbTogSet = { alt: v => dbShowAlt=v, type: v => dbShowType=v, sens: v => dbShowSens=v, cat: v => dbShowCat=v, fix: v => dbShowFix=v, vel: v => dbShowVel=v, unk: v => dbShowUnk=v };
 document.querySelectorAll('.db-tog').forEach(btn => {
     const f = btn.dataset.field;
     if (dbTogMap[f]()) btn.classList.add('on');
@@ -108,6 +119,23 @@ document.querySelectorAll('.db-tog').forEach(btn => {
         btn.classList.toggle('on', nv);
         saveDbToggles();
     });
+});
+
+// UNKNOWNS toggle
+const unkBtn = document.getElementById('unk-toggle');
+if (dbShowUnk) unkBtn.classList.add('on');
+unkBtn.addEventListener('click', () => {
+    dbShowUnk = !dbShowUnk;
+    unkBtn.classList.toggle('on', dbShowUnk);
+    saveDbToggles();
+    // If toggling UNKNOWNS off, remove all unknown markers
+    if (!dbShowUnk) {
+        for (const tid of Object.keys(markers)) {
+            const t = trackData[tid];
+            if (t && targetCategory(t) === 'unknown') removeTrack(tid);
+        }
+        updateCount();
+    }
 });
 
 // Wake category mapping (RECAT A-F → CRC display letter)
@@ -230,6 +258,15 @@ let surfaceLoaded = false;
 fetch(`/asdex/maps/${AIRPORT}.geojson`)
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(geojson => {
+        // Sort features so runways render on top (drawn last)
+        // Order: apron → taxiway → runway → structure (terminal buildings on top)
+        const renderOrder = { apron: 0, taxiway: 1, runway: 2, structure: 3 };
+        geojson.features.sort((a, b) => {
+            const aType = a.properties?.asdex || 'structure';
+            const bType = b.properties?.asdex || 'structure';
+            return (renderOrder[aType] || 0) - (renderOrder[bType] || 0);
+        });
+        
         surfaceLayer = L.geoJSON(geojson, {
             style: feature => {
                 const sfc = (feature.properties && feature.properties.asdex) || 'structure';
@@ -919,6 +956,13 @@ function applyTrack(t) {
     const ll  = [t.lat, t.lon];
     const h   = trackHash(t);
     const tid = t.trackId;
+
+    // Skip rendering if this is an unknown target and they're filtered out
+    const isUnknown = targetCategory(t) === 'unknown';
+    if (isUnknown && !dbShowUnk) {
+        if (markers[tid]) removeTrack(tid);
+        return;
+    }
 
     if (!markers[tid]) {
         markers[tid] = L.marker(ll, { icon: makeIcon(t), zIndexOffset: 0 }).addTo(map);

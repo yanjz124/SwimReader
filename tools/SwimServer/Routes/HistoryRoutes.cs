@@ -35,36 +35,88 @@ static class HistoryRoutes
             var filePath = Path.Combine(dir, $"{datePart}.jsonl");
             if (!File.Exists(filePath)) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
 
-            // Cheap line-level pre-filter: every clause's literal portion (with wildcards
-            // stripped) must appear somewhere in the line. Field-scoped match decides inclusion.
-            var preFilters = clauses.Select(c => c.Pattern.Replace("*", "").ToUpperInvariant())
-                                    .Where(s => s.Length > 0)
-                                    .ToList();
+            // Fast path: filter via the per-day index (~7MB, in memory after first build)
+            // instead of scanning the ~700MB .jsonl line by line.
+            var index = FlightHistoryIndex.GetOrBuild(dir, datePart);
 
-            var results = new List<JsonElement>();
-            foreach (var line in File.ReadLines(filePath))
+            // For each clause, decide if it can be answered by the index. The index
+            // covers callsign, computerId, origin, destination, registration. Any
+            // clause that requires an indexed field becomes a fast filter; clauses
+            // that need other fields (route, remarks, etc.) fall back to record scan.
+            bool ClauseUsesIndex(SearchClause c) =>
+                c.Field is null
+                || string.Equals(c.Field, "cs", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "callsign", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "cid", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "computerId", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "org", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "origin", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "from", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "dep", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "dest", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "destination", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "to", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "arr", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "reg", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "registration", StringComparison.OrdinalIgnoreCase);
+
+            bool MatchEntry(FlightHistoryIndex.IndexEntry e, SearchClause c)
             {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                bool prePass = true;
-                foreach (var p in preFilters)
+                // For bare clauses, mirror the default-fields behavior on indexed fields.
+                if (c.Field is null)
                 {
-                    if (!line.Contains(p, StringComparison.OrdinalIgnoreCase)) { prePass = false; break; }
+                    return WildcardMatch(e.Callsign, c.Pattern, MatchStyle.StartsWith)
+                        || (e.Origin.Length > 0 && WildcardMatch(e.Origin, c.Pattern, MatchStyle.Airport))
+                        || (e.Destination.Length > 0 && WildcardMatch(e.Destination, c.Pattern, MatchStyle.Airport))
+                        || (e.Registration.Length > 0 && WildcardMatch(e.Registration, c.Pattern, MatchStyle.StartsWith))
+                        || (e.ComputerId.Length > 0 && WildcardMatch(e.ComputerId, c.Pattern, MatchStyle.Exact));
                 }
-                if (!prePass) continue;
-
-                JsonElement el;
-                try { el = JsonSerializer.Deserialize<JsonElement>(line); }
-                catch { continue; }
-
-                bool allMatch = true;
-                foreach (var c in clauses)
+                var f = c.Field.ToLowerInvariant();
+                string val = f switch
                 {
-                    if (!ClauseMatches(el, c)) { allMatch = false; break; }
-                }
-                if (!allMatch) continue;
+                    "cs" or "callsign" => e.Callsign,
+                    "cid" or "computerid" => e.ComputerId,
+                    "org" or "origin" or "from" or "dep" => e.Origin,
+                    "dest" or "destination" or "to" or "arr" => e.Destination,
+                    "reg" or "registration" => e.Registration,
+                    _ => ""
+                };
+                MatchStyle style = (f is "org" or "origin" or "from" or "dep"
+                    or "dest" or "destination" or "to" or "arr") ? MatchStyle.Airport : MatchStyle.Contains;
+                return WildcardMatch(val, c.Pattern, style);
+            }
 
-                results.Add(el);
-                if (results.Count >= 100) break;
+            // Filter the index using all clauses that target indexed fields. The
+            // remaining clauses are checked after the .jsonl record is loaded.
+            var indexClauses = clauses.Where(ClauseUsesIndex).ToList();
+            var residualClauses = clauses.Where(c => !ClauseUsesIndex(c)).ToList();
+
+            // Apply index filters
+            IEnumerable<FlightHistoryIndex.IndexEntry> candidates = index;
+            foreach (var c in indexClauses)
+                candidates = candidates.Where(e => MatchEntry(e, c));
+
+            // Cap at 200 candidates pre-residual (after residual filter we trim to 100)
+            var matches = candidates.Take(residualClauses.Count > 0 ? 500 : 200).ToList();
+            if (matches.Count == 0) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
+
+            // Read the actual records for matched index entries (single seek per record)
+            var records = FlightHistoryIndex.ReadMatching(dir, datePart, matches, 200);
+
+            // Apply residual (non-indexed) clauses on the JSON
+            var results = new List<JsonElement>();
+            foreach (var el in records)
+            {
+                bool ok = true;
+                foreach (var c in residualClauses)
+                {
+                    if (!ClauseMatches(el, c)) { ok = false; break; }
+                }
+                if (ok)
+                {
+                    results.Add(el);
+                    if (results.Count >= 100) break;
+                }
             }
             return Results.Json(results, ctx.JsonOpts);
         });

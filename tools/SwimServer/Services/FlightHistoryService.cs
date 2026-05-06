@@ -48,10 +48,20 @@ static class FlightHistoryService
                 Events = f.GetAllEvents().Select(e => new { e.Time, e.Source, e.Centre, e.Summary }).ToArray()
             };
             var line = JsonSerializer.Serialize(record, historyJsonOpts);
+            var lineBytes = System.Text.Encoding.UTF8.GetBytes(line);
+            long offset;
             lock (historyDir) // serialize writes to same file
             {
-                File.AppendAllText(filePath, line + "\n");
+                offset = File.Exists(filePath) ? new FileInfo(filePath).Length : 0;
+                using var fs = new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Read);
+                fs.Write(lineBytes, 0, lineBytes.Length);
+                fs.WriteByte((byte)'\n');
             }
+            // Index entry — used by /api/history for fast searches.
+            FlightHistoryIndex.AppendEntry(historyDir, datePart,
+                f.Callsign ?? "", f.ComputerId ?? "",
+                f.Origin ?? "", f.Destination ?? "", f.Registration ?? "",
+                offset, lineBytes.Length);
         }
         catch (Exception ex)
         {

@@ -26,6 +26,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 #statusbar button:hover { border-color: #888; }
 #statusbar button.db-tog { color: #555; }
 #statusbar button.db-tog.on { color: #cccc44; border-color: #666; }
+#statusbar #unk-toggle.on { color: #cccc44; border-color: #666; }
 
 /* ── Target icons — rendered as Leaflet divIcons ── */
 .ac-icon {

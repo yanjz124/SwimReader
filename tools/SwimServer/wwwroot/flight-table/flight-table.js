@@ -135,47 +135,39 @@ function render() {
     const q = searchTerm.toUpperCase();
     const searching = q.length > 0;
 
-    // ── Visibility rule (decoupled per filter mode) ──
-    // historical = filter shows ONLY historical
-    // active     = live ACTIVE-status flights, plus historical SEARCH HITS
-    // dropped    = live DROPPED-status flights, plus historical SEARCH HITS
-    // ''  (All)  = everything
+    // ── Visibility rule (status filter is ABSOLUTE) ──
+    //   historical = ONLY historical
+    //   active     = ONLY live flightStatus='ACTIVE' (no historicals)
+    //   dropped    = ONLY live flightStatus='DROPPED' (no historicals)
+    //   '' (All)   = everything (live + historical)
     //
-    // A "live" flight is one currently in the SFDPS feed (no _historical flag).
-    // Once a flight is purged or loaded from the history archive, _historical
-    // becomes true and it must NOT show under Active/Dropped unless it
-    // matches an explicit search query (so users searching 'NKS' see hits
-    // even when their default filter is Active).
+    // Search filter (q) further narrows the set; if the user is searching
+    // and we have historical matches that are hidden by the status filter,
+    // we surface them via a "+ N historical matches hidden" hint below the
+    // table so they can switch the dropdown to see them.
 
     let filtered = [];
-    let histCount = 0, histShownCount = 0;
+    let histTotal = 0;          // total historical in memory
+    let histMatchesHidden = 0;  // historical matches that the current filter excludes
     for (const f of allFlights.values()) {
         const isHist = !!f._historical;
-        if (isHist) histCount++;
+        if (isHist) histTotal++;
 
-        // Decide visibility against the status filter FIRST, before any
-        // expensive search-match work — most flights short-circuit here.
-        let visible;
-        if (fStatus === 'historical') {
-            visible = isHist;
-        } else if (fStatus === '') {
-            visible = true;   // "All" — everything
-        } else if (isHist) {
-            // Active/Dropped + historical: only when there's a search match
-            visible = searching && matchesSearch(f, q);
-            if (visible) histShownCount++;
-        } else if (fStatus === 'active') {
-            visible = f.flightStatus === 'ACTIVE';
-        } else if (fStatus === 'dropped') {
-            visible = f.flightStatus === 'DROPPED';
-        } else {
-            visible = true;
-        }
-        if (!visible) continue;
+        let passesStatus;
+        if (fStatus === 'historical')      passesStatus = isHist;
+        else if (fStatus === '')           passesStatus = true;
+        else if (fStatus === 'active')     passesStatus = !isHist && f.flightStatus === 'ACTIVE';
+        else if (fStatus === 'dropped')    passesStatus = !isHist && f.flightStatus === 'DROPPED';
+        else                                passesStatus = true;
 
+        // Track historicals that match the search but are hidden by status filter
+        if (!passesStatus && isHist && searching && matchesSearch(f, q))
+            histMatchesHidden++;
+
+        if (!passesStatus) continue;
         if (fFacility && f.reportingFacility !== fFacility) continue;
         if (fRules && f.flightRules !== fRules) continue;
-        if (searching && !isHist && !matchesSearch(f, q)) continue;
+        if (searching && !matchesSearch(f, q)) continue;
         filtered.push(f);
     }
 
@@ -187,11 +179,13 @@ function render() {
         return 0;
     });
 
-    // Count display shows actual visible historicals (not the in-memory pool size)
-    const visibleHist = fStatus === 'historical' ? filtered.length : histShownCount;
-    countEl.textContent = visibleHist > 0
-        ? `${filtered.length} shown (${visibleHist} historical)`
-        : `${filtered.length} shown`;
+    // Count display: clear, accurate, and offers a hint when historical
+    // matches are hidden by the current Active/Dropped filter.
+    let countText = `${filtered.length} shown`;
+    if (histMatchesHidden > 0) {
+        countText += `  (+${histMatchesHidden} historical hidden — switch filter to see)`;
+    }
+    countEl.textContent = countText;
 
     const html = [];
     for (const f of filtered) {

@@ -55,7 +55,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 }
 .db {
     font-family: 'Consolas', monospace;
-    font-size: 13px; line-height: 16px;
+    font-size: 13px; line-height: 14px;
     color: #00cc00;
     white-space: nowrap;
     padding: 0 2px;

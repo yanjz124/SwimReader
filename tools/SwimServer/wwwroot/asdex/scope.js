@@ -301,16 +301,34 @@ let   centeredOnce = false;
 
 // ── Data block positions (8 compass points) ─────────────────────────────────
 const DB_ORDERS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-const DB_POS = {
-    N:  { wl: -5,  wt: -43, lx: 9,   ly: -16 },
-    NE: { wl: 26,  wt: -24, lx: 26,  ly: -8 },
-    E:  { wl: 26,  wt: -7,  lx: 26,  ly: 9 },
-    SE: { wl: 26,  wt: 10,  lx: 26,  ly: 26 },
-    S:  { wl: -5,  wt: 33,  lx: 9,   ly: 30 },
-    SW: { wl: -83, wt: 10,  lx: -8,  ly: 26 },
-    W:  { wl: -83, wt: -7,  lx: -8,  ly: 9 },
-    NW: { wl: -83, wt: -24, lx: -8,  ly: -8 },
-};
+
+// Geometry: aircraft center in ac-icon coords = (CX, CY).
+// lx/ly = leader line tip. wl/wt = db-wrap top-left. tf = CSS transform that
+// anchors the correct edge/corner of the db to the (wl, wt) point so the gap
+// between leader tip and nearest db edge is uniform (GAP px) in every direction.
+(function () {
+    const CX = 9, CY = 9, LDR = 22, GAP = 0;
+    const D = Math.round(LDR / Math.SQRT2); // diagonal component ≈ 10
+    window.DB_POS = {
+        N:  { lx: CX,     ly: CY-LDR, wl: CX,     wt: CY-LDR-GAP, tf: 'translate(-50%,-100%)' },
+        NE: { lx: CX+D,   ly: CY-D,   wl: CX+D+GAP, wt: CY-D-GAP, tf: 'translate(0,-100%)' },
+        E:  { lx: CX+LDR, ly: CY,     wl: CX+LDR+GAP, wt: CY,     tf: 'translate(0,-50%)' },
+        SE: { lx: CX+D,   ly: CY+D,   wl: CX+D+GAP, wt: CY+D+GAP, tf: 'translate(0,0)' },
+        S:  { lx: CX,     ly: CY+LDR, wl: CX,     wt: CY+LDR+GAP, tf: 'translate(-50%,0)' },
+        SW: { lx: CX-D,   ly: CY+D,   wl: CX-D-GAP, wt: CY+D+GAP, tf: 'translate(-100%,0)' },
+        W:  { lx: CX-LDR, ly: CY,     wl: CX-LDR-GAP, wt: CY,     tf: 'translate(-100%,-50%)' },
+        NW: { lx: CX-D,   ly: CY-D,   wl: CX-D-GAP, wt: CY-D-GAP, tf: 'translate(-100%,-100%)' },
+    };
+})();
+
+// Apply a DB_POS entry to a db-wrap element.
+function setWrap(wrap, pos, forceVisible) {
+    wrap.style.left      = pos.wl + 'px';
+    wrap.style.top       = pos.wt + 'px';
+    wrap.style.transform = pos.tf;
+    if (forceVisible) wrap.style.display = '';
+}
+
 const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
 const hiddenDbs = new Set();  // trackIds with hidden data blocks
 
@@ -519,7 +537,7 @@ document.addEventListener('mousemove', e => {
     if (!iconEl) return;
     const pos = DB_POS[dir];
     const wrap = iconEl.querySelector('.db-wrap');
-    if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; }
+    if (wrap) setWrap(wrap, pos, false);
     const line = iconEl.querySelector('.ldr line');
     if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
 });
@@ -571,7 +589,7 @@ document.addEventListener('touchmove', e => {
     if (!iconEl) return;
     const pos = DB_POS[dir];
     const wrap = iconEl.querySelector('.db-wrap');
-    if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; }
+    if (wrap) setWrap(wrap, pos, false);
     const line = iconEl.querySelector('.ldr line');
     if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
     e.preventDefault();
@@ -605,7 +623,7 @@ document.addEventListener('touchend', e => {
         if (iconEl) {
             const pos = DB_POS[dir];
             const wrap = iconEl.querySelector('.db-wrap');
-            if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; wrap.style.display = ''; }
+            if (wrap) setWrap(wrap, pos, true);
             const line = iconEl.querySelector('.ldr line');
             if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
             const ldr = iconEl.querySelector('.ldr');
@@ -682,7 +700,7 @@ document.addEventListener('click', e => {
         if (iconEl) {
             const pos = DB_POS[dir];
             const wrap = iconEl.querySelector('.db-wrap');
-            if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; wrap.style.display = ''; }
+            if (wrap) setWrap(wrap, pos, true);
             const line = iconEl.querySelector('.ldr line');
             if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
             const ldr = iconEl.querySelector('.ldr');
@@ -1077,7 +1095,7 @@ function makeIcon(t) {
     const fix = dbShowFix ? (t.gateCode || '') : '';
 
     let dbHtml = '';
-    const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 1.25)}px`;
+    const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 1.05)}px`;
     if (cs && cat !== 'unknown') {
         if (cat !== 'vehicle') {
             // Line 1: {callsign} {altitude?} {sensors?}
@@ -1104,7 +1122,7 @@ function makeIcon(t) {
     const html = `<div class="ac-icon" data-tid="${t.trackId}">
         <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block"><circle cx="0" cy="0" r="14" fill="transparent"/>${symHtml}<circle class="halo" cx="0" cy="0" r="11" fill="none" stroke="#fff" stroke-width="1"/></svg>
         ${ldrHtml}
-        <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px${hideStyle}">${dbHtml}</div>
+        <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px;transform:${pos.tf}${hideStyle}">${dbHtml}</div>
     </div>`;
 
     return L.divIcon({ className: '', html, iconSize: [200, 18], iconAnchor: [9, 9] });

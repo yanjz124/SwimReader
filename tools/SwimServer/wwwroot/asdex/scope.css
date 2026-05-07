@@ -153,6 +153,45 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     font-family: 'Consolas', monospace; font-size: 13px; color: #00cc00;
     line-height: 1.4; white-space: nowrap;
 }
+#cmd-overlay {
+    position: fixed; top: 80px; left: 80px; z-index: 700;
+    font-family: 'Consolas', monospace; font-size: 13px; color: #00cc00;
+    line-height: 1.4; white-space: nowrap;
+}
+#fp-popup {
+    position: fixed; top: 120px; left: 120px; z-index: 800;
+    font-family: 'Consolas', monospace; font-size: 10px; color: #ccc;
+    background: #111; border: 1px solid #444; min-width: 380px;
+    user-select: none;
+}
+#fp-titlebar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 3px 8px; background: #222; border-bottom: 1px solid #444;
+    cursor: move; color: #ccc; font-size: 10px;
+}
+#fp-close {
+    background: #222; border: 1px solid #444; color: #ccc;
+    font-family: inherit; font-size: 10px; padding: 1px 6px; cursor: pointer;
+    line-height: 1;
+}
+#fp-close:hover { border-color: #888; }
+#fp-fields { border-bottom: 1px solid #333; }
+.fp-tbl { border-collapse: collapse; width: 100%; }
+.fp-tbl th {
+    padding: 4px 12px 2px; color: #666; font-size: 10px;
+    text-align: center; font-weight: normal; white-space: nowrap;
+    background: #111;
+}
+.fp-tbl td {
+    padding: 2px 12px 5px; text-align: center; color: #ccc;
+    white-space: nowrap; background: #222;
+}
+.fp-tbl td.hi { color: #cccc44; }
+#fp-rte {
+    padding: 5px 8px; font-size: 10px; white-space: pre-wrap; word-break: break-all;
+}
+.fp-rte-lbl { color: #666; margin-right: 6px; }
+#fp-rte span { color: #ccc; }
 #zulu-clock {
     position: fixed; top: 75px; right: 75px; z-index: 700;
     font-family: 'Consolas', monospace; font-size: 13px; color: #00cc00;

@@ -7,7 +7,7 @@ let haloTid = null; // trackId of currently highlighted halo
 
 document.addEventListener('mousemove', e => {
     // Hide crosshair if over status bar, UI panels, or popups
-    const overUI = e.target.closest('.nav-home, #statusbar, #gatecode-popup, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay, #zulu-clock');
+    const overUI = e.target.closest('.nav-home, #statusbar, #gatecode-popup, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay, #zulu-clock, #cmd-overlay, #fp-popup');
     
     if (overUI) {
         ch.style.display = 'none';
@@ -208,7 +208,8 @@ const map = L.map('map', {
     zoomDelta: 0.25,
     attributionControl: false,
     dragging: false,
-    doubleClickZoom: false
+    doubleClickZoom: false,
+    keyboard: false
 });
 
 // Right-click drag panning
@@ -330,13 +331,146 @@ function hideLdrOverlay() {
     ldrOverlay.style.display = 'none';
 }
 
+// ── Command input (.FP etc.) ─────────────────────────────────────────────────
+const cmdOverlay = document.getElementById('cmd-overlay');
+let cmdText = '';
+
+function showCmd() {
+    cmdOverlay.textContent = cmdText + '_';
+    cmdOverlay.style.display = 'block';
+}
+function hideCmd() {
+    cmdText = '';
+    cmdOverlay.style.display = 'none';
+}
+
+function lookupTrack(acid) {
+    const up = acid.toUpperCase();
+    return Object.values(trackData).find(t => t.callsign && t.callsign.toUpperCase() === up) || null;
+}
+
+// True when the user has typed .FP (with optional trailing space) and hasn't yet provided an ACID —
+// meaning a click on a target should fill in the aircraft.
+function isPendingFpClick() {
+    if (!cmdText) return false;
+    const parts = cmdText.trim().toUpperCase().split(/\s+/);
+    return parts[0] === '.FP' && parts.length === 1;
+}
+
+function openFpPopup(t) {
+    const pop    = document.getElementById('fp-popup');
+    const title  = document.getElementById('fp-title');
+    const fields = document.getElementById('fp-fields');
+    const rte    = document.getElementById('fp-rte');
+
+    const cs      = t.callsign || '???';
+    const dep     = t.origin   || '—';
+    const dest    = t.dest     || '—';
+    const type    = t.acType   || '—';
+    const wake    = t.wake     || '—';
+    const bcn     = t.squawk   || '—';
+    const route   = t.route    || '';
+    const star    = t.star     || '';
+    const rteText = [route, star].filter(Boolean).join(' ') || '—';
+
+    title.textContent = cs;
+
+    const cols = [
+        { hdr: 'AID',  val: cs,   hi: true },
+        { hdr: 'BCN',  val: bcn },
+        { hdr: 'TYP',  val: type, hi: true },
+        { hdr: 'WAKE', val: wake },
+        { hdr: 'DEP',  val: dep,  hi: true },
+        { hdr: 'DEST', val: dest, hi: true },
+    ];
+
+    fields.innerHTML = `<table class="fp-tbl"><thead><tr>${
+        cols.map(c => `<th>${c.hdr}</th>`).join('')
+    }</tr></thead><tbody><tr>${
+        cols.map(c => `<td${c.hi ? ' class="hi"' : ''}>${c.val}</td>`).join('')
+    }</tr></tbody></table>`;
+
+    rte.innerHTML = `<span class="fp-rte-lbl">RTE</span><span>${rteText}</span>`;
+
+    pop.style.display = 'block';
+}
+
+// Draggable FP popup
+(function () {
+    const pop = document.getElementById('fp-popup');
+    const bar = document.getElementById('fp-titlebar');
+    let dragging = false, ox = 0, oy = 0;
+    bar.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        dragging = true;
+        const r = pop.getBoundingClientRect();
+        ox = e.clientX - r.left;
+        oy = e.clientY - r.top;
+        e.stopPropagation();
+    });
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        pop.style.left = (e.clientX - ox) + 'px';
+        pop.style.top  = (e.clientY - oy) + 'px';
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+    document.getElementById('fp-close').addEventListener('click', () => {
+        pop.style.display = 'none';
+    });
+})();
+
 document.addEventListener('keydown', e => {
     // Don't intercept if typing in an input field
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
     if (e.key === 'Escape') {
+        if (cmdText)                { hideCmd();        e.preventDefault(); return; }
         if (pendingLdrDir !== null) { hideLdrOverlay(); e.preventDefault(); }
         return;
     }
+
+    // Command input mode — active once first char is '.'
+    if (cmdText) {
+        if (e.key === 'Backspace') {
+            cmdText = cmdText.slice(0, -1);
+            if (!cmdText) hideCmd(); else showCmd();
+            e.preventDefault();
+            return;
+        }
+        if (e.key === 'Enter') {
+            const parts = cmdText.trim().toUpperCase().split(/\s+/);
+            if (parts[0] === '.FP' && parts[1]) {
+                const t = lookupTrack(parts[1]);
+                if (t) openFpPopup(t);
+            }
+            hideCmd();
+            e.preventDefault();
+            return;
+        }
+        if (e.key.length === 1) {
+            cmdText += e.key.toUpperCase();
+            showCmd();
+            e.preventDefault();
+            return;
+        }
+        return;
+    }
+
+    // Backspace clears pending LDR DIR
+    if (e.key === 'Backspace' && pendingLdrDir !== null) {
+        hideLdrOverlay();
+        e.preventDefault();
+        return;
+    }
+
+    // Start command on '.'
+    if (e.key === '.') {
+        cmdText = '.';
+        showCmd();
+        e.preventDefault();
+        return;
+    }
+
     const digit = parseInt(e.key);
     if (digit >= 1 && digit <= 9) {
         pendingLdrDir = digit;
@@ -523,6 +657,15 @@ document.addEventListener('click', e => {
     if (!bestTid) {
         // Clicked empty space — cancel LDR DIR if active
         if (pendingLdrDir !== null) hideLdrOverlay();
+        return;
+    }
+
+    // .FP click-pick mode: open flight plan for clicked aircraft
+    if (isPendingFpClick()) {
+        const t = trackData[bestTid];
+        if (t && t.callsign) openFpPopup(t);
+        hideCmd();
+        e.preventDefault();
         return;
     }
 
@@ -992,6 +1135,11 @@ function applyTrack(t) {
         markers[tid].setLatLng(ll);
         if (hashes[tid] !== h) {
             markers[tid].setIcon(makeIcon(t));
+            // setIcon replaces the DOM element — re-apply halo if this is the hovered track
+            if (tid === haloTid) {
+                const halo = markers[tid]?.getElement()?.querySelector('.halo');
+                if (halo) halo.style.opacity = '1';
+            }
         }
     }
     hashes[tid] = h;

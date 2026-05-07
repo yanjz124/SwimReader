@@ -894,7 +894,8 @@ document.getElementById('fl-tbody').addEventListener('click', (e) => {
 const hbPanel = document.getElementById('holdbar-panel');
 const hbBtn = document.getElementById('hb-toggle');
 let hbVisible = false;
-let holdbarOverlayVisible = true;
+let holdbarOverlayVisible = localStorage.getItem('asdex-holdbars') === 'on';
+hbBtn.style.color = holdbarOverlayVisible ? '#ff8c00' : '#ccc';
 
 hbBtn.onclick = (e) => {
     if (e.shiftKey) {
@@ -904,6 +905,7 @@ hbBtn.onclick = (e) => {
     } else {
         // Normal click: toggle holdbar overlay on map
         holdbarOverlayVisible = !holdbarOverlayVisible;
+        localStorage.setItem('asdex-holdbars', holdbarOverlayVisible ? 'on' : 'off');
         if (holdbarLayerGroup) {
             if (holdbarOverlayVisible) holdbarLayerGroup.addTo(map);
             else map.removeLayer(holdbarLayerGroup);
@@ -932,11 +934,12 @@ Promise.all([
 ]).then(([geojson, bitMap]) => {
     if (!geojson) { console.warn('[HOLDBAR] No GeoJSON for this airport'); return; }
     holdbarLines = geojson.features.filter(f => f.geometry.type === 'LineString');
-    holdbarLayerGroup = L.layerGroup().addTo(map);
+    holdbarLayerGroup = L.layerGroup();
+    if (holdbarOverlayVisible) holdbarLayerGroup.addTo(map);
     for (const feat of holdbarLines) {
         const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
         const layer = L.polyline(coords, {
-            color: '#555', weight: 0.5, opacity: 0.4, interactive: false,
+            color: '#555', weight: 1, opacity: 0.4, interactive: false,
             pane: 'holdbar'
         });
         holdbarLayers.push(layer);
@@ -976,10 +979,7 @@ function parseHoldbarBits(hex) {
 
 function applyHoldbarToMap(data) {
     const bits = parseHoldbarBits(data.status || '');
-
-    holdbarLayerGroup.clearLayers();
-    let litCount = 0;
-    const litLines = new Set(); // line indices that are lit green
+    const litLines = new Set();
 
     if (holdbarBitMap) {
         // Use learned mapping: bit position → seed line index
@@ -1004,16 +1004,14 @@ function applyHoldbarToMap(data) {
         }
     }
 
-    // Render all lines (green if lit, grey otherwise)
-    for (let li = 0; li < holdbarLines.length; li++) {
+    // Update existing layer styles in-place — never clear/re-add, which causes tearing mid-drag
+    let litCount = 0;
+    for (let li = 0; li < holdbarLayers.length; li++) {
         const on = litLines.has(li);
         if (on) litCount++;
-        const coords = holdbarLines[li].geometry.coordinates.map(c => [c[1], c[0]]);
-        const layer = L.polyline(coords, on
-            ? { color: '#00cc00', weight: 0.5, opacity: 1, interactive: false, pane: 'holdbar' }
-            : { color: '#555', weight: 0.5, opacity: 0.4, interactive: false, pane: 'holdbar' });
-        holdbarLayers[li] = layer;
-        holdbarLayerGroup.addLayer(layer);
+        holdbarLayers[li].setStyle(on
+            ? { color: '#00cc00', opacity: 1 }
+            : { color: '#555', opacity: 0.4 });
     }
 
     const activeBits = bits.map((b, i) => b ? i : -1).filter(i => i >= 0);

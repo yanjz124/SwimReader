@@ -29,6 +29,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 #statusbar #unk-toggle.on { color: #cccc44; border-color: #666; }
 
 /* ── Target icons — rendered as Leaflet divIcons ── */
+.leaflet-marker-icon { outline: none; }
 .ac-icon {
     position: relative;
     overflow: visible;

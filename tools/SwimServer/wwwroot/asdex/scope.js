@@ -67,7 +67,7 @@ function applyRotation(deg) {
 rotInput.addEventListener('input', () => applyRotation(parseInt(rotInput.value) || 360));
 
 // ── Font size adjustment ───────────────────────────────────────────────────
-let dbFontSize = 15;
+let dbFontSize = 12;
 const fontInput = document.getElementById('font-size');
 fontInput.addEventListener('input', () => {
     dbFontSize = parseInt(fontInput.value) || 13;
@@ -1110,7 +1110,7 @@ function makeIcon(t) {
     const fix = dbShowFix ? (t.gateCode || '') : '';
 
     let dbHtml = '';
-    const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 1.05)}px`;
+    const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 0.87)}px`;
     if (cs && cat !== 'unknown') {
         if (cat !== 'vehicle') {
             // Line 1: {callsign} {altitude?} {sensors?}

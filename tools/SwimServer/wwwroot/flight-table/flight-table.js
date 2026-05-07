@@ -103,10 +103,18 @@ function rebuildFacilityDropdown() {
         sorted.map(f => `<option value="${f}"${f === current ? ' selected' : ''}>${f}</option>`).join('');
 }
 
-// ── Render (throttled — 500ms cap so 1Hz WS batches don't flood) ──
-// Building an HTML string for thousands of rows + setting innerHTML is
-// the dominant cost. Render at most twice per second; user interactions
-// (sort/filter) bypass the throttle via renderNow().
+// ── Render — virtualized rows ──
+// We only render rows currently in the scroll viewport (~30 rows) instead of
+// all 12K. The filter+sort step (`render()`) builds the full ordered list
+// `filtered`; `renderViewport()` then materializes only the visible window.
+//
+// WS-driven re-renders are throttled to 500ms; user actions (sort/filter/
+// search/scroll) bypass via renderNow() so the UI feels instant.
+const ROW_HEIGHT = 24;          // px — must match .flight-row { height } in CSS
+const ROW_BUFFER = 6;            // extra rows above/below viewport for smooth scroll
+let filtered = [];               // current filter+sort result (full list)
+let lastRenderedRange = { start: -1, end: -1 };
+
 let renderPending = false;
 const RENDER_THROTTLE_MS = 500;
 let lastRenderAt = 0;
@@ -118,8 +126,6 @@ function scheduleRender() {
     const wait = Math.max(0, RENDER_THROTTLE_MS - elapsed);
     renderTimer = setTimeout(() => requestAnimationFrame(render), wait);
 }
-// Bypass the throttle for user actions (typing, dropdowns, sort clicks) — those
-// must feel instant even if the WS just rendered 200ms ago.
 function renderNow() {
     if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
     renderPending = false;
@@ -139,28 +145,20 @@ function render() {
     //   historical = ONLY historical
     //   active     = ONLY live flightStatus='ACTIVE' (no historicals)
     //   dropped    = ONLY live flightStatus='DROPPED' (no historicals)
-    //   '' (All)   = everything (live + historical)
     //
-    // Search filter (q) further narrows the set; if the user is searching
-    // and we have historical matches that are hidden by the status filter,
-    // we surface them via a "+ N historical matches hidden" hint below the
-    // table so they can switch the dropdown to see them.
+    // When searching, hidden historical matches are surfaced via a count hint.
 
-    let filtered = [];
-    let histTotal = 0;          // total historical in memory
-    let histMatchesHidden = 0;  // historical matches that the current filter excludes
+    filtered = [];   // module-level — drives renderViewport
+    let histMatchesHidden = 0;
     for (const f of allFlights.values()) {
         const isHist = !!f._historical;
-        if (isHist) histTotal++;
 
         let passesStatus;
         if (fStatus === 'historical')      passesStatus = isHist;
-        else if (fStatus === '')           passesStatus = true;
         else if (fStatus === 'active')     passesStatus = !isHist && f.flightStatus === 'ACTIVE';
         else if (fStatus === 'dropped')    passesStatus = !isHist && f.flightStatus === 'DROPPED';
         else                                passesStatus = true;
 
-        // Track historicals that match the search but are hidden by status filter
         if (!passesStatus && isHist && searching && matchesSearch(f, q))
             histMatchesHidden++;
 
@@ -187,16 +185,41 @@ function render() {
     }
     countEl.textContent = countText;
 
+    // Set the virtual list height so the scrollbar reflects the full
+    // count even though we only render a window of rows.
+    rowsEl.style.height = (filtered.length * ROW_HEIGHT) + 'px';
+    lastRenderedRange = { start: -1, end: -1 };  // force re-render of viewport
+    renderViewport();
+}
+
+// Render only the rows currently in (or near) the scroll viewport.
+// Bound by row count + viewport height regardless of total filtered length.
+function renderViewport() {
+    const list = rowsEl.parentElement;   // .flight-list (the scroll container)
+    if (!list) return;
+    const scrollTop = list.scrollTop;
+    const viewportH = list.clientHeight;
+    const totalRows = filtered.length;
+
+    let start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROW_BUFFER);
+    let end = Math.min(totalRows, Math.ceil((scrollTop + viewportH) / ROW_HEIGHT) + ROW_BUFFER);
+    if (end <= start) { rowsEl.innerHTML = ''; return; }
+
+    // Skip work when the visible window hasn't changed (common for live updates
+    // that just bump filtered counts without changing what's in view).
+    if (start === lastRenderedRange.start && end === lastRenderedRange.end) return;
+    lastRenderedRange = { start, end };
+
     const html = [];
-    for (const f of filtered) {
+    for (let i = start; i < end; i++) {
+        const f = filtered[i];
         const sel = f.gufi === selectedGufi ? ' selected' : '';
-        html.push(renderRow(f, sel));
+        html.push(renderRow(f, sel, i));
     }
     rowsEl.innerHTML = html.join('');
 
     rowsEl.querySelectorAll('.flight-row').forEach(el => {
         el.addEventListener('click', (e) => {
-            // Pin star click is handled separately
             if (e.target.dataset && e.target.dataset.action === 'pin') {
                 e.stopPropagation();
                 handlePinClick(el.dataset.gufi);
@@ -204,6 +227,28 @@ function render() {
             }
             selectFlight(el.dataset.gufi);
         });
+    });
+}
+
+// Listen to scroll events on the list container — re-render viewport
+// on each scroll, throttled to one render per animation frame.
+{
+    let scrollPending = false;
+    const list = rowsEl.parentElement;
+    if (list) {
+        list.addEventListener('scroll', () => {
+            if (scrollPending) return;
+            scrollPending = true;
+            requestAnimationFrame(() => {
+                scrollPending = false;
+                renderViewport();
+            });
+        }, { passive: true });
+    }
+    // Also re-render on window resize (viewport height changes)
+    window.addEventListener('resize', () => {
+        lastRenderedRange = { start: -1, end: -1 };
+        renderViewport();
     });
 }
 
@@ -382,7 +427,7 @@ function getSortValue(f, col) {
     }
 }
 
-function renderRow(f, selClass) {
+function renderRow(f, selClass, index) {
     const alt = fmtAlt(f);
     const altCls = f.assignedVfr ? ' vfr' : '';
     const intAlt = f.interimAltitude ? `FL${Math.round(f.interimAltitude / 100)}` : '';
@@ -400,7 +445,8 @@ function renderRow(f, selClass) {
         : pinState.pinned
             ? 'Unpin (will be kept ≥24h after unpin)'
             : 'Recently unpinned — click to re-pin';
-    return `<div class="flight-row${selClass}${histCls}" data-gufi="${f.gufi}">
+    const top = (index || 0) * ROW_HEIGHT;
+    return `<div class="flight-row${selClass}${histCls}" data-gufi="${f.gufi}" style="top:${top}px">
         <span class="pin${pinCls}" data-action="pin" title="${pinTitle}">${pinChar}</span>
         <span class="cs">${f.callsign || '????'}</span>
         <span>${f.aircraftType || ''}</span>

@@ -96,17 +96,26 @@ body {
 .col-header span:hover { color: #cccc44; }
 .col-header .sorted { color: #cccc44; }
 
-/* Flight row */
+/* Virtualized rows: fixed height, absolutely positioned within #rows.
+   The #rows container is sized to (rowCount × ROW_HEIGHT) so the scrollbar
+   reflects the full virtual list, but only the visible window is rendered. */
+#rows { position: relative; }
 .flight-row {
+    position: absolute;
+    left: 0;
+    right: 0;
+    box-sizing: border-box;
+    height: 24px;
     display: grid;
     grid-template-columns: 22px 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
     gap: 6px;
-    padding: 5px 12px;
+    padding: 4px 12px;
     font-size: 12px;
     border-bottom: 1px solid #111;
     cursor: pointer;
-    transition: background 0.1s;
+    align-items: center;
 }
+.flight-row:hover { background: #0a0a0a; }
 .flight-row:hover { background: #0a0a0a; }
 .flight-row.selected { background: #0a1a0a; border-left: 2px solid #44aa44; }
 .flight-row .cs { color: #fff; }

@@ -982,11 +982,24 @@ function applyHoldbarToMap(data) {
     const litLines = new Set(); // line indices that are lit green
 
     if (holdbarBitMap) {
-        // Use learned mapping: bit position → line index
+        // Use learned mapping: bit position → seed line index
         for (const [bitStr, lineIdx] of Object.entries(holdbarBitMap)) {
             const bitPos = parseInt(bitStr);
             if (bitPos < bits.length && bits[bitPos] && lineIdx < holdbarLines.length) {
                 litLines.add(lineIdx);
+            }
+        }
+        // Propagate: hold bars activate per runway, so when any line on runway X is lit,
+        // light ALL lines tagged with that runwayId (each intersection along the runway)
+        if (litLines.size > 0) {
+            const litRunways = new Set();
+            for (const li of litLines) {
+                const rwy = holdbarLines[li].properties?.runwayId;
+                if (rwy) litRunways.add(rwy);
+            }
+            for (let li = 0; li < holdbarLines.length; li++) {
+                const rwy = holdbarLines[li].properties?.runwayId;
+                if (rwy && litRunways.has(rwy)) litLines.add(li);
             }
         }
     }

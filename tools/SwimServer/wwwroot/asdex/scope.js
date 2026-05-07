@@ -250,9 +250,13 @@ const ASDEX_DAY = {
     apron:     'rgb(73,73,73)',
     structure: 'rgb(100,100,100)'
 };
-let asdexColors = ASDEX_NIGHT;
-let isNightMode = true;
+const _hour = new Date().getHours();
+let isNightMode = _hour < 8 || _hour >= 19;
+let asdexColors = isNightMode ? ASDEX_NIGHT : ASDEX_DAY;
 let surfaceLayer = null;
+document.getElementById('map').style.background = asdexColors.bg;
+document.body.style.background = asdexColors.bg;
+document.getElementById('dn-toggle').textContent = isNightMode ? 'NIGHT' : 'DAY';
 
 // ── Load airport surface GeoJSON ────────────────────────────────────────────
 let surfaceLoaded = false;

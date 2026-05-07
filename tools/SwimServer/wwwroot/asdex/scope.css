@@ -122,6 +122,8 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 .fl-cs { color: #cccc44; }
 .fl-apt { color: #aaa; }
 .fl-route { color: #00cc00; }
+.fl-section-hdr { cursor: default; }
+.fl-section-hdr:hover { background: transparent; }
 
 /* ── Hold bar debug panel ── */
 #holdbar-panel {
@@ -150,6 +152,11 @@ body { background: #393939; overflow: hidden; height: 100vh; }
     position: fixed; top: 80px; left: 80px; z-index: 700;
     font-family: 'Consolas', monospace; font-size: 13px; color: #00cc00;
     line-height: 1.4; white-space: nowrap;
+}
+#zulu-clock {
+    position: fixed; top: 75px; right: 75px; z-index: 700;
+    font-family: 'Consolas', monospace; font-size: 13px; color: #00cc00;
+    line-height: 1.4; white-space: nowrap; cursor: move; user-select: none;
 }
 
 /* hide Leaflet attribution noise */

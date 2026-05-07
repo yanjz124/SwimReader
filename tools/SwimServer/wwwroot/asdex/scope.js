@@ -7,7 +7,7 @@ let haloTid = null; // trackId of currently highlighted halo
 
 document.addEventListener('mousemove', e => {
     // Hide crosshair if over status bar, UI panels, or popups
-    const overUI = e.target.closest('.nav-home, #statusbar, #gatecode-popup, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay');
+    const overUI = e.target.closest('.nav-home, #statusbar, #gatecode-popup, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay, #zulu-clock');
     
     if (overUI) {
         ch.style.display = 'none';
@@ -670,20 +670,42 @@ function routeSnippet(route, origin, dest) {
 }
 
 function renderFlightList() {
+    const lid = AIRPORT.replace(/^K/, '');  // KDCA → DCA
+    const icao = AIRPORT;
+
     const tracks = Object.values(trackData)
         .filter(t => t.callsign && t.tgtType !== 'vehicle' && t.tgtType !== 'unknown')
         .sort((a, b) => (a.callsign || '').localeCompare(b.callsign || ''));
+
+    const departures = tracks.filter(t => t.origin === lid || t.origin === icao);
+    const arrivals   = tracks.filter(t => t.dest   === lid || t.dest   === icao);
+    const other      = tracks.filter(t =>
+        (t.origin !== lid && t.origin !== icao) &&
+        (t.dest   !== lid && t.dest   !== icao));
+
     document.getElementById('fl-count').textContent = tracks.length + ' aircraft';
-    const tbody = document.getElementById('fl-tbody');
-    let html = '';
-    for (const t of tracks) {
-        const cs = t.callsign || '';
-        const dep = t.origin || '';
-        const arr = t.dest || '';
-        const rte = routeSnippet(t.route, dep, arr);
-        html += `<tr data-tid="${t.trackId}"><td class="fl-cs">${cs}</td><td class="fl-apt">${dep}</td><td class="fl-apt">${arr}</td><td class="fl-route">${rte}</td></tr>`;
+
+    const COLS = `<colgroup><col style="width:7em"><col style="width:3.5em"><col style="width:3.5em"><col></colgroup>`;
+    const THEAD = `<tr><th>CALLSIGN</th><th>DEP</th><th>ARR</th><th>ROUTE</th></tr>`;
+
+    function sectionHtml(label, color, list) {
+        if (!list.length) return '';
+        let h = `<tr class="fl-section-hdr"><td colspan="4" style="color:${color};padding:4px 6px 2px;border-bottom:1px solid #333;font-size:10px">${label} (${list.length})</td></tr>`;
+        h += THEAD;
+        for (const t of list) {
+            const cs  = t.callsign || '';
+            const dep = t.origin || '';
+            const arr = t.dest || '';
+            const rte = routeSnippet(t.route, dep, arr);
+            h += `<tr data-tid="${t.trackId}"><td class="fl-cs">${cs}</td><td class="fl-apt">${dep}</td><td class="fl-apt">${arr}</td><td class="fl-route">${rte}</td></tr>`;
+        }
+        return h;
     }
-    tbody.innerHTML = html;
+
+    document.getElementById('fl-tbody').innerHTML =
+        sectionHtml('DEPARTURES', '#00cc88', departures) +
+        sectionHtml('ARRIVALS',   '#4488ff', arrivals)   +
+        sectionHtml('OTHER',      '#888',    other);
 }
 
 document.getElementById('fl-toggle').onclick = () => {
@@ -994,6 +1016,59 @@ function centerOnTracks(tracks) {
     map.setView([lat, lon], 14);
     centeredOnce = true;
 }
+
+// ── Zulu clock ───────────────────────────────────────────────────────────────
+(function () {
+    const el = document.getElementById('zulu-clock');
+
+    function tick() {
+        const now = new Date();
+        const hh  = String(now.getUTCHours()).padStart(2, '0');
+        const mm  = String(now.getUTCMinutes()).padStart(2, '0');
+        const ss  = String(now.getUTCSeconds()).padStart(2, '0');
+        el.textContent = `${hh}${mm}/${ss}`;
+    }
+    tick();
+    setInterval(tick, 1000);
+
+    // Restore saved position (right-anchored default)
+    const saved = localStorage.getItem('asdex-clock-pos');
+    if (saved) {
+        try {
+            const { x, y } = JSON.parse(saved);
+            el.style.right = '';
+            el.style.left  = x + 'px';
+            el.style.top   = y + 'px';
+        } catch (_) {}
+    }
+
+    // Drag
+    let dragging = false, ox = 0, oy = 0;
+    el.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        dragging = true;
+        const r = el.getBoundingClientRect();
+        ox = e.clientX - r.left;
+        oy = e.clientY - r.top;
+        // Switch from CSS right-anchor to explicit left so drag math works
+        el.style.left  = r.left + 'px';
+        el.style.right = '';
+        e.stopPropagation();
+    });
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        el.style.left = (e.clientX - ox) + 'px';
+        el.style.top  = (e.clientY - oy) + 'px';
+    });
+    document.addEventListener('mouseup', e => {
+        if (!dragging) return;
+        dragging = false;
+        localStorage.setItem('asdex-clock-pos', JSON.stringify({
+            x: parseInt(el.style.left),
+            y: parseInt(el.style.top)
+        }));
+    });
+})();
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 let ws = null;

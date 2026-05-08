@@ -12,6 +12,40 @@ let ws = null;
 let showIcao = false;
 let lastIcaoText = '';
 
+// Aircraft type → FAA legacy wake class (J/H/L/S+/S) — fallback when SFDPS doesn't
+// publish wakeTurbulence for the flight (only ~1% of flights have it set).
+let WAKE_BY_TYPE = {};
+fetch('/wake-categories.json').then(r => r.json()).then(d => { WAKE_BY_TYPE = d; }).catch(() => {});
+
+// FAA legacy wake → ICAO FPL wake category
+//   J = Super  (e.g. A380, AN225)            ICAO: J
+//   H = Heavy  (>136,000 kg)                  ICAO: H
+//   L = Large  (FAA "Large", 41K–300K lb)    ICAO: M  (Medium)
+//   S+ = Small medium (12.5K–41K lb)         ICAO: M  (mostly above 7,000 kg ICAO Medium boundary)
+//   S = Small  (<12.5K lb)                    ICAO: L  (Light)
+const LEGACY_TO_ICAO_WAKE = { J: 'J', H: 'H', L: 'M', 'S+': 'M', S: 'L' };
+
+/**
+ * Determine ICAO FPL Field 9 wake category for a flight.
+ *  1. Use SFDPS aircraftDescription/@wakeTurbulence if it's already a valid ICAO code (J/H/M/L)
+ *  2. Otherwise look up aircraft type in wake-categories.json (FAA legacy) and convert
+ *  3. B757 family: FAA treats as Heavy for separation purposes — return H
+ *  4. If unknown, return '?' (don't guess)
+ */
+function icaoWakeFor(d) {
+    if (d.wakeCategory && /^[JHML]$/.test(d.wakeCategory)) return d.wakeCategory;
+    const t = d.aircraftType;
+    if (t) {
+        // B757 family — FAA wake-classifies as Heavy
+        if (/^B75[237]$/.test(t)) return 'H';
+        const legacy = WAKE_BY_TYPE[t.toUpperCase()];
+        if (legacy && LEGACY_TO_ICAO_WAKE[legacy]) return LEGACY_TO_ICAO_WAKE[legacy];
+    }
+    // Last-ditch: maybe SFDPS gave us a non-ICAO code — try translating
+    if (d.wakeCategory && LEGACY_TO_ICAO_WAKE[d.wakeCategory]) return LEGACY_TO_ICAO_WAKE[d.wakeCategory];
+    return '?';
+}
+
 // Historical flights: retained after server purge, size-capped
 const MAX_HIST_BYTES = 50 * 1024 * 1024; // 50 MB
 let historicalBytes = 0;
@@ -635,10 +669,13 @@ function buildIcaoFpl(d) {
     const ftype = d.flightType ? (ftypeMap[d.flightType] || 'N') : 'N';
     const f8 = rules + ftype;
 
-    // Field 9: Type/Wake (FAA→ICAO wake: L→M, S→L)
+    // Field 9: Type/Wake (ICAO FPL conventions)
+    //   - SFDPS aircraftDescription/@wakeTurbulence already uses ICAO codes (J/H/M/L)
+    //   - For flights without it (~99% of our data), look up type in wake-categories.json
+    //   - B757 family: FAA treats as Heavy
+    //   - Unknown: '?' rather than guessing
     const acType = d.aircraftType || 'ZZZZ';
-    const wakeMap = { J: 'J', H: 'H', L: 'M', S: 'L' };
-    const wake = wakeMap[d.wakeCategory] || d.wakeCategory || 'M';
+    const wake = icaoWakeFor(d);
     const f9 = acType + '/' + wake;
 
     // Field 10: Equipment & Capabilities / Surveillance
@@ -848,8 +885,10 @@ function buildSimBriefUrl(d) {
     if (d.modeSCode) p.set('hexcode', d.modeSCode);
     // Equipment (acdata JSON for equip/transponder/pbn/extrarmk)
     const acdata = {};
-    const wakeMap = { J: 'J', H: 'H', L: 'M', S: 'L' };
-    if (d.wakeCategory) acdata.cat = wakeMap[d.wakeCategory] || d.wakeCategory;
+    {
+        const w = icaoWakeFor(d);
+        if (w && w !== '?') acdata.cat = w;
+    }
     // Build equipment and transponder strings from ICAO FPL fields
     let equip = '';
     if (d.communicationCode) equip += d.communicationCode.replace(/\s+/g, '');

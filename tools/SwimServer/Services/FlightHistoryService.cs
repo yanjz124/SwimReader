@@ -38,12 +38,18 @@ static class FlightHistoryService
                 f.Gufi, f.FdpsGufi, f.Callsign, f.ComputerId, f.Operator, f.Originator, f.FlightStatus,
                 f.Origin, f.Destination, f.AircraftType, f.Registration, f.WakeCategory,
                 f.ModeSCode, f.EquipmentQualifier, f.AircraftPerformance, f.Squawk, f.AssignedSquawk, f.FlightRules, f.FlightType,
-                f.Route, f.STAR, f.Remarks,
+                f.Route, f.OriginalRoute, f.STAR, f.Remarks,
                 f.AssignedAltitude, f.AssignedVfr, f.BlockFloor, f.BlockCeiling,
                 f.InterimAltitude, f.ReportedAltitude,
-                f.Latitude, f.Longitude, f.GroundSpeed,
+                f.Latitude, f.Longitude, f.GroundSpeed, f.RequestedSpeed,
                 f.ControllingFacility, f.ControllingSector, f.ReportingFacility,
                 f.DataLinkCode, f.CommunicationCode,
+                // Time fields needed by ICAO FPL Field 13/16 and EDCT views
+                f.ActualDepartureTime,
+                ETA = f.ETA,
+                f.EdctTime,
+                f.CoordinationFix, f.CoordinationTime,
+                f.AlternateAerodrome,
                 LastSeen = f.LastSeen.ToString("o"),
                 Events = f.GetAllEvents().Select(e => new { e.Time, e.Source, e.Centre, e.Summary }).ToArray()
             };

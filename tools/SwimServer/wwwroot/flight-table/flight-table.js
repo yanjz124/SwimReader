@@ -731,12 +731,9 @@ function buildIcaoFpl(d) {
     const f10 = f10a + '/' + f10b;
 
     // Field 13: Departure aerodrome + EOBT (estimated off-block time).
-    // SFDPS only carries actualDepartureTime when ERAM observes the wheels-up event.
-    // For flights that already departed before we joined (trans-oceanic, missed
-    // takeoff window, etc.), we have no planned EOBT either — leave it blank rather
-    // than fabricate "0000Z".
-    const dep = toIcao(d.origin) || '____';
-    let depTime = '____';
+    // ICAO FPL convention uses 0000 as placeholder when EOBT is unknown / non-scheduled.
+    const dep = toIcao(d.origin) || 'ZZZZ';
+    let depTime = '0000';
     if (d.actualDepartureTime) {
         const dt = new Date(d.actualDepartureTime);
         depTime = String(dt.getUTCHours()).padStart(2, '0') +
@@ -745,17 +742,15 @@ function buildIcaoFpl(d) {
     const f13 = dep + depTime;
 
     // Field 15: Cruising speed + level + route.
-    // Use filed airspeed (requestedSpeed) when available; we explicitly do NOT
-    // substitute ground speed for filed TAS, and we do NOT fabricate a default —
-    // missing data shows as blanks.
-    let speed = 'N____';
+    // ICAO format requires N#### for speed and F### for level — use 0000/000 as
+    // placeholder when filed values are unknown.
+    let speed = 'N0000';
     if (d.requestedSpeed) {
         speed = 'N' + String(Math.round(d.requestedSpeed)).padStart(4, '0');
     } else if (d.groundSpeed) {
-        // Fall back to current ground speed only when truly nothing else available
         speed = 'N' + String(Math.round(d.groundSpeed)).padStart(4, '0');
     }
-    let level = 'F___';
+    let level = 'F000';
     if (d.assignedVfr) {
         level = 'VFR';
         if (d.assignedAltitude) level += '/' + String(Math.round(d.assignedAltitude / 100)).padStart(3, '0');
@@ -774,11 +769,10 @@ function buildIcaoFpl(d) {
     const route = nasToIcaoRoute(routeSource, d.origin, d.destination);
     const f15 = speed + level + ' ' + route;
 
-    // Field 16: Destination + ETE + alternate(s).
-    // ETE = ETA - actualDepartureTime. If either is missing, we can't compute it,
-    // so blank the field rather than fake "0000".
-    const dest = toIcao(d.destination) || '____';
-    let eet = '____';
+    // Field 16: Destination + EET (estimated elapsed time) + alternate(s).
+    // ICAO uses 0000 as placeholder when EET unknown.
+    const dest = toIcao(d.destination) || 'ZZZZ';
+    let eet = '0000';
     if (d.eta && d.actualDepartureTime) {
         const diffMin = Math.round((new Date(d.eta) - new Date(d.actualDepartureTime)) / 60000);
         if (diffMin > 0 && diffMin < 6000) {

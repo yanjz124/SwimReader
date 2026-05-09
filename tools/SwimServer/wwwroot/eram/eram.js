@@ -6428,7 +6428,7 @@ function refreshAllSubMenus() {
 function closeAllSubMenus() {
     tbState.openMenu = null;
     tbState.openSubMenu = null;
-    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; }
+    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; subMenuContainerEl.style.maxWidth = ''; subMenuContainerEl.style.overflowX = ''; }
     if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; subSubMenuContainerEl.style.top = ''; }
     // Restore all master buttons visibility and remove pink state
     if (masterPanelEl) {
@@ -6491,14 +6491,18 @@ function openSubMenu(menuId, anchorEl) {
     if (subMenuContainerEl) {
         subMenuContainerEl.innerHTML = '';
         subMenuContainerEl.style.display = 'block';
-        // Position sub-menu items to the RIGHT of the clicked button
-        subMenuContainerEl.style.left = (anchorEl.offsetLeft + anchorEl.offsetWidth) + 'px';
+        const desiredLeft = anchorEl.offsetLeft + anchorEl.offsetWidth;
+        subMenuContainerEl.style.left = desiredLeft + 'px';
         subMenuContainerEl.style.top = '0';
-        // Which row the button is on
         const anchorRow = anchorEl.closest('.tb-row');
         const parentRowIdx = anchorRow ? Array.from(anchorRow.parentElement.children).indexOf(anchorRow) : 0;
-        // Render just the items (no parent button — the real one is still visible)
         buildSubMenuItems(menuSpec, menuId, subMenuContainerEl, parentRowIdx);
+        // Constrain width to viewport and enable horizontal scroll if needed
+        const menuRect = subMenuContainerEl.getBoundingClientRect();
+        if (menuRect.right > window.innerWidth - 4) {
+            subMenuContainerEl.style.maxWidth = (window.innerWidth - menuRect.left - 4) + 'px';
+            subMenuContainerEl.style.overflowX = 'auto';
+        }
     }
     refreshAllButtons();
 }

@@ -24,6 +24,7 @@ let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
 let ldbBrightness = 30;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
+let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
@@ -1570,6 +1571,13 @@ function formatFdbHtml(f, cls) {
     html += `${showVci ? col0Vci : col0Hit}${l2}\n`;
     html += `${showR ? col0R : col0Sp}${l3}`;
     if (l4) html += `\n${col0Sp}${l4}`;
+    if (showPortalFence && (poInfo || showR)) {
+        const fenceColor = cls === 'emrg' ? '#ff4444' : '#d0d0d0';
+        // Use CSS ch/em units for sizing (matches actual font metrics) and SVG rendering for flicker-free strokes.
+        // top: 0 when no line 0; top: calc(1.25em + 1px) skips line 0 (1 line-height + ac-db top padding).
+        const topStyle = poInfo ? 'calc(1.25em + 3px)' : '2px';
+        html += `<svg style="position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:3ch;height:3.75em;overflow:visible;pointer-events:none;" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="100,0.5 0.5,0.5 0.5,100" fill="none" stroke="${fenceColor}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></svg>`;
+    }
     return html;
 }
 
@@ -2169,7 +2177,7 @@ function flightHash(f, cls) {
     const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
     const coast = isCoasting(f) ? 1 : 0;
     const ais = f._altInitialSide || 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}`;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}|${showPortalFence?1:0}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -6210,7 +6218,10 @@ const TB_DB_FIELDS = {
                 onInc: () => {},
             }),
             { label: 'BCAST\nFLID', type: 'toggle', nosim: true },
-            { label: 'PORTAL\nFENCE', type: 'toggle', nosim: true },
+            toggle('PORTAL\nFENCE', {
+                isOn: () => showPortalFence,
+                onToggle: (on) => { showPortalFence = on; invalidateAllMarkers(); },
+            }),
         ],
         [
             nosim('NON-\nADS-B'),

@@ -188,6 +188,8 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .ac-db.emrg { color: #ff4444; }
 .dwell-border { position: absolute; pointer-events: none; border: 1px solid #cccc44; }
 .emrg .dwell-border { border-color: #ff4444; }
+/* Portal fence: top-left corner bracket on FDB lines 1-4 */
+/* Portal fence is rendered as an inline SVG — no CSS border needed */
 .ac-db.ldb.dwell { outline: 1px solid #cccc44; outline-offset: 1px; }
 .ac-db.ldb.dwell.emrg { outline-color: #ff4444; }
 /* .ac-db.ho — handoff flash now driven by JS */

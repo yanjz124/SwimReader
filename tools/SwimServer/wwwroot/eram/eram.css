@@ -483,6 +483,9 @@ body.tb-active #sidebar-wrapper { top: 70px; }
     white-space: nowrap;
     z-index: 2;
 }
+.tb-submenu::-webkit-scrollbar { height: 0px; }
+.tb-submenu::-webkit-scrollbar-thumb { background: #777; border-radius: 2px; }
+.tb-submenu::-webkit-scrollbar-track { background: #222; }
 
 /* Left/right grey bars flanking the button grid */
 .tb-side-bar {

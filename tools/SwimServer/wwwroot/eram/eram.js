@@ -23,10 +23,14 @@ let msgRate = 0;
 let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
-let ldbBrightness = 30;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
+let ldbBrightness = 50;     // 0-100, opacity for LDB history symbols (data block brightness now controlled by PR/UNP TGT sliders)
+let scopeBckgrd = 50;       // 0-100, scope background brightness (BCKGRD DCB slider)
+let scopeBcklght = 90;      // 0-100, scope backlight brightness (BCKLGHT DCB slider)
 let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
+let replayActive = false;   // replay mode active (set by replay system IIFE)
+let replayCurrentTime = null; // ISO string of current replay position
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
 const quickLookDests = new Set();   // QL destinations — force FDB on flights to these airports (e.g. KCLT, KGSO)
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
@@ -2741,6 +2745,169 @@ document.getElementById('inp-alt-high').addEventListener('change', function () {
     saveSettingsToUrl();
 });
 
+function updateScopeBackground() {
+    const b = scopeBckgrd / 100;
+    const l = scopeBcklght / 100;
+    const blue = Math.floor(b * (82 + 45 * l));
+    const color = `rgb(0,0,${blue})`;
+    const lc = document.querySelector('.leaflet-container');
+    if (lc) lc.style.setProperty('background', color, 'important');
+
+    // Apply backlight to toolbar
+    const toolbarPanel = document.getElementById('master-toolbar-container');
+    if (toolbarPanel) {
+        const backlightFactor = 0.6 + (l * 0.5);
+        toolbarPanel.style.filter = `brightness(${backlightFactor})`;
+    }
+
+    updateToolbarBrightness();
+}
+
+function updateButtonBrightness() {
+    updateToolbarBrightness();
+}
+
+function updateBorderBrightness() {
+    try {
+        // Border brightness: 0-1, where 1=white, 0=black
+        const borderFactor = tbState.bright.border / 100;
+
+        // Create or update dynamic CSS for borders
+        let styleEl = document.getElementById('dynamic-border-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-border-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Interpolate border color from white (at 100) to black (at 0)
+        const borderColor = interpolateColor('#FFFFFF', borderFactor);
+
+        styleEl.textContent = `
+            .tb-btn {
+                border-top-color: ${borderColor} !important;
+                border-right-color: ${borderColor} !important;
+                border-bottom-color: ${borderColor} !important;
+                border-left-color: ${borderColor} !important;
+            }
+            .tb-btn .tb-tear { border-right-color: ${borderColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateToolbarBackgroundBrightness() {
+    try {
+        // Toolbar brightness: 0-1, where 1=#C5C5C5 (light gray), 0=black
+        const toolbarFactor = tbState.bright.toolbar / 100;
+
+        // Create or update dynamic CSS for toolbar background
+        let styleEl = document.getElementById('dynamic-toolbar-bg-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-toolbar-bg-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Interpolate toolbar background from light gray (at 100) to black (at 0)
+        const toolbarBgColor = interpolateColor('#C5C5C5', toolbarFactor);
+
+        styleEl.textContent = `
+            #master-toolbar-container { background-color: ${toolbarBgColor} !important; }
+            .tb-master-grid { background-color: ${toolbarBgColor} !important; }
+            .tb-submenu { background-color: ${toolbarBgColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateTextBrightness() {
+    try {
+        // Text brightness: 0-1, where 1=#F3F3F3 (light gray/white), 0=black
+        const textFactor = tbState.bright.text / 100;
+
+        // Create or update dynamic CSS for text color
+        let styleEl = document.getElementById('dynamic-text-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-text-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Interpolate text color from light gray (at 100) to black (at 0)
+        const textColor = interpolateColor('#F3F3F3', textFactor);
+
+        styleEl.textContent = `
+            .tb-btn .tb-label { color: ${textColor} !important; }
+            .tb-btn .tb-value { color: ${textColor} !important; }
+            .tb-btn .tb-menu-ind { color: ${textColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function interpolateColor(hexColor, factor) {
+    // Parse hex color (e.g., #00CD00 -> [0, 205, 0])
+    const r = parseInt(hexColor.slice(1, 3), 16);
+    const g = parseInt(hexColor.slice(3, 5), 16);
+    const b = parseInt(hexColor.slice(5, 7), 16);
+
+    // Interpolate toward black: color * factor + black * (1 - factor)
+    const newR = Math.round(r * factor);
+    const newG = Math.round(g * factor);
+    const newB = Math.round(b * factor);
+
+    return `rgb(${newR}, ${newG}, ${newB})`;
+}
+
+function updateToolbarBrightness() {
+    try {
+        // Button brightness: 0-1, where 1=full color, 0=black
+        const buttonFactor = tbState.bright.button / 100;
+
+        // Create or update dynamic CSS for button backgrounds
+        let styleEl = document.getElementById('dynamic-button-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-button-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Define original button colors
+        const colors = {
+            'tb-green': '#00CD00',
+            'tb-blue': '#0000D4',
+            'tb-tan': '#DCA09B',
+            'tb-teal': '#00C7D1',
+            'tb-dark': '#000000',
+            'tb-toggle-grey-off': '#000000',
+            'tb-nosim': '#000066',
+            'tb-toggle-on': '#0000D4',
+            'tb-menu-open': '#DCA09B',
+        };
+
+        // Generate CSS with interpolated colors
+        let css = '';
+        for (const [className, color] of Object.entries(colors)) {
+            const interpolated = interpolateColor(color, buttonFactor);
+            css += `.tb-btn.${className} { background: ${interpolated} !important; }\n`;
+        }
+
+        // Default button color
+        css += `.tb-btn { background: ${interpolateColor('#0000D4', buttonFactor)} !important; }\n`;
+
+        // Tearoff strip color (interpolate toward black)
+        css += `.tb-btn .tb-tear { background: ${interpolateColor('#FFFFA1', buttonFactor)} !important; }\n`;
+
+        styleEl.textContent = css;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
 function updateFontSize() {
     CHAR_W = fontSize * 0.625;
     LINE_H = fontSize * 1.25;
@@ -3333,6 +3500,8 @@ function loadSettingsFromUrl() {
         nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
     }
     if (params.has('nxbr')) nexradBrightness = parseInt(params.get('nxbr'));
+    if (params.has('bckgrd')) scopeBckgrd = Math.max(0, Math.min(100, parseInt(params.get('bckgrd')) || 100));
+    if (params.has('bcklght')) scopeBcklght = Math.max(0, Math.min(100, parseInt(params.get('bcklght')) || 100));
     if (params.get('tb') === '0') window._tbVisible = false;
 
     // Restore map position/zoom
@@ -3388,6 +3557,7 @@ function loadSettingsFromUrl() {
         fetch('/api/nasr/centerlines').then(r => r.ok ? r.json() : null).then(d => { if (d) { centerlineData = d; drawOverlay(); } });
     }
     showBoundariesForFacility(myFacility);
+    updateScopeBackground();
 }
 
 function saveSettingsToUrl() {
@@ -3416,6 +3586,8 @@ function saveSettingsToUrl() {
     if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
     if (nexradLevel !== 3) params.set('nxlvl', nexradLevel === 0 ? '0' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '123');
     if (nexradBrightness !== 30) params.set('nxbr', nexradBrightness);
+    if (scopeBckgrd !== 50) params.set('bckgrd', scopeBckgrd);
+    if (scopeBcklght !== 90) params.set('bcklght', scopeBcklght);
     // Toolbar visibility (default on; tb=0 to hide)
     if (!window._tbVisible) params.set('tb', '0');
     // Replay state
@@ -5756,6 +5928,24 @@ document.getElementById('fm-body').addEventListener('auxclick', e => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+// Toolbar state (must be global for updateToolbarBrightness access, and BEFORE loadSettingsFromUrl)
+// ════════════════════════════════════════════════════════════════════════════
+const tbState = {
+    masterVisible: false,
+    openMenu: null,       // currently open sub-menu id string
+    openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
+    // Brightness values (0-100) for buttons not yet wired
+    bright: {
+        bckgrd: scopeBckgrd, cursor: 50, text: 100, prTgtr: 50, unpTgt: 50,
+        prHist: 50, unpHist: 50, sldb: 50, bcklght: 90, button: 80,
+        border: 50, toolbar: 50, tbBrdr: 50, fdb: 50, portal: 50,
+        onFreq: 50, line4b: 50, dwell: 50, fence: 50,
+    },
+    // Cursor sub-menu
+    cursorSize: 1,
+};
+
+// ════════════════════════════════════════════════════════════════════════════
 // Init
 // ════════════════════════════════════════════════════════════════════════════
 loadSettingsFromUrl();
@@ -5782,22 +5972,6 @@ document.getElementById('numpad-inverted').addEventListener('change', saveSettin
 // Master Toolbar System
 // ════════════════════════════════════════════════════════════════════════════
 (function () {
-
-// ── Toolbar state ──
-const tbState = {
-    masterVisible: false,
-    openMenu: null,       // currently open sub-menu id string
-    openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
-    // Brightness values (0-100) for buttons not yet wired
-    bright: {
-        bckgrd: 50, cursor: 50, text: 50, prTgtr: 50, unpTgt: 50,
-        prHist: 50, unpHist: 50, sldb: 50, bcklght: 50, button: 50,
-        border: 50, toolbar: 50, tbBrdr: 50, fdb: 50, portal: 50,
-        onFreq: 50, line4b: 50, dwell: 50, fence: 50,
-    },
-    // Cursor sub-menu
-    cursorSize: 1,
-};
 
 // ── Helper: approximate range NM from zoom ──
 function zoomToRange(z) {
@@ -5841,8 +6015,8 @@ function nxlvlLabel(val) {
 const FONT_STEPS = [8, 9, 10, 11, 12, 14];
 
 // ── Button spec builder helpers ──
-function nosim(label) { return { label, type: 'nosim' }; }
-function menu(label, menuId) { return { label, type: 'menu', menu: menuId }; }
+function nosim(label, opts) { return { label, type: 'nosim', ...opts }; }
+function menu(label, menuId, opts) { return { label, type: 'menu', menu: menuId, ...opts }; }
 function toggle(label, opts) { return { label, type: 'toggle', ...opts }; }
 function incdec(label, opts) { return { label, type: 'incdec', ...opts }; }
 function cmd(label, opts) { return { label, type: 'cmd', ...opts }; }
@@ -6019,36 +6193,44 @@ const TB_GEOMAP = {
     rows: [
         [
             toggle('UHI', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-bnd-uhi') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-uhi', on ? 60 : 0),
             }),
             toggle('HI', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-bnd-hi') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-hi', on ? 60 : 0),
             }),
             toggle('LO', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-bnd-lo') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-lo', on ? 60 : 0),
             }),
             toggle('APP', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-bnd-app') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-app', on ? 60 : 0),
             }),
         ],
         [
             toggle('HI AWY', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-jroutes') > 0,
                 onToggle: (on) => setRangeVal('rng-jroutes', on ? 60 : 0),
             }),
             toggle('LO AWY', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-vroutes') > 0,
                 onToggle: (on) => setRangeVal('rng-vroutes', on ? 60 : 0),
             }),
             toggle('VORs', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-vors') > 0,
                 onToggle: (on) => setRangeVal('rng-vors', on ? 60 : 0),
             }),
             toggle('APTs', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-airports') > 0,
                 onToggle: (on) => setRangeVal('rng-airports', on ? 60 : 0),
             }),
@@ -6060,24 +6242,26 @@ const TB_BRIGHT = {
     id: 'bright',
     rows: [
         [
-            menu('MAP\nBRIGHT', 'map-bright'),
-            nosim('CPDLC'),
-            incdec('BCKGRD', { getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { tbState.bright.bckgrd = Math.max(0, tbState.bright.bckgrd - 10); }, onInc: () => { tbState.bright.bckgrd = Math.min(100, tbState.bright.bckgrd + 10); } }),
-            incdec('CURSOR', { getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); } }),
-            incdec('TEXT', { getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); } }),
-            incdec('PR TGT', { getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); } }),
-            incdec('UNP TGT', { getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); } }),
-            incdec('PR HST', { getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
-            incdec('UNP HST', { getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
+            menu('MAP\nBRIGHT', 'map-bright', { cls: 'tb-blue' }),
+            nosim('CPDLC', { cls: 'tb-blue' }),
+            incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToUrl(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToUrl(); } }),
+            incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); } }),
+            incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToUrl(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToUrl(); } }),
+            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); saveSettingsToUrl(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); saveSettingsToUrl(); } }),
+            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); saveSettingsToUrl(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); saveSettingsToUrl(); } }),
+            incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
+            incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
             incdec('LDB', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-ldb-brightness'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-ldb-brightness', Math.max(0, getRangeVal('rng-ldb-brightness') - 10)),
                 onInc: () => setRangeVal('rng-ldb-brightness', Math.min(100, getRangeVal('rng-ldb-brightness') + 10)),
             }),
-            incdec('SLDB', { getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); } }),
+            incdec('SLDB', { cls: 'tb-green', getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); } }),
             nosim('WX'),
             incdec('NEXRAD', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-nx'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-nx', Math.max(0, getRangeVal('rng-nx') - 10)),
@@ -6085,19 +6269,19 @@ const TB_BRIGHT = {
             }),
         ],
         [
-            incdec('BCKLGHT', { getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { tbState.bright.bcklght = Math.max(0, tbState.bright.bcklght - 10); }, onInc: () => { tbState.bright.bcklght = Math.min(100, tbState.bright.bcklght + 10); } }),
-            incdec('BUTTON', { getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); } }),
-            incdec('BORDER', { getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); } }),
-            incdec('TOOLBAR', { getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); } }),
-            incdec('TB BRDR', { getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); } }),
+            incdec('BCKLGHT', { cls: 'tb-green', getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { scopeBcklght = Math.max(0, scopeBcklght - 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToUrl(); }, onInc: () => { scopeBcklght = Math.min(100, scopeBcklght + 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToUrl(); } }),
+            incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); updateButtonBrightness(); saveSettingsToUrl(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); updateButtonBrightness(); saveSettingsToUrl(); } }),
+            incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); updateBorderBrightness(); saveSettingsToUrl(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); updateBorderBrightness(); saveSettingsToUrl(); } }),
+            incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); updateToolbarBackgroundBrightness(); saveSettingsToUrl(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); updateToolbarBackgroundBrightness(); saveSettingsToUrl(); } }),
+            incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); } }),
             nosim('AB BRDR'),
-            incdec('FDB', { getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
-            incdec('PORTAL', { getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
+            incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
+            incdec('PORTAL', { cls: 'tb-green', getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
             nosim('SATCOMM'),
-            incdec('ON-FREQ', { getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); } }),
-            incdec('LINE 4', { getValue: () => tbState.bright.line4b, formatValue: v => v, onDec: () => { tbState.bright.line4b = Math.max(0, tbState.bright.line4b - 10); }, onInc: () => { tbState.bright.line4b = Math.min(100, tbState.bright.line4b + 10); } }),
-            incdec('DWELL', { getValue: () => tbState.bright.dwell, formatValue: v => v, onDec: () => { tbState.bright.dwell = Math.max(0, tbState.bright.dwell - 10); }, onInc: () => { tbState.bright.dwell = Math.min(100, tbState.bright.dwell + 10); } }),
-            incdec('FENCE', { getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); } }),
+            incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); } }),
+            incdec('LINE 4', { cls: 'tb-green', getValue: () => tbState.bright.line4b, formatValue: v => v, onDec: () => { tbState.bright.line4b = Math.max(0, tbState.bright.line4b - 10); }, onInc: () => { tbState.bright.line4b = Math.min(100, tbState.bright.line4b + 10); } }),
+            incdec('DWELL', { cls: 'tb-green', getValue: () => tbState.bright.dwell, formatValue: v => v, onDec: () => { tbState.bright.dwell = Math.max(0, tbState.bright.dwell - 10); }, onInc: () => { tbState.bright.dwell = Math.min(100, tbState.bright.dwell + 10); } }),
+            incdec('FENCE', { cls: 'tb-green', getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); } }),
             nosim('DBFEL'),
             nosim('OUTAGE'),
         ],
@@ -6198,6 +6382,7 @@ const TB_DB_FIELDS = {
             { label: 'CODE', type: 'toggle', nosim: true },
             { label: 'SPEED', type: 'toggle', nosim: true },
             toggle('DEST', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getSelectVal('sel-line4') === 'DEST',
                 onToggle: (on) => {
                     setSelectVal('sel-line4', on ? 'DEST' : 'OFF');
@@ -6205,6 +6390,7 @@ const TB_DB_FIELDS = {
                 },
             }),
             toggle('TYPE', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getSelectVal('sel-line4') === 'TYPE',
                 onToggle: (on) => {
                     setSelectVal('sel-line4', on ? 'TYPE' : 'OFF');
@@ -6219,6 +6405,7 @@ const TB_DB_FIELDS = {
             }),
             { label: 'BCAST\nFLID', type: 'toggle', nosim: true },
             toggle('PORTAL\nFENCE', {
+                cls: 'tb-toggle-grey',
                 isOn: () => showPortalFence,
                 onToggle: (on) => { showPortalFence = on; invalidateAllMarkers(); },
             }),
@@ -6322,8 +6509,9 @@ function createButton(spec, panelId, rowIdx, colIdx) {
     content.appendChild(labelDiv);
 
     // Value (for incdec)
+    let valDiv = null;
     if (spec.type === 'incdec' && spec.getValue) {
-        const valDiv = document.createElement('div');
+        valDiv = document.createElement('div');
         valDiv.className = 'tb-value';
         valDiv.textContent = spec.formatValue(spec.getValue());
         content.appendChild(valDiv);
@@ -6344,8 +6532,8 @@ function createButton(spec, panelId, rowIdx, colIdx) {
         el.classList.add('tb-toggle-on');
     }
 
-    // Store reference
-    tbElements.set(key, { el, spec });
+    // Store reference (include valDiv for incdec buttons to avoid query overhead)
+    tbElements.set(key, { el, spec, valDiv });
 
     // Event handling
     if (!isNosim) {
@@ -6401,13 +6589,17 @@ function renderPanel(spec, container) {
 function refreshButton(key) {
     const entry = tbElements.get(key);
     if (!entry) return;
-    const { el, spec } = entry;
+    const { el, spec, valDiv } = entry;
     const isNosim = spec.type === 'nosim' || spec.nosim;
 
-    // Update value display
-    if (spec.type === 'incdec' && spec.getValue) {
-        const valEl = el.querySelector('.tb-value');
-        if (valEl) valEl.textContent = spec.formatValue(spec.getValue());
+    // Update value display (if valDiv exists and getValue is defined)
+    if (valDiv && spec.getValue) {
+        const newValue = String(spec.formatValue(spec.getValue()));
+        valDiv.textContent = newValue;
+        // Force browser repaint of the entire button
+        if (el && el.offsetHeight) {
+            void el.offsetHeight;
+        }
     }
 
     // Update toggle state
@@ -6439,7 +6631,12 @@ function refreshAllSubMenus() {
 function closeAllSubMenus() {
     tbState.openMenu = null;
     tbState.openSubMenu = null;
-    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; subMenuContainerEl.style.maxWidth = ''; subMenuContainerEl.style.overflowX = ''; }
+    if (subMenuContainerEl) {
+        if (subMenuContainerEl._wheelHandler) { subMenuContainerEl.removeEventListener('wheel', subMenuContainerEl._wheelHandler); delete subMenuContainerEl._wheelHandler; }
+        if (subMenuContainerEl._dragDown) { subMenuContainerEl.removeEventListener('mousedown', subMenuContainerEl._dragDown); window.removeEventListener('mousemove', subMenuContainerEl._dragMove); window.removeEventListener('mouseup', subMenuContainerEl._dragUp); delete subMenuContainerEl._dragDown; delete subMenuContainerEl._dragMove; delete subMenuContainerEl._dragUp; }
+        subMenuContainerEl.style.cursor = '';
+        subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; subMenuContainerEl.style.maxWidth = ''; subMenuContainerEl.style.overflowX = ''; subMenuContainerEl.scrollLeft = 0;
+    }
     if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; subSubMenuContainerEl.style.top = ''; }
     // Restore all master buttons visibility and remove pink state
     if (masterPanelEl) {
@@ -6513,6 +6710,29 @@ function openSubMenu(menuId, anchorEl) {
         if (menuRect.right > window.innerWidth - 4) {
             subMenuContainerEl.style.maxWidth = (window.innerWidth - menuRect.left - 4) + 'px';
             subMenuContainerEl.style.overflowX = 'auto';
+            subMenuContainerEl._wheelHandler = (e) => {
+                if (e.deltaY !== 0) { e.preventDefault(); subMenuContainerEl.scrollLeft += e.deltaY; }
+            };
+            subMenuContainerEl.addEventListener('wheel', subMenuContainerEl._wheelHandler, { passive: false });
+            // Drag-to-scroll
+            let _dragX = null, _dragScroll = 0;
+            subMenuContainerEl._dragDown = (e) => {
+                if (e.button !== 0) return;
+                _dragX = e.clientX; _dragScroll = subMenuContainerEl.scrollLeft;
+                subMenuContainerEl.style.cursor = 'grabbing';
+                e.preventDefault();
+            };
+            subMenuContainerEl._dragMove = (e) => {
+                if (_dragX === null) return;
+                subMenuContainerEl.scrollLeft = _dragScroll - (e.clientX - _dragX);
+            };
+            subMenuContainerEl._dragUp = () => {
+                _dragX = null; subMenuContainerEl.style.cursor = 'grab';
+            };
+            subMenuContainerEl.style.cursor = 'grab';
+            subMenuContainerEl.addEventListener('mousedown', subMenuContainerEl._dragDown);
+            window.addEventListener('mousemove', subMenuContainerEl._dragMove);
+            window.addEventListener('mouseup', subMenuContainerEl._dragUp);
         }
     }
     refreshAllButtons();
@@ -6561,7 +6781,7 @@ function buildInlineSubMenu(menuSpec, menuId, container, parentRow) {
 
         if (ri === 0) {
             const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
-            const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
+            const parentSpec = { label: parentLabel, type: 'menu', menu: menuId, cls: 'tb-tan' };
             const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
             parentBtn.classList.add('tb-menu-open');
             rowEl.appendChild(parentBtn);
@@ -6592,6 +6812,7 @@ function handleBtnAction(spec, key, isMiddle) {
         } else {
             if (spec.onDec) spec.onDec();
         }
+        refreshButton(key);
         refreshAllButtons();
     } else if (spec.type === 'cmd') {
         if (spec.onCmd) spec.onCmd();
@@ -6721,13 +6942,16 @@ if (_tbInitParams.get('tb') !== '0') {
 
 // ── Initialize ──
 buildToolbar();
+refreshAllButtons();  // Refresh button displays to show correct initial values
+updateBorderBrightness();  // Initialize border brightness
+updateToolbarBackgroundBrightness();  // Initialize toolbar background brightness
+updateTextBrightness();  // Initialize text brightness
 
 // Apply initial visibility from URL
 if (tbState.masterVisible) {
     document.getElementById('master-toolbar-container').classList.add('tb-visible');
     document.body.classList.add('tb-active');
     document.getElementById('tb-tearoff-btn').classList.add('tb-active');
-    refreshAllButtons();
 }
 
 })();  // end toolbar IIFE
@@ -6750,9 +6974,7 @@ const replayStopBtn = document.getElementById('replay-stop');
 const replayRangeEl = document.getElementById('replay-range');
 
 let replayWs = null;
-let replayActive = false;
 let replayPaused = false;
-let replayCurrentTime = null; // ISO string of current replay position
 let replayPendingFlights = new Map(); // gufi → latest flight object (merged across batches)
 let replayPendingRemoves = []; // gufi list
 let replayRafId = null;

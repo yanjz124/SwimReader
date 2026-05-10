@@ -377,7 +377,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 #tb-tearoff-btn:hover { background: #007800; }
 #tb-tearoff-btn .tb-gold-strip {
-    width: 13px; background: #b8a040; flex-shrink: 0; cursor: move;
+    width: 13px; background: #FFFFA1; flex-shrink: 0; cursor: move;
 }
 #tb-tearoff-btn .tb-tearoff-label {
     color: #ffffff; white-space: nowrap;
@@ -409,19 +409,21 @@ body.tb-active #sidebar-wrapper { top: 70px; }
     display: flex; flex-direction: row; align-items: stretch;
     width: 88px; height: 34px;
     border: 1px solid #333;
+    border-right: 1px solid #555;
     cursor: pointer;
     position: relative;
     white-space: nowrap;
-    background: #000088;
+    background: #0000D4;
     flex-shrink: 0;
     overflow: hidden;
 }
-.tb-btn:hover { background: #0000aa; }
-.tb-btn:active { background: #0000cc; }
+.tb-btn:hover { background: #0000D4; }
+.tb-btn:active { background: #0000D4; }
 
-/* Tearoff strip on each button — light grey */
+/* Tearoff strip on each button — light grey with border */
 .tb-btn .tb-tear {
-    width: 13px; background: #b8a040; flex-shrink: 0;
+    width: 13px; background: #FFFFA1; flex-shrink: 0;
+    border-right: 1px solid #555;
 }
 
 /* Button content area (label + value) */
@@ -451,15 +453,23 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 /* ── Special button backgrounds ── */
 /* Black background (RANGE, ALT LIM) */
 .tb-btn.tb-dark { background: #000; }
-.tb-btn.tb-dark:hover { background: #111; }
+.tb-btn.tb-dark:hover { background: #000; }
 
-/* Green background (VECTOR) */
-.tb-btn.tb-green { background: #006800; }
-.tb-btn.tb-green:hover { background: #007800; }
+/* Green background (brightness controls) */
+.tb-btn.tb-green { background: #00CD00; }
+.tb-btn.tb-green:hover { background: #00CD00; }
+
+/* Blue background (MAP BRIGHT, CPDLC) */
+.tb-btn.tb-blue { background: #0000D4; }
+.tb-btn.tb-blue:hover { background: #0000D4; }
+
+/* Tan background (menu returns/leave submenus) */
+.tb-btn.tb-tan { background: #DCA09B; }
+.tb-btn.tb-tan:hover { background: #DCA09B; }
 
 /* Teal background (DELETE TEAROFF) */
-.tb-btn.tb-teal { background: #006868; }
-.tb-btn.tb-teal:hover { background: #007878; }
+.tb-btn.tb-teal { background: #00C7D1; }
+.tb-btn.tb-teal:hover { background: #00C7D1; }
 
 /* ── Button type states ── */
 /* Not simulated — dimmer blue */
@@ -469,12 +479,18 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 .tb-btn.tb-nosim .tb-label { color: #8888aa; }
 
 /* Toggle ON — same blue, slightly brighter */
-.tb-btn.tb-toggle-on { background: #0000aa; }
-.tb-btn.tb-toggle-on:hover { background: #0000cc; }
+.tb-btn.tb-toggle-on { background: #0000D4; }
+.tb-btn.tb-toggle-on:hover { background: #0000D4; }
+
+/* Toggle grey (DEST, TYPE, PORTAL FENCE) — off: black, on: light grey */
+.tb-btn.tb-toggle-grey { background: #000000; }
+.tb-btn.tb-toggle-grey:hover { background: #000000; }
+.tb-btn.tb-toggle-grey.tb-toggle-on { background: #C7C7C7; }
+.tb-btn.tb-toggle-grey.tb-toggle-on:hover { background: #C7C7C7; }
 
 /* Menu OPEN — pink/clay */
-.tb-btn.tb-menu-open { background: #884466; }
-.tb-btn.tb-menu-open:hover { background: #994477; }
+.tb-btn.tb-menu-open { background: #DCA09B; }
+.tb-btn.tb-menu-open:hover { background: #DCA09B; }
 
 /* Sub-menu panel — overlays on top of master grid, positioned absolutely */
 .tb-submenu {

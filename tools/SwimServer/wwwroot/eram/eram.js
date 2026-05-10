@@ -2852,6 +2852,57 @@ function updateTextBrightness() {
     }
 }
 
+function updateToolbarBorderColor() {
+    try {
+        // Toolbar border brightness: 0-1, where 1=white, 0=black
+        const borderFactor = tbState.bright.tbBrdr / 100;
+
+        // Create or update dynamic CSS for toolbar border
+        let styleEl = document.getElementById('dynamic-toolbar-border-color');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-toolbar-border-color';
+            document.head.appendChild(styleEl);
+        }
+
+        // Interpolate border color from white (at 100) to black (at 0)
+        const borderColor = interpolateColor('#FFFFFF', borderFactor);
+
+        styleEl.textContent = `
+            #master-toolbar-container { border-bottom: 1px solid ${borderColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateCursorBrightness() {
+    try {
+        // Cursor brightness: 0-1, where 1=white, 0=black
+        const cursorFactor = tbState.bright.cursor / 100;
+
+        // Interpolate cursor stroke color from white (at 100) to black (at 0)
+        const cursorColor = interpolateColor('#FFFFFF', cursorFactor);
+
+        // Create dynamic CSS with updated cursor SVG
+        let styleEl = document.getElementById('dynamic-cursor-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-cursor-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Generate new SVG cursor with interpolated color
+        const cursorSvg = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='16' y1='9' x2='16' y2='12' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='16' y1='20' x2='16' y2='23' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='9' y1='16' x2='12' y2='16' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='20' y1='16' x2='23' y2='16' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Crect x='12' y='12' width='8' height='8' fill='none' stroke='${encodeURIComponent(cursorColor)}' stroke-width='1.3'/%3E%3C/svg%3E") 16 16, crosshair`;
+
+        styleEl.textContent = `
+            :root { --eram-cursor: ${cursorSvg}; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
 function interpolateColor(hexColor, factor) {
     // Parse hex color (e.g., #00CD00 -> [0, 205, 0])
     const r = parseInt(hexColor.slice(1, 3), 16);
@@ -2886,7 +2937,7 @@ function updateToolbarBrightness() {
             'tb-tan': '#DCA09B',
             'tb-teal': '#00C7D1',
             'tb-dark': '#000000',
-            'tb-toggle-grey-off': '#000000',
+            'tb-toggle-grey': '#000000',
             'tb-nosim': '#000066',
             'tb-toggle-on': '#0000D4',
             'tb-menu-open': '#DCA09B',
@@ -2898,6 +2949,9 @@ function updateToolbarBrightness() {
             const interpolated = interpolateColor(color, buttonFactor);
             css += `.tb-btn.${className} { background: ${interpolated} !important; }\n`;
         }
+
+        // Toggle grey ON state (light gray)
+        css += `.tb-btn.tb-toggle-grey.tb-toggle-on { background: ${interpolateColor('#C7C7C7', buttonFactor)} !important; }\n`;
 
         // Default button color
         css += `.tb-btn { background: ${interpolateColor('#0000D4', buttonFactor)} !important; }\n`;
@@ -5910,7 +5964,7 @@ const tbState = {
     openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
     // Brightness values (0-100) for buttons not yet wired
     bright: {
-        bckgrd: scopeBckgrd, cursor: 50, text: 100, prTgtr: 50, unpTgt: 50,
+        bckgrd: scopeBckgrd, cursor: 100, text: 100, prTgtr: 50, unpTgt: 50,
         prHist: 50, unpHist: 50, sldb: 50, bcklght: 90, button: 80,
         border: 50, toolbar: 50, tbBrdr: 50, fdb: 50, portal: 50,
         onFreq: 50, line4b: 50, dwell: 50, fence: 50,
@@ -6015,9 +6069,15 @@ const TB_MASTER = {
     id: 'master',
     rows: [
         [
-            nosim('DRAW'),
+            toggle('DRAW', {
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             menu('ATC\nTOOLS', 'atc-tools'),
-            nosim('AB\nSETTING'),
+            toggle('AB\nSETTING', {
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             incdec('RANGE', {
                 cls: 'tb-dark',
                 getValue: () => zoomToRange(map.getZoom()),
@@ -6050,7 +6110,10 @@ const TB_MASTER = {
         [
             menu('VIEWS', 'views'),
             menu('CHECK\nLISTS', 'check-lists'),
-            nosim('COMMAND\nMENUS'),
+            toggle('COMMAND\nMENUS', {
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             menu('MAP', 'geomap'),
             incdec('ALT LIM', {
                 cls: 'tb-dark',
@@ -6064,7 +6127,10 @@ const TB_MASTER = {
                 onInc: () => {},
             }),
             menu('RADAR\nFILTER', 'radar-filter'),
-            nosim('PREFSET'),
+            toggle('PREFSET', {
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             cmd('DELETE\nTEAROFF', {
                 cls: 'tb-teal',
                 onCmd: () => { closeAllSubMenus(); },
@@ -6081,8 +6147,16 @@ const TB_ATC_TOOLS = {
     id: 'atc-tools',
     rows: [
         [
-            { label: 'CRR FIX', type: 'toggle', nosim: true },
-            nosim('SPEED\nADVSRY'),
+            toggle('CRR FIX', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('SPEED\nADVSRY', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             menu('WX', 'weather'),
         ],
     ],
@@ -6113,9 +6187,21 @@ const TB_WEATHER = {
             }),
         ],
         [
-            { label: 'WX1', type: 'nosim', cls: 'tb-dark' },
-            { label: 'WX2', type: 'nosim', cls: 'tb-dark' },
-            { label: 'WX3', type: 'nosim', cls: 'tb-dark' },
+            toggle('WX1', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('WX2', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('WX3', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
     ],
 };
@@ -6124,26 +6210,98 @@ const TB_VIEWS = {
     id: 'views',
     rows: [
         [
-            { label: 'ALTIM\nSET', type: 'toggle', nosim: true },
-            nosim('AUTO HO\nINHIB'),
-            nosim('CFR'),
-            { label: 'CODE', type: 'toggle', nosim: true },
-            nosim('CONFLCT\nALERT'),
-            nosim('CPDLC\nADV'),
-            nosim('CPDLC\nHIST'),
-            nosim('CPDLC\nTOC SET'),
-            { label: 'CRR', type: 'toggle', nosim: true },
+            toggle('ALTIM\nSET', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('AUTO HO\nINHIB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CFR', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CODE', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CONFLCT\nALERT', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CPDLC\nADV', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CPDLC\nHIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CPDLC\nTOC SET', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CRR', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
         [
-            nosim('DEPT\nLIST'),
-            nosim('FLIGHT\nEVENT'),
-            nosim('GROUP\nSUP'),
-            nosim('HOLD\nLIST'),
-            nosim('INBND\nLIST'),
-            nosim('MRP\nLIST'),
-            nosim('SSA\nFILTER'),
-            nosim('UA'),
-            { label: 'WX\nREPORT', type: 'toggle', nosim: true },
+            toggle('DEPT\nLIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('FLIGHT\nEVENT', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('GROUP\nSUP', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('HOLD\nLIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('INBND\nLIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('MRP\nLIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('SSA\nFILTER', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('UA', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('WX\nREPORT', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
     ],
 };
@@ -6152,8 +6310,16 @@ const TB_CHECK_LISTS = {
     id: 'check-lists',
     rows: [
         [
-            { label: 'POS\nCHECK', type: 'toggle', nosim: true },
-            { label: 'EMERG\nCHECK', type: 'toggle', nosim: true },
+            toggle('POS\nCHECK', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('EMERG\nCHECK', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
     ],
 };
@@ -6162,15 +6328,27 @@ const TB_CURSOR = {
     id: 'cursor',
     rows: [
         [
-            nosim('SPEED'),
+            incdec('SPEED', {
+                cls: 'tb-green',
+                getValue: () => 0,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
             incdec('SIZE', {
-                nosim: true,
+                cls: 'tb-green',
                 getValue: () => tbState.cursorSize,
                 formatValue: v => String(v),
                 onDec: () => { tbState.cursorSize = Math.max(1, tbState.cursorSize - 1); },
                 onInc: () => { tbState.cursorSize = Math.min(5, tbState.cursorSize + 1); },
             }),
-            nosim('VOLUME'),
+            incdec('VOLUME', {
+                cls: 'tb-green',
+                getValue: () => 0,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
         ],
     ],
 };
@@ -6232,7 +6410,7 @@ const TB_BRIGHT = {
             menu('MAP\nBRIGHT', 'map-bright', { cls: 'tb-blue' }),
             nosim('CPDLC', { cls: 'tb-blue' }),
             incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
-            incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); } }),
+            incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); updateCursorBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); updateCursorBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); saveSettingsToLocalStorage(); } }),
             incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); saveSettingsToLocalStorage(); } }),
@@ -6260,7 +6438,7 @@ const TB_BRIGHT = {
             incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); updateButtonBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); updateButtonBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); updateBorderBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); updateBorderBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); } }),
+            incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); } }),
             nosim('AB BRDR'),
             incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
             incdec('PORTAL', { cls: 'tb-green', getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
@@ -6280,49 +6458,57 @@ const TB_MAP_BRIGHT = {
     parentMenu: 'bright',
     rows: [
         [
-            incdec('BCG 1', {
+            incdec('UHI', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-bnd-uhi'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-bnd-uhi', Math.max(0, getRangeVal('rng-bnd-uhi') - 10)),
                 onInc: () => setRangeVal('rng-bnd-uhi', Math.min(100, getRangeVal('rng-bnd-uhi') + 10)),
             }),
-            incdec('BCG 2', {
+            incdec('HI', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-bnd-hi'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-bnd-hi', Math.max(0, getRangeVal('rng-bnd-hi') - 10)),
                 onInc: () => setRangeVal('rng-bnd-hi', Math.min(100, getRangeVal('rng-bnd-hi') + 10)),
             }),
-            incdec('BCG 3', {
+            incdec('LO', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-bnd-lo'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-bnd-lo', Math.max(0, getRangeVal('rng-bnd-lo') - 10)),
                 onInc: () => setRangeVal('rng-bnd-lo', Math.min(100, getRangeVal('rng-bnd-lo') + 10)),
             }),
-            incdec('BCG 4', {
+            incdec('APP', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-bnd-app'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-bnd-app', Math.max(0, getRangeVal('rng-bnd-app') - 10)),
                 onInc: () => setRangeVal('rng-bnd-app', Math.min(100, getRangeVal('rng-bnd-app') + 10)),
             }),
-            incdec('BCG 5', {
+            incdec('HI AWY', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-jroutes'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-jroutes', Math.max(0, getRangeVal('rng-jroutes') - 10)),
                 onInc: () => setRangeVal('rng-jroutes', Math.min(100, getRangeVal('rng-jroutes') + 10)),
             }),
-            incdec('BCG 6', {
+            incdec('LO AWY', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-vroutes'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-vroutes', Math.max(0, getRangeVal('rng-vroutes') - 10)),
                 onInc: () => setRangeVal('rng-vroutes', Math.min(100, getRangeVal('rng-vroutes') + 10)),
             }),
-            incdec('BCG 7', {
+            incdec('VORS', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-vors'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-vors', Math.max(0, getRangeVal('rng-vors') - 10)),
                 onInc: () => setRangeVal('rng-vors', Math.min(100, getRangeVal('rng-vors') + 10)),
             }),
-            incdec('BCG 8', {
+            incdec('APTS', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-airports'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-airports', Math.max(0, getRangeVal('rng-airports') - 10)),
@@ -6336,8 +6522,15 @@ const TB_FONT = {
     id: 'font',
     rows: [
         [
-            incdec('LINE 4', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
+            incdec('LINE 4', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
             incdec('FDB', {
+                cls: 'tb-green',
                 getValue: () => parseInt(getSelectVal('sel-fontsize')),
                 formatValue: v => v,
                 onDec: () => {
@@ -6351,10 +6544,34 @@ const TB_FONT = {
                     if (idx < FONT_STEPS.length - 1) setSelectVal('sel-fontsize', FONT_STEPS[idx + 1]);
                 },
             }),
-            nosim('TOOLBAR'),
-            incdec('LDB', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
-            incdec('RDB', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
-            nosim('OUTAGE'),
+            incdec('TOOLBAR', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            incdec('LDB', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            incdec('RDB', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            incdec('OUTAGE', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
         ],
     ],
 };
@@ -6364,10 +6581,26 @@ const TB_DB_FIELDS = {
     id: 'db-fields',
     rows: [
         [
-            { label: 'NON-\nRVSM', type: 'toggle', nosim: true, isOn: () => true },
-            nosim('VRI'),
-            { label: 'CODE', type: 'toggle', nosim: true },
-            { label: 'SPEED', type: 'toggle', nosim: true },
+            toggle('NON-\nRVSM', {
+                cls: 'tb-toggle-grey',
+                isOn: () => true,
+                onToggle: () => {},
+            }),
+            toggle('VRI', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CODE', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('SPEED', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             toggle('DEST', {
                 cls: 'tb-toggle-grey',
                 isOn: () => getSelectVal('sel-line4') === 'DEST',
@@ -6385,12 +6618,17 @@ const TB_DB_FIELDS = {
                 },
             }),
             incdec('FDB LDR', {
-                getValue: () => 1,  // default leader length
+                cls: 'tb-green',
+                getValue: () => 1,
                 formatValue: v => v,
                 onDec: () => {},
                 onInc: () => {},
             }),
-            { label: 'BCAST\nFLID', type: 'toggle', nosim: true },
+            toggle('BCAST\nFLID', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             toggle('PORTAL\nFENCE', {
                 cls: 'tb-toggle-grey',
                 isOn: () => showPortalFence,
@@ -6398,14 +6636,48 @@ const TB_DB_FIELDS = {
             }),
         ],
         [
-            nosim('NON-\nADS-B'),
-            nosim('NONADSB'),
-            { label: 'SAT\nCOMM', type: 'toggle', nosim: true },
-            nosim('TFM\nREROUTE'),
-            { label: 'CRR\nRDB', type: 'toggle', nosim: true },
-            nosim('STA RDB'),
-            nosim('DELAY\nRDB'),
-            nosim('DELAY\nFORMAT'),
+            incdec('NON-\nADS-B', {
+                cls: 'tb-green',
+                getValue: () => 1,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            toggle('NONADSB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('SAT\nCOMM', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('TFM\nREROUTE', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CRR\nRDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('STA RDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('DELAY\nRDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('DELAY\nFORMAT', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
     ],
 };
@@ -6414,17 +6686,50 @@ const TB_RADAR_FILTER = {
     id: 'radar-filter',
     rows: [
         [
-            { label: 'ALL\nLDBS', type: 'toggle', nosim: true },
-            { label: 'PR LDB', type: 'toggle', nosim: true },
-            { label: 'UNP\nLDB', type: 'toggle', nosim: true },
-            { label: 'ALL\nPRIM', type: 'toggle', nosim: true },
-            { label: 'NON\nMODE C', type: 'toggle', nosim: true },
+            toggle('ALL\nLDBS', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('PR LDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('UNP\nLDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('ALL\nPRIM', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('NON\nMODE C', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
         [
-            { label: 'SELECT\nBEACON', type: 'toggle', nosim: true },
-            nosim('PERM\nECHO'),
-            nosim('STROBE\nLINES'),
+            toggle('SELECT\nBEACON', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('PERM\nECHO', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('STROBE\nLINES', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             incdec('HISTORY', {
+                cls: 'tb-green',
                 getValue: () => parseInt(getSelectVal('sel-histcount')),
                 formatValue: v => v,
                 onDec: () => {
@@ -6527,7 +6832,10 @@ function createButton(spec, panelId, rowIdx, colIdx) {
         // Left click
         el.addEventListener('click', (e) => {
             e.stopPropagation();
-            handleBtnAction(spec, key, false);
+            // Ignore clicks on the tearoff strip
+            if (!e.target.closest('.tb-tear')) {
+                handleBtnAction(spec, key, false);
+            }
         });
 
         // Middle click via mousedown
@@ -6535,7 +6843,10 @@ function createButton(spec, panelId, rowIdx, colIdx) {
             if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
-                handleBtnAction(spec, key, true);
+                // Ignore middle-clicks on the tearoff strip
+                if (!e.target.closest('.tb-tear')) {
+                    handleBtnAction(spec, key, true);
+                }
             }
         });
 
@@ -6961,6 +7272,8 @@ refreshAllButtons();  // Refresh button displays to show correct initial values
 updateBorderBrightness();  // Initialize border brightness
 updateToolbarBackgroundBrightness();  // Initialize toolbar background brightness
 updateTextBrightness();  // Initialize text brightness
+updateToolbarBorderColor();  // Initialize toolbar border color
+updateCursorBrightness();  // Initialize cursor brightness
 
 // Apply initial visibility from URL
 if (tbState.masterVisible) {

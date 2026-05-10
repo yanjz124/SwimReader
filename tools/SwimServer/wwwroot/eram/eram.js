@@ -45,6 +45,10 @@ const ldrLenOverrides = new Map(); // gufi → leader length level (0-3), defaul
 const driActive = new Map();       // gufi → 'J' (standard 5nm) or 'T' (reduced 3nm)
 const dwellLocked = new Set();     // GUFIs with persistent dwell emphasis (toggled via Field A click)
 const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indicator) toggled on
+const activeTearoffs = new Map();  // btnKey → { floatingEl, buttonClone } — toolbar tearoff state
+const activeFloatingMenus = new Map(); // btnKey → { floatingMenuEl, anchorEl } — floating menu state
+let tearoffDeleteMode = false;  // when true, left-click marks for deletion, middle-click deletes
+const selectedTearoffsForDeletion = new Set();  // btnKey → marked for deletion
 
 // Controller-entered altitude overrides (QZ/QQ/QR commands)
 // Local wins when present; SWIM clears local override only when it sends a genuinely NEW different value
@@ -2753,11 +2757,18 @@ function updateScopeBackground() {
     const lc = document.querySelector('.leaflet-container');
     if (lc) lc.style.setProperty('background', color, 'important');
 
-    // Apply backlight to toolbar
+    // Apply backlight to toolbar and floating tearoffs
+    const backlightFactor = 0.6 + (l * 0.5);
     const toolbarPanel = document.getElementById('master-toolbar-container');
     if (toolbarPanel) {
-        const backlightFactor = 0.6 + (l * 0.5);
         toolbarPanel.style.filter = `brightness(${backlightFactor})`;
+    }
+
+    // Update floating tearoff colors with backlight (floating menus inherit this since they're children)
+    for (const [, tearoff] of activeTearoffs) {
+        if (tearoff.floatingEl) {
+            tearoff.floatingEl.style.filter = `brightness(${backlightFactor})`;
+        }
     }
 
     updateToolbarBrightness();
@@ -2922,6 +2933,12 @@ function updateToolbarBrightness() {
         // Button brightness: 0-1, where 1=full color, 0=black
         const buttonFactor = tbState.bright.button / 100;
 
+        // Backlight factor: 0.6-1.0 range (affects tearoff color for floating buttons)
+        const backlightFactor = 0.6 + ((scopeBcklght / 100) * 0.5);
+
+        // Combined factor for floating tearoff colors
+        const combinedFactor = buttonFactor * backlightFactor;
+
         // Create or update dynamic CSS for button backgrounds
         let styleEl = document.getElementById('dynamic-button-brightness');
         if (!styleEl) {
@@ -2956,8 +2973,13 @@ function updateToolbarBrightness() {
         // Default button color
         css += `.tb-btn { background: ${interpolateColor('#0000D4', buttonFactor)} !important; }\n`;
 
-        // Tearoff strip color (interpolate toward black)
-        css += `.tb-btn .tb-tear { background: ${interpolateColor('#FFFFA1', buttonFactor)} !important; }\n`;
+        // Tearoff strip color (interpolate toward black with backlight)
+        const tearoffColor = interpolateColor('#FFFFA1', combinedFactor);
+        css += `.tb-btn .tb-tear { background: ${tearoffColor} !important; }\n`;
+
+        // Disabled tearoff strip color (interpolate grey toward black with backlight)
+        const disabledTearoffColor = interpolateColor('#C7C7C7', combinedFactor);
+        css += `.tb-btn .tb-tear.tb-tear-disabled { background: ${disabledTearoffColor} !important; }\n`;
 
         styleEl.textContent = css;
     } catch (e) {
@@ -5964,9 +5986,9 @@ const tbState = {
     openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
     // Brightness values (0-100) for buttons not yet wired
     bright: {
-        bckgrd: scopeBckgrd, cursor: 100, text: 100, prTgtr: 50, unpTgt: 50,
-        prHist: 50, unpHist: 50, sldb: 50, bcklght: 90, button: 80,
-        border: 50, toolbar: 50, tbBrdr: 50, fdb: 50, portal: 50,
+        bckgrd: 40, cursor: 100, text: 100, prTgtr: 50, unpTgt: 50,
+        prHist: 50, unpHist: 50, sldb: 50, bcklght: 80, button: 70,
+        border: 30, toolbar: 30, tbBrdr: 30, fdb: 50, portal: 50,
         onFreq: 50, line4b: 50, dwell: 50, fence: 50,
     },
     // Cursor sub-menu
@@ -6133,7 +6155,21 @@ const TB_MASTER = {
             }),
             cmd('DELETE\nTEAROFF', {
                 cls: 'tb-teal',
-                onCmd: () => { closeAllSubMenus(); },
+                onCmd: () => {
+                    // If exiting delete mode, clear any marked selections
+                    if (tearoffDeleteMode) {
+                        for (const key of selectedTearoffsForDeletion) {
+                            const tearoff = activeTearoffs.get(key);
+                            if (tearoff && tearoff.buttonClone) {
+                                tearoff.buttonClone.classList.remove('tb-delete-selected');
+                            }
+                        }
+                        selectedTearoffsForDeletion.clear();
+                    }
+                    tearoffDeleteMode = !tearoffDeleteMode;
+                    closeAllSubMenus();
+                    refreshAllButtons();
+                },
             }),
         ],
     ],
@@ -6774,6 +6810,264 @@ function btnKey(panelId, rowIdx, colIdx) {
     return panelId + ':' + rowIdx + ':' + colIdx;
 }
 
+function updateTearoffColors() {
+    // Update all tearoff strips: tan if no active tearoff, grey if one exists for this button
+    for (const [key, entry] of tbElements) {
+        const tear = entry.el.querySelector('.tb-tear');
+        if (!tear) continue;
+
+        const hasActiveTearoff = activeTearoffs.has(key);
+
+        if (hasActiveTearoff) {
+            // Grey (#C7C7C7) + disabled
+            tear.classList.add('tb-tear-disabled');
+            tear.style.cursor = 'default';
+            tear.dataset.disabled = 'true';
+        } else {
+            // Tan (#FFFFA1) + enabled
+            tear.classList.remove('tb-tear-disabled');
+            tear.style.cursor = 'var(--eram-cursor)';
+            tear.dataset.disabled = 'false';
+        }
+    }
+}
+
+function createFloatingTearoff(btnKey, spec) {
+    // Create floating container (just wraps the button)
+    const container = document.createElement('div');
+    container.className = 'tb-floating-tearoff';
+    container.style.cssText = `
+        position: fixed;
+        z-index: 970;
+        user-select: none;
+    `;
+
+    // Clone the button
+    let buttonClone = null;
+    const sourceEntry = tbElements.get(btnKey);
+    if (sourceEntry) {
+        buttonClone = sourceEntry.el.cloneNode(true);
+
+        // Re-attach event listeners to the clone
+        if (!spec.nosim && spec.type !== 'nosim') {
+            // Left click (skip if on tearoff strip)
+            buttonClone.addEventListener('click', (e) => {
+                if (!e.target.closest('.tb-tear')) {
+                    e.stopPropagation();
+                    // In delete mode, left-click marks tearoff for deletion
+                    if (tearoffDeleteMode) {
+                        if (selectedTearoffsForDeletion.has(btnKey)) {
+                            selectedTearoffsForDeletion.delete(btnKey);
+                            buttonClone.classList.remove('tb-delete-selected');
+                        } else {
+                            selectedTearoffsForDeletion.add(btnKey);
+                            buttonClone.classList.add('tb-delete-selected');
+                        }
+                    } else {
+                        // For menu buttons, pass the buttonClone as the anchor so menu opens next to floating button
+                        handleBtnAction(spec, btnKey, false, spec.type === 'menu' ? buttonClone : undefined);
+                    }
+                }
+            });
+
+            // Middle click (skip if on tearoff strip)
+            buttonClone.addEventListener('mousedown', (e) => {
+                if (e.button === 1 && !e.target.closest('.tb-tear')) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Check if in delete mode and delete the floating tearoff
+                    if (tearoffDeleteMode) {
+                        // Delete the middle-clicked tearoff plus all selected ones
+                        selectedTearoffsForDeletion.add(btnKey);
+
+                        for (const key of selectedTearoffsForDeletion) {
+                            const tearoff = activeTearoffs.get(key);
+                            if (tearoff) {
+                                tearoff.floatingEl.remove();
+                                activeTearoffs.delete(key);
+                            }
+                        }
+
+                        selectedTearoffsForDeletion.clear();
+                        updateTearoffColors();
+                        // Turn off delete mode after deleting
+                        tearoffDeleteMode = false;
+                        refreshAllButtons();
+                        console.log('Tearoffs deleted');
+                    } else {
+                        handleBtnAction(spec, btnKey, true, spec.type === 'menu' ? buttonClone : undefined);
+                    }
+                }
+            });
+
+            // Context menu prevention
+            buttonClone.addEventListener('contextmenu', (e) => e.preventDefault());
+        }
+
+        container.appendChild(buttonClone);
+    }
+
+    // Add middle-click handler to delete tearoff when delete mode is active (BEFORE Leaflet event disabling)
+    container.addEventListener('mousedown', (e) => {
+        if (e.button === 1) {  // middle click
+            e.preventDefault();
+            e.stopPropagation();
+            if (tearoffDeleteMode) {
+                // Delete the middle-clicked tearoff plus all selected ones
+                selectedTearoffsForDeletion.add(btnKey);
+
+                for (const key of selectedTearoffsForDeletion) {
+                    const tearoff = activeTearoffs.get(key);
+                    if (tearoff) {
+                        tearoff.floatingEl.remove();
+                        activeTearoffs.delete(key);
+                    }
+                }
+
+                selectedTearoffsForDeletion.clear();
+                updateTearoffColors();
+                // Turn off delete mode after deleting
+                tearoffDeleteMode = false;
+                refreshAllButtons();
+                console.log('Tearoffs deleted');
+            }
+        }
+    });
+
+    // Add to page
+    document.body.appendChild(container);
+
+    // Prevent Leaflet from capturing events
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+
+    // Setup dragging via the tearoff strip (use standard setupBoxDrag)
+    const tearStrip = container.querySelector('.tb-tear');
+    setupBoxDrag(container, tearStrip);
+
+    // Position at the source button's location
+    const sourceBtn = sourceEntry?.el;
+    if (sourceBtn) {
+        const rect = sourceBtn.getBoundingClientRect();
+        container.style.left = rect.left + 'px';
+        container.style.top = rect.top + 'px';
+    } else {
+        // Fallback position
+        container.style.left = '100px';
+        container.style.top = '100px';
+    }
+
+    // Start drag mode immediately after creation
+    setTimeout(() => {
+        const tearStrip = container.querySelector('.tb-tear');
+        if (tearStrip && document.elementFromPoint(tearStrip.getBoundingClientRect().left + 5, tearStrip.getBoundingClientRect().top + 5) === tearStrip) {
+            // Simulate mousedown on tearoff strip to start dragging
+            const event = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                clientX: tearStrip.getBoundingClientRect().left + 5,
+                clientY: tearStrip.getBoundingClientRect().top + 5,
+            });
+            tearStrip.dispatchEvent(event);
+        }
+    }, 0);
+
+    return { container, buttonClone };
+}
+
+function setupTearoffDrag(tearEl, spec, btnKey) {
+    tearEl.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Grey tearoff strip (disabled) is non-functional - don't create tearoffs when one already exists
+        if (tearEl.dataset.disabled === 'true') {
+            return;
+        }
+
+        // Create new floating tearoff (only if one doesn't exist)
+        if (!activeTearoffs.has(btnKey)) {
+            const result = createFloatingTearoff(btnKey, spec);
+            activeTearoffs.set(btnKey, { floatingEl: result.container, buttonClone: result.buttonClone });
+            updateTearoffColors();
+
+            // Apply current backlight brightness to the new tearoff immediately
+            const l = scopeBcklght / 100;
+            const backlightFactor = 0.6 + (l * 0.5);
+            result.container.style.filter = `brightness(${backlightFactor})`;
+        }
+    });
+}
+
+function updateFloatingMenuButton(clickedEl, spec) {
+    // Find which floating menu this button is in (if any)
+    const isInToolbarMenu = (subMenuContainerEl && subMenuContainerEl.contains(clickedEl)) ||
+                            (subSubMenuContainerEl && subSubMenuContainerEl.contains(clickedEl));
+    const floatingMenuEl = clickedEl.closest('.tb-floating-menu');
+    const isInFloatingMenu = !!floatingMenuEl;
+
+    // If button was clicked in toolbar menu, update corresponding button in floating menu
+    if (isInToolbarMenu) {
+        const floatingMenus = document.querySelectorAll('.tb-floating-menu');
+        for (const floatingMenu of floatingMenus) {
+            const buttons = floatingMenu.querySelectorAll('.tb-btn');
+            const clickedRow = clickedEl.closest('.tb-row');
+            const rowIndex = Array.from(clickedRow.parentElement.children).indexOf(clickedRow);
+            const colIndex = Array.from(clickedRow.children).indexOf(clickedEl);
+
+            // For nested submenus, subtract 1 from rowIndex to account for parent button row in toolbar
+            const isNestedSubmenu = subSubMenuContainerEl && subSubMenuContainerEl.contains(clickedEl);
+            const adjustedRowIndex = isNestedSubmenu ? Math.max(0, rowIndex - 1) : rowIndex;
+            const clickedBtnPosition = adjustedRowIndex * 10 + colIndex;
+
+            if (buttons[clickedBtnPosition]) {
+                const correspondingBtn = buttons[clickedBtnPosition];
+                if (spec.type === 'toggle' && spec.isOn) {
+                    const shouldBeOn = spec.isOn();
+                    correspondingBtn.classList.toggle('tb-toggle-on', shouldBeOn);
+                } else if (spec.type === 'incdec' && spec.getValue) {
+                    const valDiv = correspondingBtn.querySelector('.tb-value');
+                    if (valDiv) {
+                        valDiv.textContent = spec.formatValue(spec.getValue());
+                    }
+                }
+            }
+        }
+    }
+    // If button was clicked in floating menu, update corresponding button in toolbar menu
+    else if (isInFloatingMenu) {
+        // Get position of clicked button
+        const buttons = floatingMenuEl.querySelectorAll('.tb-btn');
+        const clickedBtnIndex = Array.from(buttons).indexOf(clickedEl);
+
+        // Find corresponding toolbar menu container and button
+        let toolbarMenuContainer = null;
+        if (subMenuContainerEl && subMenuContainerEl.style.display !== 'none') {
+            toolbarMenuContainer = subMenuContainerEl;
+        } else if (subSubMenuContainerEl && subSubMenuContainerEl.style.display !== 'none') {
+            toolbarMenuContainer = subSubMenuContainerEl;
+        }
+
+        if (toolbarMenuContainer) {
+            const toolbarButtons = toolbarMenuContainer.querySelectorAll('.tb-btn');
+            if (toolbarButtons[clickedBtnIndex]) {
+                const correspondingBtn = toolbarButtons[clickedBtnIndex];
+                if (spec.type === 'toggle' && spec.isOn) {
+                    const shouldBeOn = spec.isOn();
+                    correspondingBtn.classList.toggle('tb-toggle-on', shouldBeOn);
+                } else if (spec.type === 'incdec' && spec.getValue) {
+                    const valDiv = correspondingBtn.querySelector('.tb-value');
+                    if (valDiv) {
+                        valDiv.textContent = spec.formatValue(spec.getValue());
+                    }
+                }
+            }
+        }
+    }
+}
+
 function createButton(spec, panelId, rowIdx, colIdx) {
     const el = document.createElement('div');
     el.className = 'tb-btn';
@@ -6827,6 +7121,9 @@ function createButton(spec, panelId, rowIdx, colIdx) {
     // Store reference (include valDiv for incdec buttons to avoid query overhead)
     tbElements.set(key, { el, spec, valDiv });
 
+    // Setup tearoff drag for the strip
+    setupTearoffDrag(tear, spec, key);
+
     // Event handling
     if (!isNosim) {
         // Left click
@@ -6834,7 +7131,24 @@ function createButton(spec, panelId, rowIdx, colIdx) {
             e.stopPropagation();
             // Ignore clicks on the tearoff strip
             if (!e.target.closest('.tb-tear')) {
-                handleBtnAction(spec, key, false);
+                // For menu buttons in floating menus, pass the button element as anchor
+                const isInFloatingMenu = el.closest('.tb-floating-menu');
+                const anchorForMenu = (spec.type === 'menu' && isInFloatingMenu) ? el : undefined;
+                handleBtnAction(spec, key, false, anchorForMenu);
+                // Update this button's visual state immediately (for menu buttons and floating menu buttons)
+                if (spec.type === 'toggle' && spec.isOn) {
+                    const shouldBeOn = spec.isOn();
+                    el.classList.toggle('tb-toggle-on', shouldBeOn);
+                    // Also update floating menu button if in a floating menu
+                    updateFloatingMenuButton(el, spec);
+                } else if (spec.type === 'incdec' && spec.getValue) {
+                    const valDiv = el.querySelector('.tb-value');
+                    if (valDiv) {
+                        valDiv.textContent = spec.formatValue(spec.getValue());
+                    }
+                    // Also update floating menu button if in a floating menu
+                    updateFloatingMenuButton(el, spec);
+                }
             }
         });
 
@@ -6846,6 +7160,15 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                 // Ignore middle-clicks on the tearoff strip
                 if (!e.target.closest('.tb-tear')) {
                     handleBtnAction(spec, key, true);
+                    // Update this button's visual state immediately
+                    if (spec.type === 'incdec' && spec.getValue) {
+                        const valDiv = el.querySelector('.tb-value');
+                        if (valDiv) {
+                            valDiv.textContent = spec.formatValue(spec.getValue());
+                        }
+                        // Also update floating menu button if in a floating menu
+                        updateFloatingMenuButton(el, spec);
+                    }
                 }
             }
         });
@@ -6909,6 +7232,47 @@ function refreshButton(key) {
     if (spec.type === 'menu') {
         const isOpen = tbState.openMenu === spec.menu || tbState.openSubMenu === spec.menu;
         el.classList.toggle('tb-menu-open', isOpen);
+    }
+
+    // Sync floating tearoff button clone if one exists
+    const tearoff = activeTearoffs.get(key);
+    if (tearoff && tearoff.buttonClone) {
+        // Update clone's value display
+        const cloneValDiv = tearoff.buttonClone.querySelector('.tb-value');
+        if (cloneValDiv && spec.getValue) {
+            const newValue = String(spec.formatValue(spec.getValue()));
+            cloneValDiv.textContent = newValue;
+        }
+
+        // Update clone's toggle state (match original button exactly)
+        if (spec.type === 'toggle' && !isNosim && spec.isOn) {
+            const shouldBeOn = spec.isOn();
+            if (shouldBeOn) {
+                tearoff.buttonClone.classList.add('tb-toggle-on');
+            } else {
+                tearoff.buttonClone.classList.remove('tb-toggle-on');
+            }
+        }
+
+        // Don't sync menu-open state to floating tearoff buttons — they remain independent
+    }
+
+    // Handle DELETE TEAROFF button styling when in delete mode
+    if (spec.label && spec.label.includes('DELETE')) {
+        if (tearoffDeleteMode) {
+            el.classList.add('tb-menu-open');
+        } else {
+            el.classList.remove('tb-menu-open');
+        }
+        // Sync to floating tearoff if one exists
+        const tearoff = activeTearoffs.get(key);
+        if (tearoff && tearoff.buttonClone) {
+            if (tearoffDeleteMode) {
+                tearoff.buttonClone.classList.add('tb-menu-open');
+            } else {
+                tearoff.buttonClone.classList.remove('tb-menu-open');
+            }
+        }
     }
 }
 
@@ -6986,6 +7350,121 @@ function closeAllSubMenus() {
         });
     }
     refreshAllButtons();
+}
+
+function openFloatingMenu(menuId, anchorEl) {
+    const menuSpec = SUB_MENUS[menuId];
+    if (!menuSpec) return;
+
+    // Get the button key from the anchor element
+    const btnKey = anchorEl.dataset.tbKey;
+
+    // Check if menu already open for this button — close it (toggle)
+    if (activeFloatingMenus.has(btnKey)) {
+        const existing = activeFloatingMenus.get(btnKey);
+        if (existing.floatingMenuEl) {
+            existing.floatingMenuEl.remove();
+        }
+        // Remove menu-open class from the button
+        anchorEl.classList.remove('tb-menu-open');
+        activeFloatingMenus.delete(btnKey);
+        return;
+    }
+
+    // Create floating menu container
+    const floatingMenu = document.createElement('div');
+    floatingMenu.className = 'tb-floating-menu';
+
+    // Check if this is a nested menu (parent menu is already floating)
+    const parentFloatingMenu = anchorEl.closest('.tb-floating-menu');
+    const isNestedMenu = !!parentFloatingMenu;
+
+    if (isNestedMenu) {
+        // Nested menu: position absolutely relative to viewport
+        const anchorRect = anchorEl.getBoundingClientRect();
+        floatingMenu.style.cssText = `
+            position: fixed;
+            left: ${anchorRect.right + 4}px;
+            top: ${anchorRect.top}px;
+            z-index: 972;
+            user-select: none;
+            background: #0000D4;
+            border: 1px solid #FFFFFF;
+        `;
+    } else {
+        // Top-level floating menu: position relative to parent container
+        floatingMenu.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 100%;
+            margin-left: 4px;
+            z-index: 971;
+            user-select: none;
+            background: #0000D4;
+            border: 1px solid #FFFFFF;
+        `;
+    }
+
+    // Build menu items into the floating container (don't force 2 rows for floating menus)
+    buildSubMenuItems(menuSpec, menuId, floatingMenu, 0, false);
+
+    // Append to the floating tearoff container so it moves with the button (for top-level menus)
+    // or to the body (for nested menus that need fixed positioning)
+    if (isNestedMenu) {
+        document.body.appendChild(floatingMenu);
+    } else {
+        const floatingTearoff = anchorEl.closest('.tb-floating-tearoff');
+        if (floatingTearoff) {
+            floatingTearoff.appendChild(floatingMenu);
+        } else {
+            // Fallback: append to body if not in a floating tearoff (shouldn't happen)
+            document.body.appendChild(floatingMenu);
+        }
+    }
+
+    // Apply current backlight brightness to the floating menu
+    const l = scopeBcklght / 100;
+    const backlightFactor = 0.6 + (l * 0.5);
+    floatingMenu.style.filter = `brightness(${backlightFactor})`;
+
+    // Add menu-open class to the button for visual feedback
+    anchorEl.classList.add('tb-menu-open');
+
+    // Store in active menus map
+    activeFloatingMenus.set(btnKey, { floatingMenuEl: floatingMenu, anchorEl: anchorEl });
+
+    // Prevent Leaflet from capturing events
+    L.DomEvent.disableClickPropagation(floatingMenu);
+    L.DomEvent.disableScrollPropagation(floatingMenu);
+
+    // Close menu when clicking outside (but not on the anchor button itself, toolbar buttons, or inside toolbar menus)
+    const closeHandler = (e) => {
+        // Check if click is on a toolbar menu button or inside a toolbar menu container
+        const clickedBtn = e.target.closest('.tb-btn');
+        const isToolbarBtn = clickedBtn && tbElements.has(clickedBtn.dataset.tbKey);
+        const isInsideToolbarMenu = (subMenuContainerEl && subMenuContainerEl.contains(e.target)) ||
+                                     (subSubMenuContainerEl && subSubMenuContainerEl.contains(e.target));
+
+        if (!floatingMenu.contains(e.target) && !anchorEl.contains(e.target) && !isToolbarBtn && !isInsideToolbarMenu) {
+            floatingMenu.remove();
+            anchorEl.classList.remove('tb-menu-open');
+            activeFloatingMenus.delete(btnKey);
+            document.removeEventListener('mousedown', closeHandler);
+        }
+    };
+    document.addEventListener('mousedown', closeHandler);
+
+    // Close menu when an item is clicked
+    floatingMenu.addEventListener('click', (e) => {
+        if (e.target.closest('.tb-btn')) {
+            setTimeout(() => {
+                floatingMenu.remove();
+                anchorEl.classList.remove('tb-menu-open');
+                activeFloatingMenus.delete(btnKey);
+            }, 10);
+            document.removeEventListener('mousedown', closeHandler);
+        }
+    });
 }
 
 function openSubMenu(menuId, anchorEl) {
@@ -7074,10 +7553,11 @@ const MENU_LABELS = {
 
 // Build sub-menu items only (no parent button — the real one stays in the master panel).
 // parentRow = which visual row the parent is on. Data row 0 goes on parentRow, row 1 on parentRow+1, etc.
-function buildSubMenuItems(menuSpec, menuId, container, parentRow) {
+// forceMinRows = if true, render at least 2 rows (for toolbar); if false, render only needed rows (for floating menus)
+function buildSubMenuItems(menuSpec, menuId, container, parentRow, forceMinRows = true) {
     if (parentRow === undefined) parentRow = 0;
-    // Always render exactly 2 rows, data rows start at row 0 (top)
-    const totalRows = 2;
+    // For toolbar menus, always render at least 2 rows. For floating menus, render only what's needed.
+    const totalRows = forceMinRows ? Math.max(2, menuSpec.rows.length) : menuSpec.rows.length;
 
     for (let vi = 0; vi < totalRows; vi++) {
         const rowEl = document.createElement('div');
@@ -7123,10 +7603,19 @@ function buildInlineSubMenu(menuSpec, menuId, container, parentRow) {
     }
 }
 
-function handleBtnAction(spec, key, isMiddle) {
+function handleBtnAction(spec, key, isMiddle, anchorEl) {
     if (spec.type === 'menu') {
-        const entry = tbElements.get(key);
-        openSubMenu(spec.menu, entry.el);
+        // If anchorEl is provided (from floating tearoff), create a floating menu
+        if (anchorEl && anchorEl.closest('.tb-floating-tearoff')) {
+            openFloatingMenu(spec.menu, anchorEl);
+        } else if (anchorEl && anchorEl.closest('.tb-floating-menu')) {
+            // Menu button clicked in a floating menu - open nested menu as floating
+            openFloatingMenu(spec.menu, anchorEl);
+        } else {
+            // Otherwise, use toolbar menu system
+            const anchor = anchorEl || tbElements.get(key)?.el;
+            if (anchor) openSubMenu(spec.menu, anchor);
+        }
     } else if (spec.type === 'toggle') {
         if (spec.isOn && spec.onToggle) {
             spec.onToggle(!spec.isOn());
@@ -7269,6 +7758,7 @@ if (_tbInitParams.get('tb') !== '0') {
 // ── Initialize ──
 buildToolbar();
 refreshAllButtons();  // Refresh button displays to show correct initial values
+updateTearoffColors();  // Initialize tearoff strip colors
 updateBorderBrightness();  // Initialize border brightness
 updateToolbarBackgroundBrightness();  // Initialize toolbar background brightness
 updateTextBrightness();  // Initialize text brightness

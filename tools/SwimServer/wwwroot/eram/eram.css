@@ -93,15 +93,36 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 }
 #cmd-help-popup .close-btn:hover { color: #cccc44; }
 
+/* ── Custom crosshair cursor ── */
+:root {
+    --eram-cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='16' y1='9' x2='16' y2='12' stroke='white' stroke-width='4.5'/%3E%3Cline x1='16' y1='20' x2='16' y2='23' stroke='white' stroke-width='4.5'/%3E%3Cline x1='9' y1='16' x2='12' y2='16' stroke='white' stroke-width='4.5'/%3E%3Cline x1='20' y1='16' x2='23' y2='16' stroke='white' stroke-width='4.5'/%3E%3Crect x='12' y='12' width='8' height='8' fill='none' stroke='white' stroke-width='1.3'/%3E%3C/svg%3E") 16 16, crosshair;
+}
+
 /* ── Map overrides ── */
 .leaflet-container {
     background: #000000 !important;
-    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='16' y1='9' x2='16' y2='12' stroke='white' stroke-width='4.5'/%3E%3Cline x1='16' y1='20' x2='16' y2='23' stroke='white' stroke-width='4.5'/%3E%3Cline x1='9' y1='16' x2='12' y2='16' stroke='white' stroke-width='4.5'/%3E%3Cline x1='20' y1='16' x2='23' y2='16' stroke='white' stroke-width='4.5'/%3E%3Crect x='12' y='12' width='8' height='8' fill='none' stroke='white' stroke-width='1.3'/%3E%3C/svg%3E") 16 16, crosshair !important;
+    cursor: var(--eram-cursor) !important;
 }
 .leaflet-control-zoom a { background: #222 !important; color: #cccc44 !important; border-color: #444 !important; }
 .leaflet-control-attribution { display: none !important; }
 /* Boundary/overlay lines: lighten blend so brighter line always shows through overlaps */
 .bnd-path { mix-blend-mode: lighten; }
+
+/* Apply crosshair cursor to interactive elements */
+.ac-db,
+.ac-sym-corr-bcn,
+.ac-sym-reduced-sep,
+.ac-sym-uncorr-bcn,
+.ac-sym-uncorr-pri,
+.ac-sym-flat-track,
+.ac-sym-coast,
+.tb-btn,
+.tb-btn .tb-content,
+.tb-side-bar .tb-arrow-btn,
+#po-menu,
+.field-menu {
+    cursor: var(--eram-cursor) !important;
+}
 
 /* ── Aircraft target group ── */
 .ac-group { position: absolute; pointer-events: none; }
@@ -417,19 +438,30 @@ body.tb-active #sidebar-wrapper { top: 70px; }
     flex-shrink: 0;
     overflow: hidden;
 }
-.tb-btn:hover { background: #0000D4; }
 .tb-btn:active { background: #0000D4; }
 
-/* Tearoff strip on each button — light grey with border */
+/* Tearoff strip on each button — separate button with borders */
 .tb-btn .tb-tear {
     width: 13px; background: #FFFFA1; flex-shrink: 0;
+    border: 1px solid #333;
     border-right: 1px solid #555;
+    cursor: var(--eram-cursor) !important;
+    transition: border-color 0.1s ease;
+}
+.tb-btn .tb-tear:hover {
+    border-color: #ffffff !important;
 }
 
-/* Button content area (label + value) */
+/* Button content area (label + value) with hover border effect */
 .tb-btn .tb-content {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     flex: 1; padding: 2px 6px; position: relative;
+    border: 1px solid #333;
+    border-right: 1px solid #555;
+    transition: border-color 0.1s ease;
+}
+.tb-btn:has(.tb-content:hover) .tb-content {
+    border-color: #ffffff !important;
 }
 
 /* Label text — white on blue */
@@ -515,8 +547,12 @@ body.tb-active #sidebar-wrapper { top: 70px; }
     width: 14px; height: 34px; background: #555; border: 1px solid #ccc;
     display: flex; align-items: flex-end; justify-content: center;
     cursor: pointer; padding: 0 0 3px 0;
+    transition: border-color 0.1s ease;
 }
-.tb-side-bar .tb-arrow-btn:hover { background: #666; }
+.tb-side-bar .tb-arrow-btn:hover {
+    background: #666;
+    border-color: #ffffff !important;
+}
 .tb-side-bar .tb-arrow-btn svg { width: 8px; height: 14px; }
 /* Master toolbar layout: [left bar] [button grid] [right bar fills to edge] */
 .tb-master-row {

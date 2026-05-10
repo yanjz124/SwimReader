@@ -2817,6 +2817,9 @@ function updateToolbarBackgroundBrightness() {
             #master-toolbar-container { background-color: ${toolbarBgColor} !important; }
             .tb-master-grid { background-color: ${toolbarBgColor} !important; }
             .tb-submenu { background-color: ${toolbarBgColor} !important; }
+            .tb-side-bar { background-color: ${toolbarBgColor} !important; }
+            .tb-side-bar .tb-arrow-btn { background-color: ${toolbarBgColor} !important; }
+            .tb-side-bar .tb-arrow-btn:hover { background-color: ${interpolateColor('#D3D3D3', toolbarFactor)} !important; }
         `;
     } catch (e) {
         // tbState not yet initialized
@@ -6612,16 +6615,58 @@ function refreshAllSubMenus() {
 // CRC behavior: when a menu opens, the master toolbar disappears and is replaced
 // by a new toolbar: [pink parent button] + [sub-menu items extending right]
 
+function cleanupMenuScrolling(containerEl) {
+    if (!containerEl) return;
+    if (containerEl._wheelHandler) { containerEl.removeEventListener('wheel', containerEl._wheelHandler); delete containerEl._wheelHandler; }
+    if (containerEl._dragDown) { containerEl.removeEventListener('mousedown', containerEl._dragDown); window.removeEventListener('mousemove', containerEl._dragMove); window.removeEventListener('mouseup', containerEl._dragUp); delete containerEl._dragDown; delete containerEl._dragMove; delete containerEl._dragUp; }
+    containerEl.style.cursor = '';
+}
+
+function setupMenuScrolling(containerEl) {
+    if (!containerEl) return;
+    cleanupMenuScrolling(containerEl);
+    // Check if menu needs scrolling
+    const menuRect = containerEl.getBoundingClientRect();
+    if (menuRect.right > window.innerWidth - 4) {
+        containerEl.style.maxWidth = (window.innerWidth - menuRect.left - 4) + 'px';
+        containerEl.style.overflowX = 'auto';
+        containerEl._wheelHandler = (e) => {
+            if (e.deltaY !== 0) { e.preventDefault(); containerEl.scrollLeft += e.deltaY; }
+        };
+        containerEl.addEventListener('wheel', containerEl._wheelHandler, { passive: false });
+        // Drag-to-scroll
+        let _dragX = null, _dragScroll = 0;
+        containerEl._dragDown = (e) => {
+            if (e.button !== 0) return;
+            _dragX = e.clientX; _dragScroll = containerEl.scrollLeft;
+            containerEl.style.cursor = 'grabbing';
+            e.preventDefault();
+        };
+        containerEl._dragMove = (e) => {
+            if (_dragX === null) return;
+            containerEl.scrollLeft = _dragScroll - (e.clientX - _dragX);
+        };
+        containerEl._dragUp = () => {
+            _dragX = null; containerEl.style.cursor = 'grab';
+        };
+        containerEl.style.cursor = 'grab';
+        containerEl.addEventListener('mousedown', containerEl._dragDown);
+        window.addEventListener('mousemove', containerEl._dragMove);
+        window.addEventListener('mouseup', containerEl._dragUp);
+    }
+}
+
 function closeAllSubMenus() {
     tbState.openMenu = null;
     tbState.openSubMenu = null;
     if (subMenuContainerEl) {
-        if (subMenuContainerEl._wheelHandler) { subMenuContainerEl.removeEventListener('wheel', subMenuContainerEl._wheelHandler); delete subMenuContainerEl._wheelHandler; }
-        if (subMenuContainerEl._dragDown) { subMenuContainerEl.removeEventListener('mousedown', subMenuContainerEl._dragDown); window.removeEventListener('mousemove', subMenuContainerEl._dragMove); window.removeEventListener('mouseup', subMenuContainerEl._dragUp); delete subMenuContainerEl._dragDown; delete subMenuContainerEl._dragMove; delete subMenuContainerEl._dragUp; }
-        subMenuContainerEl.style.cursor = '';
+        cleanupMenuScrolling(subMenuContainerEl);
         subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; subMenuContainerEl.style.maxWidth = ''; subMenuContainerEl.style.overflowX = ''; subMenuContainerEl.scrollLeft = 0;
     }
-    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; subSubMenuContainerEl.style.top = ''; }
+    if (subSubMenuContainerEl) {
+        cleanupMenuScrolling(subSubMenuContainerEl);
+        subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; subSubMenuContainerEl.style.top = ''; subSubMenuContainerEl.style.maxWidth = ''; subSubMenuContainerEl.style.overflowX = ''; subSubMenuContainerEl.scrollLeft = 0;
+    }
     // Restore all master buttons visibility and remove pink state
     if (masterPanelEl) {
         masterPanelEl.querySelectorAll('.tb-btn').forEach(btn => {
@@ -6640,20 +6685,30 @@ function openSubMenu(menuId, anchorEl) {
         // Nested sub-menu (e.g. weather under atc-tools, map-bright under bright)
         if (tbState.openSubMenu === menuId) {
             tbState.openSubMenu = null;
-            if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+            if (subSubMenuContainerEl) {
+                cleanupMenuScrolling(subSubMenuContainerEl);
+                subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none';
+                subSubMenuContainerEl.style.maxWidth = ''; subSubMenuContainerEl.style.overflowX = ''; subSubMenuContainerEl.scrollLeft = 0;
+            }
             refreshAllButtons();
             return;
         }
         tbState.openSubMenu = menuId;
         if (subSubMenuContainerEl) {
+            cleanupMenuScrolling(subSubMenuContainerEl);
             subSubMenuContainerEl.innerHTML = '';
             subSubMenuContainerEl.style.display = 'block';
+            subSubMenuContainerEl.style.maxWidth = '';
+            subSubMenuContainerEl.style.overflowX = '';
+            subSubMenuContainerEl.scrollLeft = 0;
             // Position at nested button's left edge within masterGrid
             const gridRect = subSubMenuContainerEl.parentElement.getBoundingClientRect();
             const anchorRect = anchorEl.getBoundingClientRect();
             subSubMenuContainerEl.style.left = (anchorRect.left - gridRect.left) + 'px';
             subSubMenuContainerEl.style.top = '0';
             buildInlineSubMenu(menuSpec, menuId, subSubMenuContainerEl);
+            // Setup scrolling for nested submenu (was missing before)
+            setupMenuScrolling(subSubMenuContainerEl);
         }
         refreshAllButtons();
         return;
@@ -6669,7 +6724,10 @@ function openSubMenu(menuId, anchorEl) {
     // sub-menu items extend to the right of the clicked button.
     tbState.openMenu = menuId;
     tbState.openSubMenu = null;
-    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; }
+    if (subSubMenuContainerEl) {
+        cleanupMenuScrolling(subSubMenuContainerEl);
+        subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = '';
+    }
 
     // Hide all master buttons except the clicked one (it stays in place, turns pink)
     masterPanelEl.querySelectorAll('.tb-btn').forEach(btn => {
@@ -6689,35 +6747,8 @@ function openSubMenu(menuId, anchorEl) {
         const anchorRow = anchorEl.closest('.tb-row');
         const parentRowIdx = anchorRow ? Array.from(anchorRow.parentElement.children).indexOf(anchorRow) : 0;
         buildSubMenuItems(menuSpec, menuId, subMenuContainerEl, parentRowIdx);
-        // Constrain width to viewport and enable horizontal scroll if needed
-        const menuRect = subMenuContainerEl.getBoundingClientRect();
-        if (menuRect.right > window.innerWidth - 4) {
-            subMenuContainerEl.style.maxWidth = (window.innerWidth - menuRect.left - 4) + 'px';
-            subMenuContainerEl.style.overflowX = 'auto';
-            subMenuContainerEl._wheelHandler = (e) => {
-                if (e.deltaY !== 0) { e.preventDefault(); subMenuContainerEl.scrollLeft += e.deltaY; }
-            };
-            subMenuContainerEl.addEventListener('wheel', subMenuContainerEl._wheelHandler, { passive: false });
-            // Drag-to-scroll
-            let _dragX = null, _dragScroll = 0;
-            subMenuContainerEl._dragDown = (e) => {
-                if (e.button !== 0) return;
-                _dragX = e.clientX; _dragScroll = subMenuContainerEl.scrollLeft;
-                subMenuContainerEl.style.cursor = 'grabbing';
-                e.preventDefault();
-            };
-            subMenuContainerEl._dragMove = (e) => {
-                if (_dragX === null) return;
-                subMenuContainerEl.scrollLeft = _dragScroll - (e.clientX - _dragX);
-            };
-            subMenuContainerEl._dragUp = () => {
-                _dragX = null; subMenuContainerEl.style.cursor = 'grab';
-            };
-            subMenuContainerEl.style.cursor = 'grab';
-            subMenuContainerEl.addEventListener('mousedown', subMenuContainerEl._dragDown);
-            window.addEventListener('mousemove', subMenuContainerEl._dragMove);
-            window.addEventListener('mouseup', subMenuContainerEl._dragUp);
-        }
+        // Setup scrolling for top-level submenu
+        setupMenuScrolling(subMenuContainerEl);
     }
     refreshAllButtons();
 }

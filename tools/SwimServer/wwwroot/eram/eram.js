@@ -784,7 +784,7 @@ function setupNasrSlider(sliderId, labelId, layerKey, url, renderer) {
         nasrBrightness[layerKey] = parseInt(this.value);
         document.getElementById(labelId).textContent = nasrBrightness[layerKey];
         showNasrLayer(layerKey, url, renderer);
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
     });
 }
 setupNasrSlider('rng-jroutes', 'lbl-jroutes', 'jroutes', '/api/nasr/airways?type=hi', renderAirways);
@@ -802,7 +802,7 @@ document.getElementById('rng-airports').addEventListener('input', async function
         } catch (e) { console.warn('[NASR] airports:', e); }
     }
     drawOverlay();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('rng-centerlines').addEventListener('input', async function () {
@@ -815,7 +815,7 @@ document.getElementById('rng-centerlines').addEventListener('input', async funct
         } catch (e) { console.warn('[NASR] centerlines:', e); }
     }
     drawOverlay();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 // Procedure overlay — managed via .SID/.STAR/.PROC MCA commands
@@ -845,7 +845,7 @@ document.getElementById('rng-proc').addEventListener('input', function () {
             entry.layer.eachLayer(l => l.setStyle({ color: col }));
         }
     }
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 function clearProcOverlay() {
@@ -977,14 +977,14 @@ document.getElementById('sel-nxlvl').addEventListener('change', function () {
     const v = this.value;
     nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
     updateNexrad();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('rng-nx').addEventListener('input', function () {
     nexradBrightness = parseInt(this.value);
     document.getElementById('lbl-nx').textContent = nexradBrightness;
     if (nexradLayer) nexradLayer.setOpacity(nexradBrightness / 100);
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2130,7 +2130,7 @@ function rebuildSectorCheckboxes() {
                 demoteSectorFlights(this.value);
             }
             invalidateAllMarkers(); // immediately update R indicators and FDB/LDB
-            saveSettingsToUrl();
+            saveSettingsToLocalStorage();
         });
     });
 }
@@ -2654,13 +2654,13 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
     zoomToFacility(myFacility);
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('chk-facility-only').addEventListener('change', function () {
     facilityOnly = this.checked;
     invalidateAllMarkers();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('sel-histcount').addEventListener('change', function () {
@@ -2669,25 +2669,25 @@ document.getElementById('sel-histcount').addEventListener('change', function () 
         while (hist.length > MAX_HISTORY) hist.shift();
     }
     invalidateAllMarkers();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('rng-ldb-brightness').addEventListener('input', function () {
     ldbBrightness = parseInt(this.value);
     document.getElementById('lbl-ldb-brightness').textContent = ldbBrightness;
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('sel-vector').addEventListener('change', function () {
     vectorMinutes = parseInt(this.value);
     invalidateAllMarkers();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('sel-line4').addEventListener('change', function () {
     line4Mode = this.value;
     invalidateAllMarkers();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
@@ -2699,7 +2699,7 @@ for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
     document.getElementById(id).addEventListener('change', function () {
         setBoundaryBrightness(cat, parseInt(this.value));
         document.getElementById(lblId).textContent = this.value;
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
     });
 }
 
@@ -2707,18 +2707,18 @@ document.getElementById('chk-mapbg').addEventListener('change', function () {
     showMapBg = this.checked;
     if (showMapBg) tileLayer.addTo(map);
     else map.removeLayer(tileLayer);
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('chk-mca-kb').addEventListener('change', function () {
     document.getElementById('mca').classList.toggle('show-kb', this.checked);
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 // Transp MCA: reserved for future use
 // document.getElementById('chk-transp-mca').addEventListener('change', function () {
 //     document.getElementById('map-container').classList.toggle('transp-mca', this.checked);
-//     saveSettingsToUrl();
+//     saveSettingsToLocalStorage();
 // });
 
 document.getElementById('btn-fullscreen').addEventListener('click', function () {
@@ -2732,17 +2732,17 @@ document.getElementById('btn-fullscreen').addEventListener('click', function () 
 document.getElementById('sel-fontsize').addEventListener('change', function () {
     fontSize = parseInt(this.value);
     updateFontSize();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('inp-alt-low').addEventListener('change', function () {
     altFilterLow = parseInt(this.value) || 0;
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('inp-alt-high').addEventListener('change', function () {
     altFilterHigh = parseInt(this.value) || 999;
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 function updateScopeBackground() {
@@ -3454,62 +3454,42 @@ setInterval(() => { if (selectedGufi) showFlightDetail(selectedGufi); }, 5000);
 // ════════════════════════════════════════════════════════════════════════════
 // URL-based settings persistence
 // ════════════════════════════════════════════════════════════════════════════
-function loadSettingsFromUrl() {
-    const params = new URLSearchParams(window.location.hash.slice(1));
-    myFacility = params.get('facility') || '';
-    const sectors = params.get('sectors');
-    mySectors = sectors ? new Set(sectors.split(',').filter(s => s)) : new Set();
-    if (params.has('fdb')) showFdb = params.get('fdb') !== '0';
-    if (params.has('history')) showHistory = params.get('history') !== '0';
-    if (params.has('histcount')) MAX_HISTORY = parseInt(params.get('histcount')) || 5;
-    if (params.has('vector')) vectorMinutes = parseInt(params.get('vector'));
-    if (params.has('bndbr')) {
-        const vals = params.get('bndbr').split(',').map(Number);
-        BOUNDARY_CATS.forEach((cat, i) => { if (!isNaN(vals[i])) boundaryBrightness[cat] = vals[i]; });
-    }
-    if (params.has('fontsize')) fontSize = parseInt(params.get('fontsize')) || 10;
-    if (params.has('altlow')) altFilterLow = parseInt(params.get('altlow')) || 0;
-    if (params.has('althigh')) altFilterHigh = parseInt(params.get('althigh')) || 999;
-    if (params.has('ldb')) ldbBrightness = parseInt(params.get('ldb'));
-    if (params.has('faconly')) facilityOnly = params.get('faconly') === '1';
-    if (params.has('mapbg')) showMapBg = params.get('mapbg') === '1';
-    if (params.has('kb')) {
-        document.getElementById('chk-mca-kb').checked = true;
-        document.getElementById('mca').classList.add('show-kb');
-    }
-    if (params.has('numinv')) {
-        document.getElementById('numpad-inverted').checked = false;
-    }
-    // Transp MCA: reserved for future use
-    // if (params.has('tmca')) {
-    //     document.getElementById('map-container').classList.toggle('transp-mca', true);
-    //     document.getElementById('chk-transp-mca').checked = true;
-    // }
-    if (params.has('nasrbr')) {
-        const vals = params.get('nasrbr').split(',').map(Number);
-        if (!isNaN(vals[0])) nasrBrightness.jroutes = vals[0];
-        if (!isNaN(vals[1])) nasrBrightness.vroutes = vals[1];
-        if (!isNaN(vals[2])) nasrBrightness.vors = vals[2];
-        if (!isNaN(vals[3])) nasrBrightness.airports = vals[3];
-        if (!isNaN(vals[4])) nasrBrightness.centerlines = vals[4];
-        if (!isNaN(vals[5])) nasrBrightness.proc = vals[5];
-    }
-    if (params.has('line4')) line4Mode = params.get('line4') || 'DEST';
-    if (params.has('nxlvl')) {
-        const v = params.get('nxlvl');
-        nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
-    }
-    if (params.has('nxbr')) nexradBrightness = parseInt(params.get('nxbr'));
-    if (params.has('bckgrd')) scopeBckgrd = Math.max(0, Math.min(100, parseInt(params.get('bckgrd')) || 100));
-    if (params.has('bcklght')) scopeBcklght = Math.max(0, Math.min(100, parseInt(params.get('bcklght')) || 100));
-    if (params.get('tb') === '0') window._tbVisible = false;
+function loadSettingsFromLocalStorage() {
+    try {
+        const saved = localStorage.getItem('eram-settings');
+        if (!saved) return; // Use defaults if no saved settings
 
-    // Restore map position/zoom
-    if (params.has('lat') && params.has('lng') && params.has('z')) {
-        const lat = parseFloat(params.get('lat'));
-        const lng = parseFloat(params.get('lng'));
-        const z = parseInt(params.get('z'));
-        if (!isNaN(lat) && !isNaN(lng) && !isNaN(z)) map.setView([lat, lng], z);
+        const settings = JSON.parse(saved);
+
+        myFacility = settings.facility || '';
+        mySectors = new Set(settings.sectors || []);
+        if (settings.showFdb !== undefined) showFdb = settings.showFdb;
+        if (settings.showHistory !== undefined) showHistory = settings.showHistory;
+        if (settings.MAX_HISTORY !== undefined) MAX_HISTORY = settings.MAX_HISTORY;
+        if (settings.vectorMinutes !== undefined) vectorMinutes = settings.vectorMinutes;
+        if (settings.boundaryBrightness) Object.assign(boundaryBrightness, settings.boundaryBrightness);
+        if (settings.line4Mode) line4Mode = settings.line4Mode;
+        if (settings.showMapBg !== undefined) showMapBg = settings.showMapBg;
+        if (settings.fontSize !== undefined) fontSize = settings.fontSize;
+        if (settings.altFilterLow !== undefined) altFilterLow = settings.altFilterLow;
+        if (settings.altFilterHigh !== undefined) altFilterHigh = settings.altFilterHigh;
+        if (settings.ldbBrightness !== undefined) ldbBrightness = settings.ldbBrightness;
+        if (settings.facilityOnly !== undefined) facilityOnly = settings.facilityOnly;
+        if (settings.mcaKb !== undefined) document.getElementById('chk-mca-kb').checked = settings.mcaKb;
+        if (settings.numinv !== undefined) document.getElementById('numpad-inverted').checked = !settings.numinv;
+        if (settings.nasrBrightness) Object.assign(nasrBrightness, settings.nasrBrightness);
+        if (settings.nexradLevel !== undefined) nexradLevel = settings.nexradLevel;
+        if (settings.nexradBrightness !== undefined) nexradBrightness = settings.nexradBrightness;
+        if (settings.scopeBckgrd !== undefined) scopeBckgrd = settings.scopeBckgrd;
+        if (settings.scopeBcklght !== undefined) scopeBcklght = settings.scopeBcklght;
+        if (settings.tbVisible !== undefined) window._tbVisible = settings.tbVisible;
+
+        // Restore map position/zoom
+        if (settings.mapCenter && settings.mapZoom !== undefined) {
+            map.setView([settings.mapCenter.lat, settings.mapCenter.lng], settings.mapZoom);
+        }
+    } catch (e) {
+        console.warn('Failed to load settings from localStorage:', e);
     }
 
     // Apply to UI controls
@@ -3560,49 +3540,40 @@ function loadSettingsFromUrl() {
     updateScopeBackground();
 }
 
-function saveSettingsToUrl() {
-    const params = new URLSearchParams();
-    if (myFacility) params.set('facility', myFacility);
-    if (mySectors.size) params.set('sectors', [...mySectors].join(','));
-    if (!showFdb) params.set('fdb', '0');
-    if (!showHistory) params.set('history', '0');
-    if (MAX_HISTORY !== 5) params.set('histcount', MAX_HISTORY);
-    if (vectorMinutes !== 0) params.set('vector', vectorMinutes);
-    const brVals = BOUNDARY_CATS.map(c => boundaryBrightness[c]);
-    const defaultBr = [60, 60, 60, 30];
-    if (brVals.join(',') !== defaultBr.join(',')) params.set('bndbr', brVals.join(','));
-    if (line4Mode !== 'DEST') params.set('line4', line4Mode);
-    if (showMapBg) params.set('mapbg', '1');
-    // if (document.getElementById('chk-transp-mca').checked) params.set('tmca', '1');
-    if (fontSize !== 10) params.set('fontsize', fontSize);
-    if (altFilterLow !== 0) params.set('altlow', altFilterLow);
-    if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);
-    if (ldbBrightness !== 30) params.set('ldb', ldbBrightness);
-    if (facilityOnly) params.set('faconly', '1');
-    if (document.getElementById('chk-mca-kb').checked) params.set('kb', '1');
-    if (!document.getElementById('numpad-inverted').checked) params.set('numinv', '1');
-    const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.airports, nasrBrightness.centerlines, nasrBrightness.proc];
-    const nasrDefaults = [0, 0, 15, 0, 0, 0];
-    if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
-    if (nexradLevel !== 3) params.set('nxlvl', nexradLevel === 0 ? '0' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '123');
-    if (nexradBrightness !== 30) params.set('nxbr', nexradBrightness);
-    if (scopeBckgrd !== 50) params.set('bckgrd', scopeBckgrd);
-    if (scopeBcklght !== 90) params.set('bcklght', scopeBcklght);
-    // Toolbar visibility (default on; tb=0 to hide)
-    if (!window._tbVisible) params.set('tb', '0');
-    // Replay state
-    if (replayActive && replayCurrentTime) {
-        params.set('replay', replayCurrentTime);
-        const spd = replaySpeedSel?.value;
-        if (spd && spd !== '1') params.set('rspd', spd);
+function saveSettingsToLocalStorage() {
+    const settings = {
+        facility: myFacility,
+        sectors: [...mySectors],
+        showFdb,
+        showHistory,
+        MAX_HISTORY,
+        vectorMinutes,
+        boundaryBrightness,
+        line4Mode,
+        showMapBg,
+        fontSize,
+        altFilterLow,
+        altFilterHigh,
+        ldbBrightness,
+        facilityOnly,
+        mcaKb: document.getElementById('chk-mca-kb')?.checked || false,
+        numinv: !document.getElementById('numpad-inverted')?.checked,
+        nasrBrightness,
+        nexradLevel,
+        nexradBrightness,
+        scopeBckgrd,
+        scopeBcklght,
+        tbVisible: window._tbVisible,
+        tbState: { bright: tbState.bright },
+        // Map position/zoom
+        mapCenter: map.getCenter(),
+        mapZoom: map.getZoom()
+    };
+    try {
+        localStorage.setItem('eram-settings', JSON.stringify(settings));
+    } catch (e) {
+        console.warn('Failed to save settings to localStorage:', e);
     }
-    // Map position/zoom
-    const center = map.getCenter();
-    params.set('lat', center.lat.toFixed(4));
-    params.set('lng', center.lng.toFixed(4));
-    params.set('z', map.getZoom());
-    const hash = params.toString();
-    history.replaceState(null, '', hash ? '#' + hash : window.location.pathname);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -5110,7 +5081,7 @@ function processCommand(cmd) {
         }
 
         invalidateAllMarkers();
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
 
         feedback.unshift({ type: 'ok', text: 'ACCEPT' });
         if (myFacility) feedback.splice(1, 0, { type: 'info', text: `FAC: ${myFacility}` });
@@ -5212,7 +5183,7 @@ document.addEventListener('keydown', e => {
         const next = idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1];
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
         e.preventDefault(); return;
     }
     if (e.key === 'PageDown' && !e.ctrlKey) {
@@ -5220,7 +5191,7 @@ document.addEventListener('keydown', e => {
         const next = idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0];
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
         e.preventDefault(); return;
     }
 
@@ -5928,7 +5899,7 @@ document.getElementById('fm-body').addEventListener('auxclick', e => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Toolbar state (must be global for updateToolbarBrightness access, and BEFORE loadSettingsFromUrl)
+// Toolbar state (must be global for updateToolbarBrightness access, and BEFORE loadSettingsFromLocalStorage)
 // ════════════════════════════════════════════════════════════════════════════
 const tbState = {
     masterVisible: false,
@@ -5945,10 +5916,23 @@ const tbState = {
     cursorSize: 1,
 };
 
+// Restore toolbar brightness state from localStorage (must be AFTER tbState is defined)
+try {
+    const saved = localStorage.getItem('eram-settings');
+    if (saved) {
+        const settings = JSON.parse(saved);
+        if (settings.tbState && settings.tbState.bright) {
+            Object.assign(tbState.bright, settings.tbState.bright);
+        }
+    }
+} catch (e) {
+    console.warn('Failed to restore toolbar brightness state:', e);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Init
 // ════════════════════════════════════════════════════════════════════════════
-loadSettingsFromUrl();
+loadSettingsFromLocalStorage();
 rebuildFacilityDropdown();
 rebuildSectorCheckboxes();
 
@@ -5956,7 +5940,7 @@ rebuildSectorCheckboxes();
 let _mapSaveTimer = null;
 map.on('moveend', () => {
     clearTimeout(_mapSaveTimer);
-    _mapSaveTimer = setTimeout(saveSettingsToUrl, 500);
+    _mapSaveTimer = setTimeout(saveSettingsToLocalStorage, 500);
 });
 
 window.idleOnPause = () => { if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; } };
@@ -5966,7 +5950,7 @@ document.getElementById('cmd-help-btn').onclick = () => {
     const p = document.getElementById('cmd-help-popup');
     p.style.display = p.style.display === 'block' ? 'none' : 'block';
 };
-document.getElementById('numpad-inverted').addEventListener('change', saveSettingsToUrl);
+document.getElementById('numpad-inverted').addEventListener('change', saveSettingsToLocalStorage);
 
 // ════════════════════════════════════════════════════════════════════════════
 // Master Toolbar System
@@ -6244,11 +6228,11 @@ const TB_BRIGHT = {
         [
             menu('MAP\nBRIGHT', 'map-bright', { cls: 'tb-blue' }),
             nosim('CPDLC', { cls: 'tb-blue' }),
-            incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToUrl(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToUrl(); } }),
+            incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
             incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); } }),
-            incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToUrl(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToUrl(); } }),
-            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); saveSettingsToUrl(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); saveSettingsToUrl(); } }),
-            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); saveSettingsToUrl(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); saveSettingsToUrl(); } }),
+            incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); saveSettingsToLocalStorage(); } }),
+            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); saveSettingsToLocalStorage(); } }),
             incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
             incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
             incdec('LDB', {
@@ -6269,10 +6253,10 @@ const TB_BRIGHT = {
             }),
         ],
         [
-            incdec('BCKLGHT', { cls: 'tb-green', getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { scopeBcklght = Math.max(0, scopeBcklght - 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToUrl(); }, onInc: () => { scopeBcklght = Math.min(100, scopeBcklght + 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToUrl(); } }),
-            incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); updateButtonBrightness(); saveSettingsToUrl(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); updateButtonBrightness(); saveSettingsToUrl(); } }),
-            incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); updateBorderBrightness(); saveSettingsToUrl(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); updateBorderBrightness(); saveSettingsToUrl(); } }),
-            incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); updateToolbarBackgroundBrightness(); saveSettingsToUrl(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); updateToolbarBackgroundBrightness(); saveSettingsToUrl(); } }),
+            incdec('BCKLGHT', { cls: 'tb-green', getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { scopeBcklght = Math.max(0, scopeBcklght - 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBcklght = Math.min(100, scopeBcklght + 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
+            incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); updateButtonBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); updateButtonBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); updateBorderBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); updateBorderBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); } }),
             nosim('AB BRDR'),
             incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
@@ -6929,7 +6913,7 @@ function toggleMasterToolbar() {
         refreshAllButtons();
     }
     window._tbVisible = tbState.masterVisible;
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 }
 
 // ── URL persistence for toolbar visibility ──
@@ -7169,7 +7153,7 @@ function stopReplay() {
     replayBar.style.display = 'none';
     replayStatusEl.textContent = '';
     replayTimeEl.textContent = '';
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 
     // Reconnect to live
     connectWs();
@@ -7181,7 +7165,7 @@ function replayThrottleSave() {
     if (_replaySaveTimer) return;
     _replaySaveTimer = setTimeout(() => {
         _replaySaveTimer = null;
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
     }, 3000);
 }
 

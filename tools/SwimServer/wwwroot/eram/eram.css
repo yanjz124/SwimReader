@@ -451,6 +451,10 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 .tb-btn .tb-tear:hover {
     border-color: #ffffff !important;
 }
+/* Disabled tearoff (grey when active tearoff exists) — color set dynamically in JavaScript */
+.tb-btn .tb-tear.tb-tear-disabled {
+    cursor: default !important;
+}
 
 /* Button content area (label + value) with hover border effect */
 .tb-btn .tb-content {
@@ -536,6 +540,39 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 .tb-submenu::-webkit-scrollbar { height: 0px; }
 .tb-submenu::-webkit-scrollbar-thumb { background: #777; border-radius: 2px; }
 .tb-submenu::-webkit-scrollbar-track { background: #222; }
+
+/* Floating tearoff — detached button (draggable by tearoff strip) */
+.tb-floating-tearoff {
+    display: flex;
+    position: relative;
+}
+
+/* Tearoff marked for deletion */
+.tb-floating-tearoff .tb-btn.tb-delete-selected {
+    position: relative;
+    opacity: 0.7;
+}
+
+.tb-floating-tearoff .tb-btn.tb-delete-selected::after {
+    content: '✕';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 24px;
+    color: #ff4444;
+    font-weight: bold;
+}
+
+/* Floating menu — popup menu from floating button */
+.tb-floating-menu {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    background: #0000D4 !important;
+    border: 1px solid #FFFFFF !important;
+    white-space: nowrap;
+}
 
 /* Left/right grey bars flanking the button grid */
 .tb-side-bar {

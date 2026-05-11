@@ -486,6 +486,13 @@ body.tb-active #sidebar-wrapper { top: 70px; }
     color: #6666aa; font-size: 6px; line-height: 6px;
 }
 
+/* Momentary toggle indicator triangle (top right) */
+.tb-btn .tb-momentary-ind {
+    position: absolute; top: 1px; right: 1px;
+    font-size: 7px; line-height: 1; font-weight: bold;
+    pointer-events: none;
+}
+
 /* ── Special button backgrounds ── */
 /* Black background (RANGE, ALT LIM) */
 .tb-btn.tb-dark { background: #000; }

@@ -45,6 +45,8 @@ const ldrLenOverrides = new Map(); // gufi → leader length level (0-3), defaul
 const driActive = new Map();       // gufi → 'J' (standard 5nm) or 'T' (reduced 3nm)
 const dwellLocked = new Set();     // GUFIs with persistent dwell emphasis (toggled via Field A click)
 const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indicator) toggled on
+let codeButtonPressed = false;     // momentary CODE button state — show squawk codes when true
+let speedButtonPressed = false;    // momentary SPEED button state — show speed instead of handoff when true
 const activeTearoffs = new Map();  // btnKey → { floatingEl, buttonClone } — toolbar tearoff state
 const activeFloatingMenus = new Map(); // btnKey → { floatingMenuEl, anchorEl } — floating menu state
 let tearoffDeleteMode = false;  // when true, left-click marks for deletion, middle-click deletes
@@ -1475,13 +1477,19 @@ function buildMarkerHtml(f, cls) {
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
         vciActive.delete(f.gufi);
-        // Limited Data Block (2 lines) — no leader line, right next to target
+        // Limited Data Block (2-3 lines) — no leader line, right next to target
         const ldbOp = ldbBrightness / 100;
         const l1 = f.callsign || '???';
         const alt = f.reportedAltitude ?? f.assignedAltitude;
         const l2 = alt != null ? String(Math.round(alt / 100)).padStart(3, '0') : '';
         const dbCls = isEmrg ? ' emrg' : '';
-        html += `<div class="ac-db ldb${dbCls}" style="left:${Math.ceil(CHAR_W)}px; top:${-LINE_H}px; opacity:${ldbOp};">${l1}\n${l2}</div>`;
+        // Add third line with squawk code when CODE button is pressed
+        let ldbContent = `${l1}\n${l2}`;
+        if (codeButtonPressed) {
+            const squawk = f.squawk ? String(f.squawk).padStart(4, '0') : '    ';
+            ldbContent += `\n${squawk}`;
+        }
+        html += `<div class="ac-db ldb${dbCls}" style="left:${Math.ceil(CHAR_W)}px; top:${-LINE_H}px; opacity:${ldbOp};">${ldbContent}</div>`;
     }
     // ldbBrightness === 0 for LDB → no data block at all
 
@@ -1733,6 +1741,12 @@ function formatLine3(f, cls) {
     // Normal Field E: single-letter destination + 3-digit groundspeed, or just groundspeed
     const gsStr = destLetter && gs ? `${cid}${destLetter}${gs}` : gs ? `${cid} ${gs}` : cid;
 
+    // ── CODE button: show squawk code when pressed ──
+    if (codeButtonPressed) {
+        const squawk = f.squawk ? String(f.squawk).padStart(4, '0') : '    ';
+        return `${cid}${squawk}`;
+    }
+
     // ── ERAM Field E priority (per specification) ──
 
     // 1. Special squawk codes (highest priority, static display)
@@ -1742,6 +1756,15 @@ function formatLine3(f, cls) {
     if (f.squawk === '1276') return `${cid} ADIZ`;
     if (f.squawk === '7400') return `${cid} LLNK`;
     if (f.squawk === '7777') return `${cid} AFIO`;
+
+    // 1.5 SPEED button: show speed instead of handoff when pressed
+    if (speedButtonPressed) {
+        const hoEvt = hoEventType(f.handoffEvent);
+        if (hoEvt && f.handoffReceiving) {
+            // Flight has active handoff and SPEED button is pressed — show speed
+            return gsStr;
+        }
+    }
 
     // 2. Active handoff — flash in Field E (uses global flashTime so ALL tracks sync)
     //    H = proposed, O = accepted/executing, K = forced acceptance (/OK)
@@ -6624,16 +6647,19 @@ const TB_DB_FIELDS = {
                 cls: 'tb-toggle-grey',
                 isOn: () => false,
                 onToggle: () => {},
+                isMomentary: true,
             }),
             toggle('CODE', {
                 cls: 'tb-toggle-grey',
                 isOn: () => false,
                 onToggle: () => {},
+                isMomentary: true,
             }),
             toggle('SPEED', {
                 cls: 'tb-toggle-grey',
                 isOn: () => false,
                 onToggle: () => {},
+                isMomentary: true,
             }),
             toggle('DEST', {
                 cls: 'tb-toggle-grey',
@@ -6852,7 +6878,35 @@ function createFloatingTearoff(btnKey, spec) {
             buttonClone.addEventListener('click', (e) => {
                 if (!e.target.closest('.tb-tear')) {
                     e.stopPropagation();
-                    // In delete mode, left-click marks tearoff for deletion
+                    // Skip normal toggle for momentary buttons (they only respond to hold, not click)
+                    if (!(spec.type === 'toggle' && spec.isMomentary)) {
+                        // In delete mode, left-click marks tearoff for deletion
+                        if (tearoffDeleteMode) {
+                            if (selectedTearoffsForDeletion.has(btnKey)) {
+                                selectedTearoffsForDeletion.delete(btnKey);
+                                buttonClone.classList.remove('tb-delete-selected');
+                            } else {
+                                selectedTearoffsForDeletion.add(btnKey);
+                                buttonClone.classList.add('tb-delete-selected');
+                            }
+                        } else {
+                            // For menu buttons, pass the buttonClone as the anchor so menu opens next to floating button
+                            handleBtnAction(spec, btnKey, false, spec.type === 'menu' ? buttonClone : undefined);
+                        }
+                    }
+                }
+            });
+
+            // Mousedown: handle momentary toggle and middle-click
+            buttonClone.addEventListener('mousedown', (e) => {
+                const isTearoff = e.target.closest('.tb-tear');
+
+                // Momentary toggle: left-click shows "on" state while held
+                if (e.button === 0 && !isTearoff && spec.type === 'toggle' && spec.isMomentary) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    // Check delete mode first (allow marking for deletion)
                     if (tearoffDeleteMode) {
                         if (selectedTearoffsForDeletion.has(btnKey)) {
                             selectedTearoffsForDeletion.delete(btnKey);
@@ -6861,16 +6915,24 @@ function createFloatingTearoff(btnKey, spec) {
                             selectedTearoffsForDeletion.add(btnKey);
                             buttonClone.classList.add('tb-delete-selected');
                         }
-                    } else {
-                        // For menu buttons, pass the buttonClone as the anchor so menu opens next to floating button
-                        handleBtnAction(spec, btnKey, false, spec.type === 'menu' ? buttonClone : undefined);
+                        return;
                     }
-                }
-            });
 
-            // Middle click (skip if on tearoff strip)
-            buttonClone.addEventListener('mousedown', (e) => {
-                if (e.button === 1 && !e.target.closest('.tb-tear')) {
+                    buttonClone.classList.add('tb-toggle-on');
+                    updateMomentaryIndicator(buttonClone, spec, true);
+                    // Track momentary button state
+                    if (spec.label === 'CODE') {
+                        codeButtonPressed = true;
+                        invalidateAllMarkers();
+                    } else if (spec.label === 'SPEED') {
+                        speedButtonPressed = true;
+                        invalidateAllMarkers();
+                    }
+                    return;
+                }
+
+                // Middle click
+                if (e.button === 1 && !isTearoff) {
                     e.preventDefault();
                     e.stopPropagation();
                     // Check if in delete mode and delete the floating tearoff
@@ -6894,6 +6956,39 @@ function createFloatingTearoff(btnKey, spec) {
                         console.log('Tearoffs deleted');
                     } else {
                         handleBtnAction(spec, btnKey, true, spec.type === 'menu' ? buttonClone : undefined);
+                    }
+                }
+            });
+
+            // Mouseup: revert momentary toggle to off state
+            buttonClone.addEventListener('mouseup', (e) => {
+                if (spec.type === 'toggle' && spec.isMomentary) {
+                    e.stopPropagation();
+                    buttonClone.classList.remove('tb-toggle-on');
+                    updateMomentaryIndicator(buttonClone, spec, false);
+                    // Track momentary button state
+                    if (spec.label === 'CODE') {
+                        codeButtonPressed = false;
+                        invalidateAllMarkers();
+                    } else if (spec.label === 'SPEED') {
+                        speedButtonPressed = false;
+                        invalidateAllMarkers();
+                    }
+                }
+            });
+
+            // Mouseleave: revert momentary toggle if mouse leaves button while held
+            buttonClone.addEventListener('mouseleave', (e) => {
+                if (spec.type === 'toggle' && spec.isMomentary) {
+                    buttonClone.classList.remove('tb-toggle-on');
+                    updateMomentaryIndicator(buttonClone, spec, false);
+                    // Track momentary button state
+                    if (spec.label === 'CODE') {
+                        codeButtonPressed = false;
+                        invalidateAllMarkers();
+                    } else if (spec.label === 'SPEED') {
+                        speedButtonPressed = false;
+                        invalidateAllMarkers();
                     }
                 }
             });
@@ -7066,6 +7161,19 @@ function updateFloatingMenuButton(clickedEl, spec) {
     }
 }
 
+function updateMomentaryIndicator(el, spec, isPressed) {
+    const ind = el.querySelector('.tb-momentary-ind');
+    if (!ind) return;
+
+    // For momentary buttons, determine color based on whether button is currently pressed
+    // When pressed (isPressed=true): button is ON (gray), so show BLACK triangle
+    // When not pressed (isPressed=false): button is OFF (black), so show GRAY triangle
+    const triangleColor = isPressed ? '#000000' : '#C7C7C7';
+
+    // Set triangle color
+    ind.style.color = triangleColor;
+}
+
 function createButton(spec, panelId, rowIdx, colIdx) {
     const el = document.createElement('div');
     el.className = 'tb-btn';
@@ -7109,6 +7217,15 @@ function createButton(spec, panelId, rowIdx, colIdx) {
         content.appendChild(ind);
     }
 
+    // Momentary toggle indicator triangle
+    if (spec.type === 'toggle' && spec.isMomentary) {
+        const momInd = document.createElement('div');
+        momInd.className = 'tb-momentary-ind';
+        momInd.textContent = '◀';
+        el.appendChild(momInd);
+        updateMomentaryIndicator(el, spec, false);
+    }
+
     el.appendChild(content);
 
     // Toggle state
@@ -7129,34 +7246,70 @@ function createButton(spec, panelId, rowIdx, colIdx) {
             e.stopPropagation();
             // Ignore clicks on the tearoff strip
             if (!e.target.closest('.tb-tear')) {
-                // For menu buttons in floating menus, pass the button element as anchor
-                const isInFloatingMenu = el.closest('.tb-floating-menu');
-                const anchorForMenu = (spec.type === 'menu' && isInFloatingMenu) ? el : undefined;
-                handleBtnAction(spec, key, false, anchorForMenu);
-                // Update this button's visual state immediately (for menu buttons and floating menu buttons)
-                if (spec.type === 'toggle' && spec.isOn) {
-                    const shouldBeOn = spec.isOn();
-                    el.classList.toggle('tb-toggle-on', shouldBeOn);
-                    // Also update floating menu button if in a floating menu
-                    updateFloatingMenuButton(el, spec);
-                } else if (spec.type === 'incdec' && spec.getValue) {
-                    const valDiv = el.querySelector('.tb-value');
-                    if (valDiv) {
-                        valDiv.textContent = spec.formatValue(spec.getValue());
+                // Skip normal toggle for momentary buttons (they only respond to hold, not click)
+                if (!(spec.type === 'toggle' && spec.isMomentary)) {
+                    // For menu buttons in floating menus, pass the button element as anchor
+                    const isInFloatingMenu = el.closest('.tb-floating-menu');
+                    const anchorForMenu = (spec.type === 'menu' && isInFloatingMenu) ? el : undefined;
+                    handleBtnAction(spec, key, false, anchorForMenu);
+                    // Update this button's visual state immediately (for menu buttons and floating menu buttons)
+                    if (spec.type === 'toggle' && spec.isOn) {
+                        const shouldBeOn = spec.isOn();
+                        el.classList.toggle('tb-toggle-on', shouldBeOn);
+                        // Also update floating menu button if in a floating menu
+                        updateFloatingMenuButton(el, spec);
+                    } else if (spec.type === 'incdec' && spec.getValue) {
+                        const valDiv = el.querySelector('.tb-value');
+                        if (valDiv) {
+                            valDiv.textContent = spec.formatValue(spec.getValue());
+                        }
+                        // Also update floating menu button if in a floating menu
+                        updateFloatingMenuButton(el, spec);
                     }
-                    // Also update floating menu button if in a floating menu
-                    updateFloatingMenuButton(el, spec);
                 }
             }
         });
 
-        // Middle click via mousedown
+        // Mousedown: handle momentary toggle and middle-click
         el.addEventListener('mousedown', (e) => {
+            const isTearoff = e.target.closest('.tb-tear');
+
+            // Momentary toggle: left-click shows "on" state while held
+            if (e.button === 0 && !isTearoff && spec.type === 'toggle' && spec.isMomentary) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // Check delete mode first (allow marking for deletion)
+                if (tearoffDeleteMode) {
+                    if (selectedTearoffsForDeletion.has(key)) {
+                        selectedTearoffsForDeletion.delete(key);
+                        el.classList.remove('tb-delete-selected');
+                    } else {
+                        selectedTearoffsForDeletion.add(key);
+                        el.classList.add('tb-delete-selected');
+                    }
+                    return;
+                }
+
+                el.classList.add('tb-toggle-on');
+                updateMomentaryIndicator(el, spec, true);
+                // Track momentary button state
+                if (spec.label === 'CODE') {
+                    codeButtonPressed = true;
+                    invalidateAllMarkers();
+                } else if (spec.label === 'SPEED') {
+                    speedButtonPressed = true;
+                    invalidateAllMarkers();
+                }
+                return;
+            }
+
+            // Middle click
             if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
                 // Ignore middle-clicks on the tearoff strip
-                if (!e.target.closest('.tb-tear')) {
+                if (!isTearoff) {
                     handleBtnAction(spec, key, true);
                     // Update this button's visual state immediately
                     if (spec.type === 'incdec' && spec.getValue) {
@@ -7167,6 +7320,39 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                         // Also update floating menu button if in a floating menu
                         updateFloatingMenuButton(el, spec);
                     }
+                }
+            }
+        });
+
+        // Mouseup: revert momentary toggle to off state
+        el.addEventListener('mouseup', (e) => {
+            if (spec.type === 'toggle' && spec.isMomentary) {
+                e.stopPropagation();
+                el.classList.remove('tb-toggle-on');
+                updateMomentaryIndicator(el, spec, false);
+                // Track momentary button state
+                if (spec.label === 'CODE') {
+                    codeButtonPressed = false;
+                    invalidateAllMarkers();
+                } else if (spec.label === 'SPEED') {
+                    speedButtonPressed = false;
+                    invalidateAllMarkers();
+                }
+            }
+        });
+
+        // Mouseleave: revert momentary toggle if mouse leaves button while held
+        el.addEventListener('mouseleave', (e) => {
+            if (spec.type === 'toggle' && spec.isMomentary) {
+                el.classList.remove('tb-toggle-on');
+                updateMomentaryIndicator(el, spec, false);
+                // Track momentary button state
+                if (spec.label === 'CODE') {
+                    codeButtonPressed = false;
+                    invalidateAllMarkers();
+                } else if (spec.label === 'SPEED') {
+                    speedButtonPressed = false;
+                    invalidateAllMarkers();
                 }
             }
         });
@@ -7224,6 +7410,10 @@ function refreshButton(key) {
     // Update toggle state
     if (spec.type === 'toggle' && !isNosim && spec.isOn) {
         el.classList.toggle('tb-toggle-on', spec.isOn());
+        // Update momentary indicator if it's a momentary button (only if not currently pressed)
+        if (spec.isMomentary && !el.classList.contains('tb-toggle-on')) {
+            updateMomentaryIndicator(el, spec, false);
+        }
     }
 
     // Update menu-open state

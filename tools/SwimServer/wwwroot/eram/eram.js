@@ -5425,14 +5425,12 @@ document.addEventListener('mousedown', e => {
 
 // Re-clamp on window resize
 window.addEventListener('resize', () => {
-    clampBox(document.getElementById('mca-ra-stack'));
     const poMenu = document.getElementById('po-menu');
     if (poMenu.style.display !== 'none') clampBox(poMenu);
     clampBox(document.getElementById('time-view'));
     const fm = document.getElementById('field-menu');
     if (fm.style.display !== 'none') clampBox(fm);
-    const mtb = document.getElementById('master-toolbar-container');
-    if (mtb && mtb.classList.contains('tb-visible')) clampBox(mtb);
+    // Skip mca-ra-stack to prevent shifting its bottom/right positioned element
 });
 
 setupBoxDrag(document.getElementById('mca-ra-stack'));

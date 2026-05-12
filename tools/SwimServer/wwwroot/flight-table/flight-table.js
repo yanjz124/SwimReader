@@ -1255,6 +1255,38 @@ async function searchHistory(query) {
 
 // ── Filter events ────────────────────────────────────────────
 const searchFieldEl = document.getElementById('searchField');
+
+// URL persistence — keep search / field / status / facility / rules in the
+// hash so links are shareable. hash is preferred over query so server doesn't
+// need to handle them.
+let _saveUrlTimer = null;
+function saveSearchToUrl() {
+    if (_saveUrlTimer) clearTimeout(_saveUrlTimer);
+    _saveUrlTimer = setTimeout(() => {
+        _saveUrlTimer = null;
+        const p = new URLSearchParams();
+        if (searchTerm) p.set('q', searchTerm);
+        if (searchField && searchField !== 'all') p.set('field', searchField);
+        if (filterStatus && filterStatus.value) p.set('status', filterStatus.value);
+        if (filterFacility && filterFacility.value) p.set('facility', filterFacility.value);
+        if (filterRules && filterRules.value) p.set('rules', filterRules.value);
+        const s = p.toString();
+        history.replaceState(null, '', s ? '#' + s : location.pathname + location.search);
+    }, 200);
+}
+
+// Restore from URL hash on initial load
+(function restoreSearchFromUrl() {
+    try {
+        const p = new URLSearchParams(location.hash.slice(1));
+        const q = p.get('q'); if (q) { searchTerm = q; searchEl.value = q; }
+        const f = p.get('field'); if (f && searchFieldEl) { searchField = f; searchFieldEl.value = f; }
+        const st = p.get('status'); if (st && filterStatus) filterStatus.value = st;
+        const fac = p.get('facility'); if (fac && filterFacility) filterFacility.value = fac;
+        const r = p.get('rules'); if (r && filterRules) filterRules.value = r;
+    } catch {}
+})();
+
 let searchTimeout;
 searchEl.addEventListener('input', () => {
     clearTimeout(searchTimeout);
@@ -1264,6 +1296,7 @@ searchEl.addEventListener('input', () => {
         // Invalidate the parsed-clauses cache when query changes
         matchesSearch._lastQ = null;
         renderNow();   // user typed — show new filter immediately
+        saveSearchToUrl();
     }, 200);
 });
 if (searchFieldEl) {
@@ -1272,11 +1305,12 @@ if (searchFieldEl) {
         matchesSearch._lastQ = null;
         if (searchTerm.length >= 2) searchHistory(searchTerm.toUpperCase());
         renderNow();
+        saveSearchToUrl();
     });
 }
-filterStatus.addEventListener('change', renderNow);
-filterFacility.addEventListener('change', renderNow);
-filterRules.addEventListener('change', renderNow);
+filterStatus.addEventListener('change', () => { renderNow(); saveSearchToUrl(); });
+filterFacility.addEventListener('change', () => { renderNow(); saveSearchToUrl(); });
+filterRules.addEventListener('change', () => { renderNow(); saveSearchToUrl(); });
 
 // ── Pin / unpin (server-side, persists across users + restarts) ─
 // Map gufi → { pinned, pinnedAt, unpinnedAt, callsign, origin, destination }

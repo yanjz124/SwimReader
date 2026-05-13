@@ -67,7 +67,7 @@ function applyRotation(deg) {
 rotInput.addEventListener('input', () => applyRotation(parseInt(rotInput.value) || 360));
 
 // ── Font size adjustment ───────────────────────────────────────────────────
-let dbFontSize = 12;
+let dbFontSize = 15;
 const fontInput = document.getElementById('font-size');
 fontInput.addEventListener('input', () => {
     dbFontSize = parseInt(fontInput.value) || 13;

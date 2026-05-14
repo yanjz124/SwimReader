@@ -158,6 +158,7 @@ var tais = new TaisBridge(jsonOpts);
 var tfms = new TfmsBridge(tfmsUser, tfmsPass, tfmsQueue, tfmsHost, tfmsVpn, jsonOpts);
 // ITWS bridge — own Solace session for terminal weather products
 var itws = new ItwsBridge(itwsUser, itwsPass, itwsQueue, itwsHost, itwsVpn, jsonOpts);
+itws.SetHistoryDir(Path.Combine(Directory.GetCurrentDirectory(), "itws-history"));
 
 // STDDS message telemetry — in-memory counters only, no disk I/O
 // Key: "TOPIC_PREFIX/ROOT_ELEMENT" → count (e.g. "TAIS/TATrackAndFlightPlan" → 12345)
@@ -905,6 +906,8 @@ var taisFlushTimer = new Timer(_ => tais.FlushDirty(), null, TimeSpan.FromSecond
 var taisPurgeTimer = new Timer(_ => tais.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+// ITWS: persist 24h time-series history to disk every 5 min (and on shutdown)
+var itwsHistoryTimer = new Timer(_ => itws.SaveHistory(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 // Centralized disk-budget enforcement across all persisted data (replay + flight-history + tdls-history).
 var budgetTimer = new Timer(_ => PersistenceBudget.Enforce(), null, TimeSpan.FromMinutes(2), TimeSpan.FromHours(1));
 // Hourly pin grace-period cleanup (24h floor, 4-day soft retention).
@@ -961,8 +964,8 @@ var asdexSnapshotTimer = new Timer(_ =>
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer /*, poFlushTimer, investigationFlushTimer */ };
-app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); });
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer /*, poFlushTimer, investigationFlushTimer */ };
+app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); itws.SaveHistory(); });
 
 // Replay endpoints (WebSocket + REST)
 replayServer.MapEndpoints(app);

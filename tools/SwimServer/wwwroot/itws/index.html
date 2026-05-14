@@ -11,8 +11,16 @@
     --text: #d4d4aa;
     --dim: #888;
     --accent: #cccc44;
+    --good: #6f6;
     --warn: #ff8c00;
     --emerg: #ff4444;
+
+    --nws1: #00b050;   /* light precip (level 1) */
+    --nws2: #00ff00;   /* moderate */
+    --nws3: #ffff00;   /* heavy */
+    --nws4: #ff8000;   /* very heavy */
+    --nws5: #ff0000;   /* extreme */
+    --nws6: #ff00ff;   /* hail/severe */
   }
   * { box-sizing: border-box; }
   body {
@@ -30,26 +38,25 @@
     border-bottom: 1px solid var(--border);
     background: #111;
   }
-  header h1 {
-    margin: 0;
-    font-size: 18px;
-    color: var(--accent);
-    letter-spacing: 1px;
-  }
+  header h1 { margin: 0; font-size: 18px; color: var(--accent); letter-spacing: 1px; }
   header .stats { color: var(--dim); font-size: 12px; }
   header .stats .v { color: var(--text); }
-  header .conn { margin-left: auto; padding: 2px 8px; border: 1px solid var(--border); border-radius: 2px; font-size: 11px; }
-  header .conn.ok  { color: #6f6; border-color: #353; }
+  header .right { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+  header .conn { padding: 2px 8px; border: 1px solid var(--border); border-radius: 2px; font-size: 11px; }
+  header .conn.ok  { color: var(--good); border-color: #353; }
   header .conn.bad { color: var(--emerg); border-color: #533; }
+  header .api { color: var(--dim); text-decoration: none; font-size: 11px; }
+  header .api:hover { color: var(--accent); }
 
   .layout {
     display: grid;
-    grid-template-columns: 280px 1fr 520px;
+    grid-template-columns: 200px 1fr;
     height: calc(100vh - 46px);
   }
-  .col { overflow: auto; }
-  .col + .col { border-left: 1px solid var(--border); }
-  .col h2 {
+
+  /* ── Airport list ──────────────────────────── */
+  #airports { overflow-y: auto; border-right: 1px solid var(--border); }
+  #airports h2 {
     margin: 0;
     padding: 8px 12px;
     font-size: 11px;
@@ -60,79 +67,164 @@
     position: sticky;
     top: 0;
   }
-
-  .row {
+  .ap-row {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     padding: 6px 12px;
     border-bottom: 1px solid #1a1a1a;
     cursor: pointer;
   }
-  .row:hover { background: #1c1c0c; }
-  .row.active { background: #2a2a08; color: var(--accent); }
-  .row .name { color: var(--text); }
-  .row.active .name { color: var(--accent); }
-  .row .count { color: var(--dim); font-size: 11px; }
+  .ap-row:hover { background: #1c1c0c; }
+  .ap-row.active { background: #2a2a08; color: var(--accent); }
+  .ap-row .n { font-weight: bold; }
+  .ap-row .c { color: var(--dim); font-size: 11px; }
+  .ap-row.alert .n { color: var(--emerg); }
 
-  .detail { padding: 16px; }
-  .detail .meta {
+  /* ── Dashboard ─────────────────────────────── */
+  #dash { overflow-y: auto; padding: 16px; }
+  .empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 70vh; color: var(--dim); gap: 8px;
+  }
+
+  .grid {
     display: grid;
-    grid-template-columns: 130px 1fr;
-    row-gap: 4px;
-    column-gap: 8px;
-    margin-bottom: 16px;
-  }
-  .detail .meta .k { color: var(--dim); }
-  .detail .meta .v { color: var(--text); word-break: break-all; }
-  .detail pre {
-    background: #050505;
-    border: 1px solid var(--border);
-    padding: 12px;
-    margin: 0;
-    overflow: auto;
-    max-height: calc(100vh - 320px);
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: #c8c890;
-    font-size: 12px;
-  }
-  .empty { color: var(--dim); padding: 16px; text-align: center; }
-  .download {
-    display: inline-block;
-    margin-top: 6px;
-    padding: 4px 10px;
-    border: 1px solid var(--border);
-    color: var(--text);
-    text-decoration: none;
-    font-size: 11px;
-  }
-  .download:hover { border-color: var(--accent); color: var(--accent); }
-  .toolbar {
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
+    grid-template-columns: repeat(12, 1fr);
     gap: 12px;
-    align-items: center;
   }
-  .toolbar input {
-    background: #050505;
-    color: var(--text);
+  .card {
+    background: var(--panel);
     border: 1px solid var(--border);
-    padding: 4px 8px;
-    font-family: inherit;
-    font-size: 12px;
-    width: 180px;
+    padding: 12px 14px;
+    border-radius: 3px;
+    min-height: 120px;
   }
-  .toolbar .api-link {
-    color: var(--dim);
-    text-decoration: none;
-    margin-left: auto;
+  .card h3 {
+    margin: 0 0 10px 0;
     font-size: 11px;
+    letter-spacing: 1px;
+    color: var(--dim);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
   }
-  .toolbar .api-link:hover { color: var(--accent); }
+  .card .ago { color: var(--dim); font-weight: normal; font-size: 10px; }
+  .card.span4 { grid-column: span 4; }
+  .card.span6 { grid-column: span 6; }
+  .card.span8 { grid-column: span 8; }
+  .card.span12 { grid-column: span 12; }
+
+  /* Wind card ───────── */
+  .wind {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    justify-content: center;
+  }
+  .wind .arrow {
+    width: 90px; height: 90px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .wind .arrow .needle {
+    position: absolute;
+    left: 50%; top: 6px;
+    width: 4px; height: 38px;
+    background: var(--accent);
+    transform-origin: 50% 39px;
+    transform: translateX(-50%);
+    transition: transform 0.5s ease;
+  }
+  .wind .arrow .ctr {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 10px; height: 10px;
+    background: var(--accent);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .wind .arrow .lbl {
+    position: absolute; left: 50%; bottom: -22px;
+    transform: translateX(-50%);
+    font-size: 10px; color: var(--dim);
+  }
+  .wind .vals { text-align: center; }
+  .wind .vals .big { font-size: 38px; color: var(--accent); line-height: 1; }
+  .wind .vals .unit { color: var(--dim); font-size: 13px; }
+  .wind .vals .dir  { color: var(--text); font-size: 16px; margin-top: 6px; }
+  .wind .vals .gust { color: var(--warn); font-size: 13px; margin-top: 4px; min-height: 1em; }
+
+  /* Sensor / status indicators ───────── */
+  .status-list { list-style: none; padding: 0; margin: 0; }
+  .status-list li {
+    display: flex; justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .status-list li:last-child { border-bottom: none; }
+  .status-list .ok   { color: var(--good); }
+  .status-list .bad  { color: var(--emerg); }
+  .status-list .warn { color: var(--warn); }
+  .status-list .name { color: var(--text); }
+
+  /* Alerts ───────── */
+  table.alerts {
+    width: 100%; border-collapse: collapse;
+    font-size: 12px;
+  }
+  table.alerts th, table.alerts td {
+    text-align: left; padding: 4px 8px;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  table.alerts th { color: var(--dim); font-weight: normal; font-size: 11px; letter-spacing: 1px; }
+  table.alerts tr.alert td { color: var(--emerg); }
+  table.alerts tr.alert td.t { font-weight: bold; }
+  table.alerts .none { color: var(--dim); font-style: italic; }
+
+  /* Hazard / graphics text ───────── */
+  .hazard-text {
+    background: #050505;
+    padding: 8px;
+    color: var(--text);
+    white-space: pre-wrap;
+    line-height: 1.4;
+    font-size: 12px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  /* Precip canvas ───────── */
+  .precip-wrap { display: flex; gap: 12px; align-items: flex-start; }
+  #precipCanvas { background: #050505; border: 1px solid var(--border); image-rendering: pixelated; }
+  .precip-legend { font-size: 11px; }
+  .precip-legend .sw {
+    display: inline-block; width: 14px; height: 10px; vertical-align: middle;
+    margin-right: 6px; border: 1px solid #000;
+  }
+  .precip-legend > div { margin: 3px 0; color: var(--dim); }
+
+  /* Storm cells ───────── */
+  .storm-row { display: flex; justify-content: space-between; padding: 4px 0; }
+  .storm-row .id { color: var(--accent); }
+
+  /* Raw product list ───────── */
+  .products-list { font-size: 12px; }
+  .product-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 0; border-bottom: 1px solid #1a1a1a;
+  }
+  .product-row a { color: var(--dim); text-decoration: none; font-size: 11px; }
+  .product-row a:hover { color: var(--accent); }
+  .product-row .pname { color: var(--text); }
+  .product-row .pmeta { color: var(--dim); font-size: 11px; }
 </style>
 </head>
 <body>
+
 <header>
   <h1>ITWS</h1>
   <div class="stats">
@@ -141,69 +233,499 @@
     sites <span class="v" id="siteCount">0</span> ·
     latest <span class="v" id="latestCount">0</span>
   </div>
-  <div class="conn bad" id="conn">DISCONNECTED</div>
+  <div class="right">
+    <a class="api" href="/api/itws/latest" target="_blank">REST API ↗</a>
+    <div class="conn bad" id="conn">DISCONNECTED</div>
+  </div>
 </header>
 
 <div class="layout">
-  <div class="col" id="airportsCol">
+  <div id="airports">
     <h2>AIRPORTS</h2>
-    <div id="airports"></div>
+    <div id="airportsList"></div>
   </div>
-
-  <div class="col" id="productsCol">
-    <h2 id="productsHeader">PRODUCTS</h2>
-    <div class="toolbar">
-      <input id="filter" placeholder="filter products…" />
-      <a class="api-link" href="/api/itws/latest" target="_blank">REST API ↗</a>
+  <div id="dash">
+    <div class="empty" id="dashEmpty">
+      <div style="color: var(--accent); font-size: 24px;">ITWS</div>
+      <div>Integrated Terminal Weather System</div>
+      <div>Select an airport to view its weather dashboard</div>
     </div>
-    <div id="products"></div>
-  </div>
-
-  <div class="col">
-    <h2 id="detailHeader">DETAIL</h2>
-    <div class="detail" id="detail">
-      <div class="empty">Select a product to view its latest raw XML.</div>
-    </div>
+    <div id="dashContent" style="display:none"></div>
   </div>
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let state = {
-  airports: [],       // [{airport, messageCount, products: []}]
-  products: [],       // current product list shown in middle column
-  selectedAirport: null,  // null = all airports
-  selectedKey: null,
-  // latest map: key -> {key, productType, site, topic, messageTime, receivedAt, xmlSize}
-  latest: new Map(),
+
+const state = {
+  airports: [],
+  selected: null,
+  latestByKey: new Map(),       // key → {key, productType, site, subId, ...}
+  byAirport: new Map(),          // airport → Map(productType → [messages])
+  detailCache: new Map(),        // key → parsed XML doc
 };
 
-// ---------- WebSocket ----------
+// ───────── Parse helpers ─────────────────────────────
+function parseXml(xml) {
+  return new DOMParser().parseFromString(xml, "text/xml");
+}
+function txt(node, tag) {
+  if (!node) return null;
+  const el = node.getElementsByTagName(tag)[0];
+  return el ? el.textContent.trim() : null;
+}
+function num(node, tag) {
+  const v = txt(node, tag);
+  return v === null || v === "" ? null : Number(v);
+}
+function allOf(node, tag) {
+  return node ? [...node.getElementsByTagName(tag)] : [];
+}
+function epochToDate(sec) {
+  if (sec === null || sec === undefined) return null;
+  const s = Number(sec);
+  if (s <= 0 || !isFinite(s)) return null;
+  return new Date(s * 1000);
+}
+function fmtTime(d) {
+  if (!d) return "—";
+  return d.toISOString().slice(11, 19) + "Z";
+}
+function ago(d) {
+  if (!d) return "";
+  const s = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (s < 60) return `${s.toFixed(0)}s ago`;
+  if (s < 3600) return `${(s / 60).toFixed(0)}m ago`;
+  return `${(s / 3600).toFixed(1)}h ago`;
+}
+
+// Compass direction abbreviation
+function compass(deg) {
+  if (deg === null || deg === 999 || !isFinite(deg)) return null;
+  const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  return dirs[Math.round((deg % 360) / 22.5) % 16];
+}
+
+// Configured Alerts → wind + per-runway alerts
+function parseAlerts(xml) {
+  const doc = parseXml(xml);
+  const ca = doc.getElementsByTagName("configured_alert")[0];
+  if (!ca) return null;
+  const wd = num(ca, "ca_aw_wind_dir");
+  const ws = num(ca, "ca_aw_wind_speed");
+  const wg = num(ca, "ca_aw_gust_speed");
+  const t  = epochToDate(num(ca, "ca_aw_seconds"));
+  const radarImp = num(ca, "ca_radar_impaired") === 1;
+  const llwasImp = num(ca, "ca_llwas_impaired") === 1;
+  const rwyName = txt(ca, "ca_rwy_name");
+  const alerts = allOf(ca, "ca_rwy_alert").map(a => ({
+    region: txt(a, "ca_ra_region_id"),
+    type:   txt(a, "ca_ra_type"),
+    value:  num(a, "ca_ra_value"),
+    first:  txt(a, "ca_ra_first_loc"),
+    last:   txt(a, "ca_ra_last_loc"),
+    llwasDir:   num(a, "ca_ra_llwas_wind_dir"),
+    llwasSpeed: num(a, "ca_ra_llwas_wind_speed"),
+  }));
+  return { windDir: wd, windSpeed: ws, gust: wg, time: t,
+           radarImpaired: radarImp, llwasImpaired: llwasImp,
+           runwayConfig: rwyName, alerts };
+}
+
+// Terminal Weather Graphics Product
+function parseGraphics(xml) {
+  const doc = parseXml(xml);
+  const g = doc.getElementsByTagName("twp_graphics_product")[0];
+  if (!g) return null;
+  return {
+    airport: txt(g, "twp_airport"),
+    time: txt(g, "twp_time"),
+    range: num(g, "twp_map_range"),
+    legend: txt(g, "twp_legend"),
+    text:   (txt(g, "twp_graphics") || "").trim(),
+    legacy: (txt(g, "twp_legacy_map") || "").trim(),
+  };
+}
+
+// Hazard Text TRACON
+function parseHazard(xml) {
+  const doc = parseXml(xml);
+  const h = doc.getElementsByTagName("haz_text")[0];
+  if (!h) return null;
+  return { numCells: num(h, "ht_num_cells") || 0 };
+}
+
+// AP Status (anomalous propagation / sensor health)
+function parseApStatus(xml) {
+  const doc = parseXml(xml);
+  const aps = doc.getElementsByTagName("ap_status")[0];
+  if (!aps) return null;
+  return {
+    numRadars: num(aps, "aps_num_rdrs"),
+    radars: allOf(aps, "aps_radar").map(r => ({
+      source: txt(r, "apsr_source"),
+      time: epochToDate(num(r, "apsr_seconds")),
+      edit: num(r, "apsr_edit") === 1,
+    })),
+  };
+}
+
+// SM SEP (storm motion)
+function parseSmSep(xml) {
+  const doc = parseXml(xml);
+  const sm = doc.getElementsByTagName("sm_sep")[0];
+  if (!sm) return null;
+  return {
+    numStorms: num(sm, "sm_num_storms") || 0,
+    lat: num(sm, "sm_latitude"),
+    lon: num(sm, "sm_longitude"),
+  };
+}
+
+// ITWS Status
+function parseItwsStatus(xml) {
+  const doc = parseXml(xml);
+  const s = doc.getElementsByTagName("itws_status")[0];
+  if (!s) return null;
+  return {
+    mode: num(s, "stat_itws_mode"),
+    purged: num(s, "stat_num_products_purged"),
+  };
+}
+
+// Precipitation (RLE-encoded grid)
+function parsePrecip(xml) {
+  const doc = parseXml(xml);
+  const p = doc.getElementsByTagName("precip")[0];
+  if (!p) return null;
+  const rows = num(p, "prcp_nrows") || 0;
+  const cols = num(p, "prcp_ncols") || 0;
+  const noCov = num(p, "prcp_no_coverage");
+  const apd = num(p, "prcp_ap_detected");
+  const att = num(p, "prcp_attenuated");
+  const bad = num(p, "prcp_bad_value");
+  const enc = txt(p, "prcp_grid_compressed");
+  const maxLvl = num(p, "prcp_grid_max_precip_level");
+  if (!enc || !rows || !cols) return null;
+  // Run-length encoding: "value,count value,count ..."
+  const grid = new Uint8Array(rows * cols);
+  let i = 0;
+  for (const pair of enc.split(/\s+/)) {
+    const [v, c] = pair.split(",").map(Number);
+    if (!isFinite(v) || !isFinite(c)) continue;
+    for (let k = 0; k < c && i < grid.length; k++) grid[i++] = v;
+  }
+  return { rows, cols, grid, noCov, apd, att, bad, maxLevel: maxLvl };
+}
+
+// ───────── Rendering ─────────────────────────────
+function renderWindCard(alerts) {
+  if (!alerts) return cardEmpty("Wind", "No Configured Alerts product");
+  const wd = alerts.windDir;
+  const dirText = wd === null || wd === 999 ? "VRB" : `${String(wd).padStart(3, "0")}°`;
+  const compassText = compass(wd) || "";
+  const gust = alerts.gust && alerts.gust > 0 ? `G${alerts.gust}` : "";
+  const ageStr = alerts.time ? ago(alerts.time) : "";
+  const arrowRot = wd === null || wd === 999 ? 0 : (wd + 180); // arrow points FROM, so add 180
+
+  return `
+    <div class="card span4">
+      <h3>WIND <span class="ago">${ageStr}</span></h3>
+      <div class="wind">
+        <div class="arrow">
+          <div class="needle" style="transform: translateX(-50%) rotate(${arrowRot}deg)"></div>
+          <div class="ctr"></div>
+          <div class="lbl">N</div>
+        </div>
+        <div class="vals">
+          <div><span class="big">${alerts.windSpeed ?? "—"}</span> <span class="unit">kt</span></div>
+          <div class="dir">${dirText} ${compassText}</div>
+          <div class="gust">${gust ? gust + " kt gusts" : ""}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderStatusCard(alerts, ap, itws) {
+  const rows = [];
+  if (alerts) {
+    rows.push(`<li><span class="name">Radar</span><span class="${alerts.radarImpaired ? "bad" : "ok"}">${alerts.radarImpaired ? "IMPAIRED" : "OK"}</span></li>`);
+    rows.push(`<li><span class="name">LLWAS</span><span class="${alerts.llwasImpaired ? "bad" : "ok"}">${alerts.llwasImpaired ? "IMPAIRED" : "OK"}</span></li>`);
+    if (alerts.runwayConfig)
+      rows.push(`<li><span class="name">Config</span><span class="name">${alerts.runwayConfig}</span></li>`);
+  }
+  if (ap && ap.radars) {
+    for (const r of ap.radars) {
+      rows.push(`<li><span class="name">Radar ${r.source}</span><span class="${r.edit ? "warn" : "ok"}">${r.edit ? "EDIT" : "OK"} ${r.time ? fmtTime(r.time) : ""}</span></li>`);
+    }
+  }
+  if (itws) {
+    rows.push(`<li><span class="name">ITWS mode</span><span class="${itws.mode === 0 ? "ok" : "warn"}">${itws.mode === 0 ? "NORMAL" : "MODE " + itws.mode}</span></li>`);
+  }
+  if (rows.length === 0) return cardEmpty("Status", "No status products available");
+  return `
+    <div class="card span4">
+      <h3>STATUS</h3>
+      <ul class="status-list">${rows.join("")}</ul>
+    </div>`;
+}
+
+function renderAlertsCard(alerts) {
+  if (!alerts) return cardEmpty("Runway Alerts", "No Configured Alerts product");
+  const active = alerts.alerts.filter(a => a.type && a.type.trim());
+  let body;
+  if (active.length === 0) {
+    body = `<div style="color: var(--good); padding: 6px 0;">No active runway alerts (${alerts.alerts.length} regions monitored)</div>`;
+  } else {
+    body = `<table class="alerts">
+      <thead><tr><th>RWY</th><th>TYPE</th><th>VALUE</th><th>FIRST</th><th>LAST</th></tr></thead>
+      <tbody>
+        ${active.map(a => `<tr class="alert">
+          <td class="t">${a.region || ""}</td>
+          <td class="t">${a.type || ""}</td>
+          <td>${a.value !== null ? a.value + " kt" : ""}</td>
+          <td>${a.first || ""}</td>
+          <td>${a.last || ""}</td>
+        </tr>`).join("")}
+      </tbody></table>`;
+  }
+  return `<div class="card span4"><h3>RUNWAY ALERTS</h3>${body}</div>`;
+}
+
+function renderHazardCard(graphics, hazard) {
+  if (!graphics && !hazard) return "";
+  const text = graphics?.legacy || graphics?.text || (hazard ? `No storm cells (count: ${hazard.numCells})` : "");
+  const title = graphics ? `TERMINAL WX (${graphics.time || ""})` : "HAZARD TEXT";
+  return `
+    <div class="card span8">
+      <h3>${title}</h3>
+      <div class="hazard-text">${text || "(no text)"}</div>
+    </div>`;
+}
+
+function renderStormCard(smSep) {
+  if (!smSep) return cardEmpty("Storms", "No SM SEP product");
+  if (smSep.numStorms === 0) {
+    return `<div class="card span4">
+      <h3>STORM CELLS</h3>
+      <div style="color: var(--good); padding: 6px 0;">No storms detected</div>
+    </div>`;
+  }
+  return `<div class="card span4">
+    <h3>STORM CELLS</h3>
+    <div style="font-size: 32px; color: var(--warn);">${smSep.numStorms}</div>
+    <div style="color: var(--dim); font-size: 11px;">cells tracked</div>
+  </div>`;
+}
+
+function renderPrecipCard(precip) {
+  if (!precip) return cardEmpty("Precipitation", "No precip product");
+  return `
+    <div class="card span8">
+      <h3>PRECIPITATION (TRACON, ${precip.cols}×${precip.rows} @ 1km)</h3>
+      <div class="precip-wrap">
+        <canvas id="precipCanvas" width="${precip.cols}" height="${precip.rows}"
+                style="width:${Math.min(precip.cols, 500)}px; height:auto;"></canvas>
+        <div class="precip-legend">
+          <div><span class="sw" style="background: var(--nws1)"></span>Level 1 — light rain</div>
+          <div><span class="sw" style="background: var(--nws2)"></span>Level 2 — moderate</div>
+          <div><span class="sw" style="background: var(--nws3)"></span>Level 3 — heavy</div>
+          <div><span class="sw" style="background: var(--nws4)"></span>Level 4 — very heavy</div>
+          <div><span class="sw" style="background: var(--nws5)"></span>Level 5 — extreme</div>
+          <div><span class="sw" style="background: var(--nws6)"></span>Level 6 — hail/severe</div>
+          <div><span class="sw" style="background: #333"></span>No coverage</div>
+          <div style="margin-top: 8px;">Max level seen: <b>${precip.maxLevel ?? 0}</b></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function paintPrecip(precip) {
+  if (!precip) return;
+  const cnv = document.getElementById("precipCanvas");
+  if (!cnv) return;
+  const ctx = cnv.getContext("2d");
+  const img = ctx.createImageData(precip.cols, precip.rows);
+  const palette = {
+    0:  [10,  10,  10,  255],   // clear
+    1:  [0,   176, 80,  255],
+    2:  [0,   255, 0,   255],
+    3:  [255, 255, 0,   255],
+    4:  [255, 128, 0,   255],
+    5:  [255, 0,   0,   255],
+    6:  [255, 0,   255, 255],
+    // Special marker values typically: noCov=15, attenuated=7, apDetected=8, bad=9
+  };
+  const noCov = precip.noCov;
+  for (let y = 0; y < precip.rows; y++) {
+    for (let x = 0; x < precip.cols; x++) {
+      const v = precip.grid[y * precip.cols + x];
+      let c;
+      if (v === noCov) c = [50, 50, 50, 255];
+      else if (v === precip.bad) c = [80, 0, 80, 255];
+      else if (v === precip.apd) c = [40, 40, 60, 255];
+      else if (v === precip.att) c = [60, 60, 40, 255];
+      else c = palette[v] || [25, 25, 25, 255];
+      // canvas image rows are top-down but radar grids often bottom-up;
+      // ITWS appears to be standard top-down so leave as-is.
+      const o = (y * precip.cols + x) * 4;
+      img.data[o]     = c[0];
+      img.data[o + 1] = c[1];
+      img.data[o + 2] = c[2];
+      img.data[o + 3] = c[3];
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function renderProductsCard(airport) {
+  const list = state.byAirport.get(airport);
+  if (!list) return "";
+  const items = [];
+  for (const [, msgs] of list) for (const m of msgs) items.push(m);
+  items.sort((a, b) => a.productType.localeCompare(b.productType) || (a.subId || "").localeCompare(b.subId || ""));
+  return `
+    <div class="card span12">
+      <h3>ALL PRODUCTS (${items.length})</h3>
+      <div class="products-list">
+        ${items.map(m => `
+          <div class="product-row">
+            <span class="pname">${m.productType}${m.subId ? ` · <span style="color:var(--accent)">${m.subId}</span>` : ""}</span>
+            <span class="pmeta">
+              ${ago(new Date(m.receivedAt))}
+              · ${m.xmlSize}B
+              · <a href="/api/itws/raw-by-key?key=${encodeURIComponent(m.key)}" target="_blank">XML ↗</a>
+            </span>
+          </div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function cardEmpty(title, msg) {
+  return `<div class="card span4"><h3>${title}</h3>
+    <div style="color: var(--dim); padding: 6px 0;">${msg}</div></div>`;
+}
+
+// ───────── Dashboard build for selected airport ─────
+async function loadAirport(airport) {
+  state.selected = airport;
+  $("dashEmpty").style.display = "none";
+  $("dashContent").style.display = "block";
+  $("dashContent").innerHTML = `<div class="empty">Loading ${airport}…</div>`;
+
+  let data;
+  try {
+    const r = await fetch(`/api/itws/airport/${encodeURIComponent(airport)}`);
+    data = await r.json();
+  } catch (e) {
+    $("dashContent").innerHTML = `<div class="empty">Failed to load ${airport}</div>`;
+    return;
+  }
+
+  // Index products: productType → list of msgs (sub-id variants live separately)
+  const byType = new Map();
+  for (const m of data.products) {
+    if (!byType.has(m.productType)) byType.set(m.productType, []);
+    byType.get(m.productType).push(m);
+  }
+  state.byAirport.set(airport, byType);
+
+  const findXml = (type) => {
+    const list = byType.get(type);
+    return list && list.length ? list[0].rawXml : null;
+  };
+
+  const alertsXml = findXml("Configured Alerts Product");
+  const graphicsXml = findXml("Terminal Weather Graphics Product");
+  const hazardXml = findXml("Hazard Text TRACON Product");
+  const apXml = findXml("AP Status");
+  const smXml = findXml("SM SEP TRACON Product") || findXml("SM SEP 5nm Product");
+  const itwsXml = findXml("ITWS Status Information");
+  const precipXml = findXml("Precipitation TRACON Product") || findXml("Precipitation 5nm Product");
+
+  const alerts = alertsXml ? parseAlerts(alertsXml) : null;
+  const graphics = graphicsXml ? parseGraphics(graphicsXml) : null;
+  const hazard = hazardXml ? parseHazard(hazardXml) : null;
+  const ap = apXml ? parseApStatus(apXml) : null;
+  const sm = smXml ? parseSmSep(smXml) : null;
+  const itws = itwsXml ? parseItwsStatus(itwsXml) : null;
+  const precip = precipXml ? parsePrecip(precipXml) : null;
+
+  $("dashContent").innerHTML = `
+    <div class="grid">
+      ${renderWindCard(alerts)}
+      ${renderStatusCard(alerts, ap, itws)}
+      ${renderStormCard(sm)}
+      ${renderAlertsCard(alerts)}
+      ${renderHazardCard(graphics, hazard)}
+      ${renderPrecipCard(precip)}
+      ${renderProductsCard(airport)}
+    </div>`;
+
+  if (precip) paintPrecip(precip);
+
+  // Mark active in sidebar
+  for (const el of document.querySelectorAll(".ap-row")) {
+    el.classList.toggle("active", el.dataset.ap === airport);
+  }
+  // URL update
+  history.replaceState({}, "", `/itws/${airport}`);
+}
+
+// ───────── Airport list ─────────────────────────────
+function renderAirports() {
+  const html = state.airports
+    .filter(a => a.airport !== "ALL" && a.airport !== "000")
+    .map(a => {
+      // Detect if airport has active alerts (peek at our latest summaries — we don't have parsed
+      // data yet for non-selected airports; just show it normally and let user click)
+      const hasAlerts = false;
+      return `<div class="ap-row${state.selected === a.airport ? " active" : ""}${hasAlerts ? " alert" : ""}" data-ap="${a.airport}">
+        <span class="n">${a.airport}</span>
+        <span class="c">${a.products.length}p</span>
+      </div>`;
+    }).join("");
+  $("airportsList").innerHTML = html;
+  for (const el of document.querySelectorAll(".ap-row")) {
+    el.onclick = () => loadAirport(el.dataset.ap);
+  }
+}
+
+// ───────── Polling + WebSocket ──────────────────────
 let ws = null;
-function connect() {
+function connectWs() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   ws = new WebSocket(proto + "//" + location.host + "/itws/ws");
   ws.onopen = () => { $("conn").textContent = "LIVE"; $("conn").className = "conn ok"; };
   ws.onclose = () => {
     $("conn").textContent = "DISCONNECTED";
     $("conn").className = "conn bad";
-    setTimeout(connect, 5000);
+    setTimeout(connectWs, 5000);
   };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.type === "snapshot") {
-      state.latest.clear();
-      for (const item of m.data) state.latest.set(item.key, item);
-      render();
-    } else if (m.type === "update") {
-      state.latest.set(m.data.key, m.data);
-      render();
+    if (m.type === "update") {
+      const upd = m.data;
+      state.latestByKey.set(upd.key, upd);
+      // If it belongs to the currently selected airport, schedule a refresh
+      if (state.selected && upd.site === state.selected) scheduleRefresh();
+    } else if (m.type === "snapshot") {
+      for (const item of m.data) state.latestByKey.set(item.key, item);
     }
   };
 }
 
-// ---------- Polling for stats + airport list ----------
-async function pollStats() {
+let refreshTimer = null;
+function scheduleRefresh() {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    if (state.selected) loadAirport(state.selected);
+  }, 1500);
+}
+
+async function pollOverview() {
   try {
     const [stats, airports] = await Promise.all([
       fetch("/api/itws/stats").then(r => r.json()),
@@ -215,108 +737,21 @@ async function pollStats() {
     $("latestCount").textContent = stats.latestCount;
     state.airports = airports;
     renderAirports();
-  } catch (e) { /* ignore — WS will catch up */ }
+  } catch (e) { /* ignore */ }
 }
 
-// ---------- Render ----------
-function render() {
-  renderAirports();
-  renderProducts();
-}
-
-function renderAirports() {
-  const html = [];
-  html.push(`<div class="row ${state.selectedAirport === null ? "active" : ""}" data-airport="">
-    <span class="name">ALL</span><span class="count">${state.latest.size}</span></div>`);
-  for (const a of state.airports) {
-    html.push(`<div class="row ${state.selectedAirport === a.airport ? "active" : ""}" data-airport="${a.airport}">
-      <span class="name">${a.airport}</span><span class="count">${a.products.length}p · ${a.messageCount.toLocaleString()}</span></div>`);
-  }
-  $("airports").innerHTML = html.join("");
-  for (const el of document.querySelectorAll("#airports .row")) {
-    el.onclick = () => {
-      const v = el.dataset.airport;
-      state.selectedAirport = v === "" ? null : v;
-      state.selectedKey = null;
-      render();
-    };
-  }
-}
-
-function renderProducts() {
-  const filter = ($("filter").value || "").toLowerCase();
-  const items = [...state.latest.values()]
-    .filter(m => state.selectedAirport === null || m.site === state.selectedAirport)
-    .filter(m => !filter || m.productType.toLowerCase().includes(filter) || m.site.toLowerCase().includes(filter))
-    .sort((a, b) => a.productType.localeCompare(b.productType) || a.site.localeCompare(b.site));
-
-  $("productsHeader").textContent = `PRODUCTS (${items.length})`;
-
-  if (items.length === 0) {
-    $("products").innerHTML = `<div class="empty">No products yet. ITWS messages can be infrequent.</div>`;
-    return;
-  }
-  const html = [];
-  for (const m of items) {
-    const ago = m.receivedAt ? agoText(m.receivedAt) : "";
-    html.push(`<div class="row ${state.selectedKey === m.key ? "active" : ""}" data-key="${m.key}">
-      <span class="name">${m.productType} <span style="color:#888"> · ${m.site}</span></span>
-      <span class="count">${ago}</span></div>`);
-  }
-  $("products").innerHTML = html.join("");
-  for (const el of document.querySelectorAll("#products .row")) {
-    el.onclick = () => {
-      state.selectedKey = el.dataset.key;
-      renderProducts();
-      loadDetail(state.selectedKey);
-    };
-  }
-}
-
-function agoText(iso) {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return `${s.toFixed(0)}s`;
-  if (s < 3600) return `${(s / 60).toFixed(0)}m`;
-  return `${(s / 3600).toFixed(1)}h`;
-}
-
-async function loadDetail(key) {
-  const m = state.latest.get(key);
-  if (!m) return;
-  $("detailHeader").textContent = `${m.productType} · ${m.site}`;
-  $("detail").innerHTML = `
-    <div class="meta">
-      <div class="k">Product</div><div class="v">${m.productType}</div>
-      <div class="k">Site</div><div class="v">${m.site}</div>
-      <div class="k">Topic</div><div class="v">${m.topic || ""}</div>
-      <div class="k">Message time</div><div class="v">${m.messageTime || ""}</div>
-      <div class="k">Received</div><div class="v">${m.receivedAt}</div>
-      <div class="k">XML size</div><div class="v">${m.xmlSize} bytes</div>
-    </div>
-    <a class="download" href="/api/itws/raw/${encodeURIComponent(m.productType)}/${encodeURIComponent(m.site)}" target="_blank">View raw XML ↗</a>
-    <pre id="xml">Loading…</pre>
-  `;
-  try {
-    const r = await fetch(`/api/itws/raw/${encodeURIComponent(m.productType)}/${encodeURIComponent(m.site)}`);
-    const t = await r.text();
-    $("xml").textContent = t;
-  } catch (e) {
-    $("xml").textContent = "(failed to load raw XML)";
-  }
-}
-
-$("filter").oninput = renderProducts;
-
-// If URL has /itws/{AIRPORT}, pre-select it.
+// ───────── Bootstrap ────────────────────────────────
 {
   const m = location.pathname.match(/^\/itws\/([A-Za-z0-9]+)\/?$/);
-  if (m) state.selectedAirport = m[1].toUpperCase();
+  if (m) state.selected = m[1].toUpperCase();
 }
-
-connect();
-pollStats();
-setInterval(pollStats, 5000);
-setInterval(renderProducts, 1000); // refresh "ago" timestamps
+connectWs();
+pollOverview().then(() => {
+  if (state.selected) loadAirport(state.selected);
+});
+setInterval(pollOverview, 10000);
+// Refresh "ago" timestamps every 30s by re-rendering airport detail
+setInterval(() => { if (state.selected) loadAirport(state.selected); }, 30000);
 </script>
 </body>
 </html>

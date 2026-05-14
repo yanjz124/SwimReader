@@ -154,41 +154,48 @@ class ItwsBridge
         LastMessageAt = DateTime.UtcNow;
         _topics.AddOrUpdate(topic, 1, (_, v) => v + 1);
 
+        // ITWS-specific shape: every message has root <itws_msg> with a <product_header>
+        // identifying the actual product. Real product type is product_msg_name; the
+        // root element alone would collapse all products into one bucket.
         string productType = "Unknown";
         string? site = null;
         string? msgTime = null;
+        string? subId = null;
         try
         {
             var doc = XDocument.Parse(body);
             var root = doc.Root;
             if (root is not null)
             {
-                productType = root.Name.LocalName;
+                productType =
+                    FirstNonEmpty(root, "product_msg_name", "product_msg_id")
+                    ?? root.Name.LocalName;
 
-                // Try common ITWS site / airport identifier locations
                 site =
-                    FirstNonEmpty(root, "airport", "airportID", "siteID", "site",
-                        "itwsSite", "itwsSiteID", "stationID", "icao",
-                        "asosID", "terminalID", "airportIdentifier");
+                    FirstNonEmpty(root, "product_header_airports", "product_header_source_id",
+                        "product_header_itws_sites",
+                        "airport", "airportID", "siteID", "site",
+                        "itwsSite", "itwsSiteID", "stationID", "icao");
 
-                // Try common time fields
                 msgTime =
-                    FirstNonEmpty(root, "time", "msgTime", "messageTime", "validTime",
+                    FirstNonEmpty(root, "product_header_generation_time_seconds",
+                        "time", "msgTime", "messageTime", "validTime",
                         "issuanceTime", "productTime", "generationTime");
 
-                // Topic frequently embeds airport: ITWS/.../KPHL — fall back to last path segment
+                // Discriminator for multi-record products (multiple runways/sensors/alerts
+                // arriving as separate ITWS messages with same product+site). Without this,
+                // each new sensor/runway message overwrites the previous one.
+                subId =
+                    FirstNonEmpty(root, "ca_rwy_name", "rwy_name", "runway", "runway_id",
+                        "sensor_id", "sensorID", "station_id", "stationID",
+                        "anemometer_id", "llwas_station");
+
                 if (string.IsNullOrEmpty(site) && !string.IsNullOrEmpty(topic))
                 {
+                    // Topic shape: ITWS/{productMsgId}/{itwsSite}/{airport}
                     var parts = topic.Split('/', StringSplitOptions.RemoveEmptyEntries);
-                    for (int i = parts.Length - 1; i >= 0; i--)
-                    {
-                        var p = parts[i];
-                        if (p.Length is >= 3 and <= 4 && p.All(ch => char.IsLetterOrDigit(ch)))
-                        {
-                            site = p.ToUpperInvariant();
-                            break;
-                        }
-                    }
+                    if (parts.Length >= 4) site = parts[3];
+                    else if (parts.Length >= 3) site = parts[2];
                 }
             }
         }
@@ -197,7 +204,7 @@ class ItwsBridge
             Console.Error.WriteLine($"[ITWS] Parse error on {topic}: {ex.Message}");
         }
 
-        if (string.IsNullOrEmpty(site)) site = "ALL";
+        if (string.IsNullOrEmpty(site) || site == "000") site = "ALL";
         site = site.ToUpperInvariant();
 
         _productCounts.AddOrUpdate(productType, 1, (_, v) => v + 1);
@@ -205,12 +212,15 @@ class ItwsBridge
         if (!_samples.ContainsKey(productType))
             _samples.TryAdd(productType, body.Length > 4096 ? body[..4096] + "\n... (truncated)" : body);
 
-        var key = $"{productType}|{site}";
+        var key = string.IsNullOrEmpty(subId)
+            ? $"{productType}|{site}"
+            : $"{productType}|{site}|{subId}";
         var msg = new ItwsMessage
         {
             Key = key,
             ProductType = productType,
             Site = site,
+            SubId = subId,
             Topic = topic,
             MessageTime = msgTime,
             ReceivedAt = DateTime.UtcNow,
@@ -365,12 +375,27 @@ class ItwsBridge
     /// <summary>All latest messages keyed by productType|site.</summary>
     public object GetLatest() => _latest.Values.Select(m => m.ToSummaryJson()).ToArray();
 
-    /// <summary>Raw XML for one specific product/site combination (for X-Plane plugin, etc.).</summary>
+    /// <summary>Raw XML for one specific product/site combination (for X-Plane plugin, etc.).
+    /// When multiple sub-ID variants exist (e.g. per-runway alerts, per-sensor LLWAS readings),
+    /// returns the most recently received one. Use GetRawByKey for exact-key lookup.</summary>
     public string? GetRaw(string productType, string site)
     {
-        var key = $"{productType}|{site.ToUpperInvariant()}";
-        return _latest.TryGetValue(key, out var m) ? m.RawXml : null;
+        site = site.ToUpperInvariant();
+        var exact = $"{productType}|{site}";
+        if (_latest.TryGetValue(exact, out var m)) return m.RawXml;
+        // Fall back to most-recent sub-ID variant
+        var match = _latest.Values
+            .Where(x => string.Equals(x.ProductType, productType, StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(x.Site, site, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x => x.ReceivedAt)
+            .FirstOrDefault();
+        return match?.RawXml;
     }
+
+    /// <summary>Raw XML for one specific key (e.g. "ConfiguredAlertsProduct|PHL|West-Flow-Rwy35").
+    /// Use this when the plugin needs a specific runway/sensor variant.</summary>
+    public string? GetRawByKey(string key) =>
+        _latest.TryGetValue(key, out var m) ? m.RawXml : null;
 
     /// <summary>Topic frequency table — discovery aid for new ITWS products.</summary>
     public object GetTopics() =>
@@ -390,6 +415,7 @@ class ItwsMessage
     public required string Key { get; init; }
     public required string ProductType { get; init; }
     public required string Site { get; init; }
+    public string? SubId { get; init; }
     public required string Topic { get; init; }
     public string? MessageTime { get; init; }
     public DateTime ReceivedAt { get; init; }
@@ -400,6 +426,7 @@ class ItwsMessage
         key = Key,
         productType = ProductType,
         site = Site,
+        subId = SubId,
         topic = Topic,
         messageTime = MessageTime,
         receivedAt = ReceivedAt.ToString("o"),
@@ -411,6 +438,7 @@ class ItwsMessage
         key = Key,
         productType = ProductType,
         site = Site,
+        subId = SubId,
         topic = Topic,
         messageTime = MessageTime,
         receivedAt = ReceivedAt.ToString("o"),

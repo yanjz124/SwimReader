@@ -115,10 +115,21 @@ static class ItwsRoutes
         app.MapGet("/api/itws/product/{productType}", (string productType) =>
             Results.Json(ctx.Itws.GetProduct(productType), ctx.JsonOpts));
 
-        // Raw XML for one product+site combo — primary consumer endpoint for X-Plane plugin
+        // Raw XML for one product+site combo — primary consumer endpoint for X-Plane plugin.
+        // When sub-IDs (runway/sensor) exist for the same product+site, this returns the
+        // most recent variant. For exact sub-ID lookup, use /api/itws/raw-by-key.
         app.MapGet("/api/itws/raw/{productType}/{site}", (string productType, string site) =>
         {
             var xml = ctx.Itws.GetRaw(productType, site);
+            return xml is not null ? Results.Text(xml, "application/xml") : Results.NotFound();
+        });
+
+        // Exact-key lookup — key is "{productType}|{site}" or "{productType}|{site}|{subId}".
+        // Get the key from /api/itws/latest or the WebSocket update payload.
+        // Use query string to avoid path-encoding issues with '|' and special chars.
+        app.MapGet("/api/itws/raw-by-key", (string key) =>
+        {
+            var xml = ctx.Itws.GetRawByKey(key);
             return xml is not null ? Results.Text(xml, "application/xml") : Results.NotFound();
         });
 

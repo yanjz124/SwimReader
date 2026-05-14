@@ -14,13 +14,14 @@
     --good: #6f6;
     --warn: #ff8c00;
     --emerg: #ff4444;
+    --cyan:  #6cf;
 
-    --nws1: #00b050;   /* light precip (level 1) */
-    --nws2: #00ff00;   /* moderate */
-    --nws3: #ffff00;   /* heavy */
-    --nws4: #ff8000;   /* very heavy */
-    --nws5: #ff0000;   /* extreme */
-    --nws6: #ff00ff;   /* hail/severe */
+    --nws1: #00b050;
+    --nws2: #00ff00;
+    --nws3: #ffff00;
+    --nws4: #ff8000;
+    --nws5: #ff0000;
+    --nws6: #ff00ff;
   }
   * { box-sizing: border-box; }
   body {
@@ -31,9 +32,7 @@
     color: var(--text);
   }
   header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
+    display: flex; align-items: center; gap: 16px;
     padding: 10px 16px;
     border-bottom: 1px solid var(--border);
     background: #111;
@@ -53,24 +52,17 @@
     grid-template-columns: 200px 1fr;
     height: calc(100vh - 46px);
   }
-
-  /* ── Airport list ──────────────────────────── */
   #airports { overflow-y: auto; border-right: 1px solid var(--border); }
   #airports h2 {
-    margin: 0;
-    padding: 8px 12px;
-    font-size: 11px;
-    letter-spacing: 1px;
+    margin: 0; padding: 8px 12px;
+    font-size: 11px; letter-spacing: 1px;
     color: var(--dim);
     border-bottom: 1px solid var(--border);
     background: var(--panel);
-    position: sticky;
-    top: 0;
+    position: sticky; top: 0;
   }
   .ap-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    display: flex; justify-content: space-between; align-items: center;
     padding: 6px 12px;
     border-bottom: 1px solid #1a1a1a;
     cursor: pointer;
@@ -79,20 +71,14 @@
   .ap-row.active { background: #2a2a08; color: var(--accent); }
   .ap-row .n { font-weight: bold; }
   .ap-row .c { color: var(--dim); font-size: 11px; }
-  .ap-row.alert .n { color: var(--emerg); }
 
-  /* ── Dashboard ─────────────────────────────── */
   #dash { overflow-y: auto; padding: 16px; }
   .empty {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     height: 70vh; color: var(--dim); gap: 8px;
   }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(12, 1fr);
-    gap: 12px;
-  }
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
   .card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -102,102 +88,141 @@
   }
   .card h3 {
     margin: 0 0 10px 0;
-    font-size: 11px;
-    letter-spacing: 1px;
+    font-size: 11px; letter-spacing: 1px;
     color: var(--dim);
     border-bottom: 1px solid var(--border);
     padding-bottom: 6px;
-    display: flex;
-    justify-content: space-between;
+    display: flex; justify-content: space-between;
   }
   .card .ago { color: var(--dim); font-weight: normal; font-size: 10px; }
+  .card.span3 { grid-column: span 3; }
   .card.span4 { grid-column: span 4; }
+  .card.span5 { grid-column: span 5; }
   .card.span6 { grid-column: span 6; }
+  .card.span7 { grid-column: span 7; }
   .card.span8 { grid-column: span 8; }
   .card.span12 { grid-column: span 12; }
 
-  /* Wind card ───────── */
-  .wind {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    justify-content: center;
-  }
-  .wind .arrow {
-    width: 90px; height: 90px;
-    border: 2px solid var(--accent);
+  /* ── Wind card ───────── */
+  .wind { display: flex; align-items: center; gap: 18px; justify-content: center; padding: 6px 0; }
+  .wind .compass {
+    width: 130px; height: 130px;
+    border: 2px solid var(--border);
     border-radius: 50%;
     position: relative;
     flex-shrink: 0;
+    background:
+      radial-gradient(circle at center, transparent 0 60%, rgba(204,204,68,0.05) 70%);
   }
-  .wind .arrow .needle {
-    position: absolute;
-    left: 50%; top: 6px;
-    width: 4px; height: 38px;
-    background: var(--accent);
-    transform-origin: 50% 39px;
-    transform: translateX(-50%);
-    transition: transform 0.5s ease;
+  .wind .compass .tick {
+    position: absolute; left: 50%; top: 0;
+    width: 1px; height: 8px;
+    background: var(--dim);
+    transform-origin: 50% 65px;
   }
-  .wind .arrow .ctr {
-    position: absolute;
-    left: 50%; top: 50%;
-    width: 10px; height: 10px;
-    background: var(--accent);
-    border-radius: 50%;
+  .wind .compass .tick.cardinal { background: var(--text); height: 14px; }
+  .wind .compass .lbl {
+    position: absolute; font-size: 10px; color: var(--dim);
     transform: translate(-50%, -50%);
   }
-  .wind .arrow .lbl {
-    position: absolute; left: 50%; bottom: -22px;
-    transform: translateX(-50%);
-    font-size: 10px; color: var(--dim);
+  .wind .compass .needle {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 50px solid var(--accent);
+    transform-origin: 50% 100%;
+    transform: translate(-50%, -100%);
+    transition: transform 0.6s ease;
   }
-  .wind .vals { text-align: center; }
-  .wind .vals .big { font-size: 38px; color: var(--accent); line-height: 1; }
+  .wind .compass .ctr {
+    position: absolute; left: 50%; top: 50%;
+    width: 8px; height: 8px;
+    background: var(--accent); border-radius: 50%;
+    transform: translate(-50%, -50%);
+  }
+  .wind .vals { text-align: left; min-width: 130px; }
+  .wind .vals .row1 { display: flex; align-items: baseline; gap: 8px; }
+  .wind .vals .big  { font-size: 44px; color: var(--accent); line-height: 1; font-weight: 500; }
   .wind .vals .unit { color: var(--dim); font-size: 13px; }
-  .wind .vals .dir  { color: var(--text); font-size: 16px; margin-top: 6px; }
+  .wind .vals .dir { color: var(--text); font-size: 18px; margin-top: 6px; }
+  .wind .vals .compass-l { color: var(--cyan); margin-left: 6px; }
   .wind .vals .gust { color: var(--warn); font-size: 13px; margin-top: 4px; min-height: 1em; }
+  .wind .vals .vrb  { color: var(--dim); font-size: 13px; font-style: italic; }
+  .wind-meta {
+    margin-top: 12px; display: flex; justify-content: space-between;
+    color: var(--dim); font-size: 11px;
+    border-top: 1px solid var(--border); padding-top: 8px;
+  }
+  .wind-meta .stale { color: var(--warn); }
+  .wind-meta .fresh { color: var(--good); }
 
-  /* Sensor / status indicators ───────── */
+  /* ── Wind history sparkline ───────── */
+  #spark { width: 100%; height: 90px; display: block; }
+  .spark-legend {
+    display: flex; gap: 18px; font-size: 11px; color: var(--dim); margin-top: 6px;
+  }
+  .spark-legend .sw { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 5px; }
+
+  /* ── Status / sensor list ───────── */
   .status-list { list-style: none; padding: 0; margin: 0; }
   .status-list li {
     display: flex; justify-content: space-between;
-    padding: 4px 0;
+    padding: 5px 0;
     border-bottom: 1px solid #1a1a1a;
   }
   .status-list li:last-child { border-bottom: none; }
   .status-list .ok   { color: var(--good); }
   .status-list .bad  { color: var(--emerg); }
   .status-list .warn { color: var(--warn); }
-  .status-list .name { color: var(--text); }
+  .status-list .dim  { color: var(--dim); }
 
-  /* Alerts ───────── */
-  table.alerts {
-    width: 100%; border-collapse: collapse;
-    font-size: 12px;
+  /* ── Runway wind table ───────── */
+  table.rwy-winds, table.alerts, table.radars {
+    width: 100%; border-collapse: collapse; font-size: 12px;
   }
-  table.alerts th, table.alerts td {
-    text-align: left; padding: 4px 8px;
+  table.rwy-winds th, table.rwy-winds td,
+  table.alerts th, table.alerts td,
+  table.radars th, table.radars td {
+    text-align: left; padding: 5px 8px;
     border-bottom: 1px solid #1a1a1a;
   }
-  table.alerts th { color: var(--dim); font-weight: normal; font-size: 11px; letter-spacing: 1px; }
+  table.rwy-winds th, table.alerts th, table.radars th {
+    color: var(--dim); font-weight: normal; font-size: 11px; letter-spacing: 1px;
+  }
+  table.rwy-winds tr td.rwy { color: var(--accent); font-weight: bold; }
+  table.rwy-winds tr td.invalid { color: var(--dim); font-style: italic; }
+  table.rwy-winds .mini-arrow {
+    display: inline-block; width: 12px; height: 12px;
+    vertical-align: middle;
+    border: 1px solid var(--accent); border-radius: 50%;
+    position: relative;
+    margin-right: 6px;
+  }
+  table.rwy-winds .mini-arrow::after {
+    content: ""; position: absolute; left: 50%; top: -3px;
+    width: 0; height: 0;
+    border-left: 3px solid transparent; border-right: 3px solid transparent;
+    border-bottom: 7px solid var(--accent);
+    transform-origin: 50% 9px;
+  }
   table.alerts tr.alert td { color: var(--emerg); }
   table.alerts tr.alert td.t { font-weight: bold; }
-  table.alerts .none { color: var(--dim); font-style: italic; }
 
-  /* Hazard / graphics text ───────── */
-  .hazard-text {
+  /* ── Hazard/text panels ───────── */
+  .text-block {
     background: #050505;
-    padding: 8px;
+    padding: 10px;
     color: var(--text);
     white-space: pre-wrap;
-    line-height: 1.4;
+    line-height: 1.5;
     font-size: 12px;
     max-height: 220px;
     overflow-y: auto;
   }
 
-  /* Precip canvas ───────── */
+  /* ── Precip canvas ───────── */
   .precip-wrap { display: flex; gap: 12px; align-items: flex-start; }
   #precipCanvas { background: #050505; border: 1px solid var(--border); image-rendering: pixelated; }
   .precip-legend { font-size: 11px; }
@@ -206,12 +231,35 @@
     margin-right: 6px; border: 1px solid #000;
   }
   .precip-legend > div { margin: 3px 0; color: var(--dim); }
+  .precip-stats { margin-top: 8px; color: var(--dim); font-size: 11px; }
+  .precip-stats b { color: var(--text); }
 
-  /* Storm cells ───────── */
-  .storm-row { display: flex; justify-content: space-between; padding: 4px 0; }
-  .storm-row .id { color: var(--accent); }
+  /* ── Big-number tiles ───────── */
+  .big-tile { text-align: center; padding: 8px 0; }
+  .big-tile .v { font-size: 40px; line-height: 1; color: var(--accent); }
+  .big-tile .v.warn { color: var(--warn); }
+  .big-tile .v.good { color: var(--good); }
+  .big-tile .l { color: var(--dim); font-size: 11px; margin-top: 4px; }
 
-  /* Raw product list ───────── */
+  /* ── Forecast accuracy grid ───────── */
+  .acc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .acc-cell { padding: 6px 8px; border: 1px solid var(--border); border-radius: 2px; text-align: center; }
+  .acc-cell .v { font-size: 22px; color: var(--accent); }
+  .acc-cell .l { color: var(--dim); font-size: 10px; }
+  .acc-cell.n .v { color: var(--dim); }
+
+  /* ── Ribbon display ───────── */
+  .ribbon-row {
+    font-family: monospace;
+    padding: 4px 0;
+    display: flex; gap: 12px; align-items: center;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .ribbon-row .rid { color: var(--accent); min-width: 80px; }
+  .ribbon-row .rline { color: var(--text); letter-spacing: 2px; }
+  .ribbon-row .rline.empty { color: var(--dim); font-style: italic; }
+
+  /* ── Raw product list ───────── */
   .products-list { font-size: 12px; }
   .product-row {
     display: flex; justify-content: space-between; align-items: center;
@@ -260,15 +308,15 @@ const $ = (id) => document.getElementById(id);
 const state = {
   airports: [],
   selected: null,
-  latestByKey: new Map(),       // key → {key, productType, site, subId, ...}
-  byAirport: new Map(),          // airport → Map(productType → [messages])
-  detailCache: new Map(),        // key → parsed XML doc
+  latestByKey: new Map(),
+  byAirport: new Map(),
+  windHistory: new Map(),   // airport → ring buffer of {t, dir, speed, gust}
 };
 
+const HISTORY_LEN = 60;
+
 // ───────── Parse helpers ─────────────────────────────
-function parseXml(xml) {
-  return new DOMParser().parseFromString(xml, "text/xml");
-}
+function parseXml(xml) { return new DOMParser().parseFromString(xml, "text/xml"); }
 function txt(node, tag) {
   if (!node) return null;
   const el = node.getElementsByTagName(tag)[0];
@@ -278,19 +326,14 @@ function num(node, tag) {
   const v = txt(node, tag);
   return v === null || v === "" ? null : Number(v);
 }
-function allOf(node, tag) {
-  return node ? [...node.getElementsByTagName(tag)] : [];
-}
+function allOf(node, tag) { return node ? [...node.getElementsByTagName(tag)] : []; }
 function epochToDate(sec) {
   if (sec === null || sec === undefined) return null;
   const s = Number(sec);
   if (s <= 0 || !isFinite(s)) return null;
   return new Date(s * 1000);
 }
-function fmtTime(d) {
-  if (!d) return "—";
-  return d.toISOString().slice(11, 19) + "Z";
-}
+function fmtTime(d) { return d ? d.toISOString().slice(11, 19) + "Z" : "—"; }
 function ago(d) {
   if (!d) return "";
   const s = Math.max(0, (Date.now() - d.getTime()) / 1000);
@@ -298,42 +341,58 @@ function ago(d) {
   if (s < 3600) return `${(s / 60).toFixed(0)}m ago`;
   return `${(s / 3600).toFixed(1)}h ago`;
 }
-
-// Compass direction abbreviation
 function compass(deg) {
-  if (deg === null || deg === 999 || !isFinite(deg)) return null;
-  const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-                "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  if (deg === null || deg === undefined || deg === 999 || !isFinite(deg)) return null;
+  const dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
   return dirs[Math.round((deg % 360) / 22.5) % 16];
 }
+function fmtDir(d) {
+  if (d === null || d === undefined || d === 999) return "VRB";
+  return String(d).padStart(3, "0") + "°";
+}
+function isValidWind(dir, speed) {
+  // ITWS uses 999/99 as invalid sentinels for LLWAS sensors
+  return dir !== null && dir !== 999 && speed !== null && speed !== 99;
+}
 
-// Configured Alerts → wind + per-runway alerts
+// ───────── Product parsers ──────────────────────────
 function parseAlerts(xml) {
   const doc = parseXml(xml);
   const ca = doc.getElementsByTagName("configured_alert")[0];
   if (!ca) return null;
-  const wd = num(ca, "ca_aw_wind_dir");
-  const ws = num(ca, "ca_aw_wind_speed");
-  const wg = num(ca, "ca_aw_gust_speed");
-  const t  = epochToDate(num(ca, "ca_aw_seconds"));
-  const radarImp = num(ca, "ca_radar_impaired") === 1;
-  const llwasImp = num(ca, "ca_llwas_impaired") === 1;
-  const rwyName = txt(ca, "ca_rwy_name");
-  const alerts = allOf(ca, "ca_rwy_alert").map(a => ({
-    region: txt(a, "ca_ra_region_id"),
-    type:   txt(a, "ca_ra_type"),
-    value:  num(a, "ca_ra_value"),
-    first:  txt(a, "ca_ra_first_loc"),
-    last:   txt(a, "ca_ra_last_loc"),
-    llwasDir:   num(a, "ca_ra_llwas_wind_dir"),
-    llwasSpeed: num(a, "ca_ra_llwas_wind_speed"),
-  }));
-  return { windDir: wd, windSpeed: ws, gust: wg, time: t,
-           radarImpaired: radarImp, llwasImpaired: llwasImp,
-           runwayConfig: rwyName, alerts };
+  return {
+    windDir: num(ca, "ca_aw_wind_dir"),
+    windSpeed: num(ca, "ca_aw_wind_speed"),
+    gust: num(ca, "ca_aw_gust_speed"),
+    windTime: epochToDate(num(ca, "ca_aw_seconds")),
+    windExpires: epochToDate(num(ca, "ca_wind_expiration_seconds")),
+    radarImpaired: num(ca, "ca_radar_impaired") === 1,
+    llwasImpaired: num(ca, "ca_llwas_impaired") === 1,
+    runwayConfig: txt(ca, "ca_rwy_name"),
+    numRunways: num(ca, "ca_num_rwys"),
+    rwyValidTime: epochToDate(num(ca, "ca_rwy_valid_seconds")),
+    alerts: allOf(ca, "ca_rwy_alert").map(a => {
+      const lwd = num(a, "ca_ra_llwas_wind_dir");
+      const lws = num(a, "ca_ra_llwas_wind_speed");
+      return {
+        region: txt(a, "ca_ra_region_id"),
+        type:   (txt(a, "ca_ra_type") || "").trim(),
+        value:  num(a, "ca_ra_value"),
+        first:  txt(a, "ca_ra_first_loc"),
+        last:   txt(a, "ca_ra_last_loc"),
+        llwasDir: lwd,
+        llwasSpeed: lws,
+        llwasValid: isValidWind(lwd, lws),
+        ribbons: allOf(a, "ca_ribbon_line").map(rb => ({
+          site:  txt(rb, "ca_rib_sd_id"),
+          rbdtId:txt(rb, "ca_rib_rbdt_id"),
+          lines: txt(rb, "ca_rib_rbdt_lines"),
+        })),
+      };
+    }),
+  };
 }
 
-// Terminal Weather Graphics Product
 function parseGraphics(xml) {
   const doc = parseXml(xml);
   const g = doc.getElementsByTagName("twp_graphics_product")[0];
@@ -343,20 +402,26 @@ function parseGraphics(xml) {
     time: txt(g, "twp_time"),
     range: num(g, "twp_map_range"),
     legend: txt(g, "twp_legend"),
-    text:   (txt(g, "twp_graphics") || "").trim(),
+    text: (txt(g, "twp_graphics") || "").trim(),
     legacy: (txt(g, "twp_legacy_map") || "").trim(),
   };
 }
-
-// Hazard Text TRACON
+function parseTwxText(xml) {
+  const doc = parseXml(xml);
+  const t = doc.getElementsByTagName("twx_text_prod")[0];
+  if (!t) return null;
+  return {
+    msgType: num(t, "twx_msg_type"),
+    size: num(t, "twx_size"),
+    text: (txt(t, "twx_text") || "").trim(),
+  };
+}
 function parseHazard(xml) {
   const doc = parseXml(xml);
   const h = doc.getElementsByTagName("haz_text")[0];
   if (!h) return null;
   return { numCells: num(h, "ht_num_cells") || 0 };
 }
-
-// AP Status (anomalous propagation / sensor health)
 function parseApStatus(xml) {
   const doc = parseXml(xml);
   const aps = doc.getElementsByTagName("ap_status")[0];
@@ -367,11 +432,14 @@ function parseApStatus(xml) {
       source: txt(r, "apsr_source"),
       time: epochToDate(num(r, "apsr_seconds")),
       edit: num(r, "apsr_edit") === 1,
+      thresholds: allOf(r, "apsr_data").map(d => ({
+        thresh: num(d, "apsd_thresh"),
+        area: num(d, "apsd_area"),
+        results: num(d, "apsd_results"),
+      })),
     })),
   };
 }
-
-// SM SEP (storm motion)
 function parseSmSep(xml) {
   const doc = parseXml(xml);
   const sm = doc.getElementsByTagName("sm_sep")[0];
@@ -382,19 +450,23 @@ function parseSmSep(xml) {
     lon: num(sm, "sm_longitude"),
   };
 }
-
-// ITWS Status
 function parseItwsStatus(xml) {
   const doc = parseXml(xml);
   const s = doc.getElementsByTagName("itws_status")[0];
   if (!s) return null;
+  return { mode: num(s, "stat_itws_mode"), purged: num(s, "stat_num_products_purged") };
+}
+function parseForecast(xml) {
+  const doc = parseXml(xml);
+  const f = doc.getElementsByTagName("forecast_accuracy")[0];
+  if (!f) return null;
   return {
-    mode: num(s, "stat_itws_mode"),
-    purged: num(s, "stat_num_products_purged"),
+    sa30: num(f, "fca_sa30"), sa60: num(f, "fca_sa60"),
+    sr30: num(f, "fca_sr30"), sr60: num(f, "fca_sr60"),
+    wa30: num(f, "fca_wa30"), wa60: num(f, "fca_wa60"),
+    wr30: num(f, "fca_wr30"), wr60: num(f, "fca_wr60"),
   };
 }
-
-// Precipitation (RLE-encoded grid)
 function parsePrecip(xml) {
   const doc = parseXml(xml);
   const p = doc.getElementsByTagName("precip")[0];
@@ -408,7 +480,6 @@ function parsePrecip(xml) {
   const enc = txt(p, "prcp_grid_compressed");
   const maxLvl = num(p, "prcp_grid_max_precip_level");
   if (!enc || !rows || !cols) return null;
-  // Run-length encoding: "value,count value,count ..."
   const grid = new Uint8Array(rows * cols);
   let i = 0;
   for (const pair of enc.split(/\s+/)) {
@@ -419,30 +490,175 @@ function parsePrecip(xml) {
   return { rows, cols, grid, noCov, apd, att, bad, maxLevel: maxLvl };
 }
 
-// ───────── Rendering ─────────────────────────────
+// ───────── Wind history ─────────────────────────────
+function pushWindHistory(airport, alerts) {
+  if (!alerts || alerts.windSpeed === null) return;
+  let h = state.windHistory.get(airport);
+  if (!h) { h = []; state.windHistory.set(airport, h); }
+  const t = alerts.windTime ? alerts.windTime.getTime() : Date.now();
+  // Dedupe: same wind-time epoch as last entry = same sample, skip
+  if (h.length && h[h.length - 1].t === t) return;
+  h.push({ t, dir: alerts.windDir, speed: alerts.windSpeed, gust: alerts.gust });
+  while (h.length > HISTORY_LEN) h.shift();
+}
+
+// ───────── Rendering ─────────────────────────────────
+function cardEmpty(title, msg, span) {
+  return `<div class="card span${span || 4}"><h3>${title}</h3>
+    <div style="color: var(--dim); padding: 6px 0;">${msg}</div></div>`;
+}
+
+function renderCompassTicks() {
+  const ticks = [];
+  const labels = [];
+  for (let d = 0; d < 360; d += 10) {
+    const cardinal = d % 90 === 0;
+    ticks.push(`<div class="tick${cardinal ? " cardinal" : ""}" style="transform: rotate(${d}deg)"></div>`);
+  }
+  const labelData = [{d:0,l:"N",x:50,y:8},{d:90,l:"E",x:92,y:50},{d:180,l:"S",x:50,y:92},{d:270,l:"W",x:8,y:50}];
+  for (const L of labelData) {
+    labels.push(`<div class="lbl" style="left:${L.x}%; top:${L.y}%">${L.l}</div>`);
+  }
+  return ticks.join("") + labels.join("");
+}
+
 function renderWindCard(alerts) {
-  if (!alerts) return cardEmpty("Wind", "No Configured Alerts product");
+  if (!alerts) return cardEmpty("Surface Wind", "No Configured Alerts product (this airport may not be in the alert subscription)", 5);
+
   const wd = alerts.windDir;
-  const dirText = wd === null || wd === 999 ? "VRB" : `${String(wd).padStart(3, "0")}°`;
+  const ws = alerts.windSpeed;
+  const wg = alerts.gust;
+  const ageStr = alerts.windTime ? ago(alerts.windTime) : "";
+  const vrb = wd === null || wd === 999;
+  const dirText = vrb ? "VRB" : fmtDir(wd);
   const compassText = compass(wd) || "";
-  const gust = alerts.gust && alerts.gust > 0 ? `G${alerts.gust}` : "";
-  const ageStr = alerts.time ? ago(alerts.time) : "";
-  const arrowRot = wd === null || wd === 999 ? 0 : (wd + 180); // arrow points FROM, so add 180
+
+  // Wind arrow rotates to point FROM the wind direction (meteorological convention)
+  // FROM 270° means wind blowing from West toward East, so arrow points toward 270°
+  const arrowRot = vrb ? 0 : wd;
+
+  // Staleness: ITWS surface winds carry an expiration (typically +60s after generation)
+  let staleClass = "fresh";
+  let staleText = "valid";
+  if (alerts.windExpires) {
+    const remaining = (alerts.windExpires.getTime() - Date.now()) / 1000;
+    if (remaining < 0) { staleClass = "stale"; staleText = `expired ${Math.abs(remaining).toFixed(0)}s ago`; }
+    else { staleText = `valid for ${remaining.toFixed(0)}s more`; }
+  }
 
   return `
-    <div class="card span4">
-      <h3>WIND <span class="ago">${ageStr}</span></h3>
+    <div class="card span5">
+      <h3>SURFACE WIND <span class="ago">${ageStr}</span></h3>
       <div class="wind">
-        <div class="arrow">
-          <div class="needle" style="transform: translateX(-50%) rotate(${arrowRot}deg)"></div>
+        <div class="compass">
+          ${renderCompassTicks()}
+          <div class="needle" style="transform: translate(-50%, -100%) rotate(${arrowRot}deg)"></div>
           <div class="ctr"></div>
-          <div class="lbl">N</div>
         </div>
         <div class="vals">
-          <div><span class="big">${alerts.windSpeed ?? "—"}</span> <span class="unit">kt</span></div>
-          <div class="dir">${dirText} ${compassText}</div>
-          <div class="gust">${gust ? gust + " kt gusts" : ""}</div>
+          <div class="row1">
+            <span class="big">${ws ?? "—"}</span>
+            <span class="unit">kt</span>
+          </div>
+          ${vrb
+            ? `<div class="vrb">Variable / no valid direction</div>`
+            : `<div class="dir">${dirText}<span class="compass-l">${compassText}</span></div>`}
+          <div class="gust">${wg && wg > 0 ? `Gusting ${wg} kt` : ""}</div>
         </div>
+      </div>
+      <div class="wind-meta">
+        <span>${alerts.windTime ? "sampled " + fmtTime(alerts.windTime) : ""}</span>
+        <span class="${staleClass}">${staleText}</span>
+      </div>
+    </div>`;
+}
+
+function renderWindHistoryCard(airport) {
+  const h = state.windHistory.get(airport) || [];
+  if (h.length < 2) return cardEmpty("Wind Trend", "Collecting samples — needs ≥2 readings for a trend graph", 7);
+
+  const W = 600, H = 80;
+  const speeds = h.map(p => p.speed || 0);
+  const gusts = h.map(p => p.gust || 0);
+  const dirs = h.map(p => p.dir);
+  const maxV = Math.max(10, ...speeds, ...gusts);
+  const yScale = (v) => H - (v / maxV) * (H - 10) - 4;
+  const xScale = (i) => (i / (h.length - 1)) * W;
+
+  const speedPath = speeds.map((v, i) => `${i === 0 ? "M" : "L"} ${xScale(i).toFixed(1)} ${yScale(v).toFixed(1)}`).join(" ");
+  const gustPath  = gusts.map((v, i) => `${i === 0 ? "M" : "L"} ${xScale(i).toFixed(1)} ${yScale(v).toFixed(1)}`).join(" ");
+
+  // Direction strip below: small arrows
+  const arrows = h.map((p, i) => {
+    if (p.dir === null || p.dir === 999) return "";
+    const x = xScale(i).toFixed(1);
+    return `<g transform="translate(${x},${H + 10}) rotate(${p.dir})">
+      <line x1="0" y1="-4" x2="0" y2="4" stroke="#6cf" stroke-width="1"/>
+      <polygon points="-2,4 0,8 2,4" fill="#6cf"/>
+    </g>`;
+  }).join("");
+
+  return `
+    <div class="card span7">
+      <h3>WIND TREND <span class="ago">last ${h.length} readings (~${Math.round((h[h.length-1].t - h[0].t)/60000)}m)</span></h3>
+      <svg id="spark" viewBox="0 0 ${W} ${H + 24}" preserveAspectRatio="none">
+        <line x1="0" y1="${H - 4}" x2="${W}" y2="${H - 4}" stroke="#222" stroke-width="1"/>
+        <path d="${gustPath}" stroke="var(--warn)" stroke-width="1.5" fill="none" opacity="0.7"/>
+        <path d="${speedPath}" stroke="var(--accent)" stroke-width="2" fill="none"/>
+        <text x="4" y="12" fill="#888" font-size="10">${maxV} kt</text>
+        ${arrows}
+      </svg>
+      <div class="spark-legend">
+        <span><span class="sw" style="background: var(--accent)"></span>speed</span>
+        <span><span class="sw" style="background: var(--warn)"></span>gust</span>
+        <span style="color: var(--cyan)">↓ arrows = wind FROM direction</span>
+      </div>
+    </div>`;
+}
+
+function renderRunwayWindsCard(alerts) {
+  if (!alerts || !alerts.alerts || alerts.alerts.length === 0)
+    return cardEmpty("Per-Runway Winds (LLWAS)", "No Configured Alerts product", 6);
+
+  const validCount = alerts.alerts.filter(a => a.llwasValid).length;
+  const note = alerts.llwasImpaired
+    ? `<span class="ago" style="color: var(--emerg)">LLWAS IMPAIRED — sensor data may be unavailable</span>`
+    : `<span class="ago">${validCount}/${alerts.alerts.length} sensors reporting</span>`;
+
+  const rows = alerts.alerts.map(a => {
+    if (a.llwasValid) {
+      const rot = a.llwasDir;
+      const c = compass(a.llwasDir);
+      return `<tr>
+        <td class="rwy">${a.region}</td>
+        <td>
+          <span class="mini-arrow" style="transform: rotate(0deg)">
+            <style scoped></style>
+          </span>
+          ${fmtDir(a.llwasDir)} ${c ? `<span style="color:var(--cyan)">${c}</span>` : ""}
+        </td>
+        <td>${a.llwasSpeed} kt</td>
+        <td style="color:${a.type ? "var(--emerg)" : "var(--good)"}">${a.type || "clear"}</td>
+      </tr>`;
+    } else {
+      return `<tr>
+        <td class="rwy">${a.region}</td>
+        <td class="invalid" colspan="2">— no valid LLWAS data —</td>
+        <td style="color:${a.type ? "var(--emerg)" : "var(--dim)"}">${a.type || "—"}</td>
+      </tr>`;
+    }
+  }).join("");
+
+  return `
+    <div class="card span6">
+      <h3>PER-RUNWAY WINDS (LLWAS) ${note}</h3>
+      <table class="rwy-winds">
+        <thead><tr><th>REGION</th><th>WIND FROM</th><th>SPEED</th><th>ALERT</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="margin-top:8px; color: var(--dim); font-size: 11px;">
+        Region codes: <b style="color:var(--text)">XXRA/RD</b> = runway 27 right arr/dep ·
+        <b style="color:var(--text)">XX A/D</b> = arr/dep on single runway
       </div>
     </div>`;
 }
@@ -450,95 +666,188 @@ function renderWindCard(alerts) {
 function renderStatusCard(alerts, ap, itws) {
   const rows = [];
   if (alerts) {
-    rows.push(`<li><span class="name">Radar</span><span class="${alerts.radarImpaired ? "bad" : "ok"}">${alerts.radarImpaired ? "IMPAIRED" : "OK"}</span></li>`);
-    rows.push(`<li><span class="name">LLWAS</span><span class="${alerts.llwasImpaired ? "bad" : "ok"}">${alerts.llwasImpaired ? "IMPAIRED" : "OK"}</span></li>`);
+    rows.push(`<li><span>Radar feed</span><span class="${alerts.radarImpaired ? "bad" : "ok"}">${alerts.radarImpaired ? "IMPAIRED" : "OK"}</span></li>`);
+    rows.push(`<li><span>LLWAS feed</span><span class="${alerts.llwasImpaired ? "bad" : "ok"}">${alerts.llwasImpaired ? "IMPAIRED" : "OK"}</span></li>`);
     if (alerts.runwayConfig)
-      rows.push(`<li><span class="name">Config</span><span class="name">${alerts.runwayConfig}</span></li>`);
-  }
-  if (ap && ap.radars) {
-    for (const r of ap.radars) {
-      rows.push(`<li><span class="name">Radar ${r.source}</span><span class="${r.edit ? "warn" : "ok"}">${r.edit ? "EDIT" : "OK"} ${r.time ? fmtTime(r.time) : ""}</span></li>`);
-    }
+      rows.push(`<li><span>Runway config</span><span>${alerts.runwayConfig}</span></li>`);
+    if (alerts.numRunways)
+      rows.push(`<li><span>Runway regions</span><span>${alerts.numRunways}</span></li>`);
   }
   if (itws) {
-    rows.push(`<li><span class="name">ITWS mode</span><span class="${itws.mode === 0 ? "ok" : "warn"}">${itws.mode === 0 ? "NORMAL" : "MODE " + itws.mode}</span></li>`);
+    rows.push(`<li><span>ITWS mode</span><span class="${itws.mode === 0 ? "ok" : "warn"}">${itws.mode === 0 ? "NORMAL" : "MODE " + itws.mode}</span></li>`);
+    if (itws.purged > 0) rows.push(`<li><span>Purged products</span><span class="warn">${itws.purged}</span></li>`);
   }
-  if (rows.length === 0) return cardEmpty("Status", "No status products available");
+  if (rows.length === 0) return cardEmpty("System Status", "No status data available", 3);
+  return `<div class="card span3"><h3>SYSTEM STATUS</h3>
+    <ul class="status-list">${rows.join("")}</ul></div>`;
+}
+
+function renderRadarsCard(ap) {
+  if (!ap || !ap.radars || ap.radars.length === 0) return "";
+  const rows = ap.radars.map(r => `
+    <tr>
+      <td style="color: var(--accent)">${r.source}</td>
+      <td>${fmtTime(r.time)}</td>
+      <td class="${r.edit ? "warn" : "ok"}" style="color: ${r.edit ? "var(--warn)" : "var(--good)"}">${r.edit ? "EDIT" : "OK"}</td>
+      <td style="color: var(--dim); font-size: 11px;">${r.thresholds.map(t => `L${t.thresh}:${t.results}`).join(" ")}</td>
+    </tr>`).join("");
   return `
     <div class="card span4">
-      <h3>STATUS</h3>
-      <ul class="status-list">${rows.join("")}</ul>
+      <h3>RADAR FEEDS (${ap.numRadars || ap.radars.length})</h3>
+      <table class="radars">
+        <thead><tr><th>SOURCE</th><th>LAST</th><th>STATE</th><th>AP DETECTED</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div style="margin-top:6px; color: var(--dim); font-size: 11px;">
+        AP = anomalous propagation (false radar returns). Lx:N = cells flagged at threshold x.
+      </div>
     </div>`;
 }
 
 function renderAlertsCard(alerts) {
-  if (!alerts) return cardEmpty("Runway Alerts", "No Configured Alerts product");
-  const active = alerts.alerts.filter(a => a.type && a.type.trim());
+  if (!alerts) return cardEmpty("Runway Alerts", "No Configured Alerts product", 4);
+  const active = alerts.alerts.filter(a => a.type);
   let body;
   if (active.length === 0) {
-    body = `<div style="color: var(--good); padding: 6px 0;">No active runway alerts (${alerts.alerts.length} regions monitored)</div>`;
+    body = `<div style="color: var(--good); padding: 6px 0;">No active wind shear / microburst alerts.
+      <div style="color: var(--dim); margin-top:4px; font-size: 11px;">${alerts.alerts.length} runway regions monitored.</div></div>`;
   } else {
     body = `<table class="alerts">
       <thead><tr><th>RWY</th><th>TYPE</th><th>VALUE</th><th>FIRST</th><th>LAST</th></tr></thead>
-      <tbody>
-        ${active.map(a => `<tr class="alert">
-          <td class="t">${a.region || ""}</td>
-          <td class="t">${a.type || ""}</td>
-          <td>${a.value !== null ? a.value + " kt" : ""}</td>
-          <td>${a.first || ""}</td>
-          <td>${a.last || ""}</td>
-        </tr>`).join("")}
-      </tbody></table>`;
+      <tbody>${active.map(a => `<tr class="alert">
+        <td class="t">${a.region}</td><td class="t">${a.type}</td>
+        <td>${a.value !== null ? a.value + " kt" : ""}</td>
+        <td>${a.first || ""}</td><td>${a.last || ""}</td>
+      </tr>`).join("")}</tbody></table>`;
   }
-  return `<div class="card span4"><h3>RUNWAY ALERTS</h3>${body}</div>`;
+  return `<div class="card span4"><h3>ALERTS</h3>${body}</div>`;
 }
 
-function renderHazardCard(graphics, hazard) {
-  if (!graphics && !hazard) return "";
-  const text = graphics?.legacy || graphics?.text || (hazard ? `No storm cells (count: ${hazard.numCells})` : "");
-  const title = graphics ? `TERMINAL WX (${graphics.time || ""})` : "HAZARD TEXT";
-  return `
-    <div class="card span8">
-      <h3>${title}</h3>
-      <div class="hazard-text">${text || "(no text)"}</div>
+function renderRibbonCard(alerts) {
+  if (!alerts) return "";
+  // Aggregate unique ribbons across all runway-alerts (each ribbon SD+RBDT pair shows once)
+  const seen = new Map();
+  for (const a of alerts.alerts) {
+    for (const r of a.ribbons) {
+      const k = `${r.site}|${r.rbdtId}`;
+      if (!seen.has(k)) seen.set(k, r);
+    }
+  }
+  if (seen.size === 0) return "";
+  const rows = [...seen.values()].map(r => {
+    const empty = !r.lines || /^0+$/.test(r.lines);
+    return `<div class="ribbon-row">
+      <span class="rid">${r.site}/${r.rbdtId}</span>
+      <span class="rline ${empty ? "empty" : ""}">${empty ? "(no display content)" : r.lines}</span>
     </div>`;
+  }).join("");
+  return `<div class="card span4">
+    <h3>RIBBON DISPLAYS</h3>
+    <div>${rows}</div>
+    <div style="margin-top:6px; color: var(--dim); font-size: 11px;">
+      Live ribbon-display unit content sent to tower / TRACON cabs. Mostly idle when no convective activity.
+    </div></div>`;
 }
 
 function renderStormCard(smSep) {
-  if (!smSep) return cardEmpty("Storms", "No SM SEP product");
-  if (smSep.numStorms === 0) {
-    return `<div class="card span4">
-      <h3>STORM CELLS</h3>
-      <div style="color: var(--good); padding: 6px 0;">No storms detected</div>
-    </div>`;
-  }
-  return `<div class="card span4">
+  if (!smSep) return cardEmpty("Storm Cells", "No SM SEP product", 3);
+  const cls = smSep.numStorms === 0 ? "good" : "warn";
+  return `<div class="card span3">
     <h3>STORM CELLS</h3>
-    <div style="font-size: 32px; color: var(--warn);">${smSep.numStorms}</div>
-    <div style="color: var(--dim); font-size: 11px;">cells tracked</div>
+    <div class="big-tile">
+      <div class="v ${cls}">${smSep.numStorms}</div>
+      <div class="l">cells tracked${smSep.numStorms === 0 ? " — clear" : ""}</div>
+    </div>
+    <div style="color: var(--dim); font-size: 11px;">
+      Reference: ${smSep.lat?.toFixed(3)}, ${smSep.lon?.toFixed(3)}
+    </div>
+  </div>`;
+}
+
+function renderHazardCard(graphics, twxText) {
+  // Two products carry human-readable text: Terminal Weather Graphics (legacy_map)
+  // and Terminal Weather Text Normal Product (twx_text). Both are similar; prefer
+  // showing both when present so users can compare.
+  const blocks = [];
+  if (graphics?.legacy) {
+    blocks.push(`<div style="color:var(--dim); font-size:10px; margin-bottom:4px;">GRAPHICS PRODUCT</div>
+      <div class="text-block">${graphics.legacy}</div>`);
+  }
+  if (twxText?.text) {
+    blocks.push(`<div style="color:var(--dim); font-size:10px; margin:8px 0 4px;">TEXT NORMAL PRODUCT</div>
+      <div class="text-block">${twxText.text}</div>`);
+  }
+  if (blocks.length === 0) return cardEmpty("Terminal Weather Text", "No text products available", 8);
+  return `<div class="card span8"><h3>TERMINAL WEATHER TEXT</h3>${blocks.join("")}</div>`;
+}
+
+function renderForecastCard(f) {
+  if (!f) return "";
+  const cells = [
+    ["sa30", "Storm Accuracy 30m", f.sa30], ["sa60", "Storm Accuracy 60m", f.sa60],
+    ["sr30", "Storm Recall 30m",  f.sr30], ["sr60", "Storm Recall 60m",  f.sr60],
+    ["wa30", "Weather Acc 30m",   f.wa30], ["wa60", "Weather Acc 60m",   f.wa60],
+    ["wr30", "Weather Recall 30m",f.wr30], ["wr60", "Weather Recall 60m",f.wr60],
+  ];
+  const items = cells.map(([k, label, v]) => {
+    const noData = v === null || v === -1;
+    return `<div class="acc-cell${noData ? " n" : ""}">
+      <div class="v">${noData ? "—" : v}</div>
+      <div class="l">${label}</div>
+    </div>`;
+  }).join("");
+  return `<div class="card span4">
+    <h3>FORECAST ACCURACY</h3>
+    <div class="acc-grid">${items}</div>
+    <div style="margin-top:6px; color: var(--dim); font-size: 11px;">
+      −1 / dash = no data (no recent storm/weather to score). Values are NN-scale (0-100).
+    </div>
   </div>`;
 }
 
 function renderPrecipCard(precip) {
-  if (!precip) return cardEmpty("Precipitation", "No precip product");
+  if (!precip) return cardEmpty("Precipitation Grid", "No precip product", 8);
+  const pctLevels = countPrecipLevels(precip);
   return `
     <div class="card span8">
-      <h3>PRECIPITATION (TRACON, ${precip.cols}×${precip.rows} @ 1km)</h3>
+      <h3>PRECIPITATION (TRACON, ${precip.cols}×${precip.rows} @ 1 km/cell)</h3>
       <div class="precip-wrap">
         <canvas id="precipCanvas" width="${precip.cols}" height="${precip.rows}"
                 style="width:${Math.min(precip.cols, 500)}px; height:auto;"></canvas>
-        <div class="precip-legend">
-          <div><span class="sw" style="background: var(--nws1)"></span>Level 1 — light rain</div>
-          <div><span class="sw" style="background: var(--nws2)"></span>Level 2 — moderate</div>
-          <div><span class="sw" style="background: var(--nws3)"></span>Level 3 — heavy</div>
-          <div><span class="sw" style="background: var(--nws4)"></span>Level 4 — very heavy</div>
-          <div><span class="sw" style="background: var(--nws5)"></span>Level 5 — extreme</div>
-          <div><span class="sw" style="background: var(--nws6)"></span>Level 6 — hail/severe</div>
-          <div><span class="sw" style="background: #333"></span>No coverage</div>
-          <div style="margin-top: 8px;">Max level seen: <b>${precip.maxLevel ?? 0}</b></div>
+        <div>
+          <div class="precip-legend">
+            <div><span class="sw" style="background: var(--nws1)"></span>Level 1 — light</div>
+            <div><span class="sw" style="background: var(--nws2)"></span>Level 2 — moderate</div>
+            <div><span class="sw" style="background: var(--nws3)"></span>Level 3 — heavy</div>
+            <div><span class="sw" style="background: var(--nws4)"></span>Level 4 — very heavy</div>
+            <div><span class="sw" style="background: var(--nws5)"></span>Level 5 — extreme</div>
+            <div><span class="sw" style="background: var(--nws6)"></span>Level 6 — hail/severe</div>
+            <div><span class="sw" style="background: #333"></span>No coverage</div>
+          </div>
+          <div class="precip-stats">
+            Max level seen: <b>${precip.maxLevel ?? 0}</b><br>
+            Cells with precip: <b>${pctLevels.precipCells.toLocaleString()}</b>
+              (${pctLevels.pctPrecip.toFixed(1)}%)<br>
+            No-coverage cells: <b>${pctLevels.noCovCells.toLocaleString()}</b>
+              (${pctLevels.pctNoCov.toFixed(1)}%)
+          </div>
         </div>
       </div>
     </div>`;
+}
+
+function countPrecipLevels(precip) {
+  let precipCells = 0, noCovCells = 0, total = precip.rows * precip.cols;
+  for (let i = 0; i < precip.grid.length; i++) {
+    const v = precip.grid[i];
+    if (v === precip.noCov) noCovCells++;
+    else if (v >= 1 && v <= 6) precipCells++;
+  }
+  return {
+    precipCells, noCovCells,
+    pctPrecip: (precipCells / total) * 100,
+    pctNoCov: (noCovCells / total) * 100,
+  };
 }
 
 function paintPrecip(precip) {
@@ -548,32 +857,22 @@ function paintPrecip(precip) {
   const ctx = cnv.getContext("2d");
   const img = ctx.createImageData(precip.cols, precip.rows);
   const palette = {
-    0:  [10,  10,  10,  255],   // clear
-    1:  [0,   176, 80,  255],
-    2:  [0,   255, 0,   255],
-    3:  [255, 255, 0,   255],
-    4:  [255, 128, 0,   255],
-    5:  [255, 0,   0,   255],
-    6:  [255, 0,   255, 255],
-    // Special marker values typically: noCov=15, attenuated=7, apDetected=8, bad=9
+    0: [10, 10, 10, 255],
+    1: [0, 176, 80, 255], 2: [0, 255, 0, 255],
+    3: [255, 255, 0, 255], 4: [255, 128, 0, 255],
+    5: [255, 0, 0, 255], 6: [255, 0, 255, 255],
   };
-  const noCov = precip.noCov;
   for (let y = 0; y < precip.rows; y++) {
     for (let x = 0; x < precip.cols; x++) {
       const v = precip.grid[y * precip.cols + x];
       let c;
-      if (v === noCov) c = [50, 50, 50, 255];
+      if (v === precip.noCov) c = [50, 50, 50, 255];
       else if (v === precip.bad) c = [80, 0, 80, 255];
       else if (v === precip.apd) c = [40, 40, 60, 255];
       else if (v === precip.att) c = [60, 60, 40, 255];
       else c = palette[v] || [25, 25, 25, 255];
-      // canvas image rows are top-down but radar grids often bottom-up;
-      // ITWS appears to be standard top-down so leave as-is.
       const o = (y * precip.cols + x) * 4;
-      img.data[o]     = c[0];
-      img.data[o + 1] = c[1];
-      img.data[o + 2] = c[2];
-      img.data[o + 3] = c[3];
+      img.data[o]=c[0]; img.data[o+1]=c[1]; img.data[o+2]=c[2]; img.data[o+3]=c[3];
     }
   }
   ctx.putImageData(img, 0, 0);
@@ -587,43 +886,34 @@ function renderProductsCard(airport) {
   items.sort((a, b) => a.productType.localeCompare(b.productType) || (a.subId || "").localeCompare(b.subId || ""));
   return `
     <div class="card span12">
-      <h3>ALL PRODUCTS (${items.length})</h3>
+      <h3>ALL ${items.length} PRODUCTS</h3>
       <div class="products-list">
-        ${items.map(m => `
-          <div class="product-row">
-            <span class="pname">${m.productType}${m.subId ? ` · <span style="color:var(--accent)">${m.subId}</span>` : ""}</span>
-            <span class="pmeta">
-              ${ago(new Date(m.receivedAt))}
-              · ${m.xmlSize}B
-              · <a href="/api/itws/raw-by-key?key=${encodeURIComponent(m.key)}" target="_blank">XML ↗</a>
-            </span>
-          </div>`).join("")}
+        ${items.map(m => `<div class="product-row">
+          <span class="pname">${m.productType}${m.subId ? ` · <span style="color:var(--accent)">${m.subId}</span>` : ""}</span>
+          <span class="pmeta">${ago(new Date(m.receivedAt))} · ${m.xmlSize}B ·
+            <a href="/api/itws/raw-by-key?key=${encodeURIComponent(m.key)}" target="_blank">XML ↗</a></span>
+        </div>`).join("")}
       </div>
     </div>`;
 }
 
-function cardEmpty(title, msg) {
-  return `<div class="card span4"><h3>${title}</h3>
-    <div style="color: var(--dim); padding: 6px 0;">${msg}</div></div>`;
-}
-
-// ───────── Dashboard build for selected airport ─────
+// ───────── Dashboard build ──────────────────────────
 async function loadAirport(airport) {
   state.selected = airport;
   $("dashEmpty").style.display = "none";
   $("dashContent").style.display = "block";
-  $("dashContent").innerHTML = `<div class="empty">Loading ${airport}…</div>`;
+  if (!$("dashContent").innerHTML) {
+    $("dashContent").innerHTML = `<div class="empty">Loading ${airport}…</div>`;
+  }
 
   let data;
   try {
-    const r = await fetch(`/api/itws/airport/${encodeURIComponent(airport)}`);
-    data = await r.json();
+    data = await fetch(`/api/itws/airport/${encodeURIComponent(airport)}`).then(r => r.json());
   } catch (e) {
     $("dashContent").innerHTML = `<div class="empty">Failed to load ${airport}</div>`;
     return;
   }
 
-  // Index products: productType → list of msgs (sub-id variants live separately)
   const byType = new Map();
   for (const m of data.products) {
     if (!byType.has(m.productType)) byType.set(m.productType, []);
@@ -636,63 +926,60 @@ async function loadAirport(airport) {
     return list && list.length ? list[0].rawXml : null;
   };
 
-  const alertsXml = findXml("Configured Alerts Product");
-  const graphicsXml = findXml("Terminal Weather Graphics Product");
-  const hazardXml = findXml("Hazard Text TRACON Product");
-  const apXml = findXml("AP Status");
-  const smXml = findXml("SM SEP TRACON Product") || findXml("SM SEP 5nm Product");
-  const itwsXml = findXml("ITWS Status Information");
-  const precipXml = findXml("Precipitation TRACON Product") || findXml("Precipitation 5nm Product");
+  const alerts = (() => { const x = findXml("Configured Alerts Product"); return x ? parseAlerts(x) : null; })();
+  const graphics = (() => { const x = findXml("Terminal Weather Graphics Product"); return x ? parseGraphics(x) : null; })();
+  const twxText = (() => { const x = findXml("Terminal Weather Text Normal Product"); return x ? parseTwxText(x) : null; })();
+  const hazard = (() => { const x = findXml("Hazard Text TRACON Product"); return x ? parseHazard(x) : null; })();
+  const ap = (() => { const x = findXml("AP Status"); return x ? parseApStatus(x) : null; })();
+  const sm = (() => {
+    const x = findXml("SM SEP TRACON Product") || findXml("SM SEP 5nm Product");
+    return x ? parseSmSep(x) : null;
+  })();
+  const itws = (() => { const x = findXml("ITWS Status Information"); return x ? parseItwsStatus(x) : null; })();
+  const fcst = (() => { const x = findXml("Forecast Accuracy Product"); return x ? parseForecast(x) : null; })();
+  const precip = (() => {
+    const x = findXml("Precipitation TRACON Product") || findXml("Precipitation 5nm Product");
+    return x ? parsePrecip(x) : null;
+  })();
 
-  const alerts = alertsXml ? parseAlerts(alertsXml) : null;
-  const graphics = graphicsXml ? parseGraphics(graphicsXml) : null;
-  const hazard = hazardXml ? parseHazard(hazardXml) : null;
-  const ap = apXml ? parseApStatus(apXml) : null;
-  const sm = smXml ? parseSmSep(smXml) : null;
-  const itws = itwsXml ? parseItwsStatus(itwsXml) : null;
-  const precip = precipXml ? parsePrecip(precipXml) : null;
+  if (alerts) pushWindHistory(airport, alerts);
 
   $("dashContent").innerHTML = `
     <div class="grid">
       ${renderWindCard(alerts)}
+      ${renderWindHistoryCard(airport)}
+      ${renderRunwayWindsCard(alerts)}
       ${renderStatusCard(alerts, ap, itws)}
       ${renderStormCard(sm)}
       ${renderAlertsCard(alerts)}
-      ${renderHazardCard(graphics, hazard)}
+      ${renderRibbonCard(alerts)}
+      ${renderRadarsCard(ap)}
+      ${renderForecastCard(fcst)}
+      ${renderHazardCard(graphics, twxText)}
       ${renderPrecipCard(precip)}
       ${renderProductsCard(airport)}
     </div>`;
 
   if (precip) paintPrecip(precip);
-
-  // Mark active in sidebar
   for (const el of document.querySelectorAll(".ap-row")) {
     el.classList.toggle("active", el.dataset.ap === airport);
   }
-  // URL update
   history.replaceState({}, "", `/itws/${airport}`);
 }
 
-// ───────── Airport list ─────────────────────────────
+// ───────── Airport list / polling / WS ──────────────
 function renderAirports() {
   const html = state.airports
     .filter(a => a.airport !== "ALL" && a.airport !== "000")
-    .map(a => {
-      // Detect if airport has active alerts (peek at our latest summaries — we don't have parsed
-      // data yet for non-selected airports; just show it normally and let user click)
-      const hasAlerts = false;
-      return `<div class="ap-row${state.selected === a.airport ? " active" : ""}${hasAlerts ? " alert" : ""}" data-ap="${a.airport}">
-        <span class="n">${a.airport}</span>
-        <span class="c">${a.products.length}p</span>
-      </div>`;
-    }).join("");
+    .map(a => `<div class="ap-row${state.selected === a.airport ? " active" : ""}" data-ap="${a.airport}">
+      <span class="n">${a.airport}</span><span class="c">${a.products.length}p</span></div>`)
+    .join("");
   $("airportsList").innerHTML = html;
   for (const el of document.querySelectorAll(".ap-row")) {
     el.onclick = () => loadAirport(el.dataset.ap);
   }
 }
 
-// ───────── Polling + WebSocket ──────────────────────
 let ws = null;
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -706,16 +993,13 @@ function connectWs() {
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "update") {
-      const upd = m.data;
-      state.latestByKey.set(upd.key, upd);
-      // If it belongs to the currently selected airport, schedule a refresh
-      if (state.selected && upd.site === state.selected) scheduleRefresh();
+      state.latestByKey.set(m.data.key, m.data);
+      if (state.selected && m.data.site === state.selected) scheduleRefresh();
     } else if (m.type === "snapshot") {
       for (const item of m.data) state.latestByKey.set(item.key, item);
     }
   };
 }
-
 let refreshTimer = null;
 function scheduleRefresh() {
   if (refreshTimer) return;
@@ -724,7 +1008,6 @@ function scheduleRefresh() {
     if (state.selected) loadAirport(state.selected);
   }, 1500);
 }
-
 async function pollOverview() {
   try {
     const [stats, airports] = await Promise.all([
@@ -746,11 +1029,8 @@ async function pollOverview() {
   if (m) state.selected = m[1].toUpperCase();
 }
 connectWs();
-pollOverview().then(() => {
-  if (state.selected) loadAirport(state.selected);
-});
+pollOverview().then(() => { if (state.selected) loadAirport(state.selected); });
 setInterval(pollOverview, 10000);
-// Refresh "ago" timestamps every 30s by re-rendering airport detail
 setInterval(() => { if (state.selected) loadAirport(state.selected); }, 30000);
 </script>
 </body>

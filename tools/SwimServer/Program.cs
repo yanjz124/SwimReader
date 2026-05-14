@@ -55,6 +55,13 @@ var tfmsQueue = Environment.GetEnvironmentVariable("TFMS_QUEUE") ?? "";
 var tfmsHost  = Environment.GetEnvironmentVariable("TFMS_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
 var tfmsVpn   = Environment.GetEnvironmentVariable("TFMS_VPN") ?? "TFMS";
 
+// ITWS credentials (Integrated Terminal Weather System)
+var itwsUser  = Environment.GetEnvironmentVariable("ITWS_USER") ?? "";
+var itwsPass  = Environment.GetEnvironmentVariable("ITWS_PASS") ?? "";
+var itwsQueue = Environment.GetEnvironmentVariable("ITWS_QUEUE") ?? "";
+var itwsHost  = Environment.GetEnvironmentVariable("ITWS_HOST") ?? "tcps://ems1.swim.faa.gov:55443";
+var itwsVpn   = Environment.GetEnvironmentVariable("ITWS_VPN") ?? "ITWS";
+
 // ── Shared state ────────────────────────────────────────────────────────────
 
 var flights = new ConcurrentDictionary<string, FlightState>();
@@ -149,6 +156,8 @@ var tdls = new TdlsBridge(jsonOpts) { HistoryDir = tdlsHistoryDir };
 var tais = new TaisBridge(jsonOpts);
 // TFMS bridge — own Solace session for Traffic Flow Management data
 var tfms = new TfmsBridge(tfmsUser, tfmsPass, tfmsQueue, tfmsHost, tfmsVpn, jsonOpts);
+// ITWS bridge — own Solace session for terminal weather products
+var itws = new ItwsBridge(itwsUser, itwsPass, itwsQueue, itwsHost, itwsVpn, jsonOpts);
 
 // STDDS message telemetry — in-memory counters only, no disk I/O
 // Key: "TOPIC_PREFIX/ROOT_ELEMENT" → count (e.g. "TAIS/TATrackAndFlightPlan" → 12345)
@@ -249,6 +258,7 @@ var serverCtx = new ServerContext
     Tdls = tdls,
     Tais = tais,
     Tfms = tfms,
+    Itws = itws,
     EramRecorder = eramRecorder,
     ReplayServer = replayServer,
     WebRootPath = builder.Environment.WebRootPath,
@@ -283,6 +293,9 @@ TaisRoutes.Register(app, serverCtx);
 
 // TFMS: WebSocket flight + TMI streams + /api/tfms/* REST
 TfmsRoutes.Register(app, serverCtx);
+
+// ITWS: terminal weather products page + /itws/ws WebSocket + /api/itws/* REST
+ItwsRoutes.Register(app, serverCtx);
 
 // ERAM: /ws snapshot/batch WebSocket + /api/event-xml + /api/flights + /api/stats
 EramRoutes.Register(app, serverCtx);
@@ -440,6 +453,7 @@ lifetime.ApplicationStopping.Register(() =>
 solaceThread.Start();
 asdex.Start();
 tfms.Start();
+itws.Start();
 
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
 // (csIndex/sqIndex declared above so ServerContext can capture; rebuilt below)

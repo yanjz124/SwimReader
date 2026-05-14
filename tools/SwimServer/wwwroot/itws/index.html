@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>ITWS — Integrated Terminal Weather System</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #141414;
+    --border: #2a2a2a;
+    --text: #d4d4aa;
+    --dim: #888;
+    --accent: #cccc44;
+    --warn: #ff8c00;
+    --emerg: #ff4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: #111;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 18px;
+    color: var(--accent);
+    letter-spacing: 1px;
+  }
+  header .stats { color: var(--dim); font-size: 12px; }
+  header .stats .v { color: var(--text); }
+  header .conn { margin-left: auto; padding: 2px 8px; border: 1px solid var(--border); border-radius: 2px; font-size: 11px; }
+  header .conn.ok  { color: #6f6; border-color: #353; }
+  header .conn.bad { color: var(--emerg); border-color: #533; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr 520px;
+    height: calc(100vh - 46px);
+  }
+  .col { overflow: auto; }
+  .col + .col { border-left: 1px solid var(--border); }
+  .col h2 {
+    margin: 0;
+    padding: 8px 12px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: var(--dim);
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    position: sticky;
+    top: 0;
+  }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border-bottom: 1px solid #1a1a1a;
+    cursor: pointer;
+  }
+  .row:hover { background: #1c1c0c; }
+  .row.active { background: #2a2a08; color: var(--accent); }
+  .row .name { color: var(--text); }
+  .row.active .name { color: var(--accent); }
+  .row .count { color: var(--dim); font-size: 11px; }
+
+  .detail { padding: 16px; }
+  .detail .meta {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    row-gap: 4px;
+    column-gap: 8px;
+    margin-bottom: 16px;
+  }
+  .detail .meta .k { color: var(--dim); }
+  .detail .meta .v { color: var(--text); word-break: break-all; }
+  .detail pre {
+    background: #050505;
+    border: 1px solid var(--border);
+    padding: 12px;
+    margin: 0;
+    overflow: auto;
+    max-height: calc(100vh - 320px);
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #c8c890;
+    font-size: 12px;
+  }
+  .empty { color: var(--dim); padding: 16px; text-align: center; }
+  .download {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 11px;
+  }
+  .download:hover { border-color: var(--accent); color: var(--accent); }
+  .toolbar {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .toolbar input {
+    background: #050505;
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 12px;
+    width: 180px;
+  }
+  .toolbar .api-link {
+    color: var(--dim);
+    text-decoration: none;
+    margin-left: auto;
+    font-size: 11px;
+  }
+  .toolbar .api-link:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>ITWS</h1>
+  <div class="stats">
+    msgs <span class="v" id="msgCount">0</span> ·
+    products <span class="v" id="prodCount">0</span> ·
+    sites <span class="v" id="siteCount">0</span> ·
+    latest <span class="v" id="latestCount">0</span>
+  </div>
+  <div class="conn bad" id="conn">DISCONNECTED</div>
+</header>
+
+<div class="layout">
+  <div class="col" id="airportsCol">
+    <h2>AIRPORTS</h2>
+    <div id="airports"></div>
+  </div>
+
+  <div class="col" id="productsCol">
+    <h2 id="productsHeader">PRODUCTS</h2>
+    <div class="toolbar">
+      <input id="filter" placeholder="filter products…" />
+      <a class="api-link" href="/api/itws/latest" target="_blank">REST API ↗</a>
+    </div>
+    <div id="products"></div>
+  </div>
+
+  <div class="col">
+    <h2 id="detailHeader">DETAIL</h2>
+    <div class="detail" id="detail">
+      <div class="empty">Select a product to view its latest raw XML.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let state = {
+  airports: [],       // [{airport, messageCount, products: []}]
+  products: [],       // current product list shown in middle column
+  selectedAirport: null,  // null = all airports
+  selectedKey: null,
+  // latest map: key -> {key, productType, site, topic, messageTime, receivedAt, xmlSize}
+  latest: new Map(),
+};
+
+// ---------- WebSocket ----------
+let ws = null;
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(proto + "//" + location.host + "/itws/ws");
+  ws.onopen = () => { $("conn").textContent = "LIVE"; $("conn").className = "conn ok"; };
+  ws.onclose = () => {
+    $("conn").textContent = "DISCONNECTED";
+    $("conn").className = "conn bad";
+    setTimeout(connect, 5000);
+  };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "snapshot") {
+      state.latest.clear();
+      for (const item of m.data) state.latest.set(item.key, item);
+      render();
+    } else if (m.type === "update") {
+      state.latest.set(m.data.key, m.data);
+      render();
+    }
+  };
+}
+
+// ---------- Polling for stats + airport list ----------
+async function pollStats() {
+  try {
+    const [stats, airports] = await Promise.all([
+      fetch("/api/itws/stats").then(r => r.json()),
+      fetch("/api/itws/airports").then(r => r.json()),
+    ]);
+    $("msgCount").textContent = stats.messageCount.toLocaleString();
+    $("prodCount").textContent = stats.productTypeCount;
+    $("siteCount").textContent = stats.siteCount;
+    $("latestCount").textContent = stats.latestCount;
+    state.airports = airports;
+    renderAirports();
+  } catch (e) { /* ignore — WS will catch up */ }
+}
+
+// ---------- Render ----------
+function render() {
+  renderAirports();
+  renderProducts();
+}
+
+function renderAirports() {
+  const html = [];
+  html.push(`<div class="row ${state.selectedAirport === null ? "active" : ""}" data-airport="">
+    <span class="name">ALL</span><span class="count">${state.latest.size}</span></div>`);
+  for (const a of state.airports) {
+    html.push(`<div class="row ${state.selectedAirport === a.airport ? "active" : ""}" data-airport="${a.airport}">
+      <span class="name">${a.airport}</span><span class="count">${a.products.length}p · ${a.messageCount.toLocaleString()}</span></div>`);
+  }
+  $("airports").innerHTML = html.join("");
+  for (const el of document.querySelectorAll("#airports .row")) {
+    el.onclick = () => {
+      const v = el.dataset.airport;
+      state.selectedAirport = v === "" ? null : v;
+      state.selectedKey = null;
+      render();
+    };
+  }
+}
+
+function renderProducts() {
+  const filter = ($("filter").value || "").toLowerCase();
+  const items = [...state.latest.values()]
+    .filter(m => state.selectedAirport === null || m.site === state.selectedAirport)
+    .filter(m => !filter || m.productType.toLowerCase().includes(filter) || m.site.toLowerCase().includes(filter))
+    .sort((a, b) => a.productType.localeCompare(b.productType) || a.site.localeCompare(b.site));
+
+  $("productsHeader").textContent = `PRODUCTS (${items.length})`;
+
+  if (items.length === 0) {
+    $("products").innerHTML = `<div class="empty">No products yet. ITWS messages can be infrequent.</div>`;
+    return;
+  }
+  const html = [];
+  for (const m of items) {
+    const ago = m.receivedAt ? agoText(m.receivedAt) : "";
+    html.push(`<div class="row ${state.selectedKey === m.key ? "active" : ""}" data-key="${m.key}">
+      <span class="name">${m.productType} <span style="color:#888"> · ${m.site}</span></span>
+      <span class="count">${ago}</span></div>`);
+  }
+  $("products").innerHTML = html.join("");
+  for (const el of document.querySelectorAll("#products .row")) {
+    el.onclick = () => {
+      state.selectedKey = el.dataset.key;
+      renderProducts();
+      loadDetail(state.selectedKey);
+    };
+  }
+}
+
+function agoText(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s.toFixed(0)}s`;
+  if (s < 3600) return `${(s / 60).toFixed(0)}m`;
+  return `${(s / 3600).toFixed(1)}h`;
+}
+
+async function loadDetail(key) {
+  const m = state.latest.get(key);
+  if (!m) return;
+  $("detailHeader").textContent = `${m.productType} · ${m.site}`;
+  $("detail").innerHTML = `
+    <div class="meta">
+      <div class="k">Product</div><div class="v">${m.productType}</div>
+      <div class="k">Site</div><div class="v">${m.site}</div>
+      <div class="k">Topic</div><div class="v">${m.topic || ""}</div>
+      <div class="k">Message time</div><div class="v">${m.messageTime || ""}</div>
+      <div class="k">Received</div><div class="v">${m.receivedAt}</div>
+      <div class="k">XML size</div><div class="v">${m.xmlSize} bytes</div>
+    </div>
+    <a class="download" href="/api/itws/raw/${encodeURIComponent(m.productType)}/${encodeURIComponent(m.site)}" target="_blank">View raw XML ↗</a>
+    <pre id="xml">Loading…</pre>
+  `;
+  try {
+    const r = await fetch(`/api/itws/raw/${encodeURIComponent(m.productType)}/${encodeURIComponent(m.site)}`);
+    const t = await r.text();
+    $("xml").textContent = t;
+  } catch (e) {
+    $("xml").textContent = "(failed to load raw XML)";
+  }
+}
+
+$("filter").oninput = renderProducts;
+
+// If URL has /itws/{AIRPORT}, pre-select it.
+{
+  const m = location.pathname.match(/^\/itws\/([A-Za-z0-9]+)\/?$/);
+  if (m) state.selectedAirport = m[1].toUpperCase();
+}
+
+connect();
+pollStats();
+setInterval(pollStats, 5000);
+setInterval(renderProducts, 1000); // refresh "ago" timestamps
+</script>
+</body>
+</html>

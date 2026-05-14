@@ -310,10 +310,8 @@ const state = {
   selected: null,
   latestByKey: new Map(),
   byAirport: new Map(),
-  windHistory: new Map(),   // airport → ring buffer of {t, dir, speed, gust}
+  serverHistory: null,   // last fetched /api/itws/history/{airport}
 };
-
-const HISTORY_LEN = 60;
 
 // ───────── Parse helpers ─────────────────────────────
 function parseXml(xml) { return new DOMParser().parseFromString(xml, "text/xml"); }
@@ -490,16 +488,13 @@ function parsePrecip(xml) {
   return { rows, cols, grid, noCov, apd, att, bad, maxLevel: maxLvl };
 }
 
-// ───────── Wind history ─────────────────────────────
-function pushWindHistory(airport, alerts) {
-  if (!alerts || alerts.windSpeed === null) return;
-  let h = state.windHistory.get(airport);
-  if (!h) { h = []; state.windHistory.set(airport, h); }
-  const t = alerts.windTime ? alerts.windTime.getTime() : Date.now();
-  // Dedupe: same wind-time epoch as last entry = same sample, skip
-  if (h.length && h[h.length - 1].t === t) return;
-  h.push({ t, dir: alerts.windDir, speed: alerts.windSpeed, gust: alerts.gust });
-  while (h.length > HISTORY_LEN) h.shift();
+// ───────── Server history fetch ─────────────────────
+// History is captured server-side (last 24h) and shared across clients.
+// We refetch on airport load + after each WS update for the current airport.
+async function fetchHistory(airport) {
+  try {
+    state.serverHistory = await fetch(`/api/itws/history/${encodeURIComponent(airport)}`).then(r => r.json());
+  } catch (e) { state.serverHistory = null; }
 }
 
 // ───────── Rendering ─────────────────────────────────
@@ -573,47 +568,118 @@ function renderWindCard(alerts) {
     </div>`;
 }
 
-function renderWindHistoryCard(airport) {
-  const h = state.windHistory.get(airport) || [];
-  if (h.length < 2) return cardEmpty("Wind Trend", "Collecting samples — needs ≥2 readings for a trend graph", 7);
+// Time-axis helper: maps an epoch-second timestamp into 0..W
+// Always anchor the right edge of the chart to NOW so older samples drift left,
+// giving a moving-window feel even when sample frequency is uneven.
+function timeXScale(W, samples, getT, windowSec = 86400) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const startSec = nowSec - windowSec;
+  return (s) => {
+    const t = getT(s);
+    return ((t - startSec) / windowSec) * W;
+  };
+}
 
-  const W = 600, H = 80;
-  const speeds = h.map(p => p.speed || 0);
-  const gusts = h.map(p => p.gust || 0);
-  const dirs = h.map(p => p.dir);
+function hourMarkers(W, H, windowSec = 86400) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const startSec = nowSec - windowSec;
+  // Vertical gridlines + labels every 4h
+  const m = [];
+  for (let h = 0; h <= 24; h += 4) {
+    const tx = ((((nowSec - h * 3600) - startSec) / windowSec) * W);
+    if (tx < 0 || tx > W) continue;
+    m.push(`<line x1="${tx}" y1="0" x2="${tx}" y2="${H}" stroke="#181818" stroke-width="1"/>`);
+    if (h !== 0) m.push(`<text x="${tx + 3}" y="${H - 2}" font-size="9" fill="#444">-${h}h</text>`);
+  }
+  return m.join("");
+}
+
+function renderWindHistoryCard() {
+  const h = state.serverHistory?.wind || [];
+  if (h.length < 2) return cardEmpty("Wind Trend (24h)", "Collecting samples — needs ≥2 readings", 7);
+
+  const W = 700, H = 100;
+  const ARR_H = 22;
+  const speeds = h.map(p => p.speed ?? 0);
+  const gusts  = h.map(p => p.gust ?? 0);
   const maxV = Math.max(10, ...speeds, ...gusts);
-  const yScale = (v) => H - (v / maxV) * (H - 10) - 4;
-  const xScale = (i) => (i / (h.length - 1)) * W;
+  const yScale = (v) => H - (v / maxV) * (H - 12) - 6;
+  const xScale = timeXScale(W, h, p => p.t);
 
-  const speedPath = speeds.map((v, i) => `${i === 0 ? "M" : "L"} ${xScale(i).toFixed(1)} ${yScale(v).toFixed(1)}`).join(" ");
-  const gustPath  = gusts.map((v, i) => `${i === 0 ? "M" : "L"} ${xScale(i).toFixed(1)} ${yScale(v).toFixed(1)}`).join(" ");
+  const speedPath = h.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p).toFixed(1)} ${yScale(p.speed ?? 0).toFixed(1)}`).join(" ");
+  const gustPath  = h.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p).toFixed(1)} ${yScale(p.gust ?? 0).toFixed(1)}`).join(" ");
 
-  // Direction strip below: small arrows
+  // Direction arrows: thin to avoid crowding — only every Nth sample
+  const arrowStride = Math.max(1, Math.floor(h.length / 60));
   const arrows = h.map((p, i) => {
+    if (i % arrowStride !== 0) return "";
     if (p.dir === null || p.dir === 999) return "";
-    const x = xScale(i).toFixed(1);
-    return `<g transform="translate(${x},${H + 10}) rotate(${p.dir})">
+    const x = xScale(p).toFixed(1);
+    return `<g transform="translate(${x},${H + ARR_H / 2}) rotate(${p.dir})">
       <line x1="0" y1="-4" x2="0" y2="4" stroke="#6cf" stroke-width="1"/>
       <polygon points="-2,4 0,8 2,4" fill="#6cf"/>
     </g>`;
   }).join("");
 
+  const spanMin = Math.round((h[h.length - 1].t - h[0].t) / 60);
+  const spanLabel = spanMin >= 90 ? `${(spanMin / 60).toFixed(1)}h` : `${spanMin}m`;
   return `
     <div class="card span7">
-      <h3>WIND TREND <span class="ago">last ${h.length} readings (~${Math.round((h[h.length-1].t - h[0].t)/60000)}m)</span></h3>
-      <svg id="spark" viewBox="0 0 ${W} ${H + 24}" preserveAspectRatio="none">
-        <line x1="0" y1="${H - 4}" x2="${W}" y2="${H - 4}" stroke="#222" stroke-width="1"/>
+      <h3>WIND TREND (24h) <span class="ago">${h.length} samples · span ${spanLabel}</span></h3>
+      <svg id="spark" viewBox="0 0 ${W} ${H + ARR_H}" preserveAspectRatio="none">
+        ${hourMarkers(W, H)}
+        <line x1="0" y1="${H - 6}" x2="${W}" y2="${H - 6}" stroke="#222" stroke-width="1"/>
         <path d="${gustPath}" stroke="var(--warn)" stroke-width="1.5" fill="none" opacity="0.7"/>
         <path d="${speedPath}" stroke="var(--accent)" stroke-width="2" fill="none"/>
         <text x="4" y="12" fill="#888" font-size="10">${maxV} kt</text>
+        <text x="4" y="${H - 8}" fill="#888" font-size="10">0</text>
         ${arrows}
       </svg>
       <div class="spark-legend">
         <span><span class="sw" style="background: var(--accent)"></span>speed</span>
         <span><span class="sw" style="background: var(--warn)"></span>gust</span>
         <span style="color: var(--cyan)">↓ arrows = wind FROM direction</span>
+        <span style="margin-left:auto; color: var(--dim)">x-axis: 24h, now on right</span>
       </div>
     </div>`;
+}
+
+function renderStormTrendCard() {
+  const h = state.serverHistory?.storms?.tracon || [];
+  if (h.length < 2) return ""; // omit when no data
+  const W = 500, H = 60;
+  const maxV = Math.max(2, ...h.map(p => p.count ?? 0));
+  const yScale = (v) => H - (v / maxV) * (H - 8) - 4;
+  const xScale = timeXScale(W, h, p => p.t);
+  const path = h.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p).toFixed(1)} ${yScale(p.count ?? 0).toFixed(1)}`).join(" ");
+  return `<div class="card span6">
+    <h3>STORM CELLS (24h)</h3>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%; height:60px; display:block;">
+      ${hourMarkers(W, H)}
+      <path d="${path}" stroke="var(--warn)" stroke-width="1.5" fill="none"/>
+      <text x="4" y="12" fill="#888" font-size="10">${maxV}</text>
+    </svg>
+    <div class="spark-legend"><span style="color: var(--dim)">TRACON cell count over time</span></div>
+  </div>`;
+}
+
+function renderPrecipTrendCard() {
+  const h = state.serverHistory?.precip?.tracon || [];
+  if (h.length < 2) return "";
+  const W = 500, H = 60;
+  const yScale = (v) => H - ((v ?? 0) / 6) * (H - 8) - 4;
+  const xScale = timeXScale(W, h, p => p.t);
+  const path = h.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p).toFixed(1)} ${yScale(p.maxLevel ?? 0).toFixed(1)}`).join(" ");
+  return `<div class="card span6">
+    <h3>PRECIP MAX LEVEL (24h)</h3>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%; height:60px; display:block;">
+      ${hourMarkers(W, H)}
+      <path d="${path}" stroke="var(--nws3)" stroke-width="1.5" fill="none"/>
+      <text x="4" y="12" fill="#888" font-size="10">6</text>
+      <text x="4" y="${H - 6}" fill="#888" font-size="10">0</text>
+    </svg>
+    <div class="spark-legend"><span style="color: var(--dim)">Highest NWS precip level seen in TRACON each sample</span></div>
+  </div>`;
 }
 
 function renderRunwayWindsCard(alerts) {
@@ -942,12 +1008,13 @@ async function loadAirport(airport) {
     return x ? parsePrecip(x) : null;
   })();
 
-  if (alerts) pushWindHistory(airport, alerts);
+  // History (24h trends) is captured server-side. Fetch in parallel with re-render.
+  await fetchHistory(airport);
 
   $("dashContent").innerHTML = `
     <div class="grid">
       ${renderWindCard(alerts)}
-      ${renderWindHistoryCard(airport)}
+      ${renderWindHistoryCard()}
       ${renderRunwayWindsCard(alerts)}
       ${renderStatusCard(alerts, ap, itws)}
       ${renderStormCard(sm)}
@@ -955,6 +1022,8 @@ async function loadAirport(airport) {
       ${renderRibbonCard(alerts)}
       ${renderRadarsCard(ap)}
       ${renderForecastCard(fcst)}
+      ${renderStormTrendCard()}
+      ${renderPrecipTrendCard()}
       ${renderHazardCard(graphics, twxText)}
       ${renderPrecipCard(precip)}
       ${renderProductsCard(airport)}

@@ -133,6 +133,11 @@ static class ItwsRoutes
             return xml is not null ? Results.Text(xml, "application/xml") : Results.NotFound();
         });
 
+        // 24h time-series history for the trend graphs (wind / storms / precip).
+        // Server-side captured so all clients share the same trend and reloads keep data.
+        app.MapGet("/api/itws/history/{airport}", (string airport) =>
+            Results.Json(ctx.Itws.GetHistory(airport), ctx.JsonOpts));
+
         // Discovery aids
         app.MapGet("/api/itws/topics", () => Results.Json(ctx.Itws.GetTopics(), ctx.JsonOpts));
         app.MapGet("/api/itws/sample/{productType}", (string productType) =>

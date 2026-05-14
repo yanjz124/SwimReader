@@ -44,6 +44,18 @@ class ItwsBridge
     public DateTime LastMessageAt;
     public bool Connected;
 
+    // ── Time-series history (last 24h) ──────────────────────────────────────
+    // airport → ordered list of samples; access guarded by lock(list).
+    // Each metric carries its own value shape — see History*Sample records below.
+    private readonly ConcurrentDictionary<string, List<WindHistorySample>> _windHistory =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, List<StormHistorySample>> _stormHistory =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, List<PrecipHistorySample>> _precipHistory =
+        new(StringComparer.OrdinalIgnoreCase);
+    private string? _historyDir;
+    private const int HistoryWindowSeconds = 86400; // 24h
+
     public ItwsBridge(string user, string pass, string queue, string host, string vpn,
         JsonSerializerOptions jsonOpts)
     {
@@ -228,8 +240,174 @@ class ItwsBridge
         };
         _latest[key] = msg;
 
+        // Extract time-series samples for trend graphs (wind / storms / precip).
+        // Re-parses small portions of the XML — cheap, and isolates history logic.
+        try { TryAppendHistory(body, productType, site); }
+        catch (Exception ex) { Console.Error.WriteLine($"[ITWS] history append: {ex.Message}"); }
+
         // Broadcast (lightweight notification + raw XML available via REST)
         BroadcastNew(msg);
+    }
+
+    // ── Time-series capture ─────────────────────────────────────────────────
+
+    private void TryAppendHistory(string body, string productType, string site)
+    {
+        if (productType == "Configured Alerts Product")
+        {
+            var doc = XDocument.Parse(body);
+            var ca = doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "configured_alert");
+            if (ca is null) return;
+            long t = ParseLong(GetLocal(ca, "ca_aw_seconds"));
+            if (t <= 0) return;
+            int? dir   = ParseInt(GetLocal(ca, "ca_aw_wind_dir"));
+            int? speed = ParseInt(GetLocal(ca, "ca_aw_wind_speed"));
+            int? gust  = ParseInt(GetLocal(ca, "ca_aw_gust_speed"));
+            var sample = new WindHistorySample(t, dir, speed, gust);
+            AppendDedup(_windHistory, site, sample, s => s.T);
+        }
+        else if (productType == "SM SEP TRACON Product" || productType == "SM SEP 5nm Product")
+        {
+            var doc = XDocument.Parse(body);
+            var sm = doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "sm_sep");
+            if (sm is null) return;
+            int count = ParseInt(GetLocal(sm, "sm_num_storms")) ?? 0;
+            long t = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            // Tag the metric so TRACON and 5nm don't overwrite each other
+            var key = $"{site}|{(productType.Contains("5nm") ? "5nm" : "tracon")}";
+            AppendDedup(_stormHistory, key, new StormHistorySample(t, count), s => s.T,
+                minIntervalSec: 30);
+        }
+        else if (productType == "Precipitation TRACON Product" || productType == "Precipitation 5nm Product")
+        {
+            var doc = XDocument.Parse(body);
+            var p = doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "precip");
+            if (p is null) return;
+            int max = ParseInt(GetLocal(p, "prcp_grid_max_precip_level")) ?? 0;
+            long t = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var key = $"{site}|{(productType.Contains("5nm") ? "5nm" : "tracon")}";
+            AppendDedup(_precipHistory, key, new PrecipHistorySample(t, max), s => s.T,
+                minIntervalSec: 30);
+        }
+    }
+
+    private static void AppendDedup<T>(ConcurrentDictionary<string, List<T>> store,
+        string key, T sample, Func<T, long> getTime, int minIntervalSec = 0)
+    {
+        var list = store.GetOrAdd(key, _ => new List<T>());
+        lock (list)
+        {
+            if (list.Count > 0)
+            {
+                var lastT = getTime(list[^1]);
+                var newT = getTime(sample);
+                if (newT == lastT) return;
+                if (minIntervalSec > 0 && (newT - lastT) < minIntervalSec) return;
+            }
+            list.Add(sample);
+            var cutoff = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - HistoryWindowSeconds;
+            int removeCount = 0;
+            while (removeCount < list.Count && getTime(list[removeCount]) < cutoff) removeCount++;
+            if (removeCount > 0) list.RemoveRange(0, removeCount);
+        }
+    }
+
+    private static string? GetLocal(XElement parent, string localName) =>
+        parent.Elements().FirstOrDefault(e => e.Name.LocalName == localName)?.Value?.Trim();
+
+    private static long ParseLong(string? s) => long.TryParse(s, out var v) ? v : 0;
+    private static int? ParseInt(string? s) => int.TryParse(s, out var v) ? v : (int?)null;
+
+    // ── Persistence ─────────────────────────────────────────────────────────
+
+    public void SetHistoryDir(string dir)
+    {
+        _historyDir = dir;
+        try
+        {
+            Directory.CreateDirectory(dir);
+            LoadHistoryFile(Path.Combine(dir, "wind.json"), _windHistory);
+            LoadHistoryFile(Path.Combine(dir, "storms.json"), _stormHistory);
+            LoadHistoryFile(Path.Combine(dir, "precip.json"), _precipHistory);
+            Console.WriteLine($"[ITWS] History dir: {dir} " +
+                $"(wind: {_windHistory.Count}, storms: {_stormHistory.Count}, precip: {_precipHistory.Count})");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ITWS] history setup: {ex.Message}");
+        }
+    }
+
+    private void LoadHistoryFile<T>(string path, ConcurrentDictionary<string, List<T>> target)
+    {
+        if (!File.Exists(path)) return;
+        try
+        {
+            var json = File.ReadAllText(path);
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, List<T>>>(json, _jsonOpts);
+            if (loaded is null) return;
+            foreach (var (key, samples) in loaded)
+                target[key] = samples;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ITWS] load {Path.GetFileName(path)}: {ex.Message}");
+        }
+    }
+
+    public void SaveHistory()
+    {
+        if (_historyDir is null) return;
+        try
+        {
+            SaveHistoryFile(Path.Combine(_historyDir, "wind.json"), _windHistory);
+            SaveHistoryFile(Path.Combine(_historyDir, "storms.json"), _stormHistory);
+            SaveHistoryFile(Path.Combine(_historyDir, "precip.json"), _precipHistory);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ITWS] history save: {ex.Message}");
+        }
+    }
+
+    private void SaveHistoryFile<T>(string path, ConcurrentDictionary<string, List<T>> store)
+    {
+        var snapshot = new Dictionary<string, List<T>>();
+        foreach (var (k, list) in store)
+        {
+            lock (list) snapshot[k] = list.ToList();
+        }
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(snapshot, _jsonOpts));
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    // ── Public history API ──────────────────────────────────────────────────
+
+    public object GetHistory(string airport)
+    {
+        airport = airport.ToUpperInvariant();
+        return new
+        {
+            airport,
+            wind = SnapshotList(_windHistory, airport),
+            storms = new
+            {
+                tracon = SnapshotList(_stormHistory, $"{airport}|tracon"),
+                fivenm = SnapshotList(_stormHistory, $"{airport}|5nm"),
+            },
+            precip = new
+            {
+                tracon = SnapshotList(_precipHistory, $"{airport}|tracon"),
+                fivenm = SnapshotList(_precipHistory, $"{airport}|5nm"),
+            },
+        };
+    }
+
+    private static T[] SnapshotList<T>(ConcurrentDictionary<string, List<T>> store, string key)
+    {
+        if (!store.TryGetValue(key, out var list)) return Array.Empty<T>();
+        lock (list) return list.ToArray();
     }
 
     private static string? FirstNonEmpty(XElement root, params string[] localNames)
@@ -409,6 +587,12 @@ class ItwsBridge
     public string? GetSample(string productType) =>
         _samples.TryGetValue(productType, out var s) ? s : null;
 }
+
+// Time-series sample types. Each carries an epoch-second timestamp; the
+// JSON shape is what the frontend reads, so field names matter.
+record WindHistorySample(long T, int? Dir, int? Speed, int? Gust);
+record StormHistorySample(long T, int Count);
+record PrecipHistorySample(long T, int MaxLevel);
 
 class ItwsMessage
 {

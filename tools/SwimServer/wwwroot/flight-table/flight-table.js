@@ -837,14 +837,9 @@ function buildIcaoFpl(d) {
     if (d.remarks) f18.push('RMK/' + d.remarks.replace(/\|/g, '').trim());
     const f18str = f18.length > 0 ? f18.join(' ') : '0';
 
-    // Field 19: Supplementary info (endurance, persons on board, radio, survival,
-    // jackets, dinghies, aircraft color, remarks, pilot-in-command). VATSIM prefile
-    // requires this section. SFDPS doesn't carry any of these fields, so we fill
-    // with ICAO standard placeholder values: E/0000 P/001 R/UV S/M J/L D/0 0 0 C A/W N/ C/UNKN
-    const f19 = 'E/0000 P/001 R/UV S/M J/L D/0 0 0 C A/W N/ C/UNKN';
-
-    // Format per FAA ICAO FPL Quick Guide
-    return `(FPL-${f7}-${f8}\n-${f9}-${f10}\n-${f13}\n-${f15}\n-${f16}\n-${f18str}\n-${f19})`;
+    // Field 19 (supplementary info) intentionally omitted — SFDPS doesn't carry it
+    // and placeholder values were misleading.
+    return `(FPL-${f7}-${f8}\n-${f9}-${f10}\n-${f13}\n-${f15}\n-${f16}\n-${f18str})`;
 }
 
 function buildSimBriefUrl(d) {

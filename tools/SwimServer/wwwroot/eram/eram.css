@@ -453,6 +453,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 }
 /* Disabled tearoff (grey when active tearoff exists) — color set dynamically in JavaScript */
 .tb-btn .tb-tear.tb-tear-disabled {
+    background: #C7C7C7 !important;
     cursor: default !important;
 }
 

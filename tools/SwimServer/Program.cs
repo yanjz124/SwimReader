@@ -111,27 +111,40 @@ var jsonOpts = new JsonSerializerOptions
     // detect cleared fields (e.g., interimAltitude null after OH/FH clears it)
 };
 
-// Replay recorders — capture real-time data for later playback
-// Shared budget: 85% of total disk minus non-replay usage, enforced across ALL recorders combined
-// All persisted data shares ONE hard cap. Override with PERSISTENCE_CAP_GB env var.
-var capGb = long.TryParse(Environment.GetEnvironmentVariable("PERSISTENCE_CAP_GB"), out var g) && g > 0 ? g : 80;
-var persistenceCap = capGb * 1024L * 1024 * 1024;
-PersistenceBudget.SetCap(persistenceCap);
-Console.WriteLine($"[BUDGET] Hard cap: {capGb} GB shared across replay + flight-history + tdls-history");
+// Per-category disk budgets — each data type has its OWN cap, enforced independently.
+// Rationale: the large binary replay recordings (eram/asdex) are pruned aggressively on a
+// small cap, while the small high-value text data (flight-history, tdls-history) is retained
+// much longer on generous caps. They never compete in one shared budget, so a flood of replay
+// data can't evict old flight history (and vice versa). All caps overridable via env vars.
+// Keeping the SwimReader footprint well under the disk size also leaves headroom for the other
+// services sharing this host (e.g. vNCRCC), whose data lives outside every watched dir here and
+// is therefore never touched by the budget enforcer.
+long GbCap(string envVar, long defaultGb)
+{
+    var gb = long.TryParse(Environment.GetEnvironmentVariable(envVar), out var v) && v > 0 ? v : defaultGb;
+    return gb * 1024L * 1024 * 1024;
+}
+var replayCapGb = GbCap("REPLAY_CAP_GB", 30);          // binary replay (eram + asdex) — pruned aggressively
+var historyCapGb = GbCap("HISTORY_CAP_GB", 25);        // flight-history text — keep long (~1.4 yr at 49 MB/day)
+var tdlsCapGb = GbCap("TDLS_CAP_GB", 5);               // tdls-history text — tiny, effectively unbounded
+PersistenceBudget.DefineBucket("replay", replayCapGb);
+PersistenceBudget.DefineBucket("flight-history", historyCapGb);
+PersistenceBudget.DefineBucket("tdls-history", tdlsCapGb);
+Console.WriteLine($"[BUDGET] Per-category caps (GB): replay={replayCapGb >> 30}, flight-history={historyCapGb >> 30}, tdls-history={tdlsCapGb >> 30}");
 
 var replayDir = Path.Combine(Directory.GetCurrentDirectory(), "replay");
-PersistenceBudget.Watch(replayDir, "*.jsonl.gz");
+PersistenceBudget.Watch("replay", replayDir, "*.jsonl.gz");
 // Recorders pass long.MaxValue so their internal cleanup never triggers — central enforcer owns it.
 var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), long.MaxValue, replayDir);
 var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
 
 // Flight history directory (declared early so route lambdas can capture it)
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
-PersistenceBudget.Watch(historyDir, "*.jsonl");
+PersistenceBudget.Watch("flight-history", historyDir, "*.jsonl");
 
 // TDLS history directory
 var tdlsHistoryDir = Path.Combine(Directory.GetCurrentDirectory(), "tdls-history");
-PersistenceBudget.Watch(tdlsHistoryDir, "*.jsonl");
+PersistenceBudget.Watch("tdls-history", tdlsHistoryDir, "*.jsonl");
 
 // ASDE-X departure gate codes: airport → pattern → abbreviation (declared early for route lambdas)
 var gateCodesPath = Path.Combine(Directory.GetCurrentDirectory(), "asdex-gatecodes.json");

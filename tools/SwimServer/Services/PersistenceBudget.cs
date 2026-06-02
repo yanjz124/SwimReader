@@ -1,62 +1,99 @@
 namespace SwimServer;
 
 /// <summary>
-/// Single shared disk budget for ALL persisted data: replay recordings, flight history,
-/// TDLS history, etc. When the combined size exceeds the cap, the oldest files across
-/// all watched directories are deleted (by file modification time) until under cap.
+/// Per-category disk budgets for persisted data. Each category ("bucket") has its OWN
+/// hard cap and its own set of watched directories, and is enforced independently of the
+/// others. This lets small, high-value text data (flight-history, tdls-history) be retained
+/// for a long time while large binary replay recordings (eram/asdex) are pruned aggressively
+/// on a much smaller cap — instead of all data competing for one shared budget where the tiny
+/// text files could be deleted before the huge replay files.
 ///
-/// Configure once at startup with a hard byte cap and the directories to watch.
-/// Call <see cref="Enforce"/> periodically (once per hour is plenty).
+/// Define each bucket once at startup with <see cref="DefineBucket"/> + <see cref="Watch"/>,
+/// then call <see cref="Enforce"/> periodically (once per hour is plenty). Directories that
+/// belong to no bucket (e.g. other apps' data) are never touched.
 /// </summary>
 static class PersistenceBudget
 {
-    private static long _maxBytes = long.MaxValue;
-    private static readonly List<DirSpec> _dirs = new();
-    private static readonly object _lock = new();
-
     private record DirSpec(string Path, string Pattern);
 
-    /// <summary>Hard cap on combined size of all watched directories, in bytes.</summary>
-    public static void SetCap(long maxBytes) => _maxBytes = maxBytes;
-
-    /// <summary>Register a directory to watch. Pattern e.g. "*.jsonl.gz" or "*.jsonl".</summary>
-    public static void Watch(string path, string pattern = "*")
+    private sealed class Bucket
     {
-        lock (_lock) _dirs.Add(new DirSpec(path, pattern));
+        public string Name = "";
+        public long MaxBytes = long.MaxValue;
+        public readonly List<DirSpec> Dirs = new();
     }
 
-    public static long CurrentTotalBytes()
+    // Insertion order preserved so log output is stable/readable.
+    private static readonly Dictionary<string, Bucket> _buckets = new();
+    private static readonly object _lock = new();
+
+    private static Bucket GetOrAdd(string name)
+    {
+        if (!_buckets.TryGetValue(name, out var b))
+        {
+            b = new Bucket { Name = name };
+            _buckets[name] = b;
+        }
+        return b;
+    }
+
+    /// <summary>Define (or update) a bucket's hard cap, in bytes.</summary>
+    public static void DefineBucket(string name, long maxBytes)
+    {
+        lock (_lock) GetOrAdd(name).MaxBytes = maxBytes;
+    }
+
+    /// <summary>
+    /// Register a directory under a bucket. Pattern e.g. "*.jsonl.gz" or "*.jsonl".
+    /// Multiple directories can share a bucket (their combined size is capped together).
+    /// </summary>
+    public static void Watch(string bucket, string path, string pattern = "*")
+    {
+        lock (_lock) GetOrAdd(bucket).Dirs.Add(new DirSpec(path, pattern));
+    }
+
+    /// <summary>Combined size of one bucket's watched directories, in bytes.</summary>
+    public static long CurrentBytes(string bucket)
     {
         lock (_lock)
         {
-            long total = 0;
-            foreach (var d in _dirs)
-            {
-                if (!Directory.Exists(d.Path)) continue;
-                foreach (var f in Directory.GetFiles(d.Path, d.Pattern, SearchOption.AllDirectories))
-                {
-                    try { total += new FileInfo(f).Length; } catch { }
-                }
-            }
-            return total;
+            if (!_buckets.TryGetValue(bucket, out var b)) return 0;
+            return SumBytes(b);
         }
     }
 
-    public static long MaxBytes => _maxBytes;
+    private static long SumBytes(Bucket b)
+    {
+        long total = 0;
+        foreach (var d in b.Dirs)
+        {
+            if (!Directory.Exists(d.Path)) continue;
+            foreach (var f in Directory.GetFiles(d.Path, d.Pattern, SearchOption.AllDirectories))
+            {
+                try { total += new FileInfo(f).Length; } catch { }
+            }
+        }
+        return total;
+    }
+
+    /// <summary>Enforce every bucket's cap independently.</summary>
+    public static void Enforce()
+    {
+        Bucket[] buckets;
+        lock (_lock) buckets = _buckets.Values.ToArray();
+        foreach (var b in buckets) EnforceBucket(b);
+    }
 
     /// <summary>
-    /// If combined size of all watched directories exceeds the cap, delete oldest files
-    /// (by mtime) until back under cap.
+    /// If a bucket's combined size exceeds its cap, delete the oldest files (by mtime)
+    /// within that bucket only, until back under cap.
     /// </summary>
-    public static void Enforce()
+    private static void EnforceBucket(Bucket b)
     {
         try
         {
-            DirSpec[] dirs;
-            lock (_lock) dirs = _dirs.ToArray();
-
             var all = new List<FileInfo>();
-            foreach (var d in dirs)
+            foreach (var d in b.Dirs)
             {
                 if (!Directory.Exists(d.Path)) continue;
                 foreach (var f in Directory.GetFiles(d.Path, d.Pattern, SearchOption.AllDirectories))
@@ -68,20 +105,20 @@ static class PersistenceBudget
             long total = 0;
             foreach (var fi in all) total += fi.Length;
 
-            var capMb = _maxBytes / (1024 * 1024);
+            var capMb = b.MaxBytes == long.MaxValue ? -1 : b.MaxBytes / (1024 * 1024);
             var totalMb = total / (1024 * 1024);
-            Console.WriteLine($"[BUDGET] {totalMb} MB used across {all.Count} files (cap: {capMb} MB)");
+            Console.WriteLine($"[BUDGET:{b.Name}] {totalMb} MB used across {all.Count} files (cap: {(capMb < 0 ? "none" : capMb + " MB")})");
 
-            if (total <= _maxBytes) return;
+            if (total <= b.MaxBytes) return;
 
             // Sort by modification time, oldest first.
-            all.Sort((a, b) => a.LastWriteTimeUtc.CompareTo(b.LastWriteTimeUtc));
+            all.Sort((a, c) => a.LastWriteTimeUtc.CompareTo(c.LastWriteTimeUtc));
 
             int deleted = 0;
             long freed = 0;
             foreach (var fi in all)
             {
-                if (total <= _maxBytes) break;
+                if (total <= b.MaxBytes) break;
                 try
                 {
                     var size = fi.Length;
@@ -92,14 +129,14 @@ static class PersistenceBudget
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[BUDGET] Delete failed {fi.FullName}: {ex.Message}");
+                    Console.WriteLine($"[BUDGET:{b.Name}] Delete failed {fi.FullName}: {ex.Message}");
                 }
             }
-            Console.WriteLine($"[BUDGET] Deleted {deleted} oldest files, freed {freed / (1024 * 1024)} MB; now at {total / (1024 * 1024)} MB");
+            Console.WriteLine($"[BUDGET:{b.Name}] Deleted {deleted} oldest files, freed {freed / (1024 * 1024)} MB; now at {total / (1024 * 1024)} MB");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[BUDGET] Enforce error: {ex.Message}");
+            Console.WriteLine($"[BUDGET:{b.Name}] Enforce error: {ex.Message}");
         }
     }
 }

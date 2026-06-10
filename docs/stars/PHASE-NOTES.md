@@ -707,3 +707,67 @@ tracks the controller owns.
 - Type `MS-` → MinSep cleared.
 - When two owned tracks are within 3 NM × 1000 ft, both data blocks
   flash red/yellow at 1 Hz until separation increases.
+
+---
+
+## Phase 10 — NEXRAD (deferred to Phase 11)
+
+### Scope decision
+
+The WPF reference uses `scope/NexradDisplay.cs` (+ the `NexradDecoder/`
+project) — a Level-2 radar product decoder reading NWS direct feeds and
+generating geo-projected polygons. That decoder is ~thousands of lines
+and depends on the .NET radar packet format.
+
+SwimReader already has a NEXRAD tile proxy at `/api/nexrad/tile?z&x&y`
+serving IEM-cached tiles (used by the ERAM scope) — a different
+technical approach that the WPF doesn't replicate. Under the strict-
+port rule, using the tile proxy would be a creativity violation.
+
+To honor the rule and the user's explicit wish, **Phase 10 is deferred
+along with Phase 11 polish.** Implementing the WPF's
+`NexradDecoder` faithfully needs a focused session: porting the radial
+packet decoder, the WX-color table mapping, the polygon generation,
+and the per-level brightness gates.
+
+What's already there:
+- DCB WX1-WX6 toggle buttons (Phase 4)
+- `starsState.wxLevels[6]` state
+- Empty render hook in main loop (no `drawNexrad` call yet)
+
+What needs Phase 11 work:
+- Port `NexradDecoder/*.cs` to JS (or proxy raw level-2 data via the
+  server)
+- Port `scope/NexradDisplay.cs` polygon rendering
+- Honor WX1-WX6 level mask
+- Honor `Brightness.Weather`
+
+### Self-test checklist
+
+(No tests yet — Phase 10 deferred.)
+
+---
+
+## Phase 11 — Polish + WebGL2 + remaining items
+
+Captures everything pushed to "polish":
+
+- **G1** — STARS font drop-in (TTF + pixel-snap)
+- **G2** — owned-key substitute documentation in-app
+- **G5** — WebGL2 immediate-mode wrapper for exact OpenGL parity
+- **G11** — MAX-blend (with WebGL2 in place)
+- **G12** — 3-line FDB timeshare rotation
+- **G13** — leader start point via per-glyph BoundsF
+- **G14** — DCB drag-to-scrub
+- **G15** — split Brightness fields (FDB/LDB/OTH/BCN/PRI)
+- **G16** — remaining 65 commands from CRC reference
+- **G19** — ATPA volumes + CRDA
+- **G20** — MinSep future-projection search
+- **G21** — NEXRAD (Phase 10 content lives here too)
+- All dot commands (.HOME, .DSP, .CR, .TS, ...)
+- Multi-monitor secondary displays (G3)
+- Audio (G4)
+
+This is the deliberate stopping point: phases 1-9 + 11 are a coherent
+strict-port effort; Phase 10 and the listed polish items are
+documented holes the user can prioritize.

@@ -39,9 +39,9 @@ around.
 | 6 | System lists | skipped (not in WPF; see PHASE-NOTES) | 50c8a6a |
 | 7 | SSA | done | 9af5b7a |
 | 8 | Handoffs / point-outs / sign-on (LOCAL ONLY) | done | a42e34a |
-| 9 | STCA + J-Ring + MinSep (ATPA + CRDA deferred to P11) | done | (this commit) |
-| 10 | NEXRAD | pending | — |
-| 11 | Secondary displays + polish | pending | — |
+| 9 | STCA + J-Ring + MinSep (ATPA + CRDA deferred to P11) | done | fdfa36e |
+| 10 | NEXRAD | deferred to P11 (see PHASE-NOTES) | (this commit) |
+| 11 | Polish + WebGL2 + NEXRAD + ATPA + CRDA + dot commands | pending — needs focused session | — |
 
 Update the row when a phase commits — link to the commit hash.
 

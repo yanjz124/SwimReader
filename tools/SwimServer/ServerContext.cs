@@ -38,6 +38,7 @@ class ServerContext
     public required TaisBridge Tais { get; init; }
     public required TfmsBridge Tfms { get; init; }
     public required ItwsBridge Itws { get; init; }
+    public required StarsBridge Stars { get; init; }
     public required ReplayRecorder EramRecorder { get; init; }
     public required ReplayServer ReplayServer { get; init; }
 

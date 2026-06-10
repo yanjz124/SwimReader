@@ -1,0 +1,112 @@
+# Known Deviations from WPF DGScope
+
+This file logs every place the web port can't bit-for-bit match the WPF
+program. Every entry must include: WHAT differs, WHY (the platform constraint),
+HOW CLOSE the workaround gets, and a TEST suggestion.
+
+If you add a new feature and discover a new gap, append it here in the same
+shape.
+
+---
+
+## Anticipated gaps (added before implementation; will revisit after)
+
+### G1 — Font rendering pixel parity
+- **What:** WinForms text rendering vs. browser text rendering produces
+  slightly different anti-aliasing on glyph edges; ClearType behavior in
+  WinForms is OS-controlled, browser is engine-controlled.
+- **Why:** No browser API exposes WinForms-equivalent glyph hinting.
+- **Workaround:** Ship the exact STARS font (TTF) the WPF program uses; force
+  `text-rendering: geometricPrecision; -webkit-font-smoothing: none` on render
+  surfaces; pixel-snap glyph positions.
+- **Closeness:** ≥99% on individual glyphs; possible 1px shimmer on diagonals.
+- **Test:** Side-by-side screenshot diff of a sample data block stack.
+
+### G2 — Owned keyboard shortcuts
+- **What:** Browser/OS owns `F11` (fullscreen), `F5`/`Ctrl+R` (reload),
+  `Ctrl+W`/`Cmd+W` (close), `Ctrl+T` (new tab), `Ctrl+Tab`, system meta keys.
+- **Why:** Browsers refuse to forward these to JavaScript.
+- **Workaround:** Suppress what we can via `keydown` `preventDefault`; document
+  substitute key sequences in the in-app help.
+- **Closeness:** Full STARS coverage minus the listed system keys.
+- **Test:** Walk the entire CRC keybinding table; mark each as native vs.
+  substituted.
+
+### G3 — Multi-monitor / secondary displays
+- **What:** WPF opens additional `RadarWindow` instances; in a browser these
+  become popup windows (require user gesture) or browser tabs.
+- **Why:** Browser security model.
+- **Workaround:** Secondary displays open via "Open Display" button (user
+  gesture). Each window connects independently to the same backend.
+- **Closeness:** Identical behavior inside each window; OS-level window
+  management is the user's job.
+- **Test:** Open two secondary displays, assign different TCPs, verify
+  independence.
+
+### G4 — Audio gating
+- **What:** Browsers refuse to play audio before a user gesture.
+- **Why:** Chrome/Firefox/Safari autoplay policies.
+- **Workaround:** First alert beep silent; subsequent beeps play normally
+  after any user click/key. Show one-time "Click to enable sound" banner.
+- **Closeness:** ≥99% of session audio; first-ever sound on a fresh load is
+  silent.
+- **Test:** Trigger STCA at session start before any interaction.
+
+### G5 — OpenGL → WebGL primitive parity
+- **What:** WPF uses OpenTK (immediate-mode `GL.Begin`/`GL.Vertex`). Modern
+  WebGL2 requires vertex buffers.
+- **Why:** WebGL1/2 don't expose fixed-function pipeline.
+- **Workaround:** Build a thin immediate-mode wrapper that batches the same
+  primitive calls into VBOs each frame. Render order, color, line width
+  preserved.
+- **Closeness:** Visually identical; performance characteristics differ (web
+  is typically faster on the same GPU).
+- **Test:** Side-by-side render of a busy facility (>100 targets + maps).
+
+### G6 — Right-click context menu
+- **What:** WPF accepts right-click for STARS commands (`QU`, `QZ` insert,
+  etc.); browsers default to OS context menu on right-click.
+- **Why:** Browser default.
+- **Workaround:** `contextmenu` event suppressed on the scope surface.
+- **Closeness:** 100% inside scope; user's browser context menu still works
+  on the title bar.
+- **Test:** Right-click a target → expect MCA insertion, not browser menu.
+
+---
+
+### G7 — Mouse-wheel zoom (Phase 1)
+- **What:** WPF cycles the `Range` value through preset steps via DCB buttons.
+  Web port adds mouse-wheel zoom on the canvas (multiplies Range by 0.85/1.18 per
+  scroll tick, clamped to [1, 400]) as a convenience while the DCB doesn't exist.
+- **Why:** Without a DCB yet, there's no other way to change Range in the
+  Phase 1 build. The DCB itself is built in Phase 4.
+- **Workaround:** Mouse-wheel zoom is additive — it doesn't remove or change
+  the DCB Range cycle behavior. When Phase 4 lands, DCB cycle continues to
+  work identically to WPF.
+- **Closeness:** Additive convenience only; no replacement of WPF behavior.
+- **Test:** Phase 4 verifies DCB Range cycle still works after wheel zoom.
+
+### G8 — RangeRingsCentered initial value (Phase 1)
+- **What:** WPF PrefSet defaults `RangeRingsCentered = false`. We default it
+  to `true` on first load so users see range rings centered on the facility
+  immediately. Right-click anywhere resets it to `false` exactly as WPF does
+  (RadarWindow.cs line 1317-1318).
+- **Why:** A fresh PrefSet has no saved `RangeRingLocation`, so a
+  WPF-faithful `false` default would draw zero rings on first load (rings at
+  geo 0,0 are far off-screen).
+- **Workaround:** Centered-on-load; right-click to opt out (matches WPF
+  behavior thereafter).
+- **Closeness:** After first right-click, identical to WPF.
+- **Test:** Open scope → see rings. Right-click 50nm NE → rings move there.
+
+### G9 — Temp topbar (Phase 1 only)
+- **What:** A non-WPF debug topbar at the top of the scope shows facility
+  name, current Range, RR spacing, ScreenCenterPoint, and a link back to
+  the picker.
+- **Why:** During the port, having scope state visible helps verify
+  behavior without an SSA.
+- **Workaround:** Will be deleted in Phase 7 (SSA implementation).
+- **Closeness:** Marked TEMP — Phase 7 removes it.
+- **Test:** Phase 7 commit removes `#topbar` and CSS rules.
+
+(Phase implementations will append G10+ as discovered.)

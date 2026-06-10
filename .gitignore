@@ -68,3 +68,4 @@ NUL
 # Investigation/debug logs
 tools/SwimServer/investigation-*.jsonl
 tools/SwimServer/pointout-investigation-*.jsonl
+.stars-reference/

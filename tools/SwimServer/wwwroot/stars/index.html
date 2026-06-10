@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>STARS — Facility Picker</title>
+<style>
+  body {
+    margin: 0;
+    background: #000;
+    color: #00ff00;
+    font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  header { padding: 12px 20px; border-bottom: 1px solid #1a3a1a; }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: 2px; color: #00ff00; }
+  header .sub { color: #6f6; font-size: 11px; margin-top: 4px; }
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    height: calc(100vh - 60px);
+  }
+  .col { overflow-y: auto; border-right: 1px solid #1a3a1a; }
+  .col:last-child { border-right: none; }
+  .col h2 {
+    margin: 0;
+    padding: 8px 16px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: #6f6;
+    border-bottom: 1px solid #1a3a1a;
+    background: #050505;
+    position: sticky;
+    top: 0;
+  }
+  .row {
+    padding: 6px 16px;
+    border-bottom: 1px solid #0a1a0a;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .row:hover { background: #052005; }
+  .row.active { background: #0a3a0a; color: #fff; }
+  .row .id { color: #00ff00; font-weight: bold; }
+  .row .meta { color: #6f6; font-size: 11px; }
+  .placeholder { padding: 16px; color: #6f6; }
+  .nostars { color: #888; font-style: italic; padding: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>STARS</h1>
+  <div class="sub">Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.</div>
+</header>
+<div class="layout">
+  <div class="col">
+    <h2>ARTCC</h2>
+    <div id="artccs"><div class="placeholder">Loading…</div></div>
+  </div>
+  <div class="col">
+    <h2>FACILITY</h2>
+    <div id="facilities"><div class="placeholder">Select an ARTCC</div></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let selectedArtcc = null;
+
+async function loadArtccs() {
+  try {
+    const ids = await fetch("/api/stars/artccs").then(r => r.json());
+    $("artccs").innerHTML = ids.map(id =>
+      `<div class="row" data-id="${id}"><span class="id">${id}</span></div>`).join("");
+    for (const el of document.querySelectorAll("#artccs .row"))
+      el.onclick = () => selectArtcc(el.dataset.id);
+  } catch (e) {
+    $("artccs").innerHTML = `<div class="placeholder">Error: ${e}</div>`;
+  }
+}
+
+async function selectArtcc(id) {
+  selectedArtcc = id;
+  for (const el of document.querySelectorAll("#artccs .row"))
+    el.classList.toggle("active", el.dataset.id === id);
+  $("facilities").innerHTML = `<div class="placeholder">Loading ${id}…</div>`;
+  try {
+    const data = await fetch(`/api/stars/artcc/${encodeURIComponent(id)}`).then(r => r.json());
+    if (!data.facilities || data.facilities.length === 0) {
+      $("facilities").innerHTML = `<div class="nostars">No STARS-configured facilities in ${id}.</div>`;
+      return;
+    }
+    // CRCMapImporter: auto-pick if exactly one — replicate that behavior.
+    if (data.facilities.length === 1) {
+      location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(data.facilities[0].id)}`;
+      return;
+    }
+    $("facilities").innerHTML = data.facilities.map(f =>
+      `<div class="row" data-id="${f.id}">
+        <span class="id">${f.id}</span>
+        <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${f.areaCount || 0} areas</span>
+      </div>`).join("");
+    for (const el of document.querySelectorAll("#facilities .row"))
+      el.onclick = () => {
+        location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(el.dataset.id)}`;
+      };
+  } catch (e) {
+    $("facilities").innerHTML = `<div class="placeholder">Error: ${e}</div>`;
+  }
+}
+
+loadArtccs();
+</script>
+</body>
+</html>

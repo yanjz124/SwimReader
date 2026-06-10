@@ -160,6 +160,11 @@ var tfms = new TfmsBridge(tfmsUser, tfmsPass, tfmsQueue, tfmsHost, tfmsVpn, json
 var itws = new ItwsBridge(itwsUser, itwsPass, itwsQueue, itwsHost, itwsVpn, jsonOpts);
 itws.SetHistoryDir(Path.Combine(Directory.GetCurrentDirectory(), "itws-history"));
 
+// STARS bridge — vNAS profile cache (no Solace; HTTP fetch from data-api.vnas.vatsim.net)
+var starsHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+starsHttp.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader-STARS/1.0");
+var stars = new StarsBridge(starsHttp, jsonOpts);
+
 // STDDS message telemetry — in-memory counters only, no disk I/O
 // Key: "TOPIC_PREFIX/ROOT_ELEMENT" → count (e.g. "TAIS/TATrackAndFlightPlan" → 12345)
 var stddsMessageCounts = new ConcurrentDictionary<string, long>();
@@ -260,6 +265,7 @@ var serverCtx = new ServerContext
     Tais = tais,
     Tfms = tfms,
     Itws = itws,
+    Stars = stars,
     EramRecorder = eramRecorder,
     ReplayServer = replayServer,
     WebRootPath = builder.Environment.WebRootPath,
@@ -297,6 +303,9 @@ TfmsRoutes.Register(app, serverCtx);
 
 // ITWS: terminal weather products page + /itws/ws WebSocket + /api/itws/* REST
 ItwsRoutes.Register(app, serverCtx);
+
+// STARS: facility picker + scope page + /api/stars/* vNAS profile REST
+StarsRoutes.Register(app, serverCtx);
 
 // ERAM: /ws snapshot/batch WebSocket + /api/event-xml + /api/flights + /api/stats
 EramRoutes.Register(app, serverCtx);
@@ -455,6 +464,7 @@ solaceThread.Start();
 asdex.Start();
 tfms.Start();
 itws.Start();
+stars.Start();
 
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
 // (csIndex/sqIndex declared above so ServerContext can capture; rebuilt below)

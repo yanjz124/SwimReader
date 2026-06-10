@@ -54,37 +54,35 @@ function dcbAdjust(rgbStr, brightness) {
 // ── Menu definitions (button order matches RadarWindow.cs:3536-3590) ────────
 function mainMenu(state) {
   const p = state.prefSet;
+  // Heights verbatim from scope/RadarWindow.cs:3468-3608 button declarations.
   const list = [
-    btn("RANGE", `RANGE\n${p.Range}`),
-    btn("PLACE_CNTR", "PLACE\nCNTR"),
-    btn("OFF_CNTR", "OFF\nCNTR"),
-    btn("RR_NUM", `RR\n${p.RangeRingSpacing}`),
-    btn("PLACE_RR", "PLACE\nRR"),
-    btn("RR_CNTR", "RR\nCNTR", { active: p.RangeRingsCentered }),
-    btn("MAPS", "MAPS", { submenu: "MAPS" }),
+    btn("RANGE", `RANGE\n${p.Range}`),                                                   // 80
+    btn("PLACE_CNTR", "PLACE\nCNTR", { half: true }),                                    // 40
+    btn("OFF_CNTR", "OFF\nCNTR", { half: true }),                                        // 40
+    btn("RR_NUM", `RR\n${p.RangeRingSpacing}`),                                          // 80
+    btn("PLACE_RR", "PLACE\nRR", { half: true }),                                        // 40
+    btn("RR_CNTR", "RR\nCNTR", { active: p.RangeRingsCentered, half: true }),            // 40
+    btn("MAPS", "MAPS", { submenu: "MAPS" }),                                            // 80
   ];
-  // 6 inline MAP toggles bound to mapButtonAssignments[0..5] → starsId
   for (let i = 0; i < 6; i++) {
     const m = state.dcbMapAt(i);
     list.push(btn(`MAP_${i}`, `MAP\n${i + 1}`, {
-      active: !!(m && m.visible),
-      half: true,    // RadarWindow.cs:3553 → Height = 40 (half)
-      mapIdx: i,
+      active: !!(m && m.visible), half: true, mapIdx: i,                                 // 40
     }));
   }
-  // 6 WX level toggles (Phase 10 fills these)
   for (let i = 0; i < 6; i++) {
     list.push(btn(`WX_${i + 1}`, `WX${i + 1}`, {
-      active: !!state.wxLevels[i], wx: i + 1, narrow: true,
+      active: !!state.wxLevels[i], wx: i + 1, narrow: true,                              // 80h × 40w
     }));
   }
-  list.push(btn("BRITE", "BRITE", { submenu: "BRITE" }));
-  list.push(btn("LDR_DIR", `LDR DIR\n${ldrDirName(p.OwnedDataBlockPosition)}`));
-  list.push(btn("LDR_LEN", `LDR\n${p.LeaderLength}`));
-  list.push(btn("CHAR_SIZE", "CHAR SIZE", { disabled: true }));
-  list.push(btn("MODE", "MODE\nFSL", { disabled: true }));
-  list.push(btn("SITE", "SITE", { submenu: "SITE" }));
-  list.push(btn("SHIFT", "SHIFT", { submenu: "AUX" }));
+  list.push(btn("BRITE", "BRITE", { submenu: "BRITE" }));                                // 80
+  list.push(btn("LDR_DIR", `LDR DIR\n${ldrDirName(p.OwnedDataBlockPosition)}`,
+    { half: true }));                                                                    // 40
+  list.push(btn("LDR_LEN", `LDR\n${p.LeaderLength}`, { half: true }));                   // 40
+  list.push(btn("CHAR_SIZE", "CHAR\nSIZE", { disabled: true }));                         // 80
+  list.push(btn("MODE", "MODE\nFSL", { disabled: true }));                               // 80
+  list.push(btn("SITE", "SITE", { submenu: "SITE" }));                                   // 80
+  list.push(btn("SHIFT", "SHIFT", { submenu: "AUX" }));                                  // 80
   return list;
 }
 
@@ -215,6 +213,10 @@ class DCB {
     // the same column; an 80-tall item takes the column alone.
     // Vertical DCB: flex-flow: row wrap inside an 80-wide strip → items flow
     // LEFT→RIGHT then wrap. Two 40-wide items share a row.
+    // Horizontal DCB: flex-flow:column wrap with EXACT 80px inner height so
+    // 40+40 half buttons sum to 80 and stack into one column. Any internal
+    // margin/padding pushes the sum past 80 and forces a new column for each
+    // half button (the bug seen in chrome).
     Object.assign(this.root.style, {
       position: "fixed",
       background: dcbAdjust(DCB_COLOR.FRAME_BG, p.Brightness.DCB),
@@ -223,9 +225,10 @@ class DCB {
       fontFamily: "ui-monospace, monospace",
       display: "flex",
       gap: "0",
-      padding: "1px",
+      padding: "0",
       zIndex: 20,
       alignContent: "flex-start",
+      boxSizing: "border-box",
       ...(vertical
           ? { top: 0, bottom: 0, width: sizeAxis + "px",
               [loc === "Left" ? "left" : "right"]: 0,
@@ -237,20 +240,20 @@ class DCB {
 
     const halfAxis = sizeAxis / 2;   // 40
     const html = this.buttons().map(b => {
-      // For horizontal: height = full bar (80) or half (40); width is fixed.
-      // For vertical:   width  = full bar (80) or half (40); height is fixed.
       let w, h;
       if (vertical) {
-        h = b.narrow ? halfAxis - 2 : sizeAxis - 2;     // tall axis
-        w = (b.half ? halfAxis : sizeAxis) - 2;          // wraps to share a row
+        h = b.narrow ? halfAxis : sizeAxis;
+        w = b.half ? halfAxis : sizeAxis;
       } else {
-        w = b.narrow ? halfAxis - 2 : sizeAxis - 2;     // long axis
-        h = (b.half ? halfAxis : sizeAxis) - 2;          // wraps to stack
+        w = b.narrow ? halfAxis : sizeAxis;
+        h = b.half ? halfAxis : sizeAxis;
       }
       const bg = b.disabled ? DCB_COLOR.DISABLED_BG
                 : b.active   ? DCB_COLOR.ACTIVE_BG
                              : DCB_COLOR.INACTIVE_BG;
       const fg = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
+      // border lives INSIDE the box via box-sizing:border-box so two 40px
+      // half buttons stack inside 80px column exactly. No margin.
       return `<div class="dcb-btn" data-id="${b.id}"
         ${b.mapIdx != null ? `data-map="${b.mapIdx}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
@@ -259,10 +262,10 @@ class DCB {
         ${b.disabled ? `data-disabled="1"` : ""}
         style="
           width:${w}px; height:${h}px;
-          margin:1px;
           background:${dcbAdjust(bg, p.Brightness.DCB)};
           color:${fg};
-          border:1px solid ${DCB_COLOR.BORDER};
+          outline:1px solid ${DCB_COLOR.BORDER};
+          outline-offset:-1px;
           display:flex; align-items:center; justify-content:center;
           text-align:center; line-height:1.05; font-size:11px;
           white-space:pre; cursor:${b.disabled ? "default" : "pointer"};

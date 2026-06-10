@@ -845,15 +845,12 @@ function frame() {
   requestAnimationFrame(frame);
 }
 
+// Phase 7 retired the temp topbar; only the connection-state corner indicator remains.
 function updateTopbar() {
-  const c = prefSet.ScreenCenterPoint;
-  document.getElementById("rangeLbl").textContent  = `RNG ${prefSet.Range}`;
-  document.getElementById("ringLbl").textContent   = `RR ${prefSet.RangeRingSpacing}${prefSet.RangeRingsCentered ? " (CTR)" : ""}`;
-  document.getElementById("centerLbl").textContent = `CTR ${c.Latitude.toFixed(4)}/${c.Longitude.toFixed(4)}`;
-  const tracksLbl = document.getElementById("tracksLbl");
-  if (tracksLbl)
-    tracksLbl.textContent = `T ${tracks.size}/${flightPlans.size}` +
-      ` ${dstarsState.connected ? "LIVE" : (dstarsState.lastError || "off")}`;
+  const el = document.getElementById("dstars-state");
+  if (el)
+    el.textContent = `DSTARS ${dstarsFacility()} · ${tracks.size}T/${flightPlans.size}FP · ` +
+      (dstarsState.connected ? "LIVE" : (dstarsState.lastError || "off"));
 }
 
 // ── Input: pan / zoom / right-click set RR center ───────────────────────────
@@ -934,6 +931,8 @@ async function bootstrap() {
   mountDcb();
   // Phase 5: mount MCA / preview area.
   if (window.mountMca) window.mountMca();
+  // Phase 7: mount SSA / status area.
+  if (window.mountSsa) window.mountSsa();
   // Phase 3a: DSTARS streaming connection. Runs independent of facility load.
   startDstars();
   requestAnimationFrame(frame);

@@ -7,23 +7,13 @@
 </head>
 <body>
 <canvas id="scope"></canvas>
-<div id="topbar">
-  <span id="facilityLbl">—</span>
-  <span class="sep">·</span>
-  <span id="rangeLbl">RNG —</span>
-  <span class="sep">·</span>
-  <span id="ringLbl">RR —</span>
-  <span class="sep">·</span>
-  <span id="centerLbl">CTR —</span>
-  <span class="sep">·</span>
-  <span id="tracksLbl">T 0/0 off</span>
-  <span class="sep">·</span>
-  <a href="/stars">change facility</a>
-  <span class="hint">scroll = zoom · middle-drag = pan · right-click = set RR center</span>
-</div>
+<!-- Phase 7 retired the temp debug topbar (G9). DCB + SSA cover its info now.
+     Connection state visible in SSA "DSTARS" line; facility name visible in tab title. -->
+<div id="dstars-state" style="position:fixed;bottom:8px;right:8px;font-size:11px;color:#888;background:rgba(0,0,0,0.5);padding:2px 6px;z-index:8;">—</div>
 <div id="dcb"></div>
 <script src="dcb.js"></script>
 <script src="mca.js"></script>
+<script src="ssa.js"></script>
 <script src="scope.js"></script>
 </body>
 </html>

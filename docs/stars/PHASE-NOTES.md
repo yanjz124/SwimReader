@@ -504,3 +504,67 @@ None. This is a documentation-only commit.
 The Phase 6 commit on the branch contains only updates to:
 - `docs/stars/PHASE-NOTES.md` (this entry)
 - `docs/stars/PORT-NOTES.md` (phase table marked "skipped per strict port")
+
+---
+
+## Phase 7 — SSA (System Status Area)
+
+### WPF sources ported
+
+| WPF source | What we took |
+|------------|--------------|
+| `scope/RadarWindow.cs:2942-3060` (`RenderStatus`) | Full content sequence verbatim: time + sync + altimeter → ATIS slots → SelectedBeaconCodes → Range+PTL → Altitude filter row → INTRAIL → METARs. |
+| `scope/RadarWindow.cs:747-752` (StatusArea TransparentLabel) | The SSA is one label; we render it as one `<div>` with `<br>`-separated lines. |
+| CRC docs § System Status Area | Confirms the layout taxonomy. |
+
+### Render order (mirrors WPF line-by-line)
+
+1. `HHmm/ss{syncInd}{altimeter}` — UTC time + ` ` or `*` for sync state + primary altimeter
+2. ATIS line per non-null slot (`atises[i]` + optional `gentexts[i]`)
+3. `SelectedBeaconCodes` space-separated
+4. `{Range}NM PTL: {PTLLength}`
+5. Altitude filter: `{minUnAssoc} {maxUnAssoc} U {minAssoc} {maxAssoc} A` formatted as 3-digit FL via `fa()` (= WPF `ToFilterAltitudeString`)
+6. `INTRAIL ON: {volumeIds}` if any active
+7. `INTRAIL 2.5 ON: {volumeIds}` if subset
+8. `{station} {pressure}` per METAR (K-prefix stripped for US stations, matching WPF line 3001)
+
+### Resolutions
+
+1. **Color = `AdjustedColor(DataBlockColor, Brightness.Lists)`.** Web port
+   sets `el.style.color = rgb(0, 255*Lists/100, 0)` so the SSA brightens
+   with the LST slider.
+2. **Positioning.** WPF reads `PrefSet.StatusAreaLocation` (PointF). Web
+   port defaults to (8, 90) — below the DCB — and supports
+   Shift+drag to move (persists to `prefSet.StatusAreaLocation`). Plain
+   click is reserved for STARS commands per CRC convention.
+3. **Time sync indicator.** WPF's `*` means time is unsynchronized; web
+   port leaves `timeSynchronized = true` since the browser's
+   `Date.now()` is always local-clock-accurate.
+4. **Altimeter.** WPF reads `wx.Altimeter.Value` from the local METAR
+   weather service. Web port leaves `null` until METAR fetch lands
+   (Phase 10 NEXRAD work brings the weather pipeline; for now the line
+   shows `—`).
+
+### Retirement of G9
+
+The Phase 1 debug topbar (G9) is removed in this commit. The SSA covers
+its info; one tiny `#dstars-state` corner indicator remains for raw
+connection state.
+
+### What's NOT in Phase 7
+
+- ATIS feed — the underlying ATIS storage is implemented (`SSA.atises[]`)
+  but nothing populates it. ATIS will be wired in when the relevant
+  data source is identified (likely a CRC/vNAS API or manual entry).
+- Live METAR fetch — moves with Phase 10 (NEXRAD) which already
+  proxies METAR through the existing SwimReader server.
+- Active beacon-code rotation indicator — Phase 5 implements
+  `prefSet.QuickLookedTCPs` storage; SSA visualization deferred.
+
+### Self-test checklist
+
+- SSA panel appears below DCB on load.
+- Time updates every second.
+- Range value reflects DCB RANGE button.
+- Altitude filter row reflects PrefSet defaults (and any QF/QL changes).
+- Shift+drag the panel → it moves; PrefSet.StatusAreaLocation updates.

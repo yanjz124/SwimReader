@@ -44,5 +44,43 @@ static class StarsRoutes
                 var fac = await ctx.Stars.GetFacilityAsync(artccId, facilityId);
                 return fac is not null ? Results.Json(fac, ctx.JsonOpts) : Results.NotFound();
             });
+
+        // ── Phase 2: video maps ─────────────────────────────────────────────
+        // Reads from CRC export tree on disk. See KNOWN-DEVIATIONS G10 for why
+        // we can't fetch from vNAS directly. Layout: crc-export/{artcc}/VideoMaps/{mapId}.geojson
+        app.MapGet("/api/stars/videoMap/{artccId}/{mapId}",
+            async (string artccId, string mapId) =>
+            {
+                var content = await ctx.Stars.GetVideoMapGeoJsonAsync(artccId, mapId);
+                if (content is null) return Results.NotFound(new { error = "map_not_in_crc_export", artccId, mapId });
+                return Results.Bytes(content.Value.bytes, content.Value.contentType);
+            });
+
+        app.MapGet("/api/stars/videoMaps/{artccId}", (string artccId) =>
+        {
+            var ids = ctx.Stars.ListAvailableVideoMapIds(artccId);
+            return Results.Json(new { artccId, available = ids, crcExportRoot = ctx.Stars.CrcExportRoot }, ctx.JsonOpts);
+        });
+
+        // POST a CRC export ZIP — extracts under crc-export/{artccId}/.
+        // multipart/form-data, fields: artccId, file
+        app.MapPost("/api/stars/upload-export", async (HttpContext c) =>
+        {
+            if (!c.Request.HasFormContentType) return Results.BadRequest("expected multipart/form-data");
+            var form = await c.Request.ReadFormAsync();
+            var artccId = form["artccId"].ToString();
+            if (string.IsNullOrEmpty(artccId)) return Results.BadRequest("artccId required");
+            var file = form.Files["file"];
+            if (file is null) return Results.BadRequest("file required");
+
+            var dest = Path.Combine(ctx.Stars.CrcExportRoot, artccId);
+            Directory.CreateDirectory(dest);
+            await using (var s = file.OpenReadStream())
+            {
+                System.IO.Compression.ZipFile.ExtractToDirectory(s, dest, overwriteFiles: true);
+            }
+            var ids = ctx.Stars.ListAvailableVideoMapIds(artccId);
+            return Results.Json(new { artccId, extracted = ids.Length, mapIds = ids }, ctx.JsonOpts);
+        });
     }
 }

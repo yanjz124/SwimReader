@@ -25,6 +25,11 @@ class StarsBridge
     private readonly ConcurrentDictionary<string, JsonDocument> _artccs = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _lastRefresh = DateTime.MinValue;
 
+    // Where the CRC export tree lives — see KNOWN-DEVIATIONS G10. Default is
+    // <cwd>/crc-export/. Layout matches CRCMapImporter.cs expectations:
+    //   <root>/<artccId>/VideoMaps/<mapId>.geojson
+    private string _crcExportRoot;
+
     public StarsBridge(HttpClient http, JsonSerializerOptions jsonOpts)
     {
         _http = http;
@@ -33,6 +38,15 @@ class StarsBridge
             PropertyNameCaseInsensitive = true,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         };
+        _crcExportRoot = Path.Combine(Directory.GetCurrentDirectory(), "crc-export");
+        Directory.CreateDirectory(_crcExportRoot);
+    }
+
+    public string CrcExportRoot => _crcExportRoot;
+    public void SetCrcExportRoot(string root)
+    {
+        _crcExportRoot = root;
+        Directory.CreateDirectory(root);
     }
 
     public void Start()
@@ -199,6 +213,35 @@ class StarsBridge
             starsConfiguration = starsConfig,
             videoMaps,
         };
+    }
+
+    // ── Video-map content (Phase 2) ─────────────────────────────────────────
+    //
+    // CRCMapImporter.cs lines 28-30 builds the path from a sibling VideoMaps
+    // folder of the artcc JSON file. We replicate that layout:
+    //   <crcExportRoot>/<artccId>/VideoMaps/<mapId>.geojson
+
+    public async Task<(string contentType, byte[] bytes)?> GetVideoMapGeoJsonAsync(
+        string artccId, string mapId)
+    {
+        var path = Path.Combine(_crcExportRoot, artccId, "VideoMaps", mapId + ".geojson");
+        if (File.Exists(path))
+        {
+            var bytes = await File.ReadAllBytesAsync(path);
+            return ("application/geo+json", bytes);
+        }
+        return null;
+    }
+
+    /// <summary>List of video map IDs the export tree actually contains for an ARTCC.</summary>
+    public string[] ListAvailableVideoMapIds(string artccId)
+    {
+        var dir = Path.Combine(_crcExportRoot, artccId, "VideoMaps");
+        if (!Directory.Exists(dir)) return Array.Empty<string>();
+        return Directory.GetFiles(dir, "*.geojson")
+            .Select(p => Path.GetFileNameWithoutExtension(p))
+            .Where(s => s is not null)
+            .ToArray()!;
     }
 
     private static JsonElement? FindFacility(JsonElement node, string targetId)

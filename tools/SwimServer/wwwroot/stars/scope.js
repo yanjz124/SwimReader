@@ -725,32 +725,94 @@ window.ownTcp = ownTcp;
 //   FDB (3 lines): callsign / altitude+handoff+speed+vfr+cat / scratchpad
 //   PDB (2 lines): callsign / altitude+speed
 //   LDB (2 lines): squawk    / altitude+speed                          (no callsign)
+// ── ClockPhase (scope/STARS/ClockPhase.cs) — drives FDB 3-variant timeshare.
+// Default sequence ONE_TWO_ONE_THREE: phase goes 0(2.0s)→1(1.5s)→0(2.0s)→2(1.5s).
+// Interval defaults pulled from ClockPhase.cs:18-23.
+const ClockPhase = {
+  phase: 0, _step: 0,
+  intervals: [2.0, 1.5, 2.0, 1.5],
+  // sequence values match ClockPhase.cs Sequence.ONE_TWO_ONE_THREE handlers
+  _phases: [0, 1, 0, 2],
+  _timer: null,
+  start() {
+    if (this._timer) return;
+    const advance = () => {
+      this._step = (this._step + 1) % 4;
+      this.phase = this._phases[this._step];
+      clearTimeout(this._timer);
+      this._timer = setTimeout(advance, this.intervals[this._step] * 1000);
+    };
+    this._timer = setTimeout(advance, this.intervals[0] * 1000);
+  },
+};
+ClockPhase.start();
+
 function buildDataBlock(t, fp) {
   const mode = dataBlockMode(t, fp);
   const lines = [];
+  // ── Field formatters — Aircraft.RedrawDataBlock lines 328-440 ──────────
   const dbAlt = t.Altitude?.Value ?? null;
   const altstring = dbAlt != null && t.Altitude.AltitudeType !== 2  // 2 = Unknown
     ? String(Math.round((dbAlt + 50) / 100)).padStart(3, "0")
     : "RDR";
-  const speed10 = t.GroundSpeed != null
-    ? String(Math.floor(t.GroundSpeed / 10)).padStart(2, "0")
-    : "  ";
-  const vfrChar = (fp?.FlightRules && fp.FlightRules[0] !== "I") ? fp.FlightRules[0] : " ";
-  const identChar = t.Ident ? "D" : " ";
+  const dbSpeed = t.GroundSpeed ?? 0;
+  const speed10 = String(Math.floor(dbSpeed / 10)).padStart(2, "0");
+
+  // vfrchar — FlightRules[0] when not 'I' (Aircraft.cs:355-365)
+  let vfrChar = " ", catChar = " ";
+  if (fp?.FlightRules && fp.FlightRules[0] !== "I") vfrChar = fp.FlightRules[0];
+  if (t.Ident) { vfrChar = "I"; catChar = "D"; }
+  else if (fp?.Category) catChar = fp.Category;
+
   const handoffChar = fp?.PendingHandoff ? fp.PendingHandoff.slice(-1) : " ";
 
+  // destination — falls back to altstring when null/unassigned (Aircraft.cs:373-393)
+  let destination = altstring;
+  if (fp?.Destination?.trim() && fp.Destination.trim() !== "unassigned")
+    destination = fp.Destination.trim().padEnd(3);
+
+  // yscratch — scratchpad else destination (Aircraft.cs:395-404)
+  const yscratch = (fp?.Scratchpad1?.trim() || destination).padEnd(3);
+  // yscratch2 — scratchpad2 + "+" (4ch) else scratchpad else destination (:406-417)
+  let yscratch2;
+  if (fp?.Scratchpad2?.trim()) yscratch2 = (fp.Scratchpad2.trim() + "+").padEnd(4);
+  else if (fp?.Scratchpad1?.trim()) yscratch2 = fp.Scratchpad1.trim().padEnd(3);
+  else yscratch2 = destination;
+
+  // type — AircraftType else speed10+vfr+cat (Aircraft.cs:419-430)
+  const type = (fp?.AircraftType?.trim()) ? fp.AircraftType.trim().padEnd(4)
+             : `${speed10}${vfrChar}${catChar}`;
+  // reqalt — "R{flight level}" else type (Aircraft.cs:432-440)
+  const reqalt = (fp?.RequestedAltitude > 0)
+    ? "R" + String(Math.floor(fp.RequestedAltitude / 100)).padStart(3, "0")
+    : type;
+
+  // ── Build all 3 FDB variants (Aircraft.cs:442-450) ──────────────────────
+  const fdb1line2 = `${altstring}${handoffChar}${speed10}${vfrChar}${catChar} `;
+  const fdb2line2 = `${yscratch}${handoffChar}${reqalt} `;
+  let fdb3line2;
+  if (!fp?.Scratchpad2?.trim()) fdb3line2 = `${yscratch}${handoffChar}${type} `;
+  else if (yscratch2.length === 4) fdb3line2 = `${yscratch2}${type}`;
+  else fdb3line2 = `${yscratch2}${handoffChar}${type} `;
+
   if (mode === "FDB") {
-    const cs = fp?.Callsign || t.Callsign || "";
-    lines.push(cs);
-    lines.push(`${altstring}${handoffChar}${speed10}${vfrChar}${identChar}`);
-    if (fp?.Scratchpad1) lines.push(fp.Scratchpad1.padEnd(3));
+    // Line 1: callsign or squawk (Aircraft.cs:449-489)
+    let line1 = "";
+    if (fp?.Callsign) line1 = fp.Callsign;
+    else if (t.Squawk) line1 = t.Squawk;
+    lines.push(line1);
+    // Line 2: pick variant by ClockPhase
+    lines.push([fdb1line2, fdb2line2, fdb3line2][ClockPhase.phase]);
+    // Line 3: AssignedSquawk mismatch OR ATPA mileage OR blank
+    if (fp?.AssignedSquawk && t.Squawk && t.Squawk !== String(fp.AssignedSquawk).padStart(4, "0"))
+      lines.push(`${t.Squawk} ${String(fp.AssignedSquawk).padStart(4, "0")}`);
+    else lines.push(" ");
   } else if (mode === "PDB") {
-    const cs = fp?.Callsign || t.Callsign || "";
-    lines.push(cs);
-    lines.push(`${altstring}${speed10}`);
-  } else { // LDB
+    lines.push(fp?.Callsign || t.Callsign || t.Squawk || "");
+    lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+  } else { // LDB (Aircraft.cs:559+)
     if (!prefSet.LdbBeaconCodesInhibited) lines.push(t.Squawk || "");
-    lines.push(`${altstring}${speed10}`);
+    lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
   }
   return lines;
 }

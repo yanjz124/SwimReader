@@ -409,7 +409,10 @@ function drawVideoMapLines() {
     const baseColor = (cat === "A") ? COLORS.VideoMapA : COLORS.VideoMapB;
     const color = adjusted(baseColor, brightness);
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
+    // WPF line width = GL default 1.0 px; on canvas2D a 1px stroke gets
+    // antialiased to near-invisible thinness. 1.25 matches the WPF visual
+    // weight after subpixel rendering.
+    ctx.lineWidth = 1.25;
 
     let count = 0;
     ctx.beginPath();

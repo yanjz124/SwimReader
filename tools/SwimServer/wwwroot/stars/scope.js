@@ -43,16 +43,18 @@ const prefSet = {
   HistoryNum: 10,
   HistoryRate: 4.5,
   LeaderLength: 1,
-  Range: 6,
+  Range: 50,
   AltitudeFilterAssociatedMax: 99900,
   AltitudeFilterAssociatedMin: -9900,
   AltitudeFilterUnAssociatedMax: 99900,
   AltitudeFilterUnAssociatedMin: -9900,
   LdbBeaconCodesInhibited: false,
+  // Defaults match typical DGScope profile values rather than 100. Profiles
+  // override these via applyProfile; URL `?b=...` further overrides per-category.
   Brightness: {
-    DCB: 100, Background: 100, RangeRings: 100, Compass: 100,
-    VideoMapA: 100, VideoMapB: 100, DataBlock: 100,
-    Lists: 100, Position: 100, History: 100, Weather: 100,
+    DCB: 50, Background: 100, RangeRings: 20, Compass: 30,
+    VideoMapA: 75, VideoMapB: 25, DataBlock: 100,
+    Lists: 75, Position: 100, History: 60, Weather: 70,
   },
 };
 
@@ -192,7 +194,7 @@ function drawCompass() {
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
   ctx.lineWidth = 1;
-  ctx.font = "11px ui-monospace, monospace";
+  ctx.font = "11px FixedDemiBold, ui-monospace, monospace";
 
   // pixelScale = scale (WPF: a single px in screen units; in canvas we use 1).
   const linelength = 15;
@@ -928,15 +930,25 @@ function drawDataBlockAndLeader(t, fp, posNow) {
 }
 
 // ── Position symbol render ──────────────────────────────────────────────────
-// WPF (RadarWindow.cs:5512+ + PrimaryReturn.cs): the "live" target is a
-// rendered PrimaryReturn shape (small filled square, default ~3-4 px, color
-// COLORS.Return = RGB(30,120,255) at 100% Position brightness). The character
-// symbol (◇/\/+/#) is drawn on top to indicate correlation status.
+// WPF (RadarWindow.cs:6018+ DrawTarget for RadarType.FUSED + Aircraft.cs:265
+// TargetReturn + Aircraft.cs:286-291 PositionIndicator + Aircraft.cs:617-623
+// PositionIndicator.Text):
+//   1. Filled circle for beacon target (Return color, Brightness.PrimaryTargets)
+//   2. PositionIndicator TransparentLabel with text:
+//        - PositionInd.Substring(-1)  (last char of controller sector / Owner)
+//        - else selectedSquawkChar    (when squawk is in selected list — TODO)
+//        - else "◇" if PrimaryOnly
+//        - else "*"
+function positionSymbolText(t, fp) {
+  const owner = fp?.Owner || t.PositionInd;
+  if (owner && owner.length > 0) return owner.slice(-1);
+  if (!t.Squawk || t.Squawk === "0000") return "◇";    // PrimaryOnly
+  return "*";
+}
+
 function drawPosition(t, posNow) {
   const fp = trackToFp.get(t.Guid);
-  // Track type color hierarchy. Emergency wins; otherwise the PrimaryReturn
-  // base color (cyan-ish blue) with the character glyph overlaid in beacon
-  // green so beacon vs primary is distinguishable.
+  // Color hierarchy per RadarWindow.cs:5435+ / line 5512.
   let baseColor = COLORS.Return;
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) baseColor = COLORS.Emerg;
   else if (fp?.Owner === ownTcp()) baseColor = COLORS.Owned;
@@ -944,19 +956,25 @@ function drawPosition(t, posNow) {
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;
 
-  // PrimaryReturn shape: small filled square.
+  // DrawTarget RadarType.FUSED beacon target = DrawCircle filled (line 6107).
+  // Size = TargetExtentSymbols.TargetWidth (FUSED uses
+  // NormalSymbolDistanceDimension/60.76/scale clipped to MinimumPixelDimension).
+  // 4 px diameter is the typical visual at 50NM zoom.
   ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
-  ctx.fillRect(px - 2, py - 2, 4, 4);
+  ctx.beginPath();
+  ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+  ctx.fill();
 
-  // Symbol glyph in beacon green - distinguishes ◇/\/+/# variants.
   if (!isCoasting(t)) {
+    // PositionIndicator label (Aircraft.cs:286 + 617-623). Overlay glyph
+    // on top of the circle in BeaconTarget (lime) color.
     ctx.fillStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
-    ctx.font = "13px ui-monospace, monospace";
+    ctx.font = "12px FixedDemiBold, ui-monospace, monospace";
     ctx.textBaseline = "middle";
     ctx.textAlign = "center";
-    ctx.fillText(symbolFor(t), px, py);
+    ctx.fillText(positionSymbolText(t, fp), px, py);
   } else {
-    // Coast = hash mark drawn as actual #-shape lines for visibility.
+    // Coast = stroked # symbol (vs filled glyph) for visual distinction.
     ctx.strokeStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -993,7 +1011,7 @@ function drawJRings() {
     ctx.stroke();
     // Radius label
     ctx.fillStyle = ctx.strokeStyle;
-    ctx.font = "10px ui-monospace, monospace";
+    ctx.font = "10px FixedDemiBold, ui-monospace, monospace";
     ctx.textAlign = "center";
     ctx.fillText(`J${t._jRing}`, center.x, center.y - px - 4);
   }
@@ -1055,7 +1073,7 @@ function drawMinSep() {
   ctx.setLineDash([]);
   const mx = (s1.x + s2.x) / 2, my = (s1.y + s2.y) / 2;
   ctx.fillStyle = ctx.strokeStyle;
-  ctx.font = "11px ui-monospace, monospace";
+  ctx.font = "11px FixedDemiBold, ui-monospace, monospace";
   ctx.textAlign = "center";
   ctx.fillText(`${minSepPair.dist.toFixed(2)} NM`, mx, my - 6);
 }
@@ -1182,11 +1200,7 @@ cv.addEventListener("wheel", (e) => {
 }, { passive: false });
 
 cv.addEventListener("contextmenu", (e) => {
-  e.preventDefault();  // G6
-  // RadarWindow.cs line 1317-1318: right-click sets RangeRingLocation and
-  // unsets RangeRingsCentered.
-  prefSet.RangeRingLocation = screenToGeo(e.clientX, e.clientY);
-  prefSet.RangeRingsCentered = false;
+  e.preventDefault();  // G6 suppress browser menu only - no STARS action
 });
 
 // ── Bootstrap: load facility, set HomeLocation, kick off render ─────────────
@@ -1278,6 +1292,9 @@ function mountDcb() {
   setInterval(() => dcb.render(), 1000);
 }
 
+function _afterPrefChange() {
+  if (window.pushUrlState) window.pushUrlState();
+}
 function handleNumAdjust(id, dir) {
   switch (id) {
     case "RANGE":
@@ -1322,6 +1339,7 @@ function handleNumAdjust(id, dir) {
       break;
   }
   dcb.render();
+  _afterPrefChange();
 }
 
 function handleBriteAdjust(which, d) {
@@ -1336,6 +1354,7 @@ function handleBriteAdjust(which, d) {
   const k = map[which];
   if (k) b[k] = clamp(b[k] + d, 0, 100);
   dcb.render();
+  _afterPrefChange();
 }
 
 function handleMapToggle(idx) {
@@ -1399,4 +1418,81 @@ function pickAircraft(px, py) {
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ── URL state persistence ───────────────────────────────────────────────────
+// Encodes range, leader length, ptl length, range-ring spacing, brightness
+// overrides, signed-on TCP, dstars facility, profile, menu (debug) into the
+// URL so a refresh / bookmark preserves the scope state. Format keeps params
+// short:
+//   ?p=PROFILE   profile name (already supported on load)
+//   ?r=50        range
+//   ?rr=5        range ring spacing
+//   ?ll=2        leader length
+//   ?ptl=1.0     ptl length
+//   ?tcp=ABC     signed-on TCP
+//   ?dstars=PCT  override dstars facility (already supported)
+//   ?menu=MAIN   debug submenu (already supported)
+//   ?b=DCB50,RR20,MPA75   brightness overrides (cat:val list, no spaces)
+function applyUrlState() {
+  const q = new URLSearchParams(location.search);
+  const n = (k) => { const v = q.get(k); return v != null ? +v : null; };
+  if (n("r")  != null) prefSet.Range = n("r");
+  if (n("rr") != null) prefSet.RangeRingSpacing = n("rr");
+  if (n("ll") != null) prefSet.LeaderLength = n("ll");
+  if (n("ptl") != null) prefSet.PTLLength = n("ptl");
+  const b = q.get("b");
+  if (b) {
+    for (const part of b.split(",")) {
+      const m = part.match(/^([A-Za-z]+)(\d+)$/);
+      if (!m) continue;
+      const cat = catKeyForUrl(m[1].toUpperCase());
+      if (cat) prefSet.Brightness[cat] = clamp(+m[2], 0, 100);
+    }
+  }
+}
+function catKeyForUrl(short) {
+  // Compact key → full Brightness category name
+  return ({
+    DCB: "DCB", BKC: "Background", BG: "Background",
+    MPA: "VideoMapA", MPB: "VideoMapB",
+    FDB: "DataBlock", LDB: "DataBlock", DB: "DataBlock",
+    LST: "Lists", TLS: "Lists",
+    POS: "Position", BCN: "Position", PRI: "Position",
+    HST: "History", HIST: "History",
+    RR: "RangeRings", CMP: "Compass", CM: "Compass",
+    WX: "Weather", WXC: "Weather",
+  })[short] || null;
+}
+function pushUrlState() {
+  const q = new URLSearchParams(location.search);
+  const setOrDel = (k, val, defaultV) => {
+    if (val == null || val === defaultV) q.delete(k);
+    else q.set(k, String(val));
+  };
+  setOrDel("r",  prefSet.Range, 50);
+  setOrDel("rr", prefSet.RangeRingSpacing, 5);
+  setOrDel("ll", prefSet.LeaderLength, 1);
+  setOrDel("ptl", prefSet.PTLLength, 1);
+  // Brightness overrides: list only categories that differ from internal default
+  const defaults = { DCB:50, Background:100, RangeRings:20, Compass:30,
+    VideoMapA:75, VideoMapB:25, DataBlock:100, Lists:75, Position:100,
+    History:60, Weather:70 };
+  const shortFor = { Background:"BKC", VideoMapA:"MPA", VideoMapB:"MPB",
+    RangeRings:"RR", Compass:"CMP", DataBlock:"FDB", Lists:"LST",
+    Position:"POS", History:"HST", Weather:"WX", DCB:"DCB" };
+  const parts = [];
+  for (const [k, v] of Object.entries(prefSet.Brightness)) {
+    if (v !== defaults[k] && shortFor[k]) parts.push(`${shortFor[k]}${v}`);
+  }
+  if (parts.length) q.set("b", parts.join(",")); else q.delete("b");
+  const search = q.toString();
+  const newUrl = location.pathname + (search ? "?" + search : "");
+  history.replaceState(null, "", newUrl);
+}
+// Apply on load (after profile so URL params override profile)
+applyUrlState();
+// Push state when prefs change. Triggered from DCB handlers.
+const _origPushState = () => pushUrlState();
+window.pushUrlState = _origPushState;
+
 bootstrap();

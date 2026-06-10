@@ -91,16 +91,36 @@ async function selectArtcc(id) {
       $("facilities").innerHTML = `<div class="nostars">No STARS-configured facilities in ${id}.</div>`;
       return;
     }
-    // CRCMapImporter: auto-pick if exactly one — replicate that behavior.
-    if (data.facilities.length === 1) {
-      location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(data.facilities[0].id)}`;
-      return;
-    }
-    $("facilities").innerHTML = data.facilities.map(f =>
+    // Render the import-maps banner + facility list. Don't auto-pick — give
+    // the user a chance to import maps first.
+    const avail = await fetch(`/api/stars/videoMaps/${encodeURIComponent(id)}`).then(r => r.json()).catch(() => ({available:[]}));
+    const importBanner = `<div style="padding:8px 16px;background:#0a2a0a;border-bottom:1px solid #1a3a1a;">
+      <button id="importBtn" style="background:#0a3a0a;color:#0f0;border:1px solid #0f0;padding:4px 10px;font-family:monospace;cursor:pointer;">
+        IMPORT MAPS FROM LOCAL CRC INSTALL
+      </button>
+      <span id="importStatus" style="color:#6f6;margin-left:8px;font-size:11px;">${avail.available.length} maps available on disk</span>
+    </div>`;
+    const facilityRows = data.facilities.map(f =>
       `<div class="row" data-id="${f.id}">
         <span class="id">${f.id}</span>
         <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${f.areaCount || 0} areas</span>
       </div>`).join("");
+    $("facilities").innerHTML = importBanner + facilityRows;
+    document.getElementById("importBtn").onclick = async () => {
+      const btn = document.getElementById("importBtn");
+      const status = document.getElementById("importStatus");
+      btn.disabled = true;
+      status.textContent = "importing…";
+      try {
+        const r = await fetch(`/api/stars/import-from-crc/${encodeURIComponent(id)}`, { method: "POST" }).then(r => r.json());
+        if (r.error) status.textContent = "ERROR: " + r.error;
+        else status.textContent = `imported ${r.imported} maps from ${r.crcSource}`;
+      } catch (e) {
+        status.textContent = "ERROR: " + e;
+      } finally {
+        btn.disabled = false;
+      }
+    };
     for (const el of document.querySelectorAll("#facilities .row"))
       el.onclick = () => {
         location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(el.dataset.id)}`;

@@ -250,6 +250,37 @@ class StarsBridge
             .ToArray()!;
     }
 
+    /// <summary>Path to the user's local CRC install video map directory.
+    /// Matches what github.com/yanjz124/DGScope-profile-manager reads from.
+    /// Default %LOCALAPPDATA%/CRC/VideoMaps; can be overridden.</summary>
+    public string CrcInstallVideoMapsDir { get; set; } =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "CRC", "VideoMaps");
+
+    /// <summary>Import an ARTCC's video maps from the local CRC install
+    /// (%LOCALAPPDATA%/CRC/VideoMaps/{artccId}/*.geojson) into our crc-export
+    /// tree. Returns the count of imported files.</summary>
+    public ImportResult ImportFromCrcInstall(string artccId)
+    {
+        var src = Path.Combine(CrcInstallVideoMapsDir, artccId);
+        if (!Directory.Exists(src))
+            return new ImportResult(0, $"Source not found: {src}");
+
+        var dst = Path.Combine(_crcExportRoot, artccId, "VideoMaps");
+        Directory.CreateDirectory(dst);
+
+        int imported = 0;
+        foreach (var file in Directory.GetFiles(src, "*.geojson"))
+        {
+            var destPath = Path.Combine(dst, Path.GetFileName(file));
+            File.Copy(file, destPath, overwrite: true);
+            imported++;
+        }
+        return new ImportResult(imported, null);
+    }
+
+    public record ImportResult(int Imported, string? Error);
+
     private static JsonElement? FindFacility(JsonElement node, string targetId)
     {
         if (node.TryGetProperty("id", out var idEl) && idEl.GetString() == targetId)

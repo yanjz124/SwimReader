@@ -244,10 +244,10 @@ class DCB {
       ...(vertical
           ? { top: 0, bottom: 0, width: sizeAxis + "px",
               [loc === "Left" ? "left" : "right"]: 0,
-              flexFlow: "row wrap", overflowY: "auto" }
+              flexFlow: "row wrap", overflowY: "hidden" }
           : { left: 0, right: 0, height: sizeAxis + "px",
               [loc === "Top" ? "top" : "bottom"]: 0,
-              flexFlow: "column wrap", overflowX: "auto" }),
+              flexFlow: "column wrap", overflowX: "hidden" }),
     });
 
     const halfAxis = sizeAxis / 2;   // 40

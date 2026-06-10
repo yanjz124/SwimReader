@@ -173,4 +173,31 @@ shape.
   geometric center.
 - **Test:** Side-by-side diff at high zoom.
 
-(Phase implementations will append G14+ as discovered.)
+### G14 — DCB drag-to-scrub not implemented (Phase 4)
+- **What:** WPF `DCBAdjustmentButton` lets the user middle-drag a button
+  (RANGE, RR, LDR, brightness, etc.) for continuous scrubbing. Phase 4
+  supports click (+1), right-click (−1), wheel (±1).
+- **Why:** Drag math is straightforward but adds substantial pointer-
+  capture complexity; deferred to Phase 11 polish.
+- **Workaround:** Wheel and rapid clicks achieve the same end state.
+- **Closeness:** Same final values, slower to scrub large jumps.
+- **Test:** Try ranging from 6 to 200 via wheel — works, just takes ~30
+  rotations.
+
+### G15 — Brightness categories collapsed (Phase 4)
+- **What:** WPF has `Brightness.FullDataBlocks`,
+  `Brightness.LimitedDataBlocks`, `Brightness.OtherFDBs`,
+  `Brightness.BeaconTargets`, `Brightness.PrimaryTargets` as separate
+  fields. Phase 4 collapses to PrefSet-default `DataBlock`, `Position`,
+  etc. FDB/LDB/OTH BRITE buttons all adjust `DataBlock`; BCN/PRI adjust
+  `Position`.
+- **Why:** Phase 1 PrefSet was simplified; revisiting now would dirty
+  Phase 1's commit history.
+- **Workaround:** All blocks/positions share one brightness value.
+- **Closeness:** Identical when the user keeps all of them at one
+  brightness (typical real-world usage); diverges if user sets FDB ≠
+  LDB.
+- **Test:** Phase 11 polish will expand PrefSet.Brightness and split
+  the mapping.
+
+(Phase implementations will append G16+ as discovered.)

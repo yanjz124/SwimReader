@@ -428,32 +428,16 @@ function drawVideoMapLines() {
   ctx.globalCompositeOperation = prevBlend;
 }
 
-// Temp UI to toggle individual maps (DCB MAP buttons land in Phase 4). G9-style TEMP.
-function buildMapListPanel() {
-  const div = document.createElement("div");
-  div.id = "mapPanel";
-  div.style.cssText = `position:fixed; right:0; top:30px; bottom:0; width:200px;
-    background:rgba(0,0,0,0.7); color:#6f6; font:11px ui-monospace;
-    overflow-y:auto; padding:6px; border-left:1px solid #1a3a1a; z-index:9;`;
-  document.body.appendChild(div);
-  refreshMapList();
-}
-function refreshMapList() {
-  const div = document.getElementById("mapPanel");
-  if (!div) return;
-  const html = videoMaps.map((m, i) => `
-    <label style="display:flex; gap:4px; padding:2px 0; cursor:pointer;">
-      <input type="checkbox" data-i="${i}" ${m.visible ? "checked" : ""}/>
-      <span style="color:${m.category === "A" ? "#6f6" : "#cfc"}">${m.shortName || m.name || m.id.slice(0, 8)}</span>
-    </label>`).join("");
-  div.innerHTML = `<div style="color:#888; padding-bottom:4px;">MAPS (${videoMaps.length})</div>${html}`;
-  for (const ip of div.querySelectorAll("input[type=checkbox]")) {
-    ip.onchange = () => {
-      const m = videoMaps[+ip.dataset.i];
-      m.visible = ip.checked;
-      if (m.visible && m.lines === null) ensureMapLoaded(m);
-    };
-  }
+// Phase 2 temp map panel removed in Phase 4 — real DCB MAPS submenu serves the
+// same toggles. (G9 retirement.)
+
+// DCB state — first 6 inline MAP buttons each bind to a specific video-map
+// index. WPF: TCP.DCBMapList[0..5] (RadarWindow.cs:817-820). We mirror.
+const mapButtonAssignments = [0, 1, 2, 3, 4, 5];   // default 1-to-1 first 6
+function dcbMapAt(i) {
+  const idx = mapButtonAssignments[i];
+  if (idx == null || !videoMaps[idx]) return null;
+  return videoMaps[idx];
 }
 
 // ── DSTARS track stream (Phase 3a) ──────────────────────────────────────────
@@ -922,6 +906,7 @@ async function bootstrap() {
       const loc = fac.location;
       prefSet.ScreenCenterPoint = { Latitude: loc.lat, Longitude: loc.lon };
       prefSet.RangeRingLocation = { Latitude: loc.lat, Longitude: loc.lon };
+      starsState.facilityLocation = { Latitude: loc.lat, Longitude: loc.lon };
     } else {
       // Fall back to first ASR site if facility has no direct location field.
       // (vNAS schema: some facility levels carry asrSites rather than a single lat/lon.)
@@ -935,16 +920,150 @@ async function bootstrap() {
       `${ARTCC} / ${FACILITY}${fac && fac.name ? " — " + fac.name : ""}`;
     recomputeScale();
 
-    // Phase 2: load video map catalog + render panel
+    // Phase 2: load video map catalog
     if (fac) {
       await loadVideoMapsCatalog(fac.starsConfiguration, fac.videoMaps);
-      buildMapListPanel();
     }
+    // Phase 4: ASR sites for SITE submenu (vNAS starsConfiguration → areas → asrSites if present)
+    starsState.asrSites = fac?.starsConfiguration?.areas?.flatMap(a => a.asrSites || []) || [];
   } catch (e) {
     console.error("[STARS] Failed to load facility:", e);
   }
+
+  // Phase 4: mount the Display Control Bar.
+  mountDcb();
   // Phase 3a: DSTARS streaming connection. Runs independent of facility load.
   startDstars();
   requestAnimationFrame(frame);
 }
+
+// Phase 4: DCB state container exposed to dcb.js.
+const starsState = {
+  prefSet,
+  videoMaps,
+  asrSites: [],
+  wxLevels: [false, false, false, false, false, false],
+  dcbMapAt,
+};
+
+let dcb;
+function mountDcb() {
+  const root = document.getElementById("dcb");
+  if (!root) return;
+  dcb = new DCB(root, starsState);
+  dcb.on("numAdjust", (id, dir) => handleNumAdjust(id, dir));
+  dcb.on("briteAdjust", (which, d) => handleBriteAdjust(which, d));
+  dcb.on("mapToggle", (idx) => handleMapToggle(idx));
+  dcb.on("click", ({ id }) => handleDcbClick(id));
+  dcb.render();
+  // Re-render DCB on prefSet changes (cheap; only DOM in DCB region).
+  setInterval(() => dcb.render(), 1000);
+}
+
+function handleNumAdjust(id, dir) {
+  switch (id) {
+    case "RANGE":
+      // RadarWindow.cs:4636+ — cycles through standard preset ranges 5..400
+      prefSet.Range = clamp(prefSet.Range + dir, 1, 400);
+      recomputeScale();
+      break;
+    case "RR_NUM":
+      // RadarWindow.cs:4636-4650 — cycles 2 → 5 → 10 → 2
+      switch (prefSet.RangeRingSpacing) {
+        case 5:  prefSet.RangeRingSpacing = dir > 0 ? 10 : 2; break;
+        case 10: prefSet.RangeRingSpacing = dir > 0 ? 2 : 5;  break;
+        case 2:  prefSet.RangeRingSpacing = dir > 0 ? 5 : 10; break;
+        default: prefSet.RangeRingSpacing = 5;
+      }
+      break;
+    case "LDR_LEN":
+      // 0..8 clamp (RadarWindow.cs:4159)
+      prefSet.LeaderLength = clamp(prefSet.LeaderLength + dir, 0, 8);
+      break;
+    case "LDR_DIR":
+      // cycle through 1,2,3,4,6,7,8,9 (skip 5)
+      const order = [1, 2, 3, 6, 9, 8, 7, 4];
+      let i = order.indexOf(prefSet.OwnedDataBlockPosition);
+      i = (i + (dir > 0 ? 1 : order.length - 1)) % order.length;
+      prefSet.OwnedDataBlockPosition = order[i];
+      break;
+    case "HIST_NUM":
+      prefSet.HistoryNum = clamp(prefSet.HistoryNum + dir, 0, 10);
+      break;
+    case "HIST_RATE":
+      prefSet.HistoryRate = clamp(prefSet.HistoryRate + dir * 0.5, 0.5, 10);
+      break;
+    case "PTL_LEN":
+      prefSet.PTLLength = clamp(prefSet.PTLLength + dir, 0, 10);
+      break;
+    case "PTL_OWN":  prefSet.PTLOwn = !prefSet.PTLOwn; break;
+    case "PTL_ALL":  prefSet.PTLAll = !prefSet.PTLAll; break;
+    case "RR_CNTR":
+      prefSet.RangeRingsCentered = !prefSet.RangeRingsCentered;
+      if (prefSet.RangeRingsCentered) prefSet.RangeRingLocation = { ...prefSet.ScreenCenterPoint };
+      break;
+  }
+  dcb.render();
+}
+
+function handleBriteAdjust(which, d) {
+  const b = prefSet.Brightness;
+  const map = {
+    DCB: "DCB", BKC: "Background", MPA: "VideoMapA", MPB: "VideoMapB",
+    FDB: "DataBlock", LST: "Lists", POS: "Position",
+    LDB: "DataBlock", OTH: "DataBlock", TLS: "Lists",
+    RR: "RangeRings", CMP: "Compass", BCN: "Position", PRI: "Position",
+    HST: "History", WX: "Weather", WXC: "Weather",
+  };
+  const k = map[which];
+  if (k) b[k] = clamp(b[k] + d, 0, 100);
+  dcb.render();
+}
+
+function handleMapToggle(idx) {
+  const m = videoMaps[idx];
+  if (!m) return;
+  m.visible = !m.visible;
+  if (m.visible && m.lines === null) ensureMapLoaded(m);
+}
+
+function handleDcbClick(id) {
+  switch (id) {
+    case "MAPS_CLEAR":
+      videoMaps.forEach(m => m.visible = false);
+      break;
+    case "DCB_TOP":    prefSet.DCBLocation = "Top"; break;
+    case "DCB_LEFT":   prefSet.DCBLocation = "Left"; break;
+    case "DCB_RIGHT":  prefSet.DCBLocation = "Right"; break;
+    case "DCB_BOTTOM": prefSet.DCBLocation = "Bottom"; break;
+    case "PLACE_CNTR":
+      // RadarWindow.cs PLACE CNTR: next map click sets ScreenCenterPoint.
+      pendingMapAction = "PLACE_CNTR";
+      break;
+    case "OFF_CNTR":
+      // Toggle off-center: restore screen center to facility location.
+      prefSet.ScreenCenterPoint = { ...starsState.facilityLocation } || prefSet.ScreenCenterPoint;
+      break;
+    case "PLACE_RR":
+      pendingMapAction = "PLACE_RR";
+      break;
+  }
+  if (dcb) dcb.render();
+}
+
+// PLACE CNTR / PLACE RR: next click on map sets the corresponding location.
+let pendingMapAction = null;
+cv.addEventListener("click", (e) => {
+  if (!pendingMapAction) return;
+  const g = screenToGeo(e.clientX, e.clientY);
+  if (pendingMapAction === "PLACE_CNTR") {
+    prefSet.ScreenCenterPoint = g;
+  } else if (pendingMapAction === "PLACE_RR") {
+    prefSet.RangeRingLocation = g;
+    prefSet.RangeRingsCentered = false;
+  }
+  pendingMapAction = null;
+});
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 bootstrap();

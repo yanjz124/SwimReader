@@ -281,3 +281,96 @@ position-only symbols. Phase 3b adds the data block rendering.
 - PTL appears when you set `prefSet.PTLAll = true` in console.
 - Coast (`#` symbol): no data block, no leader, position frozen.
 - Pan/zoom: data blocks track with the target (no orphaning).
+
+---
+
+## Phase 4 — DCB (Display Control Bar)
+
+### WPF sources ported
+
+| WPF source | What we took |
+|------------|--------------|
+| `scope/DCB.cs` (full, 103 lines) | Container shape: `Location` (Top/Left/Right/Bottom), `Size = 80`, `Visible`, `ActiveMenu`. |
+| `scope/DCBButton.cs` (full, 361 lines) | Button color defaults: ACTIVE_BG `rgb(0,128,0)`, INACTIVE_BG `rgb(0,80,0)`, DISABLED_BG `rgb(0,40,0)`, TEXT white, TEXT_DWELL yellow, TEXT_DISABLED dark gray. Frame color `rgb(0,35,15)`. |
+| `scope/DCBMenu.cs` (full, 193 lines) | Menu = ordered button list with active flag. |
+| `scope/RadarWindow.cs:3468-3608` (SetupDCB) | Every button declaration, exact Text strings (`RANGE\n{Range}`, `RR\n{spacing}`, `RR\nCNTR`, `MAPS`, `MAP {n}`, `WX{n}`, `BRITE`, `LDR DIR\n{N/NE/E/...}`, `LDR\n{0-8}`, `CHAR SIZE`, `MODE\nFSL`, `SITE`, `SHIFT`), exact button heights (40 half / 80 full), exact AddButton ordering. |
+| `scope/RadarWindow.cs:3920-3995` (UpdateDcbButtonText) | Live label formatters. We mirror in `mainMenu`/`auxMenu`/`briteMenu` factory functions, called every 1 s. |
+| `scope/RadarWindow.cs:3741-3795` (SITE submenu generation) | Per-ASR-site button + MULTI/FUSED. |
+| `scope/RadarWindow.cs:4156-4170` (LDR LEN +/− on right-click) | Numeric click-cycle behavior. We use left-click = +1, right-click = −1, wheel = ±1 — same model. |
+| `scope/RadarWindow.cs:4430-4520` (Brightness slider) | Step = 10 per click (right-click = −10), clamp [0, 100]. |
+| `scope/RadarWindow.cs:4636-4650` (RR cycle) | RR spacing cycles 2 → 5 → 10 → 2 (forward); reverse on backward. |
+| `scope/RadarWindow.cs:3800-3815` (RR CNTR toggle) | When toggled on, sets `RangeRingLocation = HomeLocation`. |
+| `scope/STARS/LeaderDirection.cs` | LDR DIR cycle order: NW(1)→N(2)→NE(3)→E(6)→SE(9)→S(8)→SW(7)→W(4), skip Invalid(0)/5. |
+| CRC docs § Display Control Bar | Main menu + Aux menu + BRITE/MAPS/SITE submenu layouts. |
+
+### Resolutions for ambiguous points
+
+1. **Menu navigation.** WPF stores `ActiveMenu` on `DCB`. We mirror with
+   `dcb.active = "MAIN"|"AUX"|"BRITE"|"MAPS"|"SITE"`. Sub-DONE button or
+   SHIFT-back returns to MAIN. Exact menu choreography.
+2. **Button click vs drag.** WPF `DCBAdjustmentButton` supports drag-to-
+   scrub. Phase 4 supports click (+1), right-click (−1), and wheel (±1).
+   Drag-to-scrub deferred (see G14). Click increments are identical.
+3. **Per-brightness category mapping.** WPF has separate brightness
+   categories (`FullDataBlocks`, `LimitedDataBlocks`, `OtherFDBs`,
+   `BeaconTargets`, `PrimaryTargets`). Phase 4 collapses these into the
+   PrefSet defaults from Phase 1 (`DataBlock`, `Position`, etc.). Each
+   BRITE button maps to one of these via the `map` table in
+   `handleBriteAdjust`. Documented as G15.
+4. **Inline MAP1-6 buttons.** WPF's `TCP.DCBMapList[i]` stores the
+   starsId each button toggles. We default to the first 6 video maps
+   in catalog order; clicking the MAPS submenu lets the user toggle any
+   map directly. Phase 6 will load TCP's preferred bindings from
+   `PrefSet.DisplayedMaps`.
+5. **`OFF CNTR` semantics.** WPF restores screen center to its home
+   location. Mirrored.
+
+### Backend additions
+
+None — Phase 4 is pure frontend.
+
+### Frontend additions
+
+- `wwwroot/stars/dcb.js` — `DCB` class, menu factories, click/right-click/
+  wheel routing, button rendering.
+- `scope.js` — `mountDcb`, `handleNumAdjust`, `handleBriteAdjust`,
+  `handleMapToggle`, `handleDcbClick`, `pendingMapAction` for PLACE CNTR
+  and PLACE RR.
+- `scope.html` — adds `<div id="dcb">` + `<script src="dcb.js">`.
+
+### New deviations
+
+- **G14 — drag-to-scrub on adjustment buttons not implemented.**
+  WPF lets the user middle-drag a brightness/range button to scrub
+  continuously. We support click +1, right-click −1, wheel ±1. Same
+  end state; less ergonomic for large jumps. Deferred to polish.
+- **G15 — Brightness category collapse.** WPF has `FullDataBlocks`,
+  `LimitedDataBlocks`, `OtherFDBs`, `BeaconTargets`, `PrimaryTargets`
+  as separate Brightness fields. We collapse these into the existing
+  PrefSet defaults (`DataBlock`, `Position`). Render uses the unified
+  values; FDB/LDB/OTH BRITE buttons all adjust `DataBlock`; BCN/PRI
+  both adjust `Position`. The information loss is acceptable for
+  Phase 4 — Phase 11 polish will split them per-WPF.
+
+### What's intentionally NOT in Phase 4
+
+- CHAR SIZE submenu (disabled button → Phase 11 polish)
+- MODE button (disabled in WPF too — Multi/FSL not applicable)
+- SSA FILTER + GI TEXT FILTER submenus (Phase 7 alongside SSA)
+- Drag-to-scrub adjustments (G14)
+- Dwell highlighting (G15-adjacent — text turns yellow on hover; we use
+  CSS hover but don't yet implement the exact WPF dwell color cycle)
+
+### Self-test checklist
+
+- Bar appears at top by default.
+- Click RANGE → range increments by 1; right-click → decrements; scroll → ±1.
+- Click MAPS → submenu opens, lists every catalog map; toggling any one
+  draws/erases its lines.
+- Click BRITE → submenu opens; each button shows current value
+  (e.g., `RR 100`); click cycles by +10; right-click −10.
+- Click DCB TOP/LEFT/RIGHT/BOTTOM in AUX menu → DCB jumps to that edge.
+- Click LDR DIR → leader direction cycles; data block re-positions.
+- Click LDR → leader length 0-8.
+- PTL ALL / PTL OWN toggle highlight when active.
+- Click PLACE CNTR → next map click sets screen center.

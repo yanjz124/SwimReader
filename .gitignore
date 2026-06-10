@@ -69,3 +69,4 @@ NUL
 tools/SwimServer/investigation-*.jsonl
 tools/SwimServer/pointout-investigation-*.jsonl
 .stars-reference/
+tools/SwimServer/crc-export/

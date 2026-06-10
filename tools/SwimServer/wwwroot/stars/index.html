@@ -121,7 +121,28 @@ async function selectArtcc(id) {
         btn.disabled = false;
       }
     };
-    for (const el of document.querySelectorAll("#facilities .row"))
+    // Profile picker: if any DGScope profile XMLs exist for this ARTCC, show
+    // them. Clicking a profile launches the scope with ?profile=... applied.
+    let profiles = [];
+    try {
+      profiles = (await fetch(`/api/stars/profiles/${encodeURIComponent(id)}`).then(r => r.json())).profiles || [];
+    } catch {}
+    if (profiles.length > 0) {
+      const profileSection = `<div style="padding:6px 16px;color:#888;font-size:11px;border-top:1px solid #1a3a1a;">DGScope PROFILES (loads PrefSet + DCBMapList)</div>` +
+        profiles.map(p => `<div class="row" data-profile="${p}">
+          <span class="id" style="color:#6cf">${p}</span>
+        </div>`).join("");
+      $("facilities").innerHTML += profileSection;
+      for (const el of document.querySelectorAll("#facilities .row[data-profile]")) {
+        el.onclick = () => {
+          // Find the facility ID from the profile name prefix: "{FACILITY}_..."
+          const pname = el.dataset.profile;
+          const facId = (data.facilities.find(f => pname.startsWith(f.id + "_")) || data.facilities[0]).id;
+          location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(facId)}?profile=${encodeURIComponent(pname)}`;
+        };
+      }
+    }
+    for (const el of document.querySelectorAll("#facilities .row:not([data-profile])"))
       el.onclick = () => {
         location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(el.dataset.id)}`;
       };

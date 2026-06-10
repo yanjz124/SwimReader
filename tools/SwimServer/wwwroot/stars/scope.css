@@ -12,22 +12,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #000; colo
   display: block;
   cursor: crosshair;
 }
-#topbar {
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  padding: 4px 12px;
-  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
-  color: #6f6;
-  background: rgba(0, 0, 0, 0.6);
-  pointer-events: auto;
-  z-index: 10;
-  user-select: none;
-}
-#topbar a { color: #6f6; text-decoration: none; }
-#topbar a:hover { color: #fff; }
-#topbar .sep { color: #1a3a1a; margin: 0 6px; }
-#topbar .hint { float: right; color: #444; }
+/* Phase 1 #topbar retired in Phase 7 (G9). */
 
 /* Disable browser native context menu inside scope (G6 in KNOWN-DEVIATIONS). */
 canvas { -webkit-touch-callout: none; }

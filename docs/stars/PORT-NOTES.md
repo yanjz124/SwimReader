@@ -38,8 +38,8 @@ around.
 | 5 | Command line + preview area | done | 1d222e6 |
 | 6 | System lists | skipped (not in WPF; see PHASE-NOTES) | 50c8a6a |
 | 7 | SSA | done | 9af5b7a |
-| 8 | Handoffs / point-outs / sign-on (LOCAL ONLY) | done | (this commit) |
-| 9 | STCA / ATPA / CRDA / MinSep / J-rings | pending | — |
+| 8 | Handoffs / point-outs / sign-on (LOCAL ONLY) | done | a42e34a |
+| 9 | STCA + J-Ring + MinSep (ATPA + CRDA deferred to P11) | done | (this commit) |
 | 10 | NEXRAD | pending | — |
 | 11 | Secondary displays + polish | pending | — |
 

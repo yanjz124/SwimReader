@@ -760,10 +760,13 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const blockX = padLeft ? anchorX - blockWidth : anchorX;
   const blockY = (v.y < 0) ? anchorY - blockHeight : anchorY;
 
-  // Block color — Pointout > Emergency > Owned > DataBlock.
+  // Block color — STCA > Pointout > Emergency > Owned > DataBlock.
   // RadarWindow.cs:80 — PointoutColor = Yellow.
   let baseColor = COLORS.DataBlock;
-  if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
+  if (t._stca) {
+    // Phase 9: STCA pair → flash red (1 Hz)
+    baseColor = (Date.now() % 1000 < 500) ? COLORS.Emerg : COLORS.Pointout;
+  } else if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
     baseColor = COLORS.Emerg;
   } else if (fp?._pointoutTarget && (fp._pointoutTarget === ownTcp() || fp._pointoutTarget === "ANY")) {
     baseColor = COLORS.Pointout;            // Phase 8: PO directed at us
@@ -812,6 +815,133 @@ function drawPosition(t, posNow) {
   ctx.fillText(sym, p.x, p.y);
 }
 
+// ── Phase 9: J-Ring + MinSep + STCA ─────────────────────────────────────────
+// Sources: scope/TPARing.cs (J-ring), scope/MinSep.cs, scope/ATPA.cs.
+// Most of the WPF logic is around configurable volumes and tables; Phase 9
+// implements the operational subset (J-rings, MinSep tool, STCA pair scan).
+// CRDA + ATPA volume editor deferred to Phase 11 per G19.
+
+const STCA = { lateralNM: 3.0, verticalFt: 1000 };  // STARS standard defaults
+let minSepPair = null;                              // {p1, p2, dist, t}
+
+function drawJRings() {
+  for (const t of tracks.values()) {
+    if (!t._jRing) continue;
+    if (!t.Location) continue;
+    const pos = extrapolatedPosition(t);
+    if (!pos) continue;
+    const center = geoToScreen(pos);
+    // NM → px: 1 NM = (1/60) deg lat = (1/60)/view.scale px
+    const px = (t._jRing / view.scale);
+    ctx.strokeStyle = adjusted(COLORS.TPA, prefSet.Brightness.DataBlock);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, px, 0, Math.PI * 2);
+    ctx.stroke();
+    // Radius label
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.font = "10px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(`J${t._jRing}`, center.x, center.y - px - 4);
+  }
+}
+
+// STCA pair scan — N² over owned tracks. Cheap for typical TRACON load.
+const stcaPairs = new Set();   // "guid1|guid2"
+function scanSTCA() {
+  stcaPairs.clear();
+  const owned = [];
+  for (const t of tracks.values()) {
+    if (!t.Location || t.IsOnGround) continue;
+    const fp = trackToFp.get(t.Guid);
+    if (fp?.Owner !== ownTcp()) continue;
+    owned.push(t);
+  }
+  for (let i = 0; i < owned.length; i++) {
+    for (let j = i + 1; j < owned.length; j++) {
+      const a = owned[i], b = owned[j];
+      const dnm = distanceNMGeo(a.Location, b.Location);
+      const altA = a.Altitude?.Value || 0;
+      const altB = b.Altitude?.Value || 0;
+      if (dnm < STCA.lateralNM && Math.abs(altA - altB) < STCA.verticalFt) {
+        stcaPairs.add(a.Guid + "|" + b.Guid);
+        a._stca = true; b._stca = true;
+      }
+    }
+  }
+  // Clear flag on tracks not in any pair
+  for (const t of tracks.values()) {
+    if (!stcaPairs.size) { t._stca = false; continue; }
+    if (![...stcaPairs].some(k => k.includes(t.Guid))) t._stca = false;
+  }
+}
+setInterval(scanSTCA, 1000);
+
+function distanceNMGeo(a, b) {
+  const R = 3443.92;
+  const φ1 = a.Latitude * Math.PI / 180;
+  const φ2 = b.Latitude * Math.PI / 180;
+  const dφ = (b.Latitude - a.Latitude) * Math.PI / 180;
+  const dλ = (b.Longitude - a.Longitude) * Math.PI / 180;
+  const h = Math.sin(dφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function drawMinSep() {
+  if (!minSepPair) return;
+  const p1 = extrapolatedPosition(minSepPair.p1);
+  const p2 = extrapolatedPosition(minSepPair.p2);
+  if (!p1 || !p2) return;
+  const s1 = geoToScreen(p1), s2 = geoToScreen(p2);
+  ctx.strokeStyle = adjusted(COLORS.RBL, prefSet.Brightness.DataBlock);
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  const mx = (s1.x + s2.x) / 2, my = (s1.y + s2.y) / 2;
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.textAlign = "center";
+  ctx.fillText(`${minSepPair.dist.toFixed(2)} NM`, mx, my - 6);
+}
+
+window.starsJRing = (flid, radius) => {
+  const plane = (() => {
+    if (!flid) return null;
+    for (const t of tracks.values()) {
+      const fp = trackToFp.get(t.Guid);
+      const cs = fp?.Callsign || t.Callsign;
+      if (cs && cs.toUpperCase() === flid.toUpperCase()) return t;
+      if (t.Squawk === flid) return t;
+    }
+    return null;
+  })();
+  if (!plane) return false;
+  plane._jRing = plane._jRing === radius ? 0 : radius;
+  return true;
+};
+
+window.starsMinSep = (flid1, flid2) => {
+  const find = (id) => {
+    for (const t of tracks.values()) {
+      const fp = trackToFp.get(t.Guid);
+      if ((fp?.Callsign || t.Callsign)?.toUpperCase() === id.toUpperCase()) return t;
+      if (t.Squawk === id) return t;
+    }
+  };
+  const p1 = find(flid1), p2 = find(flid2);
+  if (!p1 || !p2 || !p1.Location || !p2.Location) {
+    minSepPair = null;
+    return null;
+  }
+  const dist = distanceNMGeo(p1.Location, p2.Location);
+  minSepPair = { p1, p2, dist, t: Date.now() };
+  return dist;
+};
+window.starsMinSepClear = () => { minSepPair = null; };
+
 // ── Main per-track draw ─────────────────────────────────────────────────────
 function drawTracks() {
   for (const t of tracks.values()) {
@@ -851,7 +981,9 @@ function frame() {
   drawVideoMapLines();
   drawRangeRings();
   drawCompass();
+  drawJRings();
   drawTracks();
+  drawMinSep();
   updateTopbar();
   requestAnimationFrame(frame);
 }

@@ -242,4 +242,30 @@ shape.
   not reflected in tab 2 until a fresh DSTARS update arrives (which
   won't carry the local changes).
 
-(Phase implementations will append G19+ as discovered.)
+### G19 — ATPA volumes + CRDA deferred to Phase 11 (Phase 9)
+- **What:** ATPA's volume editor (per-runway airspace polygons + required
+  separation tables) and CRDA's setup (runway-pair config, ghost track
+  generation, stagger/tie modes) are not implemented in Phase 9.
+- **Why:** ATPAVolume.cs is ~430 lines + a Windows Forms editor;
+  CRDA depends on a full radar plot model. Both are substantial UI
+  modules that need dedicated focus.
+- **Workaround:** None for now. STCA covers the most operationally
+  critical conflict detection.
+- **Closeness:** STCA fires correctly for owned pairs; ATPA Monitor cone
+  drawn in Phase 3b is inert without volume data; CRDA totally absent.
+- **Test:** Phase 11 polish will land both.
+
+### G20 — MinSep uses now-snapshot vs future-projection (Phase 9)
+- **What:** WPF `MinSep.CalculateMinSep` projects both aircraft forward
+  along their tracks at velocity and finds the minimum-separation point.
+  Phase 9 implements only the current-distance snapshot.
+- **Why:** Future-projection search has a `DESIREDPRECISION = 0.01`
+  iterative refine loop; faithful porting is straightforward but
+  consumes a focused session.
+- **Workaround:** Now-snapshot is operationally useful for "what's the
+  current spacing?" queries; future-projection answer comes in Phase 11.
+- **Closeness:** Identical when aircraft are not converging; conservative
+  (overstates separation) when they are.
+- **Test:** Phase 11 brings the projection search.
+
+(Phase implementations will append G21+ as discovered.)

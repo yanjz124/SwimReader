@@ -866,19 +866,44 @@ function drawDataBlockAndLeader(t, fp, posNow) {
 }
 
 // ── Position symbol render ──────────────────────────────────────────────────
+// WPF (RadarWindow.cs:5512+ + PrimaryReturn.cs): the "live" target is a
+// rendered PrimaryReturn shape (small filled square, default ~3-4 px, color
+// COLORS.Return = RGB(30,120,255) at 100% Position brightness). The character
+// symbol (◇/\/+/#) is drawn on top to indicate correlation status.
 function drawPosition(t, posNow) {
   const fp = trackToFp.get(t.Guid);
-  let color = COLORS.BeaconTarget;
-  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) color = COLORS.Emerg;
-  else if (fp?.Owner === ownTcp()) color = COLORS.Owned;
-  ctx.fillStyle = adjusted(color, prefSet.Brightness.Position);
+  // Track type color hierarchy. Emergency wins; otherwise the PrimaryReturn
+  // base color (cyan-ish blue) with the character glyph overlaid in beacon
+  // green so beacon vs primary is distinguishable.
+  let baseColor = COLORS.Return;
+  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) baseColor = COLORS.Emerg;
+  else if (fp?.Owner === ownTcp()) baseColor = COLORS.Owned;
 
-  ctx.font = "13px ui-monospace, monospace";
-  ctx.textBaseline = "middle";
-  ctx.textAlign = "center";
-  const sym = symbolFor(t);
   const p = geoToScreen(posNow);
-  ctx.fillText(sym, p.x, p.y);
+  const px = p.x | 0, py = p.y | 0;
+
+  // PrimaryReturn shape: small filled square.
+  ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
+  ctx.fillRect(px - 2, py - 2, 4, 4);
+
+  // Symbol glyph in beacon green - distinguishes ◇/\/+/# variants.
+  if (!isCoasting(t)) {
+    ctx.fillStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
+    ctx.font = "13px ui-monospace, monospace";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText(symbolFor(t), px, py);
+  } else {
+    // Coast = hash mark drawn as actual #-shape lines for visibility.
+    ctx.strokeStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px - 4, py - 1); ctx.lineTo(px + 4, py - 1);
+    ctx.moveTo(px - 4, py + 1); ctx.lineTo(px + 4, py + 1);
+    ctx.moveTo(px - 1, py - 4); ctx.lineTo(px - 1, py + 4);
+    ctx.moveTo(px + 1, py - 4); ctx.lineTo(px + 1, py + 4);
+    ctx.stroke();
+  }
 }
 
 // ── Phase 9: J-Ring + MinSep + STCA ─────────────────────────────────────────

@@ -560,37 +560,271 @@ function handleDeletion(u) {
   flightPlans.delete(u.Guid);
 }
 
-// ── Track rendering: position symbols only (Phase 3a) ───────────────────────
-// CRC docs § "Track types" + RadarWindow.cs:
-//   ◇ diamond  — associated track (has a flight plan)
-//   \  back-slash — correlated beacon (squawk + no flight plan)
-//   /  slash      — uncorrelated beacon (squawk but no flight plan or out of area)
-//   +  plus       — uncorrelated primary (no squawk)
-//   #  hash       — coast track (no position update for >2 scan cycles)
-// At/below FL230 the associated diamond becomes a small bullet (•) per ERAM
-// convention; STARS uses the diamond throughout — KEEP DIAMOND. See CRC docs.
+// ── Track rendering (Phase 3a + 3b) ─────────────────────────────────────────
+// Position symbol decoder per CRC docs § Track types + RadarWindow.cs.
+//   ◇ associated (track has a flight plan)
+//   \ correlated beacon (squawk + no FP)
+//   / uncorrelated beacon (squawk + no FP, out of area; Phase 8 sectorizes)
+//   + uncorrelated primary (no squawk)
+//   # coast track (no position update for > 2 scan cycles)
+// STARS uses the diamond at all altitudes (ERAM-specific bullet form NOT
+// applied here — confirmed in CRC docs).
 function symbolFor(track) {
   const hasSquawk = !!track.Squawk && track.Squawk !== "" && track.Squawk !== "0000";
   const hasFp = trackToFp.has(track.Guid);
-  const isCoast = (Date.now() - track.lastUpdate) > 24000; // 2 × 12s scan cycle
-  if (isCoast) return "#";
+  if (isCoasting(track)) return "#";
   if (hasFp) return "◇";
   if (hasSquawk) return "\\";
   return "+";
 }
+function isCoasting(t) {
+  return (Date.now() - t.lastUpdate) > 24000;     // 2 × 12s scan
+}
 
-function drawTracks() {
-  ctx.font = "12px ui-monospace, monospace";
+// ── Velocity extrapolation (RadarWindow.cs:displayPosition + Aircraft.ExtrapolatePosition)
+// Between scans we project the target along GroundTrack at GroundSpeed knots
+// from the last reported Location. Matches the WPF ExtrapolatePosition path
+// approximated for the time-delta since lastUpdate.
+function extrapolatedPosition(t) {
+  if (!t.Location) return null;
+  if (isCoasting(t)) return t.Location;      // freeze at last known
+  if (t.GroundSpeed == null || t.GroundTrack == null) return t.Location;
+  const ageS = (Date.now() - t.lastUpdate) / 1000;
+  if (ageS < 0.05) return t.Location;
+  // 1 NM = 1/60 degree latitude. Apply GroundTrack-bearing offset.
+  const distNM = (t.GroundSpeed * ageS) / 3600;
+  const θ = t.GroundTrack * Math.PI / 180;
+  const dLat = (distNM * Math.cos(θ)) / 60;
+  const latFactor = Math.cos(t.Location.Latitude * Math.PI / 180);
+  const dLon = (distNM * Math.sin(θ)) / (60 * latFactor);
+  return {
+    Latitude: t.Location.Latitude + dLat,
+    Longitude: t.Location.Longitude + dLon,
+  };
+}
+
+// ── History (Phase 3b) ──────────────────────────────────────────────────────
+// RadarWindow.cs:5512 — every HistoryRate seconds (default 4.5s), push the
+// current position to history[0], shift older entries; cap at HistoryNum
+// (default 10). Each history dot uses HistoryColors[i] palette index.
+const HISTORY_COLORS = [
+  [30, 80, 200], [70, 70, 170], [50, 50, 130], [40, 40, 110], [30, 30, 90],
+];
+
+function tickHistory(t, posNow) {
+  if (!posNow) return;
+  if (!t._history) t._history = [];
+  if (!t._lastHistoryT) t._lastHistoryT = 0;
+  const nowS = Date.now() / 1000;
+  if (nowS - t._lastHistoryT < prefSet.HistoryRate) return;
+  t._lastHistoryT = nowS;
+  t._history.unshift({ Latitude: posNow.Latitude, Longitude: posNow.Longitude });
+  while (t._history.length > prefSet.HistoryNum) t._history.pop();
+}
+
+function drawHistory(t) {
+  if (!t._history || t._history.length === 0) return;
+  const max = Math.min(t._history.length, prefSet.HistoryNum);
+  for (let i = 0; i < max; i++) {
+    const palette = HISTORY_COLORS[Math.min(i, HISTORY_COLORS.length - 1)];
+    ctx.fillStyle = adjusted(palette, prefSet.Brightness.History);
+    const p = geoToScreen(t._history[i]);
+    if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
+    ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+  }
+}
+
+// ── PTL (RadarWindow.cs:PTL.End1/End2) ──────────────────────────────────────
+// Predicted Track Line: from current pos, project along GroundTrack for
+// PrefSet.PTLLength minutes at GroundSpeed knots. Only drawn when:
+//   - PTLAll is on (all tracks), OR
+//   - PTLOwn is on AND this track's Owner matches us (Phase 8 will wire this),
+//     OR per-track ShowPTL flag.
+function drawPTL(t, posNow) {
+  if (!posNow || t.GroundSpeed == null || t.GroundTrack == null) return;
+  const enable = prefSet.PTLAll || t.ShowPTL ||
+    (prefSet.PTLOwn && trackToFp.get(t.Guid)?.Owner === ownTcp());
+  if (!enable) return;
+  const distNM = (t.GroundSpeed * prefSet.PTLLength) / 60;
+  const θ = t.GroundTrack * Math.PI / 180;
+  const dLat = (distNM * Math.cos(θ)) / 60;
+  const latFactor = Math.cos(posNow.Latitude * Math.PI / 180);
+  const dLon = (distNM * Math.sin(θ)) / (60 * latFactor);
+  const end = { Latitude: posNow.Latitude + dLat, Longitude: posNow.Longitude + dLon };
+  const p1 = geoToScreen(posNow), p2 = geoToScreen(end);
+  ctx.strokeStyle = adjusted(COLORS.DataBlock, prefSet.Brightness.DataBlock);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+  ctx.stroke();
+}
+function ownTcp() { return null; /* Phase 8: signed-on TCP */ }
+
+// ── Data block content (Aircraft.RedrawDataBlock, lines 302-560) ────────────
+// Single-mode FDB rendering. The WPF 3-line timeshare (DataBlock/2/3
+// rotation) is deferred — see PHASE-NOTES Phase 3b. We render the most-
+// information-dense variant (fdb2line2 equivalent).
+//
+// Format:
+//   FDB (3 lines): callsign / altitude+handoff+speed+vfr+cat / scratchpad
+//   PDB (2 lines): callsign / altitude+speed
+//   LDB (2 lines): squawk    / altitude+speed                          (no callsign)
+function buildDataBlock(t, fp) {
+  const mode = dataBlockMode(t, fp);
+  const lines = [];
+  const dbAlt = t.Altitude?.Value ?? null;
+  const altstring = dbAlt != null && t.Altitude.AltitudeType !== 2  // 2 = Unknown
+    ? String(Math.round((dbAlt + 50) / 100)).padStart(3, "0")
+    : "RDR";
+  const speed10 = t.GroundSpeed != null
+    ? String(Math.floor(t.GroundSpeed / 10)).padStart(2, "0")
+    : "  ";
+  const vfrChar = (fp?.FlightRules && fp.FlightRules[0] !== "I") ? fp.FlightRules[0] : " ";
+  const identChar = t.Ident ? "D" : " ";
+  const handoffChar = fp?.PendingHandoff ? fp.PendingHandoff.slice(-1) : " ";
+
+  if (mode === "FDB") {
+    const cs = fp?.Callsign || t.Callsign || "";
+    lines.push(cs);
+    lines.push(`${altstring}${handoffChar}${speed10}${vfrChar}${identChar}`);
+    if (fp?.Scratchpad1) lines.push(fp.Scratchpad1.padEnd(3));
+  } else if (mode === "PDB") {
+    const cs = fp?.Callsign || t.Callsign || "";
+    lines.push(cs);
+    lines.push(`${altstring}${speed10}`);
+  } else { // LDB
+    if (!prefSet.LdbBeaconCodesInhibited) lines.push(t.Squawk || "");
+    lines.push(`${altstring}${speed10}`);
+  }
+  return lines;
+}
+
+// dataBlockMode — CRC docs § Data Blocks. Owned/quick-look tracks default
+// to FDB; non-owned associated default to PDB; non-associated default to LDB.
+// Phase 4 (DCB) and Phase 5 (commands) let the user toggle individual blocks.
+function dataBlockMode(t, fp) {
+  if (t._forcedMode) return t._forcedMode;
+  if (!fp) return "LDB";
+  if (fp.Owner && fp.Owner === ownTcp()) return "FDB";
+  return prefSet.LdbBeaconCodesInhibited ? "LDB" : "PDB";
+}
+
+// Leader-direction offset (RadarWindow.cs OffsetDatablockLocation, ~5750+).
+// Returns the pixel offset from target center to the data block top-left/right
+// corner. dataBlockOffset = (0.5 + LeaderLength) × charHeight.
+function leaderDirToVector(dir) {
+  switch (dir) {
+    case 1: return { x: -1, y: -1 }; // NW
+    case 2: return { x:  0, y: -1 }; // N
+    case 3: return { x:  1, y: -1 }; // NE
+    case 4: return { x: -1, y:  0 }; // W
+    case 6: return { x:  1, y:  0 }; // E
+    case 7: return { x: -1, y:  1 }; // SW
+    case 8: return { x:  0, y:  1 }; // S
+    case 9: return { x:  1, y:  1 }; // SE
+    default: return { x:  0, y: -1 }; // N fallback
+  }
+}
+function effectiveLeaderDir(t, fp) {
+  // RedrawDataBlock priority: explicit override > LDRDirection (FP) > owner default.
+  if (t._leaderOverride) return t._leaderOverride;
+  if (fp?.LDRDirection) return fp.LDRDirection;
+  if (fp?.Owner === ownTcp()) return ldrEnum(prefSet.OwnedDataBlockPosition);
+  if (fp) return ldrEnum(prefSet.UnownedDataBlockPosition);
+  return ldrEnum(prefSet.UnassociatedDataBlockPosition);
+}
+function ldrEnum(v) {
+  // PrefSet stores LeaderDirection as ints 1-9 (per STARS/LeaderDirection.cs);
+  // 0/undefined → N (2).
+  return typeof v === "number" && v >= 1 ? v : 2;
+}
+
+function drawDataBlockAndLeader(t, fp, posNow) {
+  const dir = effectiveLeaderDir(t, fp);
+  const v = leaderDirToVector(dir);
+  const lines = buildDataBlock(t, fp);
+  if (lines.length === 0) return;
+
+  const fontSize = 12;
+  ctx.font = `${fontSize}px ui-monospace, "Cascadia Mono", monospace`;
+  const charHeight = fontSize + 2;
+  const charWidth  = fontSize * 0.6;
+
+  // dataBlockOffset = (0.5 + LeaderLength) × charHeight  (RadarWindow.cs:4014)
+  const offsetPx = (0.5 + prefSet.LeaderLength) * charHeight;
+  const screen = geoToScreen(posNow);
+  // Diagonal directions get a /√2 split between x and y so the overall
+  // distance to the data block matches cardinal directions.
+  const isDiag = (v.x !== 0 && v.y !== 0);
+  const k = isDiag ? Math.SQRT1_2 : 1;
+  const dx = v.x * offsetPx * k;
+  const dy = v.y * offsetPx * k;
+  const anchorX = screen.x + dx;
+  const anchorY = screen.y + dy;
+
+  // Text alignment per leader direction (Aircraft.RedrawDataBlock pads
+  // left when leader is W/NW/SW, right otherwise).
+  const padLeft = (dir === 1 || dir === 4 || dir === 7);
+  const blockWidth = Math.max(...lines.map(l => l.length)) * charWidth;
+  const blockHeight = lines.length * charHeight;
+  const blockX = padLeft ? anchorX - blockWidth : anchorX;
+  const blockY = (v.y < 0) ? anchorY - blockHeight : anchorY;
+
+  // Block color — Pointout > Emergency > Owned > DataBlock.
+  let baseColor = COLORS.DataBlock;
+  if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
+    baseColor = COLORS.Emerg;
+  } else if (fp?.Owner === ownTcp()) {
+    baseColor = COLORS.Owned;
+  }
+  ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.DataBlock);
+  ctx.textBaseline = "top";
+  ctx.textAlign = padLeft ? "right" : "left";
+  const textX = padLeft ? anchorX : anchorX;
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], textX, blockY + i * charHeight);
+  }
+
+  // Leader line — from target edge to data block edge (RadarWindow.cs:5832+).
+  if (prefSet.LeaderLength > 0) {
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = 1;
+    const tgtRadius = 5;
+    const leaderStartX = screen.x + Math.sign(dx) * tgtRadius;
+    const leaderStartY = screen.y + Math.sign(dy) * tgtRadius;
+    const blockEdgeX = padLeft ? blockX + blockWidth : blockX;
+    const blockEdgeY = blockY + blockHeight / 2;
+    ctx.beginPath();
+    ctx.moveTo(leaderStartX, leaderStartY);
+    ctx.lineTo(blockEdgeX, blockEdgeY);
+    ctx.stroke();
+  }
+}
+
+// ── Position symbol render ──────────────────────────────────────────────────
+function drawPosition(t, posNow) {
+  const fp = trackToFp.get(t.Guid);
+  let color = COLORS.BeaconTarget;
+  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) color = COLORS.Emerg;
+  else if (fp?.Owner === ownTcp()) color = COLORS.Owned;
+  ctx.fillStyle = adjusted(color, prefSet.Brightness.Position);
+
+  ctx.font = "13px ui-monospace, monospace";
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
-  ctx.fillStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
+  const sym = symbolFor(t);
+  const p = geoToScreen(posNow);
+  ctx.fillText(sym, p.x, p.y);
+}
 
+// ── Main per-track draw ─────────────────────────────────────────────────────
+function drawTracks() {
   for (const t of tracks.values()) {
     if (!t.Location) continue;
-    if (t.IsOnGround) continue;            // Radar.cs Scan filters on-ground
-    // Altitude filter — PrefSet AltitudeFilterAssociatedMin/Max.
-    const altFt = t.Altitude?.Value;
+    if (t.IsOnGround) continue;       // Radar.cs Scan skips on-ground
     const fp = trackToFp.get(t.Guid);
+    // Altitude filter — PrefSet AltitudeFilterAssociated{Min,Max} / UnAssociated.
+    const altFt = t.Altitude?.Value;
     if (altFt != null) {
       if (fp) {
         if (altFt < prefSet.AltitudeFilterAssociatedMin) continue;
@@ -600,10 +834,19 @@ function drawTracks() {
         if (altFt > prefSet.AltitudeFilterUnAssociatedMax) continue;
       }
     }
-    const p = geoToScreen(t.Location);
-    // Cull off-screen
-    if (p.x < -10 || p.x > view.W + 10 || p.y < -10 || p.y > view.H + 10) continue;
-    ctx.fillText(symbolFor(t), p.x, p.y);
+    const posNow = extrapolatedPosition(t);
+    if (!posNow) continue;
+    const sp = geoToScreen(posNow);
+    if (sp.x < -50 || sp.x > view.W + 50 || sp.y < -50 || sp.y > view.H + 50) {
+      tickHistory(t, posNow);   // still tick offscreen so trail re-appears
+      continue;
+    }
+
+    tickHistory(t, posNow);
+    drawHistory(t);
+    drawPTL(t, posNow);
+    drawPosition(t, posNow);
+    if (!isCoasting(t)) drawDataBlockAndLeader(t, fp, posNow);
   }
 }
 

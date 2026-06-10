@@ -77,6 +77,18 @@ static class StarsRoutes
             }, ctx.JsonOpts);
         });
 
+        // DGScope profile XMLs from %LOCALAPPDATA%/DGScope Profile Manager/
+        app.MapGet("/api/stars/profiles/{artccId}", (string artccId) =>
+            Results.Json(new { artccId = artccId.ToUpperInvariant(),
+                profiles = ctx.Stars.ListProfiles(artccId.ToUpperInvariant()) }, ctx.JsonOpts));
+
+        app.MapGet("/api/stars/profile/{artccId}/{profileName}",
+            (string artccId, string profileName) =>
+            {
+                var p = ctx.Stars.LoadProfile(artccId.ToUpperInvariant(), profileName);
+                return p is not null ? Results.Json(p, ctx.JsonOpts) : Results.NotFound();
+            });
+
         // POST a CRC export ZIP — extracts under crc-export/{artccId}/.
         // multipart/form-data, fields: artccId, file
         app.MapPost("/api/stars/upload-export", async (HttpContext c) =>

@@ -281,6 +281,109 @@ class StarsBridge
 
     public record ImportResult(int Imported, string? Error);
 
+    // ── DGScope profile XML import (Phase 4 polish) ─────────────────────────
+    /// <summary>Profile root: %LOCALAPPDATA%/DGScope Profile Manager/profiles/profiles/{ARTCC}/*.xml</summary>
+    public string ProfileRoot { get; set; } =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DGScope Profile Manager", "profiles", "profiles");
+
+    public string[] ListProfiles(string artccId)
+    {
+        var dir = Path.Combine(ProfileRoot, artccId);
+        if (!Directory.Exists(dir)) return Array.Empty<string>();
+        return Directory.GetFiles(dir, "*.xml")
+            .Select(p => Path.GetFileNameWithoutExtension(p)!)
+            .OrderBy(s => s)
+            .ToArray();
+    }
+
+    /// <summary>Parse a DGScope profile XML into the subset of fields the
+    /// web port honors. Keys mirror scope/RadarWindow.cs + STARS/PrefSet.cs
+    /// + STARS/TCP.cs property names so the frontend can apply them
+    /// directly to its PrefSet copy.</summary>
+    public object? LoadProfile(string artccId, string profileName)
+    {
+        var path = Path.Combine(ProfileRoot, artccId, profileName + ".xml");
+        if (!File.Exists(path)) return null;
+        var doc = System.Xml.Linq.XDocument.Load(path);
+        var root = doc.Root;
+        if (root is null) return null;
+
+        string? S(string name) => root.Element(name)?.Value;
+        int? I(string name) { var v = S(name); return int.TryParse(v, out var n) ? n : (int?)null; }
+        double? D(string name) { var v = S(name); return double.TryParse(v, out var n) ? n : (double?)null; }
+        bool? B(string name) { var v = S(name); return bool.TryParse(v, out var n) ? n : (bool?)null; }
+
+        // ScreenCenterPoint
+        var sc = root.Element("ScreenCenterPoint");
+        var center = sc is null ? null : new
+        {
+            Latitude = double.TryParse(sc.Element("Latitude")?.Value, out var la) ? la : 0,
+            Longitude = double.TryParse(sc.Element("Longitude")?.Value, out var lo) ? lo : 0,
+        };
+
+        // PrefSet — first <PrefSet> under root, or current; profile XML usually has one.
+        var prefSet = root.Element("CurrentPrefSet")
+                  ?? root.Element("PrefSet")
+                  ?? root.Elements("PrefSet").FirstOrDefault();
+        // Some profiles place fields directly under root (no PrefSet wrapper).
+        var psSrc = prefSet ?? root;
+
+        int? PI(string name) { var v = psSrc.Element(name)?.Value; return int.TryParse(v, out var n) ? n : (int?)null; }
+        double? PD(string name) { var v = psSrc.Element(name)?.Value; return double.TryParse(v, out var n) ? n : (double?)null; }
+        bool? PB(string name) { var v = psSrc.Element(name)?.Value; return bool.TryParse(v, out var n) ? n : (bool?)null; }
+
+        // DCBMapList — TCP.DCBMapList[i] = starsId
+        var tcp = root.Element("TCP");
+        var dcbMapList = tcp?.Element("DCBMapList")?.Elements("int")
+            .Select(e => int.TryParse(e.Value, out var n) ? n : -1).ToArray()
+            ?? Array.Empty<int>();
+
+        // DisplayedMaps — initially visible starsIds
+        var displayed = psSrc.Element("DisplayedMaps")?.Elements()
+            .Select(e => int.TryParse(e.Value, out var n) ? n : -1).Where(n => n >= 0).ToArray()
+            ?? Array.Empty<int>();
+
+        // Brightness — match field names from PrefSet.cs BrightnessSettings
+        var brSrc = psSrc.Element("Brightness");
+        Dictionary<string, int> brightness = new();
+        if (brSrc is not null)
+        {
+            foreach (var e in brSrc.Elements())
+                if (int.TryParse(e.Value, out var n))
+                    brightness[e.Name.LocalName] = n;
+        }
+
+        return new
+        {
+            artccId,
+            profileName,
+            screenRotation = D("ScreenRotation"),
+            screenCenterPoint = center,
+            displayedMaps = displayed,
+            tcp = new
+            {
+                dcbMapList,
+            },
+            prefSet = new
+            {
+                Range = PI("Range"),
+                RangeRingSpacing = PI("RangeRingSpacing"),
+                DCBLocation = psSrc.Element("DCBLocation")?.Value,
+                DCBVisible = PB("DCBVisible"),
+                HistoryNum = PI("HistoryNum"),
+                HistoryRate = PD("HistoryRate"),
+                LeaderLength = PI("LeaderLength"),
+                PTLLength = PD("PTLLength"),
+                AltitudeFilterAssociatedMin = PI("AltitudeFilterAssociatedMin"),
+                AltitudeFilterAssociatedMax = PI("AltitudeFilterAssociatedMax"),
+                AltitudeFilterUnAssociatedMin = PI("AltitudeFilterUnAssociatedMin"),
+                AltitudeFilterUnAssociatedMax = PI("AltitudeFilterUnAssociatedMax"),
+                Brightness = brightness,
+            },
+        };
+    }
+
     private static JsonElement? FindFacility(JsonElement node, string targetId)
     {
         if (node.TryGetProperty("id", out var idEl) && idEl.GetString() == targetId)

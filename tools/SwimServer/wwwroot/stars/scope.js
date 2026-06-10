@@ -369,6 +369,11 @@ async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
     });
   }
   prefSet.DisplayedMaps = videoMaps.filter(m => m.visible && m.starsId != null).map(m => m.starsId);
+  // Default DCB MAP1-6 bindings = first 6 catalog entries with a starsId.
+  // Profile XML (when loaded) overrides this.
+  if (mapButtonAssignments.length === 0) {
+    mapButtonAssignments = videoMaps.filter(m => m.starsId != null).slice(0, 6).map(m => m.starsId);
+  }
 }
 
 async function ensureMapLoaded(map) {
@@ -432,12 +437,70 @@ function drawVideoMapLines() {
 // same toggles. (G9 retirement.)
 
 // DCB state — first 6 inline MAP buttons each bind to a specific video-map
-// index. WPF: TCP.DCBMapList[0..5] (RadarWindow.cs:817-820). We mirror.
-const mapButtonAssignments = [0, 1, 2, 3, 4, 5];   // default 1-to-1 first 6
+// starsId. WPF: TCP.DCBMapList[i] = starsId (RadarWindow.cs:817-820). When
+// a DGScope profile is loaded, this array is overwritten from
+// TCP.DCBMapList; otherwise defaults to first 6 catalog entries' starsIds.
+let mapButtonAssignments = [];  // populated by loadVideoMapsCatalog and overridden by profile
 function dcbMapAt(i) {
-  const idx = mapButtonAssignments[i];
-  if (idx == null || !videoMaps[idx]) return null;
-  return videoMaps[idx];
+  const starsId = mapButtonAssignments[i];
+  if (starsId == null) return null;
+  return videoMaps.find(m => m.starsId === starsId) || null;
+}
+
+// Apply a DGScope profile XML: prefSet overrides + DCBMapList + DisplayedMaps.
+// Backend serializes with camelCase per ServerContext JsonSerializer settings.
+async function applyProfile(profileName) {
+  try {
+    const p = await fetch(`/api/stars/profile/${encodeURIComponent(ARTCC)}/${encodeURIComponent(profileName)}`)
+      .then(r => r.json());
+    if (!p) return;
+    // Map camelCase API field → PascalCase prefSet field.
+    const fieldMap = {
+      range: "Range", rangeRingSpacing: "RangeRingSpacing",
+      dcbLocation: "DCBLocation", dcbVisible: "DCBVisible",
+      historyNum: "HistoryNum", historyRate: "HistoryRate",
+      leaderLength: "LeaderLength", ptlLength: "PTLLength",
+      altitudeFilterAssociatedMin: "AltitudeFilterAssociatedMin",
+      altitudeFilterAssociatedMax: "AltitudeFilterAssociatedMax",
+      altitudeFilterUnAssociatedMin: "AltitudeFilterUnAssociatedMin",
+      altitudeFilterUnAssociatedMax: "AltitudeFilterUnAssociatedMax",
+    };
+    if (p.prefSet) {
+      for (const [src, dst] of Object.entries(fieldMap)) {
+        if (p.prefSet[src] != null) prefSet[dst] = p.prefSet[src];
+      }
+      // Brightness keys (DCB/Background/MapA/MapB/...) - WPF uses different
+      // category names than our PrefSet. Best-effort merge into our scheme.
+      const b = p.prefSet.brightness || {};
+      const brMap = {
+        DCB: "DCB", Background: "Background", MapA: "VideoMapA", MapB: "VideoMapB",
+        FullDataBlocks: "DataBlock", LimitedDataBlocks: "DataBlock",
+        OtherFDBs: "DataBlock", Lists: "Lists",
+        PositionSymbols: "Position", BeaconTargets: "Position",
+        PrimaryTargets: "Position", History: "History",
+        RangeRings: "RangeRings", Compass: "Compass",
+        WeatherContrast: "Weather", Weather: "Weather", Tools: "Lists",
+      };
+      for (const [src, dst] of Object.entries(brMap)) {
+        if (b[src] != null) prefSet.Brightness[dst] = b[src];
+      }
+    }
+    if (p.screenCenterPoint) {
+      prefSet.ScreenCenterPoint = {
+        Latitude: p.screenCenterPoint.latitude,
+        Longitude: p.screenCenterPoint.longitude,
+      };
+      prefSet.RangeRingLocation = { ...prefSet.ScreenCenterPoint };
+    }
+    if (Array.isArray(p.tcp?.dcbMapList)) mapButtonAssignments = p.tcp.dcbMapList;
+    if (Array.isArray(p.displayedMaps)) {
+      const set = new Set(p.displayedMaps);
+      for (const m of videoMaps) m.visible = set.has(m.starsId);
+    }
+    recomputeScale();
+    if (dcb) dcb.render();
+    console.log(`[STARS] profile ${profileName} applied: range=${prefSet.Range} maps=${mapButtonAssignments.length}`);
+  } catch (e) { console.error("[STARS] profile load failed:", e); }
 }
 
 // ── DSTARS track stream (Phase 3a) ──────────────────────────────────────────
@@ -1077,6 +1140,11 @@ async function bootstrap() {
     }
     // Phase 4: ASR sites for SITE submenu (vNAS starsConfiguration → areas → asrSites if present)
     starsState.asrSites = fac?.starsConfiguration?.areas?.flatMap(a => a.asrSites || []) || [];
+
+    // Optional profile from URL ?profile=NAME — pulls DGScope profile XML
+    // from %LOCALAPPDATA%/DGScope Profile Manager/profiles/profiles/{ARTCC}/.
+    const profileName = (new URLSearchParams(location.search)).get("profile");
+    if (profileName) await applyProfile(profileName);
   } catch (e) {
     console.error("[STARS] Failed to load facility:", e);
   }

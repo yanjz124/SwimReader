@@ -202,6 +202,11 @@ class StarsBridge
             }
         }
 
+        // visibilityCenters[] on the ARTCC root — used as fallback center when
+        // the facility itself has no location field (true for most TRACONs).
+        JsonElement? visibilityCenters = doc.RootElement.TryGetProperty("visibilityCenters", out var vc)
+            ? vc : null;
+
         return new
         {
             artccId,
@@ -209,6 +214,7 @@ class StarsBridge
             name = fac.TryGetProperty("name", out var nm2) ? nm2.GetString() : null,
             type = fac.TryGetProperty("type", out var ty) ? ty.GetString() : null,
             location,
+            visibilityCenters,
             positions,
             starsConfiguration = starsConfig,
             videoMaps,

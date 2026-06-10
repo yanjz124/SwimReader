@@ -33,8 +33,8 @@ around.
 | 1 | Foundation + chrome | done | b30e4a6 |
 | 2 | Video maps | done | 00bc4e5 |
 | 3a | DSTARS stream + position symbols | done | edf03e3 |
-| 3b | Data blocks + leaders + history | done | (this commit) |
-| 4 | DCB (main + Aux + submenus) | pending | — |
+| 3b | Data blocks + leaders + history | done | 3a11de4 |
+| 4 | DCB (main + Aux + submenus) | done | (this commit) |
 | 5 | Command line + preview area | pending | — |
 | 6 | System lists | pending | — |
 | 7 | SSA | pending | — |

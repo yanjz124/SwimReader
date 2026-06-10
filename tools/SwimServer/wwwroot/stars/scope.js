@@ -1106,6 +1106,11 @@ function mountDcb() {
   const root = document.getElementById("dcb");
   if (!root) return;
   dcb = new DCB(root, starsState);
+  // Debug: ?menu=MAPS|BRITE|AUX|SITE pre-opens submenu so headless tests can
+  // screenshot each one without scripted clicks.
+  const qMenu = new URLSearchParams(location.search).get("menu");
+  if (qMenu && ["MAIN","MAPS","BRITE","AUX","SITE"].includes(qMenu.toUpperCase()))
+    dcb.active = qMenu.toUpperCase();
   dcb.on("numAdjust", (id, dir) => handleNumAdjust(id, dir));
   dcb.on("briteAdjust", (which, d) => handleBriteAdjust(which, d));
   dcb.on("mapToggle", (idx) => handleMapToggle(idx));

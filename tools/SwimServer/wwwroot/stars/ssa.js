@@ -116,12 +116,17 @@ function refreshSsa() {
   // Selected beacon codes
   if (SSA.selectedBeaconCodes.length) lines.push(SSA.selectedBeaconCodes.join(" "));
 
-  // Range + PTL
+  // Range + PTL — format from RadarWindow.cs:2967.
   lines.push(`${Math.round(prefSet.Range)}NM PTL: ${prefSet.PTLLength.toFixed(1)}`);
 
-  // Altitude filter — WPF formats with ToFilterAltitudeString (3-digit FL).
+  // Altitude filter — WPF ToFilterAltitudeString format.
   lines.push(`${fa(prefSet.AltitudeFilterUnAssociatedMin)} ${fa(prefSet.AltitudeFilterUnAssociatedMax)} U ` +
              `${fa(prefSet.AltitudeFilterAssociatedMin)} ${fa(prefSet.AltitudeFilterAssociatedMax)} A`);
+
+  // Quick Look TCPs — WPF: "QL: ALL" or "QL: TCP1 TCP2"
+  const ql = prefSet.QuickLookedTCPs || [];
+  if (ql.length === 0) lines.push("QL: ");
+  else lines.push("QL: " + ql.join(" "));
 
   // INTRAIL
   const onVols = SSA.intrailVolumes.filter(v => v.active);
@@ -144,9 +149,12 @@ function refreshSsa() {
 }
 
 function fa(altFt) {
-  // WPF ToFilterAltitudeString: 3-digit "FL" (e.g., 18000 -> "180"). Negative
-  // ranges show "—".
-  if (altFt == null || altFt <= -9000) return "—";
+  // ToFilterAltitudeString — observed in DGScope: negative or extreme min
+  // shows as "N99"; high max shows as 3-digit FL/100 (e.g. 99900 -> "999").
+  // PrefSet defaults: AltitudeFilterUnAssociatedMin = -9900 -> "N99".
+  if (altFt == null) return "N99";
+  if (altFt <= -9900) return "N99";
+  if (altFt <= 0) return "N" + String(Math.round(-altFt / 100)).padStart(2, "0");
   return String(Math.round(altFt / 100)).padStart(3, "0");
 }
 function escapeHtml(s) {

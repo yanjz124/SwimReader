@@ -200,4 +200,29 @@ shape.
 - **Test:** Phase 11 polish will expand PrefSet.Brightness and split
   the mapping.
 
-(Phase implementations will append G16+ as discovered.)
+### G16 — Command set incomplete (Phase 5)
+- **What:** Phase 5 implements ~15 of the ~80 commands in CRC's Command
+  Reference. Major omissions: INIT/TERM tracking, all handoff workflows,
+  point-outs, CRDA setup, all dot commands.
+- **Why:** Each command class has prerequisite state (sector ownership,
+  CRDA RPC definitions, etc.) that arrives in later phases.
+- **Workaround:** Unimplemented commands return "UNKNOWN CMD"; user can
+  still operate the scope.
+- **Closeness:** Highest-frequency 15 commands work; full table arrives
+  through Phases 8 (handoffs/point-outs), 9 (CRDA), 11 (dot commands).
+- **Test:** Walk the CRC keybinding table and mark each as
+  implemented/deferred.
+
+### G17 — Buffer model uses string vs WPF List\<object\>
+- **What:** WPF accumulates `List<object>` of typed chars + F-key tokens.
+  We use a plain string. F-key insertion writes the prefix into the
+  buffer rather than as a distinct token.
+- **Why:** Browser key events expose `e.key` as a string; a list-of-
+  objects model adds no benefit.
+- **Workaround:** Behaviorally identical for the printable character
+  subset; F-key prefix insertion mirrors the user-visible effect.
+- **Closeness:** 100% for currently implemented commands.
+- **Test:** Press F5 → expect `QZ ` in preview; types after are
+  appended; Enter dispatches.
+
+(Phase implementations will append G18+ as discovered.)

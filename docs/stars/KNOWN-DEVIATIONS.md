@@ -109,4 +109,41 @@ shape.
 - **Closeness:** Marked TEMP — Phase 7 removes it.
 - **Test:** Phase 7 commit removes `#topbar` and CSS rules.
 
-(Phase implementations will append G10+ as discovered.)
+### G10 — vNAS doesn't serve video-map GeoJSON content publicly (Phase 2)
+- **What:** `data-api.vnas.vatsim.net/api/artccs/{id}/` lists every video
+  map's metadata (id, name, sourceFileName, starsBrightnessCategory) but
+  no endpoint serves the actual GeoJSON geometry. Every URL pattern we
+  tried returns 404. The WPF program never hit vNAS for content either —
+  `CRCMapImporter.cs` reads from a local CRC export folder structure:
+  `<basedir>/VideoMaps/{artccId}/{mapId}.geojson`.
+- **Why:** vNAS doesn't publish the geometry, only the catalog. CRC
+  desktop pulls the actual content through an authenticated channel that
+  isn't documented for public access.
+- **Workaround:** SwimReader.Server reads from a configurable directory
+  (default: `tools/SwimServer/crc-export/`). The user copies their CRC
+  export tree there (same layout DGScope expects) and the STARS port
+  serves the GeoJSON via `GET /api/stars/videoMap/{artccId}/{mapId}`.
+  Auto-falls-back to the upload endpoint `POST /api/stars/upload-export`
+  if the user wants to push a ZIP instead.
+- **Closeness:** When the export tree is present, 100% identical to
+  DGScope. When the export tree is empty, maps simply don't render — same
+  behavior as launching DGScope without a CRC export.
+- **Test:** Drop one ARTCC's CRC export under `crc-export/ZDC/VideoMaps/`,
+  pick a facility, see maps render exactly as DGScope would.
+
+### G11 — Max-blend → additive blend (Phase 2)
+- **What:** RadarWindow.cs line 5310 sets `GL.BlendEquation(Max)` before
+  drawing video map lines (overlapping lines show the brighter color).
+  Canvas2D has no max-blend; the closest mode is `globalCompositeOperation
+  = "lighter"` which is additive.
+- **Why:** Browser 2D context limitation. WebGL supports MAX but the
+  Phase 1 render path is 2D; switching to WebGL is a Phase 11 cleanup.
+- **Workaround:** Use additive blending. For grey lines at 100% brightness
+  overlap looks brighter (additive: 280→clipped to 255 white) instead of
+  identical (max: 140→140). At default brightness ≤ 50% this is
+  imperceptible. Phase 11 may move to WebGL2 and restore exact MAX.
+- **Closeness:** Identical at low brightness; slight brightening at
+  overlap points when brightness > 70%.
+- **Test:** Side-by-side comparison of crossed map lines.
+
+(Phase implementations will append G12+ as discovered.)

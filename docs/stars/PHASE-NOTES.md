@@ -86,3 +86,73 @@ After commit:
 - Mouse wheel zooms (changes `Range`); middle-drag pans (moves
   `ScreenCenterPoint`); right-click sets RangeRingLocation (mirrors WPF
   `e.Position` → `ScreenToGeoPoint` at line 1317).
+
+---
+
+## Phase 2 — Video maps
+
+### WPF sources ported
+
+| WPF file | What we took |
+|----------|--------------|
+| `scope/VideoMap.cs` (full) | `VideoMap` model: Number, Name, Mnemonic, Visible, Category (A/B), Lines. `MapCategory` enum (A, B). |
+| `scope/Line.cs` (full) | `Line` model — pair of `GeoPoint`s. |
+| `scope/MapGeoJSON.cs` (recursion shape, lines ~578-700 — `GeometryToLines`, `LineStringToLines`, `PolygonToLines`, `LinearRingToLines`, `MultiLineStringToLines`, `MultiPolygonToLines`) | The dispatch logic for turning GeoJSON geometry into a flat `Line[]`. Each polygon ring becomes connected line segments; the final closure relies on GeoJSON's "first == last" ring convention, same as WPF. |
+| `scope/RadarWindow.cs` line 5302-5332 (`DrawVideoMapLines`) | Two-pass render: category A then B. Each pass collects visible-and-displayed maps, builds a single Lines list, draws with `AdjustedColor(VideoMapColor, Brightness.MapA-or-B)`. Pre/post: `BlendEquation(Max)` then restore to `FuncAdd`. |
+| `scope/MapImporter/CRC/CRCMapImporter.cs` lines 19-30 | The export-tree path layout: `<basedir>/VideoMaps/{artccId}/{mapId}.geojson`. We mirror exactly under `tools/SwimServer/crc-export/{artccId}/VideoMaps/`. |
+
+### Resolutions for ambiguous points
+
+1. **GeoJSON content source.** vNAS has no public endpoint for map content
+   (only catalog). We default to reading from a CRC export tree on disk —
+   the same source DGScope reads. See G10 in KNOWN-DEVIATIONS. Optional
+   `POST /api/stars/upload-export` accepts a ZIP for non-disk users.
+
+2. **`starsAlwaysVisible` → initial `Visible` state.** vNAS marks some maps
+   as always-visible (towers, runways). On load we set those `Visible =
+   true` and seed `PrefSet.DisplayedMaps` from the matching `starsId`s.
+   This mirrors the WPF startup that reads `PrefSet.DisplayedMaps` and
+   sets each VideoMap.Visible accordingly (RadarWindow.cs line 710).
+
+3. **Max-blend on canvas2d.** Canvas2D has no max-blend mode; we use
+   `globalCompositeOperation = "lighter"` (additive). See G11. Pixel-exact
+   match requires WebGL2; deferred to Phase 11.
+
+4. **Off-screen culling.** Both endpoints off-screen on the same side →
+   skip the line. WPF doesn't cull (relies on GPU clipping); we cull on
+   CPU because we're 2D. Visually identical.
+
+### Backend additions
+
+- `StarsBridge.cs` — `_crcExportRoot`, `GetVideoMapGeoJsonAsync`,
+  `ListAvailableVideoMapIds`.
+- `Routes/StarsRoutes.cs`:
+  - `GET /api/stars/videoMap/{artccId}/{mapId}` — serves the GeoJSON.
+  - `GET /api/stars/videoMaps/{artccId}` — lists what's available on disk.
+  - `POST /api/stars/upload-export` — accepts CRC export ZIP, extracts.
+
+### Frontend additions (scope.js)
+
+- `videoMaps` runtime list, populated from vNAS catalog metadata.
+- `geoJsonToLines` — recursive GeoJSON decoder mirroring the WPF dispatch.
+- `ensureMapLoaded` — lazy fetch on first visible.
+- `drawVideoMapLines` — two-pass A/B render with brightness × color.
+- Temp side-panel (`#mapPanel`) listing every map with a visibility
+  checkbox. Goes away in Phase 4 when DCB MAP buttons exist (G9-style).
+
+### What's intentionally NOT in Phase 2
+
+- DCB MAP/MAP TOGGLES submenus (Phase 4)
+- FAA DAT importer (not used by vNAS — included in WPF but only for
+  legacy/FAA STARS exports, not CRC profiles). If user needs it later we
+  port `scope/FAAMapDATFileParser.cs`.
+
+### Self-test checklist
+
+- With `crc-export/{ARTCC}/VideoMaps/` empty: facility loads, maps panel
+  shows all known map names from vNAS, but toggling any results in no
+  lines drawn (HTTP 404 — `map_not_in_crc_export`). Expected behavior.
+- Drop one map ID's `.geojson` into the export tree, toggle it on, see
+  lines render in correct color and respond to pan/zoom.
+- Toggle multiple overlapping maps, observe additive brightening on
+  overlap (G11 documented).

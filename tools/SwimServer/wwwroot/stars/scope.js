@@ -289,9 +289,177 @@ function labelAt(text, x, y) {
   ctx.restore();
 }
 
+// ── Video maps (Phase 2) ────────────────────────────────────────────────────
+// Mirrors scope/MapGeoJSON.cs (GeoJSON → Line decoder) + scope/VideoMap.cs
+// (Number/Name/Mnemonic/Category/Lines) + RadarWindow.cs:5302 (DrawVideoMapLines).
+//
+// videoMaps[i] = {
+//   id, name, shortName, starsId, starsBrightnessCategory, starsAlwaysVisible,
+//   visible (runtime toggle),
+//   category: "A" | "B",
+//   lines: [{lat1,lon1,lat2,lon2}, ...]   // populated lazily on first display
+// }
+const videoMaps = [];
+
+// GeoJSON geometry → flat line list (mirrors MapGeoJSON.cs GeometryToLines).
+// We mirror the recursion: LineString, MultiLineString, Polygon (ring closure),
+// MultiPolygon, GeometryCollection, Feature, FeatureCollection.
+function geoJsonToLines(obj, out) {
+  if (!obj) return;
+  if (Array.isArray(obj)) { for (const o of obj) geoJsonToLines(o, out); return; }
+  switch (obj.type) {
+    case "FeatureCollection":
+      for (const f of (obj.features || [])) geoJsonToLines(f, out);
+      return;
+    case "Feature":
+      geoJsonToLines(obj.geometry, out);
+      return;
+    case "GeometryCollection":
+      for (const g of (obj.geometries || [])) geoJsonToLines(g, out);
+      return;
+    case "LineString":
+      lineStringToLines(obj.coordinates, out);
+      return;
+    case "MultiLineString":
+      for (const ls of (obj.coordinates || [])) lineStringToLines(ls, out);
+      return;
+    case "Polygon":
+      for (const ring of (obj.coordinates || [])) ringToLines(ring, out);
+      return;
+    case "MultiPolygon":
+      for (const poly of (obj.coordinates || []))
+        for (const ring of poly) ringToLines(ring, out);
+      return;
+    case "Point":
+    case "MultiPoint":
+      return; // no lines from points (matches WPF GeometryToLines no-op)
+  }
+}
+function lineStringToLines(coords, out) {
+  if (!Array.isArray(coords) || coords.length < 2) return;
+  for (let i = 1; i < coords.length; i++) {
+    const a = coords[i - 1], b = coords[i];
+    out.push({ lon1: a[0], lat1: a[1], lon2: b[0], lat2: b[1] });
+  }
+}
+function ringToLines(coords, out) {
+  // PolygonToLines + LinearRingToLines: connect consecutive vertices AND close ring.
+  if (!Array.isArray(coords) || coords.length < 2) return;
+  for (let i = 1; i < coords.length; i++) {
+    const a = coords[i - 1], b = coords[i];
+    out.push({ lon1: a[0], lat1: a[1], lon2: b[0], lat2: b[1] });
+  }
+  // GeoJSON spec: first == last for valid rings, so the last segment closes it.
+}
+
+async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
+  // vnasMaps from /api/stars/facility/{...} carries id, name, shortName, starsId, starsBrightnessCategory.
+  // starsConfig.videoMapIds is the ordered list this facility uses.
+  if (!Array.isArray(vnasMaps)) return;
+  for (const m of vnasMaps) {
+    videoMaps.push({
+      id: m.id,
+      name: m.name || "",
+      shortName: m.shortName || "",
+      starsId: m.starsId ?? null,
+      category: (m.starsBrightnessCategory === "B") ? "B" : "A",
+      visible: !!m.starsAlwaysVisible,
+      lines: null,        // lazy
+      _loading: false,
+    });
+  }
+  prefSet.DisplayedMaps = videoMaps.filter(m => m.visible && m.starsId != null).map(m => m.starsId);
+}
+
+async function ensureMapLoaded(map) {
+  if (map.lines !== null || map._loading) return;
+  map._loading = true;
+  try {
+    const r = await fetch(`/api/stars/videoMap/${encodeURIComponent(ARTCC)}/${encodeURIComponent(map.id)}`);
+    if (!r.ok) { map.lines = []; return; }
+    const gj = await r.json();
+    const out = [];
+    geoJsonToLines(gj, out);
+    map.lines = out;
+  } catch (e) {
+    console.warn(`[STARS] map ${map.id} load failed:`, e);
+    map.lines = [];
+  } finally {
+    map._loading = false;
+  }
+}
+
+function drawVideoMapLines() {
+  // RadarWindow.cs:5302. Two passes: Category A then Category B, each with its
+  // own brightness multiplier (Brightness.VideoMapA / VideoMapB). Lines color
+  // = RGB(140,140,140) for both categories at 100%.
+  const prevBlend = ctx.globalCompositeOperation;
+  ctx.globalCompositeOperation = "lighter";   // G11 — additive ≈ max for grey
+
+  for (const cat of ["A", "B"]) {
+    const brightness = (cat === "A")
+      ? prefSet.Brightness.VideoMapA
+      : prefSet.Brightness.VideoMapB;
+    if (brightness === 0) continue;
+    const baseColor = (cat === "A") ? COLORS.VideoMapA : COLORS.VideoMapB;
+    const color = adjusted(baseColor, brightness);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+
+    let count = 0;
+    ctx.beginPath();
+    for (const m of videoMaps) {
+      if (m.category !== cat) continue;
+      if (!m.visible) continue;
+      if (m.lines === null) { ensureMapLoaded(m); continue; }
+      for (const ln of m.lines) {
+        const p1 = geoToScreen({ Latitude: ln.lat1, Longitude: ln.lon1 });
+        const p2 = geoToScreen({ Latitude: ln.lat2, Longitude: ln.lon2 });
+        // Cull lines wholly off-screen
+        if ((p1.x < 0 && p2.x < 0) || (p1.x > view.W && p2.x > view.W) ||
+            (p1.y < 0 && p2.y < 0) || (p1.y > view.H && p2.y > view.H)) continue;
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        if (++count > 8000) { ctx.stroke(); ctx.beginPath(); count = 0; }
+      }
+    }
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = prevBlend;
+}
+
+// Temp UI to toggle individual maps (DCB MAP buttons land in Phase 4). G9-style TEMP.
+function buildMapListPanel() {
+  const div = document.createElement("div");
+  div.id = "mapPanel";
+  div.style.cssText = `position:fixed; right:0; top:30px; bottom:0; width:200px;
+    background:rgba(0,0,0,0.7); color:#6f6; font:11px ui-monospace;
+    overflow-y:auto; padding:6px; border-left:1px solid #1a3a1a; z-index:9;`;
+  document.body.appendChild(div);
+  refreshMapList();
+}
+function refreshMapList() {
+  const div = document.getElementById("mapPanel");
+  if (!div) return;
+  const html = videoMaps.map((m, i) => `
+    <label style="display:flex; gap:4px; padding:2px 0; cursor:pointer;">
+      <input type="checkbox" data-i="${i}" ${m.visible ? "checked" : ""}/>
+      <span style="color:${m.category === "A" ? "#6f6" : "#cfc"}">${m.shortName || m.name || m.id.slice(0, 8)}</span>
+    </label>`).join("");
+  div.innerHTML = `<div style="color:#888; padding-bottom:4px;">MAPS (${videoMaps.length})</div>${html}`;
+  for (const ip of div.querySelectorAll("input[type=checkbox]")) {
+    ip.onchange = () => {
+      const m = videoMaps[+ip.dataset.i];
+      m.visible = ip.checked;
+      if (m.visible && m.lines === null) ensureMapLoaded(m);
+    };
+  }
+}
+
 // ── Main render loop ────────────────────────────────────────────────────────
 function frame() {
   clear();
+  drawVideoMapLines();
   drawRangeRings();
   drawCompass();
   updateTopbar();
@@ -368,6 +536,12 @@ async function bootstrap() {
     document.getElementById("facilityLbl").textContent =
       `${ARTCC} / ${FACILITY}${fac && fac.name ? " — " + fac.name : ""}`;
     recomputeScale();
+
+    // Phase 2: load video map catalog + render panel
+    if (fac) {
+      await loadVideoMapsCatalog(fac.starsConfiguration, fac.videoMaps);
+      buildMapListPanel();
+    }
   } catch (e) {
     console.error("[STARS] Failed to load facility:", e);
   }

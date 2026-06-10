@@ -30,8 +30,8 @@ around.
 
 | # | Phase | Status | Commit |
 |---|-------|--------|--------|
-| 1 | Foundation + chrome | in progress | — |
-| 2 | Video maps | pending | — |
+| 1 | Foundation + chrome | done | b30e4a6 |
+| 2 | Video maps | done | (this commit) |
 | 3 | Targets + LDB/PDB/FDB | pending | — |
 | 4 | DCB (main + Aux + submenus) | pending | — |
 | 5 | Command line + preview area | pending | — |

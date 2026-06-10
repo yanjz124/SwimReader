@@ -1419,6 +1419,19 @@ function pickAircraft(px, py) {
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+// Expose DCB / state for in-page debugging and headless test scripts.
+window.handleNumAdjust  = handleNumAdjust;
+window.handleBriteAdjust = handleBriteAdjust;
+window.handleMapToggle  = handleMapToggle;
+window.handleDcbClick   = handleDcbClick;
+window.prefSet          = prefSet;
+window.tracks           = tracks;
+window.flightPlans      = flightPlans;
+window.trackToFp        = trackToFp;
+window.videoMaps        = videoMaps;
+window.mapButtonAssignments = mapButtonAssignments;
+window.ClockPhase       = ClockPhase;
+
 // ── URL state persistence ───────────────────────────────────────────────────
 // Encodes range, leader length, ptl length, range-ring spacing, brightness
 // overrides, signed-on TCP, dstars facility, profile, menu (debug) into the
@@ -1463,7 +1476,7 @@ function catKeyForUrl(short) {
     WX: "Weather", WXC: "Weather",
   })[short] || null;
 }
-function pushUrlState() {
+function _internalPushUrlState() {
   const q = new URLSearchParams(location.search);
   const setOrDel = (k, val, defaultV) => {
     if (val == null || val === defaultV) q.delete(k);
@@ -1492,7 +1505,6 @@ function pushUrlState() {
 // Apply on load (after profile so URL params override profile)
 applyUrlState();
 // Push state when prefs change. Triggered from DCB handlers.
-const _origPushState = () => pushUrlState();
-window.pushUrlState = _origPushState;
+window.pushUrlState = _internalPushUrlState;
 
 bootstrap();

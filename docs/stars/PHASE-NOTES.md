@@ -374,3 +374,83 @@ None — Phase 4 is pure frontend.
 - Click LDR → leader length 0-8.
 - PTL ALL / PTL OWN toggle highlight when active.
 - Click PLACE CNTR → next map click sets screen center.
+
+---
+
+## Phase 5 — MCA / Preview Area + initial command set
+
+### WPF sources ported
+
+| WPF source | What we took |
+|------------|--------------|
+| `scope/RadarWindow.cs:1417-2900` (`ProcessCommand`) | Dispatch shape: tokenize on spaces, switch on first token's character; trailing-token FLID lookup against callsign/squawk. We mirror the dispatch loop in `executeCommand`. |
+| `scope/RadarWindow.cs:742-748` (PreviewArea + StatusArea) | Two separate text labels positioned at PreviewLocation/StatusLocation. Phase 5 implements PreviewArea; StatusArea comes with SSA in Phase 7. |
+| `scope/RadarWindow.cs:970-971` (Key handlers) | KeyDown for control / function keys; KeyPress for character typing. We collapse both into a single `keydown` handler since browser exposes `e.key` directly. |
+| `scope/RadarWindow.cs:2920-2945` (PreviewArea render) | Color = `AdjustedColor(DataBlockColor, Brightness.FullDataBlocks)`. We use lime + dynamic per-message coloring (red for errors). |
+| `scope/RadarWindow.cs:1308-1330` (clicked-plane handling) | `clickedplane` flag → "click + space-separated buffer = command applied to clicked plane". We expose `window.mcaSetClickedPlane`. |
+| CRC docs § Command Reference (STARS Keys) | F-key prefix table (F1=QF, F2=QP, F4=QX, F5=QZ, F6=QU, F7=QL, F8=QQ, F9=QB, F10=QS; Shift+F2=QD, Shift+F7=WR, Shift+F8=QR). |
+| CRC docs § Repositioning Tracks | Numeric keypad layout for leader direction (1=NW, 2=N, 3=NE, 4=W, 6=E, 7=SW, 8=S, 9=SE). |
+
+### Commands implemented in Phase 5
+
+- **Bare FLID** → toggle FDB ↔ LDB for that aircraft (sets `_forcedMode`)
+- **Empty + click on aircraft** → toggle FDB
+- **1-9 + click** → set leader direction for the clicked aircraft
+- **QF \<FLID\>** → flight plan readout in preview area
+- **QX \<FLID\>** → drop track (removes from local map)
+- **QZ \<alt\> \<FLID\>** → set assigned altitude
+- **QU \<FLID\>** → toggle route display
+- **QL \<sector ...\>** → quick look TCPs
+- **QD** → clear preview response
+- **QP \<FLID\>** → clear point-out / force LDB
+- **QQ \<alt\> \<FLID\>** → set interim altitude
+- **QS \<value\> \<FLID\>** → heading / speed / free-text on the clearance:
+  - prefix `` ` `` → free text
+  - prefix `/` → speed
+  - otherwise → heading
+
+### Commands deferred (TODO, marked in CRC table)
+
+These will land in later phases. They're inert / "UNKNOWN CMD" today:
+
+- **INIT \<FLID\>** / **TERM \<FLID\>** → Phase 8 (tracking, sector ownership)
+- **\* / handoffs** → Phase 8 (initiate, accept, reject handoff)
+- **PO / .PO** → Phase 8 (point-out)
+- **CRDA setup / Quick Look beaconator** → Phase 9
+- **MAP \<n\>** / **WX \<level\>** → already handled by DCB clicks
+- **All dot commands** (.HOME, .DSP, .CR, .TS, etc.) → Phase 11 polish
+
+### Frontend additions
+
+- `wwwroot/stars/mca.js` — MCA object, key handler, command dispatch.
+- `scope.html` — adds `<script src="mca.js">`.
+- `scope.js` — `pickAircraft` (12 px proximity hit-test), `pendingMapAction`
+  click path now passes hits to `window.mcaSetClickedPlane`.
+
+### Resolutions
+
+1. **Aircraft hit-test radius.** WPF uses the rendered `PositionIndicator.
+   BoundsF` (per-glyph bounding box). We use a 12 px circle around the
+   extrapolated position. Tweakable; matches WPF for typical 13 px glyphs.
+2. **Buffer state model.** WPF accumulates `List<object>` of keys (chars +
+   F-key tokens). We use a simple string buffer + token split on space.
+   Behaviorally identical for printable chars.
+3. **Response timeout.** WPF clears the preview line on the next command;
+   we add a 4 s auto-clear so transient errors don't linger. Same WPF
+   behavior would re-display on next Enter.
+
+### New deviations
+
+- **G16 — Command set incomplete.** Phase 5 implements ~15 of the ~80
+  commands in the CRC reference. The remaining commands (handoffs, point-
+  outs, dot commands, tracking init/term, CRDA setup) are deferred to
+  Phases 8 / 9 / 11.
+
+### Self-test checklist
+
+- Press F5 → preview buffer shows `QZ `.
+- Type `300 AAL123` → Enter → response shows `QZ 300 AAL123`.
+- Click an aircraft target → response shows `FDB ON`; second click → `FDB OFF`.
+- Type `5` then click an aircraft → leader direction E (east) applied.
+- Type `QL ABC DEF` → Enter → response shows `QL ABC DEF`; affects which
+  TCP-owned targets render in quick-look mode (Phase 8 wires the visual).

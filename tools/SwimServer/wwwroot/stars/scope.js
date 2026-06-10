@@ -932,6 +932,8 @@ async function bootstrap() {
 
   // Phase 4: mount the Display Control Bar.
   mountDcb();
+  // Phase 5: mount MCA / preview area.
+  if (window.mountMca) window.mountMca();
   // Phase 3a: DSTARS streaming connection. Runs independent of facility load.
   startDstars();
   requestAnimationFrame(frame);
@@ -1052,18 +1054,33 @@ function handleDcbClick(id) {
 }
 
 // PLACE CNTR / PLACE RR: next click on map sets the corresponding location.
+// Aircraft hit detection: find the closest track within 12 px and pass to MCA.
 let pendingMapAction = null;
 cv.addEventListener("click", (e) => {
-  if (!pendingMapAction) return;
-  const g = screenToGeo(e.clientX, e.clientY);
-  if (pendingMapAction === "PLACE_CNTR") {
-    prefSet.ScreenCenterPoint = g;
-  } else if (pendingMapAction === "PLACE_RR") {
-    prefSet.RangeRingLocation = g;
-    prefSet.RangeRingsCentered = false;
+  if (pendingMapAction) {
+    const g = screenToGeo(e.clientX, e.clientY);
+    if (pendingMapAction === "PLACE_CNTR") prefSet.ScreenCenterPoint = g;
+    else if (pendingMapAction === "PLACE_RR") {
+      prefSet.RangeRingLocation = g;
+      prefSet.RangeRingsCentered = false;
+    }
+    pendingMapAction = null;
+    return;
   }
-  pendingMapAction = null;
+  // Aircraft hit-test
+  const hit = pickAircraft(e.clientX, e.clientY);
+  if (hit && window.mcaSetClickedPlane) window.mcaSetClickedPlane(hit);
 });
+function pickAircraft(px, py) {
+  let best = null, bestD = Infinity;
+  for (const t of tracks.values()) {
+    if (!t.Location) continue;
+    const p = geoToScreen(extrapolatedPosition(t) || t.Location);
+    const d = Math.hypot(p.x - px, p.y - py);
+    if (d < bestD && d < 12) { best = t; bestD = d; }
+  }
+  return best;
+}
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 bootstrap();

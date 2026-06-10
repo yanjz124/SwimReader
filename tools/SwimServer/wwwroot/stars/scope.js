@@ -682,7 +682,7 @@ function drawHistory(t) {
     ctx.fillStyle = adjusted(palette, prefSet.Brightness.History);
     const p = geoToScreen(t._history[i]);
     if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
-    ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+    ctx.fillRect(p.x - 2.5, p.y - 2.5, 5, 5);
   }
 }
 
@@ -865,10 +865,10 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const lines = buildDataBlock(t, fp);
   if (lines.length === 0) return;
 
-  const fontSize = 12;
-  ctx.font = `${fontSize}px ui-monospace, "Cascadia Mono", monospace`;
+  const fontSize = 14;
+  ctx.font = `${fontSize}px FixedDemiBold, ui-monospace, "Cascadia Mono", monospace`;
   const charHeight = fontSize + 2;
-  const charWidth  = fontSize * 0.6;
+  const charWidth  = fontSize * 0.55;
 
   // dataBlockOffset = (0.5 + LeaderLength) × charHeight  (RadarWindow.cs:4014)
   const offsetPx = (0.5 + prefSet.LeaderLength) * charHeight;
@@ -956,32 +956,27 @@ function drawPosition(t, posNow) {
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;
 
-  // DrawTarget RadarType.FUSED beacon target = DrawCircle filled (line 6107).
-  // Size = TargetExtentSymbols.TargetWidth (FUSED uses
-  // NormalSymbolDistanceDimension/60.76/scale clipped to MinimumPixelDimension).
-  // 4 px diameter is the typical visual at 50NM zoom.
+  // PrimaryReturn / TargetReturn filled circle.
   ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
   ctx.beginPath();
-  ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+  ctx.arc(px, py, 4, 0, Math.PI * 2);
   ctx.fill();
 
   if (!isCoasting(t)) {
-    // PositionIndicator label (Aircraft.cs:286 + 617-623). Overlay glyph
-    // on top of the circle in BeaconTarget (lime) color.
     ctx.fillStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
-    ctx.font = "12px FixedDemiBold, ui-monospace, monospace";
+    ctx.font = "15px FixedDemiBold, ui-monospace, monospace";
     ctx.textBaseline = "middle";
     ctx.textAlign = "center";
     ctx.fillText(positionSymbolText(t, fp), px, py);
   } else {
-    // Coast = stroked # symbol (vs filled glyph) for visual distinction.
+    // Coast = #-shape stroked lines, bigger.
     ctx.strokeStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(px - 4, py - 1); ctx.lineTo(px + 4, py - 1);
-    ctx.moveTo(px - 4, py + 1); ctx.lineTo(px + 4, py + 1);
-    ctx.moveTo(px - 1, py - 4); ctx.lineTo(px - 1, py + 4);
-    ctx.moveTo(px + 1, py - 4); ctx.lineTo(px + 1, py + 4);
+    ctx.moveTo(px - 5, py - 1.5); ctx.lineTo(px + 5, py - 1.5);
+    ctx.moveTo(px - 5, py + 1.5); ctx.lineTo(px + 5, py + 1.5);
+    ctx.moveTo(px - 1.5, py - 5); ctx.lineTo(px - 1.5, py + 5);
+    ctx.moveTo(px + 1.5, py - 5); ctx.lineTo(px + 1.5, py + 5);
     ctx.stroke();
   }
 }
@@ -1169,12 +1164,20 @@ function updateTopbar() {
 
 // ── Input: pan / zoom / right-click set RR center ───────────────────────────
 // Mouse handlers mirror RadarWindow.cs ~lines 1300-1320 + 4636-4650 for zoom.
+// Pan via middle-button drag OR right-button drag (button 2). Drag distance
+// must exceed a small threshold before we treat the right-click as a pan
+// vs a context-menu / STARS-command attempt.
 let panning = false;
 let lastPan = null;
+let panButton = -1;
+const PAN_THRESHOLD = 3;
+let downAt = null;
 cv.addEventListener("mousedown", (e) => {
-  if (e.button === 1) {            // middle = pan
+  if (e.button === 1 || e.button === 2) {
     panning = true;
+    panButton = e.button;
     lastPan = { x: e.clientX, y: e.clientY };
+    downAt  = { x: e.clientX, y: e.clientY };
     e.preventDefault();
   }
 });
@@ -1188,7 +1191,7 @@ cv.addEventListener("mousemove", (e) => {
   ctr.Latitude  += ( dy_px * view.scale) / 60;
   ctr.Longitude -= ( dx_px * view.scale) / (60 * latFactor);
 });
-window.addEventListener("mouseup", () => { panning = false; });
+window.addEventListener("mouseup", () => { panning = false; panButton = -1; downAt = null; });
 
 cv.addEventListener("wheel", (e) => {
   e.preventDefault();

@@ -31,8 +31,9 @@ around.
 | # | Phase | Status | Commit |
 |---|-------|--------|--------|
 | 1 | Foundation + chrome | done | b30e4a6 |
-| 2 | Video maps | done | (this commit) |
-| 3 | Targets + LDB/PDB/FDB | pending | — |
+| 2 | Video maps | done | 00bc4e5 |
+| 3a | DSTARS stream + position symbols | done | (this commit) |
+| 3b | Data blocks + leaders + history | pending | — |
 | 4 | DCB (main + Aux + submenus) | pending | — |
 | 5 | Command line + preview area | pending | — |
 | 6 | System lists | pending | — |

@@ -456,22 +456,177 @@ function refreshMapList() {
   }
 }
 
+// ── DSTARS track stream (Phase 3a) ──────────────────────────────────────────
+// Source: DGScope.Receivers.ScopeServer/JsonUpdate.cs + ScopeServerClient.cs
+// + Track.cs + FlightPlan.cs (the DGScope client this scope mirrors).
+//
+// SwimReader.Server emits newline-delimited JSON at /dstars/{facility}/updates
+// matching DstarsTrackUpdate / DstarsFlightPlanUpdate / DstarsDeletionUpdate
+// (see src/SwimReader.Server/Adapters/Dstars*.cs).
+//
+// We use HTTP streaming via fetch+ReadableStream (the WebSocket alternative
+// requires proxy work and HTTP-stream is well-supported in browsers).
+//
+// Phase 3a renders position SYMBOLS ONLY (no data blocks, leaders, history,
+// PTLs). Phase 3b adds the rest.
+
+const tracks = new Map();        // Guid → Track {Location, Squawk, Callsign, ...}
+const flightPlans = new Map();   // Guid → FlightPlan {AssociatedTrackGuid, Owner, ...}
+const trackToFp = new Map();     // trackGuid → flightPlan (cached lookup)
+const dstarsState = { connected: false, msgCount: 0, lastError: null };
+
+function dstarsFacility() {
+  const qs = new URLSearchParams(location.search);
+  return qs.get("dstars") || FACILITY;
+}
+
+async function startDstars() {
+  const fac = dstarsFacility();
+  const url = `/dstars/${encodeURIComponent(fac)}/updates`;
+  while (true) {
+    try {
+      dstarsState.lastError = null;
+      const r = await fetch(url, { credentials: "omit" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      dstarsState.connected = true;
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          try { handleUpdate(JSON.parse(line)); }
+          catch (e) { /* skip malformed */ }
+        }
+      }
+    } catch (e) {
+      dstarsState.lastError = String(e).slice(0, 100);
+      dstarsState.connected = false;
+    }
+    // Reconnect with backoff
+    await new Promise(res => setTimeout(res, 3000));
+  }
+}
+
+function handleUpdate(u) {
+  dstarsState.msgCount++;
+  switch (u.UpdateType) {
+    case 0: handleTrackUpdate(u); return;
+    case 1: handleFlightPlanUpdate(u); return;
+    case 2: handleDeletion(u); return;
+    // 3 = weather, handled in Phase 10
+  }
+}
+
+// Track: per scope/DGScope.Receivers.ScopeServer/Track.cs — partial-update
+// semantics. Any field present overwrites; absent fields preserved.
+function handleTrackUpdate(u) {
+  let t = tracks.get(u.Guid);
+  if (!t) { t = { Guid: u.Guid, lastUpdate: 0 }; tracks.set(u.Guid, t); }
+  t.lastUpdate = Date.now();
+  if (u.Location)      t.Location = u.Location;
+  if (u.Altitude)      t.Altitude = u.Altitude;
+  if (u.GroundSpeed != null)  t.GroundSpeed = u.GroundSpeed;
+  if (u.GroundTrack != null)  t.GroundTrack = u.GroundTrack;
+  if (u.VerticalRate != null) t.VerticalRate = u.VerticalRate;
+  if (u.Squawk != null)       t.Squawk = u.Squawk;
+  if (u.Callsign != null)     t.Callsign = u.Callsign;
+  if (u.ModeSCode != null)    t.ModeSCode = u.ModeSCode;
+  if (u.IsOnGround != null)   t.IsOnGround = u.IsOnGround;
+  if (u.Ident != null)        t.Ident = u.Ident;
+}
+
+function handleFlightPlanUpdate(u) {
+  let fp = flightPlans.get(u.Guid);
+  if (!fp) { fp = { Guid: u.Guid }; flightPlans.set(u.Guid, fp); }
+  for (const k of ["Callsign","AircraftType","WakeCategory","FlightRules",
+       "Origin","Destination","EntryFix","ExitFix","Route","RequestedAltitude",
+       "Scratchpad1","Scratchpad2","Runway","Owner","PendingHandoff",
+       "AssignedSquawk","EquipmentSuffix","LDRDirection","AssociatedTrackGuid"]) {
+    if (u[k] !== undefined) fp[k] = u[k];
+  }
+  if (fp.AssociatedTrackGuid) trackToFp.set(fp.AssociatedTrackGuid, fp);
+}
+
+function handleDeletion(u) {
+  // Could be a track guid or fp guid — try both.
+  if (tracks.delete(u.Guid)) trackToFp.delete(u.Guid);
+  flightPlans.delete(u.Guid);
+}
+
+// ── Track rendering: position symbols only (Phase 3a) ───────────────────────
+// CRC docs § "Track types" + RadarWindow.cs:
+//   ◇ diamond  — associated track (has a flight plan)
+//   \  back-slash — correlated beacon (squawk + no flight plan)
+//   /  slash      — uncorrelated beacon (squawk but no flight plan or out of area)
+//   +  plus       — uncorrelated primary (no squawk)
+//   #  hash       — coast track (no position update for >2 scan cycles)
+// At/below FL230 the associated diamond becomes a small bullet (•) per ERAM
+// convention; STARS uses the diamond throughout — KEEP DIAMOND. See CRC docs.
+function symbolFor(track) {
+  const hasSquawk = !!track.Squawk && track.Squawk !== "" && track.Squawk !== "0000";
+  const hasFp = trackToFp.has(track.Guid);
+  const isCoast = (Date.now() - track.lastUpdate) > 24000; // 2 × 12s scan cycle
+  if (isCoast) return "#";
+  if (hasFp) return "◇";
+  if (hasSquawk) return "\\";
+  return "+";
+}
+
+function drawTracks() {
+  ctx.font = "12px ui-monospace, monospace";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.fillStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
+
+  for (const t of tracks.values()) {
+    if (!t.Location) continue;
+    if (t.IsOnGround) continue;            // Radar.cs Scan filters on-ground
+    // Altitude filter — PrefSet AltitudeFilterAssociatedMin/Max.
+    const altFt = t.Altitude?.Value;
+    const fp = trackToFp.get(t.Guid);
+    if (altFt != null) {
+      if (fp) {
+        if (altFt < prefSet.AltitudeFilterAssociatedMin) continue;
+        if (altFt > prefSet.AltitudeFilterAssociatedMax) continue;
+      } else {
+        if (altFt < prefSet.AltitudeFilterUnAssociatedMin) continue;
+        if (altFt > prefSet.AltitudeFilterUnAssociatedMax) continue;
+      }
+    }
+    const p = geoToScreen(t.Location);
+    // Cull off-screen
+    if (p.x < -10 || p.x > view.W + 10 || p.y < -10 || p.y > view.H + 10) continue;
+    ctx.fillText(symbolFor(t), p.x, p.y);
+  }
+}
+
 // ── Main render loop ────────────────────────────────────────────────────────
 function frame() {
   clear();
   drawVideoMapLines();
   drawRangeRings();
   drawCompass();
+  drawTracks();
   updateTopbar();
   requestAnimationFrame(frame);
 }
 
 function updateTopbar() {
   const c = prefSet.ScreenCenterPoint;
-  const r = prefSet.RangeRingLocation;
   document.getElementById("rangeLbl").textContent  = `RNG ${prefSet.Range}`;
   document.getElementById("ringLbl").textContent   = `RR ${prefSet.RangeRingSpacing}${prefSet.RangeRingsCentered ? " (CTR)" : ""}`;
   document.getElementById("centerLbl").textContent = `CTR ${c.Latitude.toFixed(4)}/${c.Longitude.toFixed(4)}`;
+  const tracksLbl = document.getElementById("tracksLbl");
+  if (tracksLbl)
+    tracksLbl.textContent = `T ${tracks.size}/${flightPlans.size}` +
+      ` ${dstarsState.connected ? "LIVE" : (dstarsState.lastError || "off")}`;
 }
 
 // ── Input: pan / zoom / right-click set RR center ───────────────────────────
@@ -545,6 +700,8 @@ async function bootstrap() {
   } catch (e) {
     console.error("[STARS] Failed to load facility:", e);
   }
+  // Phase 3a: DSTARS streaming connection. Runs independent of facility load.
+  startDstars();
   requestAnimationFrame(frame);
 }
 bootstrap();

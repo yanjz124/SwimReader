@@ -29,6 +29,29 @@ const SSA = {
   timeSynchronized: true,
 };
 
+// METAR fetcher — WPF wx.Altimeter.Value comes from the home station's METAR
+// (RadarWindow.cs:2947). We mirror by hitting /api/metar/{station} for the
+// facility's home airport. Station defaults to URL ?metar=XXX or facility name.
+async function fetchAltimeter(station) {
+  if (!station) return;
+  try {
+    const r = await fetch(`/api/metar/${encodeURIComponent(station)}`);
+    if (!r.ok) return;
+    const text = await r.text();
+    // Parse altimeter from METAR: pattern A2986 (in.Hg × 100)
+    const m = text.match(/\bA(\d{4})\b/);
+    if (m) SSA.altimeter = parseInt(m[1], 10) / 100;
+    SSA.metarRaw = text.trim();
+  } catch (e) { /* ignore */ }
+}
+function startMetarPoll() {
+  const station = (new URLSearchParams(location.search)).get("metar")
+                || window.starsState?.facilityHomeStation
+                || "KIAD";  // default IAD for PCT
+  fetchAltimeter(station);
+  setInterval(() => fetchAltimeter(station), 5 * 60 * 1000);   // every 5 min
+}
+
 function mountSsa() {
   const el = document.createElement("div");
   el.id = "ssa";
@@ -48,6 +71,7 @@ function mountSsa() {
 
   setInterval(refreshSsa, 1000);
   refreshSsa();
+  startMetarPoll();
 
   // PrefSet.StatusAreaLocation = where the user dragged this. We let the user
   // drag the SSA around with the mouse and persist to PrefSet.

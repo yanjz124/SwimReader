@@ -803,8 +803,12 @@ function buildDataBlock(t, fp) {
     if (fp?.Callsign) line1 = fp.Callsign;
     else if (t.Squawk) line1 = t.Squawk;
     lines.push(line1);
-    // Line 2: pick variant by ClockPhase
-    lines.push([fdb1line2, fdb2line2, fdb3line2][ClockPhase.phase]);
+    // Line 2: pick variant by ClockPhase. When the chosen variant is
+    // all-whitespace (no scratchpad / no AircraftType / no RequestedAlt),
+    // fall back to fdb1line2 (alt+speed) so the second line is never empty.
+    const variants = [fdb1line2, fdb2line2, fdb3line2];
+    const chosen = variants[ClockPhase.phase];
+    lines.push(chosen.trim().length > 0 ? chosen : fdb1line2);
     // Line 3: AssignedSquawk mismatch OR ATPA mileage OR blank
     if (fp?.AssignedSquawk && t.Squawk && t.Squawk !== String(fp.AssignedSquawk).padStart(4, "0"))
       lines.push(`${t.Squawk} ${String(fp.AssignedSquawk).padStart(4, "0")}`);
@@ -888,7 +892,14 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const blockWidth = Math.max(...lines.map(l => l.length)) * charWidth;
   const blockHeight = lines.length * charHeight;
   const blockX = padLeft ? anchorX - blockWidth : anchorX;
-  const blockY = (v.y < 0) ? anchorY - blockHeight : anchorY;
+  // Vertical placement: for N/NW/NE put block above anchor (extending up);
+  // for S/SW/SE put block below; for E/W vertically center on anchor so the
+  // leader line meets the block at its mid-edge. This mirrors WPF DrawLeader
+  // which uses the data block bounding box midpoint.
+  let blockY;
+  if (v.y < 0) blockY = anchorY - blockHeight;
+  else if (v.y > 0) blockY = anchorY;
+  else blockY = anchorY - blockHeight / 2;
 
   // Block color — STCA > Pointout > Emergency > Owned > DataBlock.
   // RadarWindow.cs:80 — PointoutColor = Yellow.

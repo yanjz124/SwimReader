@@ -1,3 +1,8 @@
+@font-face {
+  font-family: "FixedDemiBold";
+  src: url("FixedDemiBold.otf") format("opentype");
+  font-display: block;
+}
 /* STARS scope styling.
  * Background mirrors WPF RadarWindow.BackColor (= Color.Black = #000000).
  * Topbar is web-only chrome (NOT part of the WPF program) used during the

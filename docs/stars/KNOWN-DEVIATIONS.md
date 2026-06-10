@@ -225,4 +225,21 @@ shape.
 - **Test:** Press F5 → expect `QZ ` in preview; types after are
   appended; Enter dispatches.
 
-(Phase implementations will append G18+ as discovered.)
+### G18 — Handoff actions are local-only (Phase 8)
+- **What:** INIT/TERM/`*`/PO/QP commands mutate `FlightPlan.Owner` and
+  `PendingHandoff` in the local browser only. SwimReader's DSTARS
+  endpoint is read-only — there's no upstream channel to propagate
+  these state changes.
+- **Why:** Server-side writes require: SwimReader.Server adapter to
+  accept inbound updates, DSTARS auth handshake, SFDPS upstream
+  injection (which doesn't exist — SFDPS publishes facility state, it
+  doesn't accept controller actions). Bidirectional support is genuinely
+  out of scope for a strict port pass.
+- **Workaround:** Local-only state. The user sees the visual feedback,
+  but other connected scopes don't see their handoffs.
+- **Closeness:** Visual identical; behavior visible only locally.
+- **Test:** Two browser tabs of the same facility/TCP: handoffs in tab 1
+  not reflected in tab 2 until a fresh DSTARS update arrives (which
+  won't carry the local changes).
+
+(Phase implementations will append G19+ as discovered.)

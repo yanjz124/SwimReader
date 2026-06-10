@@ -568,3 +568,77 @@ connection state.
 - Range value reflects DCB RANGE button.
 - Altitude filter row reflects PrefSet defaults (and any QF/QL changes).
 - Shift+drag the panel → it moves; PrefSet.StatusAreaLocation updates.
+
+---
+
+## Phase 8 — Handoffs, point-outs, sign-on (LOCAL ONLY)
+
+### Scope decision
+
+The WPF DGScope's `ScopeServerClient.Send(...)` can write back to a
+DSTARS server. The SwimReader DSTARS endpoint at
+`src/SwimReader.Server/Controllers/DstarsController.cs` is **read-only**
+— it streams updates outward but doesn't accept inbound writes. Adding
+write support touches the SwimReader server, the DSTARS protocol's
+authenticated channel, and the upstream SFDPS adapter — out of scope
+for this STARS port pass.
+
+Therefore Phase 8 is **LOCAL ONLY**: handoff and point-out actions
+mutate the in-browser `FlightPlan` record. The server doesn't see them
+and other connected scopes don't see them. Documented as G18.
+
+### WPF sources referenced
+
+| WPF source | What we took |
+|------------|--------------|
+| `scope/Aircraft.cs:115` (`LDRDirection`, `OwnerLeaderDirection`) | Per-aircraft leader direction selection (already used in Phase 3b). |
+| `scope/Aircraft.cs:33-47` (`PositionInd`, `PendingHandoff`, `HandoffInitiated` events) | The state model for sector ownership + pending handoff. |
+| `scope/RadarWindow.cs:80` (`PointoutColor = Yellow`) | Color for point-out tracks. |
+| `scope/RadarWindow.cs:2206` ("'L': Leader Lines") | INIT/TERM command shape in the WPF dispatch. We mirror as `INIT <FLID>` / `TERM <FLID>`. |
+| CRC docs § Handoffs + Point Outs | The user-facing workflow. |
+
+### Commands added
+
+- **`.SO <tcp>`** — sign on as TCP (sets `_signedOnTcp`). Until used, all
+  tracks render as PDB/LDB (no ownership match).
+- **`INIT <FLID>`** — acquire ownership locally (`fp.Owner = ownTcp()`).
+- **`TERM <FLID>`** — release ownership locally.
+- **`* <sector> <FLID>`** — initiate handoff (sets `fp.PendingHandoff`).
+- **`PO <sector> <FLID>`** — initiate point-out (sets
+  `fp._pointoutTarget`).
+- Existing **`QP <FLID>`** (Phase 5) — accept point-out / clear handoff.
+
+### Visuals added
+
+- **Data block color hierarchy** (in scope.js `drawDataBlockAndLeader`):
+  Emergency > Pointout > PendingHandoff-TO-us > Owned > Default.
+- **SSA "TCP" line**: when signed on, the SSA's first line shows
+  `TCP {id}`.
+- Color constants (`COLORS.Pointout = [255,255,0]` per WPF
+  RadarWindow.cs:80) light up the data block yellow when a point-out
+  is directed at our TCP, OR when a handoff is pending TO our TCP.
+
+### URL parameter
+
+`/stars/{artcc}/{facility}?tcp=ABC` signs the user on immediately as
+TCP `ABC`. Useful for bookmarks.
+
+### Self-test checklist
+
+- Open scope with `?tcp=ZDC1`. SSA line 1 shows `TCP ZDC1`.
+- Type `* ZDC2 AAL123` Enter. AAL123's data block turns yellow
+  (PendingHandoff != us, but visible to others).
+- Reload with `?tcp=ZDC2`. Now AAL123's data block is yellow (handoff
+  pending TO us).
+- Type `INIT AAL123` Enter. AAL123 becomes owned (white data block);
+  PendingHandoff cleared.
+- Type `TERM AAL123` Enter. AAL123 becomes unowned again.
+
+### New deviation
+
+- **G18 — Handoff actions are local-only.** SwimReader's DSTARS
+  endpoint is read-only; the web port can't propagate handoff state to
+  the upstream. All Phase 8 mutations are local-only — invisible to
+  other connected scopes and reset on page reload. Full bidirectional
+  support requires server-side writes + DSTARS authentication, out of
+  scope for the strict port pass. Phase 11 polish may revisit.

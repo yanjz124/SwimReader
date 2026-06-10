@@ -93,6 +93,10 @@ function refreshSsa() {
   if (!el) return;
   const lines = [];
 
+  // Line 0 (Phase 8) — signed-on TCP indicator, only when present.
+  const tcp = window.ownTcp && window.ownTcp();
+  if (tcp) lines.push(`TCP ${tcp}`);
+
   // Line 1 — Time HHmm/ss + sync + altimeter
   const d = new Date();
   const hhmm = String(d.getUTCHours()).padStart(2, "0") + String(d.getUTCMinutes()).padStart(2, "0");

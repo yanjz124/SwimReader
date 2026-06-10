@@ -236,6 +236,57 @@ function executeCommand(line) {
       setResponse(`QS ${val} ${parts[parts.length - 1]}`);
       return;
     }
+    // ── Phase 8: tracking + handoffs (LOCAL ONLY; see G18) ─────────────────
+    case "INIT": {
+      // INIT <FLID> — acquire ownership locally. Sets fp.Owner = ownTcp.
+      const plane = findAircraft(parts[1]);
+      if (!plane) return setResponse("NOT FOUND", false);
+      const fp = trackToFp.get(plane.Guid);
+      if (!fp) return setResponse("NO FP", false);
+      const me = window.ownTcp();
+      if (!me) return setResponse("NO TCP - use .SO <id> first", false);
+      fp.Owner = me;
+      fp.PendingHandoff = null;
+      setResponse(`INIT ${parts[1]} -> ${me}`);
+      return;
+    }
+    case "TERM": {
+      // TERM <FLID> — release ownership locally.
+      const plane = findAircraft(parts[1]);
+      if (!plane) return setResponse("NOT FOUND", false);
+      const fp = trackToFp.get(plane.Guid);
+      if (!fp) return setResponse("NO FP", false);
+      fp.Owner = null;
+      fp.PendingHandoff = null;
+      setResponse(`TERM ${parts[1]}`);
+      return;
+    }
+    case ".SO": {
+      // .SO <tcp> — sign on as TCP.
+      window.setOwnTcp(parts[1]);
+      setResponse(`SIGNED ON ${parts[1] || "OFF"}`);
+      return;
+    }
+    case "*": {
+      // * <sector> <FLID> — initiate handoff. Local: sets PendingHandoff.
+      const plane = findAircraft(parts[2]);
+      if (!plane) return setResponse("NOT FOUND", false);
+      const fp = trackToFp.get(plane.Guid);
+      if (!fp) return setResponse("NO FP", false);
+      fp.PendingHandoff = parts[1] ? parts[1].toUpperCase() : "ANY";
+      setResponse(`HANDOFF ${parts[2]} -> ${fp.PendingHandoff}`);
+      return;
+    }
+    case "PO": {
+      // PO <sector> <FLID> — point out (local marker only).
+      const plane = findAircraft(parts[2]);
+      if (!plane) return setResponse("NOT FOUND", false);
+      const fp = trackToFp.get(plane.Guid);
+      if (!fp) return setResponse("NO FP", false);
+      fp._pointoutTarget = parts[1] ? parts[1].toUpperCase() : "ANY";
+      setResponse(`POINT OUT ${parts[2]} -> ${fp._pointoutTarget}`);
+      return;
+    }
     default: {
       // Position-data block / leader: digit 1-9 then aircraft click.
       if (/^[1-9]$/.test(cmd) && MCA.clickedPlane) {

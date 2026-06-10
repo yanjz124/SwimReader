@@ -642,7 +642,13 @@ function drawPTL(t, posNow) {
   ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
   ctx.stroke();
 }
-function ownTcp() { return null; /* Phase 8: signed-on TCP */ }
+// Phase 8: signed-on TCP. Set via URL ?tcp=ABC, dot command `.SO ABC`, or
+// SITE submenu (Phase 4). Reads from URL on bootstrap.
+let _signedOnTcp = (new URLSearchParams(location.search)).get("tcp") || null;
+function ownTcp() { return _signedOnTcp; }
+function setOwnTcp(v) { _signedOnTcp = v ? v.toUpperCase() : null; }
+window.setOwnTcp = setOwnTcp;
+window.ownTcp = ownTcp;
 
 // ── Data block content (Aircraft.RedrawDataBlock, lines 302-560) ────────────
 // Single-mode FDB rendering. The WPF 3-line timeshare (DataBlock/2/3
@@ -755,9 +761,14 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const blockY = (v.y < 0) ? anchorY - blockHeight : anchorY;
 
   // Block color — Pointout > Emergency > Owned > DataBlock.
+  // RadarWindow.cs:80 — PointoutColor = Yellow.
   let baseColor = COLORS.DataBlock;
   if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
     baseColor = COLORS.Emerg;
+  } else if (fp?._pointoutTarget && (fp._pointoutTarget === ownTcp() || fp._pointoutTarget === "ANY")) {
+    baseColor = COLORS.Pointout;            // Phase 8: PO directed at us
+  } else if (fp?.PendingHandoff === ownTcp()) {
+    baseColor = COLORS.Pointout;            // pending handoff TO us = yellow attention
   } else if (fp?.Owner === ownTcp()) {
     baseColor = COLORS.Owned;
   }

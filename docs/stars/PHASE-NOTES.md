@@ -454,3 +454,53 @@ These will land in later phases. They're inert / "UNKNOWN CMD" today:
 - Type `5` then click an aircraft → leader direction E (east) applied.
 - Type `QL ABC DEF` → Enter → response shows `QL ABC DEF`; affects which
   TCP-owned targets render in quick-look mode (Phase 8 wires the visual).
+
+---
+
+## Phase 6 — System lists (OUT OF SCOPE under strict-port rule)
+
+### Decision
+
+The WPF reference at `github.com/yanjz124/scope` does **not** implement
+the CRC system-lists feature set (Sign-On List, Flight Plan / TAB,
+Tower 1-3, Coast/Suspend, VFR, LA/CA/MCI, CRDA Status, Video Map Lists).
+Searching `RadarWindow.cs` and the rest of the repo turns up only:
+
+- `PreviewArea` (line 742) — MCA input + system response. Implemented in
+  Phase 5.
+- `StatusArea` (line 747) — the SSA (System Status Area). Belongs to
+  Phase 7.
+- `cmp_labels[]` (line 4730) — the compass bearing labels. Implemented
+  in Phase 1.
+
+No `TabList`, `TowerList`, `CoastList`, `VfrList`, `CrdaStatusList`,
+`SignOnList`, or video-map-list classes/instances exist anywhere in the
+WPF source. Their presence in CRC docs reflects what the FAA STARS
+displays — which DGScope intentionally doesn't replicate.
+
+### Per the user's strict-port rule
+
+> "Never be creative. Follow visual, behavior, and functionalities
+> EXACTLY. Replicate everything 100%. If it can't happen, let me know,
+> document it"
+
+Because the WPF doesn't have these lists, **adding them would violate
+the rule**. We therefore log Phase 6 as deliberately empty under the
+strict-port mandate.
+
+### What the user should decide
+
+If you want CRC-style system lists in the web port (they ARE genuinely
+useful for ATC simulation), that's a follow-up "Phase 6X — CRC parity
+extension" outside the strict port. Flag it in a future request and
+we'll implement them based on CRC docs alone.
+
+### Files touched
+
+None. This is a documentation-only commit.
+
+### What ships
+
+The Phase 6 commit on the branch contains only updates to:
+- `docs/stars/PHASE-NOTES.md` (this entry)
+- `docs/stars/PORT-NOTES.md` (phase table marked "skipped per strict port")

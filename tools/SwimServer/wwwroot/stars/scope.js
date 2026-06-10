@@ -1038,26 +1038,37 @@ cv.addEventListener("contextmenu", (e) => {
 
 // ── Bootstrap: load facility, set HomeLocation, kick off render ─────────────
 async function bootstrap() {
-  document.getElementById("facilityLbl").textContent = `${ARTCC} / ${FACILITY}`;
+  document.title = `STARS ${ARTCC}/${FACILITY}`;
   resize();
   try {
     const fac = await fetch(`/api/stars/facility/${encodeURIComponent(ARTCC)}/${encodeURIComponent(FACILITY)}`).then(r => r.json());
-    if (fac && fac.location) {
-      const loc = fac.location;
+    // vNAS schema: TRACONs often have location: null. Try in this order:
+    //   1. fac.location
+    //   2. fac.visibilityCenters[0]  (ARTCC-level, exposed by backend as fallback)
+    //   3. fac.starsConfiguration.areas[0].asrSites[0].location
+    let loc = null;
+    if (fac && fac.location) loc = fac.location;
+    else if (fac && Array.isArray(fac.visibilityCenters) && fac.visibilityCenters[0])
+      loc = fac.visibilityCenters[0];
+    else {
+      const sc = fac && fac.starsConfiguration;
+      const a0 = sc && sc.areas && sc.areas[0];
+      const asr0 = a0 && Array.isArray(a0.asrSites) && a0.asrSites[0];
+      if (asr0 && asr0.location) loc = asr0.location;
+    }
+    if (loc) {
       prefSet.ScreenCenterPoint = { Latitude: loc.lat, Longitude: loc.lon };
       prefSet.RangeRingLocation = { Latitude: loc.lat, Longitude: loc.lon };
       starsState.facilityLocation = { Latitude: loc.lat, Longitude: loc.lon };
     } else {
-      // Fall back to first ASR site if facility has no direct location field.
-      // (vNAS schema: some facility levels carry asrSites rather than a single lat/lon.)
-      const sc = fac && fac.starsConfiguration;
-      if (sc && sc.areas && sc.areas[0] && sc.areas[0].defaultRange) {
-        prefSet.Range = sc.areas[0].defaultRange;
-      }
-      console.warn("[STARS] Facility has no top-level location field; using default 0,0.");
+      console.warn("[STARS] No location available; centering on 0,0.");
     }
-    document.getElementById("facilityLbl").textContent =
-      `${ARTCC} / ${FACILITY}${fac && fac.name ? " — " + fac.name : ""}`;
+    // Default range from area config if present.
+    const sc2 = fac && fac.starsConfiguration;
+    if (sc2 && sc2.areas && sc2.areas[0] && sc2.areas[0].defaultRange) {
+      prefSet.Range = sc2.areas[0].defaultRange;
+    }
+    if (fac && fac.name) document.title = `STARS ${ARTCC}/${FACILITY} — ${fac.name}`;
     recomputeScale();
 
     // Phase 2: load video map catalog

@@ -642,3 +642,68 @@ TCP `ABC`. Useful for bookmarks.
   other connected scopes and reset on page reload. Full bidirectional
   support requires server-side writes + DSTARS authentication, out of
   scope for the strict port pass. Phase 11 polish may revisit.
+
+---
+
+## Phase 9 — STCA + J-Ring + MinSep (ATPA volumes + CRDA deferred)
+
+### Scope decision
+
+Of the four CRC conflict-detection features in the canonical list:
+
+| Feature | Status | Reason |
+|---------|--------|--------|
+| STCA   | ✅ implemented (pair scan; 3 NM / 1000 ft default) | Operationally critical; low complexity. |
+| J-Ring  | ✅ implemented (per-aircraft toggle, NM radius) | Used constantly; trivial render. |
+| MinSep  | ✅ implemented (basic now-snapshot variant; full WPF version does future-projection search) | Tool variant is operationally useful. Full search algorithm in MinSep.cs:CalculateMinSep deferred. |
+| ATPA volumes | ❌ deferred to Phase 11 | ATPA volume editor (ATPAVolume.cs ~430 lines + ATPAVolumeSelector UI) is a substantial UI module. The Phase 3b TPA cone draw is the consumer of the data; we need the volume editor to populate volumes. |
+| CRDA     | ❌ deferred to Phase 11 | CRDA setup (RPC pairs, qualification regions, ghost track generation, stagger/tie modes) is the largest single feature in the WPF reference and depends on a full radar plot model. |
+
+### WPF sources referenced
+
+| WPF source | What we took |
+|------------|--------------|
+| `scope/TPARing.cs` | J-ring concept: per-aircraft toggleable ring of N nm. |
+| `scope/MinSep.cs:CalculateMinSep` | Algorithm shape (we use a simpler now-snapshot; full future-projection search is in the WPF). |
+| `scope/ATPA.cs` (full) | STCA threshold defaults (3 NM lateral / 1000 ft vertical for IFR pairs). |
+| `scope/RadarWindow.cs:5163` (`DrawJRing`) | Render pattern: stroke circle at target with NM radius. |
+| `scope/RadarWindow.cs:5101` (`DrawTPA`) | We already render an ATPA placeholder in Phase 3b; Phase 9 doesn't change that. |
+| CRC docs § STCA + J-Ring + MinSep | User-facing workflow. |
+
+### Commands added
+
+- **`J <radius> <FLID>`** — toggle J-ring of N nm around aircraft. Same
+  `<radius>` twice = toggle off. Different radius replaces the ring.
+- **`MS <FLID1> <FLID2>`** — show MinSep dotted line + distance label.
+- **`MS-`** — clear MinSep display.
+
+### Visuals added
+
+- **J-ring** (TPA color from RadarWindow.cs:98, `rgb(90,180,255)`).
+  Label "J{n}" above the ring.
+- **MinSep** dotted line between two targets with NM distance label.
+- **STCA**: data block flashes red↔yellow at 1 Hz when an owned track
+  is within 3 NM lateral AND 1000 ft vertical of another owned track.
+
+### Pair-scan algorithm
+
+`scanSTCA()` runs every 1 s. N² over owned tracks; for typical TRACON
+(50-100 tracks) this is negligible. Tracks not signed-on (no Owner =
+us) don't participate, mirroring CRC behavior that STCA fires only for
+tracks the controller owns.
+
+### Deferred (Phase 11)
+
+- ATPA volume editor + 3-state cones (Monitor/Caution/Alert)
+- CRDA RPC setup, ghost tracks, stagger/tie modes
+- Full MinSep with future-projection (MinSep.cs:CalculateMinSep)
+- Configurable STCA thresholds per facility / per altitude band
+
+### Self-test checklist
+
+- Type `J 5 AAL123` → 5-NM ring appears around AAL123 in TPA blue.
+- Type `J 5 AAL123` again → ring disappears.
+- Type `MS AAL123 UAL456` → dotted line between targets with distance.
+- Type `MS-` → MinSep cleared.
+- When two owned tracks are within 3 NM × 1000 ft, both data blocks
+  flash red/yellow at 1 Hz until separation increases.

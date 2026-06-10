@@ -277,6 +277,28 @@ function executeCommand(line) {
       setResponse(`HANDOFF ${parts[2]} -> ${fp.PendingHandoff}`);
       return;
     }
+    // ── Phase 9: J-Ring + MinSep ───────────────────────────────────────────
+    case "J": {
+      // J <radius> <FLID>  — toggle J-ring of N nm. Same FLID toggles off.
+      const radius = parseFloat(parts[1]);
+      const flid = parts[2];
+      if (!isFinite(radius) || !flid) return setResponse("J <nm> <FLID>", false);
+      if (window.starsJRing(flid, radius)) setResponse(`J${radius} ${flid}`);
+      else setResponse("NOT FOUND", false);
+      return;
+    }
+    case "MS": {
+      // MS <FLID1> <FLID2>  — show min separation between two aircraft (now).
+      const d = window.starsMinSep(parts[1], parts[2]);
+      if (d == null) return setResponse("NOT FOUND", false);
+      setResponse(`MS ${parts[1]} ${parts[2]} = ${d.toFixed(2)} NM`);
+      return;
+    }
+    case "MS-": {
+      window.starsMinSepClear();
+      setResponse("MS CLEARED");
+      return;
+    }
     case "PO": {
       // PO <sector> <FLID> — point out (local marker only).
       const plane = findAircraft(parts[2]);

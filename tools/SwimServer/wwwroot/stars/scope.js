@@ -874,32 +874,38 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const charHeight = fontSize + 2;
   const charWidth  = fontSize * 0.55;
 
-  // dataBlockOffset = (0.5 + LeaderLength) × charHeight  (RadarWindow.cs:4014)
+  // Leader-line model: target is the clock center, leader points in `dir` for
+  // `LeaderLength + 0.5` char-heights, data block hangs off the leader's
+  // endpoint. Cardinal directions => block centered perpendicular to leader.
+  // Diagonals => block's near corner sits at leader end.
   const offsetPx = (0.5 + prefSet.LeaderLength) * charHeight;
   const screen = geoToScreen(posNow);
-  // Diagonal directions get a /√2 split between x and y so the overall
-  // distance to the data block matches cardinal directions.
   const isDiag = (v.x !== 0 && v.y !== 0);
   const k = isDiag ? Math.SQRT1_2 : 1;
-  const dx = v.x * offsetPx * k;
-  const dy = v.y * offsetPx * k;
-  const anchorX = screen.x + dx;
-  const anchorY = screen.y + dy;
+  const leaderEndX = screen.x + v.x * offsetPx * k;
+  const leaderEndY = screen.y + v.y * offsetPx * k;
 
-  // Text alignment per leader direction (Aircraft.RedrawDataBlock pads
-  // left when leader is W/NW/SW, right otherwise).
-  const padLeft = (dir === 1 || dir === 4 || dir === 7);
   const blockWidth = Math.max(...lines.map(l => l.length)) * charWidth;
   const blockHeight = lines.length * charHeight;
-  const blockX = padLeft ? anchorX - blockWidth : anchorX;
-  // Vertical placement: for N/NW/NE put block above anchor (extending up);
-  // for S/SW/SE put block below; for E/W vertically center on anchor so the
-  // leader line meets the block at its mid-edge. This mirrors WPF DrawLeader
-  // which uses the data block bounding box midpoint.
-  let blockY;
-  if (v.y < 0) blockY = anchorY - blockHeight;
-  else if (v.y > 0) blockY = anchorY;
-  else blockY = anchorY - blockHeight / 2;
+
+  // Block position derived from leader endpoint + direction vector:
+  //   v.x < 0  -> block extends LEFT  (right edge at leaderEnd)
+  //   v.x > 0  -> block extends RIGHT (left  edge at leaderEnd)
+  //   v.x = 0  -> block CENTERED horizontally on leaderEnd
+  //   v.y < 0  -> block extends UP    (bottom at leaderEnd)
+  //   v.y > 0  -> block extends DOWN  (top    at leaderEnd)
+  //   v.y = 0  -> block CENTERED vertically on leaderEnd
+  let blockX, blockY;
+  if (v.x < 0)      blockX = leaderEndX - blockWidth;
+  else if (v.x > 0) blockX = leaderEndX;
+  else              blockX = leaderEndX - blockWidth / 2;
+  if (v.y < 0)      blockY = leaderEndY - blockHeight;
+  else if (v.y > 0) blockY = leaderEndY;
+  else              blockY = leaderEndY - blockHeight / 2;
+
+  // Text alignment: pad-right when block extends left so text hugs the
+  // right edge (closest to target); pad-left otherwise.
+  const padLeft = (v.x < 0);
 
   // Block color — STCA > Pointout > Emergency > Owned > DataBlock.
   // RadarWindow.cs:80 — PointoutColor = Yellow.
@@ -919,23 +925,25 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.DataBlock);
   ctx.textBaseline = "top";
   ctx.textAlign = padLeft ? "right" : "left";
-  const textX = padLeft ? anchorX : anchorX;
+  // textX = side of the block closest to the target = block's leader-side edge.
+  const textX = padLeft ? (blockX + blockWidth) : blockX;
   for (let i = 0; i < lines.length; i++) {
     ctx.fillText(lines[i], textX, blockY + i * charHeight);
   }
 
-  // Leader line — from target edge to data block edge (RadarWindow.cs:5832+).
+  // Leader line — straight line from target edge to leader endpoint (where
+  // the block hangs). The block's own bounding box already aligns to the
+  // leader endpoint via the cases above; we don't need to compute a
+  // separate "block edge" point.
   if (prefSet.LeaderLength > 0) {
     ctx.strokeStyle = ctx.fillStyle;
     ctx.lineWidth = 1;
     const tgtRadius = 5;
-    const leaderStartX = screen.x + Math.sign(dx) * tgtRadius;
-    const leaderStartY = screen.y + Math.sign(dy) * tgtRadius;
-    const blockEdgeX = padLeft ? blockX + blockWidth : blockX;
-    const blockEdgeY = blockY + blockHeight / 2;
+    const leaderStartX = screen.x + v.x * k * tgtRadius;
+    const leaderStartY = screen.y + v.y * k * tgtRadius;
     ctx.beginPath();
     ctx.moveTo(leaderStartX, leaderStartY);
-    ctx.lineTo(blockEdgeX, blockEdgeY);
+    ctx.lineTo(leaderEndX, leaderEndY);
     ctx.stroke();
   }
 }

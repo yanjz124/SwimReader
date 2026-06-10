@@ -314,20 +314,20 @@ class StarsBridge
         double? D(string name) { var v = S(name); return double.TryParse(v, out var n) ? n : (double?)null; }
         bool? B(string name) { var v = S(name); return bool.TryParse(v, out var n) ? n : (bool?)null; }
 
-        // ScreenCenterPoint
-        var sc = root.Element("ScreenCenterPoint");
+        // PrefSet wrapper - DGScope profiles store the active set as
+        // <CurrentPrefSet> with all PrefSet fields nested inside it.
+        var prefSet = root.Element("CurrentPrefSet")
+                  ?? root.Element("PrefSet")
+                  ?? root.Elements("PrefSet").FirstOrDefault();
+        var psSrc = prefSet ?? root;
+
+        // ScreenCenterPoint - lives inside <CurrentPrefSet>, not at root.
+        var sc = psSrc.Element("ScreenCenterPoint") ?? root.Element("ScreenCenterPoint");
         var center = sc is null ? null : new
         {
             Latitude = double.TryParse(sc.Element("Latitude")?.Value, out var la) ? la : 0,
             Longitude = double.TryParse(sc.Element("Longitude")?.Value, out var lo) ? lo : 0,
         };
-
-        // PrefSet — first <PrefSet> under root, or current; profile XML usually has one.
-        var prefSet = root.Element("CurrentPrefSet")
-                  ?? root.Element("PrefSet")
-                  ?? root.Elements("PrefSet").FirstOrDefault();
-        // Some profiles place fields directly under root (no PrefSet wrapper).
-        var psSrc = prefSet ?? root;
 
         int? PI(string name) { var v = psSrc.Element(name)?.Value; return int.TryParse(v, out var n) ? n : (int?)null; }
         double? PD(string name) { var v = psSrc.Element(name)?.Value; return double.TryParse(v, out var n) ? n : (double?)null; }

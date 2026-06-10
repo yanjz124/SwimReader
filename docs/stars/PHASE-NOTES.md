@@ -156,3 +156,72 @@ After commit:
   lines render in correct color and respond to pan/zoom.
 - Toggle multiple overlapping maps, observe additive brightening on
   overlap (G11 documented).
+
+---
+
+## Phase 3a — DSTARS stream + position symbols
+
+Sliced Phase 3 into two commits per the user's "commit per phase, allow
+backtrack" instruction. Phase 3a brings the live track stream up and renders
+position-only symbols. Phase 3b adds the data block rendering.
+
+### WPF / SwimReader sources
+
+| File | What we took |
+|------|--------------|
+| `DGScope.Receivers.ScopeServer/JsonUpdate.cs` (full) | The full update-shape, esp. UpdateType (0=Track, 1=Flightplan, 2=Deletion, 3=Weather). |
+| `DGScope.Receivers.ScopeServer/Track.cs` (lines 1-80, ~330 more in repo) | Partial-update semantics: each update only carries the changed fields; absent fields preserved. |
+| `DGScope.Receivers.ScopeServer/FlightPlan.cs` (lines 1-50) | FlightPlan fields, especially `AssociatedTrackGuid` linking it to a Track. |
+| `DGScope.Receivers.ScopeServer/ScopeServerClient.cs` (the receive loop concept) | We don't port the protobuf or auth; we just use the JSON HTTP-streaming route SwimReader.Server already provides. |
+| `src/SwimReader.Server/Adapters/DstarsTrackUpdate.cs` + `DstarsFlightPlanUpdate.cs` | The actual JSON shape we receive on the wire (these are authoritative — the WPF file matches them). |
+| `src/SwimReader.Server/Controllers/DstarsController.cs` | The endpoint we hit (`GET /dstars/{facility}/updates`) — already proxied through SwimServer's DgScopeRoutes. |
+
+### Resolutions
+
+1. **HTTP-stream not WebSocket.** SwimReader.Server exposes both, but only
+   HTTP-stream is currently proxied via SwimServer's DgScopeRoutes. We
+   read newline-delimited JSON via fetch + ReadableStream. Identical data;
+   different transport. No behavioral difference; documented as design
+   choice not deviation.
+
+2. **DSTARS facility code vs vNAS facility ID.** They're usually the same
+   3- or 4-letter code (ILM, K90, PCT, ZDC). When they differ the user
+   appends `?dstars=XXX` to the scope URL. Default = vNAS facility ID.
+
+3. **Position symbols.** Per CRC docs § Track types + WPF:
+   - `◇` associated (track has a flight plan)
+   - `\` correlated beacon (squawk, no FP)
+   - `/` uncorrelated beacon (squawk, no FP, out of area) — Phase 3a
+     doesn't yet distinguish from `\` (needs sector ownership data; Phase 8)
+   - `+` uncorrelated primary (no squawk)
+   - `#` coast track (no position update for >24s = 2 scan cycles)
+   The `•` (bullet) form for FL230 and below is ERAM, NOT STARS — STARS
+   keeps the diamond throughout.
+
+4. **Coast detection.** Time-based fallback: 24s since `lastUpdate`. Phase
+   3b adds the proper Radar.cs SweptTimes tracking that mirrors WPF.
+
+5. **Altitude filter.** Honored exactly from PrefSet defaults
+   (Associated/UnAssociated × Min/Max). Range checks before draw.
+
+### What's intentionally NOT in Phase 3a
+
+- Data blocks (LDB/PDB/FDB) → Phase 3b
+- Leader lines → Phase 3b
+- History dots → Phase 3b
+- PTL (predicted track line) → Phase 3b
+- Velocity-based extrapolation → Phase 3b (currently target sits at last
+  reported Location)
+- Position symbol drawn as `/` vs `\` based on sector ownership →
+  Phase 8 (needs Owner/PositionInd state)
+- ATPA cones → Phase 9
+
+### Self-test checklist
+
+- Pick a facility whose DSTARS feed is active.
+- Topbar shows `T n/m LIVE` where n = tracks, m = flight plans.
+- Position symbols render at correct lat/lon, on top of video maps,
+  underneath compass.
+- Coast (`#`) appears after a feed gap.
+- Altitude filter (changing in browser console: `prefSet.AltitudeFilterAssociatedMax = 18000`)
+  hides high-altitude tracks instantly.

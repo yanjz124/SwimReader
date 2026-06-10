@@ -37,8 +37,8 @@ around.
 | 4 | DCB (main + Aux + submenus) | done | 8139847 |
 | 5 | Command line + preview area | done | 1d222e6 |
 | 6 | System lists | skipped (not in WPF; see PHASE-NOTES) | 50c8a6a |
-| 7 | SSA | done | (this commit) |
-| 8 | Handoffs / point-outs / consolidation / coordination | pending | — |
+| 7 | SSA | done | 9af5b7a |
+| 8 | Handoffs / point-outs / sign-on (LOCAL ONLY) | done | (this commit) |
 | 9 | STCA / ATPA / CRDA / MinSep / J-rings | pending | — |
 | 10 | NEXRAD | pending | — |
 | 11 | Secondary displays + polish | pending | — |

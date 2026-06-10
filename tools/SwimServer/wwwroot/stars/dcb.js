@@ -210,6 +210,11 @@ class DCB {
     const vertical = (loc === "Left" || loc === "Right");
     const sizeAxis = 80;
 
+    // Horizontal DCB: flex-flow: column wrap inside an 80-tall strip → items
+    // flow TOP→BOTTOM, then wrap to next column. Two 40-tall items stack in
+    // the same column; an 80-tall item takes the column alone.
+    // Vertical DCB: flex-flow: row wrap inside an 80-wide strip → items flow
+    // LEFT→RIGHT then wrap. Two 40-wide items share a row.
     Object.assign(this.root.style, {
       position: "fixed",
       background: dcbAdjust(DCB_COLOR.FRAME_BG, p.Brightness.DCB),
@@ -217,23 +222,31 @@ class DCB {
       userSelect: "none",
       fontFamily: "ui-monospace, monospace",
       display: "flex",
-      gap: "2px",
-      padding: "2px",
+      gap: "0",
+      padding: "1px",
       zIndex: 20,
+      alignContent: "flex-start",
       ...(vertical
           ? { top: 0, bottom: 0, width: sizeAxis + "px",
               [loc === "Left" ? "left" : "right"]: 0,
-              flexDirection: "column", overflowY: "auto" }
+              flexFlow: "row wrap", overflowY: "auto" }
           : { left: 0, right: 0, height: sizeAxis + "px",
               [loc === "Top" ? "top" : "bottom"]: 0,
-              flexDirection: "row", overflowX: "auto" }),
+              flexFlow: "column wrap", overflowX: "auto" }),
     });
 
+    const halfAxis = sizeAxis / 2;   // 40
     const html = this.buttons().map(b => {
-      const baseSize = (b.half ? 40 : sizeAxis);
-      const w = vertical ? sizeAxis - 4 : (b.narrow ? 40 : (b.half ? 80 : 80));
-      const h = vertical ? (b.narrow ? 40 : (b.half ? 40 : 80))
-                         : (b.half ? 40 : sizeAxis - 4);
+      // For horizontal: height = full bar (80) or half (40); width is fixed.
+      // For vertical:   width  = full bar (80) or half (40); height is fixed.
+      let w, h;
+      if (vertical) {
+        h = b.narrow ? halfAxis - 2 : sizeAxis - 2;     // tall axis
+        w = (b.half ? halfAxis : sizeAxis) - 2;          // wraps to share a row
+      } else {
+        w = b.narrow ? halfAxis - 2 : sizeAxis - 2;     // long axis
+        h = (b.half ? halfAxis : sizeAxis) - 2;          // wraps to stack
+      }
       const bg = b.disabled ? DCB_COLOR.DISABLED_BG
                 : b.active   ? DCB_COLOR.ACTIVE_BG
                              : DCB_COLOR.INACTIVE_BG;
@@ -246,13 +259,14 @@ class DCB {
         ${b.disabled ? `data-disabled="1"` : ""}
         style="
           width:${w}px; height:${h}px;
+          margin:1px;
           background:${dcbAdjust(bg, p.Brightness.DCB)};
           color:${fg};
           border:1px solid ${DCB_COLOR.BORDER};
           display:flex; align-items:center; justify-content:center;
           text-align:center; line-height:1.05; font-size:11px;
           white-space:pre; cursor:${b.disabled ? "default" : "pointer"};
-          flex:none;
+          flex:none; box-sizing:border-box;
         ">${b.text}</div>`;
     }).join("");
     this.root.innerHTML = html;

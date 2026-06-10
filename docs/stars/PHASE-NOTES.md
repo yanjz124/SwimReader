@@ -225,3 +225,59 @@ position-only symbols. Phase 3b adds the data block rendering.
 - Coast (`#`) appears after a feed gap.
 - Altitude filter (changing in browser console: `prefSet.AltitudeFilterAssociatedMax = 18000`)
   hides high-altitude tracks instantly.
+
+---
+
+## Phase 3b — Data blocks, leader lines, history, PTL, extrapolation
+
+### WPF sources ported
+
+| WPF section | What we took |
+|-------------|--------------|
+| `scope/Aircraft.cs:302-560` (`RedrawDataBlock`) | Data block content build: altstring/handoffChar/vfrChar/catChar logic, padLeft vs padRight choice based on leader direction, line-1 = callsign, line-2 = `altstring + handoff + speed/10 + vfr + cat` (the `fdb1line2` variant — most commonly displayed). |
+| `scope/RadarWindow.cs:4014` | `dataBlockOffset = (0.5 + LeaderLength) × charHeight × pixelScale`. We use canvas pixel space directly; `charHeight = fontSize + 2`. |
+| `scope/RadarWindow.cs:5800-5890` (`OffsetDatablockLocation`, leader line placement) | Leader start = target edge in the direction of the data block; leader end = data block edge facing target. |
+| `scope/RadarWindow.cs:5512-5555` (history population) | History pushed every `HistoryRate` seconds, capped at `HistoryNum`, colored by `HistoryColors[i]` palette. |
+| `scope/Aircraft.cs:ExtrapolatePosition` (called from `displayPosition`) | Between-update velocity extrapolation: forward from `Location` along `GroundTrack` at `GroundSpeed` for `(now - lastUpdate)` seconds. Skipped during coast (frozen at last reported). |
+| `scope/STARS/LeaderDirection.cs` | Enum values 1-9 (NW/N/NE/W/E/SW/S/SE/Invalid=0); we use the same ints in `effectiveLeaderDir`. |
+| CRC docs § Data Blocks (LDB/PDB/FDB) | When to use which mode: owned/quick-look → FDB; non-owned associated → PDB; non-associated → LDB. |
+
+### Resolutions for ambiguous points
+
+1. **Single-mode vs 3-line timeshare.** WPF maintains three TransparentLabels
+   (`DataBlock`, `DataBlock2`, `DataBlock3`) and rotates which gets drawn on
+   a `timeshareinterval = 1500ms` cycle (`scope/RadarWindow.cs:768`). Phase
+   3b renders **one canonical variant** (fdb1line2: altitude + handoff +
+   speed/10 + flight-rule + category). The 3-variant cycle adds scratchpad
+   and requested-altitude variants; logged as a polish item (see
+   KNOWN-DEVIATIONS G12 below).
+2. **Leader start point.** WPF uses `PositionIndicator.BoundsF` (the
+   rendered glyph box). We approximate with a 5-pixel radius from target
+   center in the leader direction. Pixel-exact match would require
+   measuring each rendered glyph's bounding box; deferred.
+3. **History dot shape.** WPF uses `PrimaryReturn.Shape` (configurable
+   shape + width/height). Default is a small square. We render 3×3 px
+   squares. Identical visual when shape = Square (default).
+4. **PTL gating.** Per CRC docs, PTL draws when `PTLAll` global is on, or
+   `PTLOwn` is on and the track is owned by us, or per-track `ShowPTL`
+   toggle (set by `T` command in Phase 5). `ownTcp()` returns null until
+   Phase 8; until then `PTLOwn + PTLAll == false` means no PTL — same
+   behavior as a freshly-started DGScope with no sign-on.
+5. **Data block color.** Hierarchy: Emergency (7500/7600/7700) →
+   Owned (white) → Default (lime). Pointout (yellow) deferred to Phase 8.
+
+### Deviation added
+
+- **G12 — 3-line FDB timeshare not yet rotating.** The WPF program shows
+  three data block variants in sequence (1.5 s each: altitude+speed,
+  scratchpad+reqalt, scratchpad2+type). Phase 3b shows variant 1 only.
+  Documented; planned for a polish commit before Phase 4.
+
+### Self-test checklist
+
+- Tracks show data block alongside symbol, positioned per leader direction.
+- Leader line connects target to data block.
+- History dots trail behind moving aircraft, fading through 5 palette colors.
+- PTL appears when you set `prefSet.PTLAll = true` in console.
+- Coast (`#` symbol): no data block, no leader, position frozen.
+- Pan/zoom: data blocks track with the target (no orphaning).

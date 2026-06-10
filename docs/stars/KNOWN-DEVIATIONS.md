@@ -146,4 +146,31 @@ shape.
   overlap points when brightness > 70%.
 - **Test:** Side-by-side comparison of crossed map lines.
 
-(Phase implementations will append G12+ as discovered.)
+### G12 — 3-line FDB timeshare not yet rotating (Phase 3b)
+- **What:** WPF cycles between 3 FDB variants on a 1.5s timeshare
+  (altitude+speed, scratchpad+reqalt, scratchpad2+type). Phase 3b shows
+  variant 1 (altitude+speed+flight-rule+category) only.
+- **Why:** The variant content + cycle-state lives in
+  `Aircraft.RedrawDataBlock` between three `TransparentLabel` instances;
+  porting the full state machine fits better in a Phase 3 polish pass.
+- **Workaround:** Static variant 1. All other variant data still rendered
+  in the data block (just not as a cycle).
+- **Closeness:** ≥80% of information visible at any instant. Misses the
+  scratchpad+reqalt and scratchpad2+type variants.
+- **Test:** Polish commit before Phase 4 will turn the cycle on; existing
+  unit test in PHASE-NOTES gets re-verified.
+
+### G13 — Leader start point uses circle approximation (Phase 3b)
+- **What:** WPF reads `PositionIndicator.BoundsF` (the rendered glyph's
+  exact bounding box) to start the leader line. We approximate with a
+  5-pixel radius from target center in the leader-direction vector.
+- **Why:** Measuring per-glyph bounding box would require offscreen
+  text measurement each frame; deferred to performance pass.
+- **Workaround:** 5px radius circle approximation. Leader meets target at
+  approximately the same point.
+- **Closeness:** ≥99% visual match for the diamond glyph; up to 2px
+  offset for `/` and `\` glyphs whose ink extends further from the
+  geometric center.
+- **Test:** Side-by-side diff at high zoom.
+
+(Phase implementations will append G14+ as discovered.)

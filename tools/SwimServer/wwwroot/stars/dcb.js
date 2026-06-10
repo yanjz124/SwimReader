@@ -64,9 +64,19 @@ function mainMenu(state) {
     btn("RR_CNTR", "RR\nCNTR", { active: p.RangeRingsCentered, half: true }),            // 40
     btn("MAPS", "MAPS", { submenu: "MAPS" }),                                            // 80
   ];
+  // Inline MAP buttons show the bound map's starsId + shortName, matching
+  // WPF rendering ("37 MNORTH" / "38 MSOUTH" / ...). Falls back to "MAP n"
+  // when no map is bound to that slot yet.
   for (let i = 0; i < 6; i++) {
     const m = state.dcbMapAt(i);
-    list.push(btn(`MAP_${i}`, `MAP\n${i + 1}`, {
+    let label;
+    if (m) {
+      const name = (m.shortName || m.name || "").slice(0, 8);
+      label = m.starsId != null ? `${m.starsId}\n${name}` : (name || `MAP ${i + 1}`);
+    } else {
+      label = `MAP\n${i + 1}`;
+    }
+    list.push(btn(`MAP_${i}`, label, {
       active: !!(m && m.visible), half: true, mapIdx: i,                                 // 40
     }));
   }
@@ -88,38 +98,41 @@ function mainMenu(state) {
 
 function auxMenu(state) {
   const p = state.prefSet;
+  // Heights verbatim from scope/RadarWindow.cs:3492-3508.
   const list = [
-    btn("VOL", "VOL\nN/A", { disabled: true }),
-    btn("HIST_NUM", `HISTORY\n${p.HistoryNum}`),
-    btn("HIST_RATE", `H RATE\n${p.HistoryRate.toFixed(1)}`),
-    btn("CURSOR_HOME", "CURSOR\nHOME", { disabled: true }),
-    btn("CURSOR_SPEED", "CURSOR\nSPEED", { disabled: true }),
-    btn("MAP_UNCOR", "MAP\nUNCOR", { disabled: true }),
-    btn("UNCOR", "UNCOR", { disabled: true }),
-    btn("BEACON_MODE", "BEACON\nMODE-2", { disabled: true }),
-    btn("RTQC", "RTQC", { disabled: true }),
-    btn("MCP", "MCP", { disabled: true }),
-    btn("DCB_TOP",    "DCB\nTOP",    { active: p.DCBLocation === "Top",    half: true }),
-    btn("DCB_LEFT",   "DCB\nLEFT",   { active: p.DCBLocation === "Left",   half: true }),
-    btn("DCB_RIGHT",  "DCB\nRIGHT",  { active: p.DCBLocation === "Right",  half: true }),
-    btn("DCB_BOTTOM", "DCB\nBOTTOM", { active: p.DCBLocation === "Bottom", half: true }),
-    btn("PTL_LEN", `PTL\nLEN ${p.PTLLength}`),
-    btn("PTL_OWN", "PTL OWN", { active: p.PTLOwn }),
-    btn("PTL_ALL", "PTL ALL", { active: p.PTLAll }),
-    btn("SHIFT", "SHIFT", { submenu: "MAIN" }),
+    btn("VOL", "VOL\nN/A", { disabled: true }),                                            // 80
+    btn("HIST_NUM", `HISTORY\n${p.HistoryNum}`, { half: true }),                          // 40
+    btn("HIST_RATE", `H RATE\n${p.HistoryRate.toFixed(1)}`, { half: true }),              // 40
+    btn("CURSOR_HOME", "CURSOR\nHOME", { disabled: true }),                                // 80
+    btn("CURSOR_SPEED", "CSR SPD\nN/A", { disabled: true }),                              // 80
+    btn("MAP_UNCOR", "MAP\nUNCOR", { disabled: true }),                                    // 80
+    btn("UNCOR", "UNCOR", { disabled: true }),                                             // 80
+    btn("BEACON_MODE", "BEACON\nMODE-2", { disabled: true }),                              // 80
+    btn("RTQC", "RTQC", { disabled: true }),                                               // 80
+    btn("MCP", "MCP", { disabled: true }),                                                 // 80
+    btn("DCB_TOP",    "DCB\nTOP",    { active: p.DCBLocation === "Top",    half: true }), // 40
+    btn("DCB_LEFT",   "DCB\nLEFT",   { active: p.DCBLocation === "Left",   half: true }), // 40
+    btn("DCB_RIGHT",  "DCB\nRIGHT",  { active: p.DCBLocation === "Right",  half: true }), // 40
+    btn("DCB_BOTTOM", "DCB\nBOTTOM", { active: p.DCBLocation === "Bottom", half: true }), // 40
+    btn("PTL_LEN", `PTL\nLEN ${p.PTLLength}`),                                             // 80
+    btn("PTL_OWN", "PTL OWN", { active: p.PTLOwn, half: true }),                          // 40
+    btn("PTL_ALL", "PTL ALL", { active: p.PTLAll, half: true }),                          // 40
+    btn("SHIFT", "SHIFT", { submenu: "MAIN" }),                                            // 80
   ];
   return list;
 }
 
 function briteMenu(state) {
   const b = state.prefSet.Brightness;
-  // Per RadarWindow.cs:3957-3973. Order verbatim.
+  // BRITE submenu — every adjustment button is 40 tall per RadarWindow.cs
+  // :3511+ (briteDCBbutton..briteWXCbutton all have Height = 40). They pair
+  // 2-per-column. DONE button is 80 (full) per briteDoneButton declaration.
   const items = [
     ["DCB",     "DCB",     b.DCB],
     ["BKC",     "BKC",     b.Background],
     ["MPA",     "MPA",     b.VideoMapA],
     ["MPB",     "MPB",     b.VideoMapB],
-    ["FDB",     "FDB",     b.DataBlock],     // (WPF uses FullDataBlocks; ours is unified Brightness.DataBlock)
+    ["FDB",     "FDB",     b.DataBlock],
     ["LST",     "LST",     b.Lists],
     ["POS",     "POS",     b.Position],
     ["LDB",     "LDB",     b.DataBlock],
@@ -134,19 +147,18 @@ function briteMenu(state) {
     ["WXC",     "WXC",     b.Weather],
   ];
   const list = items.map(([id, label, v]) =>
-    btn(`BRITE_${id}`, `${label} ${v}`, { brite: id }));
-  list.push(btn("BRITE_DONE", "DONE", { submenu: "MAIN" }));
+    btn(`BRITE_${id}`, `${label} ${v}`, { brite: id, half: true }));
+  list.push(btn("BRITE_DONE", "DONE", { submenu: "MAIN" }));     // 80
   return list;
 }
 
 function mapsMenu(state) {
-  // MAPS submenu — contains MAP7..MAPN, DONE, CLR ALL. We list every videoMap
-  // (more than 6) with starsId assigned.
+  // MAPS submenu — verbatim heights from scope/RadarWindow.cs:3476-3477 +
+  // 3563-3567 (DONE = 40, CLR ALL = 40, every per-map toggle = 40).
   const list = [
-    btn("MAPS_DONE", "DONE", { submenu: "MAIN" }),
-    btn("MAPS_CLEAR", "CLR ALL"),
+    btn("MAPS_DONE", "DONE", { submenu: "MAIN", half: true }),
+    btn("MAPS_CLEAR", "CLR ALL", { half: true }),
   ];
-  // Each known video map gets a button (starsId or short name as label).
   for (let i = 0; i < state.videoMaps.length; i++) {
     const m = state.videoMaps[i];
     const lbl = m.shortName || m.name || (m.starsId != null ? `MAP ${m.starsId}` : `MAP ${i + 1}`);

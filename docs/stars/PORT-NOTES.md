@@ -35,8 +35,8 @@ around.
 | 3a | DSTARS stream + position symbols | done | edf03e3 |
 | 3b | Data blocks + leaders + history | done | 3a11de4 |
 | 4 | DCB (main + Aux + submenus) | done | 8139847 |
-| 5 | Command line + preview area | done | (this commit) |
-| 6 | System lists | pending | — |
+| 5 | Command line + preview area | done | 1d222e6 |
+| 6 | System lists | skipped (not in WPF; see PHASE-NOTES) | (this commit) |
 | 7 | SSA | pending | — |
 | 8 | Handoffs / point-outs / consolidation / coordination | pending | — |
 | 9 | STCA / ATPA / CRDA / MinSep / J-rings | pending | — |

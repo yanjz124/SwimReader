@@ -736,24 +736,23 @@ window.ownTcp = ownTcp;
 //   FDB (3 lines): callsign / altitude+handoff+speed+vfr+cat / scratchpad
 //   PDB (2 lines): callsign / altitude+speed
 //   LDB (2 lines): squawk    / altitude+speed                          (no callsign)
-// ── ClockPhase — drives FDB line-2 timeshare.
-// scope/STARS/ClockPhase.cs default is ONE_TWO_ONE_THREE which gives phase 0
-// 4/7 of the cycle (variants 2 and 3 only show 1.5s each out of 7s, easy to
-// miss). For better information visibility we use equal-time round-robin:
-// phase advances 0 -> 1 -> 2 every 2 seconds. User sees each variant 33%
-// of the time. WPF intervals remain available via the intervals array but
-// the sequence is simple round-robin.
+// ── ClockPhase (scope/STARS/ClockPhase.cs) — drives FDB 3-variant timeshare.
+// Default sequence ONE_TWO_ONE_THREE: phase 0 (2.0s) -> 1 (1.5s) -> 0 (2.0s)
+// -> 2 (1.5s). Phase 0 (altitude+speed) shows ~57% of the time; variants 2
+// and 3 each show ~21%. Matches WPF default.
 const ClockPhase = {
-  phase: 0,
-  intervalSec: 2.0,           // seconds per variant
+  phase: 0, _step: 0,
+  intervals: [2.0, 1.5, 2.0, 1.5],
+  _phases:   [0,   1,   0,   2],
   _timer: null,
   start() {
     if (this._timer) return;
     const advance = () => {
-      this.phase = (this.phase + 1) % 3;
-      this._timer = setTimeout(advance, this.intervalSec * 1000);
+      this._step = (this._step + 1) % 4;
+      this.phase = this._phases[this._step];
+      this._timer = setTimeout(advance, this.intervals[this._step] * 1000);
     };
-    this._timer = setTimeout(advance, this.intervalSec * 1000);
+    this._timer = setTimeout(advance, this.intervals[0] * 1000);
   },
 };
 ClockPhase.start();
@@ -808,17 +807,19 @@ function buildDataBlock(t, fp) {
   // clearer info display since each variant shows visibly different data
   // even when fields fall back. Identical-content collapse still respected
   // (yscratch2 length=4 collapse from Aircraft.cs:443-449).
-  // All variants normalize to a consistent 8-char width so the data block
-  // doesn't visually resize as ClockPhase rotates. Format = LLL H RRRR
-  //   LLL  3-char left field (altitude or scratchpad/destination)
-  //   H    1-char handoff (or space)
-  //   RRRR 4-char right field (speed+vfr+cat, aircraft type, or reqalt)
-  const altLeft = altstring.padEnd(3);
+  // Format (per CRC visual reference): "LLL H RR C" or "LLL H TTTT"
+  // where LLL=3-char left, H=handoff or space, RR=2-char speed, C=1-char
+  // wake/IFR cat. For aircraft type / requested altitude variants, the
+  // right side is 4 chars (no extra space). All variants pad to 8 chars
+  // so the data block doesn't visually resize as ClockPhase rotates.
+  const altLeft = altstring.padEnd(3).slice(0, 3);
   const scr1Left = (fp?.Scratchpad1?.trim() || destination).padEnd(3).slice(0, 3);
   const scr2Left = (fp?.Scratchpad2?.trim() || fp?.Scratchpad1?.trim() || destination).padEnd(3).slice(0, 3);
 
-  // Right field: 4 chars consistent.
-  const speedRight = (`${speed10}${vfrChar}${catChar}`).padEnd(4);    // "12IL", "13E "
+  // Speed displayed as "12 F" pattern (2-digit speed + space + 1-char cat).
+  // vfrchar collapsed into catchar — WPF separates them but CRC shows just
+  // the wake category letter on screen.
+  const speedRight = `${speed10} ${catChar !== " " ? catChar : vfrChar}`.padEnd(4);
   const typeRight  = ((fp?.AircraftType?.trim() || "").padEnd(4)).slice(0, 4) || speedRight;
   const reqAltRight = (fp?.RequestedAltitude > 0)
                       ? "R" + String(Math.floor(fp.RequestedAltitude / 100)).padStart(3, "0")

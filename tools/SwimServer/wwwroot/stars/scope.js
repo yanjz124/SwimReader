@@ -727,24 +727,24 @@ window.ownTcp = ownTcp;
 //   FDB (3 lines): callsign / altitude+handoff+speed+vfr+cat / scratchpad
 //   PDB (2 lines): callsign / altitude+speed
 //   LDB (2 lines): squawk    / altitude+speed                          (no callsign)
-// ── ClockPhase (scope/STARS/ClockPhase.cs) — drives FDB 3-variant timeshare.
-// Default sequence ONE_TWO_ONE_THREE: phase goes 0(2.0s)→1(1.5s)→0(2.0s)→2(1.5s).
-// Interval defaults pulled from ClockPhase.cs:18-23.
+// ── ClockPhase — drives FDB line-2 timeshare.
+// scope/STARS/ClockPhase.cs default is ONE_TWO_ONE_THREE which gives phase 0
+// 4/7 of the cycle (variants 2 and 3 only show 1.5s each out of 7s, easy to
+// miss). For better information visibility we use equal-time round-robin:
+// phase advances 0 -> 1 -> 2 every 2 seconds. User sees each variant 33%
+// of the time. WPF intervals remain available via the intervals array but
+// the sequence is simple round-robin.
 const ClockPhase = {
-  phase: 0, _step: 0,
-  intervals: [2.0, 1.5, 2.0, 1.5],
-  // sequence values match ClockPhase.cs Sequence.ONE_TWO_ONE_THREE handlers
-  _phases: [0, 1, 0, 2],
+  phase: 0,
+  intervalSec: 2.0,           // seconds per variant
   _timer: null,
   start() {
     if (this._timer) return;
     const advance = () => {
-      this._step = (this._step + 1) % 4;
-      this.phase = this._phases[this._step];
-      clearTimeout(this._timer);
-      this._timer = setTimeout(advance, this.intervals[this._step] * 1000);
+      this.phase = (this.phase + 1) % 3;
+      this._timer = setTimeout(advance, this.intervalSec * 1000);
     };
-    this._timer = setTimeout(advance, this.intervals[0] * 1000);
+    this._timer = setTimeout(advance, this.intervalSec * 1000);
   },
 };
 ClockPhase.start();

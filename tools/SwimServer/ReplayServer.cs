@@ -20,6 +20,50 @@ public class ReplayServer
         _jsonOpts = jsonOpts;
     }
 
+    // ── Viewport filtering ────────────────────────────────────────────────────
+    // When a client provides a viewport (map bounds, already padded with a buffer),
+    // the replay stream is filtered to tracks inside it, and the server keeps a
+    // running per-session state model so it can re-snapshot the visible region the
+    // instant the viewport changes (pan/zoom) — no missing tracks, full integrity.
+    // No viewport supplied → state is not maintained and records pass through
+    // unchanged, identical to the original full-NAS stream (backward compatible).
+
+    private sealed record Bounds(double MinLat, double MinLon, double MaxLat, double MaxLon)
+    {
+        public bool Contains(double lat, double lon) =>
+            lat >= MinLat && lat <= MaxLat && lon >= MinLon && lon <= MaxLon;
+    }
+
+    /// <summary>Latest client viewport. Reference is swapped atomically by the receive
+    /// loop and read by the playback loop; <see cref="Changed"/> signals a re-snapshot.</summary>
+    private sealed class Viewport
+    {
+        private volatile Bounds? _b;
+        public Bounds? Bounds { get => _b; set => _b = value; }
+        public volatile bool Changed;
+    }
+
+    /// <summary>One track's last-known position + raw JSON, for viewport re-snapshots.</summary>
+    private sealed class StateRec
+    {
+        public double? Lat;
+        public double? Lon;
+        public JsonElement El;   // detached clone — survives the source document
+    }
+
+    private static Bounds? ParseBoundsFromQuery(HttpContext ctx)
+    {
+        var q = ctx.Request.Query;
+        if (double.TryParse(q["minLat"], System.Globalization.CultureInfo.InvariantCulture, out var minLat) &&
+            double.TryParse(q["minLon"], System.Globalization.CultureInfo.InvariantCulture, out var minLon) &&
+            double.TryParse(q["maxLat"], System.Globalization.CultureInfo.InvariantCulture, out var maxLat) &&
+            double.TryParse(q["maxLon"], System.Globalization.CultureInfo.InvariantCulture, out var maxLon))
+        {
+            return new Bounds(minLat, minLon, maxLat, maxLon);
+        }
+        return null;
+    }
+
     public void MapEndpoints(WebApplication app)
     {
         // ERAM replay metadata
@@ -67,9 +111,10 @@ public class ReplayServer
             var speed = 1.0;
             if (!string.IsNullOrEmpty(speedParam)) double.TryParse(speedParam, out speed);
 
+            var initialBounds = ParseBoundsFromQuery(ctx);
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             var dir = Path.Combine(_replayBaseDir, "eram");
-            await RunReplaySession(ws, dir, startTime, speed);
+            await RunReplaySession(ws, dir, startTime, speed, initialBounds);
         });
 
         // ASDE-X replay WebSocket
@@ -97,18 +142,23 @@ public class ReplayServer
             var icao = airport.ToUpperInvariant();
             if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
 
+            var initialBounds = ParseBoundsFromQuery(ctx);
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             var dir = Path.Combine(_replayBaseDir, "asdex", icao);
-            await RunReplaySession(ws, dir, startTime, speed);
+            await RunReplaySession(ws, dir, startTime, speed, initialBounds);
         });
     }
 
-    private async Task RunReplaySession(WebSocket ws, string dataDir, DateTime startTime, double initialSpeed)
+    private async Task RunReplaySession(WebSocket ws, string dataDir, DateTime startTime, double initialSpeed, Bounds? initialBounds = null)
     {
         var speed = initialSpeed;
         var paused = false;
         var seekTarget = (DateTime?)null;
         var cts = new CancellationTokenSource();
+
+        // Viewport filtering state (null bounds → no filtering, original behavior).
+        var vp = new Viewport { Bounds = initialBounds };
+        var state = new Dictionary<string, StateRec>();
 
         // Start a receive loop to handle client commands
         var receiveTask = Task.Run(async () =>
@@ -143,6 +193,15 @@ public class ReplayServer
                                 if (DateTime.TryParse(timeStr, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var t))
                                     seekTarget = t;
                                 break;
+                            case "viewport":
+                                var r = doc.RootElement;
+                                if (r.TryGetProperty("minLat", out var mnLat) && r.TryGetProperty("minLon", out var mnLon) &&
+                                    r.TryGetProperty("maxLat", out var mxLat) && r.TryGetProperty("maxLon", out var mxLon))
+                                {
+                                    vp.Bounds = new Bounds(mnLat.GetDouble(), mnLon.GetDouble(), mxLat.GetDouble(), mxLon.GetDouble());
+                                    vp.Changed = true;   // playback loop will re-snapshot the new region
+                                }
+                                break;
                         }
                     }
                     catch { }
@@ -164,7 +223,7 @@ public class ReplayServer
                 var t = seekTarget;
                 seekTarget = null;
                 return t;
-            }, cts.Token);
+            }, state, vp, cts.Token);
 
             // End of data
             if (ws.State == WebSocketState.Open)
@@ -182,7 +241,8 @@ public class ReplayServer
     }
 
     private async Task PlaybackLoop(WebSocket ws, string dataDir, DateTime startTime,
-        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek, CancellationToken ct)
+        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         if (!Directory.Exists(dataDir))
         {
@@ -200,6 +260,7 @@ public class ReplayServer
             if (seekTo.HasValue)
             {
                 currentTime = seekTo.Value;
+                state.Clear();  // running model is rebuilt from the new position's snapshot
                 // Send a clear signal so client resets state
                 await SendJson(ws, new { type = "replay_seek", time = currentTime.ToString("o") }, ct);
             }
@@ -226,7 +287,7 @@ public class ReplayServer
             // Read and play back all files for this hour
             foreach (var hourFile in hourFiles)
             {
-                currentTime = await PlayFile(ws, hourFile, currentTime, getSpeed, isPaused, consumeSeek, ct);
+                currentTime = await PlayFile(ws, hourFile, currentTime, getSpeed, isPaused, consumeSeek, state, vp, ct);
                 if (ct.IsCancellationRequested) break;
                 if (consumeSeek() != null) break;
             }
@@ -242,7 +303,8 @@ public class ReplayServer
     }
 
     private async Task<DateTime> PlayFile(WebSocket ws, string filePath, DateTime startFrom,
-        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek, CancellationToken ct)
+        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         var lastSentTime = DateTimeOffset.MinValue;
         var foundSnapshot = false;
@@ -290,11 +352,11 @@ public class ReplayServer
                 // skip intermediate batches to avoid flooding the client
                 if (foundSnapshot && lastSnapshotLine != null)
                 {
-                    await SendReplayRecord(ws, lastSnapshotLine, ct);
+                    await SendReplayRecord(ws, lastSnapshotLine, state, vp, ct);
                 }
 
                 // Now play this record and continue in real-time
-                await SendReplayRecord(ws, line, ct);
+                await SendReplayRecord(ws, line, state, vp, ct);
                 lastSentTime = DateTimeOffset.FromUnixTimeMilliseconds(millis);
                 break;
             }
@@ -304,7 +366,7 @@ public class ReplayServer
         // The outer loop will then move to the next hour file.
         if (lastSentTime == DateTimeOffset.MinValue && foundSnapshot)
         {
-            await SendReplayRecord(ws, lastSnapshotLine!, ct);
+            await SendReplayRecord(ws, lastSnapshotLine!, state, vp, ct);
             lastSentTime = DateTimeOffset.FromUnixTimeMilliseconds(lastSnapshotMillis);
             return lastSentTime.UtcDateTime;
         }
@@ -317,12 +379,13 @@ public class ReplayServer
         }
 
         // Phase 2: Real-time paced playback of remaining lines (after the first record we already sent)
-        var endTime = await PlayRemainingLines(ws, sr, lastSentTime, getSpeed, isPaused, consumeSeek, ct);
+        var endTime = await PlayRemainingLines(ws, sr, lastSentTime, getSpeed, isPaused, consumeSeek, state, vp, ct);
         return DateTimeOffset.FromUnixTimeMilliseconds(endTime).UtcDateTime;
     }
 
     private async Task<long> PlayRemainingLines(WebSocket ws, StreamReader sr, DateTimeOffset lastSentTime,
-        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek, CancellationToken ct)
+        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         long lastMillis = lastSentTime.ToUnixTimeMilliseconds();
 
@@ -334,9 +397,22 @@ public class ReplayServer
             // Check for seek (breaks out to main loop)
             if (consumeSeek() != null) break;
 
-            // Handle pause
+            // Viewport changed (client panned/zoomed) → re-snapshot the now-visible
+            // region from the running state model so no tracks are missing.
+            if (vp.Changed)
+            {
+                vp.Changed = false;
+                await SendViewportSnapshot(ws, state, vp.Bounds, lastMillis, ct);
+            }
+
+            // Handle pause — still honor viewport changes so panning while paused repaints.
             while (isPaused() && !ct.IsCancellationRequested && ws.State == WebSocketState.Open)
             {
+                if (vp.Changed)
+                {
+                    vp.Changed = false;
+                    await SendViewportSnapshot(ws, state, vp.Bounds, lastMillis, ct);
+                }
                 await Task.Delay(100, ct);
                 if (consumeSeek() != null) return lastMillis;
             }
@@ -362,14 +438,58 @@ public class ReplayServer
                 }
             }
 
-            await SendReplayRecord(ws, line, ct);
+            await SendReplayRecord(ws, line, state, vp, ct);
             lastMillis = millis;
         }
 
         return lastMillis;
     }
 
-    private async Task SendReplayRecord(WebSocket ws, string jsonLine, CancellationToken ct)
+    private static string KindToType(string? kind) => kind switch
+    {
+        "S" => "snapshot",
+        "B" => "batch",
+        "R" => "remove",
+        "H" => "holdbar",
+        _ => "unknown"
+    };
+
+    private static string? GetGufi(JsonElement item)
+        => item.TryGetProperty("gufi", out var g) && g.ValueKind == JsonValueKind.String ? g.GetString() : null;
+
+    private static (double? lat, double? lon) GetLatLon(JsonElement item)
+    {
+        double? lat = null, lon = null;
+        if (item.TryGetProperty("latitude", out var la) && la.ValueKind == JsonValueKind.Number) lat = la.GetDouble();
+        if (item.TryGetProperty("longitude", out var lo) && lo.ValueKind == JsonValueKind.Number) lon = lo.GetDouble();
+        return (lat, lon);
+    }
+
+    private async Task SendMsg(WebSocket ws, string type, object data, long millis, CancellationToken ct)
+    {
+        if (ws.State != WebSocketState.Open) return;
+        var time = DateTimeOffset.FromUnixTimeMilliseconds(millis).ToString("o");
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new { type, data, replayTime = time }, _jsonOpts);
+        await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+    }
+
+    /// <summary>Re-emit a recorded snapshot of just the visible region from the running
+    /// state model — sent when the client's viewport changes so panning never reveals
+    /// blank areas (the tracks were filtered out of the stream but are still in state).</summary>
+    private async Task SendViewportSnapshot(WebSocket ws, Dictionary<string, StateRec> state, Bounds? bounds, long millis, CancellationToken ct)
+    {
+        if (ws.State != WebSocketState.Open) return;
+        var list = new List<JsonElement>();
+        foreach (var rec in state.Values)
+        {
+            if (rec.Lat == null || rec.Lon == null) continue;
+            if (bounds == null || bounds.Contains(rec.Lat.Value, rec.Lon.Value))
+                list.Add(rec.El);
+        }
+        await SendMsg(ws, "snapshot", list, millis, ct);
+    }
+
+    private async Task SendReplayRecord(WebSocket ws, string jsonLine, Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         if (ws.State != WebSocketState.Open) return;
 
@@ -382,20 +502,49 @@ public class ReplayServer
             var millis = root.GetProperty("t").GetInt64();
             var data = root.GetProperty("d");
 
-            string type = kind switch
-            {
-                "S" => "snapshot",
-                "B" => "batch",
-                "R" => "remove",
-                "H" => "holdbar",
-                _ => "unknown"
-            };
+            var bounds = vp.Bounds;
 
-            // Build the output message with replay timestamp
-            var time = DateTimeOffset.FromUnixTimeMilliseconds(millis).ToString("o");
-            var msg = JsonSerializer.Serialize(new { type, data, replayTime = time }, _jsonOpts);
-            var bytes = Encoding.UTF8.GetBytes(msg);
-            await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
+            // No viewport supplied → original passthrough, no state maintenance.
+            if (bounds == null)
+            {
+                await SendMsg(ws, KindToType(kind), data, millis, ct);
+                return;
+            }
+
+            switch (kind)
+            {
+                case "S":   // snapshot: rebuild state, send only in-view tracks
+                case "B":   // batch: upsert state, send only in-view changes
+                {
+                    if (kind == "S") state.Clear();
+                    var outList = new List<JsonElement>();
+                    foreach (var item in data.EnumerateArray())
+                    {
+                        var (lat, lon) = GetLatLon(item);
+                        var clone = item.Clone();   // detach so it survives the document
+                        var gufi = GetGufi(item);
+                        if (gufi != null) state[gufi] = new StateRec { Lat = lat, Lon = lon, El = clone };
+                        if (lat != null && lon != null && bounds.Contains(lat.Value, lon.Value))
+                            outList.Add(clone);
+                    }
+                    await SendMsg(ws, kind == "S" ? "snapshot" : "batch", outList, millis, ct);
+                    break;
+                }
+                case "R":   // remove: drop from state, always forward (no-op if absent client-side)
+                {
+                    if (data.ValueKind == JsonValueKind.Object &&
+                        data.TryGetProperty("gufi", out var gEl) && gEl.ValueKind == JsonValueKind.String)
+                    {
+                        var gufi = gEl.GetString();
+                        if (gufi != null) state.Remove(gufi);
+                    }
+                    await SendMsg(ws, "remove", data, millis, ct);
+                    break;
+                }
+                default:    // holdbar / unknown — pass through
+                    await SendMsg(ws, KindToType(kind), data, millis, ct);
+                    break;
+            }
         }
         catch (Exception ex)
         {

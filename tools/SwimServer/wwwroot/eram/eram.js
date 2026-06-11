@@ -2742,6 +2742,31 @@ document.getElementById('chk-mca-kb').addEventListener('change', function () {
     saveSettingsToLocalStorage();
 });
 
+const chkMca = document.getElementById('chk-mca');
+const chkRa = document.getElementById('chk-ra');
+const chkTime = document.getElementById('chk-time');
+if (chkMca) {
+    chkMca.addEventListener('change', function () {
+        const mca = document.getElementById('mca');
+        if (mca) mca.style.display = this.checked ? 'block' : 'none';
+        saveSettingsToLocalStorage();
+    });
+}
+if (chkRa) {
+    chkRa.addEventListener('change', function () {
+        const ra = document.getElementById('ra');
+        if (ra) ra.style.display = this.checked ? 'block' : 'none';
+        saveSettingsToLocalStorage();
+    });
+}
+if (chkTime) {
+    chkTime.addEventListener('change', function () {
+        const timeView = document.getElementById('time-view');
+        if (timeView) timeView.style.display = this.checked ? 'block' : 'none';
+        saveSettingsToLocalStorage();
+    });
+}
+
 // Transp MCA: reserved for future use
 // document.getElementById('chk-transp-mca').addEventListener('change', function () {
 //     document.getElementById('map-container').classList.toggle('transp-mca', this.checked);
@@ -3683,6 +3708,9 @@ function saveSettingsToLocalStorage() {
         ldbBrightness,
         facilityOnly,
         mcaKb: document.getElementById('chk-mca-kb')?.checked || false,
+        mcaVisible: document.getElementById('chk-mca')?.checked !== false,
+        raVisible: document.getElementById('chk-ra')?.checked !== false,
+        timeVisible: document.getElementById('chk-time')?.checked !== false,
         numinv: !document.getElementById('numpad-inverted')?.checked,
         nasrBrightness,
         nexradLevel,

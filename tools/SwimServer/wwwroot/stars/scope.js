@@ -56,6 +56,15 @@ const prefSet = {
     VideoMapA: 75, VideoMapB: 25, DataBlock: 100,
     Lists: 75, Position: 100, History: 60, Weather: 70,
   },
+  // Per CRC § CHAR SIZE — 5 adjustable categories. Sizes here are in pixels.
+  // The DCB CHAR SIZE submenu cycles each value in steps.
+  CharSize: {
+    DataBlock: 14,
+    Lists:     12,
+    DCB:       11,
+    Tools:     11,
+    Position:  15,
+  },
 };
 
 // ── Colors — direct from RadarWindow.cs lines 60-110 ────────────────────────
@@ -799,22 +808,26 @@ function buildDataBlock(t, fp) {
   // clearer info display since each variant shows visibly different data
   // even when fields fall back. Identical-content collapse still respected
   // (yscratch2 length=4 collapse from Aircraft.cs:443-449).
-  const altLeft   = altstring;
-  const scr1Left  = (fp?.Scratchpad1?.trim() || destination).padEnd(3);
-  const scr2Left  = fp?.Scratchpad2?.trim()
-                     ? (fp.Scratchpad2.trim() + "+").padEnd(4)
-                     : (fp?.Scratchpad1?.trim() || destination).padEnd(3);
-  const speedRight = `${speed10}${vfrChar}${catChar}`;
-  const typeRight  = (fp?.AircraftType?.trim() || "").padEnd(4) || speedRight;
+  // All variants normalize to a consistent 8-char width so the data block
+  // doesn't visually resize as ClockPhase rotates. Format = LLL H RRRR
+  //   LLL  3-char left field (altitude or scratchpad/destination)
+  //   H    1-char handoff (or space)
+  //   RRRR 4-char right field (speed+vfr+cat, aircraft type, or reqalt)
+  const altLeft = altstring.padEnd(3);
+  const scr1Left = (fp?.Scratchpad1?.trim() || destination).padEnd(3).slice(0, 3);
+  const scr2Left = (fp?.Scratchpad2?.trim() || fp?.Scratchpad1?.trim() || destination).padEnd(3).slice(0, 3);
+
+  // Right field: 4 chars consistent.
+  const speedRight = (`${speed10}${vfrChar}${catChar}`).padEnd(4);    // "12IL", "13E "
+  const typeRight  = ((fp?.AircraftType?.trim() || "").padEnd(4)).slice(0, 4) || speedRight;
   const reqAltRight = (fp?.RequestedAltitude > 0)
                       ? "R" + String(Math.floor(fp.RequestedAltitude / 100)).padStart(3, "0")
-                      : speedRight;   // Fall back to speed (not type) so v3 stays distinct from v2.
+                      : speedRight;
 
-  const fdb1line2 = `${altLeft}${handoffChar}${speedRight} `;
+  // Each variant: LLL + H + RRRR = 8 chars.
+  const fdb1line2 = `${altLeft}${handoffChar}${speedRight}`;
   const fdb2line2 = `${scr1Left}${handoffChar}${typeRight}`;
-  const fdb3line2 = (scr2Left.length === 4)
-                    ? `${scr2Left}${reqAltRight}`
-                    : `${scr2Left}${handoffChar}${reqAltRight} `;
+  const fdb3line2 = `${scr2Left}${handoffChar}${reqAltRight}`;
 
   if (mode === "FDB") {
     // Line 1: callsign or squawk (Aircraft.cs:449-489)
@@ -891,7 +904,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const lines = buildDataBlock(t, fp);
   if (lines.length === 0) return;
 
-  const fontSize = 14;
+  const fontSize = prefSet.CharSize.DataBlock;
   ctx.font = `${fontSize}px FixedDemiBold, ui-monospace, "Cascadia Mono", monospace`;
   const charHeight = fontSize + 2;
   const charWidth  = fontSize * 0.55;
@@ -997,29 +1010,23 @@ function drawPosition(t, posNow) {
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;
 
-  // PrimaryReturn / TargetReturn filled circle.
-  ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
-  ctx.beginPath();
-  ctx.arc(px, py, 4, 0, Math.PI * 2);
-  ctx.fill();
-
+  // Coast tracks: per STARS (different from ERAM), no PrimaryReturn circle
+  // is drawn - only the position indicator letter (typically the owner
+  // sector ID) shows. Per user spec.
   if (!isCoasting(t)) {
-    ctx.fillStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
-    ctx.font = "15px FixedDemiBold, ui-monospace, monospace";
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    ctx.fillText(positionSymbolText(t, fp), px, py);
-  } else {
-    // Coast = #-shape stroked lines, bigger.
-    ctx.strokeStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
-    ctx.lineWidth = 1.5;
+    ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
     ctx.beginPath();
-    ctx.moveTo(px - 5, py - 1.5); ctx.lineTo(px + 5, py - 1.5);
-    ctx.moveTo(px - 5, py + 1.5); ctx.lineTo(px + 5, py + 1.5);
-    ctx.moveTo(px - 1.5, py - 5); ctx.lineTo(px - 1.5, py + 5);
-    ctx.moveTo(px + 1.5, py - 5); ctx.lineTo(px + 1.5, py + 5);
-    ctx.stroke();
+    ctx.arc(px, py, 4, 0, Math.PI * 2);
+    ctx.fill();
   }
+
+  // Position glyph: owner-sector letter when track is owned/handed-off, else
+  // "*" for correlated beacon, "◇" for primary-only (Aircraft.cs:617-623).
+  ctx.fillStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
+  ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.fillText(positionSymbolText(t, fp), px, py);
 }
 
 // ── Phase 9: J-Ring + MinSep + STCA ─────────────────────────────────────────
@@ -1329,6 +1336,7 @@ function mountDcb() {
     dcb.active = qMenu.toUpperCase();
   dcb.on("numAdjust", (id, dir) => handleNumAdjust(id, dir));
   dcb.on("briteAdjust", (which, d) => handleBriteAdjust(which, d));
+  dcb.on("cszAdjust", (which, d) => handleCszAdjust(which, d));
   dcb.on("mapToggle", (idx) => handleMapToggle(idx));
   dcb.on("click", ({ id }) => handleDcbClick(id));
   dcb.render();
@@ -1383,6 +1391,13 @@ function handleNumAdjust(id, dir) {
       break;
   }
   dcb.render();
+  _afterPrefChange();
+}
+
+function handleCszAdjust(which, d) {
+  const c = prefSet.CharSize;
+  if (c[which] != null) c[which] = clamp(c[which] + d, 6, 32);
+  if (dcb) dcb.render();
   _afterPrefChange();
 }
 

@@ -89,7 +89,7 @@ function mainMenu(state) {
   list.push(btn("LDR_DIR", `LDR DIR\n${ldrDirName(p.OwnedDataBlockPosition)}`,
     { half: true }));                                                                    // 40
   list.push(btn("LDR_LEN", `LDR\n${p.LeaderLength}`, { half: true }));                   // 40
-  list.push(btn("CHAR_SIZE", "CHAR\nSIZE", { disabled: true }));                         // 80
+  list.push(btn("CHAR_SIZE", "CHAR\nSIZE", { submenu: "CHARSIZE" }));                    // 80
   list.push(btn("MODE", "MODE\nFSL", { disabled: true }));                               // 80
   list.push(btn("SITE", "SITE", { submenu: "SITE" }));                                   // 80
   list.push(btn("SHIFT", "SHIFT", { submenu: "AUX" }));                                  // 80
@@ -171,6 +171,20 @@ function mapsMenu(state) {
   return list;
 }
 
+// CHAR SIZE submenu — per CRC docs § DCB CHAR SIZE: 5 adjustable categories.
+function charSizeMenu(state) {
+  const c = state.prefSet.CharSize;
+  const list = [
+    btn("CSZ_DONE", "DONE", { submenu: "MAIN" }),
+    btn("CSZ_DB",   `DATA\nBLOCKS\n${c.DataBlock}`, { csz: "DataBlock" }),
+    btn("CSZ_LST",  `LISTS\n${c.Lists}`,     { csz: "Lists" }),
+    btn("CSZ_DCB",  `DCB\n${c.DCB}`,         { csz: "DCB" }),
+    btn("CSZ_TLS",  `TOOLS\n${c.Tools}`,     { csz: "Tools" }),
+    btn("CSZ_POS",  `POS\n${c.Position}`,    { csz: "Position" }),
+  ];
+  return list;
+}
+
 function siteMenu(state) {
   // RadarWindow.cs:3741+ — one button per ASR site (Phase 6 populates real
   // ASR list); plus MULTI and FUSED.
@@ -205,11 +219,12 @@ class DCB {
 
   buttons() {
     switch (this.active) {
-      case "MAIN":  return mainMenu(this.state);
-      case "AUX":   return auxMenu(this.state);
-      case "BRITE": return briteMenu(this.state);
-      case "MAPS":  return mapsMenu(this.state);
-      case "SITE":  return siteMenu(this.state);
+      case "MAIN":     return mainMenu(this.state);
+      case "AUX":      return auxMenu(this.state);
+      case "BRITE":    return briteMenu(this.state);
+      case "MAPS":     return mapsMenu(this.state);
+      case "SITE":     return siteMenu(this.state);
+      case "CHARSIZE": return charSizeMenu(this.state);
     }
     return [];
   }
@@ -266,10 +281,12 @@ class DCB {
       const fg = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
       // border lives INSIDE the box via box-sizing:border-box so two 40px
       // half buttons stack inside 80px column exactly. No margin.
+      const fs = (p.CharSize?.DCB ?? 11);
       return `<div class="dcb-btn" data-id="${b.id}"
         ${b.mapIdx != null ? `data-map="${b.mapIdx}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
         ${b.wx ? `data-wx="${b.wx}"` : ""}
+        ${b.csz ? `data-csz="${b.csz}"` : ""}
         ${b.submenu ? `data-submenu="${b.submenu}"` : ""}
         ${b.disabled ? `data-disabled="1"` : ""}
         style="
@@ -279,7 +296,7 @@ class DCB {
           outline:1px solid ${DCB_COLOR.BORDER};
           outline-offset:-1px;
           display:flex; align-items:center; justify-content:center;
-          text-align:center; line-height:1.05; font-size:11px;
+          text-align:center; line-height:1.05; font-size:${fs}px;
           white-space:pre; cursor:${b.disabled ? "default" : "pointer"};
           flex:none; box-sizing:border-box;
         ">${b.text}</div>`;
@@ -302,6 +319,7 @@ class DCB {
     if (el.dataset.map != null) { this.emit("mapToggle", +el.dataset.map); return; }
     // Built-in: BRITE adjust (left-click = +10 step)
     if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, +10); return; }
+    if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   +1);  return; }
     // Built-in: numeric cycle for RANGE, RR, LDR LEN, HISTORY, PTL_LEN
     this.emit("numAdjust", id, +1);
   }
@@ -311,6 +329,7 @@ class DCB {
     if (!el || el.dataset.disabled) return;
     const id = el.dataset.id;
     if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, -10); return; }
+    if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   -1);  return; }
     this.emit("numAdjust", id, -1);
   }
   _onWheel(e) {
@@ -319,6 +338,7 @@ class DCB {
     e.preventDefault();
     const dir = e.deltaY < 0 ? +1 : -1;
     if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, dir * 10); return; }
+    if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   dir);     return; }
     this.emit("numAdjust", el.dataset.id, dir);
   }
 }

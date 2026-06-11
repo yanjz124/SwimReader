@@ -53,11 +53,11 @@ function mountMca() {
   pa.id = "mca";
   pa.style.cssText = `
     position:fixed; left:8px; bottom:8px;
-    background:rgba(0,0,0,0.6); color:#0f0;
-    font-family:ui-monospace, monospace; font-size:13px;
+    background:transparent; color:#0f0;
+    font-family:FixedDemiBold, ui-monospace, monospace; font-size:13px;
     padding:4px 8px; min-width:240px;
-    border:1px solid #0a3a0a; z-index:18;
-    white-space:pre; line-height:1.4;
+    z-index:18;
+    white-space:pre; line-height:1.3;
   `;
   document.body.appendChild(pa);
 
@@ -73,6 +73,12 @@ function refreshMca() {
   el.innerHTML =
     `<div style="color:${rspColor};">${MCA.response || ""}</div>` +
     `<div style="color:#fff;">${MCA.buffer}${cursor}</div>`;
+  // Apply Brightness.Lists + CharSize.Lists so MCA matches SSA visually
+  if (window.prefSet) {
+    const b = Math.max(30, window.prefSet.Brightness.Lists);
+    el.style.color = `rgb(0, ${(255 * b / 100) | 0}, 0)`;
+    el.style.fontSize = (window.prefSet.CharSize?.Lists ?? 13) + "px";
+  }
 }
 
 function onKeyDown(e) {

@@ -5,7 +5,11 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 /* ── Layout ── */
 #app { position: relative; height: 100vh; }
 #sidebar-wrapper { display: flex; position: absolute; top: 0; left: 0; bottom: 0; z-index: 500; }
-#sidebar { width: 260px; min-width: 260px; background: #111; border-right: 1px solid #333; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; transition: margin-left 0.2s ease; }
+#sidebar { width: 260px; min-width: 260px; background: #111; border-right: 1px solid #333; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; transition: margin-left 0.2s ease; scrollbar-width: thin; scrollbar-color: #333 #1a1a1a; }
+#sidebar::-webkit-scrollbar { width: 6px; }
+#sidebar::-webkit-scrollbar-track { background: #1a1a1a; }
+#sidebar::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+#sidebar::-webkit-scrollbar-thumb:hover { background: #444; }
 #sidebar.collapsed { margin-left: -260px; }
 #sidebar-toggle {
     width: 20px; background: #1a1a1a; border: none; border-right: 1px solid #333;
@@ -49,7 +53,12 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 .ctrl-row select {
     flex: 1; background: #1a1a1a; color: #cccc44; border: 1px solid #333;
     padding: 3px 6px; font-family: inherit; font-size: 11px; outline: none;
+    scrollbar-width: thin; scrollbar-color: #333 #1a1a1a;
 }
+.ctrl-row select::-webkit-scrollbar { width: 6px; }
+.ctrl-row select::-webkit-scrollbar-track { background: #1a1a1a; }
+.ctrl-row select::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+.ctrl-row select::-webkit-scrollbar-thumb:hover { background: #444; }
 .ctrl-row select:focus { border-color: #cccc44; }
 .ctrl-row input[type="checkbox"] { accent-color: #cccc44; }
 
@@ -392,17 +401,28 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
 #tb-tearoff-btn {
     display: flex; align-items: stretch;
     width: 88px; height: 34px;
-    background: #006800; border: 1px solid #333;
-    cursor: pointer; font-family: 'ERAM', 'Consolas', monospace;
+    background: #00CD00;
+    cursor: var(--eram-cursor) !important; font-family: 'ERAM', 'Consolas', monospace;
     font-size: 10px; line-height: 14px; padding: 0;
 }
-#tb-tearoff-btn:hover { background: #007800; }
 #tb-tearoff-btn .tb-gold-strip {
     width: 13px; background: #FFFFA1; flex-shrink: 0; cursor: move;
+    border: 1px solid #333;
+    border-right: 1px solid #555;
+    transition: border-color 0.1s ease;
+}
+#tb-tearoff-btn .tb-gold-strip:hover {
+    border-color: #ffffff !important;
 }
 #tb-tearoff-btn .tb-tearoff-label {
     color: #ffffff; white-space: nowrap;
     display: flex; align-items: center; justify-content: center; flex: 1;
+    border: 1px solid #333;
+    border-right: 1px solid #555;
+    transition: border-color 0.1s ease;
+}
+#tb-tearoff-btn .tb-tearoff-label:hover {
+    border-color: #ffffff !important;
 }
 
 #master-toolbar-container {
@@ -410,6 +430,7 @@ body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Co
     top: 0; left: 0; right: 0;
     user-select: none;
     display: none;
+    cursor: var(--eram-cursor) !important;
 }
 #master-toolbar-container.tb-visible { display: block; }
 /* When toolbar is visible, push sidebar below it */

@@ -2787,6 +2787,12 @@ function updateScopeBackground() {
         toolbarPanel.style.filter = `brightness(${backlightFactor})`;
     }
 
+    // Apply backlight to tearoff button (visibility toggle)
+    const tearoffContainer = document.getElementById('tb-tearoff');
+    if (tearoffContainer) {
+        tearoffContainer.style.filter = `brightness(${backlightFactor})`;
+    }
+
     // Update floating tearoff colors with backlight (floating menus inherit this since they're children)
     for (const [, tearoff] of activeTearoffs) {
         if (tearoff.floatingEl) {
@@ -2880,6 +2886,7 @@ function updateTextBrightness() {
             .tb-btn .tb-label { color: ${textColor} !important; }
             .tb-btn .tb-value { color: ${textColor} !important; }
             .tb-btn .tb-menu-ind { color: ${textColor} !important; }
+            #tb-tearoff-btn .tb-tearoff-label { color: ${textColor} !important; }
         `;
     } catch (e) {
         // tbState not yet initialized
@@ -3003,6 +3010,15 @@ function updateToolbarBrightness() {
         // Disabled tearoff strip color (interpolate grey toward black with backlight)
         const disabledTearoffColor = interpolateColor('#C7C7C7', combinedFactor);
         css += `.tb-btn .tb-tear.tb-tear-disabled { background: ${disabledTearoffColor} !important; }\n`;
+
+        // Toolbar toggle button (#tb-tearoff-btn) — green button that shows/hides the toolbar
+        const tearoffBtnColor = interpolateColor('#00CD00', buttonFactor);
+        css += `#tb-tearoff-btn { background: ${tearoffBtnColor} !important; }\n`;
+        css += `#tb-tearoff-btn:hover { background: ${tearoffBtnColor} !important; }\n`;
+
+        // Toolbar toggle button gold strip (affected by backlight like button tearoff strips)
+        const tearoffBtnGoldColor = interpolateColor('#FFFFA1', combinedFactor);
+        css += `#tb-tearoff-btn .tb-gold-strip { background: ${tearoffBtnGoldColor} !important; }\n`;
 
         styleEl.textContent = css;
     } catch (e) {

@@ -789,13 +789,32 @@ function buildDataBlock(t, fp) {
     ? "R" + String(Math.floor(fp.RequestedAltitude / 100)).padStart(3, "0")
     : type;
 
-  // ── Build all 3 FDB variants (Aircraft.cs:442-450) ──────────────────────
-  const fdb1line2 = `${altstring}${handoffChar}${speed10}${vfrChar}${catChar} `;
-  const fdb2line2 = `${yscratch}${handoffChar}${reqalt} `;
-  let fdb3line2;
-  if (!fp?.Scratchpad2?.trim()) fdb3line2 = `${yscratch}${handoffChar}${type} `;
-  else if (yscratch2.length === 4) fdb3line2 = `${yscratch2}${type}`;
-  else fdb3line2 = `${yscratch2}${handoffChar}${type} `;
+  // ── Build all 3 FDB variants ───────────────────────────────────────────
+  // Per CRC docs § Data Blocks, line 2 rotates three variants:
+  //   Variant 1: altitude + handoff + ground speed + flight rules + category
+  //   Variant 2: scratchpad #1 + handoff + AIRCRAFT TYPE
+  //   Variant 3: scratchpad #2 + handoff + REQUESTED ALTITUDE (R-prefix)
+  // The WPF Aircraft.RedrawDataBlock has variants 2/3 swapped relative to
+  // CRC docs (reqalt on variant 2, type on variant 3); we follow CRC for
+  // clearer info display since each variant shows visibly different data
+  // even when fields fall back. Identical-content collapse still respected
+  // (yscratch2 length=4 collapse from Aircraft.cs:443-449).
+  const altLeft   = altstring;
+  const scr1Left  = (fp?.Scratchpad1?.trim() || destination).padEnd(3);
+  const scr2Left  = fp?.Scratchpad2?.trim()
+                     ? (fp.Scratchpad2.trim() + "+").padEnd(4)
+                     : (fp?.Scratchpad1?.trim() || destination).padEnd(3);
+  const speedRight = `${speed10}${vfrChar}${catChar}`;
+  const typeRight  = (fp?.AircraftType?.trim() || "").padEnd(4) || speedRight;
+  const reqAltRight = (fp?.RequestedAltitude > 0)
+                      ? "R" + String(Math.floor(fp.RequestedAltitude / 100)).padStart(3, "0")
+                      : speedRight;   // Fall back to speed (not type) so v3 stays distinct from v2.
+
+  const fdb1line2 = `${altLeft}${handoffChar}${speedRight} `;
+  const fdb2line2 = `${scr1Left}${handoffChar}${typeRight}`;
+  const fdb3line2 = (scr2Left.length === 4)
+                    ? `${scr2Left}${reqAltRight}`
+                    : `${scr2Left}${handoffChar}${reqAltRight} `;
 
   if (mode === "FDB") {
     // Line 1: callsign or squawk (Aircraft.cs:449-489)
@@ -803,12 +822,9 @@ function buildDataBlock(t, fp) {
     if (fp?.Callsign) line1 = fp.Callsign;
     else if (t.Squawk) line1 = t.Squawk;
     lines.push(line1);
-    // Line 2: pick variant by ClockPhase. When the chosen variant is
-    // all-whitespace (no scratchpad / no AircraftType / no RequestedAlt),
-    // fall back to fdb1line2 (alt+speed) so the second line is never empty.
+    // Line 2: pick variant by ClockPhase.
     const variants = [fdb1line2, fdb2line2, fdb3line2];
-    const chosen = variants[ClockPhase.phase];
-    lines.push(chosen.trim().length > 0 ? chosen : fdb1line2);
+    lines.push(variants[ClockPhase.phase] || fdb1line2);
     // Line 3: AssignedSquawk mismatch OR ATPA mileage OR blank
     if (fp?.AssignedSquawk && t.Squawk && t.Squawk !== String(fp.AssignedSquawk).padStart(4, "0"))
       lines.push(`${t.Squawk} ${String(fp.AssignedSquawk).padStart(4, "0")}`);

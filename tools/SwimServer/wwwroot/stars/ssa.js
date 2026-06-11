@@ -60,7 +60,7 @@ function mountSsa() {
     left:8px; top:90px;     /* below DCB; PrefSet.StatusAreaLocation overrides */
     background:rgba(0,0,0,0.6);
     color:#0f0;
-    font-family:ui-monospace, monospace; font-size:12px;
+    font-family:FixedDemiBold, ui-monospace, monospace; font-size:12px;
     padding:4px 8px; min-width:200px;
     border:1px solid #0a3a0a; z-index:17;
     white-space:pre; line-height:1.4;
@@ -170,6 +170,7 @@ function refreshSsa() {
 
   el.innerHTML = lines.map(escapeHtml).join("<br>");
   el.style.color = `rgb(0, ${(255 * prefSet.Brightness.Lists / 100) | 0}, 0)`;
+  el.style.fontSize = (prefSet.CharSize?.Lists ?? 12) + "px";
 }
 
 function fa(altFt) {

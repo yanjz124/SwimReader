@@ -1000,6 +1000,19 @@ function isEmergency(f) {
     return f.squawk === '7700' || f.squawk === '7600' || f.squawk === '7500';
 }
 
+// Seconds since the CLIENT last received an update for this track.
+function clientAgeSec(f) {
+    return f._clientLastUpdate != null ? (performance.now() - f._clientLastUpdate) / 1000 : 0;
+}
+// Effective track age. The server stops sending a GUFI's batches once another facility
+// takes over (inter-ARTCC handoff), which FREEZES its server-side posAge at a small value
+// — so a stale duplicate would otherwise look "fresh" forever, lingering as a frozen ghost
+// and winning the callsign dedup over the live track (causing the disappear/reappear flicker).
+// Taking the max with client-receipt age lets these ghosts age out and release the live track.
+function effAgeSec(f) {
+    return Math.max(f.posAge != null ? f.posAge : 0, clientAgeSec(f));
+}
+
 function isVisible(f) {
     if (f.latitude == null || f.longitude == null) return false;
     // Allow DROPPED flights briefly — 1 minute grace for handoff transitions where
@@ -1009,8 +1022,9 @@ function isVisible(f) {
     if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
     // Hide stale ACTIVE flights — no position update for >5 min means track is lost
-    // (SFDPS can have gaps during inter-facility handoff transitions)
-    if (f.flightStatus === 'ACTIVE' && f.posAge != null && f.posAge > 300 && !f.handoffEvent) return false;
+    // (SFDPS can have gaps during inter-facility handoff transitions). Uses effective age
+    // so a GUFI the server stopped sending (handed off to another ARTCC) ages out too.
+    if (f.flightStatus === 'ACTIVE' && effAgeSec(f) > 300 && !f.handoffEvent) return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
     // Exempt: FDB tracks, and any track the user explicitly toggled (fdbOverrides entry)
@@ -2269,7 +2283,7 @@ function doRender() {
             if (f.latitude == null || f.longitude == null) continue;
             if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) continue;
             if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') continue;
-            if (f.flightStatus === 'ACTIVE' && f.posAge != null && f.posAge > 300 && !f.handoffEvent) continue;
+            if (f.flightStatus === 'ACTIVE' && effAgeSec(f) > 300 && !f.handoffEvent) continue;
             const cs = f.callsign;
             const prev = bestGufiByCallsign.get(cs);
             if (!prev) { bestGufiByCallsign.set(cs, gufi); continue; }
@@ -2279,7 +2293,13 @@ function doRender() {
             // Strong preference: has position beats no position
             if (curHasPos && !prevHasPos) { bestGufiByCallsign.set(cs, gufi); continue; }
             if (!curHasPos && prevHasPos) continue;
-            // Both have position (or neither): prefer our facility
+            const prevAge = effAgeSec(prevF);
+            const curAge = effAgeSec(f);
+            // A clearly-fresh track beats a clearly-stale one regardless of facility — stops a
+            // frozen ghost (old ARTCC, server stopped updating it) from suppressing the live track.
+            if (curAge < 60 && prevAge > 120) { bestGufiByCallsign.set(cs, gufi); continue; }
+            if (prevAge < 60 && curAge > 120) continue;
+            // Both comparably fresh: prefer our facility
             const prevFac = prevF.controllingFacility || prevF.reportingFacility || '';
             const curFac = f.controllingFacility || f.reportingFacility || '';
             if (curFac === myFacility && prevFac !== myFacility) {
@@ -2287,10 +2307,8 @@ function doRender() {
                 continue;
             }
             if (prevFac === myFacility && curFac !== myFacility) continue;
-            // Both same facility (or neither ours): prefer fresher posAge
+            // Both same facility (or neither ours): prefer fresher track
             // But add hysteresis — current winner must be 15s staler to lose (prevents flip-flop)
-            const prevAge = prevF.posAge ?? 9999;
-            const curAge = f.posAge ?? 9999;
             if (curAge + 15 < prevAge) {
                 bestGufiByCallsign.set(cs, gufi);
             }

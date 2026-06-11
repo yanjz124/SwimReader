@@ -1257,6 +1257,46 @@ cv.addEventListener("mousemove", (e) => {
 });
 window.addEventListener("mouseup", () => { panning = false; panButton = -1; downAt = null; });
 
+// Mouse-position helpers used by MCA commands (F D *, F P, F S, *T).
+// Updated on every mousemove over the canvas.
+let _lastMouseScreen = null;
+let _lastMouseGeo = null;
+cv.addEventListener("mousemove", (e) => {
+  _lastMouseScreen = { x: e.clientX, y: e.clientY };
+  _lastMouseGeo = screenToGeo(e.clientX, e.clientY);
+});
+window.mouseScreen = () => _lastMouseScreen;
+window.mouseGeo    = () => _lastMouseGeo;
+
+// State container for MCA commands. Mirrors WPF RadarWindow scope-state
+// fields: ATPA, TPASize, DrawATPAMonitorCones, AutoOffset, rangeBearingLines,
+// minSeps, tempLine, tempMinSep, Nexrad.LevelsEnabled.
+window.starsState ||= {
+  ATPA: { Active: false, Volumes: [] },
+  TPASize: false,
+  DrawATPAMonitorCones: false,
+  AutoOffset: false,
+  rangeBearingLines: [],
+  minSeps: [],
+  tempLine: null,
+  tempMinSep: null,
+  Nexrad: { LevelsEnabled: [false, false, false, false, false, false] },
+};
+window.starsWaypoints ||= [];
+window.starsAirports  ||= [];
+
+// recenterScope(lat, lon) - move scope to lat/lon (or RECENTER home if none).
+// RadarWindow.cs:2558-2577 sets HomeLocation, RangeRingLocation, ScreenRotation
+// when an airport ID is supplied. With no args (Ctrl+F1), simply re-center to
+// the current ScreenCenterPoint - the "ScopeCentered" mode the WPF toggles.
+window.recenterScope = (lat, lon) => {
+  if (lat != null && lon != null) {
+    prefSet.ScreenCenterPoint = { Latitude: lat, Longitude: lon };
+    prefSet.RangeRingLocation = { Latitude: lat, Longitude: lon };
+  }
+  prefSet.ScopeCentered = true;
+};
+
 cv.addEventListener("wheel", (e) => {
   e.preventDefault();
   // RadarWindow.cs cycles Range via DCB buttons; mouse-wheel here is a web-only

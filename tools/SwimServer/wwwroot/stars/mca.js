@@ -85,6 +85,28 @@ function mountMca() {
   document.addEventListener("keyup", (e) => {
     if (e.key === "F1") window.showAllCallsigns = false;
   });
+  // End-key Min Sep tool (RadarWindow.cs:2579-2605).
+  // 1st End on plane = arm with that plane as Plane1.
+  // 2nd End on plane = commit MinSep(Plane1, Plane2). End with no clicked + Enter clears.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "End") return;
+    e.preventDefault();
+    const ms = window.starsState.minSeps ||= [];
+    const clicked = MCA.clickedPlane;
+    if (clicked) {
+      window.starsState.tempLine = null;
+      if (!window.starsState.tempMinSep) {
+        window.starsState.tempMinSep = { plane1: clicked, plane2: null };
+      } else {
+        ms.push({ plane1: window.starsState.tempMinSep.plane1, plane2: clicked });
+        window.starsState.tempMinSep = null;
+      }
+    } else {
+      // No clicked plane + End = clear all min seps
+      ms.length = 0;
+      window.starsState.tempMinSep = null;
+    }
+  });
   refreshMca();
 }
 
@@ -362,7 +384,6 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
       else if (k[3] === "I") window.starsState.TPASize = false;
       else { setResponse("FORMAT"); return; }
     } else if (clickedplane) {
-      // Per-plane TPA size toggle. Requires TPA to exist on plane.
       const plane = clicked;
       if (!plane.TPA) { setResponse("ILL FNCT"); return; }
       if (k.length === 3) plane.TPA.ShowSize = !plane.TPA.ShowSize;
@@ -374,8 +395,113 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
     }
     return;
   }
-  // TODO(test-in-crc): *T, *J, *P, **J, **P
-  // Need WPF behaviour verified in CRC before porting these branches.
+  // *T  Range/Bearing Line tool (cs:1718-1801)
+  //   click plane + *T               -> start RBL from plane to mouse
+  //   *T then click plane            -> finalize end-plane
+  //   *T<idx> enter                  -> remove RBL at index
+  //   *T<waypoint> enter             -> new RBL from waypoint to mouse
+  //   *T enter                       -> clear all RBLs
+  //   click empty + *T               -> start RBL from clicked geo to mouse
+  if (sub === "T") {
+    const rbls = window.starsState.rangeBearingLines ||= [];
+    if (clickedplane) {
+      if (!window.starsState.tempLine) {
+        window.starsState.tempLine = { startPlane: clicked, end: window.mouseGeo?.() };
+        rbls.push(window.starsState.tempLine);
+      }
+      if (k.length > 2) {
+        const entered = k.slice(1).join("").substring(1);
+        const idx = parseInt(entered, 10);
+        if (Number.isFinite(idx)) {
+          if (idx <= rbls.length) rbls.splice(idx - 1, 1);
+        } else {
+          const wp = (window.starsWaypoints || []).find(w => w.id === entered);
+          if (wp) window.starsState.tempLine.startGeo = { lat: wp.lat, lon: wp.lon };
+        }
+        window.starsState.tempLine.endPlane = clicked;
+        window.starsState.tempLine = null;
+      }
+      return;
+    }
+    if (enter) {
+      if (k.length === 2) { rbls.length = 0; return; }
+      if (k.length > 2) {
+        const entered = k.slice(2).join("");
+        const idx = parseInt(entered, 10);
+        if (Number.isFinite(idx)) {
+          if (idx <= rbls.length) rbls.splice(idx - 1, 1);
+        } else {
+          const wp = (window.starsWaypoints || []).find(w => w.id === entered);
+          if (wp) {
+            window.starsState.tempLine = { startGeo: { lat: wp.lat, lon: wp.lon }, end: window.mouseGeo?.() };
+            rbls.push(window.starsState.tempLine);
+          }
+        }
+      }
+      return;
+    }
+    if (!window.starsState.tempLine) {
+      // Clicked empty location, start RBL from there
+      window.starsState.tempLine = { startGeo: window.mouseGeo?.() };
+      rbls.push(window.starsState.tempLine);
+    }
+    return;
+  }
+  // *J<miles>  + clicked plane (cs:1802-1828): J-Ring (TPA ring) of N miles
+  //   no miles -> remove plane's TPA
+  if (sub === "J") {
+    if (!clickedplane) return;
+    if (k.length >= 3 && k.length <= 5) {
+      const miles = parseFloat(k.slice(2).join(""));
+      if (!Number.isFinite(miles)) return;
+      if (miles > 0 && miles <= 30) {
+        clicked.TPA = { type: "JRing", miles, color: "#0f0", showSize: window.starsState.TPASize };
+      } else {
+        setResponse("FORMAT");
+      }
+    } else {
+      clicked.TPA = null;
+    }
+    return;
+  }
+  // *P<miles>  + clicked plane (cs:1829-1858): P-Cone (predictive cone)
+  if (sub === "P") {
+    if (!clickedplane) { setResponse("NO TRK"); return; }
+    if (k.length >= 3 && k.length <= 5) {
+      const miles = parseFloat(k.slice(2).join(""));
+      if (!Number.isFinite(miles)) return;
+      if (miles > 0 && miles <= 30) {
+        clicked.TPA = { type: "PCone", miles, color: "#0f0", showSize: window.starsState.TPASize };
+      } else {
+        setResponse("FORMAT");
+      }
+    } else {
+      clicked.TPA = null;
+    }
+    return;
+  }
+  // **J / **P / **<pos>  (cs:1860-1889)
+  if (sub === "*" && k.length > 2) {
+    const c = k[2];
+    if (c === "J") {
+      // Clear all J-Rings
+      for (const t of tracks.values()) if (t.TPA?.type === "JRing") t.TPA = null;
+      return;
+    }
+    if (c === "P") {
+      // Clear all P-Cones
+      for (const t of tracks.values()) if (t.TPA?.type === "PCone") t.TPA = null;
+      return;
+    }
+    // **<pos>  4 chars total = ForceQuickLook when pos == us
+    if (k.length === 4) {
+      const pos = k.slice(2).join("");
+      if (clickedplane && pos === window.ownTcp?.()) {
+        clicked._forceQuickLook = true;
+      }
+    }
+    return;
+  }
 }
 
 // ── F7 multifunction tree (RadarWindow.cs:1926-2577) ──────────────────────
@@ -526,7 +652,142 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
     // Untargeted form: F Y <FLID> [text] - TODO(verify exact format-vs-FLID parsing)
     return;
   }
-  // TODO(test-in-crc): F 2 ATPA, F 2 2.5, F D, F P, F S
+  // F D *  display clicked location as lat/lon DMS (cs:2126-2137)
+  if (sub === "D" && k.length === 3 && k[2] === "*" && !enter) {
+    const geo = window.mouseGeo?.();
+    if (geo) setResponse(geoToDms(geo));
+    return;
+  }
+  // F P  set MCA/PreviewArea location to clicked screen point (cs:2316-2322)
+  if (sub === "P" && !clickedplane) {
+    const m = window.mouseScreen?.();
+    if (m) {
+      prefSet.PreviewAreaLocation = { X: m.x, Y: m.y };
+      const el = document.getElementById("mca");
+      if (el) { el.style.left = m.x + "px"; el.style.bottom = "auto"; el.style.top = m.y + "px"; }
+    }
+    return;
+  }
+  // F S  set SSA location to clicked screen point (cs:2358-2362) - only when length 2
+  if (sub === "S" && k.length === 2 && !clickedplane) {
+    const m = window.mouseScreen?.();
+    if (m) {
+      prefSet.StatusAreaLocation = { X: m.x, Y: m.y };
+      const el = document.getElementById("ssa");
+      if (el) { el.style.left = m.x + "px"; el.style.top = m.y + "px"; }
+    }
+    return;
+  }
+  // F S <letter> [text...]  set ATIS slot 0 + free text (cs:2364-2398)
+  if (sub === "S" && !clickedplane && k.length >= 3 && /^[A-Z]$/.test(k[2])) {
+    const letter = k[2];
+    window.SSA.atises[0] = letter;
+    if (k.length > 3) {
+      let text = k.slice(3).join("");
+      // Additional tokens after first space append to free text with a space prefix.
+      if (parts.length > 1) text += " " + parts.slice(1).join(" ");
+      window.SSA.gentexts[0] = text;
+    }
+    return;
+  }
+  // F 2 ATPA[ <vol>] E|I  (cs:1932-2023)
+  // F 2 2.5 <vol> E|I  (cs:2024-2086)
+  if (sub === "2") {
+    const rest = k.slice(2).join("");
+    if (rest.startsWith("ATPA")) {
+      const atpa = window.starsState.ATPA ||= { Active: false, Volumes: [] };
+      if (rest.length === 5) {
+        const op = rest[4];
+        if (atpa.Volumes.length === 0) { setResponse("ILL FNCT"); return; }
+        if (op === "E") {
+          if (atpa.Active) { setResponse("NO CHANGE"); return; }
+          atpa.Active = true; return;
+        }
+        if (op === "I") {
+          if (!atpa.Active) { setResponse("NO CHANGE"); return; }
+          atpa.Active = false; return;
+        }
+        setResponse("FORMAT"); return;
+      }
+      if (rest.length >= 6 && rest.length <= 10) {
+        if (!atpa.Active) { setResponse("ILL FNCT"); return; }
+        const op = rest[rest.length - 1];
+        const volname = rest.substring(4, rest.length - 1);
+        const vols = atpa.Volumes.filter(v => v.VolumeId === volname);
+        if (vols.length !== 1) { setResponse("ILL VOL"); return; }
+        const vol = vols[0];
+        if (op === "E") {
+          if (vol.Active) { setResponse("NO CHANGE"); return; }
+          vol.Active = true; return;
+        }
+        if (op === "I") {
+          if (!vol.Active) { setResponse("NO CHANGE"); return; }
+          vol.Active = false; return;
+        }
+        setResponse("FORMAT"); return;
+      }
+    }
+    if (rest.startsWith("2.5")) {
+      const atpa = window.starsState.ATPA ||= { Active: false, Volumes: [] };
+      if (!atpa.Active) { setResponse("ILL FNCT"); return; }
+      if (rest.length >= 5 && rest.length <= 9) {
+        const op = rest[rest.length - 1];
+        const volname = rest.substring(3, rest.length - 1);
+        const vols = atpa.Volumes.filter(v => v.VolumeId === volname && v.Active);
+        if (vols.length !== 1) { setResponse("ILL VOL"); return; }
+        const vol = vols[0];
+        if (!vol.TwoPointFiveEnabled) { setResponse("ILL FNCT"); return; }
+        if (op === "E") {
+          if (vol.TwoPointFiveActive) { setResponse("NO CHANGE"); return; }
+          vol.TwoPointFiveActive = true; return;
+        }
+        if (op === "I") {
+          if (!vol.TwoPointFiveActive) { setResponse("NO CHANGE"); return; }
+          vol.TwoPointFiveActive = false; return;
+        }
+        setResponse("FORMAT"); return;
+      }
+      setResponse("FORMAT"); return;
+    }
+    setResponse("FORMAT");
+    return;
+  }
+  // F Y <FLID> <scratchpad>  - typed FLID variant (cs:2481-2520)
+  if (sub === "Y" && !clickedplane && parts.length === 2) {
+    const planestring = k.slice(2).join("");
+    const planes = [];
+    for (const t of tracks.values()) {
+      const fp = trackToFp.get(t.Guid);
+      if (fp?.Callsign?.trim() === planestring) planes.push({ t, fp });
+      else if (fp?.AssignedSquawk?.trim() === planestring) planes.push({ t, fp });
+    }
+    if (planes.length !== 1) { setResponse("NO FLIGHT"); return; }
+    const { fp } = planes[0];
+    const tok = parts[1];
+    if (tok.startsWith("+") && tok.length >= 2 && tok.length <= 5) {
+      fp.Scratchpad2 = tok.slice(1);
+      return;
+    }
+    if (!tok.startsWith("+") && tok.length >= 1 && tok.length <= 4) {
+      fp.Scratchpad1 = tok;
+      return;
+    }
+    setResponse("FORMAT");
+    return;
+  }
+}
+
+// Geo helpers used by F D *.
+function geoToDms(geo) {
+  const fmt = (deg, posCh, negCh) => {
+    const ch = deg >= 0 ? posCh : negCh;
+    const v = Math.abs(deg);
+    const d = Math.floor(v);
+    const m = Math.floor((v - d) * 60);
+    const s = ((v - d) * 60 - m) * 60;
+    return `${ch}${String(d).padStart(2,"0")}${String(m).padStart(2,"0")}${s.toFixed(2).padStart(5,"0")}`;
+  };
+  return `${fmt(geo.lat, "N", "S")} ${fmt(geo.lon, "E", "W")}`;
 }
 
 // ── ProcessImpliedCommand (RadarWindow.cs:2688-2769) ─────────────────────

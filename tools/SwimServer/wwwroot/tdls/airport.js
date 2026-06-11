@@ -1,14 +1,17 @@
 const AIRPORT = location.pathname.split('/').pop().toUpperCase();
-document.getElementById('airport-title').textContent = `TDLS  ${AIRPORT}`;
+document.getElementById('airport-title').textContent = AIRPORT;
 document.title = `TDLS ${AIRPORT} | swim.vncrcc.org`;
 
 let state = {}; // aircraftId → { aircraftId, acType, destination, beaconCode, messageCount, lastSeen, messages:[] }
 let selectedAc = null;
+let searchQuery = '';
 
 const acListEl = document.getElementById('ac-list');
 const detailEl = document.getElementById('detail');
 const statsEl  = document.getElementById('stats');
 const statusEl = document.getElementById('status');
+const searchEl = document.getElementById('ac-search');
+const clearEl = document.getElementById('ac-search-clear');
 
 // ── WebSocket ──────────────────────────────────────────────────
 let ws = null;
@@ -81,11 +84,21 @@ function handleNewMessages(messages) {
 
 // ── Render aircraft list ───────────────────────────────────────
 function renderAcList(flashIds) {
-    const sorted = Object.values(state).sort((a, b) => {
+    let sorted = Object.values(state).sort((a, b) => {
         const ta = new Date(a.lastSeen).getTime();
         const tb = new Date(b.lastSeen).getTime();
         return tb - ta;
     });
+
+    // Filter by search query
+    const query = searchQuery.toLowerCase();
+    if (query) {
+        sorted = sorted.filter(ac =>
+            ac.aircraftId.toLowerCase().includes(query) ||
+            (ac.acType && ac.acType.toLowerCase().includes(query)) ||
+            (ac.destination && ac.destination.toLowerCase().includes(query))
+        );
+    }
 
     const totalMsg = sorted.reduce((s, a) => s + a.messageCount, 0);
     statsEl.textContent = `${sorted.length} acft  •  ${totalMsg} msg`;
@@ -248,6 +261,30 @@ function fmtTimeShort(iso) {
 function escHtml(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+// ── Search ────────────────────────────────────────────────────
+searchEl.addEventListener('input', (ev) => {
+    searchQuery = ev.target.value;
+    clearEl.style.display = searchQuery ? 'flex' : 'none';
+    renderAcList();
+});
+
+clearEl.addEventListener('click', () => {
+    searchEl.value = '';
+    searchQuery = '';
+    clearEl.style.display = 'none';
+    renderAcList();
+    searchEl.focus();
+});
+
+// ── Keyboard shortcuts ─────────────────────────────────────────
+document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && selectedAc) {
+        selectedAc = null;
+        renderAcList();
+        renderDetail(null);
+    }
+});
 
 // ── Init ───────────────────────────────────────────────────────
 window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } };

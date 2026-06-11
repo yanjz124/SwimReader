@@ -7,7 +7,7 @@ let haloTid = null; // trackId of currently highlighted halo
 
 document.addEventListener('mousemove', e => {
     // Hide crosshair if over status bar, UI panels, or popups
-    const overUI = e.target.closest('.nav-home, #statusbar, #gatecode-popup, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay');
+    const overUI = e.target.closest('.nav-home, #statusbar, #gatecode-popup, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay, #zulu-clock, #cmd-overlay, #fp-popup');
     
     if (overUI) {
         ch.style.display = 'none';
@@ -208,7 +208,8 @@ const map = L.map('map', {
     zoomDelta: 0.25,
     attributionControl: false,
     dragging: false,
-    doubleClickZoom: false
+    doubleClickZoom: false,
+    keyboard: false
 });
 
 // Right-click drag panning
@@ -249,9 +250,13 @@ const ASDEX_DAY = {
     apron:     'rgb(73,73,73)',
     structure: 'rgb(100,100,100)'
 };
-let asdexColors = ASDEX_NIGHT;
-let isNightMode = true;
+const _hour = new Date().getHours();
+let isNightMode = _hour < 8 || _hour >= 19;
+let asdexColors = isNightMode ? ASDEX_NIGHT : ASDEX_DAY;
 let surfaceLayer = null;
+document.getElementById('map').style.background = asdexColors.bg;
+document.body.style.background = asdexColors.bg;
+document.getElementById('dn-toggle').textContent = isNightMode ? 'NIGHT' : 'DAY';
 
 // ── Load airport surface GeoJSON ────────────────────────────────────────────
 let surfaceLoaded = false;
@@ -300,16 +305,34 @@ let   centeredOnce = false;
 
 // ── Data block positions (8 compass points) ─────────────────────────────────
 const DB_ORDERS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-const DB_POS = {
-    N:  { wl: -5,  wt: -43, lx: 9,   ly: -16 },
-    NE: { wl: 26,  wt: -24, lx: 26,  ly: -8 },
-    E:  { wl: 26,  wt: -7,  lx: 26,  ly: 9 },
-    SE: { wl: 26,  wt: 10,  lx: 26,  ly: 26 },
-    S:  { wl: -5,  wt: 33,  lx: 9,   ly: 30 },
-    SW: { wl: -83, wt: 10,  lx: -8,  ly: 26 },
-    W:  { wl: -83, wt: -7,  lx: -8,  ly: 9 },
-    NW: { wl: -83, wt: -24, lx: -8,  ly: -8 },
-};
+
+// Geometry: aircraft center in ac-icon coords = (CX, CY).
+// lx/ly = leader line tip. wl/wt = db-wrap top-left. tf = CSS transform that
+// anchors the correct edge/corner of the db to the (wl, wt) point so the gap
+// between leader tip and nearest db edge is uniform (GAP px) in every direction.
+(function () {
+    const CX = 9, CY = 9, LDR = 22, GAP = 0;
+    const D = Math.round(LDR / Math.SQRT2); // diagonal component ≈ 10
+    window.DB_POS = {
+        N:  { lx: CX,     ly: CY-LDR, wl: CX,     wt: CY-LDR-GAP, tf: 'translate(-50%,-100%)' },
+        NE: { lx: CX+D,   ly: CY-D,   wl: CX+D+GAP, wt: CY-D-GAP, tf: 'translate(0,-100%)' },
+        E:  { lx: CX+LDR, ly: CY,     wl: CX+LDR+GAP, wt: CY,     tf: 'translate(0,-50%)' },
+        SE: { lx: CX+D,   ly: CY+D,   wl: CX+D+GAP, wt: CY+D+GAP, tf: 'translate(0,0)' },
+        S:  { lx: CX,     ly: CY+LDR, wl: CX,     wt: CY+LDR+GAP, tf: 'translate(-50%,0)' },
+        SW: { lx: CX-D,   ly: CY+D,   wl: CX-D-GAP, wt: CY+D+GAP, tf: 'translate(-100%,0)' },
+        W:  { lx: CX-LDR, ly: CY,     wl: CX-LDR-GAP, wt: CY,     tf: 'translate(-100%,-50%)' },
+        NW: { lx: CX-D,   ly: CY-D,   wl: CX-D-GAP, wt: CY-D-GAP, tf: 'translate(-100%,-100%)' },
+    };
+})();
+
+// Apply a DB_POS entry to a db-wrap element.
+function setWrap(wrap, pos, forceVisible) {
+    wrap.style.left      = pos.wl + 'px';
+    wrap.style.top       = pos.wt + 'px';
+    wrap.style.transform = pos.tf;
+    if (forceVisible) wrap.style.display = '';
+}
+
 const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
 const hiddenDbs = new Set();  // trackIds with hidden data blocks
 
@@ -330,13 +353,146 @@ function hideLdrOverlay() {
     ldrOverlay.style.display = 'none';
 }
 
+// ── Command input (.FP etc.) ─────────────────────────────────────────────────
+const cmdOverlay = document.getElementById('cmd-overlay');
+let cmdText = '';
+
+function showCmd() {
+    cmdOverlay.textContent = cmdText + '_';
+    cmdOverlay.style.display = 'block';
+}
+function hideCmd() {
+    cmdText = '';
+    cmdOverlay.style.display = 'none';
+}
+
+function lookupTrack(acid) {
+    const up = acid.toUpperCase();
+    return Object.values(trackData).find(t => t.callsign && t.callsign.toUpperCase() === up) || null;
+}
+
+// True when the user has typed .FP (with optional trailing space) and hasn't yet provided an ACID —
+// meaning a click on a target should fill in the aircraft.
+function isPendingFpClick() {
+    if (!cmdText) return false;
+    const parts = cmdText.trim().toUpperCase().split(/\s+/);
+    return parts[0] === '.FP' && parts.length === 1;
+}
+
+function openFpPopup(t) {
+    const pop    = document.getElementById('fp-popup');
+    const title  = document.getElementById('fp-title');
+    const fields = document.getElementById('fp-fields');
+    const rte    = document.getElementById('fp-rte');
+
+    const cs      = t.callsign || '???';
+    const dep     = t.origin   || '—';
+    const dest    = t.dest     || '—';
+    const type    = t.acType   || '—';
+    const wake    = t.wake     || '—';
+    const bcn     = t.squawk   || '—';
+    const route   = t.route    || '';
+    const star    = t.star     || '';
+    const rteText = [route, star].filter(Boolean).join(' ') || '—';
+
+    title.textContent = cs;
+
+    const cols = [
+        { hdr: 'AID',  val: cs,   hi: true },
+        { hdr: 'BCN',  val: bcn },
+        { hdr: 'TYP',  val: type, hi: true },
+        { hdr: 'WAKE', val: wake },
+        { hdr: 'DEP',  val: dep,  hi: true },
+        { hdr: 'DEST', val: dest, hi: true },
+    ];
+
+    fields.innerHTML = `<table class="fp-tbl"><thead><tr>${
+        cols.map(c => `<th>${c.hdr}</th>`).join('')
+    }</tr></thead><tbody><tr>${
+        cols.map(c => `<td${c.hi ? ' class="hi"' : ''}>${c.val}</td>`).join('')
+    }</tr></tbody></table>`;
+
+    rte.innerHTML = `<span class="fp-rte-lbl">RTE</span><span>${rteText}</span>`;
+
+    pop.style.display = 'block';
+}
+
+// Draggable FP popup
+(function () {
+    const pop = document.getElementById('fp-popup');
+    const bar = document.getElementById('fp-titlebar');
+    let dragging = false, ox = 0, oy = 0;
+    bar.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        dragging = true;
+        const r = pop.getBoundingClientRect();
+        ox = e.clientX - r.left;
+        oy = e.clientY - r.top;
+        e.stopPropagation();
+    });
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        pop.style.left = (e.clientX - ox) + 'px';
+        pop.style.top  = (e.clientY - oy) + 'px';
+    });
+    document.addEventListener('mouseup', () => { dragging = false; });
+    document.getElementById('fp-close').addEventListener('click', () => {
+        pop.style.display = 'none';
+    });
+})();
+
 document.addEventListener('keydown', e => {
     // Don't intercept if typing in an input field
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
     if (e.key === 'Escape') {
+        if (cmdText)                { hideCmd();        e.preventDefault(); return; }
         if (pendingLdrDir !== null) { hideLdrOverlay(); e.preventDefault(); }
         return;
     }
+
+    // Command input mode — active once first char is '.'
+    if (cmdText) {
+        if (e.key === 'Backspace') {
+            cmdText = cmdText.slice(0, -1);
+            if (!cmdText) hideCmd(); else showCmd();
+            e.preventDefault();
+            return;
+        }
+        if (e.key === 'Enter') {
+            const parts = cmdText.trim().toUpperCase().split(/\s+/);
+            if (parts[0] === '.FP' && parts[1]) {
+                const t = lookupTrack(parts[1]);
+                if (t) openFpPopup(t);
+            }
+            hideCmd();
+            e.preventDefault();
+            return;
+        }
+        if (e.key.length === 1) {
+            cmdText += e.key.toUpperCase();
+            showCmd();
+            e.preventDefault();
+            return;
+        }
+        return;
+    }
+
+    // Backspace clears pending LDR DIR
+    if (e.key === 'Backspace' && pendingLdrDir !== null) {
+        hideLdrOverlay();
+        e.preventDefault();
+        return;
+    }
+
+    // Start command on '.'
+    if (e.key === '.') {
+        cmdText = '.';
+        showCmd();
+        e.preventDefault();
+        return;
+    }
+
     const digit = parseInt(e.key);
     if (digit >= 1 && digit <= 9) {
         pendingLdrDir = digit;
@@ -385,7 +541,7 @@ document.addEventListener('mousemove', e => {
     if (!iconEl) return;
     const pos = DB_POS[dir];
     const wrap = iconEl.querySelector('.db-wrap');
-    if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; }
+    if (wrap) setWrap(wrap, pos, false);
     const line = iconEl.querySelector('.ldr line');
     if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
 });
@@ -437,7 +593,7 @@ document.addEventListener('touchmove', e => {
     if (!iconEl) return;
     const pos = DB_POS[dir];
     const wrap = iconEl.querySelector('.db-wrap');
-    if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; }
+    if (wrap) setWrap(wrap, pos, false);
     const line = iconEl.querySelector('.ldr line');
     if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
     e.preventDefault();
@@ -471,7 +627,7 @@ document.addEventListener('touchend', e => {
         if (iconEl) {
             const pos = DB_POS[dir];
             const wrap = iconEl.querySelector('.db-wrap');
-            if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; wrap.style.display = ''; }
+            if (wrap) setWrap(wrap, pos, true);
             const line = iconEl.querySelector('.ldr line');
             if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
             const ldr = iconEl.querySelector('.ldr');
@@ -526,6 +682,15 @@ document.addEventListener('click', e => {
         return;
     }
 
+    // .FP click-pick mode: open flight plan for clicked aircraft
+    if (isPendingFpClick()) {
+        const t = trackData[bestTid];
+        if (t && t.callsign) openFpPopup(t);
+        hideCmd();
+        e.preventDefault();
+        return;
+    }
+
     // LDR DIR mode: apply numpad position instead of toggling visibility
     if (pendingLdrDir !== null) {
         const dir = NUMPAD_TO_DIR[pendingLdrDir];
@@ -539,7 +704,7 @@ document.addEventListener('click', e => {
         if (iconEl) {
             const pos = DB_POS[dir];
             const wrap = iconEl.querySelector('.db-wrap');
-            if (wrap) { wrap.style.left = pos.wl + 'px'; wrap.style.top = pos.wt + 'px'; wrap.style.display = ''; }
+            if (wrap) setWrap(wrap, pos, true);
             const line = iconEl.querySelector('.ldr line');
             if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
             const ldr = iconEl.querySelector('.ldr');
@@ -670,20 +835,42 @@ function routeSnippet(route, origin, dest) {
 }
 
 function renderFlightList() {
+    const lid = AIRPORT.replace(/^K/, '');  // KDCA → DCA
+    const icao = AIRPORT;
+
     const tracks = Object.values(trackData)
         .filter(t => t.callsign && t.tgtType !== 'vehicle' && t.tgtType !== 'unknown')
         .sort((a, b) => (a.callsign || '').localeCompare(b.callsign || ''));
+
+    const departures = tracks.filter(t => t.origin === lid || t.origin === icao);
+    const arrivals   = tracks.filter(t => t.dest   === lid || t.dest   === icao);
+    const other      = tracks.filter(t =>
+        (t.origin !== lid && t.origin !== icao) &&
+        (t.dest   !== lid && t.dest   !== icao));
+
     document.getElementById('fl-count').textContent = tracks.length + ' aircraft';
-    const tbody = document.getElementById('fl-tbody');
-    let html = '';
-    for (const t of tracks) {
-        const cs = t.callsign || '';
-        const dep = t.origin || '';
-        const arr = t.dest || '';
-        const rte = routeSnippet(t.route, dep, arr);
-        html += `<tr data-tid="${t.trackId}"><td class="fl-cs">${cs}</td><td class="fl-apt">${dep}</td><td class="fl-apt">${arr}</td><td class="fl-route">${rte}</td></tr>`;
+
+    const COLS = `<colgroup><col style="width:7em"><col style="width:3.5em"><col style="width:3.5em"><col></colgroup>`;
+    const THEAD = `<tr><th>CALLSIGN</th><th>DEP</th><th>ARR</th><th>ROUTE</th></tr>`;
+
+    function sectionHtml(label, color, list) {
+        if (!list.length) return '';
+        let h = `<tr class="fl-section-hdr"><td colspan="4" style="color:${color};padding:4px 6px 2px;border-bottom:1px solid #333;font-size:10px">${label} (${list.length})</td></tr>`;
+        h += THEAD;
+        for (const t of list) {
+            const cs  = t.callsign || '';
+            const dep = t.origin || '';
+            const arr = t.dest || '';
+            const rte = routeSnippet(t.route, dep, arr);
+            h += `<tr data-tid="${t.trackId}"><td class="fl-cs">${cs}</td><td class="fl-apt">${dep}</td><td class="fl-apt">${arr}</td><td class="fl-route">${rte}</td></tr>`;
+        }
+        return h;
     }
-    tbody.innerHTML = html;
+
+    document.getElementById('fl-tbody').innerHTML =
+        sectionHtml('DEPARTURES', '#00cc88', departures) +
+        sectionHtml('ARRIVALS',   '#4488ff', arrivals)   +
+        sectionHtml('OTHER',      '#888',    other);
 }
 
 document.getElementById('fl-toggle').onclick = () => {
@@ -711,7 +898,8 @@ document.getElementById('fl-tbody').addEventListener('click', (e) => {
 const hbPanel = document.getElementById('holdbar-panel');
 const hbBtn = document.getElementById('hb-toggle');
 let hbVisible = false;
-let holdbarOverlayVisible = true;
+let holdbarOverlayVisible = localStorage.getItem('asdex-holdbars') === 'on';
+hbBtn.style.color = holdbarOverlayVisible ? '#ff8c00' : '#ccc';
 
 hbBtn.onclick = (e) => {
     if (e.shiftKey) {
@@ -721,6 +909,7 @@ hbBtn.onclick = (e) => {
     } else {
         // Normal click: toggle holdbar overlay on map
         holdbarOverlayVisible = !holdbarOverlayVisible;
+        localStorage.setItem('asdex-holdbars', holdbarOverlayVisible ? 'on' : 'off');
         if (holdbarLayerGroup) {
             if (holdbarOverlayVisible) holdbarLayerGroup.addTo(map);
             else map.removeLayer(holdbarLayerGroup);
@@ -749,11 +938,12 @@ Promise.all([
 ]).then(([geojson, bitMap]) => {
     if (!geojson) { console.warn('[HOLDBAR] No GeoJSON for this airport'); return; }
     holdbarLines = geojson.features.filter(f => f.geometry.type === 'LineString');
-    holdbarLayerGroup = L.layerGroup().addTo(map);
+    holdbarLayerGroup = L.layerGroup();
+    if (holdbarOverlayVisible) holdbarLayerGroup.addTo(map);
     for (const feat of holdbarLines) {
         const coords = feat.geometry.coordinates.map(c => [c[1], c[0]]);
         const layer = L.polyline(coords, {
-            color: '#555', weight: 0.5, opacity: 0.4, interactive: false,
+            color: '#555', weight: 1, opacity: 0.4, interactive: false,
             pane: 'holdbar'
         });
         holdbarLayers.push(layer);
@@ -793,31 +983,39 @@ function parseHoldbarBits(hex) {
 
 function applyHoldbarToMap(data) {
     const bits = parseHoldbarBits(data.status || '');
-
-    holdbarLayerGroup.clearLayers();
-    let litCount = 0;
-    const litLines = new Set(); // line indices that are lit green
+    const litLines = new Set();
 
     if (holdbarBitMap) {
-        // Use learned mapping: bit position → line index
+        // Use learned mapping: bit position → seed line index
         for (const [bitStr, lineIdx] of Object.entries(holdbarBitMap)) {
             const bitPos = parseInt(bitStr);
             if (bitPos < bits.length && bits[bitPos] && lineIdx < holdbarLines.length) {
                 litLines.add(lineIdx);
             }
         }
+        // Propagate: hold bars activate per runway, so when any line on runway X is lit,
+        // light ALL lines tagged with that runwayId (each intersection along the runway)
+        if (litLines.size > 0) {
+            const litRunways = new Set();
+            for (const li of litLines) {
+                const rwy = holdbarLines[li].properties?.runwayId;
+                if (rwy) litRunways.add(rwy);
+            }
+            for (let li = 0; li < holdbarLines.length; li++) {
+                const rwy = holdbarLines[li].properties?.runwayId;
+                if (rwy && litRunways.has(rwy)) litLines.add(li);
+            }
+        }
     }
 
-    // Render all lines (green if lit, grey otherwise)
-    for (let li = 0; li < holdbarLines.length; li++) {
+    // Update existing layer styles in-place — never clear/re-add, which causes tearing mid-drag
+    let litCount = 0;
+    for (let li = 0; li < holdbarLayers.length; li++) {
         const on = litLines.has(li);
         if (on) litCount++;
-        const coords = holdbarLines[li].geometry.coordinates.map(c => [c[1], c[0]]);
-        const layer = L.polyline(coords, on
-            ? { color: '#00cc00', weight: 0.5, opacity: 1, interactive: false, pane: 'holdbar' }
-            : { color: '#555', weight: 0.5, opacity: 0.4, interactive: false, pane: 'holdbar' });
-        holdbarLayers[li] = layer;
-        holdbarLayerGroup.addLayer(layer);
+        holdbarLayers[li].setStyle(on
+            ? { color: '#00cc00', opacity: 1 }
+            : { color: '#555', opacity: 0.4 });
     }
 
     const activeBits = bits.map((b, i) => b ? i : -1).filter(i => i >= 0);
@@ -912,7 +1110,7 @@ function makeIcon(t) {
     const fix = dbShowFix ? (t.gateCode || '') : '';
 
     let dbHtml = '';
-    const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 1.25)}px`;
+    const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 0.87)}px`;
     if (cs && cat !== 'unknown') {
         if (cat !== 'vehicle') {
             // Line 1: {callsign} {altitude?} {sensors?}
@@ -939,7 +1137,7 @@ function makeIcon(t) {
     const html = `<div class="ac-icon" data-tid="${t.trackId}">
         <svg class="sym" width="18" height="18" viewBox="-9 -9 18 18" style="display:block"><circle cx="0" cy="0" r="14" fill="transparent"/>${symHtml}<circle class="halo" cx="0" cy="0" r="11" fill="none" stroke="#fff" stroke-width="1"/></svg>
         ${ldrHtml}
-        <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px${hideStyle}">${dbHtml}</div>
+        <div class="db-wrap" style="left:${pos.wl}px;top:${pos.wt}px;transform:${pos.tf}${hideStyle}">${dbHtml}</div>
     </div>`;
 
     return L.divIcon({ className: '', html, iconSize: [200, 18], iconAnchor: [9, 9] });
@@ -970,6 +1168,11 @@ function applyTrack(t) {
         markers[tid].setLatLng(ll);
         if (hashes[tid] !== h) {
             markers[tid].setIcon(makeIcon(t));
+            // setIcon replaces the DOM element — re-apply halo if this is the hovered track
+            if (tid === haloTid) {
+                const halo = markers[tid]?.getElement()?.querySelector('.halo');
+                if (halo) halo.style.opacity = '1';
+            }
         }
     }
     hashes[tid] = h;
@@ -994,6 +1197,59 @@ function centerOnTracks(tracks) {
     map.setView([lat, lon], 14);
     centeredOnce = true;
 }
+
+// ── Zulu clock ───────────────────────────────────────────────────────────────
+(function () {
+    const el = document.getElementById('zulu-clock');
+
+    function tick() {
+        const now = new Date();
+        const hh  = String(now.getUTCHours()).padStart(2, '0');
+        const mm  = String(now.getUTCMinutes()).padStart(2, '0');
+        const ss  = String(now.getUTCSeconds()).padStart(2, '0');
+        el.textContent = `${hh}${mm}/${ss}`;
+    }
+    tick();
+    setInterval(tick, 1000);
+
+    // Restore saved position (right-anchored default)
+    const saved = localStorage.getItem('asdex-clock-pos');
+    if (saved) {
+        try {
+            const { x, y } = JSON.parse(saved);
+            el.style.right = '';
+            el.style.left  = x + 'px';
+            el.style.top   = y + 'px';
+        } catch (_) {}
+    }
+
+    // Drag
+    let dragging = false, ox = 0, oy = 0;
+    el.addEventListener('mousedown', e => {
+        if (e.button !== 0) return;
+        dragging = true;
+        const r = el.getBoundingClientRect();
+        ox = e.clientX - r.left;
+        oy = e.clientY - r.top;
+        // Switch from CSS right-anchor to explicit left so drag math works
+        el.style.left  = r.left + 'px';
+        el.style.right = '';
+        e.stopPropagation();
+    });
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        el.style.left = (e.clientX - ox) + 'px';
+        el.style.top  = (e.clientY - oy) + 'px';
+    });
+    document.addEventListener('mouseup', e => {
+        if (!dragging) return;
+        dragging = false;
+        localStorage.setItem('asdex-clock-pos', JSON.stringify({
+            x: parseInt(el.style.left),
+            y: parseInt(el.style.top)
+        }));
+    });
+})();
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 let ws = null;

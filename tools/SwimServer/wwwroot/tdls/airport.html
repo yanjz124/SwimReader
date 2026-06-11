@@ -8,16 +8,29 @@
 <link rel="stylesheet" href="/tdls/airport.css?v=3">
 </head>
 <body>
-<a class="nav-home" href="/">&larr; HOME</a>
-<header style="padding-left:100px">
-    <a class="back" href="/tdls">◀ TDLS</a>
-    <h1 id="airport-title">TDLS</h1>
-    <div class="stats" id="stats"></div>
-    <div id="status">connecting...</div>
+<header>
+    <div class="header-left">
+        <a class="nav-home" href="/">&larr; HOME</a>
+        <a class="back" href="/tdls">◀ APTS</a>
+    </div>
+    <div class="header-center">
+        <h1 id="airport-title">KATL</h1>
+        <span class="header-label">TDLS</span>
+    </div>
+    <div class="header-right">
+        <div class="stats" id="stats"></div>
+        <div id="status">connecting...</div>
+    </div>
 </header>
 
 <div class="main">
-    <div class="ac-list" id="ac-list"></div>
+    <div style="display: flex; flex-direction: column; width: 200px; min-width: 200px; border-right: 1px solid #333; flex-shrink: 0;">
+        <div class="ac-search-container">
+            <input type="text" id="ac-search" placeholder="Search..." class="ac-search">
+            <button id="ac-search-clear" class="ac-search-clear" style="display: none;">✕</button>
+        </div>
+        <div class="ac-list" id="ac-list"></div>
+    </div>
     <div class="detail" id="detail">
         <div class="empty">Select an aircraft to view CPDLC messages</div>
     </div>

@@ -49,12 +49,12 @@ const prefSet = {
   AltitudeFilterUnAssociatedMax: 99900,
   AltitudeFilterUnAssociatedMin: -9900,
   LdbBeaconCodesInhibited: false,
-  // Defaults match typical DGScope profile values rather than 100. Profiles
-  // override these via applyProfile; URL `?b=...` further overrides per-category.
+  // PrefSet.cs:55-63 — every Brightness category defaults to 100. Profiles
+  // override via applyProfile; URL `?b=...` further overrides per-category.
   Brightness: {
-    DCB: 50, Background: 100, RangeRings: 20, Compass: 30,
-    VideoMapA: 75, VideoMapB: 25, DataBlock: 100,
-    Lists: 75, Position: 100, History: 60, Weather: 70,
+    DCB: 100, Background: 100, RangeRings: 100, Compass: 100,
+    VideoMapA: 100, VideoMapB: 100, DataBlock: 100,
+    Lists: 100, Position: 100, History: 100, Weather: 100,
   },
   // Per CRC § CHAR SIZE — 5 adjustable categories. Sizes here are in pixels.
   // The DCB CHAR SIZE submenu cycles each value in steps.

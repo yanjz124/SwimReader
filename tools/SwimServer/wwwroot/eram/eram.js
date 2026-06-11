@@ -23,9 +23,14 @@ let msgRate = 0;
 let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
-let ldbBrightness = 30;     // 0-100, opacity for LDB data blocks (0=hidden, 100=same as FDB)
+let ldbBrightness = 50;     // 0-100, opacity for LDB history symbols (data block brightness now controlled by PR/UNP TGT sliders)
+let scopeBckgrd = 50;       // 0-100, scope background brightness (BCKGRD DCB slider)
+let scopeBcklght = 90;      // 0-100, scope backlight brightness (BCKLGHT DCB slider)
+let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
+let replayActive = false;   // replay mode active (set by replay system IIFE)
+let replayCurrentTime = null; // ISO string of current replay position
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
 const quickLookDests = new Set();   // QL destinations — force FDB on flights to these airports (e.g. KCLT, KGSO)
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
@@ -40,6 +45,12 @@ const ldrLenOverrides = new Map(); // gufi → leader length level (0-3), defaul
 const driActive = new Map();       // gufi → 'J' (standard 5nm) or 'T' (reduced 3nm)
 const dwellLocked = new Set();     // GUFIs with persistent dwell emphasis (toggled via Field A click)
 const vciActive = new Set();       // GUFIs with VCI (Visual Communications Indicator) toggled on
+let codeButtonPressed = false;     // momentary CODE button state — show squawk codes when true
+let speedButtonPressed = false;    // momentary SPEED button state — show speed instead of handoff when true
+const activeTearoffs = new Map();  // btnKey → { floatingEl, buttonClone } — toolbar tearoff state
+const activeFloatingMenus = new Map(); // btnKey → { floatingMenuEl, anchorEl } — floating menu state
+let tearoffDeleteMode = false;  // when true, left-click marks for deletion, middle-click deletes
+const selectedTearoffsForDeletion = new Set();  // btnKey → marked for deletion
 
 // Controller-entered altitude overrides (QZ/QQ/QR commands)
 // Local wins when present; SWIM clears local override only when it sends a genuinely NEW different value
@@ -779,7 +790,7 @@ function setupNasrSlider(sliderId, labelId, layerKey, url, renderer) {
         nasrBrightness[layerKey] = parseInt(this.value);
         document.getElementById(labelId).textContent = nasrBrightness[layerKey];
         showNasrLayer(layerKey, url, renderer);
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
     });
 }
 setupNasrSlider('rng-jroutes', 'lbl-jroutes', 'jroutes', '/api/nasr/airways?type=hi', renderAirways);
@@ -797,7 +808,7 @@ document.getElementById('rng-airports').addEventListener('input', async function
         } catch (e) { console.warn('[NASR] airports:', e); }
     }
     drawOverlay();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('rng-centerlines').addEventListener('input', async function () {
@@ -810,7 +821,7 @@ document.getElementById('rng-centerlines').addEventListener('input', async funct
         } catch (e) { console.warn('[NASR] centerlines:', e); }
     }
     drawOverlay();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 // Procedure overlay — managed via .SID/.STAR/.PROC MCA commands
@@ -840,7 +851,7 @@ document.getElementById('rng-proc').addEventListener('input', function () {
             entry.layer.eachLayer(l => l.setStyle({ color: col }));
         }
     }
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 function clearProcOverlay() {
@@ -972,14 +983,14 @@ document.getElementById('sel-nxlvl').addEventListener('change', function () {
     const v = this.value;
     nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
     updateNexrad();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('rng-nx').addEventListener('input', function () {
     nexradBrightness = parseInt(this.value);
     document.getElementById('lbl-nx').textContent = nexradBrightness;
     if (nexradLayer) nexradLayer.setOpacity(nexradBrightness / 100);
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1466,13 +1477,19 @@ function buildMarkerHtml(f, cls) {
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
         vciActive.delete(f.gufi);
-        // Limited Data Block (2 lines) — no leader line, right next to target
+        // Limited Data Block (2-3 lines) — no leader line, right next to target
         const ldbOp = ldbBrightness / 100;
         const l1 = f.callsign || '???';
         const alt = f.reportedAltitude ?? f.assignedAltitude;
         const l2 = alt != null ? String(Math.round(alt / 100)).padStart(3, '0') : '';
         const dbCls = isEmrg ? ' emrg' : '';
-        html += `<div class="ac-db ldb${dbCls}" style="left:${Math.ceil(CHAR_W)}px; top:${-LINE_H}px; opacity:${ldbOp};">${l1}\n${l2}</div>`;
+        // Add third line with squawk code when CODE button is pressed
+        let ldbContent = `${l1}\n${l2}`;
+        if (codeButtonPressed) {
+            const squawk = f.squawk ? String(f.squawk).padStart(4, '0') : '    ';
+            ldbContent += `\n${squawk}`;
+        }
+        html += `<div class="ac-db ldb${dbCls}" style="left:${Math.ceil(CHAR_W)}px; top:${-LINE_H}px; opacity:${ldbOp};">${ldbContent}</div>`;
     }
     // ldbBrightness === 0 for LDB → no data block at all
 
@@ -1570,6 +1587,13 @@ function formatFdbHtml(f, cls) {
     html += `${showVci ? col0Vci : col0Hit}${l2}\n`;
     html += `${showR ? col0R : col0Sp}${l3}`;
     if (l4) html += `\n${col0Sp}${l4}`;
+    if (showPortalFence && (poInfo || showR)) {
+        const fenceColor = cls === 'emrg' ? '#ff4444' : '#d0d0d0';
+        // Use CSS ch/em units for sizing (matches actual font metrics) and SVG rendering for flicker-free strokes.
+        // top: 0 when no line 0; top: calc(1.25em + 1px) skips line 0 (1 line-height + ac-db top padding).
+        const topStyle = poInfo ? 'calc(1.25em + 3px)' : '2px';
+        html += `<svg style="position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:3ch;height:3.75em;overflow:visible;pointer-events:none;" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="100,0.5 0.5,0.5 0.5,100" fill="none" stroke="${fenceColor}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></svg>`;
+    }
     return html;
 }
 
@@ -1717,6 +1741,12 @@ function formatLine3(f, cls) {
     // Normal Field E: single-letter destination + 3-digit groundspeed, or just groundspeed
     const gsStr = destLetter && gs ? `${cid}${destLetter}${gs}` : gs ? `${cid} ${gs}` : cid;
 
+    // ── CODE button: show squawk code when pressed ──
+    if (codeButtonPressed) {
+        const squawk = f.squawk ? String(f.squawk).padStart(4, '0') : '    ';
+        return `${cid}${squawk}`;
+    }
+
     // ── ERAM Field E priority (per specification) ──
 
     // 1. Special squawk codes (highest priority, static display)
@@ -1726,6 +1756,15 @@ function formatLine3(f, cls) {
     if (f.squawk === '1276') return `${cid} ADIZ`;
     if (f.squawk === '7400') return `${cid} LLNK`;
     if (f.squawk === '7777') return `${cid} AFIO`;
+
+    // 1.5 SPEED button: show speed instead of handoff when pressed
+    if (speedButtonPressed) {
+        const hoEvt = hoEventType(f.handoffEvent);
+        if (hoEvt && f.handoffReceiving) {
+            // Flight has active handoff and SPEED button is pressed — show speed
+            return gsStr;
+        }
+    }
 
     // 2. Active handoff — flash in Field E (uses global flashTime so ALL tracks sync)
     //    H = proposed, O = accepted/executing, K = forced acceptance (/OK)
@@ -2118,7 +2157,7 @@ function rebuildSectorCheckboxes() {
                 demoteSectorFlights(this.value);
             }
             invalidateAllMarkers(); // immediately update R indicators and FDB/LDB
-            saveSettingsToUrl();
+            saveSettingsToLocalStorage();
         });
     });
 }
@@ -2169,7 +2208,7 @@ function flightHash(f, cls) {
     const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
     const coast = isCoasting(f) ? 1 : 0;
     const ais = f._altInitialSide || 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}`;
+    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}|${showPortalFence?1:0}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2642,13 +2681,13 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
     zoomToFacility(myFacility);
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('chk-facility-only').addEventListener('change', function () {
     facilityOnly = this.checked;
     invalidateAllMarkers();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('sel-histcount').addEventListener('change', function () {
@@ -2657,25 +2696,25 @@ document.getElementById('sel-histcount').addEventListener('change', function () 
         while (hist.length > MAX_HISTORY) hist.shift();
     }
     invalidateAllMarkers();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('rng-ldb-brightness').addEventListener('input', function () {
     ldbBrightness = parseInt(this.value);
     document.getElementById('lbl-ldb-brightness').textContent = ldbBrightness;
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('sel-vector').addEventListener('change', function () {
     vectorMinutes = parseInt(this.value);
     invalidateAllMarkers();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('sel-line4').addEventListener('change', function () {
     line4Mode = this.value;
     invalidateAllMarkers();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
@@ -2687,7 +2726,7 @@ for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
     document.getElementById(id).addEventListener('change', function () {
         setBoundaryBrightness(cat, parseInt(this.value));
         document.getElementById(lblId).textContent = this.value;
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
     });
 }
 
@@ -2695,18 +2734,43 @@ document.getElementById('chk-mapbg').addEventListener('change', function () {
     showMapBg = this.checked;
     if (showMapBg) tileLayer.addTo(map);
     else map.removeLayer(tileLayer);
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('chk-mca-kb').addEventListener('change', function () {
     document.getElementById('mca').classList.toggle('show-kb', this.checked);
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
+
+const chkMca = document.getElementById('chk-mca');
+const chkRa = document.getElementById('chk-ra');
+const chkTime = document.getElementById('chk-time');
+if (chkMca) {
+    chkMca.addEventListener('change', function () {
+        const mca = document.getElementById('mca');
+        if (mca) mca.style.display = this.checked ? 'block' : 'none';
+        saveSettingsToLocalStorage();
+    });
+}
+if (chkRa) {
+    chkRa.addEventListener('change', function () {
+        const ra = document.getElementById('ra');
+        if (ra) ra.style.display = this.checked ? 'block' : 'none';
+        saveSettingsToLocalStorage();
+    });
+}
+if (chkTime) {
+    chkTime.addEventListener('change', function () {
+        const timeView = document.getElementById('time-view');
+        if (timeView) timeView.style.display = this.checked ? 'block' : 'none';
+        saveSettingsToLocalStorage();
+    });
+}
 
 // Transp MCA: reserved for future use
 // document.getElementById('chk-transp-mca').addEventListener('change', function () {
 //     document.getElementById('map-container').classList.toggle('transp-mca', this.checked);
-//     saveSettingsToUrl();
+//     saveSettingsToLocalStorage();
 // });
 
 document.getElementById('btn-fullscreen').addEventListener('click', function () {
@@ -2720,18 +2784,272 @@ document.getElementById('btn-fullscreen').addEventListener('click', function () 
 document.getElementById('sel-fontsize').addEventListener('change', function () {
     fontSize = parseInt(this.value);
     updateFontSize();
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('inp-alt-low').addEventListener('change', function () {
     altFilterLow = parseInt(this.value) || 0;
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
 
 document.getElementById('inp-alt-high').addEventListener('change', function () {
     altFilterHigh = parseInt(this.value) || 999;
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 });
+
+function updateScopeBackground() {
+    const b = scopeBckgrd / 100;
+    const l = scopeBcklght / 100;
+    const blue = Math.floor(b * (82 + 45 * l));
+    const color = `rgb(0,0,${blue})`;
+    const lc = document.querySelector('.leaflet-container');
+    if (lc) lc.style.setProperty('background', color, 'important');
+
+    // Apply backlight to toolbar and floating tearoffs
+    const backlightFactor = 0.6 + (l * 0.5);
+    const toolbarPanel = document.getElementById('master-toolbar-container');
+    if (toolbarPanel) {
+        toolbarPanel.style.filter = `brightness(${backlightFactor})`;
+    }
+
+    // Apply backlight to tearoff button (visibility toggle)
+    const tearoffContainer = document.getElementById('tb-tearoff');
+    if (tearoffContainer) {
+        tearoffContainer.style.filter = `brightness(${backlightFactor})`;
+    }
+
+    // Update floating tearoff colors with backlight (floating menus inherit this since they're children)
+    for (const [, tearoff] of activeTearoffs) {
+        if (tearoff.floatingEl) {
+            tearoff.floatingEl.style.filter = `brightness(${backlightFactor})`;
+        }
+    }
+
+    updateToolbarBrightness();
+}
+
+function updateButtonBrightness() {
+    updateToolbarBrightness();
+}
+
+function updateBorderBrightness() {
+    try {
+        // Border brightness: 0-1, where 1=white, 0=black
+        const borderFactor = tbState.bright.border / 100;
+
+        // Create or update dynamic CSS for borders
+        let styleEl = document.getElementById('dynamic-border-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-border-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Interpolate border color from white (at 100) to black (at 0)
+        const borderColor = interpolateColor('#FFFFFF', borderFactor);
+
+        styleEl.textContent = `
+            .tb-btn {
+                border-top-color: ${borderColor} !important;
+                border-right-color: ${borderColor} !important;
+                border-bottom-color: ${borderColor} !important;
+                border-left-color: ${borderColor} !important;
+            }
+            .tb-btn .tb-tear { border-right-color: ${borderColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateToolbarBackgroundBrightness() {
+    try {
+        // Toolbar brightness: 0-1, where 1=#C5C5C5 (light gray), 0=black
+        const toolbarFactor = tbState.bright.toolbar / 100;
+
+        // Create or update dynamic CSS for toolbar background
+        let styleEl = document.getElementById('dynamic-toolbar-bg-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-toolbar-bg-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Interpolate toolbar background from light gray (at 100) to black (at 0)
+        const toolbarBgColor = interpolateColor('#C5C5C5', toolbarFactor);
+
+        styleEl.textContent = `
+            #master-toolbar-container { background-color: ${toolbarBgColor} !important; }
+            .tb-master-grid { background-color: ${toolbarBgColor} !important; }
+            .tb-submenu { background-color: ${toolbarBgColor} !important; }
+            .tb-side-bar { background-color: ${toolbarBgColor} !important; }
+            .tb-side-bar .tb-arrow-btn { background-color: ${toolbarBgColor} !important; }
+            .tb-side-bar .tb-arrow-btn:hover { background-color: ${interpolateColor('#D3D3D3', toolbarFactor)} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateTextBrightness() {
+    try {
+        // Text brightness: 0-1, where 1=#F3F3F3 (light gray/white), 0=black
+        const textFactor = tbState.bright.text / 100;
+
+        // Create or update dynamic CSS for text color
+        let styleEl = document.getElementById('dynamic-text-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-text-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Interpolate text color from light gray (at 100) to black (at 0)
+        const textColor = interpolateColor('#F3F3F3', textFactor);
+
+        styleEl.textContent = `
+            .tb-btn .tb-label { color: ${textColor} !important; }
+            .tb-btn .tb-value { color: ${textColor} !important; }
+            .tb-btn .tb-menu-ind { color: ${textColor} !important; }
+            #tb-tearoff-btn .tb-tearoff-label { color: ${textColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateToolbarBorderColor() {
+    try {
+        // Toolbar border brightness: 0-1, where 1=white, 0=black
+        const borderFactor = tbState.bright.tbBrdr / 100;
+
+        // Create or update dynamic CSS for toolbar border
+        let styleEl = document.getElementById('dynamic-toolbar-border-color');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-toolbar-border-color';
+            document.head.appendChild(styleEl);
+        }
+
+        // Interpolate border color from white (at 100) to black (at 0)
+        const borderColor = interpolateColor('#FFFFFF', borderFactor);
+
+        styleEl.textContent = `
+            #master-toolbar-container { border-bottom: 1px solid ${borderColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateCursorBrightness() {
+    try {
+        // Cursor brightness: 0-1, where 1=white, 0=black
+        const cursorFactor = tbState.bright.cursor / 100;
+
+        // Interpolate cursor stroke color from white (at 100) to black (at 0)
+        const cursorColor = interpolateColor('#FFFFFF', cursorFactor);
+
+        // Create dynamic CSS with updated cursor SVG
+        let styleEl = document.getElementById('dynamic-cursor-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-cursor-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Generate new SVG cursor with interpolated color
+        const cursorSvg = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='16' y1='9' x2='16' y2='12' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='16' y1='20' x2='16' y2='23' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='9' y1='16' x2='12' y2='16' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='20' y1='16' x2='23' y2='16' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Crect x='12' y='12' width='8' height='8' fill='none' stroke='${encodeURIComponent(cursorColor)}' stroke-width='1.3'/%3E%3C/svg%3E") 16 16, crosshair`;
+
+        styleEl.textContent = `
+            :root { --eram-cursor: ${cursorSvg}; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function interpolateColor(hexColor, factor) {
+    // Parse hex color (e.g., #00CD00 -> [0, 205, 0])
+    const r = parseInt(hexColor.slice(1, 3), 16);
+    const g = parseInt(hexColor.slice(3, 5), 16);
+    const b = parseInt(hexColor.slice(5, 7), 16);
+
+    // Interpolate toward black: color * factor + black * (1 - factor)
+    const newR = Math.round(r * factor);
+    const newG = Math.round(g * factor);
+    const newB = Math.round(b * factor);
+
+    return `rgb(${newR}, ${newG}, ${newB})`;
+}
+
+function updateToolbarBrightness() {
+    try {
+        // Button brightness: 0-1, where 1=full color, 0=black
+        const buttonFactor = tbState.bright.button / 100;
+
+        // Backlight factor: 0.6-1.0 range (affects tearoff color for floating buttons)
+        const backlightFactor = 0.6 + ((scopeBcklght / 100) * 0.5);
+
+        // Combined factor for floating tearoff colors
+        const combinedFactor = buttonFactor * backlightFactor;
+
+        // Create or update dynamic CSS for button backgrounds
+        let styleEl = document.getElementById('dynamic-button-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-button-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Define original button colors
+        const colors = {
+            'tb-green': '#00CD00',
+            'tb-blue': '#0000D4',
+            'tb-tan': '#DCA09B',
+            'tb-teal': '#00C7D1',
+            'tb-dark': '#000000',
+            'tb-toggle-grey': '#000000',
+            'tb-nosim': '#000066',
+            'tb-toggle-on': '#0000D4',
+            'tb-menu-open': '#DCA09B',
+        };
+
+        // Generate CSS with interpolated colors
+        let css = '';
+        for (const [className, color] of Object.entries(colors)) {
+            const interpolated = interpolateColor(color, buttonFactor);
+            css += `.tb-btn.${className} { background: ${interpolated} !important; }\n`;
+        }
+
+        // Toggle grey ON state (light gray)
+        css += `.tb-btn.tb-toggle-grey.tb-toggle-on { background: ${interpolateColor('#C7C7C7', buttonFactor)} !important; }\n`;
+
+        // Default button color
+        css += `.tb-btn { background: ${interpolateColor('#0000D4', buttonFactor)} !important; }\n`;
+
+        // Tearoff strip color (interpolate toward black with backlight)
+        const tearoffColor = interpolateColor('#FFFFA1', combinedFactor);
+        css += `.tb-btn .tb-tear { background: ${tearoffColor} !important; }\n`;
+
+        // Disabled tearoff strip color (interpolate grey toward black with backlight)
+        const disabledTearoffColor = interpolateColor('#C7C7C7', combinedFactor);
+        css += `.tb-btn .tb-tear.tb-tear-disabled { background: ${disabledTearoffColor} !important; }\n`;
+
+        // Toolbar toggle button (#tb-tearoff-btn) — green button that shows/hides the toolbar
+        const tearoffBtnColor = interpolateColor('#00CD00', buttonFactor);
+        css += `#tb-tearoff-btn { background: ${tearoffBtnColor} !important; }\n`;
+        css += `#tb-tearoff-btn:hover { background: ${tearoffBtnColor} !important; }\n`;
+
+        // Toolbar toggle button gold strip (affected by backlight like button tearoff strips)
+        const tearoffBtnGoldColor = interpolateColor('#FFFFA1', combinedFactor);
+        css += `#tb-tearoff-btn .tb-gold-strip { background: ${tearoffBtnGoldColor} !important; }\n`;
+
+        styleEl.textContent = css;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
 
 function updateFontSize() {
     CHAR_W = fontSize * 0.625;
@@ -3279,60 +3597,50 @@ setInterval(() => { if (selectedGufi) showFlightDetail(selectedGufi); }, 5000);
 // ════════════════════════════════════════════════════════════════════════════
 // URL-based settings persistence
 // ════════════════════════════════════════════════════════════════════════════
-function loadSettingsFromUrl() {
-    const params = new URLSearchParams(window.location.hash.slice(1));
-    myFacility = params.get('facility') || '';
-    const sectors = params.get('sectors');
-    mySectors = sectors ? new Set(sectors.split(',').filter(s => s)) : new Set();
-    if (params.has('fdb')) showFdb = params.get('fdb') !== '0';
-    if (params.has('history')) showHistory = params.get('history') !== '0';
-    if (params.has('histcount')) MAX_HISTORY = parseInt(params.get('histcount')) || 5;
-    if (params.has('vector')) vectorMinutes = parseInt(params.get('vector'));
-    if (params.has('bndbr')) {
-        const vals = params.get('bndbr').split(',').map(Number);
-        BOUNDARY_CATS.forEach((cat, i) => { if (!isNaN(vals[i])) boundaryBrightness[cat] = vals[i]; });
-    }
-    if (params.has('fontsize')) fontSize = parseInt(params.get('fontsize')) || 10;
-    if (params.has('altlow')) altFilterLow = parseInt(params.get('altlow')) || 0;
-    if (params.has('althigh')) altFilterHigh = parseInt(params.get('althigh')) || 999;
-    if (params.has('ldb')) ldbBrightness = parseInt(params.get('ldb'));
-    if (params.has('faconly')) facilityOnly = params.get('faconly') === '1';
-    if (params.has('mapbg')) showMapBg = params.get('mapbg') === '1';
-    if (params.has('kb')) {
-        document.getElementById('chk-mca-kb').checked = true;
-        document.getElementById('mca').classList.add('show-kb');
-    }
-    if (params.has('numinv')) {
-        document.getElementById('numpad-inverted').checked = false;
-    }
-    // Transp MCA: reserved for future use
-    // if (params.has('tmca')) {
-    //     document.getElementById('map-container').classList.toggle('transp-mca', true);
-    //     document.getElementById('chk-transp-mca').checked = true;
-    // }
-    if (params.has('nasrbr')) {
-        const vals = params.get('nasrbr').split(',').map(Number);
-        if (!isNaN(vals[0])) nasrBrightness.jroutes = vals[0];
-        if (!isNaN(vals[1])) nasrBrightness.vroutes = vals[1];
-        if (!isNaN(vals[2])) nasrBrightness.vors = vals[2];
-        if (!isNaN(vals[3])) nasrBrightness.airports = vals[3];
-        if (!isNaN(vals[4])) nasrBrightness.centerlines = vals[4];
-        if (!isNaN(vals[5])) nasrBrightness.proc = vals[5];
-    }
-    if (params.has('line4')) line4Mode = params.get('line4') || 'DEST';
-    if (params.has('nxlvl')) {
-        const v = params.get('nxlvl');
-        nexradLevel = v === '123' ? 3 : v === '23' ? 2 : v === '3' ? 1 : 0;
-    }
-    if (params.has('nxbr')) nexradBrightness = parseInt(params.get('nxbr'));
-    if (params.get('tb') === '0') window._tbVisible = false;
+function loadSettingsFromLocalStorage() {
+    try {
+        const saved = localStorage.getItem('eram-settings');
+        if (!saved) {
+            // No saved settings, but still need to apply rendering with defaults
+            updateScopeBackground();
+            return;
+        }
 
-    // Restore map position/zoom
-    if (params.has('lat') && params.has('lng') && params.has('z')) {
-        const lat = parseFloat(params.get('lat'));
-        const lng = parseFloat(params.get('lng'));
-        const z = parseInt(params.get('z'));
-        if (!isNaN(lat) && !isNaN(lng) && !isNaN(z)) map.setView([lat, lng], z);
+        const settings = JSON.parse(saved);
+
+        myFacility = settings.facility || '';
+        mySectors = new Set(settings.sectors || []);
+        if (settings.showFdb !== undefined) showFdb = settings.showFdb;
+        if (settings.showHistory !== undefined) showHistory = settings.showHistory;
+        if (settings.MAX_HISTORY !== undefined) MAX_HISTORY = settings.MAX_HISTORY;
+        if (settings.vectorMinutes !== undefined) vectorMinutes = settings.vectorMinutes;
+        if (settings.boundaryBrightness) Object.assign(boundaryBrightness, settings.boundaryBrightness);
+        if (settings.line4Mode) line4Mode = settings.line4Mode;
+        if (settings.showMapBg !== undefined) showMapBg = settings.showMapBg;
+        if (settings.fontSize !== undefined) fontSize = settings.fontSize;
+        if (settings.altFilterLow !== undefined) altFilterLow = settings.altFilterLow;
+        if (settings.altFilterHigh !== undefined) altFilterHigh = settings.altFilterHigh;
+        if (settings.ldbBrightness !== undefined) ldbBrightness = settings.ldbBrightness;
+        if (settings.facilityOnly !== undefined) facilityOnly = settings.facilityOnly;
+        if (settings.mcaKb !== undefined) document.getElementById('chk-mca-kb').checked = settings.mcaKb;
+        if (settings.numinv !== undefined) document.getElementById('numpad-inverted').checked = !settings.numinv;
+        if (settings.nasrBrightness) Object.assign(nasrBrightness, settings.nasrBrightness);
+        if (settings.nexradLevel !== undefined) nexradLevel = settings.nexradLevel;
+        if (settings.nexradBrightness !== undefined) nexradBrightness = settings.nexradBrightness;
+        if (settings.scopeBckgrd !== undefined) scopeBckgrd = settings.scopeBckgrd;
+        if (settings.scopeBcklght !== undefined) scopeBcklght = settings.scopeBcklght;
+        if (settings.tbVisible !== undefined) window._tbVisible = settings.tbVisible;
+
+        // Sync button state with restored global variables
+        tbState.bright.bckgrd = scopeBckgrd;
+        tbState.bright.bcklght = scopeBcklght;
+
+        // Restore map position/zoom
+        if (settings.mapCenter && settings.mapZoom !== undefined) {
+            map.setView([settings.mapCenter.lat, settings.mapCenter.lng], settings.mapZoom);
+        }
+    } catch (e) {
+        console.warn('Failed to load settings from localStorage:', e);
     }
 
     // Apply to UI controls
@@ -3380,49 +3688,46 @@ function loadSettingsFromUrl() {
         fetch('/api/nasr/centerlines').then(r => r.ok ? r.json() : null).then(d => { if (d) { centerlineData = d; drawOverlay(); } });
     }
     showBoundariesForFacility(myFacility);
+    updateScopeBackground();
 }
 
-function saveSettingsToUrl() {
-    const params = new URLSearchParams();
-    if (myFacility) params.set('facility', myFacility);
-    if (mySectors.size) params.set('sectors', [...mySectors].join(','));
-    if (!showFdb) params.set('fdb', '0');
-    if (!showHistory) params.set('history', '0');
-    if (MAX_HISTORY !== 5) params.set('histcount', MAX_HISTORY);
-    if (vectorMinutes !== 0) params.set('vector', vectorMinutes);
-    const brVals = BOUNDARY_CATS.map(c => boundaryBrightness[c]);
-    const defaultBr = [60, 60, 60, 30];
-    if (brVals.join(',') !== defaultBr.join(',')) params.set('bndbr', brVals.join(','));
-    if (line4Mode !== 'DEST') params.set('line4', line4Mode);
-    if (showMapBg) params.set('mapbg', '1');
-    // if (document.getElementById('chk-transp-mca').checked) params.set('tmca', '1');
-    if (fontSize !== 10) params.set('fontsize', fontSize);
-    if (altFilterLow !== 0) params.set('altlow', altFilterLow);
-    if (altFilterHigh !== 999) params.set('althigh', altFilterHigh);
-    if (ldbBrightness !== 30) params.set('ldb', ldbBrightness);
-    if (facilityOnly) params.set('faconly', '1');
-    if (document.getElementById('chk-mca-kb').checked) params.set('kb', '1');
-    if (!document.getElementById('numpad-inverted').checked) params.set('numinv', '1');
-    const nasrVals = [nasrBrightness.jroutes, nasrBrightness.vroutes, nasrBrightness.vors, nasrBrightness.airports, nasrBrightness.centerlines, nasrBrightness.proc];
-    const nasrDefaults = [0, 0, 15, 0, 0, 0];
-    if (nasrVals.join(',') !== nasrDefaults.join(',')) params.set('nasrbr', nasrVals.join(','));
-    if (nexradLevel !== 3) params.set('nxlvl', nexradLevel === 0 ? '0' : nexradLevel === 2 ? '23' : nexradLevel === 1 ? '3' : '123');
-    if (nexradBrightness !== 30) params.set('nxbr', nexradBrightness);
-    // Toolbar visibility (default on; tb=0 to hide)
-    if (!window._tbVisible) params.set('tb', '0');
-    // Replay state
-    if (replayActive && replayCurrentTime) {
-        params.set('replay', replayCurrentTime);
-        const spd = replaySpeedSel?.value;
-        if (spd && spd !== '1') params.set('rspd', spd);
+function saveSettingsToLocalStorage() {
+    const settings = {
+        facility: myFacility,
+        sectors: [...mySectors],
+        showFdb,
+        showHistory,
+        MAX_HISTORY,
+        vectorMinutes,
+        boundaryBrightness,
+        line4Mode,
+        showMapBg,
+        fontSize,
+        altFilterLow,
+        altFilterHigh,
+        ldbBrightness,
+        facilityOnly,
+        mcaKb: document.getElementById('chk-mca-kb')?.checked || false,
+        mcaVisible: document.getElementById('chk-mca')?.checked !== false,
+        raVisible: document.getElementById('chk-ra')?.checked !== false,
+        timeVisible: document.getElementById('chk-time')?.checked !== false,
+        numinv: !document.getElementById('numpad-inverted')?.checked,
+        nasrBrightness,
+        nexradLevel,
+        nexradBrightness,
+        scopeBckgrd,
+        scopeBcklght,
+        tbVisible: window._tbVisible,
+        tbState: { bright: tbState.bright },
+        // Map position/zoom
+        mapCenter: map.getCenter(),
+        mapZoom: map.getZoom()
+    };
+    try {
+        localStorage.setItem('eram-settings', JSON.stringify(settings));
+    } catch (e) {
+        console.warn('Failed to save settings to localStorage:', e);
     }
-    // Map position/zoom
-    const center = map.getCenter();
-    params.set('lat', center.lat.toFixed(4));
-    params.set('lng', center.lng.toFixed(4));
-    params.set('z', map.getZoom());
-    const hash = params.toString();
-    history.replaceState(null, '', hash ? '#' + hash : window.location.pathname);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -4930,7 +5235,7 @@ function processCommand(cmd) {
         }
 
         invalidateAllMarkers();
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
 
         feedback.unshift({ type: 'ok', text: 'ACCEPT' });
         if (myFacility) feedback.splice(1, 0, { type: 'info', text: `FAC: ${myFacility}` });
@@ -5032,7 +5337,7 @@ document.addEventListener('keydown', e => {
         const next = idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1];
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
         e.preventDefault(); return;
     }
     if (e.key === 'PageDown' && !e.ctrlKey) {
@@ -5040,7 +5345,7 @@ document.addEventListener('keydown', e => {
         const next = idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0];
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
         e.preventDefault(); return;
     }
 
@@ -5195,14 +5500,12 @@ document.addEventListener('mousedown', e => {
 
 // Re-clamp on window resize
 window.addEventListener('resize', () => {
-    clampBox(document.getElementById('mca-ra-stack'));
     const poMenu = document.getElementById('po-menu');
     if (poMenu.style.display !== 'none') clampBox(poMenu);
     clampBox(document.getElementById('time-view'));
     const fm = document.getElementById('field-menu');
     if (fm.style.display !== 'none') clampBox(fm);
-    const mtb = document.getElementById('master-toolbar-container');
-    if (mtb && mtb.classList.contains('tb-visible')) clampBox(mtb);
+    // Skip mca-ra-stack to prevent shifting its bottom/right positioned element
 });
 
 setupBoxDrag(document.getElementById('mca-ra-stack'));
@@ -5748,9 +6051,40 @@ document.getElementById('fm-body').addEventListener('auxclick', e => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+// Toolbar state (must be global for updateToolbarBrightness access, and BEFORE loadSettingsFromLocalStorage)
+// ════════════════════════════════════════════════════════════════════════════
+const tbState = {
+    masterVisible: false,
+    openMenu: null,       // currently open sub-menu id string
+    openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
+    // Brightness values (0-100) for buttons not yet wired
+    bright: {
+        bckgrd: 50, cursor: 100, text: 100, prTgtr: 50, unpTgt: 50,
+        prHist: 50, unpHist: 50, sldb: 50, bcklght: 90, button: 70,
+        border: 30, toolbar: 30, tbBrdr: 30, fdb: 50, portal: 50,
+        onFreq: 50, line4b: 50, dwell: 50, fence: 50,
+    },
+    // Cursor sub-menu
+    cursorSize: 1,
+};
+
+// Restore toolbar brightness state from localStorage (must be AFTER tbState is defined)
+try {
+    const saved = localStorage.getItem('eram-settings');
+    if (saved) {
+        const settings = JSON.parse(saved);
+        if (settings.tbState && settings.tbState.bright) {
+            Object.assign(tbState.bright, settings.tbState.bright);
+        }
+    }
+} catch (e) {
+    console.warn('Failed to restore toolbar brightness state:', e);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Init
 // ════════════════════════════════════════════════════════════════════════════
-loadSettingsFromUrl();
+loadSettingsFromLocalStorage();
 rebuildFacilityDropdown();
 rebuildSectorCheckboxes();
 
@@ -5758,7 +6092,7 @@ rebuildSectorCheckboxes();
 let _mapSaveTimer = null;
 map.on('moveend', () => {
     clearTimeout(_mapSaveTimer);
-    _mapSaveTimer = setTimeout(saveSettingsToUrl, 500);
+    _mapSaveTimer = setTimeout(saveSettingsToLocalStorage, 500);
 });
 
 window.idleOnPause = () => { if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; } };
@@ -5768,28 +6102,12 @@ document.getElementById('cmd-help-btn').onclick = () => {
     const p = document.getElementById('cmd-help-popup');
     p.style.display = p.style.display === 'block' ? 'none' : 'block';
 };
-document.getElementById('numpad-inverted').addEventListener('change', saveSettingsToUrl);
+document.getElementById('numpad-inverted').addEventListener('change', saveSettingsToLocalStorage);
 
 // ════════════════════════════════════════════════════════════════════════════
 // Master Toolbar System
 // ════════════════════════════════════════════════════════════════════════════
 (function () {
-
-// ── Toolbar state ──
-const tbState = {
-    masterVisible: false,
-    openMenu: null,       // currently open sub-menu id string
-    openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
-    // Brightness values (0-100) for buttons not yet wired
-    bright: {
-        bckgrd: 50, cursor: 50, text: 50, prTgtr: 50, unpTgt: 50,
-        prHist: 50, unpHist: 50, sldb: 50, bcklght: 50, button: 50,
-        border: 50, toolbar: 50, tbBrdr: 50, fdb: 50, portal: 50,
-        onFreq: 50, line4b: 50, dwell: 50, fence: 50,
-    },
-    // Cursor sub-menu
-    cursorSize: 1,
-};
 
 // ── Helper: approximate range NM from zoom ──
 function zoomToRange(z) {
@@ -5833,8 +6151,8 @@ function nxlvlLabel(val) {
 const FONT_STEPS = [8, 9, 10, 11, 12, 14];
 
 // ── Button spec builder helpers ──
-function nosim(label) { return { label, type: 'nosim' }; }
-function menu(label, menuId) { return { label, type: 'menu', menu: menuId }; }
+function nosim(label, opts) { return { label, type: 'nosim', ...opts }; }
+function menu(label, menuId, opts) { return { label, type: 'menu', menu: menuId, ...opts }; }
 function toggle(label, opts) { return { label, type: 'toggle', ...opts }; }
 function incdec(label, opts) { return { label, type: 'incdec', ...opts }; }
 function cmd(label, opts) { return { label, type: 'cmd', ...opts }; }
@@ -5846,9 +6164,15 @@ const TB_MASTER = {
     id: 'master',
     rows: [
         [
-            nosim('DRAW'),
+            toggle('DRAW', {
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             menu('ATC\nTOOLS', 'atc-tools'),
-            nosim('AB\nSETTING'),
+            toggle('AB\nSETTING', {
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             incdec('RANGE', {
                 cls: 'tb-dark',
                 getValue: () => zoomToRange(map.getZoom()),
@@ -5881,7 +6205,10 @@ const TB_MASTER = {
         [
             menu('VIEWS', 'views'),
             menu('CHECK\nLISTS', 'check-lists'),
-            nosim('COMMAND\nMENUS'),
+            toggle('COMMAND\nMENUS', {
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             menu('MAP', 'geomap'),
             incdec('ALT LIM', {
                 cls: 'tb-dark',
@@ -5895,10 +6222,27 @@ const TB_MASTER = {
                 onInc: () => {},
             }),
             menu('RADAR\nFILTER', 'radar-filter'),
-            nosim('PREFSET'),
+            toggle('PREFSET', {
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             cmd('DELETE\nTEAROFF', {
                 cls: 'tb-teal',
-                onCmd: () => { closeAllSubMenus(); },
+                onCmd: () => {
+                    // If exiting delete mode, clear any marked selections
+                    if (tearoffDeleteMode) {
+                        for (const key of selectedTearoffsForDeletion) {
+                            const tearoff = activeTearoffs.get(key);
+                            if (tearoff && tearoff.buttonClone) {
+                                tearoff.buttonClone.classList.remove('tb-delete-selected');
+                            }
+                        }
+                        selectedTearoffsForDeletion.clear();
+                    }
+                    tearoffDeleteMode = !tearoffDeleteMode;
+                    closeAllSubMenus();
+                    refreshAllButtons();
+                },
             }),
         ],
     ],
@@ -5912,8 +6256,16 @@ const TB_ATC_TOOLS = {
     id: 'atc-tools',
     rows: [
         [
-            { label: 'CRR FIX', type: 'toggle', nosim: true },
-            nosim('SPEED\nADVSRY'),
+            toggle('CRR FIX', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('SPEED\nADVSRY', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             menu('WX', 'weather'),
         ],
     ],
@@ -5944,9 +6296,21 @@ const TB_WEATHER = {
             }),
         ],
         [
-            { label: 'WX1', type: 'nosim', cls: 'tb-dark' },
-            { label: 'WX2', type: 'nosim', cls: 'tb-dark' },
-            { label: 'WX3', type: 'nosim', cls: 'tb-dark' },
+            toggle('WX1', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('WX2', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('WX3', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
     ],
 };
@@ -5955,26 +6319,98 @@ const TB_VIEWS = {
     id: 'views',
     rows: [
         [
-            { label: 'ALTIM\nSET', type: 'toggle', nosim: true },
-            nosim('AUTO HO\nINHIB'),
-            nosim('CFR'),
-            { label: 'CODE', type: 'toggle', nosim: true },
-            nosim('CONFLCT\nALERT'),
-            nosim('CPDLC\nADV'),
-            nosim('CPDLC\nHIST'),
-            nosim('CPDLC\nTOC SET'),
-            { label: 'CRR', type: 'toggle', nosim: true },
+            toggle('ALTIM\nSET', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('AUTO HO\nINHIB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CFR', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CODE', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CONFLCT\nALERT', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CPDLC\nADV', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CPDLC\nHIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CPDLC\nTOC SET', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CRR', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
         [
-            nosim('DEPT\nLIST'),
-            nosim('FLIGHT\nEVENT'),
-            nosim('GROUP\nSUP'),
-            nosim('HOLD\nLIST'),
-            nosim('INBND\nLIST'),
-            nosim('MRP\nLIST'),
-            nosim('SSA\nFILTER'),
-            nosim('UA'),
-            { label: 'WX\nREPORT', type: 'toggle', nosim: true },
+            toggle('DEPT\nLIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('FLIGHT\nEVENT', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('GROUP\nSUP', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('HOLD\nLIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('INBND\nLIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('MRP\nLIST', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('SSA\nFILTER', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('UA', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('WX\nREPORT', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
     ],
 };
@@ -5983,8 +6419,16 @@ const TB_CHECK_LISTS = {
     id: 'check-lists',
     rows: [
         [
-            { label: 'POS\nCHECK', type: 'toggle', nosim: true },
-            { label: 'EMERG\nCHECK', type: 'toggle', nosim: true },
+            toggle('POS\nCHECK', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('EMERG\nCHECK', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
     ],
 };
@@ -5993,15 +6437,27 @@ const TB_CURSOR = {
     id: 'cursor',
     rows: [
         [
-            nosim('SPEED'),
+            incdec('SPEED', {
+                cls: 'tb-green',
+                getValue: () => 0,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
             incdec('SIZE', {
-                nosim: true,
+                cls: 'tb-green',
                 getValue: () => tbState.cursorSize,
                 formatValue: v => String(v),
                 onDec: () => { tbState.cursorSize = Math.max(1, tbState.cursorSize - 1); },
                 onInc: () => { tbState.cursorSize = Math.min(5, tbState.cursorSize + 1); },
             }),
-            nosim('VOLUME'),
+            incdec('VOLUME', {
+                cls: 'tb-green',
+                getValue: () => 0,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
         ],
     ],
 };
@@ -6011,36 +6467,44 @@ const TB_GEOMAP = {
     rows: [
         [
             toggle('UHI', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-bnd-uhi') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-uhi', on ? 60 : 0),
             }),
             toggle('HI', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-bnd-hi') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-hi', on ? 60 : 0),
             }),
             toggle('LO', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-bnd-lo') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-lo', on ? 60 : 0),
             }),
             toggle('APP', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-bnd-app') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-app', on ? 60 : 0),
             }),
         ],
         [
             toggle('HI AWY', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-jroutes') > 0,
                 onToggle: (on) => setRangeVal('rng-jroutes', on ? 60 : 0),
             }),
             toggle('LO AWY', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-vroutes') > 0,
                 onToggle: (on) => setRangeVal('rng-vroutes', on ? 60 : 0),
             }),
             toggle('VORs', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-vors') > 0,
                 onToggle: (on) => setRangeVal('rng-vors', on ? 60 : 0),
             }),
             toggle('APTs', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-airports') > 0,
                 onToggle: (on) => setRangeVal('rng-airports', on ? 60 : 0),
             }),
@@ -6052,24 +6516,26 @@ const TB_BRIGHT = {
     id: 'bright',
     rows: [
         [
-            menu('MAP\nBRIGHT', 'map-bright'),
-            nosim('CPDLC'),
-            incdec('BCKGRD', { getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { tbState.bright.bckgrd = Math.max(0, tbState.bright.bckgrd - 10); }, onInc: () => { tbState.bright.bckgrd = Math.min(100, tbState.bright.bckgrd + 10); } }),
-            incdec('CURSOR', { getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); } }),
-            incdec('TEXT', { getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); } }),
-            incdec('PR TGT', { getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); } }),
-            incdec('UNP TGT', { getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); } }),
-            incdec('PR HST', { getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
-            incdec('UNP HST', { getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
+            menu('MAP\nBRIGHT', 'map-bright', { cls: 'tb-blue' }),
+            nosim('CPDLC', { cls: 'tb-blue' }),
+            incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
+            incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); updateCursorBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); updateCursorBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); saveSettingsToLocalStorage(); } }),
+            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); saveSettingsToLocalStorage(); } }),
+            incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
+            incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
             incdec('LDB', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-ldb-brightness'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-ldb-brightness', Math.max(0, getRangeVal('rng-ldb-brightness') - 10)),
                 onInc: () => setRangeVal('rng-ldb-brightness', Math.min(100, getRangeVal('rng-ldb-brightness') + 10)),
             }),
-            incdec('SLDB', { getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); } }),
+            incdec('SLDB', { cls: 'tb-green', getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); } }),
             nosim('WX'),
             incdec('NEXRAD', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-nx'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-nx', Math.max(0, getRangeVal('rng-nx') - 10)),
@@ -6077,19 +6543,19 @@ const TB_BRIGHT = {
             }),
         ],
         [
-            incdec('BCKLGHT', { getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { tbState.bright.bcklght = Math.max(0, tbState.bright.bcklght - 10); }, onInc: () => { tbState.bright.bcklght = Math.min(100, tbState.bright.bcklght + 10); } }),
-            incdec('BUTTON', { getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); } }),
-            incdec('BORDER', { getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); } }),
-            incdec('TOOLBAR', { getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); } }),
-            incdec('TB BRDR', { getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); } }),
+            incdec('BCKLGHT', { cls: 'tb-green', getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { scopeBcklght = Math.max(0, scopeBcklght - 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBcklght = Math.min(100, scopeBcklght + 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
+            incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); updateButtonBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); updateButtonBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); updateBorderBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); updateBorderBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); } }),
             nosim('AB BRDR'),
-            incdec('FDB', { getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
-            incdec('PORTAL', { getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
+            incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
+            incdec('PORTAL', { cls: 'tb-green', getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
             nosim('SATCOMM'),
-            incdec('ON-FREQ', { getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); } }),
-            incdec('LINE 4', { getValue: () => tbState.bright.line4b, formatValue: v => v, onDec: () => { tbState.bright.line4b = Math.max(0, tbState.bright.line4b - 10); }, onInc: () => { tbState.bright.line4b = Math.min(100, tbState.bright.line4b + 10); } }),
-            incdec('DWELL', { getValue: () => tbState.bright.dwell, formatValue: v => v, onDec: () => { tbState.bright.dwell = Math.max(0, tbState.bright.dwell - 10); }, onInc: () => { tbState.bright.dwell = Math.min(100, tbState.bright.dwell + 10); } }),
-            incdec('FENCE', { getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); } }),
+            incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); } }),
+            incdec('LINE 4', { cls: 'tb-green', getValue: () => tbState.bright.line4b, formatValue: v => v, onDec: () => { tbState.bright.line4b = Math.max(0, tbState.bright.line4b - 10); }, onInc: () => { tbState.bright.line4b = Math.min(100, tbState.bright.line4b + 10); } }),
+            incdec('DWELL', { cls: 'tb-green', getValue: () => tbState.bright.dwell, formatValue: v => v, onDec: () => { tbState.bright.dwell = Math.max(0, tbState.bright.dwell - 10); }, onInc: () => { tbState.bright.dwell = Math.min(100, tbState.bright.dwell + 10); } }),
+            incdec('FENCE', { cls: 'tb-green', getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); } }),
             nosim('DBFEL'),
             nosim('OUTAGE'),
         ],
@@ -6101,49 +6567,57 @@ const TB_MAP_BRIGHT = {
     parentMenu: 'bright',
     rows: [
         [
-            incdec('BCG 1', {
+            incdec('UHI', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-bnd-uhi'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-bnd-uhi', Math.max(0, getRangeVal('rng-bnd-uhi') - 10)),
                 onInc: () => setRangeVal('rng-bnd-uhi', Math.min(100, getRangeVal('rng-bnd-uhi') + 10)),
             }),
-            incdec('BCG 2', {
+            incdec('HI', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-bnd-hi'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-bnd-hi', Math.max(0, getRangeVal('rng-bnd-hi') - 10)),
                 onInc: () => setRangeVal('rng-bnd-hi', Math.min(100, getRangeVal('rng-bnd-hi') + 10)),
             }),
-            incdec('BCG 3', {
+            incdec('LO', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-bnd-lo'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-bnd-lo', Math.max(0, getRangeVal('rng-bnd-lo') - 10)),
                 onInc: () => setRangeVal('rng-bnd-lo', Math.min(100, getRangeVal('rng-bnd-lo') + 10)),
             }),
-            incdec('BCG 4', {
+            incdec('APP', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-bnd-app'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-bnd-app', Math.max(0, getRangeVal('rng-bnd-app') - 10)),
                 onInc: () => setRangeVal('rng-bnd-app', Math.min(100, getRangeVal('rng-bnd-app') + 10)),
             }),
-            incdec('BCG 5', {
+            incdec('HI AWY', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-jroutes'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-jroutes', Math.max(0, getRangeVal('rng-jroutes') - 10)),
                 onInc: () => setRangeVal('rng-jroutes', Math.min(100, getRangeVal('rng-jroutes') + 10)),
             }),
-            incdec('BCG 6', {
+            incdec('LO AWY', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-vroutes'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-vroutes', Math.max(0, getRangeVal('rng-vroutes') - 10)),
                 onInc: () => setRangeVal('rng-vroutes', Math.min(100, getRangeVal('rng-vroutes') + 10)),
             }),
-            incdec('BCG 7', {
+            incdec('VORS', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-vors'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-vors', Math.max(0, getRangeVal('rng-vors') - 10)),
                 onInc: () => setRangeVal('rng-vors', Math.min(100, getRangeVal('rng-vors') + 10)),
             }),
-            incdec('BCG 8', {
+            incdec('APTS', {
+                cls: 'tb-green',
                 getValue: () => getRangeVal('rng-airports'),
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-airports', Math.max(0, getRangeVal('rng-airports') - 10)),
@@ -6157,8 +6631,15 @@ const TB_FONT = {
     id: 'font',
     rows: [
         [
-            incdec('LINE 4', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
+            incdec('LINE 4', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
             incdec('FDB', {
+                cls: 'tb-green',
                 getValue: () => parseInt(getSelectVal('sel-fontsize')),
                 formatValue: v => v,
                 onDec: () => {
@@ -6172,10 +6653,34 @@ const TB_FONT = {
                     if (idx < FONT_STEPS.length - 1) setSelectVal('sel-fontsize', FONT_STEPS[idx + 1]);
                 },
             }),
-            nosim('TOOLBAR'),
-            incdec('LDB', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
-            incdec('RDB', { nosim: true, getValue: () => 10, formatValue: v => v, onDec: () => {}, onInc: () => {} }),
-            nosim('OUTAGE'),
+            incdec('TOOLBAR', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            incdec('LDB', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            incdec('RDB', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            incdec('OUTAGE', {
+                cls: 'tb-green',
+                getValue: () => 10,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
         ],
     ],
 };
@@ -6185,11 +6690,31 @@ const TB_DB_FIELDS = {
     id: 'db-fields',
     rows: [
         [
-            { label: 'NON-\nRVSM', type: 'toggle', nosim: true, isOn: () => true },
-            nosim('VRI'),
-            { label: 'CODE', type: 'toggle', nosim: true },
-            { label: 'SPEED', type: 'toggle', nosim: true },
+            toggle('NON-\nRVSM', {
+                cls: 'tb-toggle-grey',
+                isOn: () => true,
+                onToggle: () => {},
+            }),
+            toggle('VRI', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+                isMomentary: true,
+            }),
+            toggle('CODE', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+                isMomentary: true,
+            }),
+            toggle('SPEED', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+                isMomentary: true,
+            }),
             toggle('DEST', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getSelectVal('sel-line4') === 'DEST',
                 onToggle: (on) => {
                     setSelectVal('sel-line4', on ? 'DEST' : 'OFF');
@@ -6197,6 +6722,7 @@ const TB_DB_FIELDS = {
                 },
             }),
             toggle('TYPE', {
+                cls: 'tb-toggle-grey',
                 isOn: () => getSelectVal('sel-line4') === 'TYPE',
                 onToggle: (on) => {
                     setSelectVal('sel-line4', on ? 'TYPE' : 'OFF');
@@ -6204,23 +6730,66 @@ const TB_DB_FIELDS = {
                 },
             }),
             incdec('FDB LDR', {
-                getValue: () => 1,  // default leader length
+                cls: 'tb-green',
+                getValue: () => 1,
                 formatValue: v => v,
                 onDec: () => {},
                 onInc: () => {},
             }),
-            { label: 'BCAST\nFLID', type: 'toggle', nosim: true },
-            { label: 'PORTAL\nFENCE', type: 'toggle', nosim: true },
+            toggle('BCAST\nFLID', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('PORTAL\nFENCE', {
+                cls: 'tb-toggle-grey',
+                isOn: () => showPortalFence,
+                onToggle: (on) => { showPortalFence = on; invalidateAllMarkers(); },
+            }),
         ],
         [
-            nosim('NON-\nADS-B'),
-            nosim('NONADSB'),
-            { label: 'SAT\nCOMM', type: 'toggle', nosim: true },
-            nosim('TFM\nREROUTE'),
-            { label: 'CRR\nRDB', type: 'toggle', nosim: true },
-            nosim('STA RDB'),
-            nosim('DELAY\nRDB'),
-            nosim('DELAY\nFORMAT'),
+            incdec('NON-\nADS-B', {
+                cls: 'tb-green',
+                getValue: () => 1,
+                formatValue: v => v,
+                onDec: () => {},
+                onInc: () => {},
+            }),
+            toggle('NONADSB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('SAT\nCOMM', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('TFM\nREROUTE', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('CRR\nRDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('STA RDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('DELAY\nRDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('DELAY\nFORMAT', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
     ],
 };
@@ -6229,17 +6798,50 @@ const TB_RADAR_FILTER = {
     id: 'radar-filter',
     rows: [
         [
-            { label: 'ALL\nLDBS', type: 'toggle', nosim: true },
-            { label: 'PR LDB', type: 'toggle', nosim: true },
-            { label: 'UNP\nLDB', type: 'toggle', nosim: true },
-            { label: 'ALL\nPRIM', type: 'toggle', nosim: true },
-            { label: 'NON\nMODE C', type: 'toggle', nosim: true },
+            toggle('ALL\nLDBS', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('PR LDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('UNP\nLDB', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('ALL\nPRIM', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('NON\nMODE C', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
         ],
         [
-            { label: 'SELECT\nBEACON', type: 'toggle', nosim: true },
-            nosim('PERM\nECHO'),
-            nosim('STROBE\nLINES'),
+            toggle('SELECT\nBEACON', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('PERM\nECHO', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
+            toggle('STROBE\nLINES', {
+                cls: 'tb-toggle-grey',
+                isOn: () => false,
+                onToggle: () => {},
+            }),
             incdec('HISTORY', {
+                cls: 'tb-green',
                 getValue: () => parseInt(getSelectVal('sel-histcount')),
                 formatValue: v => v,
                 onDec: () => {
@@ -6284,6 +6886,346 @@ function btnKey(panelId, rowIdx, colIdx) {
     return panelId + ':' + rowIdx + ':' + colIdx;
 }
 
+function updateTearoffColors() {
+    // Update all tearoff strips: tan if no active tearoff, grey if one exists for this button
+    for (const [key, entry] of tbElements) {
+        const tear = entry.el.querySelector('.tb-tear');
+        if (!tear) continue;
+
+        const hasActiveTearoff = activeTearoffs.has(key);
+
+        if (hasActiveTearoff) {
+            // Grey (#C7C7C7) + disabled
+            tear.classList.add('tb-tear-disabled');
+            tear.style.cursor = 'default';
+            tear.dataset.disabled = 'true';
+        } else {
+            // Tan (#FFFFA1) + enabled
+            tear.classList.remove('tb-tear-disabled');
+            tear.style.cursor = 'var(--eram-cursor)';
+            tear.dataset.disabled = 'false';
+        }
+    }
+}
+
+function createFloatingTearoff(btnKey, spec) {
+    // Create floating container (just wraps the button)
+    const container = document.createElement('div');
+    container.className = 'tb-floating-tearoff';
+    container.style.cssText = `
+        position: fixed;
+        z-index: 970;
+        user-select: none;
+    `;
+
+    // Clone the button
+    let buttonClone = null;
+    const sourceEntry = tbElements.get(btnKey);
+    if (sourceEntry) {
+        buttonClone = sourceEntry.el.cloneNode(true);
+
+        // Re-attach event listeners to the clone
+        if (!spec.nosim && spec.type !== 'nosim') {
+            // Left click (skip if on tearoff strip)
+            buttonClone.addEventListener('click', (e) => {
+                if (!e.target.closest('.tb-tear')) {
+                    e.stopPropagation();
+                    // Skip normal toggle for momentary buttons (they only respond to hold, not click)
+                    if (!(spec.type === 'toggle' && spec.isMomentary)) {
+                        // In delete mode, left-click marks tearoff for deletion
+                        if (tearoffDeleteMode) {
+                            if (selectedTearoffsForDeletion.has(btnKey)) {
+                                selectedTearoffsForDeletion.delete(btnKey);
+                                buttonClone.classList.remove('tb-delete-selected');
+                            } else {
+                                selectedTearoffsForDeletion.add(btnKey);
+                                buttonClone.classList.add('tb-delete-selected');
+                            }
+                        } else {
+                            // For menu buttons, pass the buttonClone as the anchor so menu opens next to floating button
+                            handleBtnAction(spec, btnKey, false, spec.type === 'menu' ? buttonClone : undefined);
+                        }
+                    }
+                }
+            });
+
+            // Mousedown: handle momentary toggle and middle-click
+            buttonClone.addEventListener('mousedown', (e) => {
+                const isTearoff = e.target.closest('.tb-tear');
+
+                // Momentary toggle: left-click shows "on" state while held
+                if (e.button === 0 && !isTearoff && spec.type === 'toggle' && spec.isMomentary) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    // Check delete mode first (allow marking for deletion)
+                    if (tearoffDeleteMode) {
+                        if (selectedTearoffsForDeletion.has(btnKey)) {
+                            selectedTearoffsForDeletion.delete(btnKey);
+                            buttonClone.classList.remove('tb-delete-selected');
+                        } else {
+                            selectedTearoffsForDeletion.add(btnKey);
+                            buttonClone.classList.add('tb-delete-selected');
+                        }
+                        return;
+                    }
+
+                    buttonClone.classList.add('tb-toggle-on');
+                    updateMomentaryIndicator(buttonClone, spec, true);
+                    // Track momentary button state
+                    if (spec.label === 'CODE') {
+                        codeButtonPressed = true;
+                        invalidateAllMarkers();
+                    } else if (spec.label === 'SPEED') {
+                        speedButtonPressed = true;
+                        invalidateAllMarkers();
+                    }
+                    return;
+                }
+
+                // Middle click
+                if (e.button === 1 && !isTearoff) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Check if in delete mode and delete the floating tearoff
+                    if (tearoffDeleteMode) {
+                        // Delete the middle-clicked tearoff plus all selected ones
+                        selectedTearoffsForDeletion.add(btnKey);
+
+                        for (const key of selectedTearoffsForDeletion) {
+                            const tearoff = activeTearoffs.get(key);
+                            if (tearoff) {
+                                tearoff.floatingEl.remove();
+                                activeTearoffs.delete(key);
+                            }
+                        }
+
+                        selectedTearoffsForDeletion.clear();
+                        updateTearoffColors();
+                        // Turn off delete mode after deleting
+                        tearoffDeleteMode = false;
+                        refreshAllButtons();
+                        console.log('Tearoffs deleted');
+                    } else {
+                        handleBtnAction(spec, btnKey, true, spec.type === 'menu' ? buttonClone : undefined);
+                    }
+                }
+            });
+
+            // Mouseup: revert momentary toggle to off state
+            buttonClone.addEventListener('mouseup', (e) => {
+                if (spec.type === 'toggle' && spec.isMomentary) {
+                    e.stopPropagation();
+                    buttonClone.classList.remove('tb-toggle-on');
+                    updateMomentaryIndicator(buttonClone, spec, false);
+                    // Track momentary button state
+                    if (spec.label === 'CODE') {
+                        codeButtonPressed = false;
+                        invalidateAllMarkers();
+                    } else if (spec.label === 'SPEED') {
+                        speedButtonPressed = false;
+                        invalidateAllMarkers();
+                    }
+                }
+            });
+
+            // Mouseleave: revert momentary toggle if mouse leaves button while held
+            buttonClone.addEventListener('mouseleave', (e) => {
+                if (spec.type === 'toggle' && spec.isMomentary) {
+                    buttonClone.classList.remove('tb-toggle-on');
+                    updateMomentaryIndicator(buttonClone, spec, false);
+                    // Track momentary button state
+                    if (spec.label === 'CODE') {
+                        codeButtonPressed = false;
+                        invalidateAllMarkers();
+                    } else if (spec.label === 'SPEED') {
+                        speedButtonPressed = false;
+                        invalidateAllMarkers();
+                    }
+                }
+            });
+
+            // Context menu prevention
+            buttonClone.addEventListener('contextmenu', (e) => e.preventDefault());
+        }
+
+        container.appendChild(buttonClone);
+    }
+
+    // Add middle-click handler to delete tearoff when delete mode is active (BEFORE Leaflet event disabling)
+    container.addEventListener('mousedown', (e) => {
+        if (e.button === 1) {  // middle click
+            e.preventDefault();
+            e.stopPropagation();
+            if (tearoffDeleteMode) {
+                // Delete the middle-clicked tearoff plus all selected ones
+                selectedTearoffsForDeletion.add(btnKey);
+
+                for (const key of selectedTearoffsForDeletion) {
+                    const tearoff = activeTearoffs.get(key);
+                    if (tearoff) {
+                        tearoff.floatingEl.remove();
+                        activeTearoffs.delete(key);
+                    }
+                }
+
+                selectedTearoffsForDeletion.clear();
+                updateTearoffColors();
+                // Turn off delete mode after deleting
+                tearoffDeleteMode = false;
+                refreshAllButtons();
+                console.log('Tearoffs deleted');
+            }
+        }
+    });
+
+    // Add to page
+    document.body.appendChild(container);
+
+    // Prevent Leaflet from capturing events
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+
+    // Setup dragging via the tearoff strip (use standard setupBoxDrag)
+    const tearStrip = container.querySelector('.tb-tear');
+    setupBoxDrag(container, tearStrip);
+
+    // Position at the source button's location
+    const sourceBtn = sourceEntry?.el;
+    if (sourceBtn) {
+        const rect = sourceBtn.getBoundingClientRect();
+        container.style.left = rect.left + 'px';
+        container.style.top = rect.top + 'px';
+    } else {
+        // Fallback position
+        container.style.left = '100px';
+        container.style.top = '100px';
+    }
+
+    // Start drag mode immediately after creation
+    setTimeout(() => {
+        const tearStrip = container.querySelector('.tb-tear');
+        if (tearStrip && document.elementFromPoint(tearStrip.getBoundingClientRect().left + 5, tearStrip.getBoundingClientRect().top + 5) === tearStrip) {
+            // Simulate mousedown on tearoff strip to start dragging
+            const event = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                clientX: tearStrip.getBoundingClientRect().left + 5,
+                clientY: tearStrip.getBoundingClientRect().top + 5,
+            });
+            tearStrip.dispatchEvent(event);
+        }
+    }, 0);
+
+    return { container, buttonClone };
+}
+
+function setupTearoffDrag(tearEl, spec, btnKey) {
+    tearEl.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Grey tearoff strip (disabled) is non-functional - don't create tearoffs when one already exists
+        if (tearEl.dataset.disabled === 'true') {
+            return;
+        }
+
+        // Create new floating tearoff (only if one doesn't exist)
+        if (!activeTearoffs.has(btnKey)) {
+            const result = createFloatingTearoff(btnKey, spec);
+            activeTearoffs.set(btnKey, { floatingEl: result.container, buttonClone: result.buttonClone });
+            updateTearoffColors();
+
+            // Apply current backlight brightness to the new tearoff immediately
+            const l = scopeBcklght / 100;
+            const backlightFactor = 0.6 + (l * 0.5);
+            result.container.style.filter = `brightness(${backlightFactor})`;
+        }
+    });
+}
+
+function updateFloatingMenuButton(clickedEl, spec) {
+    // Find which floating menu this button is in (if any)
+    const isInToolbarMenu = (subMenuContainerEl && subMenuContainerEl.contains(clickedEl)) ||
+                            (subSubMenuContainerEl && subSubMenuContainerEl.contains(clickedEl));
+    const floatingMenuEl = clickedEl.closest('.tb-floating-menu');
+    const isInFloatingMenu = !!floatingMenuEl;
+
+    // If button was clicked in toolbar menu, update corresponding button in floating menu
+    if (isInToolbarMenu) {
+        const floatingMenus = document.querySelectorAll('.tb-floating-menu');
+        for (const floatingMenu of floatingMenus) {
+            const buttons = floatingMenu.querySelectorAll('.tb-btn');
+            const clickedRow = clickedEl.closest('.tb-row');
+            const rowIndex = Array.from(clickedRow.parentElement.children).indexOf(clickedRow);
+            const colIndex = Array.from(clickedRow.children).indexOf(clickedEl);
+
+            // For nested submenus, subtract 1 from rowIndex to account for parent button row in toolbar
+            const isNestedSubmenu = subSubMenuContainerEl && subSubMenuContainerEl.contains(clickedEl);
+            const adjustedRowIndex = isNestedSubmenu ? Math.max(0, rowIndex - 1) : rowIndex;
+            const clickedBtnPosition = adjustedRowIndex * 10 + colIndex;
+
+            if (buttons[clickedBtnPosition]) {
+                const correspondingBtn = buttons[clickedBtnPosition];
+                if (spec.type === 'toggle' && spec.isOn) {
+                    const shouldBeOn = spec.isOn();
+                    correspondingBtn.classList.toggle('tb-toggle-on', shouldBeOn);
+                } else if (spec.type === 'incdec' && spec.getValue) {
+                    const valDiv = correspondingBtn.querySelector('.tb-value');
+                    if (valDiv) {
+                        valDiv.textContent = spec.formatValue(spec.getValue());
+                    }
+                }
+            }
+        }
+    }
+    // If button was clicked in floating menu, update corresponding button in toolbar menu
+    else if (isInFloatingMenu) {
+        // Get position of clicked button
+        const buttons = floatingMenuEl.querySelectorAll('.tb-btn');
+        const clickedBtnIndex = Array.from(buttons).indexOf(clickedEl);
+
+        // Find corresponding toolbar menu container and button
+        let toolbarMenuContainer = null;
+        if (subMenuContainerEl && subMenuContainerEl.style.display !== 'none') {
+            toolbarMenuContainer = subMenuContainerEl;
+        } else if (subSubMenuContainerEl && subSubMenuContainerEl.style.display !== 'none') {
+            toolbarMenuContainer = subSubMenuContainerEl;
+        }
+
+        if (toolbarMenuContainer) {
+            const toolbarButtons = toolbarMenuContainer.querySelectorAll('.tb-btn');
+            if (toolbarButtons[clickedBtnIndex]) {
+                const correspondingBtn = toolbarButtons[clickedBtnIndex];
+                if (spec.type === 'toggle' && spec.isOn) {
+                    const shouldBeOn = spec.isOn();
+                    correspondingBtn.classList.toggle('tb-toggle-on', shouldBeOn);
+                } else if (spec.type === 'incdec' && spec.getValue) {
+                    const valDiv = correspondingBtn.querySelector('.tb-value');
+                    if (valDiv) {
+                        valDiv.textContent = spec.formatValue(spec.getValue());
+                    }
+                }
+            }
+        }
+    }
+}
+
+function updateMomentaryIndicator(el, spec, isPressed) {
+    const ind = el.querySelector('.tb-momentary-ind');
+    if (!ind) return;
+
+    // For momentary buttons, determine color based on whether button is currently pressed
+    // When pressed (isPressed=true): button is ON (gray), so show BLACK triangle
+    // When not pressed (isPressed=false): button is OFF (black), so show GRAY triangle
+    const triangleColor = isPressed ? '#000000' : '#C7C7C7';
+
+    // Set triangle color
+    ind.style.color = triangleColor;
+}
+
 function createButton(spec, panelId, rowIdx, colIdx) {
     const el = document.createElement('div');
     el.className = 'tb-btn';
@@ -6311,8 +7253,9 @@ function createButton(spec, panelId, rowIdx, colIdx) {
     content.appendChild(labelDiv);
 
     // Value (for incdec)
+    let valDiv = null;
     if (spec.type === 'incdec' && spec.getValue) {
-        const valDiv = document.createElement('div');
+        valDiv = document.createElement('div');
         valDiv.className = 'tb-value';
         valDiv.textContent = spec.formatValue(spec.getValue());
         content.appendChild(valDiv);
@@ -6326,6 +7269,15 @@ function createButton(spec, panelId, rowIdx, colIdx) {
         content.appendChild(ind);
     }
 
+    // Momentary toggle indicator triangle
+    if (spec.type === 'toggle' && spec.isMomentary) {
+        const momInd = document.createElement('div');
+        momInd.className = 'tb-momentary-ind';
+        momInd.textContent = '◀';
+        el.appendChild(momInd);
+        updateMomentaryIndicator(el, spec, false);
+    }
+
     el.appendChild(content);
 
     // Toggle state
@@ -6333,23 +7285,127 @@ function createButton(spec, panelId, rowIdx, colIdx) {
         el.classList.add('tb-toggle-on');
     }
 
-    // Store reference
-    tbElements.set(key, { el, spec });
+    // Store reference (include valDiv for incdec buttons to avoid query overhead)
+    tbElements.set(key, { el, spec, valDiv });
+
+    // Setup tearoff drag for the strip
+    setupTearoffDrag(tear, spec, key);
 
     // Event handling
     if (!isNosim) {
         // Left click
         el.addEventListener('click', (e) => {
             e.stopPropagation();
-            handleBtnAction(spec, key, false);
+            // Ignore clicks on the tearoff strip
+            if (!e.target.closest('.tb-tear')) {
+                // Skip normal toggle for momentary buttons (they only respond to hold, not click)
+                if (!(spec.type === 'toggle' && spec.isMomentary)) {
+                    // For menu buttons in floating menus, pass the button element as anchor
+                    const isInFloatingMenu = el.closest('.tb-floating-menu');
+                    const anchorForMenu = (spec.type === 'menu' && isInFloatingMenu) ? el : undefined;
+                    handleBtnAction(spec, key, false, anchorForMenu);
+                    // Update this button's visual state immediately (for menu buttons and floating menu buttons)
+                    if (spec.type === 'toggle' && spec.isOn) {
+                        const shouldBeOn = spec.isOn();
+                        el.classList.toggle('tb-toggle-on', shouldBeOn);
+                        // Also update floating menu button if in a floating menu
+                        updateFloatingMenuButton(el, spec);
+                    } else if (spec.type === 'incdec' && spec.getValue) {
+                        const valDiv = el.querySelector('.tb-value');
+                        if (valDiv) {
+                            valDiv.textContent = spec.formatValue(spec.getValue());
+                        }
+                        // Also update floating menu button if in a floating menu
+                        updateFloatingMenuButton(el, spec);
+                    }
+                }
+            }
         });
 
-        // Middle click via mousedown
+        // Mousedown: handle momentary toggle and middle-click
         el.addEventListener('mousedown', (e) => {
+            const isTearoff = e.target.closest('.tb-tear');
+
+            // Momentary toggle: left-click shows "on" state while held
+            if (e.button === 0 && !isTearoff && spec.type === 'toggle' && spec.isMomentary) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                // Check delete mode first (allow marking for deletion)
+                if (tearoffDeleteMode) {
+                    if (selectedTearoffsForDeletion.has(key)) {
+                        selectedTearoffsForDeletion.delete(key);
+                        el.classList.remove('tb-delete-selected');
+                    } else {
+                        selectedTearoffsForDeletion.add(key);
+                        el.classList.add('tb-delete-selected');
+                    }
+                    return;
+                }
+
+                el.classList.add('tb-toggle-on');
+                updateMomentaryIndicator(el, spec, true);
+                // Track momentary button state
+                if (spec.label === 'CODE') {
+                    codeButtonPressed = true;
+                    invalidateAllMarkers();
+                } else if (spec.label === 'SPEED') {
+                    speedButtonPressed = true;
+                    invalidateAllMarkers();
+                }
+                return;
+            }
+
+            // Middle click
             if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
-                handleBtnAction(spec, key, true);
+                // Ignore middle-clicks on the tearoff strip
+                if (!isTearoff) {
+                    handleBtnAction(spec, key, true);
+                    // Update this button's visual state immediately
+                    if (spec.type === 'incdec' && spec.getValue) {
+                        const valDiv = el.querySelector('.tb-value');
+                        if (valDiv) {
+                            valDiv.textContent = spec.formatValue(spec.getValue());
+                        }
+                        // Also update floating menu button if in a floating menu
+                        updateFloatingMenuButton(el, spec);
+                    }
+                }
+            }
+        });
+
+        // Mouseup: revert momentary toggle to off state
+        el.addEventListener('mouseup', (e) => {
+            if (spec.type === 'toggle' && spec.isMomentary) {
+                e.stopPropagation();
+                el.classList.remove('tb-toggle-on');
+                updateMomentaryIndicator(el, spec, false);
+                // Track momentary button state
+                if (spec.label === 'CODE') {
+                    codeButtonPressed = false;
+                    invalidateAllMarkers();
+                } else if (spec.label === 'SPEED') {
+                    speedButtonPressed = false;
+                    invalidateAllMarkers();
+                }
+            }
+        });
+
+        // Mouseleave: revert momentary toggle if mouse leaves button while held
+        el.addEventListener('mouseleave', (e) => {
+            if (spec.type === 'toggle' && spec.isMomentary) {
+                el.classList.remove('tb-toggle-on');
+                updateMomentaryIndicator(el, spec, false);
+                // Track momentary button state
+                if (spec.label === 'CODE') {
+                    codeButtonPressed = false;
+                    invalidateAllMarkers();
+                } else if (spec.label === 'SPEED') {
+                    speedButtonPressed = false;
+                    invalidateAllMarkers();
+                }
             }
         });
 
@@ -6390,24 +7446,73 @@ function renderPanel(spec, container) {
 function refreshButton(key) {
     const entry = tbElements.get(key);
     if (!entry) return;
-    const { el, spec } = entry;
+    const { el, spec, valDiv } = entry;
     const isNosim = spec.type === 'nosim' || spec.nosim;
 
-    // Update value display
-    if (spec.type === 'incdec' && spec.getValue) {
-        const valEl = el.querySelector('.tb-value');
-        if (valEl) valEl.textContent = spec.formatValue(spec.getValue());
+    // Update value display (if valDiv exists and getValue is defined)
+    if (valDiv && spec.getValue) {
+        const newValue = String(spec.formatValue(spec.getValue()));
+        valDiv.textContent = newValue;
+        // Force browser repaint of the entire button
+        if (el && el.offsetHeight) {
+            void el.offsetHeight;
+        }
     }
 
     // Update toggle state
     if (spec.type === 'toggle' && !isNosim && spec.isOn) {
         el.classList.toggle('tb-toggle-on', spec.isOn());
+        // Update momentary indicator if it's a momentary button (only if not currently pressed)
+        if (spec.isMomentary && !el.classList.contains('tb-toggle-on')) {
+            updateMomentaryIndicator(el, spec, false);
+        }
     }
 
     // Update menu-open state
     if (spec.type === 'menu') {
         const isOpen = tbState.openMenu === spec.menu || tbState.openSubMenu === spec.menu;
         el.classList.toggle('tb-menu-open', isOpen);
+    }
+
+    // Sync floating tearoff button clone if one exists
+    const tearoff = activeTearoffs.get(key);
+    if (tearoff && tearoff.buttonClone) {
+        // Update clone's value display
+        const cloneValDiv = tearoff.buttonClone.querySelector('.tb-value');
+        if (cloneValDiv && spec.getValue) {
+            const newValue = String(spec.formatValue(spec.getValue()));
+            cloneValDiv.textContent = newValue;
+        }
+
+        // Update clone's toggle state (match original button exactly)
+        if (spec.type === 'toggle' && !isNosim && spec.isOn) {
+            const shouldBeOn = spec.isOn();
+            if (shouldBeOn) {
+                tearoff.buttonClone.classList.add('tb-toggle-on');
+            } else {
+                tearoff.buttonClone.classList.remove('tb-toggle-on');
+            }
+        }
+
+        // Don't sync menu-open state to floating tearoff buttons — they remain independent
+    }
+
+    // Handle DELETE TEAROFF button styling when in delete mode
+    if (spec.label && spec.label.includes('DELETE')) {
+        if (tearoffDeleteMode) {
+            el.classList.add('tb-menu-open');
+        } else {
+            el.classList.remove('tb-menu-open');
+        }
+        // Sync to floating tearoff if one exists
+        const tearoff = activeTearoffs.get(key);
+        if (tearoff && tearoff.buttonClone) {
+            if (tearoffDeleteMode) {
+                tearoff.buttonClone.classList.add('tb-menu-open');
+            } else {
+                tearoff.buttonClone.classList.remove('tb-menu-open');
+            }
+        }
     }
 }
 
@@ -6425,11 +7530,58 @@ function refreshAllSubMenus() {
 // CRC behavior: when a menu opens, the master toolbar disappears and is replaced
 // by a new toolbar: [pink parent button] + [sub-menu items extending right]
 
+function cleanupMenuScrolling(containerEl) {
+    if (!containerEl) return;
+    if (containerEl._wheelHandler) { containerEl.removeEventListener('wheel', containerEl._wheelHandler); delete containerEl._wheelHandler; }
+    if (containerEl._dragDown) { containerEl.removeEventListener('mousedown', containerEl._dragDown); window.removeEventListener('mousemove', containerEl._dragMove); window.removeEventListener('mouseup', containerEl._dragUp); delete containerEl._dragDown; delete containerEl._dragMove; delete containerEl._dragUp; }
+    containerEl.style.cursor = '';
+}
+
+function setupMenuScrolling(containerEl) {
+    if (!containerEl) return;
+    cleanupMenuScrolling(containerEl);
+    // Check if menu needs scrolling
+    const menuRect = containerEl.getBoundingClientRect();
+    if (menuRect.right > window.innerWidth - 4) {
+        containerEl.style.maxWidth = (window.innerWidth - menuRect.left - 4) + 'px';
+        containerEl.style.overflowX = 'auto';
+        containerEl._wheelHandler = (e) => {
+            if (e.deltaY !== 0) { e.preventDefault(); containerEl.scrollLeft += e.deltaY; }
+        };
+        containerEl.addEventListener('wheel', containerEl._wheelHandler, { passive: false });
+        // Drag-to-scroll
+        let _dragX = null, _dragScroll = 0;
+        containerEl._dragDown = (e) => {
+            if (e.button !== 0) return;
+            _dragX = e.clientX; _dragScroll = containerEl.scrollLeft;
+            containerEl.style.cursor = 'grabbing';
+            e.preventDefault();
+        };
+        containerEl._dragMove = (e) => {
+            if (_dragX === null) return;
+            containerEl.scrollLeft = _dragScroll - (e.clientX - _dragX);
+        };
+        containerEl._dragUp = () => {
+            _dragX = null; containerEl.style.cursor = 'grab';
+        };
+        containerEl.style.cursor = 'grab';
+        containerEl.addEventListener('mousedown', containerEl._dragDown);
+        window.addEventListener('mousemove', containerEl._dragMove);
+        window.addEventListener('mouseup', containerEl._dragUp);
+    }
+}
+
 function closeAllSubMenus() {
     tbState.openMenu = null;
     tbState.openSubMenu = null;
-    if (subMenuContainerEl) { subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; }
-    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; subSubMenuContainerEl.style.top = ''; }
+    if (subMenuContainerEl) {
+        cleanupMenuScrolling(subMenuContainerEl);
+        subMenuContainerEl.innerHTML = ''; subMenuContainerEl.style.display = 'none'; subMenuContainerEl.style.left = ''; subMenuContainerEl.style.top = ''; subMenuContainerEl.style.maxWidth = ''; subMenuContainerEl.style.overflowX = ''; subMenuContainerEl.scrollLeft = 0;
+    }
+    if (subSubMenuContainerEl) {
+        cleanupMenuScrolling(subSubMenuContainerEl);
+        subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; subSubMenuContainerEl.style.top = ''; subSubMenuContainerEl.style.maxWidth = ''; subSubMenuContainerEl.style.overflowX = ''; subSubMenuContainerEl.scrollLeft = 0;
+    }
     // Restore all master buttons visibility and remove pink state
     if (masterPanelEl) {
         masterPanelEl.querySelectorAll('.tb-btn').forEach(btn => {
@@ -6440,6 +7592,121 @@ function closeAllSubMenus() {
     refreshAllButtons();
 }
 
+function openFloatingMenu(menuId, anchorEl) {
+    const menuSpec = SUB_MENUS[menuId];
+    if (!menuSpec) return;
+
+    // Get the button key from the anchor element
+    const btnKey = anchorEl.dataset.tbKey;
+
+    // Check if menu already open for this button — close it (toggle)
+    if (activeFloatingMenus.has(btnKey)) {
+        const existing = activeFloatingMenus.get(btnKey);
+        if (existing.floatingMenuEl) {
+            existing.floatingMenuEl.remove();
+        }
+        // Remove menu-open class from the button
+        anchorEl.classList.remove('tb-menu-open');
+        activeFloatingMenus.delete(btnKey);
+        return;
+    }
+
+    // Create floating menu container
+    const floatingMenu = document.createElement('div');
+    floatingMenu.className = 'tb-floating-menu';
+
+    // Check if this is a nested menu (parent menu is already floating)
+    const parentFloatingMenu = anchorEl.closest('.tb-floating-menu');
+    const isNestedMenu = !!parentFloatingMenu;
+
+    if (isNestedMenu) {
+        // Nested menu: position absolutely relative to viewport
+        const anchorRect = anchorEl.getBoundingClientRect();
+        floatingMenu.style.cssText = `
+            position: fixed;
+            left: ${anchorRect.right + 4}px;
+            top: ${anchorRect.top}px;
+            z-index: 972;
+            user-select: none;
+            background: #0000D4;
+            border: 1px solid #FFFFFF;
+        `;
+    } else {
+        // Top-level floating menu: position relative to parent container
+        floatingMenu.style.cssText = `
+            position: absolute;
+            top: 0;
+            left: 100%;
+            margin-left: 4px;
+            z-index: 971;
+            user-select: none;
+            background: #0000D4;
+            border: 1px solid #FFFFFF;
+        `;
+    }
+
+    // Build menu items into the floating container (don't force 2 rows for floating menus)
+    buildSubMenuItems(menuSpec, menuId, floatingMenu, 0, false);
+
+    // Append to the floating tearoff container so it moves with the button (for top-level menus)
+    // or to the body (for nested menus that need fixed positioning)
+    if (isNestedMenu) {
+        document.body.appendChild(floatingMenu);
+    } else {
+        const floatingTearoff = anchorEl.closest('.tb-floating-tearoff');
+        if (floatingTearoff) {
+            floatingTearoff.appendChild(floatingMenu);
+        } else {
+            // Fallback: append to body if not in a floating tearoff (shouldn't happen)
+            document.body.appendChild(floatingMenu);
+        }
+    }
+
+    // Apply current backlight brightness to the floating menu
+    const l = scopeBcklght / 100;
+    const backlightFactor = 0.6 + (l * 0.5);
+    floatingMenu.style.filter = `brightness(${backlightFactor})`;
+
+    // Add menu-open class to the button for visual feedback
+    anchorEl.classList.add('tb-menu-open');
+
+    // Store in active menus map
+    activeFloatingMenus.set(btnKey, { floatingMenuEl: floatingMenu, anchorEl: anchorEl });
+
+    // Prevent Leaflet from capturing events
+    L.DomEvent.disableClickPropagation(floatingMenu);
+    L.DomEvent.disableScrollPropagation(floatingMenu);
+
+    // Close menu when clicking outside (but not on the anchor button itself, toolbar buttons, or inside toolbar menus)
+    const closeHandler = (e) => {
+        // Check if click is on a toolbar menu button or inside a toolbar menu container
+        const clickedBtn = e.target.closest('.tb-btn');
+        const isToolbarBtn = clickedBtn && tbElements.has(clickedBtn.dataset.tbKey);
+        const isInsideToolbarMenu = (subMenuContainerEl && subMenuContainerEl.contains(e.target)) ||
+                                     (subSubMenuContainerEl && subSubMenuContainerEl.contains(e.target));
+
+        if (!floatingMenu.contains(e.target) && !anchorEl.contains(e.target) && !isToolbarBtn && !isInsideToolbarMenu) {
+            floatingMenu.remove();
+            anchorEl.classList.remove('tb-menu-open');
+            activeFloatingMenus.delete(btnKey);
+            document.removeEventListener('mousedown', closeHandler);
+        }
+    };
+    document.addEventListener('mousedown', closeHandler);
+
+    // Close menu when an item is clicked
+    floatingMenu.addEventListener('click', (e) => {
+        if (e.target.closest('.tb-btn')) {
+            setTimeout(() => {
+                floatingMenu.remove();
+                anchorEl.classList.remove('tb-menu-open');
+                activeFloatingMenus.delete(btnKey);
+            }, 10);
+            document.removeEventListener('mousedown', closeHandler);
+        }
+    });
+}
+
 function openSubMenu(menuId, anchorEl) {
     const menuSpec = SUB_MENUS[menuId];
     if (!menuSpec) return;
@@ -6448,20 +7715,30 @@ function openSubMenu(menuId, anchorEl) {
         // Nested sub-menu (e.g. weather under atc-tools, map-bright under bright)
         if (tbState.openSubMenu === menuId) {
             tbState.openSubMenu = null;
-            if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; }
+            if (subSubMenuContainerEl) {
+                cleanupMenuScrolling(subSubMenuContainerEl);
+                subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none';
+                subSubMenuContainerEl.style.maxWidth = ''; subSubMenuContainerEl.style.overflowX = ''; subSubMenuContainerEl.scrollLeft = 0;
+            }
             refreshAllButtons();
             return;
         }
         tbState.openSubMenu = menuId;
         if (subSubMenuContainerEl) {
+            cleanupMenuScrolling(subSubMenuContainerEl);
             subSubMenuContainerEl.innerHTML = '';
             subSubMenuContainerEl.style.display = 'block';
+            subSubMenuContainerEl.style.maxWidth = '';
+            subSubMenuContainerEl.style.overflowX = '';
+            subSubMenuContainerEl.scrollLeft = 0;
             // Position at nested button's left edge within masterGrid
             const gridRect = subSubMenuContainerEl.parentElement.getBoundingClientRect();
             const anchorRect = anchorEl.getBoundingClientRect();
             subSubMenuContainerEl.style.left = (anchorRect.left - gridRect.left) + 'px';
             subSubMenuContainerEl.style.top = '0';
             buildInlineSubMenu(menuSpec, menuId, subSubMenuContainerEl);
+            // Setup scrolling for nested submenu (was missing before)
+            setupMenuScrolling(subSubMenuContainerEl);
         }
         refreshAllButtons();
         return;
@@ -6477,7 +7754,10 @@ function openSubMenu(menuId, anchorEl) {
     // sub-menu items extend to the right of the clicked button.
     tbState.openMenu = menuId;
     tbState.openSubMenu = null;
-    if (subSubMenuContainerEl) { subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = ''; }
+    if (subSubMenuContainerEl) {
+        cleanupMenuScrolling(subSubMenuContainerEl);
+        subSubMenuContainerEl.innerHTML = ''; subSubMenuContainerEl.style.display = 'none'; subSubMenuContainerEl.style.left = '';
+    }
 
     // Hide all master buttons except the clicked one (it stays in place, turns pink)
     masterPanelEl.querySelectorAll('.tb-btn').forEach(btn => {
@@ -6491,14 +7771,14 @@ function openSubMenu(menuId, anchorEl) {
     if (subMenuContainerEl) {
         subMenuContainerEl.innerHTML = '';
         subMenuContainerEl.style.display = 'block';
-        // Position sub-menu items to the RIGHT of the clicked button
-        subMenuContainerEl.style.left = (anchorEl.offsetLeft + anchorEl.offsetWidth) + 'px';
+        const desiredLeft = anchorEl.offsetLeft + anchorEl.offsetWidth;
+        subMenuContainerEl.style.left = desiredLeft + 'px';
         subMenuContainerEl.style.top = '0';
-        // Which row the button is on
         const anchorRow = anchorEl.closest('.tb-row');
         const parentRowIdx = anchorRow ? Array.from(anchorRow.parentElement.children).indexOf(anchorRow) : 0;
-        // Render just the items (no parent button — the real one is still visible)
         buildSubMenuItems(menuSpec, menuId, subMenuContainerEl, parentRowIdx);
+        // Setup scrolling for top-level submenu
+        setupMenuScrolling(subMenuContainerEl);
     }
     refreshAllButtons();
 }
@@ -6513,10 +7793,11 @@ const MENU_LABELS = {
 
 // Build sub-menu items only (no parent button — the real one stays in the master panel).
 // parentRow = which visual row the parent is on. Data row 0 goes on parentRow, row 1 on parentRow+1, etc.
-function buildSubMenuItems(menuSpec, menuId, container, parentRow) {
+// forceMinRows = if true, render at least 2 rows (for toolbar); if false, render only needed rows (for floating menus)
+function buildSubMenuItems(menuSpec, menuId, container, parentRow, forceMinRows = true) {
     if (parentRow === undefined) parentRow = 0;
-    // Always render exactly 2 rows, data rows start at row 0 (top)
-    const totalRows = 2;
+    // For toolbar menus, always render at least 2 rows. For floating menus, render only what's needed.
+    const totalRows = forceMinRows ? Math.max(2, menuSpec.rows.length) : menuSpec.rows.length;
 
     for (let vi = 0; vi < totalRows; vi++) {
         const rowEl = document.createElement('div');
@@ -6546,7 +7827,7 @@ function buildInlineSubMenu(menuSpec, menuId, container, parentRow) {
 
         if (ri === 0) {
             const parentLabel = MENU_LABELS[menuId] || menuId.toUpperCase();
-            const parentSpec = { label: parentLabel, type: 'menu', menu: menuId };
+            const parentSpec = { label: parentLabel, type: 'menu', menu: menuId, cls: 'tb-tan' };
             const parentBtn = createButton(parentSpec, menuSpec.id + '-parent', 0, 0);
             parentBtn.classList.add('tb-menu-open');
             rowEl.appendChild(parentBtn);
@@ -6562,10 +7843,19 @@ function buildInlineSubMenu(menuSpec, menuId, container, parentRow) {
     }
 }
 
-function handleBtnAction(spec, key, isMiddle) {
+function handleBtnAction(spec, key, isMiddle, anchorEl) {
     if (spec.type === 'menu') {
-        const entry = tbElements.get(key);
-        openSubMenu(spec.menu, entry.el);
+        // If anchorEl is provided (from floating tearoff), create a floating menu
+        if (anchorEl && anchorEl.closest('.tb-floating-tearoff')) {
+            openFloatingMenu(spec.menu, anchorEl);
+        } else if (anchorEl && anchorEl.closest('.tb-floating-menu')) {
+            // Menu button clicked in a floating menu - open nested menu as floating
+            openFloatingMenu(spec.menu, anchorEl);
+        } else {
+            // Otherwise, use toolbar menu system
+            const anchor = anchorEl || tbElements.get(key)?.el;
+            if (anchor) openSubMenu(spec.menu, anchor);
+        }
     } else if (spec.type === 'toggle') {
         if (spec.isOn && spec.onToggle) {
             spec.onToggle(!spec.isOn());
@@ -6577,6 +7867,7 @@ function handleBtnAction(spec, key, isMiddle) {
         } else {
             if (spec.onDec) spec.onDec();
         }
+        refreshButton(key);
         refreshAllButtons();
     } else if (spec.type === 'cmd') {
         if (spec.onCmd) spec.onCmd();
@@ -6693,7 +7984,7 @@ function toggleMasterToolbar() {
         refreshAllButtons();
     }
     window._tbVisible = tbState.masterVisible;
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 }
 
 // ── URL persistence for toolbar visibility ──
@@ -6706,13 +7997,19 @@ if (_tbInitParams.get('tb') !== '0') {
 
 // ── Initialize ──
 buildToolbar();
+refreshAllButtons();  // Refresh button displays to show correct initial values
+updateTearoffColors();  // Initialize tearoff strip colors
+updateBorderBrightness();  // Initialize border brightness
+updateToolbarBackgroundBrightness();  // Initialize toolbar background brightness
+updateTextBrightness();  // Initialize text brightness
+updateToolbarBorderColor();  // Initialize toolbar border color
+updateCursorBrightness();  // Initialize cursor brightness
 
 // Apply initial visibility from URL
 if (tbState.masterVisible) {
     document.getElementById('master-toolbar-container').classList.add('tb-visible');
     document.body.classList.add('tb-active');
     document.getElementById('tb-tearoff-btn').classList.add('tb-active');
-    refreshAllButtons();
 }
 
 })();  // end toolbar IIFE
@@ -6735,9 +8032,7 @@ const replayStopBtn = document.getElementById('replay-stop');
 const replayRangeEl = document.getElementById('replay-range');
 
 let replayWs = null;
-let replayActive = false;
 let replayPaused = false;
-let replayCurrentTime = null; // ISO string of current replay position
 let replayPendingFlights = new Map(); // gufi → latest flight object (merged across batches)
 let replayPendingRemoves = []; // gufi list
 let replayRafId = null;
@@ -6932,7 +8227,7 @@ function stopReplay() {
     replayBar.style.display = 'none';
     replayStatusEl.textContent = '';
     replayTimeEl.textContent = '';
-    saveSettingsToUrl();
+    saveSettingsToLocalStorage();
 
     // Reconnect to live
     connectWs();
@@ -6944,7 +8239,7 @@ function replayThrottleSave() {
     if (_replaySaveTimer) return;
     _replaySaveTimer = setTimeout(() => {
         _replaySaveTimer = null;
-        saveSettingsToUrl();
+        saveSettingsToLocalStorage();
     }, 3000);
 }
 

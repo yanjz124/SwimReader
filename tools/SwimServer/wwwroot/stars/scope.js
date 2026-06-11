@@ -55,6 +55,7 @@ const prefSet = {
     DCB: 100, Background: 100, RangeRings: 100, Compass: 100,
     VideoMapA: 100, VideoMapB: 100, DataBlock: 100,
     Lists: 100, Position: 100, History: 100, Weather: 100,
+    Tools: 100,
   },
   // Per CRC § CHAR SIZE — 5 adjustable categories. Sizes here are in pixels.
   // The DCB CHAR SIZE submenu cycles each value in steps.
@@ -483,21 +484,35 @@ async function applyProfile(profileName) {
       for (const [src, dst] of Object.entries(fieldMap)) {
         if (p.prefSet[src] != null) prefSet[dst] = p.prefSet[src];
       }
-      // Brightness keys (DCB/Background/MapA/MapB/...) - WPF uses different
-      // category names than our PrefSet. Best-effort merge into our scheme.
+      // Brightness keys. WPF PrefSet.cs:55-63 has 14 separate categories.
+      // Several map to a single slot in our scheme (DataBlock collapses
+      // FullDataBlocks/LimitedDataBlocks/OtherFDBs; Position collapses
+      // PositionSymbols/BeaconTargets/PrimaryTargets). Each direction is
+      // explicit so order is irrelevant and there is no collision.
+      // CRITICAL: Tools is a SEPARATE WPF category - it must not overwrite
+      // Lists. Profile PCT_Mount Vernon had Lists=75 and Tools=45; the
+      // old `Tools: "Lists"` mapping was silently dimming the SSA/MCA.
       const b = p.prefSet.brightness || {};
-      const brMap = {
-        DCB: "DCB", Background: "Background", MapA: "VideoMapA", MapB: "VideoMapB",
-        FullDataBlocks: "DataBlock", LimitedDataBlocks: "DataBlock",
-        OtherFDBs: "DataBlock", Lists: "Lists",
-        PositionSymbols: "Position", BeaconTargets: "Position",
-        PrimaryTargets: "Position", History: "History",
-        RangeRings: "RangeRings", Compass: "Compass",
-        WeatherContrast: "Weather", Weather: "Weather", Tools: "Lists",
-      };
-      for (const [src, dst] of Object.entries(brMap)) {
-        if (b[src] != null) prefSet.Brightness[dst] = b[src];
-      }
+      if (b.DCB             != null) prefSet.Brightness.DCB        = b.DCB;
+      if (b.Background      != null) prefSet.Brightness.Background = b.Background;
+      if (b.MapA            != null) prefSet.Brightness.VideoMapA  = b.MapA;
+      if (b.MapB            != null) prefSet.Brightness.VideoMapB  = b.MapB;
+      if (b.Lists           != null) prefSet.Brightness.Lists      = b.Lists;
+      if (b.Tools           != null) prefSet.Brightness.Tools      = b.Tools;
+      if (b.History         != null) prefSet.Brightness.History    = b.History;
+      if (b.RangeRings      != null) prefSet.Brightness.RangeRings = b.RangeRings;
+      if (b.Compass         != null) prefSet.Brightness.Compass    = b.Compass;
+      if (b.Weather         != null) prefSet.Brightness.Weather    = b.Weather;
+      if (b.WeatherContrast != null) prefSet.Brightness.Weather    = b.WeatherContrast;
+      // DataBlock collapses 3 WPF categories — last-write-wins is fine
+      // since they're usually equal in practice.
+      if (b.FullDataBlocks    != null) prefSet.Brightness.DataBlock = b.FullDataBlocks;
+      if (b.LimitedDataBlocks != null) prefSet.Brightness.DataBlock = b.LimitedDataBlocks;
+      if (b.OtherFDBs         != null) prefSet.Brightness.DataBlock = b.OtherFDBs;
+      // Position collapses 3 WPF categories.
+      if (b.PositionSymbols != null) prefSet.Brightness.Position = b.PositionSymbols;
+      if (b.BeaconTargets   != null) prefSet.Brightness.Position = b.BeaconTargets;
+      if (b.PrimaryTargets  != null) prefSet.Brightness.Position = b.PrimaryTargets;
     }
     if (p.screenCenterPoint) {
       prefSet.ScreenCenterPoint = {

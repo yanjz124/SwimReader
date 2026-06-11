@@ -8075,9 +8075,8 @@ async function fetchReplayRange() {
             const s = new Date(data.eram.start);
             const e = new Date(data.eram.end);
             replayRangeEl.textContent = `Available: ${fmtDt(s)} — ${fmtDt(e)} (${data.eram.hours}h, ${data.eram.totalSizeMB.toFixed(1)} MB)`;
-            // Default start input to 1 hour ago
-            const def = new Date(Date.now() - 3600000);
-            replayStartInput.value = toLocalISOString(def);
+            // Default start input to 1 hour ago, in Zulu (24-hour, UTC).
+            replayStartInput.value = fmtZuluInput(new Date(Date.now() - 3600000));
         } else {
             replayRangeEl.textContent = 'No replay data yet (recording...)';
         }
@@ -8086,22 +8085,37 @@ async function fetchReplayRange() {
     }
 }
 
+// All replay times are Zulu (UTC), 24-hour clock — no local time, no AM/PM.
 function fmtDt(d) {
     return d.toISOString().replace('T', ' ').slice(0, 16) + 'Z';
 }
 
-function toLocalISOString(d) {
-    const off = d.getTimezoneOffset();
-    const local = new Date(d.getTime() - off * 60000);
-    return local.toISOString().slice(0, 19);
+// Format a Date as the Zulu text the start input expects: "YYYY-MM-DD HH:MM:SS".
+function fmtZuluInput(d) {
+    return d.toISOString().replace('T', ' ').slice(0, 19);
+}
+
+// Parse a Zulu start-time string entered by the user. Accepts "YYYY-MM-DD HH:MM[:SS]"
+// (space or T separator, optional trailing Z), and ALWAYS interprets it as UTC.
+function parseZulu(s) {
+    if (!s) return null;
+    s = s.trim().replace(/\s*[zZ]$/, '').replace(' ', 'T');
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!m) return null;
+    const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] || '00'}Z`);
+    return isNaN(d.getTime()) ? null : d;
 }
 
 // Start replay
 replayGoBtn.addEventListener('click', () => {
-    const val = replayStartInput.value;
-    if (!val) return;
-    const startTime = new Date(val).toISOString();
-    startReplay(startTime);
+    const d = parseZulu(replayStartInput.value);
+    if (!d) {
+        replayRangeEl.textContent = 'Enter Zulu start time as YYYY-MM-DD HH:MM:SS';
+        replayRangeEl.style.color = '#ff8c00';
+        return;
+    }
+    replayRangeEl.style.color = '';
+    startReplay(d.toISOString());
 });
 
 function startReplay(startTime) {

@@ -3559,7 +3559,11 @@ setInterval(() => { if (selectedGufi) showFlightDetail(selectedGufi); }, 5000);
 function loadSettingsFromLocalStorage() {
     try {
         const saved = localStorage.getItem('eram-settings');
-        if (!saved) return; // Use defaults if no saved settings
+        if (!saved) {
+            // No saved settings, but still need to apply rendering with defaults
+            updateScopeBackground();
+            return;
+        }
 
         const settings = JSON.parse(saved);
 
@@ -3585,6 +3589,10 @@ function loadSettingsFromLocalStorage() {
         if (settings.scopeBckgrd !== undefined) scopeBckgrd = settings.scopeBckgrd;
         if (settings.scopeBcklght !== undefined) scopeBcklght = settings.scopeBcklght;
         if (settings.tbVisible !== undefined) window._tbVisible = settings.tbVisible;
+
+        // Sync button state with restored global variables
+        tbState.bright.bckgrd = scopeBckgrd;
+        tbState.bright.bcklght = scopeBcklght;
 
         // Restore map position/zoom
         if (settings.mapCenter && settings.mapZoom !== undefined) {
@@ -6007,8 +6015,8 @@ const tbState = {
     openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
     // Brightness values (0-100) for buttons not yet wired
     bright: {
-        bckgrd: 40, cursor: 100, text: 100, prTgtr: 50, unpTgt: 50,
-        prHist: 50, unpHist: 50, sldb: 50, bcklght: 80, button: 70,
+        bckgrd: 50, cursor: 100, text: 100, prTgtr: 50, unpTgt: 50,
+        prHist: 50, unpHist: 50, sldb: 50, bcklght: 90, button: 70,
         border: 30, toolbar: 30, tbBrdr: 30, fdb: 50, portal: 50,
         onFreq: 50, line4b: 50, dwell: 50, fence: 50,
     },

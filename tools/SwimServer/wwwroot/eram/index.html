@@ -209,8 +209,10 @@
             <div class="panel-label">REPLAY</div>
             <div id="replay-controls">
                 <div class="ctrl-row" style="flex-wrap:wrap;gap:4px;">
-                    <input type="datetime-local" id="replay-start" step="1"
+                    <input type="text" id="replay-start" inputmode="numeric"
+                        placeholder="YYYY-MM-DD HH:MM:SS" title="Start time in Zulu (UTC), 24-hour clock"
                         style="flex:1;min-width:140px;background:#1a1a1a;color:#cccc44;border:1px solid #333;padding:2px 4px;font-family:inherit;font-size:10px;">
+                    <span style="color:#cccc44;font-size:10px;align-self:center;">Z</span>
                     <button id="replay-go" style="background:#006800;color:#fff;border:1px solid #333;padding:2px 8px;font-family:inherit;font-size:10px;cursor:pointer;">GO</button>
                 </div>
                 <div id="replay-bar" style="display:none;margin-top:6px;">

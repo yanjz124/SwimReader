@@ -142,6 +142,20 @@ class TdlsBridge
 
         lock (aircraft.Messages)
         {
+            // Deduplication: check if an identical message already exists (same time + type + body)
+            var isDuplicate = aircraft.Messages.Any(m =>
+                m.Time == msg.Time &&
+                m.Type == msg.Type &&
+                m.DataBody == msg.DataBody &&
+                m.Gate == msg.Gate &&
+                m.TakeoffRunway == msg.TakeoffRunway);
+
+            if (isDuplicate)
+            {
+                Console.WriteLine($"[TDLS] Duplicate message skipped: {airport} {aircraftId} {msg.Type}");
+                return;
+            }
+
             aircraft.Messages.Add(msg);
         }
         aircraft.LastSeen = DateTime.UtcNow;

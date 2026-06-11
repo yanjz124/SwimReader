@@ -204,23 +204,63 @@ function ldrDirName(v) {
 }
 
 // ── Layout + render ─────────────────────────────────────────────────────────
+// Submenu mode: AUX replaces the main menu (SHIFT navigation), but BRITE /
+// MAPS / SITE / CHARSIZE are popouts that float next to their parent
+// button while the main DCB stays visible underneath dimmed. Mirrors CRC's
+// behaviour where most submenus pop out.
+const POPOUT_SUBMENUS = new Set(["BRITE", "MAPS", "SITE", "CHARSIZE"]);
+
 class DCB {
   constructor(rootEl, state) {
     this.root = rootEl;
     this.state = state;
-    this.active = "MAIN";
+    this.active = "MAIN";        // base menu always one of MAIN / AUX
+    this.popout = null;           // current popout submenu key, or null
+    this.popoutAnchorId = null;   // ID of the parent button so we can find rect
     this.handlers = {};
     rootEl.addEventListener("click", (e) => this._onClick(e));
     rootEl.addEventListener("contextmenu", (e) => this._onRClick(e));
     rootEl.addEventListener("wheel",     (e) => this._onWheel(e), { passive: false });
+    // Backdrop + popout overlay containers, mounted as siblings of the DCB
+    this.backdrop = document.createElement("div");
+    this.backdrop.id = "dcb-backdrop";
+    this.backdrop.style.cssText = `
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 19;
+      display: none;
+    `;
+    this.backdrop.addEventListener("click", () => { this.popout = null; this.popoutAnchorId = null; this.render(); });
+    document.body.appendChild(this.backdrop);
+    this.popoutEl = document.createElement("div");
+    this.popoutEl.id = "dcb-popout";
+    this.popoutEl.style.cssText = `
+      position: fixed; z-index: 21;
+      display: none;
+      background: ${DCB_COLOR.FRAME_BG};
+      padding: 0;
+      box-sizing: border-box;
+      align-content: flex-start;
+    `;
+    this.popoutEl.addEventListener("click", (e) => this._onPopoutClick(e));
+    this.popoutEl.addEventListener("contextmenu", (e) => this._onPopoutRClick(e));
+    this.popoutEl.addEventListener("wheel", (e) => this._onPopoutWheel(e), { passive: false });
+    document.body.appendChild(this.popoutEl);
   }
   on(event, fn) { (this.handlers[event] ||= []).push(fn); }
   emit(event, ...args) { (this.handlers[event] || []).forEach(fn => fn(...args)); }
 
   buttons() {
+    // Only MAIN/AUX render in the base DCB. Popout submenus render in
+    // the popoutEl overlay.
     switch (this.active) {
-      case "MAIN":     return mainMenu(this.state);
-      case "AUX":      return auxMenu(this.state);
+      case "MAIN": return mainMenu(this.state);
+      case "AUX":  return auxMenu(this.state);
+    }
+    return [];
+  }
+  popoutButtons() {
+    switch (this.popout) {
       case "BRITE":    return briteMenu(this.state);
       case "MAPS":     return mapsMenu(this.state);
       case "SITE":     return siteMenu(this.state);
@@ -302,35 +342,157 @@ class DCB {
         ">${b.text}</div>`;
     }).join("");
     this.root.innerHTML = html;
+    this._renderPopout();
+  }
+
+  _renderPopout() {
+    if (!this.popout) {
+      this.popoutEl.style.display = "none";
+      this.backdrop.style.display = "none";
+      return;
+    }
+    // Find anchor button in the main DCB.
+    const anchor = this.popoutAnchorId
+      ? this.root.querySelector(`[data-id="${this.popoutAnchorId}"]`)
+      : null;
+    const p = this.state.prefSet;
+    const sizeAxis = 80;
+    const halfAxis = 40;
+    const items = this.popoutButtons();
+    const vertical = (p.DCBLocation === "Left" || p.DCBLocation === "Right");
+    // Container size: row of buttons next to the anchor (horizontal DCB) or
+    // column of buttons (vertical DCB).
+    // We render the same flex-flow as base menu so two half-buttons stack.
+    Object.assign(this.popoutEl.style, {
+      display: "flex",
+      flexFlow: vertical ? "row wrap" : "column wrap",
+      [vertical ? "width" : "height"]: sizeAxis + "px",
+      alignContent: "flex-start",
+      background: dcbAdjust(DCB_COLOR.FRAME_BG, p.Brightness.DCB),
+      boxShadow: "0 0 12px #000",
+    });
+
+    // Position next to anchor
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      if (vertical) {
+        // DCB at left/right: popout below/above the anchor
+        this.popoutEl.style.top = r.bottom + "px";
+        this.popoutEl.style.left = r.left + "px";
+      } else {
+        // DCB at top/bottom: popout to the right of the anchor
+        this.popoutEl.style.top = r.top + "px";
+        this.popoutEl.style.left = r.right + "px";
+        this.popoutEl.style.height = sizeAxis + "px";
+      }
+    } else {
+      // Fallback: anchor not found, position near top-left
+      this.popoutEl.style.top = "10px";
+      this.popoutEl.style.left = "10px";
+    }
+
+    const html = items.map(b => {
+      let w, h;
+      if (vertical) {
+        h = b.narrow ? halfAxis : sizeAxis;
+        w = b.half   ? halfAxis : sizeAxis;
+      } else {
+        w = b.narrow ? halfAxis : sizeAxis;
+        h = b.half   ? halfAxis : sizeAxis;
+      }
+      const bg = b.disabled ? DCB_COLOR.DISABLED_BG
+                : b.active   ? DCB_COLOR.ACTIVE_BG
+                             : DCB_COLOR.INACTIVE_BG;
+      const fg = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
+      const fs = (p.CharSize?.DCB ?? 11);
+      return `<div class="dcb-btn" data-id="${b.id}"
+        ${b.mapIdx != null ? `data-map="${b.mapIdx}"` : ""}
+        ${b.brite ? `data-brite="${b.brite}"` : ""}
+        ${b.wx ? `data-wx="${b.wx}"` : ""}
+        ${b.csz ? `data-csz="${b.csz}"` : ""}
+        ${b.submenu ? `data-submenu="${b.submenu}"` : ""}
+        ${b.disabled ? `data-disabled="1"` : ""}
+        style="
+          width:${w}px; height:${h}px;
+          background:${dcbAdjust(bg, p.Brightness.DCB)};
+          color:${fg};
+          outline:1px solid ${DCB_COLOR.BORDER};
+          outline-offset:-1px;
+          display:flex; align-items:center; justify-content:center;
+          text-align:center; line-height:1.05; font-size:${fs}px;
+          white-space:pre; cursor:${b.disabled ? "default" : "pointer"};
+          flex:none; box-sizing:border-box;
+        ">${b.text}</div>`;
+    }).join("");
+    this.popoutEl.innerHTML = html;
+
+    // Compute width (horizontal DCB) so we know the popout's pixel extent
+    // for clamping if it would go off-screen.
+    requestAnimationFrame(() => {
+      const r = this.popoutEl.getBoundingClientRect();
+      if (!vertical && r.right > window.innerWidth) {
+        this.popoutEl.style.left = (window.innerWidth - r.width) + "px";
+      }
+    });
+
+    this.backdrop.style.display = "block";
   }
 
   _btn(target) {
     return target.closest(".dcb-btn");
   }
-  _onClick(e) {
-    const el = this._btn(e.target);
+  _handleButton(el, baseAdjust) {
+    // Shared click handling for both base DCB and popout. baseAdjust is +1
+    // or -1 depending on left- vs right-click.
     if (!el || el.dataset.disabled) return;
     const id = el.dataset.id;
     const submenu = el.dataset.submenu;
-    this.emit("click", { id, el, e });
-    // Built-in: submenu navigation
-    if (submenu) { this.active = submenu; this.render(); return; }
-    // Built-in: MAP toggle
+    this.emit("click", { id, el });
+    if (submenu) {
+      // SHIFT/Aux replace; everything else pops out.
+      if (POPOUT_SUBMENUS.has(submenu)) {
+        this.popout = submenu;
+        this.popoutAnchorId = id;
+      } else if (submenu === "AUX" || submenu === "MAIN") {
+        this.active = submenu;
+        this.popout = null; this.popoutAnchorId = null;
+      } else {
+        this.active = submenu;
+      }
+      this.render();
+      return;
+    }
     if (el.dataset.map != null) { this.emit("mapToggle", +el.dataset.map); return; }
-    // Built-in: BRITE adjust (left-click = +10 step)
-    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, +10); return; }
-    if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   +1);  return; }
-    // Built-in: numeric cycle for RANGE, RR, LDR LEN, HISTORY, PTL_LEN
-    this.emit("numAdjust", id, +1);
+    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, baseAdjust * 10); return; }
+    if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   baseAdjust);     return; }
+    this.emit("numAdjust", id, baseAdjust);
+  }
+  _onClick(e) {
+    const el = this._btn(e.target);
+    this._handleButton(el, +1);
+  }
+  _onPopoutClick(e) {
+    const el = this._btn(e.target);
+    this._handleButton(el, +1);
+  }
+  _onPopoutRClick(e) {
+    e.preventDefault();
+    const el = this._btn(e.target);
+    this._handleButton(el, -1);
+  }
+  _onPopoutWheel(e) {
+    e.preventDefault();
+    const el = this._btn(e.target);
+    if (!el || el.dataset.disabled) return;
+    const dir = e.deltaY < 0 ? +1 : -1;
+    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, dir * 10); return; }
+    if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   dir);     return; }
+    this.emit("numAdjust", el.dataset.id, dir);
   }
   _onRClick(e) {
     e.preventDefault();
     const el = this._btn(e.target);
-    if (!el || el.dataset.disabled) return;
-    const id = el.dataset.id;
-    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, -10); return; }
-    if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   -1);  return; }
-    this.emit("numAdjust", id, -1);
+    this._handleButton(el, -1);
   }
   _onWheel(e) {
     const el = this._btn(e.target);

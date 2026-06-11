@@ -58,12 +58,12 @@ function mountSsa() {
   el.style.cssText = `
     position:fixed;
     left:8px; top:90px;     /* below DCB; PrefSet.StatusAreaLocation overrides */
-    background:rgba(0,0,0,0.6);
+    background:transparent;
     color:#0f0;
     font-family:FixedDemiBold, ui-monospace, monospace; font-size:12px;
     padding:4px 8px; min-width:200px;
-    border:1px solid #0a3a0a; z-index:17;
-    white-space:pre; line-height:1.4;
+    z-index:17;
+    white-space:pre; line-height:1.3;
     pointer-events:auto; user-select:none;
   `;
   el.draggable = false;
@@ -169,7 +169,10 @@ function refreshSsa() {
   }
 
   el.innerHTML = lines.map(escapeHtml).join("<br>");
-  el.style.color = `rgb(0, ${(255 * prefSet.Brightness.Lists / 100) | 0}, 0)`;
+  // Per CRC visual reference: SSA color = bright green, no border, no
+  // background. Brightness.Lists modulates between 30% (dim) and 100%.
+  const b = Math.max(30, prefSet.Brightness.Lists);
+  el.style.color = `rgb(0, ${(255 * b / 100) | 0}, 0)`;
   el.style.fontSize = (prefSet.CharSize?.Lists ?? 12) + "px";
 }
 

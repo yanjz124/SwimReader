@@ -863,6 +863,70 @@ var purgeTimer = new Timer(_ =>
             f.PointoutTimestamp = null;
         }
     }
+
+    // Early-retire stale duplicate GUFIs left behind by inter-ARTCC handoffs.
+    // When an aircraft crosses an ARTCC boundary it briefly exists as two GUFIs (one per
+    // centre). After the handoff the old centre stops sending its GUFI, which then sits frozen
+    // for the full 60 min above. If a same-callsign sibling with the SAME origin AND destination
+    // is still actively updating, drop the stale one now instead of waiting.
+    //
+    // Safety (must satisfy ALL): (a) a fresh canonical sibling exists with a position fix < 60s
+    // old; (b) the stale GUFI has had NO position fix for > 3 min; (c) identical origin AND
+    // destination; (d) no active handoff on the stale GUFI. Pseudo-tracks (TFC/BLOCK/JUMP/etc.)
+    // carry no origin/destination so they are never matched. Only the older duplicate is removed
+    // and the live one is always kept — this can neither create a duplicate nor drop a track that
+    // is still updating. Genuinely distinct flights that share a callsign are safe too: removal
+    // requires one to be 3-min stale while the other is live, which never holds for two aircraft
+    // that are both actually airborne and reporting.
+    var nowUtc = DateTime.UtcNow;
+    // 300s stale matches the client's hide window and keeps early-retire well clear of normal
+    // radar gaps. (Even if a gapped real track were retired, its same-callsign sibling keeps the
+    // target on screen, so no aircraft vanishes — but 300s makes that case vanishingly rare.)
+    const double freshSec = 60, staleSec = 300;
+    var byCallsign = new Dictionary<string, List<KeyValuePair<string, FlightState>>>(StringComparer.OrdinalIgnoreCase);
+    foreach (var kv in flights)
+    {
+        var f = kv.Value;
+        if (f.FlightStatus != "ACTIVE") continue;
+        if (string.IsNullOrEmpty(f.Callsign)) continue;
+        if (!f.Latitude.HasValue) continue;
+        if (string.IsNullOrEmpty(f.Origin) || string.IsNullOrEmpty(f.Destination)) continue;
+        if (f.LastPositionTime == default) continue;
+        if (!byCallsign.TryGetValue(f.Callsign, out var lst)) byCallsign[f.Callsign] = lst = new();
+        lst.Add(kv);
+    }
+    int retired = 0;
+    foreach (var (_, group) in byCallsign)
+    {
+        if (group.Count < 2) continue;
+        // Canonical = the GUFI with the freshest position fix.
+        var fresh = group[0];
+        foreach (var g in group)
+            if (g.Value.LastPositionTime > fresh.Value.LastPositionTime) fresh = g;
+        if ((nowUtc - fresh.Value.LastPositionTime).TotalSeconds > freshSec) continue; // no live canonical → leave to 60-min purge
+        foreach (var (gufi, f) in group)
+        {
+            if (gufi == fresh.Key) continue;
+            if ((nowUtc - f.LastPositionTime).TotalSeconds <= staleSec) continue;       // still recent → keep
+            if (!string.IsNullOrEmpty(f.HandoffEvent)) continue;                        // mid-handoff → keep
+            if (!string.Equals(f.Origin, fresh.Value.Origin, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.Equals(f.Destination, fresh.Value.Destination, StringComparison.OrdinalIgnoreCase)) continue;
+            // Preserve per-facility CIDs: fold the stale GUFI's computer IDs into the survivor
+            // (without overwriting), so viewing from the transferring ARTCC still shows its CID
+            // after the duplicate is gone.
+            foreach (var cidKv in f.ComputerIds)
+                fresh.Value.ComputerIds.TryAdd(cidKv.Key, cidKv.Value);
+            if (flights.TryRemove(gufi, out var removed))
+            {
+                eramRecorder.RecordRemove(new { gufi }, nowUtc);
+                Broadcast(new WsMsg("remove", new { gufi }));
+                Task.Run(() => FlightHistoryService.Save(removed, historyDir, historyJsonOpts));
+                retired++;
+            }
+        }
+    }
+    if (retired > 0)
+        Console.WriteLine($"[Purge] Early-retired {retired} stale duplicate GUFIs (inter-ARTCC handoff leftovers)");
 }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 
 // Broadcast stats every 5 seconds

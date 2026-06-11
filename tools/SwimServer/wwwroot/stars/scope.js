@@ -846,6 +846,12 @@ function dataBlockMode(t, fp) {
   if (t._forcedMode) return t._forcedMode;
   if (!fp) return "LDB";
   if (fp.Owner && fp.Owner === ownTcp()) return "FDB";
+  // Per CRC § Data Blocks, only FDB rotates the second line. When no TCP is
+  // signed on (observer mode), default associated tracks to FDB so the user
+  // sees the full rotation (alt+speed / scratchpad+type / scratchpad2+reqalt)
+  // for every flight plan. Once signed on via `.SO TCP`, the WPF behavior
+  // (FDB for owned, PDB for not-owned) takes over.
+  if (!ownTcp()) return "FDB";
   return prefSet.LdbBeaconCodesInhibited ? "LDB" : "PDB";
 }
 

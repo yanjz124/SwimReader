@@ -169,10 +169,11 @@ function refreshSsa() {
   }
 
   el.innerHTML = lines.map(escapeHtml).join("<br>");
-  // Per CRC visual reference: SSA color = bright green, no border, no
-  // background. Brightness.Lists modulates between 30% (dim) and 100%.
-  const b = Math.max(30, prefSet.Brightness.Lists);
-  el.style.color = `rgb(0, ${(255 * b / 100) | 0}, 0)`;
+  // RadarWindow.cs:2943: StatusArea.ForeColor = AdjustedColor(DataBlockColor,
+  // Brightness.Lists). DataBlockColor is the configured green; brightness
+  // multiplies linearly. No bold, no shadow.
+  const b = prefSet.Brightness.Lists / 100;
+  el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
   el.style.fontSize = (prefSet.CharSize?.Lists ?? 12) + "px";
 }
 

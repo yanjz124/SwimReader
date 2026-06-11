@@ -69,14 +69,15 @@ function refreshMca() {
   const el = document.getElementById("mca");
   if (!el) return;
   const cursor = "_";
-  const rspColor = MCA.responseColor || "#0f0";
+  // RadarWindow.cs:2918-2945: PreviewArea + response both render as
+  // DataBlockColor (green) modulated by Brightness.Lists. Errors do NOT
+  // change color in WPF — they just set the message. We follow that.
   el.innerHTML =
-    `<div style="color:${rspColor};">${MCA.response || ""}</div>` +
-    `<div style="color:#fff;">${MCA.buffer}${cursor}</div>`;
-  // Apply Brightness.Lists + CharSize.Lists so MCA matches SSA visually
+    `<div>${MCA.response || ""}</div>` +
+    `<div>${MCA.buffer}${cursor}</div>`;
   if (window.prefSet) {
-    const b = Math.max(30, window.prefSet.Brightness.Lists);
-    el.style.color = `rgb(0, ${(255 * b / 100) | 0}, 0)`;
+    const b = window.prefSet.Brightness.Lists / 100;
+    el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
     el.style.fontSize = (window.prefSet.CharSize?.Lists ?? 13) + "px";
   }
 }

@@ -20,28 +20,47 @@ const MCA = {
   clickedPlane: null,  // the aircraft last left-clicked (for "+ click" commands)
 };
 
-// F-key prefix table — CRC docs § STARS Keys + scope/RadarWindow.cs DcbButtonClick.
-// Each F-key inserts its prefix; user appends a FLID (callsign / CID / squawk)
-// and presses Enter.
+// STARS F-key prefixes — real STARS keyboards have dedicated function keys for
+// these operations. CRC simulates them via F-key mappings, and DGScope's
+// Window_KeyDown (RadarWindow.cs:3271-3450) wires each F-key to a KeyCode
+// enum value (RadarWindow.cs:1395-1409). The preview text rendered for each
+// KeyCode comes from GeneratePreviewString (RadarWindow.cs:3190-3240).
+//
+//   F1  — Beacon Code Readout (hold-to-show, no prefix inserted)
+//   F2  — Track Reposition (RP per CRC docs)
+//   F3  — INIT CNTL → "IC" preview text
+//   F4  — TERM CNTL → "TC" preview text
+//   F5  — HND OFF  → "HO" preview text
+//   F6  — FLT DATA → "FD" preview text  (CRC docs call it "DA"; WPF code says FD)
+//   F7  — MULTI FUNC → "F" preview text
+//   F9  — VFR PLAN  → "VP" preview text
+//   F11 — CA (Conflict Alert)
+//
+// NOTE: previous ERAM-style mappings (QF, QP, QX, QZ, QU, QL, QQ, QB, QS) were
+// wrong - those are ERAM commands, NOT STARS. Removed entirely.
 const FKEY_PREFIX = {
-  F1:  "QF",   // Flight plan readout (vSTARS Quick Flight)
-  F2:  "QP",   // Point out acknowledge / acknowledge
-  F4:  "QX",   // Drop track
-  F5:  "QZ",   // Altitude assign
-  F6:  "QU",   // Route display
-  F7:  "QL",   // Quick Look (sector)
-  F8:  "QQ",   // Interim altitude
-  F9:  "QB",   // Beacon code
-  F10: "QS",   // Heading / speed / free text
-  // Shift+F2 = QD (clear response)
-  // Shift+F7 = WR (METAR)
-  // Shift+F8 = QR (controller reported altitude)
+  F2:  "RP",
+  F3:  "IC",
+  F4:  "TC",
+  F5:  "HO",
+  F6:  "FD",
+  F7:  "F",
+  F9:  "VP",
+  F11: "CA",
 };
 
-const FKEY_PREFIX_SHIFT = {
-  F2:  "QD",
-  F7:  "WR",
-  F8:  "QR",
+// Ctrl+F-key bindings per CRC docs.
+//   Ctrl+F1: Re-center scope
+//   Ctrl+F2: Open MAPS submenu
+//   Ctrl+F3: Open BRITE submenu
+//   Ctrl+F7: Toggle DCB menu position
+//   Ctrl+F8: Toggle DCB visible
+const FKEY_CTRL_ACTION = {
+  F1: "recenter",
+  F2: "open-maps",
+  F3: "open-brite",
+  F7: "dcb-position",
+  F8: "dcb-visible",
 };
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
@@ -62,6 +81,10 @@ function mountMca() {
   document.body.appendChild(pa);
 
   document.addEventListener("keydown", onKeyDown);
+  // F1 release - clear hold-to-show-all-callsigns (RadarWindow.cs:3444-3450).
+  document.addEventListener("keyup", (e) => {
+    if (e.key === "F1") window.showAllCallsigns = false;
+  });
   refreshMca();
 }
 
@@ -86,11 +109,35 @@ function onKeyDown(e) {
   // Ignore typing inside text inputs (none currently, but defensive).
   if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
 
-  // F-key prefix insertion — CRC docs § STARS Keys.
+  // STARS F-key handling per CRC docs / RadarWindow.cs Window_KeyDown.
   if (e.key && /^F\d+$/.test(e.key)) {
     e.preventDefault();
     const k = e.key.toUpperCase();
-    const prefix = (e.shiftKey ? FKEY_PREFIX_SHIFT[k] : FKEY_PREFIX[k]);
+    // Ctrl+F-keys are scope-control shortcuts, not preview prefixes.
+    if (e.ctrlKey) {
+      const action = FKEY_CTRL_ACTION[k];
+      if (!action) return;
+      if (action === "recenter" && typeof window.recenterScope === "function") {
+        window.recenterScope();
+      } else if (action === "open-maps" && window.dcb) {
+        window.dcb.popout = "MAPS"; window.dcb.popoutAnchorId = "MAPS"; window.dcb.render();
+      } else if (action === "open-brite" && window.dcb) {
+        window.dcb.popout = "BRITE"; window.dcb.popoutAnchorId = "BRITE"; window.dcb.render();
+      } else if (action === "dcb-visible" && window.prefSet) {
+        window.prefSet.DCBVisible = !window.prefSet.DCBVisible;
+        const root = document.getElementById("dcb");
+        if (root) root.style.display = window.prefSet.DCBVisible ? "" : "none";
+      }
+      return;
+    }
+    // F1 is hold-to-show-all-callsigns - no preview prefix (RadarWindow.cs:3421).
+    // Just clear preview and set the flag.
+    if (k === "F1") {
+      window.showAllCallsigns = true;
+      return;
+    }
+    // Other F-keys insert the STARS preview text from the KeyCode table.
+    const prefix = FKEY_PREFIX[k];
     if (prefix) {
       MCA.buffer = prefix + " ";
       refreshMca();

@@ -181,6 +181,11 @@ let flashTime = performance.now();
 
 // Dedup: when a facility is selected, only show one GUFI per callsign (prefer our facility)
 const bestGufiByCallsign = new Map();  // callsign → gufi — rebuilt each render cycle
+// callsign → merged {facility: cid} across all that callsign's GUFIs. Lets getCid() show the
+// selected ARTCC's CID even when the displayed GUFI isn't the one carrying it — e.g. after an
+// inter-ARTCC handoff the old centre's CID lives on the old GUFI, but we still want to show it
+// when viewing from that centre. Rebuilt each render cycle (only when a facility is selected).
+const cidUnionByCallsign = new Map();
 function isDedupHidden(gufi, f) {
     return myFacility && f.callsign && bestGufiByCallsign.get(f.callsign) !== gufi;
 }
@@ -1095,8 +1100,11 @@ function getCid(f) {
     // Each ARTCC assigns its own CID — only show the selected facility's CID.
     // Never show a foreign facility's CID (controllers only see their own).
     let cid;
-    if (myFacility && f.computerIds) {
-        cid = f.computerIds[myFacility] || '';
+    if (myFacility) {
+        cid = (f.computerIds && f.computerIds[myFacility]) || '';
+        // Fallback: the displayed GUFI may not carry this facility's CID (it lives on a sibling
+        // GUFI of the same callsign after a handoff) — pull it from the per-callsign union.
+        if (!cid && f.callsign) cid = cidUnionByCallsign.get(f.callsign)?.[myFacility] || '';
     } else {
         // No facility selected ("All") — show most recent CID from any facility
         cid = f.computerId || '';
@@ -2274,9 +2282,16 @@ function doRender() {
     // (4) fresher posAge. Only considers candidates that would pass isVisible() status checks
     // to prevent a "dead" GUFI from winning dedup over a "live" one during GUFI transitions.
     bestGufiByCallsign.clear();
+    cidUnionByCallsign.clear();
     if (myFacility) {
         for (const [gufi, f] of flights) {
             if (!f.callsign) continue;
+            // Merge this GUFI's per-facility CIDs into the callsign union (don't overwrite).
+            if (f.computerIds) {
+                let u = cidUnionByCallsign.get(f.callsign);
+                if (!u) cidUnionByCallsign.set(f.callsign, u = {});
+                for (const k in f.computerIds) if (!(k in u)) u[k] = f.computerIds[k];
+            }
             if (f.flightStatus === 'CANCELLED') continue;
             // Mirror isVisible() status/age guards — a flight that would fail isVisible()
             // must never win dedup and shadow a visible sibling GUFI
@@ -5267,8 +5282,9 @@ function showFlightInRA(f) {
     const ra = document.getElementById('ra-content');
     const now = new Date();
     const zulu = String(now.getUTCHours()).padStart(2, '0') + String(now.getUTCMinutes()).padStart(2, '0');
+    // getCid() already returns a normalized 3-char CID — pad to 3 (not 4, which re-added a leading 0).
     const cidVal = getCid(f);
-    const cid = cidVal ? String(cidVal).padStart(4, '0') : '????';
+    const cid = cidVal ? String(cidVal).padStart(3, '0') : '???';
     // Sector display: prefix with ARTCC handoff code if different facility
     const ctrlFac = f.controllingFacility || '';
     const ctrlSec = f.controllingSector || '??';

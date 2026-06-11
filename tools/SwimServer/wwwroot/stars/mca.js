@@ -253,20 +253,10 @@ function executeCommand(line, opts = {}) {
   const clickedplane = clicked != null;
   const enter = opts.enter !== false;     // default = Enter-key path
 
-  // Implied command on aircraft click with empty buffer (RadarWindow.cs:1438-1450).
+  // Implied command on aircraft click with empty buffer.
+  // Full priority chain from ProcessImpliedCommand (RadarWindow.cs:2688-2769).
   if (!line && clickedplane) {
-    const plane = clicked;
-    const fp = trackToFp.get(plane.Guid);
-    if (plane._forceQuickLook) {
-      plane._forceQuickLook = false;
-    } else if (!fp || !fp.Owner || fp.Owner !== window.ownTcp?.()) {
-      // Not owned -> toggle FDB on/off.
-      plane._fdb = !plane._fdb;
-    } else if (fp.PositionInd && fp.PositionInd !== window.ownTcp?.()) {
-      // Owned by us but PositionInd differs -> release ownership.
-      fp.Owner = null;
-    }
-    return;
+    return processImplied(clicked);
   }
   if (!line) return;
 
@@ -334,9 +324,15 @@ function executeCommand(line, opts = {}) {
     return processMultifunction(keys[0], parts, clicked, clickedplane, enter);
   }
 
-  // Bare FLID alone: WPF doesn't have this case in ProcessCommand. It happens
-  // through ProcessImpliedCommand when you click. We do nothing for typed
-  // FLIDs without a verb.
+  // ── KeyCode commands the user can type explicitly ──────────────────────
+  if (parts[0] === "RR")       return cmdRangeRings(parts);       // 2528-2541
+  if (parts[0] === "WX")       return cmdWeather(parts);          // 2542-2557
+  if (parts[0] === "RECENTER") return cmdRecenter(parts);         // 2558-2577
+
+  // ── Default catchall on clicked plane (cs:2606-2683) ───────────────────
+  if (clickedplane && keys[0].length >= 2 && keys[0].length <= 4) {
+    return cmdDefaultClickedPlane(line, clicked);
+  }
 
   // Unknown command path - WPF silently does nothing. Match that.
 }
@@ -531,6 +527,120 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
     return;
   }
   // TODO(test-in-crc): F 2 ATPA, F 2 2.5, F D, F P, F S
+}
+
+// ── ProcessImpliedCommand (RadarWindow.cs:2688-2769) ─────────────────────
+// Priority chain when user clicks an aircraft with an empty MCA buffer:
+//   1. PendingHandoff == us         -> accept handoff
+//   2. PositionInd == us && pending -> recall handoff
+//   3. Pointout                     -> clear pointout
+//   4. ForceQuickLook               -> clear FQL
+//   5. Owned & PositionInd != us    -> release ownership
+//   6. Owned & has callsign         -> beacon readout in preview
+//   7. !Owned & has callsign        -> toggle FDB
+//   8. No callsign                  -> toggle FDB (unassociated)
+function processImplied(plane) {
+  const fp = trackToFp.get(plane.Guid) || {};
+  const me = window.ownTcp?.();
+  // 1. Accept handoff
+  if (fp.PendingHandoff && fp.PendingHandoff === me) {
+    fp.PositionInd = me;
+    fp.PendingHandoff = null;
+    return;
+  }
+  // 2. Recall handoff
+  if (fp.PositionInd === me && fp.PendingHandoff) {
+    fp.PendingHandoff = null;
+    return;
+  }
+  // 3. Clear pointout
+  if (plane._pointout) {
+    plane._pointout = false;
+    return;
+  }
+  // 4. Clear ForceQuickLook
+  if (plane._forceQuickLook) {
+    plane._forceQuickLook = false;
+    return;
+  }
+  // 5. Release ownership (we own but display is elsewhere)
+  if (plane._owned && fp.PositionInd && fp.PositionInd !== me) {
+    plane._owned = false;
+    return;
+  }
+  // 6. Beacon readout in preview area
+  if (plane._owned && fp.Callsign) {
+    setResponse(`${fp.Callsign} ${plane.Squawk || ""} ${fp.AssignedSquawk || ""}`.trim());
+    return;
+  }
+  // 7. Toggle FDB on associated track we don't own
+  if (!plane._owned && fp.Callsign) {
+    plane._fdb = !plane._fdb;
+    return;
+  }
+  // 8. Toggle FDB on unassociated track
+  if (!fp.Callsign) {
+    plane._fdb = !plane._fdb;
+  }
+}
+
+// ── KeyCode.RngRing  "RR <interval>" + enter (RadarWindow.cs:2528-2541) ──
+function cmdRangeRings(parts) {
+  if (parts.length < 2) return;
+  const interval = parseFloat(parts[1]);
+  if (Number.isFinite(interval)) prefSet.RangeRingSpacing = Math.floor(interval);
+}
+
+// ── KeyCode.WX  "WX <level>" + enter (RadarWindow.cs:2542-2557) ───────────
+function cmdWeather(parts) {
+  if (parts.length < 2 || parts[1].length !== 1) return;
+  const level = parseInt(parts[1], 10);
+  if (level > 0 && level < 7 && window.starsState?.Nexrad) {
+    const arr = window.starsState.Nexrad.LevelsEnabled ||= [];
+    arr[level - 1] = !arr[level - 1];
+  }
+}
+
+// ── KeyCode.RecenterEverything  "RECENTER <ICAO>" (RadarWindow.cs:2558-2577)
+function cmdRecenter(parts) {
+  if (parts.length !== 2) return;
+  const code = parts[1].toUpperCase();
+  // Look up in vNAS airports loaded by scope.js applyProfile.
+  const airport = (window.starsAirports || []).find(a => a.id === code);
+  if (!airport) { setResponse("NO AIRPORT"); return; }
+  prefSet.ScopeCentered = true;
+  prefSet.RangeRingLocation = { Latitude: airport.lat, Longitude: airport.lon };
+  if (window.recenterScope) window.recenterScope(airport.lat, airport.lon);
+  if (airport.magVar != null) prefSet.ScreenRotation = airport.magVar;
+}
+
+// ── Default catchall — typed text on clicked plane (cs:2606-2683) ─────────
+//   1 token, 3 chars: Scratchpad1                 (cs:2627-2640)
+//   1 token, 4 chars trailing '+': Scratchpad2    (cs:2641-2654)
+//   1 token, 4 chars no '+': aircraft Type        (cs:2655-2668)
+//   1 token, 2 chars: PendingHandoff (initiate)   (cs:2669-2683)
+//   tempLine end-target (RBL):                    (cs:2607-2626) TODO(rbl)
+function cmdDefaultClickedPlane(line, clicked) {
+  const fp = trackToFp.get(clicked.Guid);
+  if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
+  if (!fp) return;
+  const token = line.trim();
+  if (token.length === 3) {
+    fp.Scratchpad1 = token;
+    return;
+  }
+  if (token.length === 4 && token.endsWith("+")) {
+    fp.Scratchpad2 = token.slice(0, 3);
+    return;
+  }
+  if (token.length === 4) {
+    fp.AircraftType = token;
+    return;
+  }
+  if (token.length === 2) {
+    fp.PendingHandoff = token;
+    return;
+  }
 }
 
 // Aircraft click → set as "clicked plane" + handle implicit commands.

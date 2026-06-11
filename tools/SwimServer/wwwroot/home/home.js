@@ -1,6 +1,8 @@
 const panelEl = document.getElementById('panel');
 const navItems = document.querySelectorAll('.nav-item');
 let stats = {};
+let _sys = {};          // latest /api/system snapshot
+let _shownKey = '';     // which detail panel is currently open
 
 // ── Nav hover → show detail in right panel ────────────────────
 const pages = {
@@ -110,11 +112,14 @@ navItems.forEach(item => {
     });
     // Prevent default nav on click, open in same tab
     item.addEventListener('click', (e) => {
-        // Allow normal navigation
+        // The server item has no destination page — it only drives the detail panel.
+        if (item.dataset.key === 'server') { e.preventDefault(); showPanel('server'); }
     });
 });
 
 function showPanel(key) {
+    _shownKey = key;
+    if (key === 'server') { renderServerPanel(); return; }
     const p = pages[key];
     if (!p) return;
 
@@ -131,8 +136,54 @@ function showPanel(key) {
     `;
 }
 
+function fmtMB(mb) {
+    if (mb == null) return '--';
+    return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
+}
+
+function renderServerPanel() {
+    const s = _sys || {};
+    const fields = [
+        ['CPU', (s.cpuPercent ?? 0) + '%  (' + (s.cores ?? '?') + ' cores)'],
+        ['Memory (RSS)', fmtMB(s.memWorkingSetMB)],
+        ['Managed heap', fmtMB(s.memManagedMB) + '  /  GC ' + fmtMB(s.gcHeapMB)],
+        ['GC gen 0/1/2', `${s.gen0 ?? 0} / ${s.gen1 ?? 0} / ${s.gen2 ?? 0}`],
+        ['Threads', s.threads ?? '--'],
+        ['WS clients', s.wsClients ?? '--'],
+        ['Flights in memory', (s.flights ?? 0).toLocaleString()],
+        ['Uptime', s.uptime ?? '--'],
+        ['Disk free', (s.diskFreeGB ?? '--') + ' / ' + (s.diskTotalGB ?? '--') + ' GB'],
+        ['Host', (s.machine ?? '--') + '  (pid ' + (s.pid ?? '--') + ')'],
+        ['.NET', s.dotnet ?? '--'],
+    ];
+    const fieldsHtml = fields.map(([l, v]) =>
+        `<span class="lbl">${l}</span><span class="val">${v}</span>`
+    ).join('');
+    panelEl.innerHTML = `
+        <h2>SERVER STATUS</h2>
+        <div class="source">Process diagnostics — /api/system</div>
+        <div class="description">Live SwimServer performance. Auto-refreshes every 10s.</div>
+        <div class="field-grid">${fieldsHtml}</div>
+    `;
+}
+
 // ── Live stats polling ────────────────────────────────────────
 async function refreshStats() {
+    try {
+        // Server performance (CPU / memory / uptime / clients)
+        const syr = await fetch('/api/system');
+        if (syr.ok) {
+            _sys = await syr.json();
+            const sEl = document.getElementById('serverStat');
+            if (sEl) sEl.innerHTML =
+                `SRV: <b>CPU ${(_sys.cpuPercent ?? 0).toFixed(0)}%</b>  <b>${fmtMB(_sys.memWorkingSetMB)}</b>`;
+            const scEl = document.getElementById('serverCount');
+            if (scEl) scEl.textContent =
+                `CPU ${(_sys.cpuPercent ?? 0).toFixed(0)}%  ${fmtMB(_sys.memWorkingSetMB)}  ${_sys.wsClients ?? 0} clients`;
+            if (_shownKey === 'server') renderServerPanel();
+        }
+    } catch {}
+
     try {
         // SFDPS stats
         const sr = await fetch('/api/stats');

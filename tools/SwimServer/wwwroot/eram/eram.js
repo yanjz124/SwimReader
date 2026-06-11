@@ -8036,6 +8036,31 @@ let replayPaused = false;
 let replayPendingFlights = new Map(); // gufi → latest flight object (merged across batches)
 let replayPendingRemoves = []; // gufi list
 let replayRafId = null;
+let _vpTimer = null;
+
+// Current map bounds expanded by a 50% buffer, as the server's viewport filter expects.
+// The buffer keeps edge tracks (and their leaders/vectors) present and absorbs small pans.
+function paddedBounds() {
+    const b = map.getBounds().pad(0.5);
+    return {
+        minLat: b.getSouth(), minLon: b.getWest(),
+        maxLat: b.getNorth(), maxLon: b.getEast()
+    };
+}
+
+// Push the current viewport to the replay server (it responds with a region snapshot).
+function sendViewport() {
+    if (!replayActive || !replayWs || replayWs.readyState !== WebSocket.OPEN) return;
+    replayWs.send(JSON.stringify(Object.assign({ cmd: 'viewport' }, paddedBounds())));
+}
+
+// Debounce viewport updates so a drag/zoom only sends once it settles.
+function scheduleViewport() {
+    if (!replayActive) return;
+    if (_vpTimer) clearTimeout(_vpTimer);
+    _vpTimer = setTimeout(sendViewport, 300);
+}
+map.on('moveend zoomend', scheduleViewport);
 
 function replayFlush() {
     replayRafId = null;
@@ -8142,7 +8167,13 @@ function startReplay(startTime) {
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const speed = replaySpeedSel.value || '1';
-    replayWs = new WebSocket(`${proto}//${location.host}/replay/ws?start=${encodeURIComponent(startTime)}&speed=${speed}`);
+    // Viewport filtering: stream only tracks within the visible area (+ buffer) so the
+    // client isn't parsing/processing thousands of off-screen NAS tracks. Bounds are sent
+    // at connect (URL) and on every pan/zoom (viewport command); the server re-snapshots
+    // the new region so panning never reveals blank areas.
+    const vp = paddedBounds();
+    const vpQuery = `&minLat=${vp.minLat}&minLon=${vp.minLon}&maxLat=${vp.maxLat}&maxLon=${vp.maxLon}`;
+    replayWs = new WebSocket(`${proto}//${location.host}/replay/ws?start=${encodeURIComponent(startTime)}&speed=${speed}${vpQuery}`);
 
     replayWs.onopen = () => {
         replayStatusEl.textContent = 'Loading...';

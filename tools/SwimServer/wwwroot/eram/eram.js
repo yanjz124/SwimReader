@@ -1581,7 +1581,7 @@ function formatFdbHtml(f, cls) {
     const poInfo = getPointoutIndicator(f);
     let html = '';
     if (poInfo) {
-        html += `<span class="ac-po-line0" style="pointer-events:auto;cursor:pointer;">${col0Sp}\u00a0\u00a0<span class="ac-po-${poInfo.cls}">${poInfo.ch}</span></span>\n`;
+        html += `<span class="ac-po-line0" style="pointer-events:auto;cursor:inherit;">${col0Sp}\u00a0\u00a0<span class="ac-po-${poInfo.cls}">${poInfo.ch}</span></span>\n`;
     }
     html += `${col0Hit}${l1}\n`;
     html += `${showVci ? col0Vci : col0Hit}${l2}\n`;

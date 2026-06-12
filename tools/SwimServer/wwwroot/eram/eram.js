@@ -6386,10 +6386,10 @@ const tbState = {
     openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
     // Brightness values (0-100) for buttons not yet wired
     bright: {
-        bckgrd: 50, cursor: 100, text: 100, prTgtr: 80, unpTgt: 80,
-        prHist: 80, unpHist: 80, ldb: 60, bcklght: 90, button: 70,
-        border: 30, toolbar: 30, tbBrdr: 30, fdb: 80, portal: 50,
-        onFreq: 60, line4b: 50, dwell: 50, fence: 80,
+        bckgrd: 40, cursor: 100, text: 100, prTgtr: 80, unpTgt: 80,
+        prHist: 80, unpHist: 80, ldb: 70, bcklght: 80, button: 70,
+        border: 30, toolbar: 40, tbBrdr: 30, fdb: 80, portal: 50,
+        onFreq: 70, line4b: 50, dwell: 50, fence: 80, sldb: 50,
     },
     // Cursor sub-menu
     cursorSize: 1,
@@ -6859,7 +6859,7 @@ const TB_BRIGHT = {
                 onDec: () => { tbState.bright.ldb = Math.max(0, tbState.bright.ldb - 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
                 onInc: () => { tbState.bright.ldb = Math.min(100, tbState.bright.ldb + 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
             }),
-            incdec('SLDB', { cls: 'tb-green', getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); } }),
+            incdec('SLDB', { cls: 'tb-green', getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); saveSettingsToLocalStorage(); } }),
             nosim('WX'),
             incdec('NEXRAD', {
                 cls: 'tb-green',

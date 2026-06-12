@@ -5910,6 +5910,158 @@ document.getElementById('po-menu-body').addEventListener('auxclick', (e) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+// Checklist Menus (POS CHECK, EMERG CHECK)
+// ════════════════════════════════════════════════════════════════════════════
+const CHECKLISTS = {
+    'pos': {
+        title: 'POS CHECK',
+        items: [
+            'SIAS',
+            'TRAFFIC MANAGEMENT INITIATIVES',
+            'SPECIAL USE AIRSPACE/SPECIAL ACTIVITIES',
+            'WEATHER/RIDES/ALTIMETERS',
+            'SURROUNDING AIRSPACE CONFIGURATIONS',
+            'TRAFFIC AND COMMUNICATION STATUS',
+        ]
+    },
+    'emerg': {
+        title: 'EMERG CHECK',
+        items: [
+            'AIRCRAFT CALLSIGN AND TYPE',
+            'NATURE OF EMERGENCY',
+            'PILOTS INTENTIONS',
+            '',  // separator line
+            'FUEL REMAINING IN TIME',
+            'NUMBER OF PEOPLE ON BOARD',
+            'POINT OF DEPARTURE AND DESTINATION',
+            '',  // separator line
+            'OTHER PERTINENT INFORMATION',
+        ]
+    }
+};
+
+let checklistState = {};  // type → Set of checked item indices
+let currentChecklistOpen = null;  // track which checklist is currently open
+
+function openChecklist(type, clientX, clientY) {
+    const checklist = CHECKLISTS[type];
+    if (!checklist) return;
+
+    // Initialize checked state if needed
+    if (!checklistState[type]) {
+        checklistState[type] = new Set();
+    }
+
+    const menu = document.getElementById('checklist-menu');
+    document.getElementById('checklist-menu-title-text').textContent = checklist.title;
+    currentChecklistOpen = type;
+
+    let html = '';
+    for (let i = 0; i < checklist.items.length; i++) {
+        const item = checklist.items[i];
+        if (item === '') {
+            // Separator line
+            html += `<div class="checklist-separator"></div>`;
+        } else {
+            const isChecked = checklistState[type].has(i);
+            html += `<div class="checklist-item${isChecked ? ' checked' : ''}" data-type="${type}" data-index="${i}">${item}</div>`;
+        }
+    }
+    document.getElementById('checklist-menu-body').innerHTML = html;
+
+    // Try to restore saved position, otherwise use provided coordinates
+    const container = document.getElementById('map-container');
+    const cRect = container.getBoundingClientRect();
+    const savedPos = localStorage.getItem(`checklist-pos-${type}`);
+
+    if (savedPos) {
+        const pos = JSON.parse(savedPos);
+        menu.style.left = pos.left + 'px';
+        menu.style.top = pos.top + 'px';
+    } else {
+        menu.style.left = (clientX - cRect.left + 10) + 'px';
+        menu.style.top = (clientY - cRect.top - 10) + 'px';
+    }
+
+    menu.style.right = 'auto';
+    menu.style.bottom = 'auto';
+    menu.style.display = 'block';
+    requestAnimationFrame(() => clampBox(menu));
+}
+
+function closeChecklist() {
+    const menu = document.getElementById('checklist-menu');
+
+    // Save current position
+    if (currentChecklistOpen && menu.style.display !== 'none') {
+        const left = parseInt(menu.style.left);
+        const top = parseInt(menu.style.top);
+        localStorage.setItem(`checklist-pos-${currentChecklistOpen}`, JSON.stringify({ left, top }));
+    }
+
+    menu.style.display = 'none';
+    currentChecklistOpen = null;
+
+    // Update toolbar button state immediately and persistently
+    const updateChecklistButtons = () => {
+        const allButtons = document.querySelectorAll('.tb-btn');
+        allButtons.forEach(btn => {
+            const labels = btn.querySelectorAll('.tb-label');
+            labels.forEach(label => {
+                const text = label.textContent || '';
+                if ((text.includes('POS') && text.includes('CHECK')) ||
+                    (text.includes('EMERG') && text.includes('CHECK'))) {
+                    btn.classList.remove('tb-toggle-on');
+                }
+            });
+        });
+    };
+
+    // Update immediately
+    updateChecklistButtons();
+
+    // Also update on next frame to ensure it sticks
+    requestAnimationFrame(updateChecklistButtons);
+}
+
+document.getElementById('checklist-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    closeChecklist();
+});
+
+document.getElementById('checklist-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+});
+
+document.getElementById('checklist-menu-body').addEventListener('click', (e) => {
+    const item = e.target.closest('.checklist-item');
+    if (!item) return;
+
+    const type = item.dataset.type;
+    const index = parseInt(item.dataset.index);
+
+    if (!checklistState[type]) checklistState[type] = new Set();
+
+    if (checklistState[type].has(index)) {
+        checklistState[type].delete(index);
+        item.classList.remove('checked');
+    } else {
+        checklistState[type].add(index);
+        item.classList.add('checked');
+    }
+});
+
+setupBoxDrag(document.getElementById('checklist-menu'), document.getElementById('checklist-menu-title'));
+
+// Close checklist when clicking outside
+document.addEventListener('mousedown', e => {
+    const cm = document.getElementById('checklist-menu');
+    if (cm.style.display !== 'none' && !cm.contains(e.target)) closeChecklist();
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 // Zulu Time View
 // ════════════════════════════════════════════════════════════════════════════
 setupBoxDrag(document.getElementById('time-view'));
@@ -6776,13 +6928,33 @@ const TB_CHECK_LISTS = {
         [
             toggle('POS\nCHECK', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => document.getElementById('checklist-menu').style.display !== 'none' && document.getElementById('checklist-menu-title-text').textContent === 'POS CHECK',
+                onToggle: () => {
+                    const menu = document.getElementById('checklist-menu');
+                    const isOpen = menu.style.display !== 'none';
+                    const isPosOpen = isOpen && document.getElementById('checklist-menu-title-text').textContent === 'POS CHECK';
+
+                    if (isPosOpen) {
+                        closeChecklist();
+                    } else {
+                        openChecklist('pos', window.innerWidth / 2, window.innerHeight / 2);
+                    }
+                },
             }),
             toggle('EMERG\nCHECK', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => document.getElementById('checklist-menu').style.display !== 'none' && document.getElementById('checklist-menu-title-text').textContent === 'EMERG CHECK',
+                onToggle: () => {
+                    const menu = document.getElementById('checklist-menu');
+                    const isOpen = menu.style.display !== 'none';
+                    const isEmergOpen = isOpen && document.getElementById('checklist-menu-title-text').textContent === 'EMERG CHECK';
+
+                    if (isEmergOpen) {
+                        closeChecklist();
+                    } else {
+                        openChecklist('emerg', window.innerWidth / 2, window.innerHeight / 2);
+                    }
+                },
             }),
         ],
     ],

@@ -5910,158 +5910,6 @@ document.getElementById('po-menu-body').addEventListener('auxclick', (e) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// Checklist Menus (POS CHECK, EMERG CHECK)
-// ════════════════════════════════════════════════════════════════════════════
-const CHECKLISTS = {
-    'pos': {
-        title: 'POS CHECK',
-        items: [
-            'SIAS',
-            'TRAFFIC MANAGEMENT INITIATIVES',
-            'SPECIAL USE AIRSPACE/SPECIAL ACTIVITIES',
-            'WEATHER/RIDES/ALTIMETERS',
-            'SURROUNDING AIRSPACE CONFIGURATIONS',
-            'TRAFFIC AND COMMUNICATION STATUS',
-        ]
-    },
-    'emerg': {
-        title: 'EMERG CHECK',
-        items: [
-            'AIRCRAFT CALLSIGN AND TYPE',
-            'NATURE OF EMERGENCY',
-            'PILOTS INTENTIONS',
-            '',  // separator line
-            'FUEL REMAINING IN TIME',
-            'NUMBER OF PEOPLE ON BOARD',
-            'POINT OF DEPARTURE AND DESTINATION',
-            '',  // separator line
-            'OTHER PERTINENT INFORMATION',
-        ]
-    }
-};
-
-let checklistState = {};  // type → Set of checked item indices
-let currentChecklistOpen = null;  // track which checklist is currently open
-
-function openChecklist(type, clientX, clientY) {
-    const checklist = CHECKLISTS[type];
-    if (!checklist) return;
-
-    // Initialize checked state if needed
-    if (!checklistState[type]) {
-        checklistState[type] = new Set();
-    }
-
-    const menu = document.getElementById('checklist-menu');
-    document.getElementById('checklist-menu-title-text').textContent = checklist.title;
-    currentChecklistOpen = type;
-
-    let html = '';
-    for (let i = 0; i < checklist.items.length; i++) {
-        const item = checklist.items[i];
-        if (item === '') {
-            // Separator line
-            html += `<div class="checklist-separator"></div>`;
-        } else {
-            const isChecked = checklistState[type].has(i);
-            html += `<div class="checklist-item${isChecked ? ' checked' : ''}" data-type="${type}" data-index="${i}">${item}</div>`;
-        }
-    }
-    document.getElementById('checklist-menu-body').innerHTML = html;
-
-    // Try to restore saved position, otherwise use provided coordinates
-    const container = document.getElementById('map-container');
-    const cRect = container.getBoundingClientRect();
-    const savedPos = localStorage.getItem(`checklist-pos-${type}`);
-
-    if (savedPos) {
-        const pos = JSON.parse(savedPos);
-        menu.style.left = pos.left + 'px';
-        menu.style.top = pos.top + 'px';
-    } else {
-        menu.style.left = (clientX - cRect.left + 10) + 'px';
-        menu.style.top = (clientY - cRect.top - 10) + 'px';
-    }
-
-    menu.style.right = 'auto';
-    menu.style.bottom = 'auto';
-    menu.style.display = 'block';
-    requestAnimationFrame(() => clampBox(menu));
-}
-
-function closeChecklist() {
-    const menu = document.getElementById('checklist-menu');
-
-    // Save current position
-    if (currentChecklistOpen && menu.style.display !== 'none') {
-        const left = parseInt(menu.style.left);
-        const top = parseInt(menu.style.top);
-        localStorage.setItem(`checklist-pos-${currentChecklistOpen}`, JSON.stringify({ left, top }));
-    }
-
-    menu.style.display = 'none';
-    currentChecklistOpen = null;
-
-    // Update toolbar button state immediately and persistently
-    const updateChecklistButtons = () => {
-        const allButtons = document.querySelectorAll('.tb-btn');
-        allButtons.forEach(btn => {
-            const labels = btn.querySelectorAll('.tb-label');
-            labels.forEach(label => {
-                const text = label.textContent || '';
-                if ((text.includes('POS') && text.includes('CHECK')) ||
-                    (text.includes('EMERG') && text.includes('CHECK'))) {
-                    btn.classList.remove('tb-toggle-on');
-                }
-            });
-        });
-    };
-
-    // Update immediately
-    updateChecklistButtons();
-
-    // Also update on next frame to ensure it sticks
-    requestAnimationFrame(updateChecklistButtons);
-}
-
-document.getElementById('checklist-menu-close').addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    closeChecklist();
-});
-
-document.getElementById('checklist-menu-close').addEventListener('mousedown', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-});
-
-document.getElementById('checklist-menu-body').addEventListener('click', (e) => {
-    const item = e.target.closest('.checklist-item');
-    if (!item) return;
-
-    const type = item.dataset.type;
-    const index = parseInt(item.dataset.index);
-
-    if (!checklistState[type]) checklistState[type] = new Set();
-
-    if (checklistState[type].has(index)) {
-        checklistState[type].delete(index);
-        item.classList.remove('checked');
-    } else {
-        checklistState[type].add(index);
-        item.classList.add('checked');
-    }
-});
-
-setupBoxDrag(document.getElementById('checklist-menu'), document.getElementById('checklist-menu-title'));
-
-// Close checklist when clicking outside
-document.addEventListener('mousedown', e => {
-    const cm = document.getElementById('checklist-menu');
-    if (cm.style.display !== 'none' && !cm.contains(e.target)) closeChecklist();
-});
-
-// ════════════════════════════════════════════════════════════════════════════
 // Zulu Time View
 // ════════════════════════════════════════════════════════════════════════════
 setupBoxDrag(document.getElementById('time-view'));
@@ -6215,16 +6063,10 @@ function buildAltMenuBody(gufi) {
     html += `<div class="field-menu-divider"></div>`;
 
     // 7 altitude values per page with right-side scrollbar
-    // Always show a full page; if near the end, shift back so last item is 600
-    let startFL = (altMenuPage * 7 + 1) * 10;
-    const minStartFL = 10;
-    const maxStartFL = 600 - 60;  // Last item shown will be 600
-    startFL = Math.max(minStartFL, Math.min(maxStartFL, startFL));
-    // Calculate which page we're actually on (for scrollbar position)
-    const actualPage = Math.max(0, (startFL - minStartFL) / 70);
-    const maxPage = (maxStartFL - minStartFL) / 70;
+    const startFL = Math.max(10, (altMenuPage * 7 + 1) * 10);
+    const maxPage = Math.floor((600 - 10) / 70);
     const thumbPct = 1 / (maxPage + 1) * 100;
-    const thumbTop = (maxPage - actualPage) / (maxPage + 1) * 100;
+    const thumbTop = altMenuPage / (maxPage + 1) * 100;
     html += '<div class="field-menu-values">';
     html += '<div class="field-menu-values-col">';
     for (let i = 6; i >= 0; i--) {
@@ -6287,16 +6129,10 @@ function buildHdgMenuBody(gufi) {
     html += '</div><div class="field-menu-divider"></div>';
 
     // 14 heading values per page (2 columns × 7 rows) with right-side scrollbar
-    // Always show a full page; if near the end, shift back so last item is 360
-    let startH = hdgMenuPage * 70 + 5;
-    const minStartH = 5;
-    const maxStartH = 360 - 70;  // Last item shown will be 360
-    startH = Math.max(minStartH, Math.min(maxStartH, startH));
-    // Calculate which page we're actually on (for scrollbar position)
-    const hdgActualPage = Math.max(0, (startH - minStartH) / 70);
-    const hdgMaxPageCalc = (maxStartH - minStartH) / 70;
-    const hdgThumbPct = 1 / (hdgMaxPageCalc + 1) * 100;
-    const hdgThumbTop = (hdgMaxPageCalc - hdgActualPage) / (hdgMaxPageCalc + 1) * 100;
+    const startH = hdgMenuPage * 70 + 5;
+    const hdgMaxPage = Math.floor((360 - 5) / 70);
+    const hdgThumbPct = 1 / (hdgMaxPage + 1) * 100;
+    const hdgThumbTop = hdgMenuPage / (hdgMaxPage + 1) * 100;
     html += '<div class="field-menu-values">';
     html += '<div class="field-menu-values-col">';
     for (let row = 6; row >= 0; row--) {
@@ -6355,26 +6191,13 @@ function buildSpdMenuBody(gufi) {
     html += '</div><div class="field-menu-divider"></div>';
 
     // Speed values with right-side scrollbar
-    // Always show a full page; if near the end, shift back so last item is max
-    let startM, startK, spdActualPage, spdMaxPageCalc;
-    if (spdMenuMach) {
-        startM = 92 - spdMenuPage * 7;
-        const minStartM = 66;  // Show down to 60
-        startM = Math.max(minStartM, Math.min(92, startM));
-        spdActualPage = (92 - startM) / 7;
-        spdMaxPageCalc = (92 - minStartM) / 7;
-    } else {
-        startK = 500 - spdMenuPage * 70;
-        const minStartK = 160;  // Show down to 100
-        startK = Math.max(minStartK, Math.min(500, startK));
-        spdActualPage = (500 - startK) / 70;
-        spdMaxPageCalc = (500 - minStartK) / 70;
-    }
-    const spdThumbPct = 1 / (spdMaxPageCalc + 1) * 100;
-    const spdThumbTop = spdActualPage / (spdMaxPageCalc + 1) * 100;
+    const spdMaxPage = spdMenuMach ? Math.floor((92 - 60) / 7) : Math.floor((500 - 100) / 70);
+    const spdThumbPct = 1 / (spdMaxPage + 1) * 100;
+    const spdThumbTop = spdMenuPage / (spdMaxPage + 1) * 100;
     html += '<div class="field-menu-values">';
     html += '<div class="field-menu-values-col">';
     if (spdMenuMach) {
+        const startM = 92 - spdMenuPage * 7;
         for (let i = 0; i < 7; i++) {
             const m = startM - i;
             if (m < 60) continue;
@@ -6479,11 +6302,10 @@ function handleFieldMenuClick(e) {
             menuSetInterim(gufi, fl, 'I');
             closeFieldMenu();
         } else if (action === 'scroll-up') {
-            const maxPage = Math.floor((600 - 10) / 70);
-            altMenuPage = Math.min(maxPage, altMenuPage + 1);
+            altMenuPage = Math.max(0, altMenuPage - 1);
             refreshAltMenu();
         } else if (action === 'scroll-down') {
-            altMenuPage = Math.max(0, altMenuPage - 1);
+            altMenuPage++;
             refreshAltMenu();
         }
     }
@@ -6511,10 +6333,9 @@ function handleFieldMenuClick(e) {
             menuClearHsf(gufi, 'heading');
             closeFieldMenu();
         } else if (action === 'scroll-up') {
-            const hdgMaxPage = Math.floor((360 - 5) / 70);
-            hdgMenuPage = Math.min(hdgMaxPage, hdgMenuPage + 1); refreshHdgMenu();
-        } else if (action === 'scroll-down') {
             hdgMenuPage = Math.max(0, hdgMenuPage - 1); refreshHdgMenu();
+        } else if (action === 'scroll-down') {
+            hdgMenuPage++; refreshHdgMenu();
         }
     }
 
@@ -6538,8 +6359,7 @@ function handleFieldMenuClick(e) {
         } else if (action === 'scroll-up') {
             spdMenuPage = Math.max(0, spdMenuPage - 1); refreshSpdMenu();
         } else if (action === 'scroll-down') {
-            const spdMaxPage = spdMenuMach ? Math.floor((92 - 60) / 7) : Math.floor((500 - 100) / 70);
-            spdMenuPage = Math.min(spdMaxPage, spdMenuPage + 1); refreshSpdMenu();
+            spdMenuPage++; refreshSpdMenu();
         }
     }
 
@@ -6928,33 +6748,13 @@ const TB_CHECK_LISTS = {
         [
             toggle('POS\nCHECK', {
                 cls: 'tb-toggle-grey',
-                isOn: () => document.getElementById('checklist-menu').style.display !== 'none' && document.getElementById('checklist-menu-title-text').textContent === 'POS CHECK',
-                onToggle: () => {
-                    const menu = document.getElementById('checklist-menu');
-                    const isOpen = menu.style.display !== 'none';
-                    const isPosOpen = isOpen && document.getElementById('checklist-menu-title-text').textContent === 'POS CHECK';
-
-                    if (isPosOpen) {
-                        closeChecklist();
-                    } else {
-                        openChecklist('pos', window.innerWidth / 2, window.innerHeight / 2);
-                    }
-                },
+                isOn: () => false,
+                onToggle: () => {},
             }),
             toggle('EMERG\nCHECK', {
                 cls: 'tb-toggle-grey',
-                isOn: () => document.getElementById('checklist-menu').style.display !== 'none' && document.getElementById('checklist-menu-title-text').textContent === 'EMERG CHECK',
-                onToggle: () => {
-                    const menu = document.getElementById('checklist-menu');
-                    const isOpen = menu.style.display !== 'none';
-                    const isEmergOpen = isOpen && document.getElementById('checklist-menu-title-text').textContent === 'EMERG CHECK';
-
-                    if (isEmergOpen) {
-                        closeChecklist();
-                    } else {
-                        openChecklist('emerg', window.innerWidth / 2, window.innerHeight / 2);
-                    }
-                },
+                isOn: () => false,
+                onToggle: () => {},
             }),
         ],
     ],
@@ -7059,7 +6859,7 @@ const TB_BRIGHT = {
                 onDec: () => { tbState.bright.ldb = Math.max(0, tbState.bright.ldb - 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
                 onInc: () => { tbState.bright.ldb = Math.min(100, tbState.bright.ldb + 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
             }),
-            nosim('SLDB'),
+            incdec('SLDB', { cls: 'tb-green', getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); saveSettingsToLocalStorage(); } }),
             nosim('WX'),
             incdec('NEXRAD', {
                 cls: 'tb-green',
@@ -7077,11 +6877,11 @@ const TB_BRIGHT = {
             incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); } }),
             nosim('AB BRDR'),
             incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); updateFdbBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); updateFdbBrightness(); saveSettingsToLocalStorage(); } }),
-            nosim('PORTAL'),
+            incdec('PORTAL', { cls: 'tb-green', getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
             nosim('SATCOMM'),
             incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); updateOnFreqBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); updateOnFreqBrightness(); saveSettingsToLocalStorage(); } }),
-            nosim('LINE 4'),
-            nosim('DWELL'),
+            incdec('LINE 4', { cls: 'tb-green', getValue: () => tbState.bright.line4b, formatValue: v => v, onDec: () => { tbState.bright.line4b = Math.max(0, tbState.bright.line4b - 10); }, onInc: () => { tbState.bright.line4b = Math.min(100, tbState.bright.line4b + 10); } }),
+            incdec('DWELL', { cls: 'tb-green', getValue: () => tbState.bright.dwell, formatValue: v => v, onDec: () => { tbState.bright.dwell = Math.max(0, tbState.bright.dwell - 10); }, onInc: () => { tbState.bright.dwell = Math.min(100, tbState.bright.dwell + 10); } }),
             incdec('FENCE', { cls: 'tb-green', getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); invalidateAllMarkers(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); invalidateAllMarkers(); saveSettingsToLocalStorage(); } }),
             nosim('DBFEL'),
             nosim('OUTAGE'),

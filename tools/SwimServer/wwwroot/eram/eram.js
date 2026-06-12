@@ -12,6 +12,7 @@ const EMRG_COLOR = '#ff4444';
 const MAP_COLOR = '#555555';
 const RENDER_INTERVAL = 2000;  // render repaint interval (ms)
 const SCAN_INTERVAL = 12000;   // SFDPS update cadence (used for history decay cutoff)
+const SETTINGS_VERSION = 2;    // Increment when pushing breaking changes to reset user settings to defaults once
 
 let myFacility = '';
 let mySectors = new Set();
@@ -26,9 +27,9 @@ let msgRate = 0;
 let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
-let ldbBrightness = 50;     // 0-100, opacity for LDB history symbols (data block brightness now controlled by PR/UNP TGT sliders)
-let scopeBckgrd = 50;       // 0-100, scope background brightness (BCKGRD DCB slider)
-let scopeBcklght = 90;      // 0-100, scope backlight brightness (BCKLGHT DCB slider)
+let ldbBrightness = 70;     // 0-100, opacity for LDB history symbols (data block brightness now controlled by PR/UNP TGT sliders)
+let scopeBckgrd = 40;       // 0-100, scope background brightness (BCKGRD DCB slider)
+let scopeBcklght = 80;      // 0-100, scope backlight brightness (BCKLGHT DCB slider)
 let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
@@ -3934,6 +3935,14 @@ function loadSettingsFromLocalStorage() {
 
         const settings = JSON.parse(saved);
 
+        // Check if settings version is outdated — if so, reset to defaults
+        if (!settings.settingsVersion || settings.settingsVersion < SETTINGS_VERSION) {
+            // Settings are from an older version — discard and use defaults
+            localStorage.removeItem('eram-settings');
+            updateScopeBackground();
+            return;
+        }
+
         myFacility = settings.facility || '';
         mySectors = new Set(settings.sectors || []);
         if (settings.showFdb !== undefined) showFdb = settings.showFdb;
@@ -4019,6 +4028,7 @@ function loadSettingsFromLocalStorage() {
 
 function saveSettingsToLocalStorage() {
     const settings = {
+        settingsVersion: SETTINGS_VERSION,
         facility: myFacility,
         sectors: [...mySectors],
         showFdb,

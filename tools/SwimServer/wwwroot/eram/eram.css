@@ -181,6 +181,11 @@ input[type="checkbox"]:checked::after {
     font-family: 'ERAM', 'Consolas', monospace; font-size: 11px;
     color: #ccc; max-width: 600px; max-height: 80vh; overflow-y: auto; line-height: 1.6;
     scrollbar-width: thin; scrollbar-color: #333 #1a1a1a;
+    cursor: var(--eram-cursor) !important;
+}
+#cmd-help-popup,
+#cmd-help-popup * {
+    cursor: var(--eram-cursor) !important;
 }
 #cmd-help-popup::-webkit-scrollbar { width: 6px; }
 #cmd-help-popup::-webkit-scrollbar-track { background: #1a1a1a; }
@@ -222,7 +227,12 @@ input[type="checkbox"]:checked::after {
 .tb-btn .tb-content,
 .tb-side-bar .tb-arrow-btn,
 #po-menu,
-.field-menu {
+.field-menu,
+#mca,
+#mca-preview,
+#mca-feedback,
+#ra,
+#ra-content {
     cursor: var(--eram-cursor) !important;
 }
 
@@ -331,9 +341,13 @@ input[type="checkbox"]:checked::after {
     user-select: none; background: #000; border: 1px solid #888;
 }
 #po-menu.box-dragging { outline: 2px solid #fff; cursor: move; }
-#po-menu-title {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 2px 6px; border-bottom: 1px solid #555; background: #222; cursor: move;
+#po-menu,
+#po-menu * {
+    cursor: var(--eram-cursor) !important;
+}
+#po-menu-title,
+.field-menu-title {
+    cursor: move !important;
 }
 #po-menu-callsign { color: #fff; }
 .po-menu-divider { width: 1px; align-self: stretch; background: #555; margin: 0 4px; }
@@ -356,6 +370,9 @@ input[type="checkbox"]:checked::after {
     border: 1px solid transparent; white-space: nowrap;
     top: 10px; right: 60px;
 }
+#time-view:not(.box-dragging) {
+    cursor: var(--eram-cursor) !important;
+}
 #time-view.bordered { border-color: #555; }
 #time-view.box-dragging { outline: 2px solid #fff; }
 
@@ -366,6 +383,11 @@ input[type="checkbox"]:checked::after {
     font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
     user-select: none; background: #000; border: 1px solid #999;
     min-width: 120px;
+    cursor: var(--eram-cursor) !important;
+}
+.field-menu,
+.field-menu * {
+    cursor: var(--eram-cursor) !important;
 }
 .field-menu.box-dragging { outline: 2px solid #fff; cursor: move; }
 .field-menu-title {
@@ -383,7 +405,7 @@ input[type="checkbox"]:checked::after {
 .field-menu-row.fm-toggle:hover { background: #888; }
 .field-menu-row.fm-toggle.toggle-active { background: #999; }
 .field-menu-footer { padding: 1px 4px; }
-.field-menu-values { display: flex; }
+.field-menu-values { display: flex; min-height: 112px; }
 .field-menu-values-col { flex: 1; padding: 0 2px; }
 .field-menu-scrollbar {
     display: flex; flex-direction: column; align-items: center;
@@ -439,8 +461,15 @@ input[type="checkbox"]:checked::after {
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     user-select: none;
     position: relative;
+    cursor: var(--eram-cursor) !important;
 }
-#mca-ra-stack.box-dragging { outline: 2px solid #fff; cursor: move; }
+#mca,
+#mca * {
+    cursor: var(--eram-cursor) !important;
+}
+#mca-ra-stack.box-dragging {
+    outline: 2px solid #fff; cursor: move;
+}
 #mca-preview {
     background: #000000; border: 1px solid #888; color: #ffffff;
     padding: 3px 6px; min-width: 400px;
@@ -476,6 +505,11 @@ input[type="checkbox"]:checked::after {
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     user-select: none;
     position: relative;
+    cursor: var(--eram-cursor) !important;
+}
+#ra,
+#ra * {
+    cursor: var(--eram-cursor) !important;
 }
 #ra-content {
     background: #000000; border: 1px solid #888; color: #ffffff;
@@ -568,7 +602,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 /* Disabled tearoff (grey when active tearoff exists) — color set dynamically in JavaScript */
 .tb-btn .tb-tear.tb-tear-disabled {
     background: #C7C7C7 !important;
-    cursor: default !important;
+    cursor: var(--eram-cursor) !important;
 }
 
 /* Button content area (label + value) with hover border effect */
@@ -631,7 +665,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 
 /* ── Button type states ── */
 /* Not simulated — dimmer blue */
-.tb-btn.tb-nosim { background: #000066; cursor: default; }
+.tb-btn.tb-nosim { background: #000066; cursor: var(--eram-cursor) !important; }
 .tb-btn.tb-nosim:hover { background: #000066; }
 .tb-btn.tb-nosim:active { background: #000066; }
 .tb-btn.tb-nosim .tb-label { color: #8888aa; }
@@ -694,6 +728,11 @@ body.tb-active #sidebar-wrapper { top: 70px; }
     background: #0000D4 !important;
     border: 1px solid #FFFFFF !important;
     white-space: nowrap;
+    cursor: var(--eram-cursor) !important;
+}
+.tb-floating-menu,
+.tb-floating-menu * {
+    cursor: var(--eram-cursor) !important;
 }
 
 /* Left/right grey bars flanking the button grid */

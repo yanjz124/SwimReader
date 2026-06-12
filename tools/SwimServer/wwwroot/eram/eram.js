@@ -4,7 +4,10 @@ const flights = new Map();          // current displayed state — datablock fie
 // Position updates applied immediately — history dots use time-based decay for scan simulation
 const flightHistory = new Map();
 let MAX_HISTORY = 5;
-const TRACK_COLOR = '#cccc44';
+let TRACK_COLOR = '#cccc44';  // dynamic, updated by FDB brightness slider
+let PR_HIST_COLOR = '#cccc44';  // dynamic, updated by PR HIST brightness slider
+let UNP_TGT_COLOR = '#cccc44';  // dynamic, updated by UNP TGT brightness slider
+let UNP_HIST_COLOR = '#cccc44';  // dynamic, updated by UNP HIST brightness slider
 const EMRG_COLOR = '#ff4444';
 const MAP_COLOR = '#555555';
 const RENDER_INTERVAL = 2000;  // render repaint interval (ms)
@@ -363,10 +366,14 @@ function drawOverlay() {
             if (isCidRecycled(gufi, f)) continue;
             if (manuallyHidden.has(gufi)) continue;
 
-            const color = isEmergency(f) ? EMRG_COLOR : TRACK_COLOR;
             const isFdb = shouldShowFdb(gufi, classifyTrack(f));
             const histAlpha = isFdb ? 0.30 : (ldbBrightness / 100) * 0.30;
             if (histAlpha <= 0) continue;
+
+            // Use PR_HIST_COLOR for paired targets (with callsign), UNP_HIST_COLOR for unpaired, otherwise TRACK_COLOR
+            const isPaired = f.callsign ? true : false;
+            const isUnpaired = f.squawk && !f.callsign ? true : false;
+            const color = isEmergency(f) ? EMRG_COLOR : (isPaired ? PR_HIST_COLOR : (isUnpaired ? UNP_HIST_COLOR : TRACK_COLOR));
 
             for (let i = 0; i < hist.length; i++) {
                 if (hist[i].time && hist[i].time < histCutoff) continue;
@@ -1377,13 +1384,15 @@ function applyDwell(el, gufi) {
         // If Line 0 (point-out indicator) is present, exclude it from the dwell border
         const f0 = flights.get(gufi);
         const hasLine0 = f0 && getPointoutIndicator(f0);
-        const topOff = hasLine0 ? Math.round(LINE_H) - 1 : -1;
         const heightAdj = hasLine0 ? Math.round(LINE_H) : 0;
-        b.style.cssText = `left:${chOff}px;top:${topOff}px;width:${w - chOff + 2}px;height:${h - heightAdj + 2}px;`;
+        // Use fence positioning for top/left, but data block dimensions for width/height
+        const topStyle = hasLine0 ? 'calc(1.25em + 3px)' : '2px';
+        b.style.cssText = `position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:${w - chOff}px;height:${h - heightAdj}px;border:1px solid #FFFF44;pointer-events:none;box-sizing:border-box;z-index:10;opacity:1;`;
         dbEl.appendChild(b);
     }
     const f = flights.get(gufi);
-    if (f && !shouldShowFdb(gufi, classifyTrack(f))) dbEl.style.opacity = '1';
+    // Brighten both FDB and LDB on hover
+    dbEl.style.opacity = '1';
 }
 function removeDwell(el, gufi) {
     const dbEl = el.querySelector('.ac-db');
@@ -1489,7 +1498,8 @@ function buildMarkerHtml(f, cls) {
                 ldrX2 += dbGap + Math.round(CHAR_W * 1.5);
             }
         }
-        html += `<svg class="ac-leader" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${ldrX2}" y2="${ldrY2}" stroke="${color}" stroke-width="1"/></svg>`;
+        const leaderClass = isEmrg ? 'ac-leader emrg' : 'ac-leader fdb-leader';
+        html += `<svg class="${leaderClass}" width="1" height="1" overflow="visible"><line x1="0" y1="0" x2="${ldrX2}" y2="${ldrY2}" stroke="${color}" stroke-width="1"/></svg>`;
 
         const db = formatFdbHtml(f, cls);
         const dbCls = isEmrg ? ' emrg' : '';
@@ -1595,7 +1605,7 @@ function formatFdbHtml(f, cls) {
 
     // Column 0: inline spans — VCI hit area on lines 1-2, R on line 3
     const col0Hit = '<span class="ac-vci-hit" style="display:inline-block;width:1.5ch;pointer-events:auto;cursor:inherit;">\u00a0</span>';
-    const col0Vci = `<span class="ac-vci-hit ac-vci" style="display:inline-block;width:1.5ch;text-align:center;pointer-events:auto;cursor:inherit;">${VCI_SVG}</span>`;
+    const col0Vci = `<span class="ac-vci-hit ac-vci on-freq" style="display:inline-block;width:1.5ch;text-align:center;pointer-events:auto;cursor:inherit;">${VCI_SVG}</span>`;
     const col0R   = '<span class="ac-col0 ac-r" style="display:inline-block;width:1.5ch;text-align:center;">R</span>';
     const col0Sp  = '<span style="display:inline-block;width:1.5ch;">\u00a0</span>';
 
@@ -1610,11 +1620,18 @@ function formatFdbHtml(f, cls) {
     html += `${showR ? col0R : col0Sp}${l3}`;
     if (l4) html += `\n${col0Sp}${l4}`;
     if (showPortalFence && (poInfo || showR)) {
-        const fenceColor = cls === 'emrg' ? '#ff4444' : '#d0d0d0';
+        let fenceColor;
+        if (cls === 'emrg') {
+            fenceColor = '#ff4444';
+        } else {
+            const v = Math.round(tbState.bright.fence * 2.55);
+            const hexVal = v.toString(16).padStart(2, '0');
+            fenceColor = `#${hexVal}${hexVal}${hexVal}`;
+        }
         // Use CSS ch/em units for sizing (matches actual font metrics) and SVG rendering for flicker-free strokes.
         // top: 0 when no line 0; top: calc(1.25em + 1px) skips line 0 (1 line-height + ac-db top padding).
         const topStyle = poInfo ? 'calc(1.25em + 3px)' : '2px';
-        html += `<svg style="position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:3ch;height:3.75em;overflow:visible;pointer-events:none;" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="100,0.5 0.5,0.5 0.5,100" fill="none" stroke="${fenceColor}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></svg>`;
+        html += `<svg style="position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:3ch;height:3.75em;overflow:visible;pointer-events:none;z-index:1;" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="100,0.5 0.5,0.5 0.5,100" fill="none" stroke="${fenceColor}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></svg>`;
     }
     return html;
 }
@@ -2685,7 +2702,13 @@ setInterval(() => {
         const cls = classifyTrack(f);
         if (shouldShowFdb(gufi, cls)) {
             // Column 0 is inline — just regenerate full HTML (includes R, VCI)
+            // Preserve dwell border if present during innerHTML update
+            const hasDwell = dbEl.classList.contains('dwell');
+            const dwellBorder = hasDwell ? dbEl.querySelector('.dwell-border') : null;
             dbEl.innerHTML = formatFdbHtml(f, cls);
+            if (dwellBorder && hasDwell) {
+                dbEl.appendChild(dwellBorder);
+            }
         }
     }
 }, 500);
@@ -3079,6 +3102,276 @@ function updateToolbarBrightness() {
         css += `#tb-tearoff-btn .tb-gold-strip { background: ${tearoffBtnGoldColor} !important; }\n`;
 
         styleEl.textContent = css;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateFdbBrightness() {
+    try {
+        // FDB brightness: 0-1, where 1=#FFFF44 (bright yellow), 0=black
+        // At 30% brightness, color is #606038 to avoid greenish mid-tones
+        const brightness = tbState.bright.fdb;
+
+        // Create or update dynamic CSS for FDB color
+        let styleEl = document.getElementById('dynamic-fdb-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-fdb-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Piecewise interpolation: black → #606038 (0-30) → #FFFF44 (30-100)
+        let fdbColor;
+        if (brightness <= 30) {
+            // 0-30: interpolate from black to #606038
+            const factor = brightness / 30;
+            fdbColor = interpolateColor('#606038', factor);
+        } else {
+            // 30-100: interpolate from #606038 to #FFFF44
+            const factor = (brightness - 30) / 70;
+            const r0 = 96, g0 = 96, b0 = 56;  // #606038
+            const r1 = 255, g1 = 255, b1 = 68;  // #FFFF44
+            const r = Math.round(r0 + (r1 - r0) * factor);
+            const g = Math.round(g0 + (g1 - g0) * factor);
+            const b = Math.round(b0 + (b1 - b0) * factor);
+            fdbColor = `rgb(${r}, ${g}, ${b})`;
+        }
+
+        // Update global TRACK_COLOR for canvas vector drawing
+        TRACK_COLOR = fdbColor;
+        // Force immediate canvas redraw
+        lastRenderTime = 0;
+
+        styleEl.textContent = `
+            .ac-col0 { color: ${fdbColor} !important; }
+            .fdb { color: ${fdbColor} !important; }
+            .ac-po-pending, .ac-po-accepted { color: ${fdbColor} !important; }
+            .fdb-leader line { stroke: ${fdbColor} !important; }
+            .ac-sym-flat-track { border-color: ${fdbColor} !important; }
+            .fdb.dwell { color: #FFFF44 !important; }
+            .fdb.dwell .ac-col0 { color: #FFFF44 !important; }
+            .fdb.dwell .ac-po-pending, .fdb.dwell .ac-po-accepted { color: #FFFF44 !important; }
+            .fdb-leader.dwell line { stroke: #FFFF44 !important; }
+            .ac-sym-flat-track.dwell { border-color: #FFFF44 !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateLdbBrightness() {
+    try {
+        // LDB brightness: same color interpolation as FDB but for limited data blocks
+        const brightness = tbState.bright.ldb;
+
+        // Create or update dynamic CSS for LDB color
+        let styleEl = document.getElementById('dynamic-ldb-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-ldb-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Piecewise interpolation: black → #606038 (0-30) → #FFFF44 (30-100)
+        let ldbColor;
+        if (brightness <= 30) {
+            // 0-30: interpolate from black to #606038
+            const factor = brightness / 30;
+            ldbColor = interpolateColor('#606038', factor);
+        } else {
+            // 30-100: interpolate from #606038 to #FFFF44
+            const factor = (brightness - 30) / 70;
+            const r0 = 96, g0 = 96, b0 = 56;  // #606038
+            const r1 = 255, g1 = 255, b1 = 68;  // #FFFF44
+            const r = Math.round(r0 + (r1 - r0) * factor);
+            const g = Math.round(g0 + (g1 - g0) * factor);
+            const b = Math.round(b0 + (b1 - b0) * factor);
+            ldbColor = `rgb(${r}, ${g}, ${b})`;
+        }
+
+        styleEl.textContent = `
+            .ldb { color: ${ldbColor} !important; }
+            .ldb.dwell { color: #FFFF44 !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateOnFreqBrightness() {
+    try {
+        // ON-FREQ brightness: same color interpolation as FDB
+        const brightness = tbState.bright.onFreq;
+
+        // Create or update dynamic CSS for ON-FREQ color
+        let styleEl = document.getElementById('dynamic-onfreq-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-onfreq-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Piecewise interpolation: black → #606038 (0-30) → #FFFF44 (30-100)
+        let onFreqColor;
+        if (brightness <= 30) {
+            // 0-30: interpolate from black to #606038
+            const factor = brightness / 30;
+            onFreqColor = interpolateColor('#606038', factor);
+        } else {
+            // 30-100: interpolate from #606038 to #FFFF44
+            const factor = (brightness - 30) / 70;
+            const r0 = 96, g0 = 96, b0 = 56;  // #606038
+            const r1 = 255, g1 = 255, b1 = 68;  // #FFFF44
+            const r = Math.round(r0 + (r1 - r0) * factor);
+            const g = Math.round(g0 + (g1 - g0) * factor);
+            const b = Math.round(b0 + (b1 - b0) * factor);
+            onFreqColor = `rgb(${r}, ${g}, ${b})`;
+        }
+
+        styleEl.textContent = `
+            .on-freq { color: ${onFreqColor} !important; }
+            .on-freq.dwell { color: #FFFF44 !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updatePrTgtBrightness() {
+    try {
+        // PR TGT brightness: same color interpolation as FDB for paired target symbols
+        const brightness = tbState.bright.prTgtr;
+
+        // Create or update dynamic CSS for PR TGT color
+        let styleEl = document.getElementById('dynamic-prtgt-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-prtgt-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Piecewise interpolation: black → #606038 (0-30) → #FFFF44 (30-100)
+        let prTgtColor;
+        if (brightness <= 30) {
+            // 0-30: interpolate from black to #606038
+            const factor = brightness / 30;
+            prTgtColor = interpolateColor('#606038', factor);
+        } else {
+            // 30-100: interpolate from #606038 to #FFFF44
+            const factor = (brightness - 30) / 70;
+            const r0 = 96, g0 = 96, b0 = 56;  // #606038
+            const r1 = 255, g1 = 255, b1 = 68;  // #FFFF44
+            const r = Math.round(r0 + (r1 - r0) * factor);
+            const g = Math.round(g0 + (g1 - g0) * factor);
+            const b = Math.round(b0 + (b1 - b0) * factor);
+            prTgtColor = `rgb(${r}, ${g}, ${b})`;
+        }
+
+        styleEl.textContent = `
+            div[style*="rotate(-45deg)"] { background: ${prTgtColor} !important; }
+            div[style*="border-radius:50%"] { background: ${prTgtColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updatePrHistBrightness() {
+    try {
+        // PR HIST brightness: same color interpolation as FDB for paired target history
+        const brightness = tbState.bright.prHist;
+
+        // Piecewise interpolation: black → #606038 (0-30) → #FFFF44 (30-100)
+        let prHistColor;
+        if (brightness <= 30) {
+            // 0-30: interpolate from black to #606038
+            const factor = brightness / 30;
+            prHistColor = interpolateColor('#606038', factor);
+        } else {
+            // 30-100: interpolate from #606038 to #FFFF44
+            const factor = (brightness - 30) / 70;
+            const r0 = 96, g0 = 96, b0 = 56;  // #606038
+            const r1 = 255, g1 = 255, b1 = 68;  // #FFFF44
+            const r = Math.round(r0 + (r1 - r0) * factor);
+            const g = Math.round(g0 + (g1 - g0) * factor);
+            const b = Math.round(b0 + (b1 - b0) * factor);
+            prHistColor = `rgb(${r}, ${g}, ${b})`;
+        }
+
+        // Update global PR_HIST_COLOR for canvas history drawing
+        PR_HIST_COLOR = prHistColor;
+        // Force immediate canvas redraw
+        lastRenderTime = 0;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateUnpTgtBrightness() {
+    try {
+        // UNP TGT brightness: same color interpolation as FDB for unpaired target symbols
+        const brightness = tbState.bright.unpTgt;
+
+        // Create or update dynamic CSS for UNP TGT color
+        let styleEl = document.getElementById('dynamic-unptgt-brightness');
+        if (!styleEl) {
+            styleEl = document.createElement('style');
+            styleEl.id = 'dynamic-unptgt-brightness';
+            document.head.appendChild(styleEl);
+        }
+
+        // Piecewise interpolation: black → #606038 (0-30) → #FFFF44 (30-100)
+        let unpTgtColor;
+        if (brightness <= 30) {
+            // 0-30: interpolate from black to #606038
+            const factor = brightness / 30;
+            unpTgtColor = interpolateColor('#606038', factor);
+        } else {
+            // 30-100: interpolate from #606038 to #FFFF44
+            const factor = (brightness - 30) / 70;
+            const r0 = 96, g0 = 96, b0 = 56;  // #606038
+            const r1 = 255, g1 = 255, b1 = 68;  // #FFFF44
+            const r = Math.round(r0 + (r1 - r0) * factor);
+            const g = Math.round(g0 + (g1 - g0) * factor);
+            const b = Math.round(b0 + (b1 - b0) * factor);
+            unpTgtColor = `rgb(${r}, ${g}, ${b})`;
+        }
+
+        styleEl.textContent = `
+            div[style*="rotate(45deg)"] { background: ${unpTgtColor} !important; }
+        `;
+    } catch (e) {
+        // tbState not yet initialized
+    }
+}
+
+function updateUnpHistBrightness() {
+    try {
+        // UNP HIST brightness: same color interpolation as FDB for unpaired target history
+        const brightness = tbState.bright.unpHist;
+
+        // Piecewise interpolation: black → #606038 (0-30) → #FFFF44 (30-100)
+        let unpHistColor;
+        if (brightness <= 30) {
+            // 0-30: interpolate from black to #606038
+            const factor = brightness / 30;
+            unpHistColor = interpolateColor('#606038', factor);
+        } else {
+            // 30-100: interpolate from #606038 to #FFFF44
+            const factor = (brightness - 30) / 70;
+            const r0 = 96, g0 = 96, b0 = 56;  // #606038
+            const r1 = 255, g1 = 255, b1 = 68;  // #FFFF44
+            const r = Math.round(r0 + (r1 - r0) * factor);
+            const g = Math.round(g0 + (g1 - g0) * factor);
+            const b = Math.round(b0 + (b1 - b0) * factor);
+            unpHistColor = `rgb(${r}, ${g}, ${b})`;
+        }
+
+        // Update global UNP_HIST_COLOR for canvas history drawing
+        UNP_HIST_COLOR = unpHistColor;
+        // Force immediate canvas redraw
+        lastRenderTime = 0;
     } catch (e) {
         // tbState not yet initialized
     }
@@ -6093,10 +6386,10 @@ const tbState = {
     openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
     // Brightness values (0-100) for buttons not yet wired
     bright: {
-        bckgrd: 50, cursor: 100, text: 100, prTgtr: 50, unpTgt: 50,
-        prHist: 50, unpHist: 50, sldb: 50, bcklght: 90, button: 70,
-        border: 30, toolbar: 30, tbBrdr: 30, fdb: 50, portal: 50,
-        onFreq: 50, line4b: 50, dwell: 50, fence: 50,
+        bckgrd: 50, cursor: 100, text: 100, prTgtr: 80, unpTgt: 80,
+        prHist: 80, unpHist: 80, ldb: 60, bcklght: 90, button: 70,
+        border: 30, toolbar: 30, tbBrdr: 30, fdb: 80, portal: 50,
+        onFreq: 60, line4b: 50, dwell: 50, fence: 80,
     },
     // Cursor sub-menu
     cursorSize: 1,
@@ -6555,16 +6848,16 @@ const TB_BRIGHT = {
             incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
             incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); updateCursorBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); updateCursorBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); saveSettingsToLocalStorage(); } }),
-            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); saveSettingsToLocalStorage(); } }),
-            incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); } }),
-            incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); } }),
+            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); updatePrTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); updatePrTgtBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); updatePrHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); updatePrHistBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); updateUnpHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); updateUnpHistBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('LDB', {
                 cls: 'tb-green',
-                getValue: () => getRangeVal('rng-ldb-brightness'),
+                getValue: () => tbState.bright.ldb,
                 formatValue: v => v,
-                onDec: () => setRangeVal('rng-ldb-brightness', Math.max(0, getRangeVal('rng-ldb-brightness') - 10)),
-                onInc: () => setRangeVal('rng-ldb-brightness', Math.min(100, getRangeVal('rng-ldb-brightness') + 10)),
+                onDec: () => { tbState.bright.ldb = Math.max(0, tbState.bright.ldb - 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
+                onInc: () => { tbState.bright.ldb = Math.min(100, tbState.bright.ldb + 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
             }),
             incdec('SLDB', { cls: 'tb-green', getValue: () => tbState.bright.sldb, formatValue: v => v, onDec: () => { tbState.bright.sldb = Math.max(0, tbState.bright.sldb - 10); }, onInc: () => { tbState.bright.sldb = Math.min(100, tbState.bright.sldb + 10); } }),
             nosim('WX'),
@@ -6583,13 +6876,13 @@ const TB_BRIGHT = {
             incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); } }),
             nosim('AB BRDR'),
-            incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); } }),
+            incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); updateFdbBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); updateFdbBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('PORTAL', { cls: 'tb-green', getValue: () => tbState.bright.portal, formatValue: v => v, onDec: () => { tbState.bright.portal = Math.max(0, tbState.bright.portal - 10); }, onInc: () => { tbState.bright.portal = Math.min(100, tbState.bright.portal + 10); } }),
             nosim('SATCOMM'),
-            incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); } }),
+            incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); updateOnFreqBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); updateOnFreqBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('LINE 4', { cls: 'tb-green', getValue: () => tbState.bright.line4b, formatValue: v => v, onDec: () => { tbState.bright.line4b = Math.max(0, tbState.bright.line4b - 10); }, onInc: () => { tbState.bright.line4b = Math.min(100, tbState.bright.line4b + 10); } }),
             incdec('DWELL', { cls: 'tb-green', getValue: () => tbState.bright.dwell, formatValue: v => v, onDec: () => { tbState.bright.dwell = Math.max(0, tbState.bright.dwell - 10); }, onInc: () => { tbState.bright.dwell = Math.min(100, tbState.bright.dwell + 10); } }),
-            incdec('FENCE', { cls: 'tb-green', getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); } }),
+            incdec('FENCE', { cls: 'tb-green', getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); invalidateAllMarkers(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); invalidateAllMarkers(); saveSettingsToLocalStorage(); } }),
             nosim('DBFEL'),
             nosim('OUTAGE'),
         ],
@@ -8036,6 +8329,13 @@ updateTearoffColors();  // Initialize tearoff strip colors
 updateBorderBrightness();  // Initialize border brightness
 updateToolbarBackgroundBrightness();  // Initialize toolbar background brightness
 updateTextBrightness();  // Initialize text brightness
+updateFdbBrightness();  // Initialize FDB brightness
+updateLdbBrightness();  // Initialize LDB brightness
+updateOnFreqBrightness();  // Initialize ON-FREQ brightness
+updatePrTgtBrightness();  // Initialize PR TGT brightness
+updatePrHistBrightness();  // Initialize PR HIST brightness
+updateUnpTgtBrightness();  // Initialize UNP TGT brightness
+updateUnpHistBrightness();  // Initialize UNP HIST brightness
 updateToolbarBorderColor();  // Initialize toolbar border color
 updateCursorBrightness();  // Initialize cursor brightness
 

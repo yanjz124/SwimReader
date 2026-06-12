@@ -562,7 +562,7 @@ input[type="checkbox"]:checked::after {
     font-size: 10px; line-height: 14px; padding: 0;
 }
 #tb-tearoff-btn .tb-gold-strip {
-    width: 13px; background: #FFFFA1; flex-shrink: 0; cursor: move;
+    width: 13px; background: #FFFFA1; flex-shrink: 0; cursor: var(--eram-cursor) !important;
     border: 1px solid #333;
     border-right: 1px solid #555;
     transition: border-color 0.1s ease;

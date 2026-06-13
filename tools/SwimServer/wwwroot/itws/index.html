@@ -47,6 +47,13 @@
   header .api { color: var(--dim); text-decoration: none; font-size: 11px; }
   header .api:hover { color: var(--accent); }
 
+  /* ── Scrollbars ───────────────────────────────────── */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #555; }
+  * { scrollbar-color: #333 transparent; scrollbar-width: thin; }
+
   .layout {
     display: grid;
     grid-template-columns: 200px 1fr;
@@ -84,7 +91,7 @@
     border: 1px solid var(--border);
     padding: 12px 14px;
     border-radius: 3px;
-    min-height: 120px;
+    min-height: auto;
   }
   .card h3 {
     margin: 0 0 10px 0;
@@ -180,12 +187,12 @@
 
   /* ── Runway wind table ───────── */
   table.rwy-winds, table.alerts, table.radars {
-    width: 100%; border-collapse: collapse; font-size: 12px;
+    width: 100%; border-collapse: collapse; font-size: 11px;
   }
   table.rwy-winds th, table.rwy-winds td,
   table.alerts th, table.alerts td,
   table.radars th, table.radars td {
-    text-align: left; padding: 5px 8px;
+    text-align: left; padding: 3px 6px;
     border-bottom: 1px solid #1a1a1a;
   }
   table.rwy-winds th, table.alerts th, table.radars th {
@@ -218,7 +225,7 @@
     white-space: pre-wrap;
     line-height: 1.5;
     font-size: 12px;
-    max-height: 220px;
+    max-height: 60px;
     overflow-y: auto;
   }
 
@@ -249,12 +256,30 @@
   .acc-cell.n .v { color: var(--dim); }
 
   /* ── Ribbon display ───────── */
+  .ribbon-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 8px 14px;
+    border-radius: 3px;
+    grid-column: span 4;
+    height: fit-content;
+  }
+  .ribbon-card h3 {
+    margin: 0 0 6px 0;
+    font-size: 11px; letter-spacing: 1px;
+    color: var(--dim);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
   .ribbon-row {
     font-family: monospace;
-    padding: 4px 0;
+    padding: 2px 0;
     display: flex; gap: 12px; align-items: center;
     border-bottom: 1px solid #1a1a1a;
+    font-size: 11px;
+    line-height: 1.4;
   }
+  .ribbon-row:last-child { border-bottom: none; }
   .ribbon-row .rid { color: var(--accent); min-width: 80px; }
   .ribbon-row .rline { color: var(--text); letter-spacing: 2px; }
   .ribbon-row .rline.empty { color: var(--dim); font-style: italic; }
@@ -510,7 +535,7 @@ function renderCompassTicks() {
     const cardinal = d % 90 === 0;
     ticks.push(`<div class="tick${cardinal ? " cardinal" : ""}" style="transform: rotate(${d}deg)"></div>`);
   }
-  const labelData = [{d:0,l:"N",x:50,y:8},{d:90,l:"E",x:92,y:50},{d:180,l:"S",x:50,y:92},{d:270,l:"W",x:8,y:50}];
+  const labelData = [{d:0,l:"N",x:50,y:18},{d:90,l:"E",x:82,y:50},{d:180,l:"S",x:50,y:82},{d:270,l:"W",x:18,y:50}];
   for (const L of labelData) {
     labels.push(`<div class="lbl" style="left:${L.x}%; top:${L.y}%">${L.l}</div>`);
   }
@@ -589,7 +614,7 @@ function hourMarkers(W, H, windowSec = 86400) {
     const tx = ((((nowSec - h * 3600) - startSec) / windowSec) * W);
     if (tx < 0 || tx > W) continue;
     m.push(`<line x1="${tx}" y1="0" x2="${tx}" y2="${H}" stroke="#181818" stroke-width="1"/>`);
-    if (h !== 0) m.push(`<text x="${tx + 3}" y="${H - 2}" font-size="9" fill="#444">-${h}h</text>`);
+    if (h !== 0) m.push(`<text x="${tx + 3}" y="${H + 16}" font-size="11" fill="#666">-${h}h</text>`);
   }
   return m.join("");
 }
@@ -598,8 +623,8 @@ function renderWindHistoryCard() {
   const h = state.serverHistory?.wind || [];
   if (h.length < 2) return cardEmpty("Wind Trend (24h)", "Collecting samples — needs ≥2 readings", 7);
 
-  const W = 700, H = 100;
-  const ARR_H = 22;
+  const W = 700, H = 160;
+  const ARR_H = 32;
   const speeds = h.map(p => p.speed ?? 0);
   const gusts  = h.map(p => p.gust ?? 0);
   const maxV = Math.max(10, ...speeds, ...gusts);
@@ -610,7 +635,7 @@ function renderWindHistoryCard() {
   const gustPath  = h.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(p).toFixed(1)} ${yScale(p.gust ?? 0).toFixed(1)}`).join(" ");
 
   // Direction arrows: thin to avoid crowding — only every Nth sample
-  const arrowStride = Math.max(1, Math.floor(h.length / 60));
+  const arrowStride = 30;
   const arrows = h.map((p, i) => {
     if (i % arrowStride !== 0) return "";
     if (p.dir === null || p.dir === 999) return "";
@@ -626,13 +651,13 @@ function renderWindHistoryCard() {
   return `
     <div class="card span7">
       <h3>WIND TREND (24h) <span class="ago">${h.length} samples · span ${spanLabel}</span></h3>
-      <svg id="spark" viewBox="0 0 ${W} ${H + ARR_H}" preserveAspectRatio="none">
+      <svg id="spark" viewBox="0 0 ${W} ${H + ARR_H}" style="width:100%; height:160px; display:block;">
         ${hourMarkers(W, H)}
         <line x1="0" y1="${H - 6}" x2="${W}" y2="${H - 6}" stroke="#222" stroke-width="1"/>
         <path d="${gustPath}" stroke="var(--warn)" stroke-width="1.5" fill="none" opacity="0.7"/>
         <path d="${speedPath}" stroke="var(--accent)" stroke-width="2" fill="none"/>
-        <text x="4" y="12" fill="#888" font-size="10">${maxV} kt</text>
-        <text x="4" y="${H - 8}" fill="#888" font-size="10">0</text>
+        <text x="4" y="14" fill="#888" font-size="12">${maxV} kt</text>
+        <text x="4" y="${H + 4}" fill="#888" font-size="12">0</text>
         ${arrows}
       </svg>
       <div class="spark-legend">
@@ -698,9 +723,9 @@ function renderRunwayWindsCard(alerts) {
       return `<tr>
         <td class="rwy">${a.region}</td>
         <td>
-          <span class="mini-arrow" style="transform: rotate(0deg)">
-            <style scoped></style>
-          </span>
+          <svg class="mini-arrow" viewBox="0 0 24 24" style="transform: rotate(${rot}deg); display: inline-block; width: 14px; height: 14px; vertical-align: middle; margin-right: 6px;">
+            <line x1="12" y1="12" x2="12" y2="2" stroke="var(--accent)" stroke-width="2.5"/>
+          </svg>
           ${fmtDir(a.llwasDir)} ${c ? `<span style="color:var(--cyan)">${c}</span>` : ""}
         </td>
         <td>${a.llwasSpeed} kt</td>
@@ -807,12 +832,10 @@ function renderRibbonCard(alerts) {
       <span class="rline ${empty ? "empty" : ""}">${empty ? "(no display content)" : r.lines}</span>
     </div>`;
   }).join("");
-  return `<div class="card span4">
+  return `<div class="ribbon-card">
     <h3>RIBBON DISPLAYS</h3>
-    <div>${rows}</div>
-    <div style="margin-top:6px; color: var(--dim); font-size: 11px;">
-      Live ribbon-display unit content sent to tower / TRACON cabs. Mostly idle when no convective activity.
-    </div></div>`;
+    ${rows}
+  </div>`;
 }
 
 function renderStormCard(smSep) {
@@ -1040,6 +1063,7 @@ async function loadAirport(airport) {
 function renderAirports() {
   const html = state.airports
     .filter(a => a.airport !== "ALL" && a.airport !== "000")
+    .sort((a, b) => a.airport.localeCompare(b.airport))
     .map(a => `<div class="ap-row${state.selected === a.airport ? " active" : ""}" data-ap="${a.airport}">
       <span class="n">${a.airport}</span><span class="c">${a.products.length}p</span></div>`)
     .join("");

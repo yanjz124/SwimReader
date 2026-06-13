@@ -291,6 +291,7 @@
         <span class="cmd">LC &lt;fix&gt;/&lt;time&gt; &lt;track&gt;</span> <span class="desc">— Required speed to reach fix at time</span><br>
         <h4>WEATHER</h4>
         <span class="cmd">WR R &lt;station&gt;</span> <span class="desc">— Display METAR (e.g. WR R DCA)</span><br>
+        <span class="cmd">AR &lt;station&gt;</span> <span class="desc">— Add altimeter setting (e.g. AR LAX or AR KLAX)</span><br>
         <h4>DOT COMMANDS</h4>
         <span class="cmd">.FIND &lt;ident&gt;</span> <span class="desc">— Highlight fix/navaid/airport on scope</span><br>
         <span class="cmd">.SID [name]</span> <span class="desc">— Toggle SID overlay; no args = list active</span><br>
@@ -323,6 +324,13 @@
                 <span id="po-menu-close">X</span>
             </div>
             <div id="po-menu-body"></div>
+        </div>
+        <div id="altim-menu" style="display:none;">
+            <div id="altim-menu-title">
+                <span>ALTIM SET</span>
+                <span id="altim-menu-close">X</span>
+            </div>
+            <div id="altim-menu-body"></div>
         </div>
         <div id="checklist-menu" style="display:none;">
             <div id="checklist-menu-title">

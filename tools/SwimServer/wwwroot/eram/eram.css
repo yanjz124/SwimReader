@@ -389,6 +389,95 @@ input[type="checkbox"]:checked::after {
 .po-recv-pending { color: #00cccc; border-color: #00cccc; }
 .po-acked { color: #fff; border-color: transparent; }
 
+/* ── Altimeter Settings Menu ── */
+#altim-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 13px; line-height: 18px; letter-spacing: 0.5px;
+    user-select: none; background: #000; border: 1px solid #666;
+    min-width: 180px;
+}
+#altim-menu,
+#altim-menu * {
+    cursor: var(--eram-cursor) !important;
+}
+#altim-menu.box-dragging { outline: 2px solid #fff; }
+#altim-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #000; padding: 2px 4px; border-bottom: 1px solid #666;
+    color: #BBBBBB; cursor: var(--eram-cursor) !important; font-weight: normal;
+    padding-left: 8px;
+}
+#altim-menu-close {
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+    padding: 0 6px;
+    font-weight: bold;
+    user-select: none;
+}
+#altim-menu-close:hover { color: #FFFFFF; }
+#altim-menu-body { padding: 0; max-height: 400px; overflow-y: auto; }
+.altim-entry {
+    padding: 2px 4px;
+    border-bottom: 1px solid #333;
+    display: flex;
+    align-items: center;
+    white-space: pre;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    min-width: 180px;
+}
+.altim-entry:last-child { border-bottom: none; }
+.altim-entry:hover { background: #1a1a1a; }
+.altim-entry-selected {
+    background: #333344;
+}
+.altim-box {
+    display: inline-block;
+    width: 12px; height: 12px;
+    background: #9FA309;
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+.altim-station {
+    color: #BBBBBB;
+    font-weight: bold;
+    min-width: 50px;
+}
+.altim-time {
+    color: #BBBBBB;
+    font-size: 11px;
+    min-width: 50px;
+    text-align: right;
+    margin: 0 2px 0 8px;
+}
+.altim-value {
+    color: #BBBBBB;
+    margin-left: -8px;
+}
+.altim-value-digits {
+    display: inline-block;
+}
+.altim-value-digits.below-standard {
+    text-decoration: underline;
+}
+.altim-entry-selected .altim-value {
+    visibility: hidden;
+}
+.altim-delete-btn {
+    position: absolute;
+    right: 4px;
+    top: 2px;
+    color: #ff4444;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0 4px;
+    white-space: nowrap;
+}
+.altim-delete-btn:hover { background: #440000; color: #ffff77; }
+
 /* ── Zulu Time View ── */
 #time-view {
     position: absolute; z-index: 1050;

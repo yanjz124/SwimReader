@@ -95,6 +95,11 @@ const PO_CLIENT_TIMEOUT = 3 * 60 * 1000;  // 3 minutes
 const pointoutBlocked = new Set();  // GUFIs that had a point-out — FLID toggle blocked until QP <FLID>
 let pointoutMenuGufi = null;       // GUFI of flight whose point-out menu is open
 
+// Altimeter settings state
+const altimeterStations = new Map();  // station → { airport, code, altimeter, time, updatedAt }
+let altimeterMenuOpen = false;
+let altimeterSelectedStation = null;  // currently selected station for deletion
+
 function updatePointoutMenuBody(f, poInfo) {
     const body = document.getElementById('po-menu-body');
     const acked = pointoutAcked.has(f.gufi);
@@ -152,6 +157,289 @@ function openPointoutMenu(f, poInfo, clientX, clientY) {
 function closePointoutMenu() {
     pointoutMenuGufi = null;
     document.getElementById('po-menu').style.display = 'none';
+}
+
+function getAltimeterObsAgeMinutes(updatedAt) {
+    if (!updatedAt) return null;
+    try {
+        const obsTime = new Date(updatedAt);
+        const now = new Date();
+        const ageMs = now - obsTime;
+        return Math.floor(ageMs / 1000 / 60);  // age in minutes
+    } catch {
+        return null;
+    }
+}
+
+function formatAltimeterValue(altimStr) {
+    // Input: "29.89" or "30.12" etc.
+    // Output: "989" (remove 2 and decimal) or "012" (remove 3 and decimal)
+    // Returns 3 digits without first digit and decimal point
+    if (!altimStr || altimStr === 'N/A') return null;
+
+    const clean = altimStr.replace(/[^\d]/g, '');  // Remove non-digits
+    if (clean.length < 3) return null;
+
+    // Remove first digit, keep last 3 digits (the decimal part without point)
+    return clean.substring(1);  // e.g., "2989" → "989", "3012" → "012"
+}
+
+function isAltimeterBelowStandard(altimStr) {
+    // Standard is 29.92 inHg
+    if (!altimStr || altimStr === 'N/A') return false;
+    try {
+        const val = parseFloat(altimStr);
+        return val < 29.92;
+    } catch {
+        return false;
+    }
+}
+
+function updateAltimeterMenuBody() {
+    const body = document.getElementById('altim-menu-body');
+    if (altimeterStations.size === 0) {
+        body.innerHTML = '<div style="color:#888; font-size:11px; padding:6px 4px; min-width:180px; text-align:center;">No stations</div>';
+        return;
+    }
+    let html = '';
+    for (const [station, data] of altimeterStations) {
+        const timeStr = (data.time || '????Z').padEnd(6);
+        const ageMin = getAltimeterObsAgeMinutes(data.updatedAt);
+
+        // Determine altimeter display and styling
+        let altimHtml;
+        if (ageMin !== null && ageMin > 120) {
+            // Too old — show -M-
+            altimHtml = '<span class="altim-value-digits">-M-</span>';
+        } else if (!data.altimeter || data.altimeter === 'N/A') {
+            // Missing report
+            altimHtml = '<span class="altim-value-digits">-M-</span>';
+        } else {
+            // Format as 3-digit code (e.g., "989" for 29.89)
+            const formatted = formatAltimeterValue(data.altimeter);
+            if (formatted) {
+                const belowStandard = isAltimeterBelowStandard(data.altimeter);
+                const underlineClass = belowStandard ? 'below-standard' : '';
+                altimHtml = `<span class="altim-value-digits ${underlineClass}">${formatted}</span>`;
+            } else {
+                altimHtml = '<span class="altim-value-digits">-M-</span>';
+            }
+        }
+
+        // Underline observation time if stale (>65 min)
+        let timeStyle = '';
+        if (ageMin !== null && ageMin > 65) {
+            timeStyle = 'text-decoration: underline;';
+        }
+
+        const isSelected = altimeterSelectedStation === station;
+        const selectedClass = isSelected ? 'altim-entry-selected' : '';
+        html += `<div class="altim-entry ${selectedClass}" data-station="${station}" onclick="selectAltimeterStation('${station}', event)">
+            <span class="altim-box"></span>
+            <span class="altim-station">${station.padEnd(4)}</span>
+            <span class="altim-time" style="${timeStyle}">${timeStr}</span>
+            <span class="altim-value">${altimHtml}</span>
+            ${isSelected ? '<span class="altim-delete-btn" onclick="deleteSelectedAltimeterStation(event)">DEL</span>' : ''}
+        </div>`;
+    }
+    body.innerHTML = html;
+}
+
+function selectAltimeterStation(station, event) {
+    event.stopPropagation();
+    altimeterSelectedStation = altimeterSelectedStation === station ? null : station;
+    updateAltimeterMenuBody();
+}
+
+function deleteSelectedAltimeterStation(event) {
+    event.stopPropagation();
+    if (altimeterSelectedStation) {
+        removeAltimeterStation(altimeterSelectedStation);
+        altimeterSelectedStation = null;
+    }
+}
+
+let altimeterUpdateInterval = null;
+let altimeterRefreshInterval = null;
+
+async function refreshAllAltimeterStations() {
+    for (const station of altimeterStations.keys()) {
+        try {
+            const icao = 'K' + station;
+            const resp = await fetch(`https://atis.info/api/${encodeURIComponent(icao)}`);
+            if (!resp.ok) continue;
+            let data = await resp.json();
+
+            if (Array.isArray(data)) {
+                if (data.length === 0) continue;
+                data = data[0];
+            }
+
+            if (!data || !data.airport) continue;
+
+            // Parse altimeter from DATIS string
+            let altimValue = null;
+            if (data.datis) {
+                const altMatch = data.datis.match(/\bA(\d{4})\b/);
+                if (altMatch) {
+                    const raw = altMatch[1];
+                    altimValue = raw.substring(0, 2) + '.' + raw.substring(2);
+                }
+            }
+
+            // Update the station data
+            altimeterStations.set(station, {
+                airport: data.airport,
+                code: data.code,
+                altimeter: altimValue || 'N/A',
+                time: data.time || '????Z',
+                updatedAt: data.updatedAt
+            });
+        } catch (e) {
+            console.warn('[ALTIM] Refresh error for', station, ':', e);
+        }
+    }
+    if (altimeterMenuOpen) updateAltimeterMenuBody();
+}
+
+function openAltimeterMenu() {
+    altimeterMenuOpen = true;
+    const menu = document.getElementById('altim-menu');
+    updateAltimeterMenuBody();
+
+    // Try to restore position from localStorage
+    const savedPos = localStorage.getItem('boxPos_altim-menu');
+    if (!savedPos) {
+        // No saved position — set default (middle of screen)
+        menu.style.left = 'calc(50vw - 110px)';
+        menu.style.top = 'calc(50vh - 80px)';
+        menu.style.bottom = 'auto';
+        menu.style.right = 'auto';
+    } else {
+        // Restore from localStorage
+        try {
+            const pos = JSON.parse(savedPos);
+            if (pos.left) menu.style.left = pos.left;
+            if (pos.top) { menu.style.top = pos.top; menu.style.bottom = 'auto'; menu.style.right = 'auto'; }
+            requestAnimationFrame(() => clampBox(menu));
+        } catch(e) {
+            // Fallback to default if parse fails
+            menu.style.left = 'calc(50vw - 110px)';
+            menu.style.top = 'calc(50vh - 80px)';
+            menu.style.bottom = 'auto';
+            menu.style.right = 'auto';
+        }
+    }
+
+    menu.style.display = 'block';
+
+    // Update the toolbar button state to reflect open menu
+    updateAltimSetButtonState();
+
+    // Start periodic updates to refresh observation ages
+    if (altimeterUpdateInterval) clearInterval(altimeterUpdateInterval);
+    altimeterUpdateInterval = setInterval(() => {
+        if (altimeterMenuOpen) updateAltimeterMenuBody();
+    }, 30000);  // Update every 30 seconds
+
+    // Start periodic refresh of ATIS data (every 5 minutes)
+    if (altimeterRefreshInterval) clearInterval(altimeterRefreshInterval);
+    altimeterRefreshInterval = setInterval(() => {
+        if (altimeterMenuOpen) refreshAllAltimeterStations();
+    }, 5 * 60 * 1000);  // Refresh every 5 minutes
+}
+
+function closeAltimeterMenu() {
+    altimeterMenuOpen = false;
+    document.getElementById('altim-menu').style.display = 'none';
+    if (altimeterUpdateInterval) {
+        clearInterval(altimeterUpdateInterval);
+        altimeterUpdateInterval = null;
+    }
+    if (altimeterRefreshInterval) {
+        clearInterval(altimeterRefreshInterval);
+        altimeterRefreshInterval = null;
+    }
+    // Update the toolbar button state to reflect closed menu
+    updateAltimSetButtonState();
+}
+
+function updateAltimSetButtonState() {
+    const buttons = document.querySelectorAll('.tb-btn');
+    for (const btn of buttons) {
+        const label = btn.querySelector('.tb-label');
+        if (label && label.textContent.includes('ALTIM')) {
+            btn.classList.toggle('tb-toggle-on', altimeterMenuOpen);
+        }
+    }
+    // Also update tearoff buttons
+    for (const [btnKey, tearoff] of activeTearoffs) {
+        if (btnKey.includes('ALTIM')) {
+            tearoff.buttonClone.classList.toggle('tb-toggle-on', altimeterMenuOpen);
+        }
+    }
+}
+
+function removeAltimeterStation(station) {
+    altimeterStations.delete(station);
+    updateAltimeterMenuBody();
+}
+
+async function addAltimeterStation(station) {
+    // Normalize: strip leading K if present, default to K prefix for API
+    let stationCode = station.toUpperCase();
+    if (stationCode.startsWith('K')) {
+        stationCode = stationCode.substring(1);
+    }
+    const icao = 'K' + stationCode;
+
+    try {
+        const resp = await fetch(`https://atis.info/api/${encodeURIComponent(icao)}`);
+        if (!resp.ok) {
+            return { feedback: [{ type: 'err', text: `NO ATIS FOR ${stationCode}` }] };
+        }
+        let data = await resp.json();
+
+        // API returns an array, extract first element
+        if (Array.isArray(data)) {
+            if (data.length === 0) {
+                return { feedback: [{ type: 'err', text: `NO ATIS FOR ${stationCode}` }] };
+            }
+            data = data[0];
+        }
+
+        if (!data || !data.airport) {
+            return { feedback: [{ type: 'err', text: `INVALID ATIS DATA FOR ${stationCode}` }] };
+        }
+
+        // Parse altimeter from DATIS string: look for "A####" pattern
+        let altimValue = null;
+        if (data.datis) {
+            const altMatch = data.datis.match(/\bA(\d{4})\b/);
+            if (altMatch) {
+                const raw = altMatch[1];
+                altimValue = raw.substring(0, 2) + '.' + raw.substring(2);
+            }
+        }
+
+        altimeterStations.set(stationCode, {
+            airport: data.airport,
+            code: data.code,
+            altimeter: altimValue || 'N/A',
+            time: data.time || '????Z',
+            updatedAt: data.updatedAt
+        });
+
+        updateAltimeterMenuBody();
+        return { feedback: [
+            { type: 'ok', text: 'ACCEPT' },
+            { type: 'info', text: `ALTIMETER ${stationCode}` },
+            { type: 'info', text: `${altimValue || 'N/A'}` }
+        ]};
+    } catch (e) {
+        console.warn('[ALTIM] Error:', e);
+        return { feedback: [{ type: 'err', text: `ATIS REQ FAILED: ${e.message}` }] };
+    }
 }
 
 // .FIND overlay state
@@ -4630,6 +4918,31 @@ function processCommand(cmd) {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // AR <station>           — add/remove altimeter setting for station (toggle)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'AR' && parts.length >= 2) {
+        let stationInput = parts.slice(1).join('').toUpperCase();
+        if (stationInput.startsWith('K')) {
+            stationInput = stationInput.substring(1);
+        }
+        if (!stationInput) return { feedback: [{ type: 'err', text: 'AR REQUIRES STATION ID' }] };
+
+        // Check if already exists — toggle remove
+        if (altimeterStations.has(stationInput)) {
+            removeAltimeterStation(stationInput);
+            altimeterSelectedStation = null;
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `ALTIMETER ${stationInput}` },
+                { type: 'info', text: 'REMOVED' }
+            ]};
+        }
+
+        // Otherwise add
+        return addAltimeterStation(stationInput);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // LA <loc1> <loc2> [/<speed>|T/<speed>|T]  — range/bearing between two locations
     // LB <fix> <loc> | LB <fix>/<speed> <track> — range/bearing from fix to location
     // LC <fix>/<time> <track>                   — speed adjustment to reach fix at time
@@ -5829,6 +6142,8 @@ document.addEventListener('mousedown', e => {
 window.addEventListener('resize', () => {
     const poMenu = document.getElementById('po-menu');
     if (poMenu.style.display !== 'none') clampBox(poMenu);
+    const altimMenu = document.getElementById('altim-menu');
+    if (altimMenu.style.display !== 'none') clampBox(altimMenu);
     clampBox(document.getElementById('time-view'));
     const fm = document.getElementById('field-menu');
     if (fm.style.display !== 'none') clampBox(fm);
@@ -5837,6 +6152,7 @@ window.addEventListener('resize', () => {
 
 setupBoxDrag(document.getElementById('mca-ra-stack'));
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
+setupBoxDrag(document.getElementById('altim-menu'), document.getElementById('altim-menu-title'));
 
 // Point-out menu: close button (left + middle click)
 document.getElementById('po-menu-close').addEventListener('click', (e) => {
@@ -5849,6 +6165,22 @@ document.getElementById('po-menu-close').addEventListener('auxclick', (e) => {
 // Point-out menu: middle-click title bar → close menu
 document.getElementById('po-menu-title').addEventListener('auxclick', (e) => {
     if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closePointoutMenu(); }
+});
+
+// Altimeter menu: close button (left + middle click)
+document.getElementById('altim-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();  // Prevent drag initiation
+});
+document.getElementById('altim-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAltimeterMenu();
+});
+document.getElementById('altim-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeAltimeterMenu(); }
+});
+// Altimeter menu: middle-click title bar → close menu
+document.getElementById('altim-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeAltimeterMenu(); }
 });
 
 // Point-out menu: sector row click handler (shared for left + middle click)
@@ -6828,8 +7160,14 @@ const TB_VIEWS = {
         [
             toggle('ALTIM\nSET', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => altimeterMenuOpen,
+                onToggle: () => {
+                    if (altimeterMenuOpen) {
+                        closeAltimeterMenu();
+                    } else {
+                        openAltimeterMenu();
+                    }
+                },
             }),
             toggle('AUTO HO\nINHIB', {
                 cls: 'tb-toggle-grey',

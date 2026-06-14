@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dSTARS | swim.vncrcc.org</title>
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<link rel="stylesheet" href="/dstars/directory.css?v=2">
+</head>
+<body>
+<a class="nav-home" href="/">&larr; HOME</a>
+<header style="padding-left:100px">
+    <h1>dSTARS / DGSCOPE FEED</h1>
+    <div id="status">loading...</div>
+</header>
+
+<section id="guide">
+    <h2>CONNECT A DGSCOPE CLIENT</h2>
+    <p>Point your DGScope ScopeServer feed at this server. Each facility streams its own
+       newline-delimited JSON track feed (HTTP stream or WebSocket upgrade on the same URL).</p>
+    <ol>
+        <li>Open DGScope &rarr; receiver / ScopeServer settings.</li>
+        <li>Set the feed URL to the address below, replacing <code>{FACILITY}</code> with a
+            STARS/TRACON identifier from the directory (e.g. <code>A80</code>).</li>
+        <li>Start the scope &mdash; tracks for that facility stream live.</li>
+    </ol>
+    <div class="url-box">
+        <code id="feedUrl">&hellip;/dstars/{FACILITY}/updates</code>
+        <button id="copyTemplate" type="button">COPY</button>
+    </div>
+    <p class="hint">Tip: click any facility card below to copy its ready-to-use feed URL.</p>
+</section>
+
+<div id="count-bar"></div>
+<div id="grid"><div class="empty">Loading facilities...</div></div>
+
+<div id="toast"></div>
+
+<script src="/dstars/directory.js?v=1"></script>
+<script src="/idle-timer.js?v=2"></script>
+</body>
+</html>

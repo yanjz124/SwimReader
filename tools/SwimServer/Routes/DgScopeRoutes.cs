@@ -7,8 +7,16 @@ namespace SwimServer;
 /// </summary>
 static class DgScopeRoutes
 {
-    public static void Register(WebApplication app, ServerContext _ctx)
+    public static void Register(WebApplication app, ServerContext ctx)
     {
+        // Landing/directory page for DGScope users. The literal "/dstars" route is more
+        // specific than the "/dstars/{**rest}" proxy below, so it wins for the bare path.
+        app.MapGet("/dstars", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "dstars", "directory.html"));
+        });
+
         app.Map("/dstars/{**rest}", async (HttpContext c, string rest) =>
         {
             var targetUrl = $"http://127.0.0.1:5000/dstars/{rest}";

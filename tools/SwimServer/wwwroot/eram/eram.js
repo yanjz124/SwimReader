@@ -100,6 +100,22 @@ const altimeterStations = new Map();  // station → { airport, code, altimeter,
 let altimeterMenuOpen = false;
 let altimeterSelectedStation = null;  // currently selected station for deletion
 
+let crrMenuOpen = false;
+let crrGroups = new Map();  // label -> { lat, lon, aircraft: [{ callsign/cid, gufi, distance }], color }
+let crrSelectedGroup = null;
+let crrColor = '#00D000';
+let crrColorSelectorOpen = false;
+
+function setCrrColor(color) {
+    crrColor = color;
+    updateCrrMenuBody();
+}
+
+function toggleCrrColorSelector() {
+    crrColorSelectorOpen = !crrColorSelectorOpen;
+    updateCrrMenuBody();
+}
+
 function updatePointoutMenuBody(f, poInfo) {
     const body = document.getElementById('po-menu-body');
     const acked = pointoutAcked.has(f.gufi);
@@ -440,6 +456,270 @@ async function addAltimeterStation(station) {
         console.warn('[ALTIM] Error:', e);
         return { feedback: [{ type: 'err', text: `ATIS REQ FAILED: ${e.message}` }] };
     }
+}
+
+// ── CRR (Continuous Range Readout) ──
+function openCrrMenu() {
+    crrMenuOpen = true;
+    const menu = document.getElementById('crr-menu');
+    updateCrrMenuBody();
+
+    // Try to restore position from localStorage
+    const savedPos = localStorage.getItem('boxPos_crr-menu');
+    if (!savedPos) {
+        menu.style.left = 'calc(50vw - 110px)';
+        menu.style.top = 'calc(50vh - 80px)';
+        menu.style.bottom = 'auto';
+        menu.style.right = 'auto';
+    } else {
+        try {
+            const pos = JSON.parse(savedPos);
+            if (pos.left) menu.style.left = pos.left;
+            if (pos.top) { menu.style.top = pos.top; menu.style.bottom = 'auto'; menu.style.right = 'auto'; }
+            requestAnimationFrame(() => clampBox(menu));
+        } catch(e) {
+            menu.style.left = 'calc(50vw - 110px)';
+            menu.style.top = 'calc(50vh - 80px)';
+            menu.style.bottom = 'auto';
+            menu.style.right = 'auto';
+        }
+    }
+
+    menu.style.display = 'block';
+    updateCrrButtonState();
+}
+
+function closeCrrMenu() {
+    crrMenuOpen = false;
+    document.getElementById('crr-menu').style.display = 'none';
+    updateCrrButtonState();
+}
+
+function updateCrrButtonState() {
+    const buttons = document.querySelectorAll('.tb-btn');
+    for (const btn of buttons) {
+        const label = btn.querySelector('.tb-label');
+        if (label && label.textContent.includes('CRR')) {
+            btn.classList.toggle('tb-toggle-on', crrMenuOpen);
+        }
+    }
+    for (const [btnKey, tearoff] of activeTearoffs) {
+        if (btnKey.includes('CRR') && !btnKey.includes('CRR FIX') && !btnKey.includes('CRR RDB')) {
+            tearoff.buttonClone.classList.toggle('tb-toggle-on', crrMenuOpen);
+        }
+    }
+}
+
+function updateCrrMenuBody() {
+    const body = document.getElementById('crr-menu-body');
+
+    let html = '';
+
+    // Color selector (only shown if toggled on)
+    if (crrColorSelectorOpen) {
+        const colorOptions = ['#00D000', '#cccc44', '#ff4444', '#00ccff', '#ff00ff', '#ffff00'];
+        html += '<div style="padding:4px; border-bottom:1px solid #333; display:flex; gap:4px;">';
+        for (const color of colorOptions) {
+            const isSelected = crrColor === color;
+            const borderStyle = isSelected ? 'border:3px solid #fff;' : 'border:1px solid #666;';
+            html += `<div onclick="setCrrColor('${color}')" style="width:16px; height:16px; background:${color}; cursor:pointer; ${borderStyle}"></div>`;
+        }
+        html += '</div>';
+    }
+
+    if (crrGroups.size === 0) {
+        body.innerHTML = html + '<div style="color:#888; font-size:11px; padding:4px; min-width:180px; text-align:center;">No groups</div>';
+        return;
+    }
+    for (const [label, group] of crrGroups) {
+        const isSelected = crrSelectedGroup === label;
+        const selectedClass = isSelected ? 'crr-group-selected' : '';
+        const groupColor = group.color || crrColor;
+
+        let aircraftHtml = '';
+        for (const ac of group.aircraft) {
+            const id = ac.callsign || ac.cid || '?';
+            const distStr = ac.distance !== null ? ac.distance.toFixed(1) : '?';
+            aircraftHtml += `<div class="crr-aircraft" data-group="${label}" data-gufi="${ac.gufi}" data-callsign="${id}">${id.padEnd(10)} ${distStr.padStart(5)}</div>`;
+        }
+
+        html += `<div class="crr-group ${selectedClass}" data-label="${label}">
+            <div class="crr-group-label" data-group="${label}" style="color:${groupColor}">${label}${isSelected ? ` <span class="crr-group-label-delete" data-delete="${label}">X</span>` : ''}</div>
+            ${aircraftHtml}
+        </div>`;
+    }
+
+    body.innerHTML = html;
+}
+
+function selectCrrGroup(label, event) {
+    event.stopPropagation();
+
+    if (event.button === 0) {
+        // Left-click: Start LF command to add/remove aircraft
+        mcaState.content = `LF ${label} `;
+        mcaState.selectedFlids = [];
+        updateMcaPreview();
+    } else if (event.button === 1) {
+        // Middle-click: Open delete popup
+        event.preventDefault();
+        openCrrGroupDeletePopup(label, event);
+    }
+}
+
+function deleteCrrGroup(label, event) {
+    if (event) event.stopPropagation();
+    crrGroups.delete(label);
+    crrSelectedGroup = null;
+    closeCrrGroupDeletePopup();
+    updateCrrMenuBody();
+}
+
+let crrGroupDeletePopupOpen = false;
+let crrGroupDeletePopupLabel = null;
+
+function openCrrGroupDeletePopup(label, event) {
+    closeCrrGroupDeletePopup();
+    crrGroupDeletePopupOpen = true;
+    crrGroupDeletePopupLabel = label;
+
+    const group = crrGroups.get(label);
+    const menu = document.getElementById('crr-group-delete-popup');
+    const hasAircraft = group.aircraft.length > 0;
+
+    let html = '';
+    if (hasAircraft) {
+        html = `<div class="crr-popup-option" onclick="deleteCrrGroupAllAircraft('${label}', event); event.stopPropagation();">Delete all aircraft</div>`;
+        html += `<div class="crr-popup-option" onclick="deleteCrrGroup('${label}', event); event.stopPropagation();">Delete group</div>`;
+    } else {
+        html = `<div class="crr-popup-option" onclick="deleteCrrGroup('${label}', event); event.stopPropagation();">Delete group (empty)</div>`;
+    }
+
+    menu.innerHTML = html;
+    menu.style.display = 'block';
+    menu.style.left = event.clientX + 'px';
+    menu.style.top = event.clientY + 'px';
+}
+
+function closeCrrGroupDeletePopup() {
+    crrGroupDeletePopupOpen = false;
+    crrGroupDeletePopupLabel = null;
+    const menu = document.getElementById('crr-group-delete-popup');
+    if (menu) menu.style.display = 'none';
+}
+
+function deleteCrrGroupAllAircraft(label, event) {
+    if (event) event.stopPropagation();
+    const group = crrGroups.get(label);
+    if (group) {
+        group.aircraft = [];
+    }
+    closeCrrGroupDeletePopup();
+    updateCrrMenuBody();
+}
+
+let crrAircraftDeletePopupOpen = false;
+let crrAircraftDeletePopupLabel = null;
+let crrAircraftDeletePopupGufi = null;
+
+function openCrrAircraftDeletePopup(label, gufi, callsign, event) {
+    closeCrrAircraftDeletePopup();
+    crrAircraftDeletePopupOpen = true;
+    crrAircraftDeletePopupLabel = label;
+    crrAircraftDeletePopupGufi = gufi;
+
+    const menu = document.getElementById('crr-aircraft-delete-popup');
+    const html = `<div class="crr-popup-option" onclick="deleteCrrAircraft('${label}', '${gufi}', event); event.stopPropagation();">Delete ${callsign}</div>`;
+
+    menu.innerHTML = html;
+    menu.style.display = 'block';
+    menu.style.left = event.clientX + 'px';
+    menu.style.top = event.clientY + 'px';
+}
+
+function closeCrrAircraftDeletePopup() {
+    crrAircraftDeletePopupOpen = false;
+    crrAircraftDeletePopupLabel = null;
+    crrAircraftDeletePopupGufi = null;
+    const menu = document.getElementById('crr-aircraft-delete-popup');
+    if (menu) menu.style.display = 'none';
+}
+
+function deleteCrrAircraft(label, gufi, event) {
+    if (event) event.stopPropagation();
+    const group = crrGroups.get(label);
+    if (group) {
+        group.aircraft = group.aircraft.filter(a => a.gufi !== gufi);
+    }
+    closeCrrAircraftDeletePopup();
+    updateCrrMenuBody();
+}
+
+function addCrrGroup(label, lat, lon) {
+    if (crrGroups.has(label)) {
+        return { feedback: [{ type: 'err', text: `GROUP ${label} EXISTS` }] };
+    }
+    crrGroups.set(label, { lat, lon, aircraft: [] });
+    updateCrrMenuBody();
+    return { feedback: [
+        { type: 'ok', text: 'ACCEPT' },
+        { type: 'info', text: `CRR GROUP ${label}` }
+    ]};
+}
+
+function addAircraftToCrrGroup(label, flids) {
+    const group = crrGroups.get(label);
+    if (!group) {
+        return { feedback: [{ type: 'err', text: `GROUP ${label} NOT FOUND` }] };
+    }
+
+    for (const flid of flids) {
+        const flight = findFlight(flid);
+        if (!flight || !flight.latitude || !flight.longitude) {
+            return { feedback: [{ type: 'err', text: `${flid} NOT FOUND OR NO POS` }] };
+        }
+
+        const distance = calculateNmDistance(group.lat, group.lon, flight.latitude, flight.longitude);
+        const existing = group.aircraft.find(a => a.gufi === flight.gufi);
+        if (!existing) {
+            group.aircraft.push({
+                gufi: flight.gufi,
+                callsign: flight.callsign,
+                cid: getCid(flight),
+                distance: distance
+            });
+        }
+    }
+
+    updateCrrMenuBody();
+    return { feedback: [
+        { type: 'ok', text: 'ACCEPT' },
+        { type: 'info', text: `CRR AC ADDED` }
+    ]};
+}
+
+function calculateNmDistance(lat1, lon1, lat2, lon2) {
+    const R = 3440.065;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+// Update distances for all CRR groups
+function updateCrrDistances() {
+    for (const [label, group] of crrGroups) {
+        for (const ac of group.aircraft) {
+            const flight = flights.get(ac.gufi);
+            if (flight && flight.latitude && flight.longitude) {
+                ac.distance = calculateNmDistance(group.lat, group.lon, flight.latitude, flight.longitude);
+            }
+        }
+    }
+    if (crrMenuOpen) updateCrrMenuBody();
 }
 
 // .FIND overlay state
@@ -2577,6 +2857,8 @@ function doRender() {
     const now = performance.now();
     // Update QU route lines to follow aircraft positions
     if (activeRoutes.size > 0) updateActiveRoutes();
+    // Update CRR distances
+    if (crrGroups.size > 0) updateCrrDistances();
 
     const mapBounds = map.getBounds();
     const onScreenGufis = new Set();
@@ -4393,7 +4675,11 @@ map.on('click', (e) => {
         const latMin = Math.round((absLat % 1) * 60).toString().padStart(2, '0');
         const lonDeg = Math.floor(absLon).toString().padStart(3, '0');
         const lonMin = Math.round((absLon % 1) * 60).toString().padStart(2, '0');
-        const locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+        let locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+        // For LF commands, prepend // automatically
+        if (mca.text.trim().toUpperCase().startsWith('LF')) {
+            locStr = '//' + locStr;
+        }
         mcaInsertTarget(locStr);
     }
 });
@@ -4414,7 +4700,11 @@ mapEl.addEventListener('auxclick', (e) => {
     const latMin = Math.round((absLat % 1) * 60).toString().padStart(2, '0');
     const lonDeg = Math.floor(absLon).toString().padStart(3, '0');
     const lonMin = Math.round((absLon % 1) * 60).toString().padStart(2, '0');
-    const locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+    let locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+    // For LF commands, prepend // automatically
+    if (mca.text.trim().toUpperCase().startsWith('LF')) {
+        locStr = '//' + locStr;
+    }
     if (mca.text[mca.text.length - 1] !== ' ') mca.text += ' ';
     mca.text += locStr;
     mca.cursor = mca.text.length;
@@ -5046,6 +5336,125 @@ function processCommand(cmd) {
                 }
             } catch {
                 return { feedback: [{ type: 'err', text: 'RANGE CALC FAILED' }] };
+            }
+        })();
+    }
+
+    // LF <location> [<label>] [<aircraft>] — Create CRR group
+    // LF <label> <aircraft> — Add aircraft to existing CRR group
+    if (verb === 'LF') {
+        return (async () => {
+            try {
+                if (parts.length < 2) {
+                    return { feedback: [{ type: 'err', text: 'LF REQUIRES LOCATION AND/OR LABEL' }] };
+                }
+
+                const arg1 = parts[1].toUpperCase();
+                const isLocationPrefix = arg1.startsWith('//');
+
+                // If arg1 doesn't have //, treat it as a group label (existing or to be added to)
+                if (!isLocationPrefix && parts.length >= 3) {
+                    // LF <label> <aircraft> — Add or remove from existing group (toggle)
+                    const label = arg1;
+                    if (!crrGroups.has(label)) {
+                        return { feedback: [{ type: 'err', text: `GROUP ${label} NOT FOUND` }] };
+                    }
+
+                    const group = crrGroups.get(label);
+                    const acParts = parts.slice(2).join('/').split('/');
+                    let addedCount = 0, removedCount = 0;
+
+                    for (const acStr of acParts) {
+                        const f = findFlight(acStr.toUpperCase());
+                        if (!f || !f.latitude || !f.longitude) {
+                            return { feedback: [{ type: 'err', text: `${acStr} NOT FOUND OR NO POS` }] };
+                        }
+
+                        const existingIdx = group.aircraft.findIndex(a => a.gufi === f.gufi);
+                        if (existingIdx >= 0) {
+                            // Aircraft already in group — remove it
+                            group.aircraft.splice(existingIdx, 1);
+                            removedCount++;
+                        } else {
+                            // Aircraft not in group — add it
+                            const distance = calculateNmDistance(group.lat, group.lon, f.latitude, f.longitude);
+                            group.aircraft.push({
+                                gufi: f.gufi,
+                                callsign: f.callsign,
+                                cid: getCid(f),
+                                distance: distance
+                            });
+                            addedCount++;
+                        }
+                    }
+
+                    updateCrrMenuBody();
+                    let msg = '';
+                    if (addedCount > 0) msg += `${addedCount} AC ADDED `;
+                    if (removedCount > 0) msg += `${removedCount} AC REMOVED`;
+                    return { feedback: [
+                        { type: 'ok', text: 'ACCEPT' },
+                        { type: 'info', text: `CRR ${label} ${msg}` }
+                    ]};
+                }
+
+                // Try to resolve arg1 as a location (must have // prefix)
+                const loc = isLocationPrefix ? await resolveLocation(arg1.substring(2)) : null;
+
+                if (loc) {
+                    // LF <location> [<label>] [<aircraft>]
+                    // Label is optional if location is a fix/navaid
+                    let label = loc.name || arg1;  // Use location name as default label
+                    let aircraftStartIdx = 2;
+
+                    // If second arg looks like a label (1-5 chars), use it as label
+                    if (parts.length >= 3 && /^[A-Z0-9]{1,5}$/.test(parts[2].toUpperCase())) {
+                        label = parts[2].toUpperCase();
+                        aircraftStartIdx = 3;
+                    }
+
+                    // Validate label: 1-5 alphanumeric characters
+                    if (!/^[A-Z0-9]{1,5}$/.test(label)) {
+                        return { feedback: [{ type: 'err', text: 'LABEL MUST BE 1-5 ALPHANUMERIC' }] };
+                    }
+
+                    if (crrGroups.has(label)) {
+                        return { feedback: [{ type: 'err', text: `GROUP ${label} EXISTS` }] };
+                    }
+
+                    // Create the group with selected color
+                    crrGroups.set(label, { lat: loc.lat, lon: loc.lon, aircraft: [], color: crrColor });
+
+                    // If aircraft specified, add them
+                    if (parts.length >= aircraftStartIdx + 1) {
+                        const acParts = parts.slice(aircraftStartIdx).join('/').split('/');
+                        for (const acStr of acParts) {
+                            const f = findFlight(acStr.toUpperCase());
+                            if (!f || !f.latitude || !f.longitude) {
+                                crrGroups.delete(label);
+                                return { feedback: [{ type: 'err', text: `${acStr} NOT FOUND OR NO POS` }] };
+                            }
+                            const distance = calculateNmDistance(loc.lat, loc.lon, f.latitude, f.longitude);
+                            crrGroups.get(label).aircraft.push({
+                                gufi: f.gufi,
+                                callsign: f.callsign,
+                                cid: getCid(f),
+                                distance: distance
+                            });
+                        }
+                    }
+
+                    updateCrrMenuBody();
+                    return { feedback: [
+                        { type: 'ok', text: 'ACCEPT' },
+                        { type: 'info', text: `CRR ${label}` }
+                    ]};
+                } else {
+                    return { feedback: [{ type: 'err', text: 'LF FORMAT ERROR' }] };
+                }
+            } catch (e) {
+                console.warn('[LF] Error:', e);
+                return { feedback: [{ type: 'err', text: 'LF COMMAND FAILED' }] };
             }
         })();
     }
@@ -6153,6 +6562,7 @@ window.addEventListener('resize', () => {
 setupBoxDrag(document.getElementById('mca-ra-stack'));
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
 setupBoxDrag(document.getElementById('altim-menu'), document.getElementById('altim-menu-title'));
+setupBoxDrag(document.getElementById('crr-menu'), document.getElementById('crr-menu-title'));
 
 // Point-out menu: close button (left + middle click)
 document.getElementById('po-menu-close').addEventListener('click', (e) => {
@@ -6181,6 +6591,81 @@ document.getElementById('altim-menu-close').addEventListener('auxclick', (e) => 
 // Altimeter menu: middle-click title bar → close menu
 document.getElementById('altim-menu-title').addEventListener('auxclick', (e) => {
     if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeAltimeterMenu(); }
+});
+
+// CRR menu: close button
+document.getElementById('crr-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+});
+document.getElementById('crr-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeCrrMenu();
+});
+document.getElementById('crr-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeCrrMenu(); }
+});
+// CRR menu: middle-click title bar → toggle color selector
+document.getElementById('crr-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); toggleCrrColorSelector(); }
+});
+
+// Close CRR popups on outside click
+document.addEventListener('click', (e) => {
+    if (crrGroupDeletePopupOpen && !e.target.closest('#crr-group-delete-popup')) {
+        closeCrrGroupDeletePopup();
+    }
+    if (crrAircraftDeletePopupOpen && !e.target.closest('#crr-aircraft-delete-popup')) {
+        closeCrrAircraftDeletePopup();
+    }
+});
+
+// CRR menu body event delegation
+document.addEventListener('click', (e) => {
+    const labelEl = e.target.closest('[data-group]');
+    if (labelEl && labelEl.closest('#crr-menu-body')) {
+        const label = labelEl.dataset.group;
+        e.stopPropagation();
+        const mcaInput = document.getElementById('mca-mobile-input');
+        if (mcaInput) {
+            mcaInput.value = `LF ${label} `;
+            mcaInput.focus();
+            mcaInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+});
+
+document.addEventListener('auxclick', (e) => {
+    const labelEl = e.target.closest('[data-group]');
+    if (labelEl && labelEl.closest('#crr-menu-body') && e.button === 1) {
+        // Check if it's an aircraft row or group label
+        if (labelEl.classList.contains('crr-aircraft')) {
+            // Aircraft middle-click
+            e.preventDefault();
+            e.stopPropagation();
+            const label = labelEl.dataset.group;
+            const gufi = labelEl.dataset.gufi;
+            const callsign = labelEl.dataset.callsign;
+            openCrrAircraftDeletePopup(label, gufi, callsign, e);
+        } else if (labelEl.classList.contains('crr-group-label')) {
+            // Group label middle-click
+            const label = labelEl.dataset.group;
+            e.preventDefault();
+            e.stopPropagation();
+            openCrrGroupDeletePopup(label, e);
+        }
+    }
+});
+
+// Aircraft left/middle-click handler
+document.addEventListener('click', (e) => {
+    const aircraftEl = e.target.closest('.crr-aircraft');
+    if (aircraftEl && aircraftEl.closest('#crr-menu-body')) {
+        const label = aircraftEl.dataset.group;
+        const gufi = aircraftEl.dataset.gufi;
+        const callsign = aircraftEl.dataset.callsign;
+        e.stopPropagation();
+        openCrrAircraftDeletePopup(label, gufi, callsign, e);
+    }
 });
 
 // Point-out menu: sector row click handler (shared for left + middle click)
@@ -7206,8 +7691,14 @@ const TB_VIEWS = {
             }),
             toggle('CRR', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => crrMenuOpen,
+                onToggle: () => {
+                    if (crrMenuOpen) {
+                        closeCrrMenu();
+                    } else {
+                        openCrrMenu();
+                    }
+                },
             }),
         ],
         [

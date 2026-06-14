@@ -478,6 +478,95 @@ input[type="checkbox"]:checked::after {
 }
 .altim-delete-btn:hover { background: #440000; color: #ffff77; }
 
+/* ── CRR Menu ── */
+#crr-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 13px; line-height: 18px; letter-spacing: 0.5px;
+    user-select: none; background: #000; border: 1px solid #666;
+    min-width: 180px;
+}
+#crr-menu,
+#crr-menu * {
+    cursor: var(--eram-cursor) !important;
+}
+#crr-menu.box-dragging { outline: 2px solid #fff; }
+#crr-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #000; padding: 2px 4px; border-bottom: 1px solid #666;
+    color: #BBBBBB; cursor: var(--eram-cursor) !important; font-weight: normal;
+    padding-left: 8px;
+}
+#crr-menu-close {
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+    padding: 0 6px;
+    font-weight: bold;
+    user-select: none;
+}
+#crr-menu-close:hover { color: #FFFFFF; }
+#crr-menu-body { padding: 0; max-height: 400px; overflow-y: auto; }
+.crr-group {
+    padding: 2px 2px 2px 4px;
+    border-bottom: 1px solid #333;
+    display: block;
+    font-size: 12px;
+    user-select: none;
+    position: relative;
+    border: 1px solid transparent;
+}
+.crr-group:last-child { border-bottom: none; }
+.crr-group:hover { border: 1px solid #fff; }
+.crr-group-selected {
+    background: #333344;
+}
+.crr-group-label {
+    color: #00D000;
+    font-weight: bold;
+    margin-bottom: 1px;
+    padding: 1px 0;
+    text-align: center;
+}
+.crr-group-label-delete {
+    color: #ff4444;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: 4px;
+    white-space: nowrap;
+}
+.crr-group-label-delete:hover { background: #440000; color: #ffff77; }
+.crr-aircraft {
+    color: #BBBBBB;
+    white-space: pre;
+    cursor: pointer;
+    padding: 0px 2px;
+    font-size: 11px;
+    line-height: 1.2;
+    border: 1px solid transparent;
+    margin-top: 4px;
+}
+.crr-aircraft:hover { border: 1px solid #fff; }
+
+/* ── CRR Group Delete Popup ── */
+#crr-group-delete-popup,
+#crr-aircraft-delete-popup {
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 11px;
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+}
+#crr-group-delete-popup *,
+#crr-aircraft-delete-popup * {
+    cursor: var(--eram-cursor) !important;
+}
+.crr-popup-option {
+    padding: 3px 8px;
+    border-bottom: 1px solid #333;
+    white-space: nowrap;
+}
+.crr-popup-option:last-child { border-bottom: none; }
+.crr-popup-option:hover { background: #1a1a1a; }
+
 /* ── Zulu Time View ── */
 #time-view {
     position: absolute; z-index: 1050;

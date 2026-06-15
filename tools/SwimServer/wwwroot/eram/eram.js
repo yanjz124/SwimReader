@@ -100,6 +100,11 @@ const altimeterStations = new Map();  // station → { airport, code, altimeter,
 let altimeterMenuOpen = false;
 let altimeterSelectedStation = null;  // currently selected station for deletion
 
+// Weather report state
+const weatherStations = new Map();  // station → { airport, metar, time, updatedAt }
+let weatherMenuOpen = false;
+let weatherSelectedStation = null;  // currently selected station for deletion
+
 let crrMenuOpen = false;
 let crrGroups = new Map();  // label -> { lat, lon, aircraft: [{ callsign/cid, gufi, distance }], color }
 let crrSelectedGroup = null;
@@ -283,35 +288,23 @@ let altimeterRefreshInterval = null;
 async function refreshAllAltimeterStations() {
     for (const station of altimeterStations.keys()) {
         try {
-            const icao = 'K' + station;
-            const resp = await fetch(`https://atis.info/api/${encodeURIComponent(icao)}`);
+            const resp = await fetch(`/api/metar/${encodeURIComponent(station)}`);
             if (!resp.ok) continue;
-            let data = await resp.json();
+            const metarText = (await resp.text()).trim();
+            if (!metarText) continue;
 
-            if (Array.isArray(data)) {
-                if (data.length === 0) continue;
-                data = data[0];
-            }
-
-            if (!data || !data.airport) continue;
-
-            // Parse altimeter from DATIS string
-            let altimValue = null;
-            if (data.datis) {
-                const altMatch = data.datis.match(/\bA(\d{4})\b/);
-                if (altMatch) {
-                    const raw = altMatch[1];
-                    altimValue = raw.substring(0, 2) + '.' + raw.substring(2);
-                }
-            }
+            // Parse altimeter and time from METAR
+            const altimValue = extractAltimeterFromMetar(metarText);
+            const obsTime = extractTimeFromMetar(metarText);
 
             // Update the station data
             altimeterStations.set(station, {
-                airport: data.airport,
-                code: data.code,
+                airport: station,
+                code: '?',
                 altimeter: altimValue || 'N/A',
-                time: data.time || '????Z',
-                updatedAt: data.updatedAt
+                time: obsTime,
+                updatedAt: new Date().toISOString(),
+                metar: metarText
             });
         } catch (e) {
             console.warn('[ALTIM] Refresh error for', station, ':', e);
@@ -404,48 +397,33 @@ function removeAltimeterStation(station) {
 }
 
 async function addAltimeterStation(station) {
-    // Normalize: strip leading K if present, default to K prefix for API
+    // Normalize: strip leading K if present
     let stationCode = station.toUpperCase();
     if (stationCode.startsWith('K')) {
         stationCode = stationCode.substring(1);
     }
-    const icao = 'K' + stationCode;
 
     try {
-        const resp = await fetch(`https://atis.info/api/${encodeURIComponent(icao)}`);
+        const resp = await fetch(`/api/metar/${encodeURIComponent(stationCode)}`);
         if (!resp.ok) {
-            return { feedback: [{ type: 'err', text: `NO ATIS FOR ${stationCode}` }] };
+            return { feedback: [{ type: 'err', text: `NO METAR FOR ${stationCode}` }] };
         }
-        let data = await resp.json();
-
-        // API returns an array, extract first element
-        if (Array.isArray(data)) {
-            if (data.length === 0) {
-                return { feedback: [{ type: 'err', text: `NO ATIS FOR ${stationCode}` }] };
-            }
-            data = data[0];
+        const metarText = (await resp.text()).trim();
+        if (!metarText) {
+            return { feedback: [{ type: 'err', text: `NO METAR FOR ${stationCode}` }] };
         }
 
-        if (!data || !data.airport) {
-            return { feedback: [{ type: 'err', text: `INVALID ATIS DATA FOR ${stationCode}` }] };
-        }
-
-        // Parse altimeter from DATIS string: look for "A####" pattern
-        let altimValue = null;
-        if (data.datis) {
-            const altMatch = data.datis.match(/\bA(\d{4})\b/);
-            if (altMatch) {
-                const raw = altMatch[1];
-                altimValue = raw.substring(0, 2) + '.' + raw.substring(2);
-            }
-        }
+        // Parse altimeter and time from METAR
+        const altimValue = extractAltimeterFromMetar(metarText);
+        const obsTime = extractTimeFromMetar(metarText);
 
         altimeterStations.set(stationCode, {
-            airport: data.airport,
-            code: data.code,
+            airport: stationCode,
+            code: '?',
             altimeter: altimValue || 'N/A',
-            time: data.time || '????Z',
-            updatedAt: data.updatedAt
+            time: obsTime,
+            updatedAt: new Date().toISOString(),
+            metar: metarText
         });
 
         updateAltimeterMenuBody();
@@ -456,7 +434,289 @@ async function addAltimeterStation(station) {
         ]};
     } catch (e) {
         console.warn('[ALTIM] Error:', e);
-        return { feedback: [{ type: 'err', text: `ATIS REQ FAILED: ${e.message}` }] };
+        return { feedback: [{ type: 'err', text: `METAR REQ FAILED: ${e.message}` }] };
+    }
+}
+
+// ── Weather Report Panel ──
+function getWeatherObsAgeMinutes(updatedAt) {
+    if (!updatedAt) return null;
+    try {
+        const now = new Date();
+        const obs = new Date(updatedAt);
+        return (now - obs) / (1000 * 60);
+    } catch {
+        return null;
+    }
+}
+
+function extractMetarFromDatis(datis) {
+    if (!datis) return null;
+    // DATIS format: "LAX ATIS INFO Y 0253Z. 24013KT 10SM BKN010 19/16 A2995..."
+    // Extract everything after the time and period (e.g., after "0253Z.")
+    const match = datis.match(/\d{4}Z\.\s*(.+)/);
+    if (match) {
+        return match[1].trim();
+    }
+    return datis;
+}
+
+function extractTimeFromMetar(metar) {
+    if (!metar) return '????';
+    // METAR format: "DCA 121551Z..." or similar
+    // Extract time in format DDHHMMZ
+    const match = metar.match(/\s(\d{2})(\d{2})(\d{2})Z/);
+    if (match) {
+        return match[2] + match[3];  // Return HHMM
+    }
+    return '????';
+}
+
+function extractAltimeterFromMetar(metar) {
+    if (!metar) return null;
+    // METAR format: "... A2995 ..." or "... A3012 ..."
+    const match = metar.match(/\bA(\d{4})\b/);
+    if (match) {
+        const raw = match[1];
+        return raw.substring(0, 2) + '.' + raw.substring(2);
+    }
+    return null;
+}
+
+function cleanMetarText(metar) {
+    if (!metar) return '';
+    // Remove "METAR " prefix if present
+    let text = metar.replace(/^METAR\s+/, '');
+    // Remove station ID at the beginning (4 characters followed by space)
+    text = text.replace(/^[A-Z]{4}\s+/, '');
+    return text.trim();
+}
+
+function updateWeatherMenuBody() {
+    const body = document.getElementById('wx-menu-body');
+    if (weatherStations.size === 0) {
+        body.innerHTML = '<div style="color:#888; font-size:11px; text-align:center; width:100%;">No stations</div>';
+        body.style.display = 'flex';
+        body.style.alignItems = 'center';
+        body.style.justifyContent = 'center';
+        return;
+    }
+    body.style.display = 'block';
+    let html = '';
+    for (const [station, data] of weatherStations) {
+        const timeStr = (data.time || '????') + 'Z';
+        const ageMin = getWeatherObsAgeMinutes(data.updatedAt);
+
+        // Determine METAR display and styling
+        let metarHtml;
+        if (ageMin !== null && ageMin > 120) {
+            // Too old — show -M-
+            metarHtml = '<span class="wx-metar missing">-M-</span>';
+        } else if (!data.metar || data.metar === 'N/A') {
+            // Missing report
+            metarHtml = '<span class="wx-metar missing">-M-</span>';
+        } else {
+            // Format METAR text with word wrap at ~35 chars per line (for 250px display)
+            const metar = cleanMetarText(data.metar);
+            const maxCharsPerLine = 35;
+            let lines = [];
+            let currentLine = '';
+            const words = metar.split(' ');
+            for (const word of words) {
+                if ((currentLine + ' ' + word).length > maxCharsPerLine) {
+                    if (currentLine) lines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = currentLine ? currentLine + ' ' + word : word;
+                }
+            }
+            if (currentLine) lines.push(currentLine);
+
+            const displayLines = lines.slice(0, 2);  // Show max 2 lines in menu
+            const hasMore = lines.length > 2;
+            const metarText = displayLines.join('\n') + (hasMore ? ' >' : '');
+            metarHtml = `<span class="wx-metar">${metarText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>`;
+        }
+
+        // Underline observation time if stale (>65 min)
+        const staleClass = ageMin !== null && ageMin > 65 ? 'stale' : '';
+
+        const isSelected = weatherSelectedStation === station;
+        const selectedClass = isSelected ? 'wx-entry-selected' : '';
+        html += `<div class="wx-entry ${selectedClass}" data-station="${station}" onclick="selectWeatherStation('${station}', event)">
+            <div class="wx-station-row">
+                <span class="wx-box" style="${isSelected ? 'background:#ff8844;' : ''}"></span>
+                <span class="wx-station">${station.padEnd(4)}</span>
+                <span class="wx-time ${staleClass}">${timeStr}</span>
+            </div>
+            ${metarHtml}
+            ${isSelected ? '<span class="wx-delete-btn" onclick="deleteSelectedWeatherStation(event)">DEL</span>' : ''}
+        </div>`;
+    }
+    body.innerHTML = html;
+}
+
+function selectWeatherStation(station, event) {
+    event.stopPropagation();
+    weatherSelectedStation = weatherSelectedStation === station ? null : station;
+    updateWeatherMenuBody();
+}
+
+function deleteSelectedWeatherStation(event) {
+    event.stopPropagation();
+    if (weatherSelectedStation) {
+        removeWeatherStation(weatherSelectedStation);
+        weatherSelectedStation = null;
+    }
+}
+
+let weatherUpdateInterval = null;
+let weatherRefreshInterval = null;
+
+async function refreshAllWeatherStations() {
+    for (const station of weatherStations.keys()) {
+        try {
+            const resp = await fetch(`/api/metar/${encodeURIComponent(station)}`);
+            if (!resp.ok) continue;
+            const metarText = (await resp.text()).trim();
+            if (!metarText) continue;
+
+            // Extract time from METAR
+            const obsTime = extractTimeFromMetar(metarText);
+
+            // Update the station data
+            weatherStations.set(station, {
+                airport: station,
+                metar: metarText,
+                time: obsTime,
+                updatedAt: new Date().toISOString()
+            });
+        } catch (e) {
+            console.warn('[WX] Refresh error for', station, ':', e);
+        }
+    }
+    if (weatherMenuOpen) updateWeatherMenuBody();
+}
+
+function openWeatherMenu() {
+    weatherMenuOpen = true;
+    const menu = document.getElementById('wx-menu');
+    updateWeatherMenuBody();
+
+    // Try to restore position from localStorage
+    const savedPos = localStorage.getItem('boxPos_wx-menu');
+    if (!savedPos) {
+        // No saved position — set default (right side of screen)
+        menu.style.left = 'auto';
+        menu.style.right = '20px';
+        menu.style.top = '100px';
+        menu.style.bottom = 'auto';
+    } else {
+        // Restore from localStorage
+        try {
+            const pos = JSON.parse(savedPos);
+            if (pos.left) menu.style.left = pos.left;
+            if (pos.top) { menu.style.top = pos.top; menu.style.bottom = 'auto'; menu.style.right = 'auto'; }
+            requestAnimationFrame(() => clampBox(menu));
+        } catch(e) {
+            // Fallback to default if parse fails
+            menu.style.left = 'auto';
+            menu.style.right = '20px';
+            menu.style.top = '100px';
+            menu.style.bottom = 'auto';
+        }
+    }
+
+    menu.style.display = 'block';
+
+    // Update the toolbar button state to reflect open menu
+    updateWxButtonState();
+
+    // Start periodic updates to refresh observation ages
+    if (weatherUpdateInterval) clearInterval(weatherUpdateInterval);
+    weatherUpdateInterval = setInterval(() => {
+        if (weatherMenuOpen) updateWeatherMenuBody();
+    }, 30000);  // Update every 30 seconds
+
+    // Start periodic refresh of ATIS data (every 5 minutes)
+    if (weatherRefreshInterval) clearInterval(weatherRefreshInterval);
+    weatherRefreshInterval = setInterval(() => {
+        if (weatherMenuOpen) refreshAllWeatherStations();
+    }, 5 * 60 * 1000);  // Refresh every 5 minutes
+}
+
+function closeWeatherMenu() {
+    weatherMenuOpen = false;
+    document.getElementById('wx-menu').style.display = 'none';
+    if (weatherUpdateInterval) {
+        clearInterval(weatherUpdateInterval);
+        weatherUpdateInterval = null;
+    }
+    if (weatherRefreshInterval) {
+        clearInterval(weatherRefreshInterval);
+        weatherRefreshInterval = null;
+    }
+    // Update the toolbar button state to reflect closed menu
+    updateWxButtonState();
+}
+
+function updateWxButtonState() {
+    const buttons = document.querySelectorAll('.tb-btn');
+    for (const btn of buttons) {
+        const label = btn.querySelector('.tb-label');
+        if (label && label.textContent.includes('WX')) {
+            btn.classList.toggle('tb-toggle-on', weatherMenuOpen);
+        }
+    }
+    // Also update tearoff buttons
+    for (const [btnKey, tearoff] of activeTearoffs) {
+        if (btnKey.includes('WX')) {
+            tearoff.buttonClone.classList.toggle('tb-toggle-on', weatherMenuOpen);
+        }
+    }
+}
+
+function removeWeatherStation(station) {
+    weatherStations.delete(station);
+    updateWeatherMenuBody();
+}
+
+async function addWeatherStation(station) {
+    // Normalize: strip leading K if present
+    let stationCode = station.toUpperCase();
+    if (stationCode.startsWith('K')) {
+        stationCode = stationCode.substring(1);
+    }
+
+    try {
+        const resp = await fetch(`/api/metar/${encodeURIComponent(stationCode)}`);
+        if (!resp.ok) {
+            return { feedback: [{ type: 'err', text: `NO METAR FOR ${stationCode}` }] };
+        }
+        const metarText = (await resp.text()).trim();
+        if (!metarText) {
+            return { feedback: [{ type: 'err', text: `NO METAR FOR ${stationCode}` }] };
+        }
+
+        // Extract time from METAR
+        const obsTime = extractTimeFromMetar(metarText);
+
+        weatherStations.set(stationCode, {
+            airport: stationCode,
+            metar: metarText,
+            time: obsTime,
+            updatedAt: new Date().toISOString()
+        });
+
+        updateWeatherMenuBody();
+        return { feedback: [
+            { type: 'ok', text: 'ACCEPT' },
+            { type: 'info', text: `WEATHER ${stationCode}` },
+            { type: 'info', text: `${obsTime + 'Z'}` }
+        ]};
+    } catch (e) {
+        console.warn('[WX] Error:', e);
+        return { feedback: [{ type: 'err', text: `METAR REQ FAILED: ${e.message}` }] };
     }
 }
 
@@ -5231,10 +5491,7 @@ function processCommand(cmd) {
     // ═══════════════════════════════════════════════════════════════════════
     // WR R <station>        — weather request: display METAR in Response Area
     // ═══════════════════════════════════════════════════════════════════════
-    if (verb === 'WR') {
-        if (parts.length < 3 || parts[1].toUpperCase() !== 'R') {
-            return { feedback: [{ type: 'err', text: 'FORMAT: WR R <STATION>' }] };
-        }
+    if (verb === 'WR' && parts.length >= 3 && parts[1].toUpperCase() === 'R') {
         const station = parts.slice(2).join('').toUpperCase();
         if (!station) return { feedback: [{ type: 'err', text: 'WR R REQUIRES STATION ID' }] };
         const icao = station.length === 3 ? 'K' + station : station;
@@ -5286,6 +5543,37 @@ function processCommand(cmd) {
 
         // Otherwise add
         return addAltimeterStation(stationInput);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // WR <station>           — add/remove weather report for station (toggle)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'WR' && parts.length >= 2 && parts[1].toUpperCase() !== 'R') {
+        let stationInput = parts.slice(1).join('').toUpperCase();
+        if (stationInput.startsWith('K')) {
+            stationInput = stationInput.substring(1);
+        }
+        if (!stationInput) return { feedback: [{ type: 'err', text: 'WR REQUIRES STATION ID' }] };
+
+        // Check if already exists — toggle remove
+        if (weatherStations.has(stationInput)) {
+            removeWeatherStation(stationInput);
+            weatherSelectedStation = null;
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `WEATHER ${stationInput}` },
+                { type: 'info', text: 'REMOVED' }
+            ]};
+        }
+
+        // Otherwise add and open menu
+        return (async () => {
+            const result = await addWeatherStation(stationInput);
+            if (result.feedback && result.feedback.some(f => f.type === 'ok')) {
+                if (!weatherMenuOpen) openWeatherMenu();
+            }
+            return result;
+        })();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -6635,6 +6923,7 @@ window.addEventListener('resize', () => {
 setupBoxDrag(document.getElementById('mca-ra-stack'));
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
 setupBoxDrag(document.getElementById('altim-menu'), document.getElementById('altim-menu-title'));
+setupBoxDrag(document.getElementById('wx-menu'), document.getElementById('wx-menu-title'));
 setupBoxDrag(document.getElementById('crr-menu'), document.getElementById('crr-menu-title'));
 
 // Point-out menu: close button (left + middle click)
@@ -6664,6 +6953,91 @@ document.getElementById('altim-menu-close').addEventListener('auxclick', (e) => 
 // Altimeter menu: middle-click title bar → close menu
 document.getElementById('altim-menu-title').addEventListener('auxclick', (e) => {
     if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeAltimeterMenu(); }
+});
+
+// Weather menu: close button (left + middle click)
+document.getElementById('wx-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();  // Prevent drag initiation
+});
+document.getElementById('wx-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeWeatherMenu();
+});
+document.getElementById('wx-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeWeatherMenu(); }
+});
+// Weather menu: middle-click title bar → open rows popup
+document.getElementById('wx-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        openWxRowsPopup(e);
+    }
+});
+
+// Weather menu: rows popup
+let wxRowsPopupOpen = false;
+let wxVisibleRows = 8;  // Default 8 rows
+
+function openWxRowsPopup(event) {
+    if (wxRowsPopupOpen) {
+        closeWxRowsPopup();
+        return;
+    }
+
+    const popup = document.getElementById('wx-rows-popup');
+    document.getElementById('wx-rows-display').textContent = wxVisibleRows;
+
+    // Position popup below the title
+    const menu = document.getElementById('wx-menu');
+    const title = document.getElementById('wx-menu-title');
+    popup.style.left = menu.offsetLeft + 'px';
+    popup.style.top = (menu.offsetTop + title.offsetHeight) + 'px';
+    popup.style.display = 'block';
+    wxRowsPopupOpen = true;
+}
+
+function setWxVisibleRows(rows) {
+    wxVisibleRows = Math.max(2, Math.min(15, rows));
+    const body = document.getElementById('wx-menu-body');
+    body.style.maxHeight = (wxVisibleRows * 18) + 'px';
+    document.getElementById('wx-rows-display').textContent = wxVisibleRows;
+}
+
+function closeWxRowsPopup() {
+    document.getElementById('wx-rows-popup').style.display = 'none';
+    wxRowsPopupOpen = false;
+}
+
+// Rows popup buttons
+document.getElementById('wx-rows-minus').addEventListener('click', (e) => {
+    e.stopPropagation();
+    setWxVisibleRows(wxVisibleRows - 1);
+});
+
+document.getElementById('wx-rows-plus').addEventListener('click', (e) => {
+    e.stopPropagation();
+    setWxVisibleRows(wxVisibleRows + 1);
+});
+
+// Close popup on outside click
+document.addEventListener('click', (e) => {
+    if (wxRowsPopupOpen && !e.target.closest('#wx-rows-popup') && !e.target.closest('#wx-menu-title')) {
+        closeWxRowsPopup();
+    }
+});
+
+// Weather menu: custom scroll controls
+document.getElementById('wx-scroll-up').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const body = document.getElementById('wx-menu-body');
+    body.scrollTop = Math.max(0, body.scrollTop - 16);
+});
+
+document.getElementById('wx-scroll-down').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const body = document.getElementById('wx-menu-body');
+    body.scrollTop = Math.min(body.scrollHeight - body.clientHeight, body.scrollTop + 16);
 });
 
 // CRR menu: close button
@@ -7827,8 +8201,14 @@ const TB_VIEWS = {
             }),
             toggle('WX\nREPORT', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => weatherMenuOpen,
+                onToggle: () => {
+                    if (weatherMenuOpen) {
+                        closeWeatherMenu();
+                    } else {
+                        openWeatherMenu();
+                    }
+                },
             }),
         ],
     ],

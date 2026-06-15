@@ -3175,6 +3175,8 @@ function doRender() {
     if (activeRoutes.size > 0) updateActiveRoutes();
     // Update CRR distances
     if (crrGroups.size > 0) updateCrrDistances();
+    // Update beacon codes menu in real-time if open
+    if (beaconMenuOpen) updateBeaconMenuBody();
 
     const mapBounds = map.getBounds();
     const onScreenGufis = new Set();
@@ -5546,6 +5548,53 @@ function processCommand(cmd) {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // QB <code1> <code2> ...  — add/remove beacon codes (toggle)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'QB' && parts.length >= 2) {
+        let feedback = [];
+        for (let i = 1; i < parts.length; i++) {
+            const code = parts[i].toUpperCase();
+            if (!code || code.length !== 4) continue;
+
+            if (beaconCodes.has(code)) {
+                beaconCodes.delete(code);
+                feedback.push({ type: 'info', text: `${code} REMOVED` });
+            } else {
+                // Find flight with this squawk code
+                let flight = null;
+                for (const [, f] of flights) {
+                    if (f.squawk === code) {
+                        flight = f;
+                        break;
+                    }
+                }
+
+                // Only allow manual add if it's an 'other' aircraft
+                if (flight && classifyTrack(flight) === 'other') {
+                    beaconCodes.set(code, { manual: true });
+                    feedback.push({ type: 'info', text: `${code} ADDED` });
+                } else if (!flight) {
+                    feedback.push({ type: 'err', text: `${code} NOT FOUND` });
+                } else {
+                    feedback.push({ type: 'err', text: `${code} NOT OTHER AIRCRAFT` });
+                }
+            }
+        }
+        if (feedback.length > 0) {
+            // Check if any codes were actually added
+            const hasAddOrRemove = feedback.some(f => f.text.includes('ADDED') || f.text.includes('REMOVED'));
+            if (hasAddOrRemove) {
+                feedback.unshift({ type: 'ok', text: 'ACCEPT' });
+                updateBeaconMenuBody();
+                if (!beaconMenuOpen) openBeaconMenu();
+            }
+        } else {
+            feedback = [{ type: 'err', text: 'QB REQUIRES BEACON CODES' }];
+        }
+        return { feedback };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // WR <station>           — add/remove weather report for station (toggle)
     // ═══════════════════════════════════════════════════════════════════════
     if (verb === 'WR' && parts.length >= 2 && parts[1].toUpperCase() !== 'R') {
@@ -6924,6 +6973,7 @@ setupBoxDrag(document.getElementById('mca-ra-stack'));
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
 setupBoxDrag(document.getElementById('altim-menu'), document.getElementById('altim-menu-title'));
 setupBoxDrag(document.getElementById('wx-menu'), document.getElementById('wx-menu-title'));
+setupBoxDrag(document.getElementById('beacon-menu'), document.getElementById('beacon-menu-title'));
 setupBoxDrag(document.getElementById('crr-menu'), document.getElementById('crr-menu-title'));
 
 // Point-out menu: close button (left + middle click)
@@ -6974,6 +7024,159 @@ document.getElementById('wx-menu-title').addEventListener('auxclick', (e) => {
         openWxRowsPopup(e);
     }
 });
+
+// Beacon menu: close button (left + middle click)
+document.getElementById('beacon-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+});
+document.getElementById('beacon-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeBeaconMenu();
+});
+document.getElementById('beacon-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeBeaconMenu(); }
+});
+// Beacon menu: middle-click title bar → open rows popup
+document.getElementById('beacon-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        openBeaconRowsPopup(e);
+    }
+});
+
+// Beacon codes state
+const beaconCodes = new Map();  // code → { manual: boolean }
+let beaconMenuOpen = false;
+let beaconVisibleRows = 8;  // Default 8 rows
+let beaconRowsPopupOpen = false;
+
+function updateBeaconMenuBody() {
+    const body = document.getElementById('beacon-menu-body');
+
+    try {
+        // Collect all unique squawk codes from owned tracks (regardless of handoff status)
+        const allCodes = new Set();
+
+        for (const [, flight] of flights) {
+            if (flight.squawk) {
+                const cls = classifyTrack(flight);
+                // Show tracks you own ('own' class or 'ho' in handoff)
+                if (cls === 'own' || cls === 'ho') {
+                    allCodes.add(flight.squawk);
+                }
+            }
+        }
+
+        // Add manually tracked codes
+        for (const code of beaconCodes.keys()) {
+            allCodes.add(code);
+        }
+
+        if (allCodes.size === 0) {
+            body.innerHTML = '<div style="color:#888; font-size:11px; text-align:center; margin-right:16px;">No code</div>';
+            body.style.display = 'flex';
+            body.style.alignItems = 'center';
+            body.style.justifyContent = 'center';
+            body.style.flexDirection = 'column';
+            return;
+        }
+        body.style.display = 'block';
+
+        // Sort codes and display
+        const sortedCodes = Array.from(allCodes).sort();
+        let html = '';
+        for (const code of sortedCodes) {
+            const isManual = beaconCodes.has(code);
+            const suffix = isManual ? '.' : '';
+            html += `<div class="beacon-entry">${code}${suffix}</div>`;
+        }
+        body.innerHTML = html;
+    } catch (e) {
+        console.error('Error updating beacon menu:', e);
+        body.innerHTML = '<div style="color:#888; font-size:11px; text-align:center; margin-right:16px;">Error</div>';
+    }
+}
+
+function openBeaconMenu() {
+    beaconMenuOpen = true;
+    const menu = document.getElementById('beacon-menu');
+    updateBeaconMenuBody();
+
+    const savedPos = localStorage.getItem('boxPos_beacon-menu');
+    if (!savedPos) {
+        menu.style.left = 'auto';
+        menu.style.right = '20px';
+        menu.style.top = '150px';
+        menu.style.bottom = 'auto';
+    } else {
+        try {
+            const pos = JSON.parse(savedPos);
+            if (pos.left) menu.style.left = pos.left;
+            if (pos.top) { menu.style.top = pos.top; menu.style.bottom = 'auto'; menu.style.right = 'auto'; }
+            requestAnimationFrame(() => clampBox(menu));
+        } catch(e) {
+            menu.style.left = 'auto';
+            menu.style.right = '20px';
+            menu.style.top = '150px';
+            menu.style.bottom = 'auto';
+        }
+    }
+
+    menu.style.display = 'block';
+    updateBeaconButtonState();
+}
+
+function closeBeaconMenu() {
+    beaconMenuOpen = false;
+    document.getElementById('beacon-menu').style.display = 'none';
+    if (beaconUpdateInterval) {
+        clearInterval(beaconUpdateInterval);
+        beaconUpdateInterval = null;
+    }
+    updateBeaconButtonState();
+}
+
+function updateBeaconButtonState() {
+    const buttons = document.querySelectorAll('.tb-btn');
+    for (const btn of buttons) {
+        const label = btn.querySelector('.tb-label');
+        if (label && label.textContent.includes('CODE')) {
+            btn.classList.toggle('tb-toggle-on', beaconMenuOpen);
+        }
+    }
+}
+
+function openBeaconRowsPopup(event) {
+    if (beaconRowsPopupOpen) {
+        closeBeaconRowsPopup();
+        return;
+    }
+
+    const popup = document.getElementById('beacon-rows-popup');
+    document.getElementById('beacon-rows-display').textContent = beaconVisibleRows;
+
+    const menu = document.getElementById('beacon-menu');
+    const title = document.getElementById('beacon-menu-title');
+    popup.style.left = menu.offsetLeft + 'px';
+    popup.style.top = (menu.offsetTop + title.offsetHeight) + 'px';
+    popup.style.display = 'block';
+    beaconRowsPopupOpen = true;
+}
+
+function setBeaconVisibleRows(rows) {
+    beaconVisibleRows = Math.max(2, Math.min(15, rows));
+    const body = document.getElementById('beacon-menu-body');
+    body.style.maxHeight = (beaconVisibleRows * 18) + 'px';
+    document.getElementById('beacon-rows-display').textContent = beaconVisibleRows;
+}
+
+function closeBeaconRowsPopup() {
+    document.getElementById('beacon-rows-popup').style.display = 'none';
+    beaconRowsPopupOpen = false;
+}
+
+let beaconUpdateInterval = null;
 
 // Weather menu: rows popup
 let wxRowsPopupOpen = false;
@@ -7038,6 +7241,37 @@ document.getElementById('wx-scroll-down').addEventListener('click', (e) => {
     e.stopPropagation();
     const body = document.getElementById('wx-menu-body');
     body.scrollTop = Math.min(body.scrollHeight - body.clientHeight, body.scrollTop + 16);
+});
+
+// Beacon menu: custom scroll controls
+document.getElementById('beacon-scroll-up').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const body = document.getElementById('beacon-menu-body');
+    body.scrollTop = Math.max(0, body.scrollTop - 16);
+});
+
+document.getElementById('beacon-scroll-down').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const body = document.getElementById('beacon-menu-body');
+    body.scrollTop = Math.min(body.scrollHeight - body.clientHeight, body.scrollTop + 16);
+});
+
+// Beacon rows popup buttons
+document.getElementById('beacon-rows-minus').addEventListener('click', (e) => {
+    e.stopPropagation();
+    setBeaconVisibleRows(beaconVisibleRows - 1);
+});
+
+document.getElementById('beacon-rows-plus').addEventListener('click', (e) => {
+    e.stopPropagation();
+    setBeaconVisibleRows(beaconVisibleRows + 1);
+});
+
+// Close beacon rows popup on outside click
+document.addEventListener('click', (e) => {
+    if (beaconRowsPopupOpen && !e.target.closest('#beacon-rows-popup') && !e.target.closest('#beacon-menu-title')) {
+        closeBeaconRowsPopup();
+    }
 });
 
 // CRR menu: close button
@@ -8123,8 +8357,14 @@ const TB_VIEWS = {
             }),
             toggle('CODE', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => beaconMenuOpen,
+                onToggle: () => {
+                    if (beaconMenuOpen) {
+                        closeBeaconMenu();
+                    } else {
+                        openBeaconMenu();
+                    }
+                },
             }),
             toggle('CONFLCT\nALERT', {
                 cls: 'tb-toggle-grey',

@@ -547,6 +547,76 @@ input[type="checkbox"]:checked::after {
 #wx-rows-popup button:hover { background: #444 !important; border-color: #666 !important; }
 #wx-rows-popup button:active { background: #555 !important; }
 
+/* ── Beacon Codes Menu ── */
+#beacon-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
+    user-select: none; background: #000; border: 1px solid #666;
+    width: 100px;
+}
+#beacon-menu,
+#beacon-menu * {
+    cursor: var(--eram-cursor) !important;
+}
+#beacon-menu.box-dragging { outline: 2px solid #fff; }
+#beacon-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #000; padding: 2px 4px; border-bottom: 1px solid #666;
+    color: #BBBBBB; cursor: var(--eram-cursor) !important; font-weight: normal;
+    padding-left: 8px;
+}
+#beacon-menu-close {
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+    padding: 0 6px;
+    font-weight: bold;
+    user-select: none;
+}
+#beacon-menu-close:hover { color: #FFFFFF; }
+#beacon-menu-body {
+    padding: 0;
+    min-height: 40px;
+    max-height: 140px;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    position: relative;
+}
+#beacon-menu-body::-webkit-scrollbar { width: 0; display: none; }
+.beacon-scroll-track {
+    position: absolute; right: 0; top: 0; bottom: 0;
+    width: 16px; background: #000; border-left: 1px solid #333;
+    display: flex; flex-direction: column;
+    z-index: 10;
+    pointer-events: none;
+}
+.beacon-scroll-btn {
+    flex: 1;
+    width: 16px;
+    background: #000; border: 1px solid #333; border-left: none;
+    color: #BBBBBB; font-size: 10px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; user-select: none;
+    pointer-events: auto;
+}
+.beacon-scroll-btn:hover { background: #111; border-color: #555; }
+.beacon-scroll-btn:active { background: #222; }
+.beacon-entry {
+    padding: 4px 8px;
+    border-bottom: 1px solid #333;
+    font-size: 12px;
+    cursor: default;
+    user-select: none;
+    color: #BBBBBB;
+    min-width: 100px;
+}
+.beacon-entry:last-child { border-bottom: none; }
+
+/* ── Beacon Rows Popup ── */
+#beacon-rows-popup button:hover { background: #444 !important; border-color: #666 !important; }
+#beacon-rows-popup button:active { background: #555 !important; }
+
 .wx-entry {
     padding: 2px 4px;
     border-bottom: 1px solid #333;

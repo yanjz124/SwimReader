@@ -105,6 +105,8 @@ let crrGroups = new Map();  // label -> { lat, lon, aircraft: [{ callsign/cid, g
 let crrSelectedGroup = null;
 let crrColor = '#00D000';
 let crrColorSelectorOpen = false;
+let crrRdbEnabled = false;
+let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles with Ctrl+Shift+O)
 
 function setCrrColor(color) {
     crrColor = color;
@@ -569,10 +571,18 @@ function selectCrrGroup(label, event) {
 
 function deleteCrrGroup(label, event) {
     if (event) event.stopPropagation();
+    const group = crrGroups.get(label);
+    // Invalidate markers for all aircraft in the deleted group
+    if (group && group.aircraft) {
+        for (const ac of group.aircraft) {
+            invalidateMarker(ac.gufi);
+        }
+    }
     crrGroups.delete(label);
     crrSelectedGroup = null;
     closeCrrGroupDeletePopup();
     updateCrrMenuBody();
+    lastRenderTime = 0;  // Force immediate render
 }
 
 let crrGroupDeletePopupOpen = false;
@@ -612,10 +622,15 @@ function deleteCrrGroupAllAircraft(label, event) {
     if (event) event.stopPropagation();
     const group = crrGroups.get(label);
     if (group) {
+        // Invalidate markers for all aircraft in the group
+        for (const ac of group.aircraft) {
+            invalidateMarker(ac.gufi);
+        }
         group.aircraft = [];
     }
     closeCrrGroupDeletePopup();
     updateCrrMenuBody();
+    lastRenderTime = 0;  // Force immediate render
 }
 
 let crrAircraftDeletePopupOpen = false;
@@ -653,6 +668,8 @@ function deleteCrrAircraft(label, gufi, event) {
     }
     closeCrrAircraftDeletePopup();
     updateCrrMenuBody();
+    invalidateMarker(gufi);  // Update RDB visibility
+    lastRenderTime = 0;  // Force immediate render
 }
 
 function addCrrGroup(label, lat, lon) {
@@ -688,10 +705,13 @@ function addAircraftToCrrGroup(label, flids) {
                 cid: getCid(flight),
                 distance: distance
             });
+            // Invalidate marker to update RDB visibility
+            invalidateMarker(flight.gufi);
         }
     }
 
     updateCrrMenuBody();
+    lastRenderTime = 0;  // Force immediate render
     return { feedback: [
         { type: 'ok', text: 'ACCEPT' },
         { type: 'info', text: `CRR AC ADDED` }
@@ -707,6 +727,22 @@ function calculateNmDistance(lat1, lon1, lat2, lon2) {
               Math.sin(dLon/2) * Math.sin(dLon/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
+}
+
+function getCrrRdbDistance(f) {
+    // Find the closest CRR group this aircraft is in, return distance
+    let minDistance = null;
+    for (const [label, group] of crrGroups) {
+        for (const ac of group.aircraft) {
+            if (ac.gufi === f.gufi) {
+                const distance = calculateNmDistance(group.lat, group.lon, f.latitude, f.longitude);
+                if (minDistance === null || distance < minDistance) {
+                    minDistance = distance;
+                }
+            }
+        }
+    }
+    return minDistance;
 }
 
 // Update distances for all CRR groups
@@ -2074,6 +2110,26 @@ function buildMarkerHtml(f, cls) {
         // Line 0 (point-out indicator) adds height — shift div up so Lines 1-4 stay anchored
         const poOffset = getPointoutIndicator(f) ? -LINE_H : 0;
         html += `<div class="ac-db fdb${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift + poOffset}px;${leftExtra}">${db}</div>`;
+
+        // CRR RDB (Range Data Block) — distance to group location in nautical miles
+        // Position relative to target icon (0,0), cycling around it
+        if (crrRdbEnabled && f.latitude && f.longitude) {
+            const rdbDist = getCrrRdbDistance(f);
+            if (rdbDist !== null) {
+                const rdbText = rdbDist.toFixed(1) + 'nm';
+
+                // RDB offsets cycle around the target symbol (0,0)
+                const offsetConfigs = [
+                    { left: Math.ceil(CHAR_W * 2.5), top: -Math.ceil(LINE_H * 0.5) },  // right
+                    { left: -Math.ceil(CHAR_W * 8) - 20, top: -Math.ceil(LINE_H * 0.5) },  // left
+                    { left: -Math.ceil(CHAR_W * 3) - 10, top: -Math.ceil(LINE_H * 2) },  // above-left
+                    { left: -Math.ceil(CHAR_W * 3) - 10, top: Math.ceil(LINE_H * 0.5) }  // bottom-left
+                ];
+                const cfg = offsetConfigs[crrRdbOffset];
+
+                html += `<div class="ac-rdb" style="left:${cfg.left}px; top:${cfg.top}px;">${rdbText}</div>`;
+            }
+        }
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
         vciActive.delete(f.gufi);
@@ -5375,6 +5431,8 @@ function processCommand(cmd) {
                             // Aircraft already in group — remove it
                             group.aircraft.splice(existingIdx, 1);
                             removedCount++;
+                            // Invalidate marker to update RDB visibility
+                            invalidateMarker(f.gufi);
                         } else {
                             // Aircraft not in group — add it
                             const distance = calculateNmDistance(group.lat, group.lon, f.latitude, f.longitude);
@@ -5385,10 +5443,13 @@ function processCommand(cmd) {
                                 distance: distance
                             });
                             addedCount++;
+                            // Invalidate marker to update RDB visibility
+                            invalidateMarker(f.gufi);
                         }
                     }
 
                     updateCrrMenuBody();
+                    lastRenderTime = 0;  // Force immediate render
                     let msg = '';
                     if (addedCount > 0) msg += `${addedCount} AC ADDED `;
                     if (removedCount > 0) msg += `${removedCount} AC REMOVED`;
@@ -5441,10 +5502,13 @@ function processCommand(cmd) {
                                 cid: getCid(f),
                                 distance: distance
                             });
+                            // Invalidate marker to update RDB visibility
+                            invalidateMarker(f.gufi);
                         }
                     }
 
                     updateCrrMenuBody();
+                    lastRenderTime = 0;  // Force immediate render
                     return { feedback: [
                         { type: 'ok', text: 'ACCEPT' },
                         { type: 'info', text: `CRR ${label}` }
@@ -6379,6 +6443,15 @@ document.addEventListener('keydown', e => {
         e.preventDefault(); return;
     }
 
+    // Ctrl+Shift+O → cycle CRR RDB offset
+    if (e.ctrlKey && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+        if (crrRdbEnabled) {
+            crrRdbOffset = (crrRdbOffset + 1) % 4;
+            invalidateAllMarkers();
+        }
+        e.preventDefault(); return;
+    }
+
     // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8)
     const vectorSteps = [0, 1, 2, 4, 8];
     if (e.key === 'PageUp' && !e.ctrlKey) {
@@ -6665,6 +6738,16 @@ document.addEventListener('click', (e) => {
         const callsign = aircraftEl.dataset.callsign;
         e.stopPropagation();
         openCrrAircraftDeletePopup(label, gufi, callsign, e);
+    }
+});
+
+// CRR group delete button (X) click handler
+document.addEventListener('click', (e) => {
+    const deleteBtn = e.target.closest('.crr-group-label-delete');
+    if (deleteBtn && deleteBtn.closest('#crr-menu-body')) {
+        const label = deleteBtn.dataset.delete;
+        e.stopPropagation();
+        deleteCrrGroup(label, e);
     }
 });
 
@@ -8128,8 +8211,12 @@ const TB_DB_FIELDS = {
             }),
             toggle('CRR\nRDB', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => crrRdbEnabled,
+                onToggle: (on) => {
+                    crrRdbEnabled = on;
+                    crrRdbOffset = 3;  // Reset offset to bottom-left when toggling on
+                    invalidateAllMarkers();
+                },
             }),
             toggle('STA RDB', {
                 cls: 'tb-toggle-grey',

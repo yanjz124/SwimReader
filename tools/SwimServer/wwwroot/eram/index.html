@@ -290,7 +290,9 @@
         <span class="cmd">LB &lt;fix&gt; &lt;loc&gt;</span> <span class="desc">— Range/bearing from fix to location</span><br>
         <span class="cmd">LC &lt;fix&gt;/&lt;time&gt; &lt;track&gt;</span> <span class="desc">— Required speed to reach fix at time</span><br>
         <h4>WEATHER</h4>
-        <span class="cmd">WR R &lt;station&gt;</span> <span class="desc">— Display METAR (e.g. WR R DCA)</span><br>
+        <span class="cmd">WR R &lt;station&gt;</span> <span class="desc">— Display METAR in Response Area (e.g. WR R DCA)</span><br>
+        <span class="cmd">WR &lt;station&gt;</span> <span class="desc">— Add weather report (e.g. WR KSTL); toggle to remove</span><br>
+        <span class="cmd">AR &lt;station&gt;</span> <span class="desc">— Add altimeter setting (e.g. AR LAX or AR KLAX)</span><br>
         <h4>DOT COMMANDS</h4>
         <span class="cmd">.FIND &lt;ident&gt;</span> <span class="desc">— Highlight fix/navaid/airport on scope</span><br>
         <span class="cmd">.SID [name]</span> <span class="desc">— Toggle SID overlay; no args = list active</span><br>
@@ -324,6 +326,62 @@
             </div>
             <div id="po-menu-body"></div>
         </div>
+        <div id="altim-menu" style="display:none;">
+            <div id="altim-menu-title">
+                <span>ALTIM SET</span>
+                <span id="altim-menu-close">X</span>
+            </div>
+            <div id="altim-menu-body"></div>
+        </div>
+        <div id="wx-menu" style="display:none;">
+            <div id="wx-menu-title">
+                <span>WX REPORT</span>
+                <span id="wx-menu-close">X</span>
+            </div>
+            <div style="position: relative;">
+                <div id="wx-menu-body"></div>
+                <div class="wx-scroll-track">
+                    <div class="wx-scroll-btn" id="wx-scroll-up">▲</div>
+                    <div class="wx-scroll-btn" id="wx-scroll-down">▼</div>
+                </div>
+            </div>
+        </div>
+        <div id="wx-rows-popup" style="display:none; position:absolute; background:#000; border:1px solid #666; z-index:1101; padding:6px 8px; text-align:center;">
+            <div style="display:flex; align-items:center; gap:6px; justify-content:center;">
+                <button id="wx-rows-minus" style="background:#333; border:1px solid #555; color:#BBBBBB; cursor:pointer; width:24px; height:20px; font-family:inherit; font-size:11px;">−</button>
+                <span id="wx-rows-display" style="color:#BBBBBB; min-width:30px; font-size:11px; font-family:'ERAM', 'Consolas', monospace;">8</span>
+                <button id="wx-rows-plus" style="background:#333; border:1px solid #555; color:#BBBBBB; cursor:pointer; width:24px; height:20px; font-family:inherit; font-size:11px;">+</button>
+            </div>
+        </div>
+        <div id="beacon-menu" style="display:none;">
+            <div id="beacon-menu-title">
+                <span>CODE</span>
+                <span id="beacon-menu-close">X</span>
+            </div>
+            <div style="position: relative;">
+                <div id="beacon-menu-body"></div>
+                <div class="beacon-scroll-track">
+                    <div class="beacon-scroll-btn" id="beacon-scroll-up">▲</div>
+                    <div class="beacon-scroll-btn" id="beacon-scroll-down">▼</div>
+                </div>
+            </div>
+        </div>
+        <div id="beacon-rows-popup" style="display:none; position:absolute; background:#000; border:1px solid #666; z-index:1101; padding:6px 8px; text-align:center;">
+            <div style="display:flex; align-items:center; gap:6px; justify-content:center;">
+                <button id="beacon-rows-minus" style="background:#333; border:1px solid #555; color:#BBBBBB; cursor:pointer; width:24px; height:20px; font-family:inherit; font-size:11px;">−</button>
+                <span id="beacon-rows-display" style="color:#BBBBBB; min-width:30px; font-size:11px; font-family:'ERAM', 'Consolas', monospace;">8</span>
+                <button id="beacon-rows-plus" style="background:#333; border:1px solid #555; color:#BBBBBB; cursor:pointer; width:24px; height:20px; font-family:inherit; font-size:11px;">+</button>
+            </div>
+        </div>
+        <div id="crr-menu" style="display:none;">
+            <div id="crr-menu-title">
+                <span>CRR</span>
+                <span id="crr-menu-close">X</span>
+            </div>
+            <div id="crr-menu-body"></div>
+        </div>
+        <div id="crr-group-delete-popup" style="display:none; position:absolute; background:#000; border:1px solid #666; z-index:1200;"></div>
+        <div id="crr-aircraft-delete-popup" style="display:none; position:absolute; background:#000; border:1px solid #666; z-index:1200;"></div>
         <div id="checklist-menu" style="display:none;">
             <div id="checklist-menu-title">
                 <span id="checklist-menu-title-text"></span>

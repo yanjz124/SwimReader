@@ -327,6 +327,15 @@ input[type="checkbox"]:checked::after {
 .ac-db.ldb.dwell.emrg { outline-color: #ff4444; }
 /* .ac-db.ho — handoff flash now driven by JS */
 
+/* ── Range Data Block (RDB) — distance to CRR group ── */
+.ac-rdb {
+    position: absolute; white-space: nowrap; pointer-events: none;
+    font-family: 'ERAM', 'Consolas', monospace;
+    font-size: 10px; line-height: 12.5px; letter-spacing: 0.5px;
+    text-shadow: 0 0 3px rgba(0,0,0,0.9), 1px 1px 2px rgba(0,0,0,0.8);
+    color: #FF00FF;
+}
+
 /* ── Column 0 (R / VCI) — inline prefix on each data block line ── */
 .ac-col0 { color: #cccc44; }
 .ac-vci { color: #44cc44; }
@@ -388,6 +397,383 @@ input[type="checkbox"]:checked::after {
 .po-orig-pending { color: #cccc44; border-color: #cccc44; }
 .po-recv-pending { color: #00cccc; border-color: #00cccc; }
 .po-acked { color: #fff; border-color: transparent; }
+
+/* ── Altimeter Settings Menu ── */
+#altim-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 13px; line-height: 18px; letter-spacing: 0.5px;
+    user-select: none; background: #000; border: 1px solid #666;
+    min-width: 180px;
+}
+#altim-menu,
+#altim-menu * {
+    cursor: var(--eram-cursor) !important;
+}
+#altim-menu.box-dragging { outline: 2px solid #fff; }
+#altim-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #000; padding: 2px 4px; border-bottom: 1px solid #666;
+    color: #BBBBBB; cursor: var(--eram-cursor) !important; font-weight: normal;
+    padding-left: 8px;
+}
+#altim-menu-close {
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+    padding: 0 6px;
+    font-weight: bold;
+    user-select: none;
+}
+#altim-menu-close:hover { color: #FFFFFF; }
+#altim-menu-body { padding: 0; max-height: 400px; overflow-y: auto; }
+.altim-entry {
+    padding: 2px 4px;
+    border-bottom: 1px solid #333;
+    display: flex;
+    align-items: center;
+    white-space: pre;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    min-width: 180px;
+}
+.altim-entry:last-child { border-bottom: none; }
+.altim-entry:hover { background: #1a1a1a; }
+.altim-entry-selected {
+    background: #333344;
+}
+.altim-box {
+    display: inline-block;
+    width: 12px; height: 12px;
+    background: #9FA309;
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+.altim-station {
+    color: #BBBBBB;
+    font-weight: bold;
+    min-width: 50px;
+}
+.altim-time {
+    color: #BBBBBB;
+    font-size: 11px;
+    min-width: 50px;
+    text-align: right;
+    margin: 0 2px 0 8px;
+}
+.altim-value {
+    color: #BBBBBB;
+    margin-left: -8px;
+}
+.altim-value-digits {
+    display: inline-block;
+}
+.altim-value-digits.below-standard {
+    text-decoration: underline;
+}
+.altim-entry-selected .altim-value {
+    visibility: hidden;
+}
+.altim-delete-btn {
+    position: absolute;
+    right: 4px;
+    top: 2px;
+    color: #ff4444;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0 4px;
+    white-space: nowrap;
+}
+.altim-delete-btn:hover { background: #440000; color: #ffff77; }
+
+/* ── Weather Report Menu ── */
+#wx-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
+    user-select: none; background: #000; border: 1px solid #666;
+    width: 250px;
+}
+#wx-menu,
+#wx-menu * {
+    cursor: var(--eram-cursor) !important;
+}
+#wx-menu.box-dragging { outline: 2px solid #fff; }
+#wx-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #000; padding: 2px 4px; border-bottom: 1px solid #666;
+    color: #BBBBBB; cursor: var(--eram-cursor) !important; font-weight: normal;
+    padding-left: 8px;
+}
+#wx-menu-close {
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+    padding: 0 6px;
+    font-weight: bold;
+    user-select: none;
+}
+#wx-menu-close:hover { color: #FFFFFF; }
+#wx-menu-body {
+    padding: 0;
+    min-height: 40px;
+    max-height: 140px;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    position: relative;
+}
+#wx-menu-body::-webkit-scrollbar { width: 0; display: none; }
+.wx-scroll-track {
+    position: absolute; right: 0; top: 0; bottom: 0;
+    width: 16px; background: #000; border-left: 1px solid #333;
+    display: flex; flex-direction: column;
+    z-index: 10;
+    pointer-events: none;
+}
+.wx-scroll-btn {
+    flex: 1;
+    width: 16px;
+    background: #000; border: 1px solid #333; border-left: none;
+    color: #BBBBBB; font-size: 10px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; user-select: none;
+    pointer-events: auto;
+}
+.wx-scroll-btn:hover { background: #111; border-color: #555; }
+.wx-scroll-btn:active { background: #222; }
+
+/* ── WX Rows Popup ── */
+#wx-rows-popup button:hover { background: #444 !important; border-color: #666 !important; }
+#wx-rows-popup button:active { background: #555 !important; }
+
+/* ── Beacon Codes Menu ── */
+#beacon-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
+    user-select: none; background: #000; border: 1px solid #666;
+    width: 100px;
+}
+#beacon-menu,
+#beacon-menu * {
+    cursor: var(--eram-cursor) !important;
+}
+#beacon-menu.box-dragging { outline: 2px solid #fff; }
+#beacon-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #000; padding: 2px 4px; border-bottom: 1px solid #666;
+    color: #BBBBBB; cursor: var(--eram-cursor) !important; font-weight: normal;
+    padding-left: 8px;
+}
+#beacon-menu-close {
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+    padding: 0 6px;
+    font-weight: bold;
+    user-select: none;
+}
+#beacon-menu-close:hover { color: #FFFFFF; }
+#beacon-menu-body {
+    padding: 0;
+    min-height: 40px;
+    max-height: 140px;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-width: none;
+    position: relative;
+}
+#beacon-menu-body::-webkit-scrollbar { width: 0; display: none; }
+.beacon-scroll-track {
+    position: absolute; right: 0; top: 0; bottom: 0;
+    width: 16px; background: #000; border-left: 1px solid #333;
+    display: flex; flex-direction: column;
+    z-index: 10;
+    pointer-events: none;
+}
+.beacon-scroll-btn {
+    flex: 1;
+    width: 16px;
+    background: #000; border: 1px solid #333; border-left: none;
+    color: #BBBBBB; font-size: 10px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; user-select: none;
+    pointer-events: auto;
+}
+.beacon-scroll-btn:hover { background: #111; border-color: #555; }
+.beacon-scroll-btn:active { background: #222; }
+.beacon-entry {
+    padding: 4px 8px;
+    border-bottom: 1px solid #333;
+    font-size: 12px;
+    cursor: default;
+    user-select: none;
+    color: #BBBBBB;
+    min-width: 100px;
+}
+.beacon-entry:last-child { border-bottom: none; }
+
+/* ── Beacon Rows Popup ── */
+#beacon-rows-popup button:hover { background: #444 !important; border-color: #666 !important; }
+#beacon-rows-popup button:active { background: #555 !important; }
+
+.wx-entry {
+    padding: 2px 4px;
+    border-bottom: 1px solid #333;
+    font-size: 11px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    min-width: 250px;
+    color: #BBBBBB;
+    display: flex;
+    flex-direction: column;
+}
+.wx-entry:last-child { border-bottom: none; }
+.wx-entry:hover { background: #1a1a1a; }
+.wx-entry-selected {
+    background: #333344;
+}
+.wx-box {
+    display: inline-block;
+    width: 12px; height: 12px;
+    background: #9FA309;
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+.wx-station-row {
+    display: flex; align-items: center; padding-bottom: 2px;
+}
+.wx-station {
+    color: #CCCC44;
+    font-weight: bold;
+    min-width: 40px;
+    margin-right: 4px;
+}
+.wx-time {
+    color: #BBBBBB;
+    font-size: 10px;
+    min-width: 50px;
+    text-align: right;
+    margin-right: 4px;
+}
+.wx-time.stale {
+    text-decoration: underline;
+}
+.wx-metar {
+    color: #BBBBBB;
+    font-size: 11px;
+    line-height: 14px;
+    word-break: break-word;
+    white-space: pre-wrap;
+    padding: 2px 0;
+}
+.wx-metar.missing {
+    color: #888888;
+}
+.wx-entry-selected .wx-metar {
+    visibility: hidden;
+}
+.wx-delete-btn {
+    position: absolute;
+    right: 22px;
+    top: 2px;
+    color: #ff4444;
+    font-weight: bold;
+    cursor: pointer;
+    padding: 0 4px;
+    white-space: nowrap;
+}
+.wx-delete-btn:hover { background: #440000; color: #ffff77; }
+
+/* ── CRR Menu ── */
+#crr-menu {
+    position: absolute; z-index: 1100;
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 13px; line-height: 18px; letter-spacing: 0.5px;
+    user-select: none; background: #000; border: 1px solid #666;
+    min-width: 180px;
+}
+#crr-menu,
+#crr-menu * {
+    cursor: var(--eram-cursor) !important;
+}
+#crr-menu.box-dragging { outline: 2px solid #fff; }
+#crr-menu-title {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #000; padding: 2px 4px; border-bottom: 1px solid #666;
+    color: #BBBBBB; cursor: var(--eram-cursor) !important; font-weight: normal;
+    padding-left: 8px;
+}
+#crr-menu-close {
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+    padding: 0 6px;
+    font-weight: bold;
+    user-select: none;
+}
+#crr-menu-close:hover { color: #FFFFFF; }
+#crr-menu-body { padding: 0; max-height: 400px; overflow-y: auto; }
+.crr-group {
+    padding: 2px 2px 2px 4px;
+    border-bottom: 1px solid #333;
+    display: block;
+    font-size: 12px;
+    user-select: none;
+    position: relative;
+    border: 1px solid transparent;
+}
+.crr-group:last-child { border-bottom: none; }
+.crr-group:hover { border: 1px solid #fff; }
+.crr-group-selected {
+    background: #333344;
+}
+.crr-group-label {
+    color: #00D000;
+    font-weight: bold;
+    margin-bottom: 1px;
+    padding: 1px 0;
+    text-align: center;
+}
+.crr-group-label-delete {
+    color: #ff4444;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: 4px;
+    white-space: nowrap;
+}
+.crr-group-label-delete:hover { background: #440000; color: #ffff77; }
+.crr-aircraft {
+    color: #BBBBBB;
+    white-space: pre;
+    cursor: pointer;
+    padding: 0px 2px;
+    font-size: 11px;
+    line-height: 1.2;
+    border: 1px solid transparent;
+    margin-top: 4px;
+}
+.crr-aircraft:hover { border: 1px solid #fff; }
+
+/* ── CRR Group Delete Popup ── */
+#crr-group-delete-popup,
+#crr-aircraft-delete-popup {
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
+    font-size: 11px;
+    color: #BBBBBB;
+    cursor: var(--eram-cursor) !important;
+}
+#crr-group-delete-popup *,
+#crr-aircraft-delete-popup * {
+    cursor: var(--eram-cursor) !important;
+}
+.crr-popup-option {
+    padding: 3px 8px;
+    border-bottom: 1px solid #333;
+    white-space: nowrap;
+}
+.crr-popup-option:last-child { border-bottom: none; }
+.crr-popup-option:hover { background: #1a1a1a; }
 
 /* ── Zulu Time View ── */
 #time-view {

@@ -95,6 +95,34 @@ const PO_CLIENT_TIMEOUT = 3 * 60 * 1000;  // 3 minutes
 const pointoutBlocked = new Set();  // GUFIs that had a point-out — FLID toggle blocked until QP <FLID>
 let pointoutMenuGufi = null;       // GUFI of flight whose point-out menu is open
 
+// Altimeter settings state
+const altimeterStations = new Map();  // station → { airport, code, altimeter, time, updatedAt }
+let altimeterMenuOpen = false;
+let altimeterSelectedStation = null;  // currently selected station for deletion
+
+// Weather report state
+const weatherStations = new Map();  // station → { airport, metar, time, updatedAt }
+let weatherMenuOpen = false;
+let weatherSelectedStation = null;  // currently selected station for deletion
+
+let crrMenuOpen = false;
+let crrGroups = new Map();  // label -> { lat, lon, aircraft: [{ callsign/cid, gufi, distance }], color }
+let crrSelectedGroup = null;
+let crrColor = '#00D000';
+let crrColorSelectorOpen = false;
+let crrRdbEnabled = false;
+let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles with Ctrl+Shift+O)
+
+function setCrrColor(color) {
+    crrColor = color;
+    updateCrrMenuBody();
+}
+
+function toggleCrrColorSelector() {
+    crrColorSelectorOpen = !crrColorSelectorOpen;
+    updateCrrMenuBody();
+}
+
 function updatePointoutMenuBody(f, poInfo) {
     const body = document.getElementById('po-menu-body');
     const acked = pointoutAcked.has(f.gufi);
@@ -152,6 +180,842 @@ function openPointoutMenu(f, poInfo, clientX, clientY) {
 function closePointoutMenu() {
     pointoutMenuGufi = null;
     document.getElementById('po-menu').style.display = 'none';
+}
+
+function getAltimeterObsAgeMinutes(updatedAt) {
+    if (!updatedAt) return null;
+    try {
+        const obsTime = new Date(updatedAt);
+        const now = new Date();
+        const ageMs = now - obsTime;
+        return Math.floor(ageMs / 1000 / 60);  // age in minutes
+    } catch {
+        return null;
+    }
+}
+
+function formatAltimeterValue(altimStr) {
+    // Input: "29.89" or "30.12" etc.
+    // Output: "989" (remove 2 and decimal) or "012" (remove 3 and decimal)
+    // Returns 3 digits without first digit and decimal point
+    if (!altimStr || altimStr === 'N/A') return null;
+
+    const clean = altimStr.replace(/[^\d]/g, '');  // Remove non-digits
+    if (clean.length < 3) return null;
+
+    // Remove first digit, keep last 3 digits (the decimal part without point)
+    return clean.substring(1);  // e.g., "2989" → "989", "3012" → "012"
+}
+
+function isAltimeterBelowStandard(altimStr) {
+    // Standard is 29.92 inHg
+    if (!altimStr || altimStr === 'N/A') return false;
+    try {
+        const val = parseFloat(altimStr);
+        return val < 29.92;
+    } catch {
+        return false;
+    }
+}
+
+function updateAltimeterMenuBody() {
+    const body = document.getElementById('altim-menu-body');
+    if (altimeterStations.size === 0) {
+        body.innerHTML = '<div style="color:#888; font-size:11px; padding:6px 4px; min-width:180px; text-align:center;">No stations</div>';
+        return;
+    }
+    let html = '';
+    for (const [station, data] of altimeterStations) {
+        const timeStr = (data.time || '????Z').padEnd(6);
+        const ageMin = getAltimeterObsAgeMinutes(data.updatedAt);
+
+        // Determine altimeter display and styling
+        let altimHtml;
+        if (ageMin !== null && ageMin > 120) {
+            // Too old — show -M-
+            altimHtml = '<span class="altim-value-digits">-M-</span>';
+        } else if (!data.altimeter || data.altimeter === 'N/A') {
+            // Missing report
+            altimHtml = '<span class="altim-value-digits">-M-</span>';
+        } else {
+            // Format as 3-digit code (e.g., "989" for 29.89)
+            const formatted = formatAltimeterValue(data.altimeter);
+            if (formatted) {
+                const belowStandard = isAltimeterBelowStandard(data.altimeter);
+                const underlineClass = belowStandard ? 'below-standard' : '';
+                altimHtml = `<span class="altim-value-digits ${underlineClass}">${formatted}</span>`;
+            } else {
+                altimHtml = '<span class="altim-value-digits">-M-</span>';
+            }
+        }
+
+        // Underline observation time if stale (>65 min)
+        let timeStyle = '';
+        if (ageMin !== null && ageMin > 65) {
+            timeStyle = 'text-decoration: underline;';
+        }
+
+        const isSelected = altimeterSelectedStation === station;
+        const selectedClass = isSelected ? 'altim-entry-selected' : '';
+        html += `<div class="altim-entry ${selectedClass}" data-station="${station}" onclick="selectAltimeterStation('${station}', event)">
+            <span class="altim-box"></span>
+            <span class="altim-station">${station.padEnd(4)}</span>
+            <span class="altim-time" style="${timeStyle}">${timeStr}</span>
+            <span class="altim-value">${altimHtml}</span>
+            ${isSelected ? '<span class="altim-delete-btn" onclick="deleteSelectedAltimeterStation(event)">DEL</span>' : ''}
+        </div>`;
+    }
+    body.innerHTML = html;
+}
+
+function selectAltimeterStation(station, event) {
+    event.stopPropagation();
+    altimeterSelectedStation = altimeterSelectedStation === station ? null : station;
+    updateAltimeterMenuBody();
+}
+
+function deleteSelectedAltimeterStation(event) {
+    event.stopPropagation();
+    if (altimeterSelectedStation) {
+        removeAltimeterStation(altimeterSelectedStation);
+        altimeterSelectedStation = null;
+    }
+}
+
+let altimeterUpdateInterval = null;
+let altimeterRefreshInterval = null;
+
+async function refreshAllAltimeterStations() {
+    for (const station of altimeterStations.keys()) {
+        try {
+            const resp = await fetch(`/api/metar/${encodeURIComponent(station)}`);
+            if (!resp.ok) continue;
+            const metarText = (await resp.text()).trim();
+            if (!metarText) continue;
+
+            // Parse altimeter and time from METAR
+            const altimValue = extractAltimeterFromMetar(metarText);
+            const obsTime = extractTimeFromMetar(metarText);
+
+            // Update the station data
+            altimeterStations.set(station, {
+                airport: station,
+                code: '?',
+                altimeter: altimValue || 'N/A',
+                time: obsTime,
+                updatedAt: new Date().toISOString(),
+                metar: metarText
+            });
+        } catch (e) {
+            console.warn('[ALTIM] Refresh error for', station, ':', e);
+        }
+    }
+    if (altimeterMenuOpen) updateAltimeterMenuBody();
+}
+
+function openAltimeterMenu() {
+    altimeterMenuOpen = true;
+    const menu = document.getElementById('altim-menu');
+    updateAltimeterMenuBody();
+
+    // Try to restore position from localStorage
+    const savedPos = localStorage.getItem('boxPos_altim-menu');
+    if (!savedPos) {
+        // No saved position — set default (middle of screen)
+        menu.style.left = 'calc(50vw - 110px)';
+        menu.style.top = 'calc(50vh - 80px)';
+        menu.style.bottom = 'auto';
+        menu.style.right = 'auto';
+    } else {
+        // Restore from localStorage
+        try {
+            const pos = JSON.parse(savedPos);
+            if (pos.left) menu.style.left = pos.left;
+            if (pos.top) { menu.style.top = pos.top; menu.style.bottom = 'auto'; menu.style.right = 'auto'; }
+            requestAnimationFrame(() => clampBox(menu));
+        } catch(e) {
+            // Fallback to default if parse fails
+            menu.style.left = 'calc(50vw - 110px)';
+            menu.style.top = 'calc(50vh - 80px)';
+            menu.style.bottom = 'auto';
+            menu.style.right = 'auto';
+        }
+    }
+
+    menu.style.display = 'block';
+
+    // Update the toolbar button state to reflect open menu
+    updateAltimSetButtonState();
+
+    // Start periodic updates to refresh observation ages
+    if (altimeterUpdateInterval) clearInterval(altimeterUpdateInterval);
+    altimeterUpdateInterval = setInterval(() => {
+        if (altimeterMenuOpen) updateAltimeterMenuBody();
+    }, 30000);  // Update every 30 seconds
+
+    // Start periodic refresh of ATIS data (every 5 minutes)
+    if (altimeterRefreshInterval) clearInterval(altimeterRefreshInterval);
+    altimeterRefreshInterval = setInterval(() => {
+        if (altimeterMenuOpen) refreshAllAltimeterStations();
+    }, 5 * 60 * 1000);  // Refresh every 5 minutes
+}
+
+function closeAltimeterMenu() {
+    altimeterMenuOpen = false;
+    document.getElementById('altim-menu').style.display = 'none';
+    if (altimeterUpdateInterval) {
+        clearInterval(altimeterUpdateInterval);
+        altimeterUpdateInterval = null;
+    }
+    if (altimeterRefreshInterval) {
+        clearInterval(altimeterRefreshInterval);
+        altimeterRefreshInterval = null;
+    }
+    // Update the toolbar button state to reflect closed menu
+    updateAltimSetButtonState();
+}
+
+function updateAltimSetButtonState() {
+    const buttons = document.querySelectorAll('.tb-btn');
+    for (const btn of buttons) {
+        const label = btn.querySelector('.tb-label');
+        if (label && label.textContent.includes('ALTIM')) {
+            btn.classList.toggle('tb-toggle-on', altimeterMenuOpen);
+        }
+    }
+    // Also update tearoff buttons
+    for (const [btnKey, tearoff] of activeTearoffs) {
+        if (btnKey.includes('ALTIM')) {
+            tearoff.buttonClone.classList.toggle('tb-toggle-on', altimeterMenuOpen);
+        }
+    }
+}
+
+function removeAltimeterStation(station) {
+    altimeterStations.delete(station);
+    updateAltimeterMenuBody();
+}
+
+async function addAltimeterStation(station) {
+    // Normalize: strip leading K if present
+    let stationCode = station.toUpperCase();
+    if (stationCode.startsWith('K')) {
+        stationCode = stationCode.substring(1);
+    }
+
+    try {
+        const resp = await fetch(`/api/metar/${encodeURIComponent(stationCode)}`);
+        if (!resp.ok) {
+            return { feedback: [{ type: 'err', text: `NO METAR FOR ${stationCode}` }] };
+        }
+        const metarText = (await resp.text()).trim();
+        if (!metarText) {
+            return { feedback: [{ type: 'err', text: `NO METAR FOR ${stationCode}` }] };
+        }
+
+        // Parse altimeter and time from METAR
+        const altimValue = extractAltimeterFromMetar(metarText);
+        const obsTime = extractTimeFromMetar(metarText);
+
+        altimeterStations.set(stationCode, {
+            airport: stationCode,
+            code: '?',
+            altimeter: altimValue || 'N/A',
+            time: obsTime,
+            updatedAt: new Date().toISOString(),
+            metar: metarText
+        });
+
+        updateAltimeterMenuBody();
+        return { feedback: [
+            { type: 'ok', text: 'ACCEPT' },
+            { type: 'info', text: `ALTIMETER ${stationCode}` },
+            { type: 'info', text: `${altimValue || 'N/A'}` }
+        ]};
+    } catch (e) {
+        console.warn('[ALTIM] Error:', e);
+        return { feedback: [{ type: 'err', text: `METAR REQ FAILED: ${e.message}` }] };
+    }
+}
+
+// ── Weather Report Panel ──
+function getWeatherObsAgeMinutes(updatedAt) {
+    if (!updatedAt) return null;
+    try {
+        const now = new Date();
+        const obs = new Date(updatedAt);
+        return (now - obs) / (1000 * 60);
+    } catch {
+        return null;
+    }
+}
+
+function extractMetarFromDatis(datis) {
+    if (!datis) return null;
+    // DATIS format: "LAX ATIS INFO Y 0253Z. 24013KT 10SM BKN010 19/16 A2995..."
+    // Extract everything after the time and period (e.g., after "0253Z.")
+    const match = datis.match(/\d{4}Z\.\s*(.+)/);
+    if (match) {
+        return match[1].trim();
+    }
+    return datis;
+}
+
+function extractTimeFromMetar(metar) {
+    if (!metar) return '????';
+    // METAR format: "DCA 121551Z..." or similar
+    // Extract time in format DDHHMMZ
+    const match = metar.match(/\s(\d{2})(\d{2})(\d{2})Z/);
+    if (match) {
+        return match[2] + match[3];  // Return HHMM
+    }
+    return '????';
+}
+
+function extractAltimeterFromMetar(metar) {
+    if (!metar) return null;
+    // METAR format: "... A2995 ..." or "... A3012 ..."
+    const match = metar.match(/\bA(\d{4})\b/);
+    if (match) {
+        const raw = match[1];
+        return raw.substring(0, 2) + '.' + raw.substring(2);
+    }
+    return null;
+}
+
+function cleanMetarText(metar) {
+    if (!metar) return '';
+    // Remove "METAR " prefix if present
+    let text = metar.replace(/^METAR\s+/, '');
+    // Remove station ID at the beginning (4 characters followed by space)
+    text = text.replace(/^[A-Z]{4}\s+/, '');
+    return text.trim();
+}
+
+function updateWeatherMenuBody() {
+    const body = document.getElementById('wx-menu-body');
+    if (weatherStations.size === 0) {
+        body.innerHTML = '<div style="color:#888; font-size:11px; text-align:center; width:100%;">No stations</div>';
+        body.style.display = 'flex';
+        body.style.alignItems = 'center';
+        body.style.justifyContent = 'center';
+        return;
+    }
+    body.style.display = 'block';
+    let html = '';
+    for (const [station, data] of weatherStations) {
+        const timeStr = (data.time || '????') + 'Z';
+        const ageMin = getWeatherObsAgeMinutes(data.updatedAt);
+
+        // Determine METAR display and styling
+        let metarHtml;
+        if (ageMin !== null && ageMin > 120) {
+            // Too old — show -M-
+            metarHtml = '<span class="wx-metar missing">-M-</span>';
+        } else if (!data.metar || data.metar === 'N/A') {
+            // Missing report
+            metarHtml = '<span class="wx-metar missing">-M-</span>';
+        } else {
+            // Format METAR text with word wrap at ~35 chars per line (for 250px display)
+            const metar = cleanMetarText(data.metar);
+            const maxCharsPerLine = 35;
+            let lines = [];
+            let currentLine = '';
+            const words = metar.split(' ');
+            for (const word of words) {
+                if ((currentLine + ' ' + word).length > maxCharsPerLine) {
+                    if (currentLine) lines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = currentLine ? currentLine + ' ' + word : word;
+                }
+            }
+            if (currentLine) lines.push(currentLine);
+
+            const displayLines = lines.slice(0, 2);  // Show max 2 lines in menu
+            const hasMore = lines.length > 2;
+            const metarText = displayLines.join('\n') + (hasMore ? ' >' : '');
+            metarHtml = `<span class="wx-metar">${metarText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>`;
+        }
+
+        // Underline observation time if stale (>65 min)
+        const staleClass = ageMin !== null && ageMin > 65 ? 'stale' : '';
+
+        const isSelected = weatherSelectedStation === station;
+        const selectedClass = isSelected ? 'wx-entry-selected' : '';
+        html += `<div class="wx-entry ${selectedClass}" data-station="${station}" onclick="selectWeatherStation('${station}', event)">
+            <div class="wx-station-row">
+                <span class="wx-box" style="${isSelected ? 'background:#ff8844;' : ''}"></span>
+                <span class="wx-station">${station.padEnd(4)}</span>
+                <span class="wx-time ${staleClass}">${timeStr}</span>
+            </div>
+            ${metarHtml}
+            ${isSelected ? '<span class="wx-delete-btn" onclick="deleteSelectedWeatherStation(event)">DEL</span>' : ''}
+        </div>`;
+    }
+    body.innerHTML = html;
+}
+
+function selectWeatherStation(station, event) {
+    event.stopPropagation();
+    weatherSelectedStation = weatherSelectedStation === station ? null : station;
+    updateWeatherMenuBody();
+}
+
+function deleteSelectedWeatherStation(event) {
+    event.stopPropagation();
+    if (weatherSelectedStation) {
+        removeWeatherStation(weatherSelectedStation);
+        weatherSelectedStation = null;
+    }
+}
+
+let weatherUpdateInterval = null;
+let weatherRefreshInterval = null;
+
+async function refreshAllWeatherStations() {
+    for (const station of weatherStations.keys()) {
+        try {
+            const resp = await fetch(`/api/metar/${encodeURIComponent(station)}`);
+            if (!resp.ok) continue;
+            const metarText = (await resp.text()).trim();
+            if (!metarText) continue;
+
+            // Extract time from METAR
+            const obsTime = extractTimeFromMetar(metarText);
+
+            // Update the station data
+            weatherStations.set(station, {
+                airport: station,
+                metar: metarText,
+                time: obsTime,
+                updatedAt: new Date().toISOString()
+            });
+        } catch (e) {
+            console.warn('[WX] Refresh error for', station, ':', e);
+        }
+    }
+    if (weatherMenuOpen) updateWeatherMenuBody();
+}
+
+function openWeatherMenu() {
+    weatherMenuOpen = true;
+    const menu = document.getElementById('wx-menu');
+    updateWeatherMenuBody();
+
+    // Try to restore position from localStorage
+    const savedPos = localStorage.getItem('boxPos_wx-menu');
+    if (!savedPos) {
+        // No saved position — set default (right side of screen)
+        menu.style.left = 'auto';
+        menu.style.right = '20px';
+        menu.style.top = '100px';
+        menu.style.bottom = 'auto';
+    } else {
+        // Restore from localStorage
+        try {
+            const pos = JSON.parse(savedPos);
+            if (pos.left) menu.style.left = pos.left;
+            if (pos.top) { menu.style.top = pos.top; menu.style.bottom = 'auto'; menu.style.right = 'auto'; }
+            requestAnimationFrame(() => clampBox(menu));
+        } catch(e) {
+            // Fallback to default if parse fails
+            menu.style.left = 'auto';
+            menu.style.right = '20px';
+            menu.style.top = '100px';
+            menu.style.bottom = 'auto';
+        }
+    }
+
+    menu.style.display = 'block';
+
+    // Update the toolbar button state to reflect open menu
+    updateWxButtonState();
+
+    // Start periodic updates to refresh observation ages
+    if (weatherUpdateInterval) clearInterval(weatherUpdateInterval);
+    weatherUpdateInterval = setInterval(() => {
+        if (weatherMenuOpen) updateWeatherMenuBody();
+    }, 30000);  // Update every 30 seconds
+
+    // Start periodic refresh of ATIS data (every 5 minutes)
+    if (weatherRefreshInterval) clearInterval(weatherRefreshInterval);
+    weatherRefreshInterval = setInterval(() => {
+        if (weatherMenuOpen) refreshAllWeatherStations();
+    }, 5 * 60 * 1000);  // Refresh every 5 minutes
+}
+
+function closeWeatherMenu() {
+    weatherMenuOpen = false;
+    document.getElementById('wx-menu').style.display = 'none';
+    if (weatherUpdateInterval) {
+        clearInterval(weatherUpdateInterval);
+        weatherUpdateInterval = null;
+    }
+    if (weatherRefreshInterval) {
+        clearInterval(weatherRefreshInterval);
+        weatherRefreshInterval = null;
+    }
+    // Update the toolbar button state to reflect closed menu
+    updateWxButtonState();
+}
+
+function updateWxButtonState() {
+    const buttons = document.querySelectorAll('.tb-btn');
+    for (const btn of buttons) {
+        const label = btn.querySelector('.tb-label');
+        if (label && label.textContent.includes('WX')) {
+            btn.classList.toggle('tb-toggle-on', weatherMenuOpen);
+        }
+    }
+    // Also update tearoff buttons
+    for (const [btnKey, tearoff] of activeTearoffs) {
+        if (btnKey.includes('WX')) {
+            tearoff.buttonClone.classList.toggle('tb-toggle-on', weatherMenuOpen);
+        }
+    }
+}
+
+function removeWeatherStation(station) {
+    weatherStations.delete(station);
+    updateWeatherMenuBody();
+}
+
+async function addWeatherStation(station) {
+    // Normalize: strip leading K if present
+    let stationCode = station.toUpperCase();
+    if (stationCode.startsWith('K')) {
+        stationCode = stationCode.substring(1);
+    }
+
+    try {
+        const resp = await fetch(`/api/metar/${encodeURIComponent(stationCode)}`);
+        if (!resp.ok) {
+            return { feedback: [{ type: 'err', text: `NO METAR FOR ${stationCode}` }] };
+        }
+        const metarText = (await resp.text()).trim();
+        if (!metarText) {
+            return { feedback: [{ type: 'err', text: `NO METAR FOR ${stationCode}` }] };
+        }
+
+        // Extract time from METAR
+        const obsTime = extractTimeFromMetar(metarText);
+
+        weatherStations.set(stationCode, {
+            airport: stationCode,
+            metar: metarText,
+            time: obsTime,
+            updatedAt: new Date().toISOString()
+        });
+
+        updateWeatherMenuBody();
+        return { feedback: [
+            { type: 'ok', text: 'ACCEPT' },
+            { type: 'info', text: `WEATHER ${stationCode}` },
+            { type: 'info', text: `${obsTime + 'Z'}` }
+        ]};
+    } catch (e) {
+        console.warn('[WX] Error:', e);
+        return { feedback: [{ type: 'err', text: `METAR REQ FAILED: ${e.message}` }] };
+    }
+}
+
+// ── CRR (Continuous Range Readout) ──
+function openCrrMenu() {
+    crrMenuOpen = true;
+    const menu = document.getElementById('crr-menu');
+    updateCrrMenuBody();
+
+    // Try to restore position from localStorage
+    const savedPos = localStorage.getItem('boxPos_crr-menu');
+    if (!savedPos) {
+        menu.style.left = 'calc(50vw - 110px)';
+        menu.style.top = 'calc(50vh - 80px)';
+        menu.style.bottom = 'auto';
+        menu.style.right = 'auto';
+    } else {
+        try {
+            const pos = JSON.parse(savedPos);
+            if (pos.left) menu.style.left = pos.left;
+            if (pos.top) { menu.style.top = pos.top; menu.style.bottom = 'auto'; menu.style.right = 'auto'; }
+            requestAnimationFrame(() => clampBox(menu));
+        } catch(e) {
+            menu.style.left = 'calc(50vw - 110px)';
+            menu.style.top = 'calc(50vh - 80px)';
+            menu.style.bottom = 'auto';
+            menu.style.right = 'auto';
+        }
+    }
+
+    menu.style.display = 'block';
+    updateCrrButtonState();
+}
+
+function closeCrrMenu() {
+    crrMenuOpen = false;
+    document.getElementById('crr-menu').style.display = 'none';
+    updateCrrButtonState();
+}
+
+function updateCrrButtonState() {
+    const buttons = document.querySelectorAll('.tb-btn');
+    for (const btn of buttons) {
+        const label = btn.querySelector('.tb-label');
+        if (label && label.textContent.includes('CRR')) {
+            btn.classList.toggle('tb-toggle-on', crrMenuOpen);
+        }
+    }
+    for (const [btnKey, tearoff] of activeTearoffs) {
+        if (btnKey.includes('CRR') && !btnKey.includes('CRR FIX') && !btnKey.includes('CRR RDB')) {
+            tearoff.buttonClone.classList.toggle('tb-toggle-on', crrMenuOpen);
+        }
+    }
+}
+
+function updateCrrMenuBody() {
+    const body = document.getElementById('crr-menu-body');
+
+    let html = '';
+
+    // Color selector (only shown if toggled on)
+    if (crrColorSelectorOpen) {
+        const colorOptions = ['#00D000', '#cccc44', '#ff4444', '#00ccff', '#ff00ff', '#ffff00'];
+        html += '<div style="padding:4px; border-bottom:1px solid #333; display:flex; gap:4px;">';
+        for (const color of colorOptions) {
+            const isSelected = crrColor === color;
+            const borderStyle = isSelected ? 'border:3px solid #fff;' : 'border:1px solid #666;';
+            html += `<div onclick="setCrrColor('${color}')" style="width:16px; height:16px; background:${color}; cursor:pointer; ${borderStyle}"></div>`;
+        }
+        html += '</div>';
+    }
+
+    if (crrGroups.size === 0) {
+        body.innerHTML = html + '<div style="color:#888; font-size:11px; padding:4px; min-width:180px; text-align:center;">No groups</div>';
+        return;
+    }
+    for (const [label, group] of crrGroups) {
+        const isSelected = crrSelectedGroup === label;
+        const selectedClass = isSelected ? 'crr-group-selected' : '';
+        const groupColor = group.color || crrColor;
+
+        let aircraftHtml = '';
+        for (const ac of group.aircraft) {
+            const id = ac.callsign || ac.cid || '?';
+            const distStr = ac.distance !== null ? ac.distance.toFixed(1) : '?';
+            aircraftHtml += `<div class="crr-aircraft" data-group="${label}" data-gufi="${ac.gufi}" data-callsign="${id}">${id.padEnd(10)} ${distStr.padStart(5)}</div>`;
+        }
+
+        html += `<div class="crr-group ${selectedClass}" data-label="${label}">
+            <div class="crr-group-label" data-group="${label}" style="color:${groupColor}">${label}${isSelected ? ` <span class="crr-group-label-delete" data-delete="${label}">X</span>` : ''}</div>
+            ${aircraftHtml}
+        </div>`;
+    }
+
+    body.innerHTML = html;
+}
+
+function selectCrrGroup(label, event) {
+    event.stopPropagation();
+
+    if (event.button === 0) {
+        // Left-click: Start LF command to add/remove aircraft
+        mcaState.content = `LF ${label} `;
+        mcaState.selectedFlids = [];
+        updateMcaPreview();
+    } else if (event.button === 1) {
+        // Middle-click: Open delete popup
+        event.preventDefault();
+        openCrrGroupDeletePopup(label, event);
+    }
+}
+
+function deleteCrrGroup(label, event) {
+    if (event) event.stopPropagation();
+    const group = crrGroups.get(label);
+    // Invalidate markers for all aircraft in the deleted group
+    if (group && group.aircraft) {
+        for (const ac of group.aircraft) {
+            invalidateMarker(ac.gufi);
+        }
+    }
+    crrGroups.delete(label);
+    crrSelectedGroup = null;
+    closeCrrGroupDeletePopup();
+    updateCrrMenuBody();
+    lastRenderTime = 0;  // Force immediate render
+}
+
+let crrGroupDeletePopupOpen = false;
+let crrGroupDeletePopupLabel = null;
+
+function openCrrGroupDeletePopup(label, event) {
+    closeCrrGroupDeletePopup();
+    crrGroupDeletePopupOpen = true;
+    crrGroupDeletePopupLabel = label;
+
+    const group = crrGroups.get(label);
+    const menu = document.getElementById('crr-group-delete-popup');
+    const hasAircraft = group.aircraft.length > 0;
+
+    let html = '';
+    if (hasAircraft) {
+        html = `<div class="crr-popup-option" onclick="deleteCrrGroupAllAircraft('${label}', event); event.stopPropagation();">Delete all aircraft</div>`;
+        html += `<div class="crr-popup-option" onclick="deleteCrrGroup('${label}', event); event.stopPropagation();">Delete group</div>`;
+    } else {
+        html = `<div class="crr-popup-option" onclick="deleteCrrGroup('${label}', event); event.stopPropagation();">Delete group (empty)</div>`;
+    }
+
+    menu.innerHTML = html;
+    menu.style.display = 'block';
+    menu.style.left = event.clientX + 'px';
+    menu.style.top = event.clientY + 'px';
+}
+
+function closeCrrGroupDeletePopup() {
+    crrGroupDeletePopupOpen = false;
+    crrGroupDeletePopupLabel = null;
+    const menu = document.getElementById('crr-group-delete-popup');
+    if (menu) menu.style.display = 'none';
+}
+
+function deleteCrrGroupAllAircraft(label, event) {
+    if (event) event.stopPropagation();
+    const group = crrGroups.get(label);
+    if (group) {
+        // Invalidate markers for all aircraft in the group
+        for (const ac of group.aircraft) {
+            invalidateMarker(ac.gufi);
+        }
+        group.aircraft = [];
+    }
+    closeCrrGroupDeletePopup();
+    updateCrrMenuBody();
+    lastRenderTime = 0;  // Force immediate render
+}
+
+let crrAircraftDeletePopupOpen = false;
+let crrAircraftDeletePopupLabel = null;
+let crrAircraftDeletePopupGufi = null;
+
+function openCrrAircraftDeletePopup(label, gufi, callsign, event) {
+    closeCrrAircraftDeletePopup();
+    crrAircraftDeletePopupOpen = true;
+    crrAircraftDeletePopupLabel = label;
+    crrAircraftDeletePopupGufi = gufi;
+
+    const menu = document.getElementById('crr-aircraft-delete-popup');
+    const html = `<div class="crr-popup-option" onclick="deleteCrrAircraft('${label}', '${gufi}', event); event.stopPropagation();">Delete ${callsign}</div>`;
+
+    menu.innerHTML = html;
+    menu.style.display = 'block';
+    menu.style.left = event.clientX + 'px';
+    menu.style.top = event.clientY + 'px';
+}
+
+function closeCrrAircraftDeletePopup() {
+    crrAircraftDeletePopupOpen = false;
+    crrAircraftDeletePopupLabel = null;
+    crrAircraftDeletePopupGufi = null;
+    const menu = document.getElementById('crr-aircraft-delete-popup');
+    if (menu) menu.style.display = 'none';
+}
+
+function deleteCrrAircraft(label, gufi, event) {
+    if (event) event.stopPropagation();
+    const group = crrGroups.get(label);
+    if (group) {
+        group.aircraft = group.aircraft.filter(a => a.gufi !== gufi);
+    }
+    closeCrrAircraftDeletePopup();
+    updateCrrMenuBody();
+    invalidateMarker(gufi);  // Update RDB visibility
+    lastRenderTime = 0;  // Force immediate render
+}
+
+function addCrrGroup(label, lat, lon) {
+    if (crrGroups.has(label)) {
+        return { feedback: [{ type: 'err', text: `GROUP ${label} EXISTS` }] };
+    }
+    crrGroups.set(label, { lat, lon, aircraft: [] });
+    updateCrrMenuBody();
+    return { feedback: [
+        { type: 'ok', text: 'ACCEPT' },
+        { type: 'info', text: `CRR GROUP ${label}` }
+    ]};
+}
+
+function addAircraftToCrrGroup(label, flids) {
+    const group = crrGroups.get(label);
+    if (!group) {
+        return { feedback: [{ type: 'err', text: `GROUP ${label} NOT FOUND` }] };
+    }
+
+    for (const flid of flids) {
+        const flight = findFlight(flid);
+        if (!flight || !flight.latitude || !flight.longitude) {
+            return { feedback: [{ type: 'err', text: `${flid} NOT FOUND OR NO POS` }] };
+        }
+
+        const distance = calculateNmDistance(group.lat, group.lon, flight.latitude, flight.longitude);
+        const existing = group.aircraft.find(a => a.gufi === flight.gufi);
+        if (!existing) {
+            group.aircraft.push({
+                gufi: flight.gufi,
+                callsign: flight.callsign,
+                cid: getCid(flight),
+                distance: distance
+            });
+            // Invalidate marker to update RDB visibility
+            invalidateMarker(flight.gufi);
+        }
+    }
+
+    updateCrrMenuBody();
+    lastRenderTime = 0;  // Force immediate render
+    return { feedback: [
+        { type: 'ok', text: 'ACCEPT' },
+        { type: 'info', text: `CRR AC ADDED` }
+    ]};
+}
+
+function calculateNmDistance(lat1, lon1, lat2, lon2) {
+    const R = 3440.065;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+function getCrrRdbDistance(f) {
+    // Find the closest CRR group this aircraft is in, return distance
+    let minDistance = null;
+    for (const [label, group] of crrGroups) {
+        for (const ac of group.aircraft) {
+            if (ac.gufi === f.gufi) {
+                const distance = calculateNmDistance(group.lat, group.lon, f.latitude, f.longitude);
+                if (minDistance === null || distance < minDistance) {
+                    minDistance = distance;
+                }
+            }
+        }
+    }
+    return minDistance;
+}
+
+// Update distances for all CRR groups
+function updateCrrDistances() {
+    for (const [label, group] of crrGroups) {
+        for (const ac of group.aircraft) {
+            const flight = flights.get(ac.gufi);
+            if (flight && flight.latitude && flight.longitude) {
+                ac.distance = calculateNmDistance(group.lat, group.lon, flight.latitude, flight.longitude);
+            }
+        }
+    }
+    if (crrMenuOpen) updateCrrMenuBody();
 }
 
 // .FIND overlay state
@@ -1506,6 +2370,26 @@ function buildMarkerHtml(f, cls) {
         // Line 0 (point-out indicator) adds height — shift div up so Lines 1-4 stay anchored
         const poOffset = getPointoutIndicator(f) ? -LINE_H : 0;
         html += `<div class="ac-db fdb${dbCls}" style="${leftStyle}; top:${ldr.dy + anchor.yShift + poOffset}px;${leftExtra}">${db}</div>`;
+
+        // CRR RDB (Range Data Block) — distance to group location in nautical miles
+        // Position relative to target icon (0,0), cycling around it
+        if (crrRdbEnabled && f.latitude && f.longitude) {
+            const rdbDist = getCrrRdbDistance(f);
+            if (rdbDist !== null) {
+                const rdbText = rdbDist.toFixed(1) + 'nm';
+
+                // RDB offsets cycle around the target symbol (0,0)
+                const offsetConfigs = [
+                    { left: Math.ceil(CHAR_W * 2.5), top: -Math.ceil(LINE_H * 0.5) },  // right
+                    { left: -Math.ceil(CHAR_W * 8) - 20, top: -Math.ceil(LINE_H * 0.5) },  // left
+                    { left: -Math.ceil(CHAR_W * 3) - 10, top: -Math.ceil(LINE_H * 2) },  // above-left
+                    { left: -Math.ceil(CHAR_W * 3) - 10, top: Math.ceil(LINE_H * 0.5) }  // bottom-left
+                ];
+                const cfg = offsetConfigs[crrRdbOffset];
+
+                html += `<div class="ac-rdb" style="left:${cfg.left}px; top:${cfg.top}px;">${rdbText}</div>`;
+            }
+        }
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
         vciActive.delete(f.gufi);
@@ -2289,6 +3173,10 @@ function doRender() {
     const now = performance.now();
     // Update QU route lines to follow aircraft positions
     if (activeRoutes.size > 0) updateActiveRoutes();
+    // Update CRR distances
+    if (crrGroups.size > 0) updateCrrDistances();
+    // Update beacon codes menu in real-time if open
+    if (beaconMenuOpen) updateBeaconMenuBody();
 
     const mapBounds = map.getBounds();
     const onScreenGufis = new Set();
@@ -4105,7 +4993,11 @@ map.on('click', (e) => {
         const latMin = Math.round((absLat % 1) * 60).toString().padStart(2, '0');
         const lonDeg = Math.floor(absLon).toString().padStart(3, '0');
         const lonMin = Math.round((absLon % 1) * 60).toString().padStart(2, '0');
-        const locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+        let locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+        // For LF commands, prepend // automatically
+        if (mca.text.trim().toUpperCase().startsWith('LF')) {
+            locStr = '//' + locStr;
+        }
         mcaInsertTarget(locStr);
     }
 });
@@ -4126,7 +5018,11 @@ mapEl.addEventListener('auxclick', (e) => {
     const latMin = Math.round((absLat % 1) * 60).toString().padStart(2, '0');
     const lonDeg = Math.floor(absLon).toString().padStart(3, '0');
     const lonMin = Math.round((absLon % 1) * 60).toString().padStart(2, '0');
-    const locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+    let locStr = `${latDeg}${latMin}${latDir}/${lonDeg}${lonMin}${lonDir}`;
+    // For LF commands, prepend // automatically
+    if (mca.text.trim().toUpperCase().startsWith('LF')) {
+        locStr = '//' + locStr;
+    }
     if (mca.text[mca.text.length - 1] !== ' ') mca.text += ' ';
     mca.text += locStr;
     mca.cursor = mca.text.length;
@@ -4597,10 +5493,7 @@ function processCommand(cmd) {
     // ═══════════════════════════════════════════════════════════════════════
     // WR R <station>        — weather request: display METAR in Response Area
     // ═══════════════════════════════════════════════════════════════════════
-    if (verb === 'WR') {
-        if (parts.length < 3 || parts[1].toUpperCase() !== 'R') {
-            return { feedback: [{ type: 'err', text: 'FORMAT: WR R <STATION>' }] };
-        }
+    if (verb === 'WR' && parts.length >= 3 && parts[1].toUpperCase() === 'R') {
         const station = parts.slice(2).join('').toUpperCase();
         if (!station) return { feedback: [{ type: 'err', text: 'WR R REQUIRES STATION ID' }] };
         const icao = station.length === 3 ? 'K' + station : station;
@@ -4626,6 +5519,109 @@ function processCommand(cmd) {
             } catch {
                 return { feedback: [{ type: 'err', text: 'WX REQ FAILED' }] };
             }
+        })();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // AR <station>           — add/remove altimeter setting for station (toggle)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'AR' && parts.length >= 2) {
+        let stationInput = parts.slice(1).join('').toUpperCase();
+        if (stationInput.startsWith('K')) {
+            stationInput = stationInput.substring(1);
+        }
+        if (!stationInput) return { feedback: [{ type: 'err', text: 'AR REQUIRES STATION ID' }] };
+
+        // Check if already exists — toggle remove
+        if (altimeterStations.has(stationInput)) {
+            removeAltimeterStation(stationInput);
+            altimeterSelectedStation = null;
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `ALTIMETER ${stationInput}` },
+                { type: 'info', text: 'REMOVED' }
+            ]};
+        }
+
+        // Otherwise add
+        return addAltimeterStation(stationInput);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // QB <code1> <code2> ...  — add/remove beacon codes (toggle)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'QB' && parts.length >= 2) {
+        let feedback = [];
+        for (let i = 1; i < parts.length; i++) {
+            const code = parts[i].toUpperCase();
+            if (!code || code.length !== 4) continue;
+
+            if (beaconCodes.has(code)) {
+                beaconCodes.delete(code);
+                feedback.push({ type: 'info', text: `${code} REMOVED` });
+            } else {
+                // Find flight with this squawk code
+                let flight = null;
+                for (const [, f] of flights) {
+                    if (f.squawk === code) {
+                        flight = f;
+                        break;
+                    }
+                }
+
+                // Only allow manual add if it's an 'other' aircraft
+                if (flight && classifyTrack(flight) === 'other') {
+                    beaconCodes.set(code, { manual: true });
+                    feedback.push({ type: 'info', text: `${code} ADDED` });
+                } else if (!flight) {
+                    feedback.push({ type: 'err', text: `${code} NOT FOUND` });
+                } else {
+                    feedback.push({ type: 'err', text: `${code} NOT OTHER AIRCRAFT` });
+                }
+            }
+        }
+        if (feedback.length > 0) {
+            // Check if any codes were actually added
+            const hasAddOrRemove = feedback.some(f => f.text.includes('ADDED') || f.text.includes('REMOVED'));
+            if (hasAddOrRemove) {
+                feedback.unshift({ type: 'ok', text: 'ACCEPT' });
+                updateBeaconMenuBody();
+                if (!beaconMenuOpen) openBeaconMenu();
+            }
+        } else {
+            feedback = [{ type: 'err', text: 'QB REQUIRES BEACON CODES' }];
+        }
+        return { feedback };
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // WR <station>           — add/remove weather report for station (toggle)
+    // ═══════════════════════════════════════════════════════════════════════
+    if (verb === 'WR' && parts.length >= 2 && parts[1].toUpperCase() !== 'R') {
+        let stationInput = parts.slice(1).join('').toUpperCase();
+        if (stationInput.startsWith('K')) {
+            stationInput = stationInput.substring(1);
+        }
+        if (!stationInput) return { feedback: [{ type: 'err', text: 'WR REQUIRES STATION ID' }] };
+
+        // Check if already exists — toggle remove
+        if (weatherStations.has(stationInput)) {
+            removeWeatherStation(stationInput);
+            weatherSelectedStation = null;
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: `WEATHER ${stationInput}` },
+                { type: 'info', text: 'REMOVED' }
+            ]};
+        }
+
+        // Otherwise add and open menu
+        return (async () => {
+            const result = await addWeatherStation(stationInput);
+            if (result.feedback && result.feedback.some(f => f.type === 'ok')) {
+                if (!weatherMenuOpen) openWeatherMenu();
+            }
+            return result;
         })();
     }
 
@@ -4733,6 +5729,133 @@ function processCommand(cmd) {
                 }
             } catch {
                 return { feedback: [{ type: 'err', text: 'RANGE CALC FAILED' }] };
+            }
+        })();
+    }
+
+    // LF <location> [<label>] [<aircraft>] — Create CRR group
+    // LF <label> <aircraft> — Add aircraft to existing CRR group
+    if (verb === 'LF') {
+        return (async () => {
+            try {
+                if (parts.length < 2) {
+                    return { feedback: [{ type: 'err', text: 'LF REQUIRES LOCATION AND/OR LABEL' }] };
+                }
+
+                const arg1 = parts[1].toUpperCase();
+                const isLocationPrefix = arg1.startsWith('//');
+
+                // If arg1 doesn't have //, treat it as a group label (existing or to be added to)
+                if (!isLocationPrefix && parts.length >= 3) {
+                    // LF <label> <aircraft> — Add or remove from existing group (toggle)
+                    const label = arg1;
+                    if (!crrGroups.has(label)) {
+                        return { feedback: [{ type: 'err', text: `GROUP ${label} NOT FOUND` }] };
+                    }
+
+                    const group = crrGroups.get(label);
+                    const acParts = parts.slice(2).join('/').split('/');
+                    let addedCount = 0, removedCount = 0;
+
+                    for (const acStr of acParts) {
+                        const f = findFlight(acStr.toUpperCase());
+                        if (!f || !f.latitude || !f.longitude) {
+                            return { feedback: [{ type: 'err', text: `${acStr} NOT FOUND OR NO POS` }] };
+                        }
+
+                        const existingIdx = group.aircraft.findIndex(a => a.gufi === f.gufi);
+                        if (existingIdx >= 0) {
+                            // Aircraft already in group — remove it
+                            group.aircraft.splice(existingIdx, 1);
+                            removedCount++;
+                            // Invalidate marker to update RDB visibility
+                            invalidateMarker(f.gufi);
+                        } else {
+                            // Aircraft not in group — add it
+                            const distance = calculateNmDistance(group.lat, group.lon, f.latitude, f.longitude);
+                            group.aircraft.push({
+                                gufi: f.gufi,
+                                callsign: f.callsign,
+                                cid: getCid(f),
+                                distance: distance
+                            });
+                            addedCount++;
+                            // Invalidate marker to update RDB visibility
+                            invalidateMarker(f.gufi);
+                        }
+                    }
+
+                    updateCrrMenuBody();
+                    lastRenderTime = 0;  // Force immediate render
+                    let msg = '';
+                    if (addedCount > 0) msg += `${addedCount} AC ADDED `;
+                    if (removedCount > 0) msg += `${removedCount} AC REMOVED`;
+                    return { feedback: [
+                        { type: 'ok', text: 'ACCEPT' },
+                        { type: 'info', text: `CRR ${label} ${msg}` }
+                    ]};
+                }
+
+                // Try to resolve arg1 as a location (must have // prefix)
+                const loc = isLocationPrefix ? await resolveLocation(arg1.substring(2)) : null;
+
+                if (loc) {
+                    // LF <location> [<label>] [<aircraft>]
+                    // Label is optional if location is a fix/navaid
+                    let label = loc.name || arg1;  // Use location name as default label
+                    let aircraftStartIdx = 2;
+
+                    // If second arg looks like a label (1-5 chars), use it as label
+                    if (parts.length >= 3 && /^[A-Z0-9]{1,5}$/.test(parts[2].toUpperCase())) {
+                        label = parts[2].toUpperCase();
+                        aircraftStartIdx = 3;
+                    }
+
+                    // Validate label: 1-5 alphanumeric characters
+                    if (!/^[A-Z0-9]{1,5}$/.test(label)) {
+                        return { feedback: [{ type: 'err', text: 'LABEL MUST BE 1-5 ALPHANUMERIC' }] };
+                    }
+
+                    if (crrGroups.has(label)) {
+                        return { feedback: [{ type: 'err', text: `GROUP ${label} EXISTS` }] };
+                    }
+
+                    // Create the group with selected color
+                    crrGroups.set(label, { lat: loc.lat, lon: loc.lon, aircraft: [], color: crrColor });
+
+                    // If aircraft specified, add them
+                    if (parts.length >= aircraftStartIdx + 1) {
+                        const acParts = parts.slice(aircraftStartIdx).join('/').split('/');
+                        for (const acStr of acParts) {
+                            const f = findFlight(acStr.toUpperCase());
+                            if (!f || !f.latitude || !f.longitude) {
+                                crrGroups.delete(label);
+                                return { feedback: [{ type: 'err', text: `${acStr} NOT FOUND OR NO POS` }] };
+                            }
+                            const distance = calculateNmDistance(loc.lat, loc.lon, f.latitude, f.longitude);
+                            crrGroups.get(label).aircraft.push({
+                                gufi: f.gufi,
+                                callsign: f.callsign,
+                                cid: getCid(f),
+                                distance: distance
+                            });
+                            // Invalidate marker to update RDB visibility
+                            invalidateMarker(f.gufi);
+                        }
+                    }
+
+                    updateCrrMenuBody();
+                    lastRenderTime = 0;  // Force immediate render
+                    return { feedback: [
+                        { type: 'ok', text: 'ACCEPT' },
+                        { type: 'info', text: `CRR ${label}` }
+                    ]};
+                } else {
+                    return { feedback: [{ type: 'err', text: 'LF FORMAT ERROR' }] };
+                }
+            } catch (e) {
+                console.warn('[LF] Error:', e);
+                return { feedback: [{ type: 'err', text: 'LF COMMAND FAILED' }] };
             }
         })();
     }
@@ -5657,6 +6780,15 @@ document.addEventListener('keydown', e => {
         e.preventDefault(); return;
     }
 
+    // Ctrl+Shift+O → cycle CRR RDB offset
+    if (e.ctrlKey && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+        if (crrRdbEnabled) {
+            crrRdbOffset = (crrRdbOffset + 1) % 4;
+            invalidateAllMarkers();
+        }
+        e.preventDefault(); return;
+    }
+
     // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8)
     const vectorSteps = [0, 1, 2, 4, 8];
     if (e.key === 'PageUp' && !e.ctrlKey) {
@@ -5829,6 +6961,8 @@ document.addEventListener('mousedown', e => {
 window.addEventListener('resize', () => {
     const poMenu = document.getElementById('po-menu');
     if (poMenu.style.display !== 'none') clampBox(poMenu);
+    const altimMenu = document.getElementById('altim-menu');
+    if (altimMenu.style.display !== 'none') clampBox(altimMenu);
     clampBox(document.getElementById('time-view'));
     const fm = document.getElementById('field-menu');
     if (fm.style.display !== 'none') clampBox(fm);
@@ -5837,6 +6971,10 @@ window.addEventListener('resize', () => {
 
 setupBoxDrag(document.getElementById('mca-ra-stack'));
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
+setupBoxDrag(document.getElementById('altim-menu'), document.getElementById('altim-menu-title'));
+setupBoxDrag(document.getElementById('wx-menu'), document.getElementById('wx-menu-title'));
+setupBoxDrag(document.getElementById('beacon-menu'), document.getElementById('beacon-menu-title'));
+setupBoxDrag(document.getElementById('crr-menu'), document.getElementById('crr-menu-title'));
 
 // Point-out menu: close button (left + middle click)
 document.getElementById('po-menu-close').addEventListener('click', (e) => {
@@ -5849,6 +6987,376 @@ document.getElementById('po-menu-close').addEventListener('auxclick', (e) => {
 // Point-out menu: middle-click title bar → close menu
 document.getElementById('po-menu-title').addEventListener('auxclick', (e) => {
     if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closePointoutMenu(); }
+});
+
+// Altimeter menu: close button (left + middle click)
+document.getElementById('altim-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();  // Prevent drag initiation
+});
+document.getElementById('altim-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAltimeterMenu();
+});
+document.getElementById('altim-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeAltimeterMenu(); }
+});
+// Altimeter menu: middle-click title bar → close menu
+document.getElementById('altim-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeAltimeterMenu(); }
+});
+
+// Weather menu: close button (left + middle click)
+document.getElementById('wx-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();  // Prevent drag initiation
+});
+document.getElementById('wx-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeWeatherMenu();
+});
+document.getElementById('wx-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeWeatherMenu(); }
+});
+// Weather menu: middle-click title bar → open rows popup
+document.getElementById('wx-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        openWxRowsPopup(e);
+    }
+});
+
+// Beacon menu: close button (left + middle click)
+document.getElementById('beacon-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+});
+document.getElementById('beacon-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeBeaconMenu();
+});
+document.getElementById('beacon-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeBeaconMenu(); }
+});
+// Beacon menu: middle-click title bar → open rows popup
+document.getElementById('beacon-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        openBeaconRowsPopup(e);
+    }
+});
+
+// Beacon codes state
+const beaconCodes = new Map();  // code → { manual: boolean }
+let beaconMenuOpen = false;
+let beaconVisibleRows = 8;  // Default 8 rows
+let beaconRowsPopupOpen = false;
+
+function updateBeaconMenuBody() {
+    const body = document.getElementById('beacon-menu-body');
+
+    try {
+        // Collect all unique squawk codes from owned tracks (regardless of handoff status)
+        const allCodes = new Set();
+
+        for (const [, flight] of flights) {
+            if (flight.squawk) {
+                const cls = classifyTrack(flight);
+                // Show tracks you own ('own' class or 'ho' in handoff)
+                if (cls === 'own' || cls === 'ho') {
+                    allCodes.add(flight.squawk);
+                }
+            }
+        }
+
+        // Add manually tracked codes
+        for (const code of beaconCodes.keys()) {
+            allCodes.add(code);
+        }
+
+        if (allCodes.size === 0) {
+            body.innerHTML = '<div style="color:#888; font-size:11px; text-align:center; margin-right:16px;">No code</div>';
+            body.style.display = 'flex';
+            body.style.alignItems = 'center';
+            body.style.justifyContent = 'center';
+            body.style.flexDirection = 'column';
+            return;
+        }
+        body.style.display = 'block';
+
+        // Sort codes and display
+        const sortedCodes = Array.from(allCodes).sort();
+        let html = '';
+        for (const code of sortedCodes) {
+            const isManual = beaconCodes.has(code);
+            const suffix = isManual ? '.' : '';
+            html += `<div class="beacon-entry">${code}${suffix}</div>`;
+        }
+        body.innerHTML = html;
+    } catch (e) {
+        console.error('Error updating beacon menu:', e);
+        body.innerHTML = '<div style="color:#888; font-size:11px; text-align:center; margin-right:16px;">Error</div>';
+    }
+}
+
+function openBeaconMenu() {
+    beaconMenuOpen = true;
+    const menu = document.getElementById('beacon-menu');
+    updateBeaconMenuBody();
+
+    const savedPos = localStorage.getItem('boxPos_beacon-menu');
+    if (!savedPos) {
+        menu.style.left = 'auto';
+        menu.style.right = '20px';
+        menu.style.top = '150px';
+        menu.style.bottom = 'auto';
+    } else {
+        try {
+            const pos = JSON.parse(savedPos);
+            if (pos.left) menu.style.left = pos.left;
+            if (pos.top) { menu.style.top = pos.top; menu.style.bottom = 'auto'; menu.style.right = 'auto'; }
+            requestAnimationFrame(() => clampBox(menu));
+        } catch(e) {
+            menu.style.left = 'auto';
+            menu.style.right = '20px';
+            menu.style.top = '150px';
+            menu.style.bottom = 'auto';
+        }
+    }
+
+    menu.style.display = 'block';
+    updateBeaconButtonState();
+}
+
+function closeBeaconMenu() {
+    beaconMenuOpen = false;
+    document.getElementById('beacon-menu').style.display = 'none';
+    if (beaconUpdateInterval) {
+        clearInterval(beaconUpdateInterval);
+        beaconUpdateInterval = null;
+    }
+    updateBeaconButtonState();
+}
+
+function updateBeaconButtonState() {
+    const buttons = document.querySelectorAll('.tb-btn');
+    for (const btn of buttons) {
+        const label = btn.querySelector('.tb-label');
+        if (label && label.textContent.includes('CODE')) {
+            btn.classList.toggle('tb-toggle-on', beaconMenuOpen);
+        }
+    }
+}
+
+function openBeaconRowsPopup(event) {
+    if (beaconRowsPopupOpen) {
+        closeBeaconRowsPopup();
+        return;
+    }
+
+    const popup = document.getElementById('beacon-rows-popup');
+    document.getElementById('beacon-rows-display').textContent = beaconVisibleRows;
+
+    const menu = document.getElementById('beacon-menu');
+    const title = document.getElementById('beacon-menu-title');
+    popup.style.left = menu.offsetLeft + 'px';
+    popup.style.top = (menu.offsetTop + title.offsetHeight) + 'px';
+    popup.style.display = 'block';
+    beaconRowsPopupOpen = true;
+}
+
+function setBeaconVisibleRows(rows) {
+    beaconVisibleRows = Math.max(2, Math.min(15, rows));
+    const body = document.getElementById('beacon-menu-body');
+    body.style.maxHeight = (beaconVisibleRows * 18) + 'px';
+    document.getElementById('beacon-rows-display').textContent = beaconVisibleRows;
+}
+
+function closeBeaconRowsPopup() {
+    document.getElementById('beacon-rows-popup').style.display = 'none';
+    beaconRowsPopupOpen = false;
+}
+
+let beaconUpdateInterval = null;
+
+// Weather menu: rows popup
+let wxRowsPopupOpen = false;
+let wxVisibleRows = 8;  // Default 8 rows
+
+function openWxRowsPopup(event) {
+    if (wxRowsPopupOpen) {
+        closeWxRowsPopup();
+        return;
+    }
+
+    const popup = document.getElementById('wx-rows-popup');
+    document.getElementById('wx-rows-display').textContent = wxVisibleRows;
+
+    // Position popup below the title
+    const menu = document.getElementById('wx-menu');
+    const title = document.getElementById('wx-menu-title');
+    popup.style.left = menu.offsetLeft + 'px';
+    popup.style.top = (menu.offsetTop + title.offsetHeight) + 'px';
+    popup.style.display = 'block';
+    wxRowsPopupOpen = true;
+}
+
+function setWxVisibleRows(rows) {
+    wxVisibleRows = Math.max(2, Math.min(15, rows));
+    const body = document.getElementById('wx-menu-body');
+    body.style.maxHeight = (wxVisibleRows * 18) + 'px';
+    document.getElementById('wx-rows-display').textContent = wxVisibleRows;
+}
+
+function closeWxRowsPopup() {
+    document.getElementById('wx-rows-popup').style.display = 'none';
+    wxRowsPopupOpen = false;
+}
+
+// Rows popup buttons
+document.getElementById('wx-rows-minus').addEventListener('click', (e) => {
+    e.stopPropagation();
+    setWxVisibleRows(wxVisibleRows - 1);
+});
+
+document.getElementById('wx-rows-plus').addEventListener('click', (e) => {
+    e.stopPropagation();
+    setWxVisibleRows(wxVisibleRows + 1);
+});
+
+// Close popup on outside click
+document.addEventListener('click', (e) => {
+    if (wxRowsPopupOpen && !e.target.closest('#wx-rows-popup') && !e.target.closest('#wx-menu-title')) {
+        closeWxRowsPopup();
+    }
+});
+
+// Weather menu: custom scroll controls
+document.getElementById('wx-scroll-up').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const body = document.getElementById('wx-menu-body');
+    body.scrollTop = Math.max(0, body.scrollTop - 16);
+});
+
+document.getElementById('wx-scroll-down').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const body = document.getElementById('wx-menu-body');
+    body.scrollTop = Math.min(body.scrollHeight - body.clientHeight, body.scrollTop + 16);
+});
+
+// Beacon menu: custom scroll controls
+document.getElementById('beacon-scroll-up').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const body = document.getElementById('beacon-menu-body');
+    body.scrollTop = Math.max(0, body.scrollTop - 16);
+});
+
+document.getElementById('beacon-scroll-down').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const body = document.getElementById('beacon-menu-body');
+    body.scrollTop = Math.min(body.scrollHeight - body.clientHeight, body.scrollTop + 16);
+});
+
+// Beacon rows popup buttons
+document.getElementById('beacon-rows-minus').addEventListener('click', (e) => {
+    e.stopPropagation();
+    setBeaconVisibleRows(beaconVisibleRows - 1);
+});
+
+document.getElementById('beacon-rows-plus').addEventListener('click', (e) => {
+    e.stopPropagation();
+    setBeaconVisibleRows(beaconVisibleRows + 1);
+});
+
+// Close beacon rows popup on outside click
+document.addEventListener('click', (e) => {
+    if (beaconRowsPopupOpen && !e.target.closest('#beacon-rows-popup') && !e.target.closest('#beacon-menu-title')) {
+        closeBeaconRowsPopup();
+    }
+});
+
+// CRR menu: close button
+document.getElementById('crr-menu-close').addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+});
+document.getElementById('crr-menu-close').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeCrrMenu();
+});
+document.getElementById('crr-menu-close').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); closeCrrMenu(); }
+});
+// CRR menu: middle-click title bar → toggle color selector
+document.getElementById('crr-menu-title').addEventListener('auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); toggleCrrColorSelector(); }
+});
+
+// Close CRR popups on outside click
+document.addEventListener('click', (e) => {
+    if (crrGroupDeletePopupOpen && !e.target.closest('#crr-group-delete-popup')) {
+        closeCrrGroupDeletePopup();
+    }
+    if (crrAircraftDeletePopupOpen && !e.target.closest('#crr-aircraft-delete-popup')) {
+        closeCrrAircraftDeletePopup();
+    }
+});
+
+// CRR menu body event delegation
+document.addEventListener('click', (e) => {
+    const labelEl = e.target.closest('[data-group]');
+    if (labelEl && labelEl.closest('#crr-menu-body')) {
+        const label = labelEl.dataset.group;
+        e.stopPropagation();
+        const mcaInput = document.getElementById('mca-mobile-input');
+        if (mcaInput) {
+            mcaInput.value = `LF ${label} `;
+            mcaInput.focus();
+            mcaInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+});
+
+document.addEventListener('auxclick', (e) => {
+    const labelEl = e.target.closest('[data-group]');
+    if (labelEl && labelEl.closest('#crr-menu-body') && e.button === 1) {
+        // Check if it's an aircraft row or group label
+        if (labelEl.classList.contains('crr-aircraft')) {
+            // Aircraft middle-click
+            e.preventDefault();
+            e.stopPropagation();
+            const label = labelEl.dataset.group;
+            const gufi = labelEl.dataset.gufi;
+            const callsign = labelEl.dataset.callsign;
+            openCrrAircraftDeletePopup(label, gufi, callsign, e);
+        } else if (labelEl.classList.contains('crr-group-label')) {
+            // Group label middle-click
+            const label = labelEl.dataset.group;
+            e.preventDefault();
+            e.stopPropagation();
+            openCrrGroupDeletePopup(label, e);
+        }
+    }
+});
+
+// Aircraft left/middle-click handler
+document.addEventListener('click', (e) => {
+    const aircraftEl = e.target.closest('.crr-aircraft');
+    if (aircraftEl && aircraftEl.closest('#crr-menu-body')) {
+        const label = aircraftEl.dataset.group;
+        const gufi = aircraftEl.dataset.gufi;
+        const callsign = aircraftEl.dataset.callsign;
+        e.stopPropagation();
+        openCrrAircraftDeletePopup(label, gufi, callsign, e);
+    }
+});
+
+// CRR group delete button (X) click handler
+document.addEventListener('click', (e) => {
+    const deleteBtn = e.target.closest('.crr-group-label-delete');
+    if (deleteBtn && deleteBtn.closest('#crr-menu-body')) {
+        const label = deleteBtn.dataset.delete;
+        e.stopPropagation();
+        deleteCrrGroup(label, e);
+    }
 });
 
 // Point-out menu: sector row click handler (shared for left + middle click)
@@ -6828,8 +8336,14 @@ const TB_VIEWS = {
         [
             toggle('ALTIM\nSET', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => altimeterMenuOpen,
+                onToggle: () => {
+                    if (altimeterMenuOpen) {
+                        closeAltimeterMenu();
+                    } else {
+                        openAltimeterMenu();
+                    }
+                },
             }),
             toggle('AUTO HO\nINHIB', {
                 cls: 'tb-toggle-grey',
@@ -6843,8 +8357,14 @@ const TB_VIEWS = {
             }),
             toggle('CODE', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => beaconMenuOpen,
+                onToggle: () => {
+                    if (beaconMenuOpen) {
+                        closeBeaconMenu();
+                    } else {
+                        openBeaconMenu();
+                    }
+                },
             }),
             toggle('CONFLCT\nALERT', {
                 cls: 'tb-toggle-grey',
@@ -6868,8 +8388,14 @@ const TB_VIEWS = {
             }),
             toggle('CRR', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => crrMenuOpen,
+                onToggle: () => {
+                    if (crrMenuOpen) {
+                        closeCrrMenu();
+                    } else {
+                        openCrrMenu();
+                    }
+                },
             }),
         ],
         [
@@ -6915,8 +8441,14 @@ const TB_VIEWS = {
             }),
             toggle('WX\nREPORT', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => weatherMenuOpen,
+                onToggle: () => {
+                    if (weatherMenuOpen) {
+                        closeWeatherMenu();
+                    } else {
+                        openWeatherMenu();
+                    }
+                },
             }),
         ],
     ],
@@ -7299,8 +8831,12 @@ const TB_DB_FIELDS = {
             }),
             toggle('CRR\nRDB', {
                 cls: 'tb-toggle-grey',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => crrRdbEnabled,
+                onToggle: (on) => {
+                    crrRdbEnabled = on;
+                    crrRdbOffset = 3;  // Reset offset to bottom-left when toggling on
+                    invalidateAllMarkers();
+                },
             }),
             toggle('STA RDB', {
                 cls: 'tb-toggle-grey',

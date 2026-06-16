@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using Microsoft.AspNetCore.StaticFiles;
 
 namespace SwimServer;
 
@@ -6,10 +7,13 @@ namespace SwimServer;
 /// Reverse proxy: /dstars/* → SwimReader.Server (port 5000) for DGScope clients.
 /// SwimServer fronts DGScope's HTTP-stream/WebSocket interface so external users only
 /// need one Cloudflare tunnel hostname for both feeds. Both transports are proxied:
-/// plain HTTP streaming and WebSocket upgrades.
+/// plain HTTP streaming and WebSocket upgrades. The landing page's own static assets
+/// (under wwwroot/dstars/) are served locally so the catch-all doesn't swallow them.
 /// </summary>
 static class DgScopeRoutes
 {
+    static readonly FileExtensionContentTypeProvider ContentTypes = new();
+
     public static void Register(WebApplication app, ServerContext ctx)
     {
         // Landing/directory page for DGScope users. The literal "/dstars" route is more
@@ -23,6 +27,23 @@ static class DgScopeRoutes
         app.Map("/dstars/{**rest}", async (HttpContext c, string rest) =>
         {
             var query = c.Request.QueryString.HasValue ? c.Request.QueryString.Value : "";
+
+            // Landing-page static assets (directory.css/js, fonts, images) live under
+            // wwwroot/dstars/ and must be served locally — the proxy below would otherwise
+            // forward them to the upstream feed and 404. Feed paths like "{facility}/updates"
+            // don't exist on disk, so they fall through to the proxy.
+            if (!c.WebSockets.IsWebSocketRequest && !rest.Contains(".."))
+            {
+                var localPath = Path.GetFullPath(Path.Combine(ctx.WebRootPath, "dstars", rest));
+                var dstarsRoot = Path.GetFullPath(Path.Combine(ctx.WebRootPath, "dstars"));
+                if (localPath.StartsWith(dstarsRoot, StringComparison.Ordinal) && File.Exists(localPath))
+                {
+                    c.Response.ContentType = ContentTypes.TryGetContentType(localPath, out var ct)
+                        ? ct : "application/octet-stream";
+                    await c.Response.SendFileAsync(localPath);
+                    return;
+                }
+            }
 
             // WebSocket transport: bridge the client socket to an upstream socket on port 5000.
             if (c.WebSockets.IsWebSocketRequest)

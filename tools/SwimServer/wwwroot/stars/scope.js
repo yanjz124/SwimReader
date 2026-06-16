@@ -409,6 +409,25 @@ async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
   }
 }
 
+// Warm the lazy line cache for ALL of the facility's maps in the background,
+// so toggling a MAP button later renders instantly. Runs at low concurrency
+// after the scope is interactive; DCB-assigned maps (MAP1-6) go first. A few
+// seconds of fetching up front is fine — the user opted into that tradeoff.
+async function warmAllMaps() {
+  const assigned = new Set(mapButtonAssignments);
+  const queue = [...videoMaps].sort((a, b) =>
+    (assigned.has(b.starsId) ? 1 : 0) - (assigned.has(a.starsId) ? 1 : 0));
+  const CONCURRENCY = 6;
+  let i = 0;
+  async function worker() {
+    while (i < queue.length) {
+      const m = queue[i++];
+      if (m.lines === null && !m._loading) await ensureMapLoaded(m);
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+}
+
 async function ensureMapLoaded(map) {
   if (map.lines !== null || map._loading) return;
   map._loading = true;
@@ -701,7 +720,10 @@ function isCoasting(t) {
 // approximated for the time-delta since lastUpdate.
 function extrapolatedPosition(t) {
   if (!t.Location) return null;
-  if (isCoasting(t)) return t.Location;      // freeze at last known
+  // No coast-freeze: DGScope's ScanTarget extrapolates continuously every sweep
+  // (Radar.cs:104) right up until the track is hidden at LostTargetSeconds — it
+  // has no coast state. Freezing at 24s then snapping when a delayed fix lands
+  // is exactly the intermittent "lag then jump" artifact, so we don't do it.
   if (t.GroundSpeed == null || t.GroundTrack == null) return t.Location;
   // Extrapolate from the last position fix (Aircraft.cs:884 uses the position
   // extrapolate time, not message time).
@@ -1512,6 +1534,7 @@ async function bootstrap() {
     // Phase 2: load video map catalog
     if (fac) {
       await loadVideoMapsCatalog(fac.starsConfiguration, fac.videoMaps);
+      warmAllMaps();   // background prefetch so MAP toggles render instantly
     }
     // Phase 4: ASR sites for SITE submenu (vNAS starsConfiguration → areas → asrSites if present)
     starsState.asrSites = fac?.starsConfiguration?.areas?.flatMap(a => a.asrSites || []) || [];

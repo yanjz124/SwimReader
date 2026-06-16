@@ -240,6 +240,7 @@ class DCB {
       padding: 0;
       box-sizing: border-box;
       align-content: flex-start;
+      font-family: FixedDemiBold, ui-monospace, monospace;
     `;
     this.popoutEl.addEventListener("click", (e) => this._onPopoutClick(e));
     this.popoutEl.addEventListener("contextmenu", (e) => this._onPopoutRClick(e));
@@ -288,7 +289,7 @@ class DCB {
       background: dcbAdjust(DCB_COLOR.FRAME_BG, p.Brightness.DCB),
       pointerEvents: "auto",
       userSelect: "none",
-      fontFamily: "ui-monospace, monospace",
+      fontFamily: "FixedDemiBold, ui-monospace, monospace",
       display: "flex",
       gap: "0",
       padding: "0",

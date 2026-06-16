@@ -55,7 +55,7 @@ const prefSet = {
   // PrefSet.cs:55-63 — every Brightness category defaults to 100. Profiles
   // override via applyProfile; URL `?b=...` further overrides per-category.
   Brightness: {
-    DCB: 100, Background: 100, RangeRings: 100, Compass: 100,
+    DCB: 100, Background: 100, RangeRings: 20, Compass: 100,
     VideoMapA: 100, VideoMapB: 100, DataBlock: 100,
     Lists: 100, Position: 100, History: 100, Weather: 100,
     Tools: 100,

@@ -35,6 +35,7 @@ public sealed class PersistedTarget
     public string? Callsign { get; set; }
     public string? Facility { get; set; }
     public DateTime LastSeen { get; set; }
+    public DateTime LastPositionTime { get; set; }
 }
 
 public static class DgScopePersistence

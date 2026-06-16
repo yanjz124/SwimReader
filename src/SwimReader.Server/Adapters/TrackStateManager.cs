@@ -32,7 +32,13 @@ public sealed class TrackStateManager
             return t;
         });
 
-        target.LastSeen = DateTime.UtcNow;
+        // GetTrackGuid is the POSITION path (called from ConvertTrack). Stamp the
+        // position time so purge can drop tracks whose position has gone stale even
+        // if flight-plan/enrichment messages keep refreshing LastSeen — otherwise a
+        // departed aircraft lingers as a position-frozen, callsign-shedding ghost.
+        var now = DateTime.UtcNow;
+        target.LastSeen = now;
+        target.LastPositionTime = now;
         target.Facility ??= facility;
         return target.TrackGuid;
     }
@@ -75,7 +81,14 @@ public sealed class TrackStateManager
 
         foreach (var kvp in _targets)
         {
-            if (kvp.Value.LastSeen < cutoff)
+            // A target that has EVER had a position is purged on position staleness
+            // (so FP/enrichment can't keep a frozen ghost alive); a flight-plan-only
+            // target (never positioned) falls back to message staleness.
+            var t = kvp.Value;
+            var stale = t.LastPositionTime != default
+                ? t.LastPositionTime < cutoff
+                : t.LastSeen < cutoff;
+            if (stale)
             {
                 if (_targets.TryRemove(kvp.Key, out var target))
                 {
@@ -131,6 +144,7 @@ public sealed class TrackStateManager
                 Callsign = kv.Value.Callsign,
                 Facility = kv.Value.Facility,
                 LastSeen = kv.Value.LastSeen,
+                LastPositionTime = kv.Value.LastPositionTime,
             });
         return list;
     }
@@ -143,7 +157,12 @@ public sealed class TrackStateManager
         var live = new HashSet<Guid>();
         foreach (var t in targets)
         {
-            if (t.LastSeen < cutoff) continue;
+            // Only restore targets with a FRESH position (or fresh message if never
+            // positioned) — never re-seed position-frozen ghosts across restarts.
+            var fresh = t.LastPositionTime != default
+                ? t.LastPositionTime >= cutoff
+                : t.LastSeen >= cutoff;
+            if (!fresh) continue;
             _targets[t.Key] = new TrackedTarget
             {
                 TrackGuid = t.TrackGuid,
@@ -151,6 +170,7 @@ public sealed class TrackStateManager
                 Callsign = t.Callsign,
                 Facility = t.Facility,
                 LastSeen = t.LastSeen,
+                LastPositionTime = t.LastPositionTime,
             };
             live.Add(t.TrackGuid);
             if (t.FlightPlanGuid != Guid.Empty) live.Add(t.FlightPlanGuid);
@@ -174,6 +194,7 @@ public sealed class TrackStateManager
         public Guid FlightPlanGuid { get; set; }
         public string? Callsign { get; set; }
         public string? Facility { get; set; }
+        public DateTime LastPositionTime { get; set; }   // last actual position fix (not FP/enrichment)
         public DateTime LastSeen { get; set; } = DateTime.UtcNow;
     }
 }

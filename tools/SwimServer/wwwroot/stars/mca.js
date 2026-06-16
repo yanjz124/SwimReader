@@ -90,7 +90,7 @@ function mountMca() {
       if (e.button !== 0 || !e.shiftKey) return;
       const r = pa.getBoundingClientRect();
       dragging = true; ox = e.clientX - r.left; oy = e.clientY - r.top;
-      pa.dataset.positioned = "1"; e.preventDefault();
+      pa.dataset.userMoved = "1"; e.preventDefault();
     });
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;

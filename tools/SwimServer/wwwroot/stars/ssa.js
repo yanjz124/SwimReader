@@ -191,15 +191,16 @@ function refreshSsa() {
   el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
   el.style.fontSize = (prefSet.CharSize?.Lists ?? 12) + "px";
 
-  // DEFAULT the preview (MCA) to just below the SSA — ONCE. After that it's free
-  // to be moved (drag / PreviewLocation command); we don't keep re-pinning it.
+  // Keep the preview (MCA) pinned just below the SSA so it follows when the SSA
+  // grows/shrinks (e.g. signing on adds a TCP line) — otherwise the SSA grows
+  // down OVER the preview and the typed text disappears. Stops tracking once the
+  // user drags it (userMoved) or sets PreviewLocation by command.
   const mca = document.getElementById("mca");
-  if (mca && !mca.dataset.positioned && !prefSet.PreviewLocation) {
+  if (mca && !mca.dataset.userMoved && !prefSet.PreviewLocation) {
     const r = el.getBoundingClientRect();
     mca.style.top = (r.bottom + 8) + "px";
     mca.style.left = r.left + "px";
     mca.style.bottom = "auto";
-    mca.dataset.positioned = "1";
   }
 }
 

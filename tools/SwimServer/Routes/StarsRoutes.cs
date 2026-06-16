@@ -74,20 +74,10 @@ static class StarsRoutes
             return Results.Json(new { artccId, available = ids, crcExportRoot = ctx.Stars.CrcExportRoot }, ctx.JsonOpts);
         });
 
-        // Auto-import from local CRC install (%LOCALAPPDATA%/CRC/VideoMaps/{ARTCC}/).
-        // This is what github.com/yanjz124/DGScope-profile-manager does — the maps
-        // already exist on disk; we just copy them into our crc-export tree.
-        app.MapPost("/api/stars/import-from-crc/{artccId}", (string artccId) =>
-        {
-            var r = ctx.Stars.ImportFromCrcInstall(artccId.ToUpperInvariant());
-            return Results.Json(new
-            {
-                artccId = artccId.ToUpperInvariant(),
-                imported = r.Imported,
-                error = r.Error,
-                crcSource = Path.Combine(ctx.Stars.CrcInstallVideoMapsDir, artccId.ToUpperInvariant()),
-            }, ctx.JsonOpts);
-        });
+        // (Removed: POST /api/stars/import-from-crc/{artccId}. It ran server-side
+        // and only ever saw the *server's* %LOCALAPPDATA%/CRC folder — on the Pi
+        // that surfaced JY's path to every viewer. Video maps are now served
+        // exclusively from the crc-export tree; admins seed it via upload-export.)
 
         // DGScope profile XMLs from %LOCALAPPDATA%/DGScope Profile Manager/
         app.MapGet("/api/stars/profiles/{artccId}", (string artccId) =>

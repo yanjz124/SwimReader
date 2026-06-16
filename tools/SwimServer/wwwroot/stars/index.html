@@ -60,7 +60,7 @@
 <header>
   <h1>STARS <span class="wip">WORK IN PROGRESS</span><a class="home" href="/">&larr; HOME</a></h1>
   <div class="sub">Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.</div>
-  <div class="wipnote">Active DGScope port — expect rough edges. Video maps require a local CRC export and won't render on this hosted instance; live targets stream from the dSTARS feed.</div>
+  <div class="wipnote">Active DGScope port — expect rough edges. Video maps are served from the hosted CRC export (where seeded); live targets stream from the dSTARS feed.</div>
 </header>
 <div class="layout">
   <div class="col">
@@ -100,36 +100,20 @@ async function selectArtcc(id) {
       $("facilities").innerHTML = `<div class="nostars">No STARS-configured facilities in ${id}.</div>`;
       return;
     }
-    // Render the import-maps banner + facility list. Don't auto-pick — give
-    // the user a chance to import maps first.
+    // Video maps are served exclusively from the server's crc-export tree —
+    // there's no client-side import (it would only ever see the *server's*
+    // local CRC folder, not the viewer's). Show a read-only count of what the
+    // server has on disk for this ARTCC.
     const avail = await fetch(`/api/stars/videoMaps/${encodeURIComponent(id)}`).then(r => r.json()).catch(() => ({available:[]}));
-    const importBanner = `<div style="padding:8px 16px;background:#0a2a0a;border-bottom:1px solid #1a3a1a;">
-      <button id="importBtn" style="background:#0a3a0a;color:#0f0;border:1px solid #0f0;padding:4px 10px;font-family:monospace;cursor:pointer;">
-        IMPORT MAPS FROM LOCAL CRC INSTALL
-      </button>
-      <span id="importStatus" style="color:#6f6;margin-left:8px;font-size:11px;">${avail.available.length} maps available on disk</span>
-    </div>`;
+    const mapsBanner = avail.available.length
+      ? `<div style="padding:8px 16px;background:#0a2a0a;border-bottom:1px solid #1a3a1a;color:#6f6;font-size:11px;">${avail.available.length} video maps available for ${id} on the server</div>`
+      : `<div style="padding:8px 16px;background:#2a1a0a;border-bottom:1px solid #3a2a1a;color:#fb6;font-size:11px;">No video maps on the server for ${id} — targets will still display.</div>`;
     const facilityRows = data.facilities.map(f =>
       `<div class="row" data-id="${f.id}">
         <span class="id">${f.id}</span>
         <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${f.areaCount || 0} areas</span>
       </div>`).join("");
-    $("facilities").innerHTML = importBanner + facilityRows;
-    document.getElementById("importBtn").onclick = async () => {
-      const btn = document.getElementById("importBtn");
-      const status = document.getElementById("importStatus");
-      btn.disabled = true;
-      status.textContent = "importing…";
-      try {
-        const r = await fetch(`/api/stars/import-from-crc/${encodeURIComponent(id)}`, { method: "POST" }).then(r => r.json());
-        if (r.error) status.textContent = "ERROR: " + r.error;
-        else status.textContent = `imported ${r.imported} maps from ${r.crcSource}`;
-      } catch (e) {
-        status.textContent = "ERROR: " + e;
-      } finally {
-        btn.disabled = false;
-      }
-    };
+    $("facilities").innerHTML = mapsBanner + facilityRows;
     // Profile picker: if any DGScope profile XMLs exist for this ARTCC, show
     // them. Clicking a profile launches the scope with ?profile=... applied.
     let profiles = [];

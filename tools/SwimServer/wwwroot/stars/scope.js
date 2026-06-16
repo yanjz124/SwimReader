@@ -685,8 +685,12 @@ function extrapolatedPosition(t) {
 // ── History (Phase 3b) ──────────────────────────────────────────────────────
 // RadarWindow.cs:5512 — every HistoryRate seconds (default 4.5s), push the
 // current position to history[0], shift older entries; cap at HistoryNum
-// (default 10). History dots are faded renderings of the target RETURN colour
-// that decay continuously with age (drawn in drawHistory) — not a fixed palette.
+// (default 10). Dots use the fixed 5-step HistoryColors palette indexed by age,
+// oldest clamped to the last entry (RadarWindow.cs:235,5530-5533; HistoryFade
+// default false → discrete steps, no continuous fade).
+const HISTORY_COLORS = [
+  [30, 80, 200], [70, 70, 170], [50, 50, 130], [40, 40, 110], [30, 30, 90],
+];
 
 function tickHistory(t, posNow) {
   if (!posNow) return;
@@ -702,11 +706,9 @@ function tickHistory(t, posNow) {
 function drawHistory(t) {
   if (!t._history || t._history.length === 0) return;
   const max = Math.min(t._history.length, prefSet.HistoryNum);
-  const denom = Math.max(prefSet.HistoryNum, 1);
   for (let i = 0; i < max; i++) {
-    // Faded return colour, continuous decay with age (oldest ~20% brightness).
-    const fade = 1 - 0.8 * (i / denom);
-    ctx.fillStyle = adjusted(COLORS.Return, prefSet.Brightness.History * fade);
+    const c = HISTORY_COLORS[Math.min(i, HISTORY_COLORS.length - 1)];
+    ctx.fillStyle = adjusted(c, prefSet.Brightness.History);
     const p = geoToScreen(t._history[i]);
     if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
     ctx.fillRect(Math.round(p.x - 2.5), Math.round(p.y - 2.5), 5, 5);
@@ -841,12 +843,13 @@ function buildDataBlock(t, fp) {
   const typeRight  = ((fp?.AircraftType?.trim() || "").padEnd(4)).slice(0, 4) || speedRight;
   const reqAltRight = (fp?.RequestedAltitude > 0)
                       ? "R" + String(Math.floor(fp.RequestedAltitude / 100)).padStart(3, "0")
-                      : speedRight;
+                      : typeRight;   // WPF: reqalt falls back to type (Aircraft.cs:431-433)
 
-  // Each variant: LLL + H + RRRR = 8 chars.
+  // Variant order per WPF Aircraft.cs: phase0 = alt+speed (:436), phase1 =
+  // scratchpad1+reqalt (:437), phase2 = scratchpad2+type (:438-444).
   const fdb1line2 = `${altLeft}${handoffChar}${speedRight}`;
-  const fdb2line2 = `${scr1Left}${handoffChar}${typeRight}`;
-  const fdb3line2 = `${scr2Left}${handoffChar}${reqAltRight}`;
+  const fdb2line2 = `${scr1Left}${handoffChar}${reqAltRight}`;
+  const fdb3line2 = `${scr2Left}${handoffChar}${typeRight}`;
 
   if (mode === "FDB") {
     // Line 1: callsign or squawk (Aircraft.cs:449-489)
@@ -864,9 +867,17 @@ function buildDataBlock(t, fp) {
   } else if (mode === "PDB") {
     lines.push(fp?.Callsign || t.Callsign || t.Squawk || "");
     lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
-  } else { // LDB (Aircraft.cs:559+)
-    if (!prefSet.LdbBeaconCodesInhibited) lines.push(t.Squawk || "");
-    lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+  } else { // LDB — WPF Aircraft.cs:565-613 (always 3 lines)
+    if (prefSet.LdbBeaconCodesInhibited) {
+      // BCB inhibited: altitude on line 1, two blank lines (Aircraft.cs:571-573)
+      lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+      lines.push("     ");
+      lines.push("     ");
+    } else {
+      lines.push(t.Squawk || "");                                    // line 1 squawk
+      lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);  // line 2 altitude
+      lines.push("     ");                                           // line 3 blank
+    }
   }
   return lines;
 }
@@ -1017,14 +1028,13 @@ function drawDataBlockAndLeader(t, fp, posNow) {
 //        - else "◇" if PrimaryOnly
 //        - else "*"
 function positionSymbolText(t, fp) {
-  // Coast tracks show the coast glyph regardless of ownership.
-  if (isCoasting(t)) return "#";
-  // Owned / handed-off track shows the controlling position's sector char.
+  // STARS position symbol (WPF Aircraft.cs:616-623): the controlling position's
+  // sector char if owned/handed-off; ◇ for primary-only (no beacon); else "*".
+  // STARS has NO ERAM-style coast "#" / "\" / "+" glyphs.
   const owner = fp?.Owner || t.PositionInd;
   if (owner && owner.length > 0) return owner.slice(-1);
-  // Otherwise use the STARS track-type glyph (◇ associated / \ correlated
-  // beacon / + uncorrelated primary) instead of collapsing everything to "*".
-  return symbolFor(t);
+  if (!t.Squawk || t.Squawk === "0000") return "◇";  // PrimaryOnly
+  return "*";
 }
 
 function drawPosition(t, posNow) {
@@ -1037,15 +1047,11 @@ function drawPosition(t, posNow) {
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;
 
-  // Coast tracks: per STARS (different from ERAM), no PrimaryReturn circle
-  // is drawn - only the position indicator letter (typically the owner
-  // sector ID) shows. Per user spec.
-  if (!isCoasting(t)) {
-    ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
-    ctx.beginPath();
-    ctx.arc(px, py, 4, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  // Primary return — WPF always draws it (STARS has no coast suppression).
+  ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
+  ctx.beginPath();
+  ctx.arc(px, py, 4, 0, Math.PI * 2);
+  ctx.fill();
 
   // Position glyph colour follows the target's state: red on emergency, white
   // when owned, else the standard green beacon/track colour (not always lime).
@@ -1213,7 +1219,7 @@ function drawTracks() {
     drawHistory(t);
     drawPTL(t, posNow);
     drawPosition(t, posNow);
-    if (!isCoasting(t)) drawDataBlockAndLeader(t, fp, posNow);
+    drawDataBlockAndLeader(t, fp, posNow);  // WPF draws the block for all tracks (no coast suppression)
   }
 }
 
@@ -1328,32 +1334,37 @@ async function bootstrap() {
   resize();
   try {
     const fac = await fetch(`/api/stars/facility/${encodeURIComponent(ARTCC)}/${encodeURIComponent(FACILITY)}`).then(r => r.json());
-    // vNAS schema: TRACONs often have location: null. Try in this order:
-    //   1. fac.location
-    //   2. fac.visibilityCenters[0]  (ARTCC-level, exposed by backend as fallback)
-    //   3. fac.starsConfiguration.areas[0].asrSites[0].location
+    // A STARS facility has one or more AREAS; each area carries its own
+    // visibilityCenter (display center), surveillanceRange, maps and altimeter.
+    // Center on the selected area's visibilityCenter — NOT the ARTCC center.
+    const sc = fac && fac.starsConfiguration;
+    const areas = (sc && Array.isArray(sc.areas)) ? sc.areas : [];
+    const areaSel = new URLSearchParams(location.search).get("area");
+    let area = areas[0] || null;
+    if (areaSel && areas.length) {
+      const m = areas.find(a => a.id === areaSel ||
+        (a.name || "").toUpperCase() === areaSel.toUpperCase());
+      if (m) area = m;
+    }
+    starsState.area = area;
+
+    // Center priority: area.visibilityCenter → facility location → ARTCC center.
     let loc = null;
-    if (fac && fac.location) loc = fac.location;
+    if (area && area.visibilityCenter) loc = area.visibilityCenter;
+    else if (fac && fac.location) loc = fac.location;
     else if (fac && Array.isArray(fac.visibilityCenters) && fac.visibilityCenters[0])
       loc = fac.visibilityCenters[0];
-    else {
-      const sc = fac && fac.starsConfiguration;
-      const a0 = sc && sc.areas && sc.areas[0];
-      const asr0 = a0 && Array.isArray(a0.asrSites) && a0.asrSites[0];
-      if (asr0 && asr0.location) loc = asr0.location;
-    }
+
     if (loc) {
       prefSet.ScreenCenterPoint = { Latitude: loc.lat, Longitude: loc.lon };
       prefSet.RangeRingLocation = { Latitude: loc.lat, Longitude: loc.lon };
       starsState.facilityLocation = { Latitude: loc.lat, Longitude: loc.lon };
     } else {
-      console.warn("[STARS] No location available; centering on 0,0.");
+      console.warn("[STARS] No area/location available; centering on 0,0.");
     }
-    // Default range from area config if present.
-    const sc2 = fac && fac.starsConfiguration;
-    if (sc2 && sc2.areas && sc2.areas[0] && sc2.areas[0].defaultRange) {
-      prefSet.Range = sc2.areas[0].defaultRange;
-    }
+    // Default range from the area's surveillance range (e.g. RDU = 80).
+    if (area && area.surveillanceRange) prefSet.Range = area.surveillanceRange;
+    else if (area && area.defaultRange) prefSet.Range = area.defaultRange;
     if (fac && fac.name) document.title = `STARS ${ARTCC}/${FACILITY} — ${fac.name}`;
     recomputeScale();
 

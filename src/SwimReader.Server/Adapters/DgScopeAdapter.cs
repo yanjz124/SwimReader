@@ -48,6 +48,19 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> _facilityFlightPlans = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Recent positions per track (newest-first, capped), injected into the
+    /// snapshot so a freshly-connected scope renders a history trail instantly
+    /// instead of taking ~HistoryRate*N seconds to build it up. Each entry is an
+    /// immutable array swapped atomically, so GetSnapshot reads it lock-free.
+    /// Live updates do NOT carry history (only the snapshot does), so per-update
+    /// bandwidth is unchanged.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, DstarsGeoPoint[]> _trackHistory = new();
+    private readonly ConcurrentDictionary<Guid, DateTime> _trackHistoryTime = new();
+    private const int HistoryMax = 10;                                    // matches client HistoryNum ceiling
+    private static readonly TimeSpan HistorySpacing = TimeSpan.FromSeconds(4.5);  // PrefSet.HistoryRate default
+
+    /// <summary>
     /// Tracks which FP GUIDs have TAIS data with a callsign (non-LADD).
     /// Enrichment is fully suppressed for these tracks.
     /// </summary>
@@ -133,7 +146,16 @@ public sealed class DgScopeAdapter : BackgroundService
         if (_facilityTracks.TryGetValue(facility, out var tGuids))
         {
             foreach (var g in tGuids.Keys)
-                if (_lastTrackJson.TryGetValue(g, out var json)) yield return json;
+            {
+                if (!_lastTrackJson.TryGetValue(g, out var json)) continue;
+                // Inject the cached history trail (snapshot only) by splicing it
+                // into the flat JSON object before the closing brace. Reading the
+                // array reference is atomic (it's swapped, never mutated).
+                var hist = _trackHistory.GetValueOrDefault(g);
+                if (hist is { Length: > 1 })
+                    json = json[..^1] + ",\"History\":" + JsonSerializer.Serialize(hist, JsonOptions) + "}";
+                yield return json;
+            }
         }
     }
 
@@ -190,7 +212,30 @@ public sealed class DgScopeAdapter : BackgroundService
             Source = positionOnly ? null : 0
         };
 
+        if (update.Location is not null)
+            RecordHistory(guid, update.Location, track.Timestamp);
+
         return JsonSerializer.Serialize(update, JsonOptions);
+    }
+
+    /// <summary>
+    /// Append a position to the track's history ring buffer — time-gated to
+    /// HistorySpacing and only when the position actually changed (so a frozen
+    /// track doesn't stack points), capped at HistoryMax, newest-first. Mirrors
+    /// the client's radarSweep history logic so the seeded trail is consistent.
+    /// </summary>
+    private void RecordHistory(Guid guid, DstarsGeoPoint pos, DateTime ts)
+    {
+        if (_trackHistoryTime.TryGetValue(guid, out var last) && (ts - last) < HistorySpacing)
+            return;
+        var prev = _trackHistory.GetValueOrDefault(guid) ?? Array.Empty<DstarsGeoPoint>();
+        if (prev.Length > 0 && prev[0].Latitude == pos.Latitude && prev[0].Longitude == pos.Longitude)
+            return;   // no movement — don't stack
+        _trackHistoryTime[guid] = ts;
+        var next = new DstarsGeoPoint[Math.Min(prev.Length + 1, HistoryMax)];
+        next[0] = pos;
+        Array.Copy(prev, 0, next, 1, next.Length - 1);
+        _trackHistory[guid] = next;
     }
 
     private string? ConvertFlightPlan(FlightPlanDataEvent fp)
@@ -308,6 +353,8 @@ public sealed class DgScopeAdapter : BackgroundService
                     _lastFpJson.TryRemove(guid, out _);
                     _lastFpJsonOut.TryRemove(guid, out _);
                     _lastTrackJson.TryRemove(guid, out _);
+                    _trackHistory.TryRemove(guid, out _);
+                    _trackHistoryTime.TryRemove(guid, out _);
                     _taisHasCallsign.TryRemove(guid, out _);
                     _enrichedCallsigns.TryRemove(guid, out _);
                     if (facility is not null)

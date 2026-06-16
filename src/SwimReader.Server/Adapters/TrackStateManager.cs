@@ -117,6 +117,47 @@ public sealed class TrackStateManager
 
     public int ActiveTrackCount => _targets.Count;
 
+    /// <summary>Export the GUID mappings for persistence (survives restarts so
+    /// fresh positions re-associate with the saved flight plans).</summary>
+    public List<PersistedTarget> ExportTargets()
+    {
+        var list = new List<PersistedTarget>(_targets.Count);
+        foreach (var kv in _targets)
+            list.Add(new PersistedTarget
+            {
+                Key = kv.Key,
+                TrackGuid = kv.Value.TrackGuid,
+                FlightPlanGuid = kv.Value.FlightPlanGuid,
+                Callsign = kv.Value.Callsign,
+                Facility = kv.Value.Facility,
+                LastSeen = kv.Value.LastSeen,
+            });
+        return list;
+    }
+
+    /// <summary>Restore GUID mappings seen at-or-after <paramref name="cutoff"/>.
+    /// Returns the set of restored GUIDs (track + flight plan) so the adapter can
+    /// restore only matching cache entries.</summary>
+    public HashSet<Guid> ImportTargets(IEnumerable<PersistedTarget> targets, DateTime cutoff)
+    {
+        var live = new HashSet<Guid>();
+        foreach (var t in targets)
+        {
+            if (t.LastSeen < cutoff) continue;
+            _targets[t.Key] = new TrackedTarget
+            {
+                TrackGuid = t.TrackGuid,
+                FlightPlanGuid = t.FlightPlanGuid,
+                Callsign = t.Callsign,
+                Facility = t.Facility,
+                LastSeen = t.LastSeen,
+            };
+            live.Add(t.TrackGuid);
+            if (t.FlightPlanGuid != Guid.Empty) live.Add(t.FlightPlanGuid);
+        }
+        return live;
+    }
+
     private static string BuildTrackKey(int? modeSCode, string? trackNumber, string? facility)
     {
         // Prefer Mode S code as it's globally unique

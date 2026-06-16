@@ -130,6 +130,44 @@ public sealed class DgScopeAdapter : BackgroundService
         }
     }
 
+    /// <summary>Export the broadcast caches for persistence. Pairs with
+    /// TrackStateManager.ExportTargets — together they let a restarted server
+    /// serve the full prior state (callsign, owner, scratchpads, history) on the
+    /// connect snapshot instead of bald position-only tracks.</summary>
+    public void ExportCaches(PersistedState s)
+    {
+        foreach (var kv in _lastTrackJson) s.LastTrackJson[kv.Key.ToString()] = kv.Value;
+        foreach (var kv in _lastFpJsonOut) s.LastFpJson[kv.Key.ToString()] = kv.Value;
+        foreach (var kv in _facilityTracks) s.FacilityTracks[kv.Key] = kv.Value.Keys.Select(g => g.ToString()).ToList();
+        foreach (var kv in _facilityFlightPlans) s.FacilityFlightPlans[kv.Key] = kv.Value.Keys.Select(g => g.ToString()).ToList();
+        foreach (var kv in _enrichedCallsigns) s.EnrichedCallsigns[kv.Key.ToString()] = kv.Value;
+        foreach (var g in _taisHasCallsign.Keys) s.TaisHasCallsign.Add(g.ToString());
+        foreach (var kv in _trackHistory) s.TrackHistory[kv.Key.ToString()] = kv.Value.ToList();
+    }
+
+    /// <summary>Restore caches, keeping only entries whose GUID is a live target
+    /// (post-cutoff) so we never resurrect tracks the manager dropped.</summary>
+    public void ImportCaches(PersistedState s, HashSet<Guid> live)
+    {
+        foreach (var kv in s.LastTrackJson) if (Guid.TryParse(kv.Key, out var g) && live.Contains(g)) _lastTrackJson[g] = kv.Value;
+        foreach (var kv in s.LastFpJson) if (Guid.TryParse(kv.Key, out var g) && live.Contains(g)) _lastFpJsonOut[g] = kv.Value;
+        foreach (var kv in s.EnrichedCallsigns) if (Guid.TryParse(kv.Key, out var g) && live.Contains(g)) _enrichedCallsigns[g] = kv.Value;
+        foreach (var k in s.TaisHasCallsign) if (Guid.TryParse(k, out var g) && live.Contains(g)) _taisHasCallsign[g] = 0;
+        foreach (var kv in s.TrackHistory)
+            if (Guid.TryParse(kv.Key, out var g) && live.Contains(g) && kv.Value.Count > 0)
+                _trackHistory[g] = kv.Value.ToArray();
+        foreach (var kv in s.FacilityTracks)
+        {
+            var set = _facilityTracks.GetOrAdd(kv.Key, _ => new());
+            foreach (var idStr in kv.Value) if (Guid.TryParse(idStr, out var g) && live.Contains(g)) set[g] = 0;
+        }
+        foreach (var kv in s.FacilityFlightPlans)
+        {
+            var set = _facilityFlightPlans.GetOrAdd(kv.Key, _ => new());
+            foreach (var idStr in kv.Value) if (Guid.TryParse(idStr, out var g) && live.Contains(g)) set[g] = 0;
+        }
+    }
+
     /// <summary>
     /// Snapshot of all currently-known tracks + flight plans for a facility.
     /// Called by DstarsController on new client connect so they see the

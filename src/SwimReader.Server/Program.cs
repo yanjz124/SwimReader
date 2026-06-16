@@ -67,6 +67,9 @@ builder.Services.AddSingleton<ClientConnectionManager>();
 // resolve it for snapshot-on-connect.
 builder.Services.AddSingleton<DgScopeAdapter>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DgScopeAdapter>());
+// Persist track + flight-plan state across restarts (periodic + on shutdown);
+// the matching load runs below, before app.Run(), so it precedes Solace data.
+builder.Services.AddHostedService<DgScopePersistenceService>();
 
 // --- ADS-B hybrid enrichment (adsb.fi + adsb.lol + airplanes.live) ---
 builder.Services.Configure<AdsbFiOptions>(
@@ -110,6 +113,15 @@ if (adsbFiConfig?.Enabled == true)
 builder.Services.AddControllers();
 
 var app = builder.Build();
+
+// Restore persisted dStars state BEFORE the host starts processing Solace data,
+// so the first connecting client sees full prior state (callsign/owner/history)
+// and fresh positions re-associate with the saved flight plans by GUID.
+SwimReader.Server.Adapters.DgScopePersistence.Load(
+    app.Services.GetRequiredService<SwimReader.Server.Adapters.TrackStateManager>(),
+    app.Services.GetRequiredService<SwimReader.Server.Adapters.DgScopeAdapter>(),
+    SwimReader.Server.Adapters.DgScopePersistence.ResolvePath(),
+    app.Services.GetRequiredService<ILogger<SwimReader.Server.Adapters.DgScopeAdapter>>());
 
 app.UseWebSockets();
 app.MapControllers();

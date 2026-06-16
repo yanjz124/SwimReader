@@ -622,9 +622,24 @@ function handleUpdate(u) {
 // semantics. Any field present overwrites; absent fields preserved.
 function handleTrackUpdate(u) {
   let t = tracks.get(u.Guid);
+  const fresh = !t;
   if (!t) { t = { Guid: u.Guid, lastUpdate: 0 }; tracks.set(u.Guid, t); }
   t.lastUpdate = Date.now();
-  if (u.Location)      t.Location = u.Location;
+  if (u.Location) {
+    // Track position-fix time (lastPosUpdate) and last *movement* time
+    // (lastMoveT) separately from message time. Our feed re-sends the same
+    // frozen position for landed/parked tracks, so message-time alone never
+    // ages them out. DGScope hides on LastMessageTime (RadarWindow.cs:6162),
+    // but it also keeps ExtrapolatePosition ghosting the target forward
+    // (Aircraft.cs:882) — for our feed, movement is the faithful liveness
+    // signal: no positional change in LostTargetSeconds → coast → drop.
+    const prev = t.Location;
+    const moved = !prev || prev.Latitude !== u.Location.Latitude
+                        || prev.Longitude !== u.Location.Longitude;
+    t.Location = u.Location;
+    t.lastPosUpdate = t.lastUpdate;
+    if (fresh || moved) t.lastMoveT = t.lastUpdate;
+  }
   if (u.Altitude)      t.Altitude = u.Altitude;
   if (u.GroundSpeed != null)  t.GroundSpeed = u.GroundSpeed;
   if (u.GroundTrack != null)  t.GroundTrack = u.GroundTrack;
@@ -672,7 +687,9 @@ function symbolFor(track) {
   return "+";
 }
 function isCoasting(t) {
-  return (Date.now() - t.lastUpdate) > 24000;     // 2 × 12s scan
+  // Based on the last *position fix*, not the last message — the feed can keep
+  // sending messages (or a frozen position) without the target actually moving.
+  return (Date.now() - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate)) > 24000; // 2 × 12s scan
 }
 
 // ── Velocity extrapolation (RadarWindow.cs:displayPosition + Aircraft.ExtrapolatePosition)
@@ -683,7 +700,9 @@ function extrapolatedPosition(t) {
   if (!t.Location) return null;
   if (isCoasting(t)) return t.Location;      // freeze at last known
   if (t.GroundSpeed == null || t.GroundTrack == null) return t.Location;
-  const ageS = (Date.now() - t.lastUpdate) / 1000;
+  // Extrapolate from the last position fix (Aircraft.cs:884 uses the position
+  // extrapolate time, not message time).
+  const ageS = (Date.now() - (t.lastPosUpdate ?? t.lastUpdate)) / 1000;
   if (ageS < 0.05) return t.Location;
   // 1 NM = 1/60 degree latitude. Apply GroundTrack-bearing offset.
   const distNM = (t.GroundSpeed * ageS) / 3600;
@@ -1201,14 +1220,23 @@ function radarSweep() {
   const now = Date.now();
   for (const t of tracks.values()) {
     if (!t.Location) continue;
-    if (now - t.lastUpdate > LOST_TARGET_MS) continue;   // lost target: stop sweeping
+    // Stop sweeping a track whose position has gone stale (no movement within
+    // LostTargetSeconds) — it's coasting / has landed and will be hidden.
+    if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue;
     const pos = extrapolatedPosition(t);
     if (!pos) continue;
     t._sweptPos = pos;                                   // 1 Hz displayed position
     if (!t._lastHistoryT) t._lastHistoryT = now;
     if (now - t._lastHistoryT >= prefSet.HistoryRate * 1000) {
-      (t._history ||= []).unshift({ Latitude: pos.Latitude, Longitude: pos.Longitude });
-      while (t._history.length > prefSet.HistoryNum) t._history.pop();
+      // Only deposit a history dot if the target actually moved since the last
+      // one — otherwise a frozen track stacks dots into a blob at one spot.
+      const last = t._history && t._history[0];
+      const moved = !last || Math.abs(pos.Latitude - last.Latitude) > 1e-5
+                          || Math.abs(pos.Longitude - last.Longitude) > 1e-5;
+      if (moved) {
+        (t._history ||= []).unshift({ Latitude: pos.Latitude, Longitude: pos.Longitude });
+        while (t._history.length > prefSet.HistoryNum) t._history.pop();
+      }
       t._lastHistoryT = now;
     }
   }
@@ -1297,7 +1325,7 @@ function drawTracks() {
   for (const t of tracks.values()) {
     if (!t.Location) continue;
     if (t.IsOnGround) continue;                       // Radar.cs Scan skips on-ground
-    if (now - t.lastUpdate > LOST_TARGET_MS) continue; // lost target → hidden (LostTargetSeconds)
+    if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue; // lost target → hidden (LostTargetSeconds, by position movement)
     const fp = trackToFp.get(t.Guid);
     // Altitude filter — PrefSet AltitudeFilterAssociated{Min,Max} / UnAssociated.
     const altFt = t.Altitude?.Value;

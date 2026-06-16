@@ -114,15 +114,13 @@ function mountMca() {
 function refreshMca() {
   const el = document.getElementById("mca");
   if (!el) return;
-  const cursor = "_";
-  // RadarWindow.cs:2918-2945: PreviewArea + response both render as
-  // DataBlockColor (green) modulated by Brightness.Lists. Errors do NOT
-  // change color in WPF — they just set the message. We follow that.
-  el.innerHTML =
-    `<div>${MCA.response || ""}</div>` +
-    `<div>${MCA.buffer}${cursor}</div>`;
+  // RenderPreview (RadarWindow.cs:2920-2945): show exactly ONE thing — the readout
+  // message while the buffer is empty (DisplayPreviewMessage clears the buffer),
+  // else the typed buffer + a trailing-space cursor (GeneratePreviewString :3261).
+  // Colour = DataBlockColor * Brightness.FullDataBlocks (cs:2928), NOT Lists.
+  el.textContent = (MCA.response && !MCA.buffer) ? MCA.response : (MCA.buffer + " ");
   if (window.prefSet) {
-    const b = window.prefSet.Brightness.Lists / 100;
+    const b = (window.prefSet.Brightness.DataBlock ?? 100) / 100;
     el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
     el.style.fontSize = (window.prefSet.CharSize?.Lists ?? 13) + "px";
   }
@@ -223,14 +221,16 @@ function onKeyDown(e) {
 // IMPORTANT: This is a partial port. Sections marked TODO(test-in-crc) need
 // you to test the WPF/CRC behavior so we can match it exactly.
 
-function setResponse(msg) {
-  // RadarWindow.cs:2937-2940: SetPreviewMessage stores text + expiry timestamp;
-  // colour does NOT change. 4-second auto-clear matches WPF default.
+function setResponse(msg, seconds = 5) {
+  // DisplayPreviewMessage (RadarWindow.cs:2935-2940): store message + expiry and
+  // CLEAR the typed buffer (cs:2937) — the readout replaces the buffer. Default
+  // expiry 5s (some call-sites override to 10s/30s).
   MCA.response = msg;
+  MCA.buffer = "";
   refreshMca();
   setTimeout(() => {
     if (MCA.response === msg) { MCA.response = ""; refreshMca(); }
-  }, 4000);
+  }, seconds * 1000);
 }
 
 // FLID resolution: callsign first, then assigned beacon code.

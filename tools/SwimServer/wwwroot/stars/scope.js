@@ -984,21 +984,27 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // right edge (closest to target); pad-left otherwise.
   const padLeft = (v.x < 0);
 
-  // Block color — STCA > Pointout > Emergency > Owned > DataBlock.
-  // RadarWindow.cs:80 — PointoutColor = Yellow.
+  // Data-block colour priority — RadarWindow.cs:5436-5468:
+  //   Emergency→red > Marked→Selected(cyan) > ForceQuickLook→Pointout(yellow)
+  //   > Owned||QuickLookPlus→Owned(white) > FDB/LDB→DataBlock(green).
+  // An inbound handoff (PendingHandoff == my position) is treated as Owned and
+  // FLASHES (DataBlock.Flashing, cs:1067-1070) — NOT a yellow tier.
+  const inboundHandoff = fp?.PendingHandoff && fp.PendingHandoff === ownTcp();
+  const owned = (fp?.Owner === ownTcp()) || inboundHandoff;
   let baseColor = COLORS.DataBlock;
   if (t._stca) {
-    // Phase 9: STCA pair → flash red (1 Hz)
     baseColor = (Date.now() % 1000 < 500) ? COLORS.Emerg : COLORS.Pointout;
   } else if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
     baseColor = COLORS.Emerg;
+  } else if (t._marked) {
+    baseColor = COLORS.Selected;            // cyan
   } else if (fp?._pointoutTarget && (fp._pointoutTarget === ownTcp() || fp._pointoutTarget === "ANY")) {
-    baseColor = COLORS.Pointout;            // Phase 8: PO directed at us
-  } else if (fp?.PendingHandoff === ownTcp()) {
-    baseColor = COLORS.Pointout;            // pending handoff TO us = yellow attention
-  } else if (fp?.Owner === ownTcp()) {
-    baseColor = COLORS.Owned;
+    baseColor = COLORS.Pointout;            // ForceQuickLook → yellow
+  } else if (owned) {
+    baseColor = COLORS.Owned;               // white
   }
+  // Inbound handoff flashes ~1 Hz — hide the block on the off phase (cs:1068).
+  if (inboundHandoff && (Date.now() % 1000) >= 500) return;
   ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.DataBlock);
   ctx.textBaseline = "top";
   ctx.textAlign = padLeft ? "right" : "left";
@@ -1046,10 +1052,13 @@ function positionSymbolText(t, fp) {
 
 function drawPosition(t, posNow) {
   const fp = trackToFp.get(t.Guid);
-  // Color hierarchy per RadarWindow.cs:5435+ / line 5512.
+  // Position-symbol colour follows the data-block priority (RadarWindow.cs:5469,
+  // 5580-5584): emergency red > marked cyan > owned/inbound-handoff white > green.
+  const inbound = fp?.PendingHandoff && fp.PendingHandoff === ownTcp();
   let baseColor = COLORS.Return;
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) baseColor = COLORS.Emerg;
-  else if (fp?.Owner === ownTcp()) baseColor = COLORS.Owned;
+  else if (t._marked) baseColor = COLORS.Selected;
+  else if (fp?.Owner === ownTcp() || inbound) baseColor = COLORS.Owned;
 
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;

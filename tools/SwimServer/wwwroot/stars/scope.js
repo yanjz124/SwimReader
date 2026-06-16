@@ -1093,6 +1093,46 @@ function drawJRings() {
   }
 }
 
+// ── Range/Bearing Lines (*T) — RadarWindow.cs DrawLine(rbl) ──────────────────
+function _rblGeo(s) {
+  if (!s) return null;
+  if (s.Latitude != null) return { Latitude: s.Latitude, Longitude: s.Longitude };
+  if (s.lat != null) return { Latitude: s.lat, Longitude: s.lon };
+  return null;
+}
+function _rblPlaneGeo(p) {
+  const loc = extrapolatedPosition(p) || p?.Location;
+  return loc ? { Latitude: loc.Latitude, Longitude: loc.Longitude } : null;
+}
+function rblBearing(a, b) {
+  const φ1 = a.Latitude * Math.PI / 180, φ2 = b.Latitude * Math.PI / 180;
+  const dλ = (b.Longitude - a.Longitude) * Math.PI / 180;
+  const y = Math.sin(dλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(dλ);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+function drawRBLs() {
+  const lines = window.starsState?.rangeBearingLines;
+  if (!lines || !lines.length) return;
+  ctx.strokeStyle = adjusted(COLORS.RBL, prefSet.Brightness.Tools);
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.lineWidth = 1;
+  ctx.font = `${prefSet.CharSize.Tools}px FixedDemiBold, ui-monospace, monospace`;
+  ctx.textAlign = "left";
+  for (const l of lines) {
+    const a = l.startPlane ? _rblPlaneGeo(l.startPlane) : _rblGeo(l.startGeo);
+    const isTemp = (l === window.starsState.tempLine && !l.endPlane);
+    const b = l.endPlane ? _rblPlaneGeo(l.endPlane) : (isTemp ? window.mouseGeo() : _rblGeo(l.end));
+    if (!a || !b) continue;
+    const pa = geoToScreen(a), pb = geoToScreen(b);
+    ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+    const distNM = distanceNM(a, b);
+    const brg = rblBearing(a, b);
+    ctx.fillText(`${distNM.toFixed(1)}/${String(Math.round(brg) % 360).padStart(3, "0")}`,
+      (pa.x + pb.x) / 2 + 5, (pa.y + pb.y) / 2 - 3);
+  }
+}
+
 // STCA pair scan — N² over owned tracks. Cheap for typical TRACON load.
 const stcaPairs = new Set();   // "guid1|guid2"
 function scanSTCA() {
@@ -1123,6 +1163,20 @@ function scanSTCA() {
   }
 }
 setInterval(scanSTCA, 1000);
+
+// Purge tracks that have stopped updating (landed / out of radar coverage) so
+// they don't linger frozen on the scope. The upstream feed only drops them
+// after ~5 min; remove locally after no position update for TRACK_TIMEOUT.
+const TRACK_TIMEOUT_MS = 60000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [guid, t] of tracks) {
+    if (now - t.lastUpdate > TRACK_TIMEOUT_MS) {
+      tracks.delete(guid);
+      trackToFp.delete(guid);
+    }
+  }
+}, 5000);
 
 function distanceNMGeo(a, b) {
   const R = 3443.92;
@@ -1229,6 +1283,7 @@ function frame() {
   drawRangeRings();
   drawCompass();
   drawJRings();
+  drawRBLs();
   drawTracks();
   drawMinSep();
   updateTopbar();

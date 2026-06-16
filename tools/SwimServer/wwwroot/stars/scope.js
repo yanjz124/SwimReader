@@ -812,7 +812,7 @@ function drawPTL(t, posNow) {
 // SITE submenu (Phase 4). Reads from URL on bootstrap.
 let _signedOnTcp = (new URLSearchParams(location.search)).get("tcp") || null;
 function ownTcp() { return _signedOnTcp; }
-function setOwnTcp(v) { _signedOnTcp = v ? v.toUpperCase() : null; }
+function setOwnTcp(v) { _signedOnTcp = v ? v.toUpperCase() : null; window.pushUrlState?.(); }
 window.setOwnTcp = setOwnTcp;
 window.ownTcp = ownTcp;
 
@@ -1052,9 +1052,10 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const inboundHandoff = fp?.PendingHandoff && fp.PendingHandoff === ownTcp();
   const owned = (fp?.Owner === ownTcp()) || inboundHandoff;
   let baseColor = COLORS.DataBlock;
-  if (t._stca) {
-    baseColor = (Date.now() % 1000 < 500) ? COLORS.Emerg : COLORS.Pointout;
-  } else if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
+  // Conflict Alert is NOT a whole-block colour change — it adds a red "CA"
+  // annotation to the top line (handled below). The block keeps its normal
+  // ownership colour (CRC STARS § STCA).
+  if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
     baseColor = COLORS.Emerg;
   } else if (t._marked) {
     baseColor = COLORS.Selected;            // cyan
@@ -1065,13 +1066,41 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   }
   // Inbound handoff flashes ~1 Hz — hide the block on the off phase (cs:1068).
   if (inboundHandoff && (Date.now() % 1000) >= 500) return;
-  ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.DataBlock);
   ctx.textBaseline = "top";
   ctx.textAlign = padLeft ? "right" : "left";
   // textX = side of the block closest to the target = block's leader-side edge.
   const textX = padLeft ? (blockX + blockWidth) : blockX;
+  const normColor = adjusted(baseColor, prefSet.Brightness.DataBlock);
+  // CA annotation: "CA" in red on the top line, blinking until acknowledged then
+  // solid. Space for it is always reserved while in conflict so the callsign
+  // doesn't jump as it blinks.
+  const caShow = t._stca && (t._caAcked || (Date.now() % 1000) < 500);
+  const caGap = ctx.measureText(" ").width;
+  const caW = ctx.measureText("CA").width + caGap;
   for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i], textX, blockY + i * charHeight);
+    const y = blockY + i * charHeight;
+    if (i === 0 && t._stca) {
+      if (padLeft) {                          // right-aligned: callsign at textX, CA to its left
+        ctx.fillStyle = normColor; ctx.textAlign = "right";
+        ctx.fillText(lines[0], textX, y);
+        if (caShow) {
+          ctx.fillStyle = adjusted(COLORS.Emerg, prefSet.Brightness.DataBlock);
+          ctx.fillText("CA", textX - ctx.measureText(lines[0]).width - caGap, y);
+        }
+      } else {                                // left-aligned: CA at textX, callsign reserved-shifted
+        ctx.textAlign = "left";
+        if (caShow) {
+          ctx.fillStyle = adjusted(COLORS.Emerg, prefSet.Brightness.DataBlock);
+          ctx.fillText("CA", textX, y);
+        }
+        ctx.fillStyle = normColor;
+        ctx.fillText(lines[0], textX + caW, y);
+      }
+    } else {
+      ctx.fillStyle = normColor;
+      ctx.textAlign = padLeft ? "right" : "left";
+      ctx.fillText(lines[i], textX, y);
+    }
   }
 
   // Leader line — straight line from target edge to leader endpoint (where
@@ -1129,10 +1158,10 @@ function drawPosition(t, posNow) {
   ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Position glyph colour follows the target's state: red on emergency, white
-  // when owned, else the standard green beacon/track colour (not always lime).
-  const glyphColor = (baseColor === COLORS.Return) ? COLORS.BeaconTarget : baseColor;
-  ctx.fillStyle = adjusted(glyphColor, prefSet.Brightness.Position);
+  // Glyph colour matches the return so the whole position symbol is one colour:
+  // white when owned, blue (== history) for everyone else, red emergency, cyan
+  // marked. (Owned tracks render white only when signed on; see ownTcp.)
+  ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
   ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
@@ -1236,18 +1265,49 @@ function scanSTCA() {
       const dnm = distanceNMGeo(a.Location, b.Location);
       const altA = a.Altitude?.Value || 0;
       const altB = b.Altitude?.Value || 0;
-      if (dnm < STCA.lateralNM && Math.abs(altA - altB) < STCA.verticalFt) {
+      // CRC STARS: 3 NM horizontal AND 1000 ft vertical AND NON-INCREASING
+      // separation. A passing/diverging pair must NOT alert.
+      if (dnm < STCA.lateralNM && Math.abs(altA - altB) < STCA.verticalFt && stcaClosing(a, b)) {
         stcaPairs.add(a.Guid + "|" + b.Guid);
         a._stca = true; b._stca = true;
       }
     }
   }
-  // Clear flag on tracks not in any pair
+  // Clear flag (and ack state) on tracks no longer in any conflict pair.
   for (const t of tracks.values()) {
-    if (!stcaPairs.size) { t._stca = false; continue; }
-    if (![...stcaPairs].some(k => k.includes(t.Guid))) t._stca = false;
+    if (stcaPairs.size && [...stcaPairs].some(k => k.includes(t.Guid))) continue;
+    t._stca = false; t._caAcked = false;
   }
 }
+
+// Non-increasing horizontal separation test: closing or constant ⇒ r·vrel ≤ 0,
+// where r = posB − posA (NM, E/N) and vrel = velB − velA (kt). Diverging pairs
+// (r·v > 0) are excluded. Missing velocity ⇒ treat as closing (conservative).
+function stcaClosing(a, b) {
+  if (a.GroundSpeed == null || a.GroundTrack == null ||
+      b.GroundSpeed == null || b.GroundTrack == null) return true;
+  const latF = Math.cos(((a.Location.Latitude + b.Location.Latitude) / 2) * Math.PI / 180);
+  const rE = (b.Location.Longitude - a.Location.Longitude) * 60 * latF;
+  const rN = (b.Location.Latitude  - a.Location.Latitude)  * 60;
+  const rad = Math.PI / 180;
+  const vE = b.GroundSpeed * Math.sin(b.GroundTrack * rad) - a.GroundSpeed * Math.sin(a.GroundTrack * rad);
+  const vN = b.GroundSpeed * Math.cos(b.GroundTrack * rad) - a.GroundSpeed * Math.cos(a.GroundTrack * rad);
+  return (rE * vE + rN * vN) <= 0;
+}
+
+// Acknowledge a CA by clicking either track (CRC STARS): silences (we have no
+// tone) and turns the CA text solid. Acks both tracks in every pair it's in.
+window.starsAckCA = (track) => {
+  if (!track || !track._stca) return false;
+  for (const key of stcaPairs) {
+    const [g1, g2] = key.split("|");
+    if (g1 !== track.Guid && g2 !== track.Guid) continue;
+    const t1 = tracks.get(g1), t2 = tracks.get(g2);
+    if (t1) t1._caAcked = true;
+    if (t2) t2._caAcked = true;
+  }
+  return true;
+};
 setInterval(scanSTCA, 1000);
 
 // ── Radar sweep model (DGScope Radar.cs) — match it exactly, don't invent ────
@@ -1857,6 +1917,8 @@ function _internalPushUrlState() {
   // Visible video maps (persisted selection).
   const visMaps = videoMaps.filter(m => m.visible && m.starsId != null).map(m => m.starsId);
   if (visMaps.length) q.set("maps", visMaps.join(",")); else q.delete("maps");
+  // Signed-on TCP (so a reload stays signed on at the same position).
+  setOrDel("tcp", _signedOnTcp, null);
   const search = q.toString();
   const newUrl = location.pathname + (search ? "?" + search : "");
   history.replaceState(null, "", newUrl);

@@ -832,24 +832,17 @@ function buildDataBlock(t, fp) {
   // wake/IFR cat. For aircraft type / requested altitude variants, the
   // right side is 4 chars (no extra space). All variants pad to 8 chars
   // so the data block doesn't visually resize as ClockPhase rotates.
-  const altLeft = altstring.padEnd(3).slice(0, 3);
-  const scr1Left = (fp?.Scratchpad1?.trim() || destination).padEnd(3).slice(0, 3);
-  const scr2Left = (fp?.Scratchpad2?.trim() || fp?.Scratchpad1?.trim() || destination).padEnd(3).slice(0, 3);
-
-  // Speed displayed as "12 F" pattern (2-digit speed + space + 1-char cat).
-  // vfrchar collapsed into catchar — WPF separates them but CRC shows just
-  // the wake category letter on screen.
-  const speedRight = `${speed10} ${catChar !== " " ? catChar : vfrChar}`.padEnd(4);
-  const typeRight  = ((fp?.AircraftType?.trim() || "").padEnd(4)).slice(0, 4) || speedRight;
-  const reqAltRight = (fp?.RequestedAltitude > 0)
-                      ? "R" + String(Math.floor(fp.RequestedAltitude / 100)).padStart(3, "0")
-                      : typeRight;   // WPF: reqalt falls back to type (Aircraft.cs:431-433)
-
-  // Variant order per WPF Aircraft.cs: phase0 = alt+speed (:436), phase1 =
-  // scratchpad1+reqalt (:437), phase2 = scratchpad2+type (:438-444).
-  const fdb1line2 = `${altLeft}${handoffChar}${speedRight}`;
-  const fdb2line2 = `${scr1Left}${handoffChar}${reqAltRight}`;
-  const fdb3line2 = `${scr2Left}${handoffChar}${typeRight}`;
+  // FDB line-2 variants — exact WPF composition (Aircraft.cs:436-444):
+  //   phase0: altstring + handoff + speed/10 + vfr + cat
+  //   phase1: yscratch  + handoff + reqalt
+  //   phase2: yscratch2 (+type, with the scratchpad2 "+" 4-char collapse)
+  const speedField = `${speed10}${vfrChar}${catChar}`;
+  const fdb1line2 = `${altstring}${handoffChar}${speedField} `;
+  const fdb2line2 = `${yscratch}${handoffChar}${reqalt} `;
+  let fdb3line2;
+  if (!yscratch2 || !yscratch2.trim()) fdb3line2 = `${yscratch}${handoffChar}${type} `;
+  else if (yscratch2.length === 4)     fdb3line2 = `${yscratch2}${type}`;       // scratchpad2 "+" form
+  else                                  fdb3line2 = `${yscratch2}${handoffChar}${type} `;
 
   if (mode === "FDB") {
     // Line 1: callsign or squawk (Aircraft.cs:449-489)
@@ -886,16 +879,18 @@ function buildDataBlock(t, fp) {
 // to FDB; non-owned associated default to PDB; non-associated default to LDB.
 // Phase 4 (DCB) and Phase 5 (commands) let the user toggle individual blocks.
 function dataBlockMode(t, fp) {
-  if (t._forcedMode) return t._forcedMode;
-  if (!fp) return "LDB";
-  if (fp.Owner && fp.Owner === ownTcp()) return "FDB";
-  // Per CRC § Data Blocks, only FDB rotates the second line. When no TCP is
-  // signed on (observer mode), default associated tracks to FDB so the user
-  // sees the full rotation (alt+speed / scratchpad+type / scratchpad2+reqalt)
-  // for every flight plan. Once signed on via `.SO TCP`, the WPF behavior
-  // (FDB for owned, PDB for not-owned) takes over.
+  // WPF Aircraft.FDB (Aircraft.cs:119-136): FDB iff Owned, QuickLook,
+  // ForceQuickLook, Emergency, or manually toggled — otherwise LDB. There is
+  // no separate "PDB" mode.
+  if (t._forcedMode) return t._forcedMode;                            // manual toggle
+  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) return "FDB";
+  if (!fp) return "LDB";                                              // unassociated
+  if (fp.Owner && fp.Owner === ownTcp()) return "FDB";               // owned
+  if (t._quickLook) return "FDB";                                    // quick-looked
+  // Observer convenience (documented deviation): with no position signed on,
+  // show full blocks for every associated track so the scope is readable.
   if (!ownTcp()) return "FDB";
-  return prefSet.LdbBeaconCodesInhibited ? "LDB" : "PDB";
+  return "LDB";                                                       // non-owned associated → LDB
 }
 
 // Leader-direction offset (RadarWindow.cs OffsetDatablockLocation, ~5750+).

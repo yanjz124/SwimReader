@@ -29,27 +29,41 @@ const SSA = {
   timeSynchronized: true,
 };
 
-// METAR fetcher — WPF wx.Altimeter.Value comes from the home station's METAR
-// (RadarWindow.cs:2947). We mirror by hitting /api/metar/{station} for the
-// facility's home airport. Station defaults to URL ?metar=XXX or facility name.
-async function fetchAltimeter(station) {
-  if (!station) return;
+// METAR fetcher — populates the SSA altimeter stations from the selected area's
+// ssaAirports (e.g. RDU), plus the header altimeter (RadarWindow.cs:2947).
+// /api/metar/{station} proxies aviationweather.gov.
+function ssaStations() {
+  const override = (new URLSearchParams(location.search)).get("metar");
+  if (override) return override.split(",").map(s => s.trim()).filter(Boolean);
+  const ap = window.starsState?.area?.ssaAirports;
+  if (Array.isArray(ap) && ap.length) return ap;
+  if (window.starsState?.facilityHomeStation) return [window.starsState.facilityHomeStation];
+  return [];
+}
+async function fetchMetar(station) {
+  const icao = station.length === 3 ? "K" + station.toUpperCase() : station.toUpperCase();
   try {
-    const r = await fetch(`/api/metar/${encodeURIComponent(station)}`);
-    if (!r.ok) return;
-    const text = await r.text();
-    // Parse altimeter from METAR: pattern A2986 (in.Hg × 100)
-    const m = text.match(/\bA(\d{4})\b/);
-    if (m) SSA.altimeter = parseInt(m[1], 10) / 100;
-    SSA.metarRaw = text.trim();
-  } catch (e) { /* ignore */ }
+    const r = await fetch(`/api/metar/${encodeURIComponent(icao)}`);
+    if (!r.ok) return null;
+    const text = (await r.text()).trim();
+    const m = text.match(/\bA(\d{4})\b/);   // A2986 = 29.86 inHg
+    const pressure = m ? parseInt(m[1], 10) / 100 : null;
+    SSA.metars.set(icao, { pressure, raw: text });
+    return pressure;
+  } catch { return null; }
+}
+async function pollMetars() {
+  const stations = ssaStations();
+  let header = null;
+  for (const s of stations) {
+    const p = await fetchMetar(s);
+    if (header == null && p != null) header = p;
+  }
+  if (header != null) SSA.altimeter = header;   // header line uses the first station
 }
 function startMetarPoll() {
-  const station = (new URLSearchParams(location.search)).get("metar")
-                || window.starsState?.facilityHomeStation
-                || "KIAD";  // default IAD for PCT
-  fetchAltimeter(station);
-  setInterval(() => fetchAltimeter(station), 5 * 60 * 1000);   // every 5 min
+  pollMetars();
+  setInterval(pollMetars, 5 * 60 * 1000);   // every 5 min
 }
 
 function mountSsa() {

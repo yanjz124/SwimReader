@@ -225,7 +225,7 @@ class DCB {
     this.backdrop.id = "dcb-backdrop";
     this.backdrop.style.cssText = `
       position: fixed; inset: 0;
-      background: rgba(0,0,0,0.55);
+      background: transparent;
       z-index: 19;
       display: none;
     `;

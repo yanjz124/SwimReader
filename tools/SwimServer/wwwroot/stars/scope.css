@@ -10,7 +10,14 @@
  * actual STARS SSA + DCB. Listed in KNOWN-DEVIATIONS.md as TEMP.
  */
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { width: 100%; height: 100%; overflow: hidden; background: #000; color: #ddd; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden; background: #000; color: #ddd;
+  /* STARS crisp text (KNOWN-DEVIATIONS G1): disable sub-pixel smoothing on
+     DOM-rendered chrome (SSA/DCB) so it matches the WPF pixel look. */
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
+}
 #scope {
   position: absolute; inset: 0;
   width: 100%; height: 100%;

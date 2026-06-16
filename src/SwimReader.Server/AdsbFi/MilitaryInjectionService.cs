@@ -99,9 +99,14 @@ public sealed class MilitaryInjectionService : BackgroundService
             seenHexCodes.Add(mil.Hex!);
             var modeSCode = ModeSCodeHelper.ParseHex(mil.Hex);
 
-            // Skip if already tracked by TAIS (but not if we injected it ourselves)
-            if (modeSCode.HasValue && _trackState.HasTrack(modeSCode.Value)
-                && !_injectedMilitary.ContainsKey(mil.Hex!))
+            // Skip if already tracked by TAIS — by Mode S code OR by callsign.
+            // The callsign check catches the dupe case where TAIS keys the target
+            // by track number (no Mode S) while our injection would key it by
+            // Mode S, yielding two GUIDs for one aircraft. Don't skip our own
+            // injected track (we must keep re-publishing it to stay alive).
+            var taisHasIt = (modeSCode.HasValue && _trackState.HasTrack(modeSCode.Value))
+                || (mil.TrimmedCallsign is not null && _trackState.HasCallsign(mil.TrimmedCallsign, null));
+            if (taisHasIt && !_injectedMilitary.ContainsKey(mil.Hex!))
                 continue;
 
             await InjectAircraftAsync(mil, facility.FacilityId, ct);

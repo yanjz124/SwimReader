@@ -1360,11 +1360,36 @@ window.starsMinSep = (flid1, flid2) => {
 };
 window.starsMinSepClear = () => { minSepPair = null; };
 
+// Hide transient duplicate GUIDs for one physical aircraft. The dStars adapter
+// can briefly assign two GUIDs to the same target (e.g. a TAIS track-number
+// target plus an ADS-B Mode-S injection) before they correlate. Mirrors the
+// ERAM scope's callsign dedup: when several live tracks share a callsign, keep
+// only the freshest and suppress the rest. Tracks with no callsign are never
+// deduped (they're genuinely distinct primaries).
+function dedupByCallsign(now) {
+  const byCs = new Map();          // callsign → { guid, fresh }
+  const suppressed = new Set();
+  for (const t of tracks.values()) {
+    if (!t.Location) continue;
+    if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue;
+    const cs = (trackToFp.get(t.Guid)?.Callsign || t.Callsign || "").toUpperCase();
+    if (!cs) continue;
+    const fresh = t.lastPosUpdate ?? t.lastUpdate ?? 0;
+    const cur = byCs.get(cs);
+    if (!cur) { byCs.set(cs, { guid: t.Guid, fresh }); continue; }
+    if (fresh > cur.fresh) { suppressed.add(cur.guid); byCs.set(cs, { guid: t.Guid, fresh }); }
+    else suppressed.add(t.Guid);
+  }
+  return suppressed;
+}
+
 // ── Main per-track draw ─────────────────────────────────────────────────────
 function drawTracks() {
   const now = Date.now();
+  const suppressed = dedupByCallsign(now);
   for (const t of tracks.values()) {
     if (!t.Location) continue;
+    if (suppressed.has(t.Guid)) continue;             // transient duplicate GUID
     if (t.IsOnGround) continue;                       // Radar.cs Scan skips on-ground
     if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue; // lost target → hidden (LostTargetSeconds, by position movement)
     const fp = trackToFp.get(t.Guid);

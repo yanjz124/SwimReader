@@ -28,6 +28,26 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly ConcurrentDictionary<Guid, string> _lastFpJson = new();
 
     /// <summary>
+    /// Caches the most-recently broadcast Track update JSON per Guid.
+    /// Used to emit a snapshot when a new client connects so they see all
+    /// known tracks immediately instead of waiting for the next sweep.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, string> _lastTrackJson = new();
+
+    /// <summary>
+    /// Caches the most-recently broadcast FlightPlan JSON per Guid.
+    /// Separate from _lastFpJson (which stores a dedup CONTENT KEY, not the
+    /// actual JSON).
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, string> _lastFpJsonOut = new();
+
+    /// <summary>
+    /// Per-facility ordered Guid set so snapshots can scope to one facility.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> _facilityTracks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> _facilityFlightPlans = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Tracks which FP GUIDs have TAIS data with a callsign (non-LADD).
     /// Enrichment is fully suppressed for these tracks.
     /// </summary>
@@ -69,9 +89,24 @@ public sealed class DgScopeAdapter : BackgroundService
         {
             try
             {
-                var (json, facility) = ConvertToJsonWithFacility(evt);
+                var (json, facility, kind, guid) = ConvertToJsonWithFacility(evt);
                 if (json is not null)
                 {
+                    // Cache the last broadcast value per Guid so a freshly-
+                    // connected client can be seeded with the current state.
+                    if (guid is Guid g && facility is not null)
+                    {
+                        if (kind == "T")
+                        {
+                            _lastTrackJson[g] = json;
+                            _facilityTracks.GetOrAdd(facility, _ => new())[g] = 0;
+                        }
+                        else if (kind == "F")
+                        {
+                            // _lastFpJson already managed inside ConvertFlightPlan
+                            _facilityFlightPlans.GetOrAdd(facility, _ => new())[g] = 0;
+                        }
+                    }
                     _clients.Broadcast(json, facility);
                 }
             }
@@ -82,18 +117,42 @@ public sealed class DgScopeAdapter : BackgroundService
         }
     }
 
-    private (string? json, string? facility) ConvertToJsonWithFacility(ISwimEvent evt)
+    /// <summary>
+    /// Snapshot of all currently-known tracks + flight plans for a facility.
+    /// Called by DstarsController on new client connect so they see the
+    /// current state immediately. Order: flight plans first (so AssociatedTrackGuid
+    /// resolves on the client side before tracks render).
+    /// </summary>
+    public IEnumerable<string> GetSnapshot(string facility)
+    {
+        if (_facilityFlightPlans.TryGetValue(facility, out var fpGuids))
+        {
+            foreach (var g in fpGuids.Keys)
+                if (_lastFpJsonOut.TryGetValue(g, out var json)) yield return json;
+        }
+        if (_facilityTracks.TryGetValue(facility, out var tGuids))
+        {
+            foreach (var g in tGuids.Keys)
+                if (_lastTrackJson.TryGetValue(g, out var json)) yield return json;
+        }
+    }
+
+    private (string? json, string? facility, string kind, Guid? guid) ConvertToJsonWithFacility(ISwimEvent evt)
     {
         switch (evt)
         {
             case TrackPositionEvent track:
-                return (ConvertTrack(track), track.Facility);
-
+            {
+                var guid = _trackState.GetTrackGuid(track.ModeSCode, track.TrackNumber, track.Facility);
+                return (ConvertTrack(track), track.Facility, "T", guid);
+            }
             case FlightPlanDataEvent fp:
-                return (ConvertFlightPlan(fp), fp.Facility);
-
+            {
+                var guid = _trackState.GetFlightPlanGuid(fp.ModeSCode, fp.TrackNumber, fp.Callsign, fp.Facility);
+                return (ConvertFlightPlan(fp), fp.Facility, "F", guid);
+            }
             default:
-                return (null, null);
+                return (null, null, "", null);
         }
     }
 
@@ -198,6 +257,7 @@ public sealed class DgScopeAdapter : BackgroundService
         if (_lastFpJson.TryGetValue(guid, out var prev) && prev == contentKey)
             return null; // unchanged — suppress
         _lastFpJson[guid] = contentKey;
+        _lastFpJsonOut[guid] = json;     // store full JSON for snapshot replay
 
         return json;
     }
@@ -246,8 +306,15 @@ public sealed class DgScopeAdapter : BackgroundService
                 foreach (var (guid, facility) in deletedTargets)
                 {
                     _lastFpJson.TryRemove(guid, out _);
+                    _lastFpJsonOut.TryRemove(guid, out _);
+                    _lastTrackJson.TryRemove(guid, out _);
                     _taisHasCallsign.TryRemove(guid, out _);
                     _enrichedCallsigns.TryRemove(guid, out _);
+                    if (facility is not null)
+                    {
+                        if (_facilityTracks.TryGetValue(facility, out var ft)) ft.TryRemove(guid, out _);
+                        if (_facilityFlightPlans.TryGetValue(facility, out var ff)) ff.TryRemove(guid, out _);
+                    }
 
                     var deletion = new DstarsDeletionUpdate
                     {

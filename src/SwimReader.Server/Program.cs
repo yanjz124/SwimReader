@@ -63,7 +63,10 @@ builder.Services.AddHostedService<ParserPipelineHostedService>();
 // --- DGScope adapter ---
 builder.Services.AddSingleton<TrackStateManager>();
 builder.Services.AddSingleton<ClientConnectionManager>();
-builder.Services.AddHostedService<DgScopeAdapter>();
+// Register as both singleton and hosted service so the controller can
+// resolve it for snapshot-on-connect.
+builder.Services.AddSingleton<DgScopeAdapter>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DgScopeAdapter>());
 
 // --- ADS-B hybrid enrichment (adsb.fi + adsb.lol + airplanes.live) ---
 builder.Services.Configure<AdsbFiOptions>(

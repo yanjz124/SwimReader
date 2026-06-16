@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>STARS — Facility Picker</title>
+<style>
+  body {
+    margin: 0;
+    background: #000;
+    color: #00ff00;
+    font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  header { padding: 12px 20px; border-bottom: 1px solid #1a3a1a; }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: 2px; color: #00ff00; }
+  header .sub { color: #6f6; font-size: 11px; margin-top: 4px; }
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    height: calc(100vh - 60px);
+  }
+  .col { overflow-y: auto; border-right: 1px solid #1a3a1a; }
+  .col:last-child { border-right: none; }
+  .col h2 {
+    margin: 0;
+    padding: 8px 16px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: #6f6;
+    border-bottom: 1px solid #1a3a1a;
+    background: #050505;
+    position: sticky;
+    top: 0;
+  }
+  .row {
+    padding: 6px 16px;
+    border-bottom: 1px solid #0a1a0a;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .row:hover { background: #052005; }
+  .row.active { background: #0a3a0a; color: #fff; }
+  .row .id { color: #00ff00; font-weight: bold; }
+  .row .meta { color: #6f6; font-size: 11px; }
+  .placeholder { padding: 16px; color: #6f6; }
+  .nostars { color: #888; font-style: italic; padding: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>STARS</h1>
+  <div class="sub">Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.</div>
+</header>
+<div class="layout">
+  <div class="col">
+    <h2>ARTCC</h2>
+    <div id="artccs"><div class="placeholder">Loading…</div></div>
+  </div>
+  <div class="col">
+    <h2>FACILITY</h2>
+    <div id="facilities"><div class="placeholder">Select an ARTCC</div></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let selectedArtcc = null;
+
+async function loadArtccs() {
+  try {
+    const ids = await fetch("/api/stars/artccs").then(r => r.json());
+    $("artccs").innerHTML = ids.map(id =>
+      `<div class="row" data-id="${id}"><span class="id">${id}</span></div>`).join("");
+    for (const el of document.querySelectorAll("#artccs .row"))
+      el.onclick = () => selectArtcc(el.dataset.id);
+  } catch (e) {
+    $("artccs").innerHTML = `<div class="placeholder">Error: ${e}</div>`;
+  }
+}
+
+async function selectArtcc(id) {
+  selectedArtcc = id;
+  for (const el of document.querySelectorAll("#artccs .row"))
+    el.classList.toggle("active", el.dataset.id === id);
+  $("facilities").innerHTML = `<div class="placeholder">Loading ${id}…</div>`;
+  try {
+    const data = await fetch(`/api/stars/artcc/${encodeURIComponent(id)}`).then(r => r.json());
+    if (!data.facilities || data.facilities.length === 0) {
+      $("facilities").innerHTML = `<div class="nostars">No STARS-configured facilities in ${id}.</div>`;
+      return;
+    }
+    // Render the import-maps banner + facility list. Don't auto-pick — give
+    // the user a chance to import maps first.
+    const avail = await fetch(`/api/stars/videoMaps/${encodeURIComponent(id)}`).then(r => r.json()).catch(() => ({available:[]}));
+    const importBanner = `<div style="padding:8px 16px;background:#0a2a0a;border-bottom:1px solid #1a3a1a;">
+      <button id="importBtn" style="background:#0a3a0a;color:#0f0;border:1px solid #0f0;padding:4px 10px;font-family:monospace;cursor:pointer;">
+        IMPORT MAPS FROM LOCAL CRC INSTALL
+      </button>
+      <span id="importStatus" style="color:#6f6;margin-left:8px;font-size:11px;">${avail.available.length} maps available on disk</span>
+    </div>`;
+    const facilityRows = data.facilities.map(f =>
+      `<div class="row" data-id="${f.id}">
+        <span class="id">${f.id}</span>
+        <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${f.areaCount || 0} areas</span>
+      </div>`).join("");
+    $("facilities").innerHTML = importBanner + facilityRows;
+    document.getElementById("importBtn").onclick = async () => {
+      const btn = document.getElementById("importBtn");
+      const status = document.getElementById("importStatus");
+      btn.disabled = true;
+      status.textContent = "importing…";
+      try {
+        const r = await fetch(`/api/stars/import-from-crc/${encodeURIComponent(id)}`, { method: "POST" }).then(r => r.json());
+        if (r.error) status.textContent = "ERROR: " + r.error;
+        else status.textContent = `imported ${r.imported} maps from ${r.crcSource}`;
+      } catch (e) {
+        status.textContent = "ERROR: " + e;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    // Profile picker: if any DGScope profile XMLs exist for this ARTCC, show
+    // them. Clicking a profile launches the scope with ?profile=... applied.
+    let profiles = [];
+    try {
+      profiles = (await fetch(`/api/stars/profiles/${encodeURIComponent(id)}`).then(r => r.json())).profiles || [];
+    } catch {}
+    if (profiles.length > 0) {
+      const profileSection = `<div style="padding:6px 16px;color:#888;font-size:11px;border-top:1px solid #1a3a1a;">DGScope PROFILES (loads PrefSet + DCBMapList)</div>` +
+        profiles.map(p => `<div class="row" data-profile="${p}">
+          <span class="id" style="color:#6cf">${p}</span>
+        </div>`).join("");
+      $("facilities").innerHTML += profileSection;
+      for (const el of document.querySelectorAll("#facilities .row[data-profile]")) {
+        el.onclick = () => {
+          // Find the facility ID from the profile name prefix: "{FACILITY}_..."
+          const pname = el.dataset.profile;
+          const facId = (data.facilities.find(f => pname.startsWith(f.id + "_")) || data.facilities[0]).id;
+          location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(facId)}?profile=${encodeURIComponent(pname)}`;
+        };
+      }
+    }
+    for (const el of document.querySelectorAll("#facilities .row:not([data-profile])"))
+      el.onclick = () => {
+        location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(el.dataset.id)}`;
+      };
+  } catch (e) {
+    $("facilities").innerHTML = `<div class="placeholder">Error: ${e}</div>`;
+  }
+}
+
+loadArtccs();
+</script>
+</body>
+</html>

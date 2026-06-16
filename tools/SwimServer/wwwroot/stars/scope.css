@@ -1,0 +1,30 @@
+@font-face {
+  font-family: "FixedDemiBold";
+  src: url("FixedDemiBold.otf") format("opentype");
+  font-display: block;
+}
+/* STARS scope styling.
+ * Background mirrors WPF RadarWindow.BackColor (= Color.Black = #000000).
+ * Topbar is web-only chrome (NOT part of the WPF program) used during the
+ * port to expose state for debugging. Phase 4 removes it in favor of the
+ * actual STARS SSA + DCB. Listed in KNOWN-DEVIATIONS.md as TEMP.
+ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden; background: #000; color: #ddd;
+  /* STARS crisp text (KNOWN-DEVIATIONS G1): disable sub-pixel smoothing on
+     DOM-rendered chrome (SSA/DCB) so it matches the WPF pixel look. */
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
+}
+#scope {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  cursor: crosshair;
+}
+/* Phase 1 #topbar retired in Phase 7 (G9). */
+
+/* Disable browser native context menu inside scope (G6 in KNOWN-DEVIATIONS). */
+canvas { -webkit-touch-callout: none; }

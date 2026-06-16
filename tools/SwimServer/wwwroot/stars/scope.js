@@ -33,8 +33,9 @@ const prefSet = {
   RangeRingsDisplayed: true,                          // (WPF defaults via ShowRangeRings field)
   RangeRingLocation: { Latitude: 0, Longitude: 0 },
   RangeRingSpacing: 5,                                // PrefSet.cs line 30
-  RangeRingsCentered: true,                           // (WPF: false; we default centered for first-load convenience.
-                                                      //  Right-click moves to point and unsets — see KNOWN-DEVIATIONS G7.)
+  RangeRingsCentered: false,                          // WPF default: rings anchored to RangeRingLocation (a geo
+                                                      //  point set to facility center on load) so they pan with
+                                                      //  the map. RR CNTR toggles screen-centered.
   DCBLocation: "Top",                                 // PrefSet.cs line 31
   OwnedDataBlockPosition: 2,        // N (LeaderDirection enum) — 0 would render "INV"
   UnownedDataBlockPosition: 2,
@@ -711,7 +712,9 @@ function drawHistory(t) {
     ctx.fillStyle = adjusted(c, prefSet.Brightness.History);
     const p = geoToScreen(t._history[i]);
     if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
-    ctx.fillRect(Math.round(p.x - 2.5), Math.round(p.y - 2.5), 5, 5);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.3, 0, Math.PI * 2);   // circular history dots (not squares)
+    ctx.fill();
   }
 }
 
@@ -733,7 +736,8 @@ function drawPTL(t, posNow) {
   const dLon = (distNM * Math.sin(θ)) / (60 * latFactor);
   const end = { Latitude: posNow.Latitude + dLat, Longitude: posNow.Longitude + dLon };
   const p1 = geoToScreen(posNow), p2 = geoToScreen(end);
-  ctx.strokeStyle = adjusted(COLORS.DataBlock, prefSet.Brightness.DataBlock);
+  // WPF: PTL drawn in RBLColor (white) at Brightness.Tools (RadarWindow.cs:6293).
+  ctx.strokeStyle = adjusted(COLORS.RBL, prefSet.Brightness.Tools);
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);

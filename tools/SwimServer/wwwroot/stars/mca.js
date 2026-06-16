@@ -72,7 +72,7 @@ function mountMca() {
   const pa = document.createElement("div");
   pa.id = "mca";
   pa.style.cssText = `
-    position:fixed; left:8px; bottom:8px;
+    position:fixed; left:20px; top:360px;
     background:transparent; color:#0f0;
     font-family:FixedDemiBold, ui-monospace, monospace; font-size:13px;
     padding:4px 8px; min-width:240px;
@@ -80,6 +80,26 @@ function mountMca() {
     white-space:pre; line-height:1.3;
   `;
   document.body.appendChild(pa);
+
+  // Shift+drag to move the preview area (its default is below the SSA). Plain
+  // clicks pass through so they don't interfere with scope commands.
+  {
+    let dragging = false, ox = 0, oy = 0;
+    pa.addEventListener("mousedown", (e) => {
+      if (e.button !== 0 || !e.shiftKey) return;
+      const r = pa.getBoundingClientRect();
+      dragging = true; ox = e.clientX - r.left; oy = e.clientY - r.top;
+      pa.dataset.positioned = "1"; e.preventDefault();
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      pa.style.left = (e.clientX - ox) + "px";
+      pa.style.top = (e.clientY - oy) + "px";
+      pa.style.bottom = "auto";
+      if (window.prefSet) window.prefSet.PreviewLocation = { X: e.clientX - ox, Y: e.clientY - oy };
+    });
+    window.addEventListener("mouseup", () => { dragging = false; });
+  }
 
   document.addEventListener("keydown", onKeyDown);
   // F1 release - clear hold-to-show-all-callsigns (RadarWindow.cs:3444-3450).
@@ -160,10 +180,11 @@ function onKeyDown(e) {
     // Other F-keys insert the STARS preview text from the KeyCode table.
     const prefix = FKEY_PREFIX[k];
     if (prefix) {
-      // The F7 multifunction subcommand concatenates into one token (WPF adds
-      // no separator), so "F" then "2ATPAE" → "F2ATPAE". Other prefixes keep a
-      // separating space (e.g. "SIGN ON 1N", "TC").
-      MCA.buffer = (prefix === "F") ? prefix : prefix + " ";
+      // DGScope GeneratePreviewString emits "<prefix>\r\n" — the readout sits on
+      // its own line and the typed value goes on the next (e.g. "SIGN ON" then
+      // "1N"). EXCEPT F7 multifunction, whose subcommand concatenates into one
+      // token ("F" + "2ATPAE" → "F2ATPAE"); whitespace there would break parsing.
+      MCA.buffer = (prefix === "F") ? prefix : prefix + "\n";
       refreshMca();
     }
     return;

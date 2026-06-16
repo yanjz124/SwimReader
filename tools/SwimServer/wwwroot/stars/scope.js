@@ -216,9 +216,13 @@ function drawCompass() {
   // i.e. half-width/half-height in canvas space, minus a 1-pixel inset.
   let w = view.W / 2 - 1;
   let h = view.H / 2 - 1;
-  // DCB occupies one edge — placeholder reservation (Phase 4 will populate).
-  // Mirrors WPF lines 4744-4768.
-  const dcbSize = 0; // Phase 4: will become non-zero.
+  // DCB occupies one edge — reserve its actual thickness so the compass sits
+  // BELOW it (WPF lines 4744-4768: h -= dcb.Size/2 + translate dcb.Size/2).
+  const dcbEl = document.getElementById("dcb");
+  const dcbRect = dcbEl ? dcbEl.getBoundingClientRect() : null;
+  const sideDcb = prefSet.DCBLocation === "Left" || prefSet.DCBLocation === "Right";
+  const dcbSize = (prefSet.DCBVisible && dcbRect)
+    ? (sideDcb ? dcbRect.width : dcbRect.height) : 0;
   let dx = 0, dy = 0;
   if (prefSet.DCBVisible && dcbSize > 0) {
     if (prefSet.DCBLocation === "Left" || prefSet.DCBLocation === "Right") {
@@ -259,11 +263,14 @@ function drawCompass() {
 
     if (i % 10 === 0) {
       const line = i / 10;
-      labelAt(`${i}`,         x1, h1 - 8);
-      labelAt(`${i + 180}`,  -x1, -h1 + 8);
+      // DGScope offsets labels inward by the label height (cs:4809) — gives a
+      // clear gap between the tick and the number.
+      const lh = 14;
+      labelAt(`${i}`,         x1, h1 - lh);
+      labelAt(`${i + 180}`,  -x1, -h1 + lh);
       if (line > 0) {
-        labelAt(`${180 - i}`,  x1, -h1 + 8);
-        labelAt(`${360 - i}`, -x1,  h1 - 8);
+        labelAt(`${180 - i}`,  x1, -h1 + lh);
+        labelAt(`${360 - i}`, -x1,  h1 - lh);
       } else {
         // 360 (=0 at top center)
       }
@@ -279,10 +286,12 @@ function drawCompass() {
     drawLineNoFlip(-w, -y, -w1, -y1, color);
 
     if (i % 10 === 0) {
-      labelAt(`${i}`,         w1 + 4,  y1);
-      labelAt(`${i + 180}`,  -w1 - 4, -y1);
-      labelAt(`${180 - i}`,   w1 + 4, -y1);
-      labelAt(`${360 - i}`,  -w1 - 4,  y1);
+      // INSIDE the border by the label width (cs:4844-4853), not outside it.
+      const lw = ctx.measureText(`${i}`).width + 6;
+      labelAt(`${i}`,         w1 - lw,  y1);
+      labelAt(`${i + 180}`,  -w1 + lw, -y1);
+      labelAt(`${180 - i}`,   w1 - lw, -y1);
+      labelAt(`${360 - i}`,  -w1 + lw,  y1);
     }
   }
   ctx.restore();

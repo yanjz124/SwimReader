@@ -178,13 +178,11 @@ function refreshSsa() {
 }
 
 function fa(altFt) {
-  // ToFilterAltitudeString — observed in DGScope: negative or extreme min
-  // shows as "N99"; high max shows as 3-digit FL/100 (e.g. 99900 -> "999").
-  // PrefSet defaults: AltitudeFilterUnAssociatedMin = -9900 -> "N99".
+  // ToFilterAltitudeString (RadarWindow.cs:3053-3060): negative → "N99",
+  // else abs(altitude/100) as a 3-digit string (e.g. 99900 → "999").
   if (altFt == null) return "N99";
-  if (altFt <= -9900) return "N99";
-  if (altFt <= 0) return "N" + String(Math.round(-altFt / 100)).padStart(2, "0");
-  return String(Math.round(altFt / 100)).padStart(3, "0");
+  if (altFt < 0) return "N99";
+  return String(Math.abs(Math.trunc(altFt / 100))).padStart(3, "0");
 }
 function escapeHtml(s) {
   return String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));

@@ -30,6 +30,13 @@ class StarsBridge
     //   <root>/<artccId>/VideoMaps/<mapId>.geojson
     private string _crcExportRoot;
 
+    // Optional vNAS auth for fetching video-map GeoJSON on demand (the public
+    // /api/artccs/{id}/video-maps/{mapId} endpoint requires authentication).
+    // Set VNAS_TOKEN (a bearer token) or VNAS_COOKIE (a full Cookie header) in
+    // the environment / .env. Downloaded maps are cached under crc-export/.
+    private static readonly string? VnasToken = Environment.GetEnvironmentVariable("VNAS_TOKEN");
+    private static readonly string? VnasCookie = Environment.GetEnvironmentVariable("VNAS_COOKIE");
+
     public StarsBridge(HttpClient http, JsonSerializerOptions jsonOpts)
     {
         _http = http;
@@ -198,6 +205,7 @@ class StarsBridge
                     shortName = map.TryGetProperty("shortName", out var sn) ? sn.GetString() : null,
                     starsId = map.TryGetProperty("starsId", out var sid) ? (int?)sid.GetInt32() : null,
                     starsBrightnessCategory = map.TryGetProperty("starsBrightnessCategory", out var bc) ? bc.GetString() : null,
+                    starsAlwaysVisible = map.TryGetProperty("starsAlwaysVisible", out var av) && av.ValueKind == JsonValueKind.True,
                 });
             }
         }
@@ -235,6 +243,40 @@ class StarsBridge
         {
             var bytes = await File.ReadAllBytesAsync(path);
             return ("application/geo+json", bytes);
+        }
+
+        // Cache miss → fetch from the vNAS data API if a token/cookie is configured,
+        // then cache to disk so future requests (and token expiry) are covered.
+        if (VnasToken is { Length: > 0 } || VnasCookie is { Length: > 0 })
+        {
+            try
+            {
+                var url = $"https://data-api.vnas.vatsim.net/api/artccs/{artccId}/video-maps/{mapId}";
+                using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                if (VnasToken is { Length: > 0 })
+                    req.Headers.TryAddWithoutValidation("Authorization",
+                        VnasToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? VnasToken : "Bearer " + VnasToken);
+                if (VnasCookie is { Length: > 0 })
+                    req.Headers.TryAddWithoutValidation("Cookie", VnasCookie);
+
+                using var resp = await _http.SendAsync(req);
+                if (resp.IsSuccessStatusCode)
+                {
+                    var bytes = await resp.Content.ReadAsByteArrayAsync();
+                    try
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                        await File.WriteAllBytesAsync(path, bytes);
+                    }
+                    catch { /* cache best-effort */ }
+                    return ("application/geo+json", bytes);
+                }
+                Console.WriteLine($"[STARS] video map fetch {artccId}/{mapId} -> {(int)resp.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[STARS] video map fetch error {artccId}/{mapId}: {ex.Message}");
+            }
         }
         return null;
     }

@@ -66,6 +66,9 @@ static class TaisRoutes
 
         // REST
         app.MapGet("/api/tais", () => Results.Json(ctx.Tais.GetDirectory(), ctx.JsonOpts));
+        // Active controller positions (TCPs) owning tracks. Registered before the
+        // {facility} route so the literal "tcps" wins.
+        app.MapGet("/api/tais/tcps", () => Results.Json(ctx.Tais.GetActiveTcps(), ctx.JsonOpts));
         app.MapGet("/api/tais/{facility}", (string facility) =>
             Results.Json(ctx.Tais.GetSnapshot(facility.ToUpperInvariant()), ctx.JsonOpts));
     }

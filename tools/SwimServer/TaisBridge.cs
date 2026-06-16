@@ -230,6 +230,30 @@ class TaisBridge
             .OrderBy(x => x.facility)
             .ToArray();
 
+    /// <summary>Active controller positions (TCPs) currently owning tracks, by
+    /// facility: [{facility, tcpCount, trackCount, tcps:[{tcp, count}]}]. "Active"
+    /// = a position (CPS controller ID) that owns ≥1 track right now. Sorted by
+    /// busiest facility, then each facility's TCPs by busiest.</summary>
+    public object GetActiveTcps()
+    {
+        var facs = new List<(int tcpCount, int trackCount, object payload)>();
+        foreach (var kv in _state)
+        {
+            var tcps = kv.Value.Values
+                .Where(t => !string.IsNullOrWhiteSpace(t.Owner))
+                .GroupBy(t => t.Owner!.Trim())
+                .Select(g => new { tcp = g.Key, count = g.Count() })
+                .OrderByDescending(x => x.count).ThenBy(x => x.tcp)
+                .ToList();
+            if (tcps.Count == 0) continue;
+            var trackCount = tcps.Sum(x => x.count);
+            facs.Add((tcps.Count, trackCount,
+                new { facility = kv.Key, tcpCount = tcps.Count, trackCount, tcps }));
+        }
+        return facs.OrderByDescending(f => f.tcpCount).ThenByDescending(f => f.trackCount)
+                   .Select(f => f.payload).ToList();
+    }
+
     /// <summary>Full snapshot for one facility.</summary>
     public object GetSnapshot(string facility)
     {

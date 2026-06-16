@@ -44,7 +44,7 @@ const prefSet = {
   PTLLength: 1,
   PTLOwn: false,
   PTLAll: false,
-  HistoryNum: 10,
+  HistoryNum: 5,
   HistoryRate: 4.5,
   LeaderLength: 1,
   Range: 50,
@@ -727,7 +727,7 @@ function drawHistory(t) {
     const p = geoToScreen(t._history[i]);
     if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 2.3, 0, Math.PI * 2);   // circular history dots (not squares)
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);   // filled circle, FMATargetSymbols.Radius=3 (cs:616,6141-6143)
     ctx.fill();
   }
 }
@@ -1072,10 +1072,10 @@ function drawPosition(t, posNow) {
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;
 
-  // Primary return — WPF always draws it (STARS has no coast suppression).
+  // Primary return — filled circle, FMATargetSymbols.Radius=3 (cs:616,6141-6143).
   ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
   ctx.beginPath();
-  ctx.arc(px, py, 4, 0, Math.PI * 2);
+  ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
 
   // Position glyph colour follows the target's state: red on emergency, white

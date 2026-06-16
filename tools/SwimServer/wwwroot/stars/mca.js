@@ -284,11 +284,15 @@ function leaderDirFromDigit(d, invert = false) {
   return undefined;
 }
 
-// Helper: precondition check identical to WPF "!owned or pending handoff".
+// Precondition (RadarWindow.cs:1608, 2426): ILL TRK if a handoff is pending OR
+// the track's controlling position isn't mine. DGScope tests PositionInd; our
+// feed carries that controlling sector in fp.Owner. Empty/other owner = not mine
+// (so an unsigned-on observer can't manipulate owned tracks — sign on first).
 function illTrk(plane, fp) {
   if (!fp) return true;
   if (fp.PendingHandoff) return true;
-  if (fp.PositionInd && window.ownTcp && fp.PositionInd !== window.ownTcp()) return true;
+  const me = (window.ownTcp && window.ownTcp()) || "";
+  if ((fp.Owner || "") !== me) return true;
   return false;
 }
 
@@ -322,16 +326,19 @@ function executeCommand(line, opts = {}) {
     return;
   }
 
+  // F3/F5/F6/F9 (IC/HO/VP/FD) are NO-OPS in DGScope ProcessCommand (F3 body is
+  // commented out at 1595-1603; F5/F6/F9 have no case → fall to default with a
+  // single enum token = no effect). Return so the typed prefix can't be treated
+  // as a 2-char handoff/scratchpad on a clicked plane.
+  if (["IC", "HO", "VP", "FD"].includes(keys[0].join(""))) return;
+
   // ── F4 + clicked plane = drop flight plan (1604-1622) ───────────────────
   // (F4 here means the token was parsed as F4 KeyCode literal; in our port
   // the user gets here by typing 'TC' after pressing F4. We accept both.)
   if (first === "T" && keys[0].length === 2 && keys[0][1] === "C") {
     if (!clickedplane) { setResponse("NO FLIGHT"); return; }
     const fp = trackToFp.get(clicked.Guid);
-    // WPF: ILL TRK unless owned by me (PendingHandoff set or not my position).
-    if (fp && (fp.PendingHandoff || (fp.Owner && fp.Owner !== window.ownTcp?.()))) {
-      setResponse("ILL TRK"); return;
-    }
+    if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }   // cs:1608
     // DeleteFP — terminate the flight-plan association (keep the radar track).
     if (fp) { fp.Owner = null; fp.Callsign = null; fp.AircraftType = null; trackToFp.delete(clicked.Guid); }
     return;
@@ -755,12 +762,12 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
         setResponse("FORMAT"); return;
       }
     }
-    if (rest.startsWith("2.5")) {
+    if (rest.startsWith(".5")) {   // "2" already consumed as sub → rest = ".5<vol><op>"
       const atpa = window.starsState.ATPA ||= { Active: false, Volumes: [] };
       if (!atpa.Active) { setResponse("ILL FNCT"); return; }
-      if (rest.length >= 5 && rest.length <= 9) {
+      if (rest.length >= 4 && rest.length <= 8) {
         const op = rest[rest.length - 1];
-        const volname = rest.substring(3, rest.length - 1);
+        const volname = rest.substring(2, rest.length - 1);
         const vols = atpa.Volumes.filter(v => v.VolumeId === volname && v.Active);
         if (vols.length !== 1) { setResponse("ILL VOL"); return; }
         const vol = vols[0];

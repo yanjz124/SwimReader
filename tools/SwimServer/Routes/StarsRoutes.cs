@@ -17,12 +17,24 @@ static class StarsRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "stars", "index.html"));
         });
 
-        // Scope page: /stars/{artcc}/{facility}
+        // Scope page: /stars/{artcc}/{facility}. Inject a cache-busting version
+        // (the newest mtime of the stars JS/CSS) into the asset refs so browsers
+        // and the CDN always fetch the latest frontend — no manual ?v bumping or
+        // hard-refreshes needed.
         app.MapGet("/stars/{artcc:regex(^[A-Za-z0-9]+$)}/{facility:regex(^[A-Za-z0-9]+$)}",
             async (HttpContext c, string artcc, string facility) =>
             {
+                var dir = Path.Combine(ctx.WebRootPath, "stars");
+                var html = await File.ReadAllTextAsync(Path.Combine(dir, "scope.html"));
+                long ver = 0;
+                foreach (var f in System.IO.Directory.EnumerateFiles(dir)
+                             .Where(p => p.EndsWith(".js") || p.EndsWith(".css")))
+                    ver = System.Math.Max(ver, File.GetLastWriteTimeUtc(f).Ticks);
+                html = System.Text.RegularExpressions.Regex.Replace(
+                    html, "(src|href)=\"([\\w.-]+\\.(?:js|css))\"", $"$1=\"$2?v={ver}\"");
+                c.Response.Headers.CacheControl = "no-cache";
                 c.Response.ContentType = "text/html";
-                await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "stars", "scope.html"));
+                await c.Response.WriteAsync(html);
             });
 
         // ── vNAS profile REST ────────────────────────────────────────────────

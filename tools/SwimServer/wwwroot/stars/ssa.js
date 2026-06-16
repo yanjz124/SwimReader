@@ -140,7 +140,7 @@ function refreshSsa() {
   const hhmm = String(d.getUTCHours()).padStart(2, "0") + String(d.getUTCMinutes()).padStart(2, "0");
   const ss = String(d.getUTCSeconds()).padStart(2, "0");
   const syncInd = SSA.timeSynchronized ? " " : "*";
-  const altimeterStr = SSA.altimeter != null ? SSA.altimeter.toFixed(2) : "—";
+  const altimeterStr = SSA.altimeter != null ? SSA.altimeter.toFixed(2) : "00.00";  // cs:2947 always 00.00
   lines.push(`${hhmm}/${ss}${syncInd}${altimeterStr}`);
 
   // Line 2..N — ATIS
@@ -154,19 +154,14 @@ function refreshSsa() {
   // Selected beacon codes
   if (SSA.selectedBeaconCodes.length) lines.push(SSA.selectedBeaconCodes.join(" "));
 
-  // Range + PTL — format from RadarWindow.cs:2967.
-  lines.push(`${Math.round(prefSet.Range)}NM PTL: ${prefSet.PTLLength.toFixed(1)}`);
+  // Range + PTL — format from RadarWindow.cs:2967 ((int) cast truncates toward zero).
+  lines.push(`${Math.trunc(prefSet.Range)}NM PTL: ${prefSet.PTLLength.toFixed(1)}`);
 
   // Altitude filter — WPF ToFilterAltitudeString format.
   lines.push(`${fa(prefSet.AltitudeFilterUnAssociatedMin)} ${fa(prefSet.AltitudeFilterUnAssociatedMax)} U ` +
              `${fa(prefSet.AltitudeFilterAssociatedMin)} ${fa(prefSet.AltitudeFilterAssociatedMax)} A`);
 
-  // Quick Look TCPs — WPF: "QL: ALL" or "QL: TCP1 TCP2". Only shown when active
-  // (no bare "QL:" line when nothing is quick-looked).
-  const ql = prefSet.QuickLookedTCPs || [];
-  if (ql.length > 0) lines.push("QL: " + ql.join(" "));
-
-  // INTRAIL
+  // INTRAIL (RenderStatus order: after the altitude filter, before METARs).
   const onVols = SSA.intrailVolumes.filter(v => v.active);
   if (onVols.length) {
     lines.push(`INTRAIL ON: ${onVols.map(v => v.id).join(" ")}`);
@@ -174,13 +169,19 @@ function refreshSsa() {
     if (t25.length) lines.push(`INTRAIL 2.5 ON: ${t25.map(v => v.id).join(" ")}`);
   }
 
-  // METAR pressure for known stations.
+  // METAR altimeters — DGScope packs 3 stations per line (RadarWindow.cs:3019-3028).
   const sorted = [...SSA.metars.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  let metarRow = [];
   for (const [icao, m] of sorted) {
     const station = (icao.length === 4 && icao[0] === "K") ? icao.slice(1) : icao;
-    if (m.pressure != null) lines.push(`${station} ${m.pressure.toFixed(2)}`);
-    else lines.push(`${station} 00.00`);
+    metarRow.push(`${station} ${m.pressure != null ? m.pressure.toFixed(2) : "00.00"}`);
+    if (metarRow.length === 3) { lines.push(metarRow.join(" ")); metarRow = []; }
   }
+  if (metarRow.length) lines.push(metarRow.join(" "));
+
+  // Quick Look TCPs — the LAST block in RenderStatus (cs:3040, after METAR/FPS).
+  const ql = prefSet.QuickLookedTCPs || [];
+  if (ql.length > 0) lines.push("QL: " + ql.join(" "));
 
   el.innerHTML = lines.map(escapeHtml).join("<br>");
   // RadarWindow.cs:2943: StatusArea.ForeColor = AdjustedColor(DataBlockColor,

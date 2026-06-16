@@ -384,6 +384,11 @@ async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
       _loading: false,
     });
   }
+  // ?maps= overrides which maps are visible (persisted selection).
+  if (_urlMapIds) {
+    for (const m of videoMaps) m.visible = m.starsId != null && _urlMapIds.includes(m.starsId);
+    for (const m of videoMaps) if (m.visible && m.lines === null) ensureMapLoaded(m);
+  }
   prefSet.DisplayedMaps = videoMaps.filter(m => m.visible && m.starsId != null).map(m => m.starsId);
   // Default DCB MAP1-6 bindings = first 6 catalog entries with a starsId.
   // Profile XML (when loaded) overrides this.
@@ -1078,7 +1083,7 @@ function drawJRings() {
   for (const t of tracks.values()) {
     if (!t._jRing) continue;
     if (!t.Location) continue;
-    const pos = extrapolatedPosition(t);
+    const pos = displayPos(t);
     if (!pos) continue;
     const center = geoToScreen(pos);
     // NM → px: 1 NM = (1/60) deg lat = (1/60)/view.scale px
@@ -1104,7 +1109,7 @@ function _rblGeo(s) {
   return null;
 }
 function _rblPlaneGeo(p) {
-  const loc = extrapolatedPosition(p) || p?.Location;
+  const loc = displayPos(p);
   return loc ? { Latitude: loc.Latitude, Longitude: loc.Longitude } : null;
 }
 function rblBearing(a, b) {
@@ -1167,19 +1172,41 @@ function scanSTCA() {
 }
 setInterval(scanSTCA, 1000);
 
-// Purge tracks that have stopped updating (landed / out of radar coverage) so
-// they don't linger frozen on the scope. The upstream feed only drops them
-// after ~5 min; remove locally after no position update for TRACK_TIMEOUT.
-const TRACK_TIMEOUT_MS = 60000;
+// ── Radar sweep model (DGScope Radar.cs) — match it exactly, don't invent ────
+// UpdateRate = 1: the sweep rotates once per SECOND, so each target's DISPLAYED
+// position is updated ~1 Hz to its ExtrapolatePosition(now) (Radar.cs:95-110) —
+// a discrete 1 Hz step, NOT continuous 60 fps. A history dot is shifted in every
+// HistoryRate seconds at the swept position (RadarWindow.cs:5509-5542). A target
+// not updated within LostTargetSeconds is dropped/hidden (RadarWindow.cs:241).
+const LOST_TARGET_MS = 30000;   // LostTargetSeconds = 30
+function radarSweep() {
+  const now = Date.now();
+  for (const t of tracks.values()) {
+    if (!t.Location) continue;
+    if (now - t.lastUpdate > LOST_TARGET_MS) continue;   // lost target: stop sweeping
+    const pos = extrapolatedPosition(t);
+    if (!pos) continue;
+    t._sweptPos = pos;                                   // 1 Hz displayed position
+    if (!t._lastHistoryT) t._lastHistoryT = now;
+    if (now - t._lastHistoryT >= prefSet.HistoryRate * 1000) {
+      (t._history ||= []).unshift({ Latitude: pos.Latitude, Longitude: pos.Longitude });
+      while (t._history.length > prefSet.HistoryNum) t._history.pop();
+      t._lastHistoryT = now;
+    }
+  }
+}
+setInterval(radarSweep, 1000);   // UpdateRate = 1 s
+// The DISPLAYED position the renderer should use (the 1 Hz swept value).
+function displayPos(t) { return t._sweptPos || t.Location || null; }
+
+// Memory backstop: fully drop tracks not updated for a long time (the upstream
+// deletes after ~5 min). Visual hiding happens in drawTracks at LOST_TARGET_MS.
 setInterval(() => {
   const now = Date.now();
   for (const [guid, t] of tracks) {
-    if (now - t.lastUpdate > TRACK_TIMEOUT_MS) {
-      tracks.delete(guid);
-      trackToFp.delete(guid);
-    }
+    if (now - t.lastUpdate > 120000) { tracks.delete(guid); trackToFp.delete(guid); }
   }
-}, 5000);
+}, 10000);
 
 function distanceNMGeo(a, b) {
   const R = 3443.92;
@@ -1193,8 +1220,8 @@ function distanceNMGeo(a, b) {
 
 function drawMinSep() {
   if (!minSepPair) return;
-  const p1 = extrapolatedPosition(minSepPair.p1);
-  const p2 = extrapolatedPosition(minSepPair.p2);
+  const p1 = displayPos(minSepPair.p1);
+  const p2 = displayPos(minSepPair.p2);
   if (!p1 || !p2) return;
   const s1 = geoToScreen(p1), s2 = geoToScreen(p2);
   ctx.strokeStyle = adjusted(COLORS.RBL, prefSet.Brightness.DataBlock);
@@ -1248,9 +1275,11 @@ window.starsMinSepClear = () => { minSepPair = null; };
 
 // ── Main per-track draw ─────────────────────────────────────────────────────
 function drawTracks() {
+  const now = Date.now();
   for (const t of tracks.values()) {
     if (!t.Location) continue;
-    if (t.IsOnGround) continue;       // Radar.cs Scan skips on-ground
+    if (t.IsOnGround) continue;                       // Radar.cs Scan skips on-ground
+    if (now - t.lastUpdate > LOST_TARGET_MS) continue; // lost target → hidden (LostTargetSeconds)
     const fp = trackToFp.get(t.Guid);
     // Altitude filter — PrefSet AltitudeFilterAssociated{Min,Max} / UnAssociated.
     const altFt = t.Altitude?.Value;
@@ -1263,19 +1292,16 @@ function drawTracks() {
         if (altFt > prefSet.AltitudeFilterUnAssociatedMax) continue;
       }
     }
-    const posNow = extrapolatedPosition(t);
+    // Use the 1 Hz swept position (radarSweep), not a per-frame extrapolation.
+    const posNow = displayPos(t);
     if (!posNow) continue;
     const sp = geoToScreen(posNow);
-    if (sp.x < -50 || sp.x > view.W + 50 || sp.y < -50 || sp.y > view.H + 50) {
-      tickHistory(t, posNow);   // still tick offscreen so trail re-appears
-      continue;
-    }
+    if (sp.x < -50 || sp.x > view.W + 50 || sp.y < -50 || sp.y > view.H + 50) continue;
 
-    tickHistory(t, posNow);
     drawHistory(t);
     drawPTL(t, posNow);
     drawPosition(t, posNow);
-    drawDataBlockAndLeader(t, fp, posNow);  // WPF draws the block for all tracks (no coast suppression)
+    drawDataBlockAndLeader(t, fp, posNow);
   }
 }
 
@@ -1574,12 +1600,14 @@ function handleMapToggle(idx) {
   if (!m) return;
   m.visible = !m.visible;
   if (m.visible && m.lines === null) ensureMapLoaded(m);
+  if (window.pushUrlState) window.pushUrlState();   // persist map selection in URL
 }
 
 function handleDcbClick(id) {
   switch (id) {
     case "MAPS_CLEAR":
       videoMaps.forEach(m => m.visible = false);
+      if (window.pushUrlState) window.pushUrlState();
       break;
     case "DCB_TOP":    prefSet.DCBLocation = "Top"; break;
     case "DCB_LEFT":   prefSet.DCBLocation = "Left"; break;
@@ -1622,7 +1650,7 @@ function pickAircraft(px, py) {
   let best = null, bestD = Infinity;
   for (const t of tracks.values()) {
     if (!t.Location) continue;
-    const p = geoToScreen(extrapolatedPosition(t) || t.Location);
+    const p = geoToScreen(displayPos(t));
     const d = Math.hypot(p.x - px, p.y - py);
     if (d < bestD && d < 12) { best = t; bestD = d; }
   }
@@ -1658,6 +1686,7 @@ window.ClockPhase       = ClockPhase;
 //   ?dstars=PCT  override dstars facility (already supported)
 //   ?menu=MAIN   debug submenu (already supported)
 //   ?b=DCB50,RR20,MPA75   brightness overrides (cat:val list, no spaces)
+let _urlMapIds = null;   // map starsIds requested via ?maps=, applied once maps load
 function applyUrlState() {
   const q = new URLSearchParams(location.search);
   const n = (k) => { const v = q.get(k); return v != null ? +v : null; };
@@ -1665,6 +1694,8 @@ function applyUrlState() {
   if (n("rr") != null) prefSet.RangeRingSpacing = n("rr");
   if (n("ll") != null) prefSet.LeaderLength = n("ll");
   if (n("ptl") != null) prefSet.PTLLength = n("ptl");
+  const maps = q.get("maps");
+  if (maps != null) _urlMapIds = maps === "" ? [] : maps.split(",").map(Number).filter(Number.isFinite);
   const b = q.get("b");
   if (b) {
     for (const part of b.split(",")) {
@@ -1710,6 +1741,9 @@ function _internalPushUrlState() {
     if (v !== defaults[k] && shortFor[k]) parts.push(`${shortFor[k]}${v}`);
   }
   if (parts.length) q.set("b", parts.join(",")); else q.delete("b");
+  // Visible video maps (persisted selection).
+  const visMaps = videoMaps.filter(m => m.visible && m.starsId != null).map(m => m.starsId);
+  if (visMaps.length) q.set("maps", visMaps.join(",")); else q.delete("maps");
   const search = q.toString();
   const newUrl = location.pathname + (search ? "?" + search : "");
   history.replaceState(null, "", newUrl);

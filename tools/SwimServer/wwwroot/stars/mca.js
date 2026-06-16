@@ -26,27 +26,28 @@ const MCA = {
 // enum value (RadarWindow.cs:1395-1409). The preview text rendered for each
 // KeyCode comes from GeneratePreviewString (RadarWindow.cs:3190-3240).
 //
+// Verified against WPF RadarWindow.cs Window_KeyDown (Preview.Add(e.Key), line
+// 3433) + GeneratePreviewString (3190-3213). OpenTK Key.F1=10..F12=21, and the
+// KeyCode enum values alias those F-key codes, so the physical key → preview is:
 //   F1  — Beacon Code Readout (hold-to-show, no prefix inserted)
-//   F2  — Track Reposition (RP per CRC docs)
-//   F3  — INIT CNTL → "IC" preview text
-//   F4  — TERM CNTL → "TC" preview text
-//   F5  — HND OFF  → "HO" preview text
-//   F6  — FLT DATA → "FD" preview text  (CRC docs call it "DA"; WPF code says FD)
-//   F7  — MULTI FUNC → "F" preview text
-//   F9  — VFR PLAN  → "VP" preview text
-//   F11 — CA (Conflict Alert)
+//   F3  — INIT CNTL  → "IC"  (InitCntl=12=F3)
+//   F4  — TERM CNTL  → "TC"  (TermCntl=13=F4)
+//   F5  — HND OFF    → "HO"  (HndOff=14=F5)
+//   F6  — VFR PLAN   → "VP"  (VP=15=F6)
+//   F7  — MULTI FUNC → "F"   (MultiFunc=16=F7)
+//   F9  — FLT DATA   → "FD"  (FltData=18=F9)
+//   F12 — SIGN ON    → "SIGN ON" (SignOn=21=F12; handler is the typed equivalent)
+// F2 (plain) and F11 are NOT STARS MCA prefixes (no GeneratePreviewString case).
 //
 // NOTE: previous ERAM-style mappings (QF, QP, QX, QZ, QU, QL, QQ, QB, QS) were
 // wrong - those are ERAM commands, NOT STARS. Removed entirely.
 const FKEY_PREFIX = {
-  F2:  "RP",
   F3:  "IC",
   F4:  "TC",
   F5:  "HO",
-  F6:  "FD",
+  F6:  "VP",   // was "FD" — corrected (VP=15=F6)
   F7:  "F",
-  F9:  "VP",
-  F11: "CA",
+  F9:  "FD",   // was "VP" — corrected (FltData=18=F9)
 };
 
 // Ctrl+F-key bindings per CRC docs.

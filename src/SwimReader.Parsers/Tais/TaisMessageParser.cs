@@ -44,6 +44,11 @@ public sealed class TaisMessageParser : IStddsMessageParser
         {
             var track = record.Element("track");
             if (track is null) continue;
+            // Skip records with no track number (match SwimServer's TaisBridge):
+            // these are untracked/raw returns, not stable tracks. Emitting them
+            // produced Mode-S- or "TN:fac:0"-keyed extras with no flight plan that
+            // rendered as callsign-less duplicate targets.
+            if (string.IsNullOrEmpty(track.Element("trackNum")?.Value)) continue;
 
             // Parse track position
             var trackEvent = ParseTrackPosition(track, facility, receivedAt);

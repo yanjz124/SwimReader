@@ -40,6 +40,7 @@ public sealed class TrackStateManager
         target.LastSeen = now;
         target.LastPositionTime = now;
         target.Facility ??= facility;
+        if (modeSCode.HasValue && modeSCode.Value > 0) target.ModeSCode = modeSCode;
         return target.TrackGuid;
     }
 
@@ -110,8 +111,9 @@ public sealed class TrackStateManager
     /// </summary>
     public bool HasTrack(int modeSCode)
     {
-        var key = $"MS:{modeSCode:X6}";
-        return _targets.ContainsKey(key);
+        // Tracks are keyed by track number now, so match on the stored Mode S
+        // field (set from each track's acAddress) rather than an "MS:" key.
+        return _targets.Values.Any(t => t.ModeSCode == modeSCode);
     }
 
     /// <summary>
@@ -180,12 +182,19 @@ public sealed class TrackStateManager
 
     private static string BuildTrackKey(int? modeSCode, string? trackNumber, string? facility)
     {
-        // Prefer Mode S code as it's globally unique
+        // Key by the per-facility TAIS track number first — it's the stable
+        // identifier the source uses (matches SwimServer's TaisBridge, which keys
+        // purely by trackNum). Preferring Mode S split one aircraft into TWO GUIDs
+        // whenever its messages inconsistently carried the Mode S address, and the
+        // no-flight-plan twin rendered as a callsign-less duplicate track.
+        if (!string.IsNullOrEmpty(trackNumber))
+            return $"TN:{facility ?? "UNK"}:{trackNumber}";
+
+        // Fall back to Mode S (e.g. ADS-B injected tracks carry no track number).
         if (modeSCode.HasValue && modeSCode.Value > 0)
             return $"MS:{modeSCode.Value:X6}";
 
-        // Fall back to facility + track number
-        return $"TN:{facility ?? "UNK"}:{trackNumber ?? "0"}";
+        return $"TN:{facility ?? "UNK"}:0";
     }
 
     private sealed class TrackedTarget
@@ -194,6 +203,7 @@ public sealed class TrackStateManager
         public Guid FlightPlanGuid { get; set; }
         public string? Callsign { get; set; }
         public string? Facility { get; set; }
+        public int? ModeSCode { get; set; }               // stored for injection dedup (key is trackNum)
         public DateTime LastPositionTime { get; set; }   // last actual position fix (not FP/enrichment)
         public DateTime LastSeen { get; set; } = DateTime.UtcNow;
     }

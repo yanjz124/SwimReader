@@ -1427,17 +1427,24 @@ window.starsMinSepClear = () => { minSepPair = null; };
 // only the freshest and suppress the rest. Tracks with no callsign are never
 // deduped (they're genuinely distinct primaries).
 function dedupByCallsign(now) {
-  const byCs = new Map();          // callsign → { guid, fresh }
+  const byKey = new Map();         // dedup key → { guid, fresh }
   const suppressed = new Set();
   for (const t of tracks.values()) {
     if (!t.Location) continue;
     if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue;
-    const cs = (trackToFp.get(t.Guid)?.Callsign || t.Callsign || "").toUpperCase();
-    if (!cs) continue;
+    // Dedup by callsign; for callsign-less tracks fall back to the discrete
+    // beacon code (unique to one aircraft). VFR 1200 (and 0000) are shared by
+    // many aircraft, so never dedup those.
+    let key = (trackToFp.get(t.Guid)?.Callsign || t.Callsign || "").toUpperCase();
+    if (!key) {
+      const sq = t.Squawk;
+      if (sq && sq !== "1200" && sq !== "0000") key = "SQ:" + sq;
+    }
+    if (!key) continue;
     const fresh = t.lastPosUpdate ?? t.lastUpdate ?? 0;
-    const cur = byCs.get(cs);
-    if (!cur) { byCs.set(cs, { guid: t.Guid, fresh }); continue; }
-    if (fresh > cur.fresh) { suppressed.add(cur.guid); byCs.set(cs, { guid: t.Guid, fresh }); }
+    const cur = byKey.get(key);
+    if (!cur) { byKey.set(key, { guid: t.Guid, fresh }); continue; }
+    if (fresh > cur.fresh) { suppressed.add(cur.guid); byKey.set(key, { guid: t.Guid, fresh }); }
     else suppressed.add(t.Guid);
   }
   return suppressed;

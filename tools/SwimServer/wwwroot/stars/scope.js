@@ -15,6 +15,9 @@
 
 const cv = document.getElementById("scope");
 const ctx = cv.getContext("2d");
+// Crisp STARS-style glyph rendering (KNOWN-DEVIATIONS G1 workaround): prefer
+// geometric glyph metrics over hinted anti-aliasing so text matches the WPF look.
+if ("textRendering" in ctx) ctx.textRendering = "geometricPrecision";
 
 // ── Path params: /stars/{artcc}/{facility} ──────────────────────────────────
 const pathMatch = location.pathname.match(/^\/stars\/([^/]+)\/([^/]+)/);
@@ -33,9 +36,9 @@ const prefSet = {
   RangeRingsCentered: true,                           // (WPF: false; we default centered for first-load convenience.
                                                       //  Right-click moves to point and unsets — see KNOWN-DEVIATIONS G7.)
   DCBLocation: "Top",                                 // PrefSet.cs line 31
-  OwnedDataBlockPosition: 0,
-  UnownedDataBlockPosition: 0,
-  UnassociatedDataBlockPosition: 0,
+  OwnedDataBlockPosition: 2,        // N (LeaderDirection enum) — 0 would render "INV"
+  UnownedDataBlockPosition: 2,
+  UnassociatedDataBlockPosition: 2,
   DCBVisible: true,
   PTLLength: 1,
   PTLOwn: false,
@@ -682,10 +685,8 @@ function extrapolatedPosition(t) {
 // ── History (Phase 3b) ──────────────────────────────────────────────────────
 // RadarWindow.cs:5512 — every HistoryRate seconds (default 4.5s), push the
 // current position to history[0], shift older entries; cap at HistoryNum
-// (default 10). Each history dot uses HistoryColors[i] palette index.
-const HISTORY_COLORS = [
-  [30, 80, 200], [70, 70, 170], [50, 50, 130], [40, 40, 110], [30, 30, 90],
-];
+// (default 10). History dots are faded renderings of the target RETURN colour
+// that decay continuously with age (drawn in drawHistory) — not a fixed palette.
 
 function tickHistory(t, posNow) {
   if (!posNow) return;
@@ -701,12 +702,14 @@ function tickHistory(t, posNow) {
 function drawHistory(t) {
   if (!t._history || t._history.length === 0) return;
   const max = Math.min(t._history.length, prefSet.HistoryNum);
+  const denom = Math.max(prefSet.HistoryNum, 1);
   for (let i = 0; i < max; i++) {
-    const palette = HISTORY_COLORS[Math.min(i, HISTORY_COLORS.length - 1)];
-    ctx.fillStyle = adjusted(palette, prefSet.Brightness.History);
+    // Faded return colour, continuous decay with age (oldest ~20% brightness).
+    const fade = 1 - 0.8 * (i / denom);
+    ctx.fillStyle = adjusted(COLORS.Return, prefSet.Brightness.History * fade);
     const p = geoToScreen(t._history[i]);
     if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
-    ctx.fillRect(p.x - 2.5, p.y - 2.5, 5, 5);
+    ctx.fillRect(Math.round(p.x - 2.5), Math.round(p.y - 2.5), 5, 5);
   }
 }
 
@@ -902,16 +905,20 @@ function leaderDirToVector(dir) {
 }
 function effectiveLeaderDir(t, fp) {
   // RedrawDataBlock priority: explicit override > LDRDirection (FP) > owner default.
-  if (t._leaderOverride) return t._leaderOverride;
-  if (fp?.LDRDirection) return fp.LDRDirection;
+  if (t._leaderOverride) return ldrEnum(t._leaderOverride);
+  if (fp?.LDRDirection) return ldrEnum(fp.LDRDirection);
   if (fp?.Owner === ownTcp()) return ldrEnum(prefSet.OwnedDataBlockPosition);
   if (fp) return ldrEnum(prefSet.UnownedDataBlockPosition);
   return ldrEnum(prefSet.UnassociatedDataBlockPosition);
 }
+const LDR_NAME_TO_ENUM = { NW: 1, N: 2, NE: 3, W: 4, E: 6, SW: 7, S: 8, SE: 9 };
 function ldrEnum(v) {
-  // PrefSet stores LeaderDirection as ints 1-9 (per STARS/LeaderDirection.cs);
-  // 0/undefined → N (2).
-  return typeof v === "number" && v >= 1 ? v : 2;
+  // PrefSet stores LeaderDirection as ints 1-9 (per STARS/LeaderDirection.cs).
+  // Also accept compass-name strings (e.g. "NW") so MCA leader-reposition
+  // commands work regardless of which representation set the value.
+  if (typeof v === "number" && v >= 1) return v;
+  if (typeof v === "string" && LDR_NAME_TO_ENUM[v] != null) return LDR_NAME_TO_ENUM[v];
+  return 2; // 0/undefined/unknown → N
 }
 
 function drawDataBlockAndLeader(t, fp, posNow) {
@@ -1010,10 +1017,14 @@ function drawDataBlockAndLeader(t, fp, posNow) {
 //        - else "◇" if PrimaryOnly
 //        - else "*"
 function positionSymbolText(t, fp) {
+  // Coast tracks show the coast glyph regardless of ownership.
+  if (isCoasting(t)) return "#";
+  // Owned / handed-off track shows the controlling position's sector char.
   const owner = fp?.Owner || t.PositionInd;
   if (owner && owner.length > 0) return owner.slice(-1);
-  if (!t.Squawk || t.Squawk === "0000") return "◇";    // PrimaryOnly
-  return "*";
+  // Otherwise use the STARS track-type glyph (◇ associated / \ correlated
+  // beacon / + uncorrelated primary) instead of collapsing everything to "*".
+  return symbolFor(t);
 }
 
 function drawPosition(t, posNow) {
@@ -1036,9 +1047,10 @@ function drawPosition(t, posNow) {
     ctx.fill();
   }
 
-  // Position glyph: owner-sector letter when track is owned/handed-off, else
-  // "*" for correlated beacon, "◇" for primary-only (Aircraft.cs:617-623).
-  ctx.fillStyle = adjusted(COLORS.BeaconTarget, prefSet.Brightness.Position);
+  // Position glyph colour follows the target's state: red on emergency, white
+  // when owned, else the standard green beacon/track colour (not always lime).
+  const glyphColor = (baseColor === COLORS.Return) ? COLORS.BeaconTarget : baseColor;
+  ctx.fillStyle = adjusted(glyphColor, prefSet.Brightness.Position);
   ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
@@ -1368,6 +1380,20 @@ async function bootstrap() {
   if (window.mountSsa) window.mountSsa();
   // Phase 3a: DSTARS streaming connection. Runs independent of facility load.
   startDstars();
+
+  // G1 workaround: wait for the STARS font (FixedDemiBold) before the first
+  // paint so a cold load never renders the scope in fallback monospace.
+  try {
+    if (document.fonts) {
+      await Promise.all([
+        document.fonts.load(`${prefSet.CharSize.DataBlock}px FixedDemiBold`),
+        document.fonts.load(`${prefSet.CharSize.Position}px FixedDemiBold`),
+        document.fonts.load(`${prefSet.CharSize.Lists}px FixedDemiBold`),
+      ]);
+      await document.fonts.ready;
+    }
+  } catch { /* fall through — render anyway */ }
+
   requestAnimationFrame(frame);
 }
 

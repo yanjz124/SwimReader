@@ -147,10 +147,10 @@ function refreshSsa() {
   lines.push(`${fa(prefSet.AltitudeFilterUnAssociatedMin)} ${fa(prefSet.AltitudeFilterUnAssociatedMax)} U ` +
              `${fa(prefSet.AltitudeFilterAssociatedMin)} ${fa(prefSet.AltitudeFilterAssociatedMax)} A`);
 
-  // Quick Look TCPs — WPF: "QL: ALL" or "QL: TCP1 TCP2"
+  // Quick Look TCPs — WPF: "QL: ALL" or "QL: TCP1 TCP2". Only shown when active
+  // (no bare "QL:" line when nothing is quick-looked).
   const ql = prefSet.QuickLookedTCPs || [];
-  if (ql.length === 0) lines.push("QL: ");
-  else lines.push("QL: " + ql.join(" "));
+  if (ql.length > 0) lines.push("QL: " + ql.join(" "));
 
   // INTRAIL
   const onVols = SSA.intrailVolumes.filter(v => v.active);

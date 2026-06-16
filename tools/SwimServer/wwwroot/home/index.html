@@ -5,13 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>swim.vncrcc.org</title>
 <link rel="stylesheet" href="/shared/common.css?v=2">
-<link rel="stylesheet" href="/home/home.css?v=2">
+<link rel="stylesheet" href="/home/home.css?v=3">
 </head>
 <body>
 
 <header>
-    <h1>SWIM</h1>
-    <span class="sub">SYSTEM WIDE INFORMATION MANAGEMENT</span>
+    <div class="brand">
+        <h1>SWIM</h1>
+        <span class="sub">SYSTEM WIDE INFORMATION MANAGEMENT</span>
+    </div>
     <div class="status-bar">
         <span class="stat" id="sfdpsStat">SFDPS: <b>--</b></span>
         <span class="stat" id="stddsStat">STDDS: <b>--</b></span>
@@ -21,93 +23,110 @@
     </div>
 </header>
 
-<div class="main">
-    <div class="nav" id="nav">
-        <div class="nav-section">EN ROUTE (SFDPS)</div>
-        <a class="nav-item" data-key="eram" href="/eram">
-            <div class="title">ERAM SCOPE</div>
-            <div class="desc">Radar display with data blocks</div>
-            <div class="count" id="eramCount"></div>
-        </a>
-        <a class="nav-item" data-key="flight-table" href="/flight-table">
-            <div class="title">FLIGHT TABLE</div>
-            <div class="desc">Flight plan viewer with event history</div>
-        </a>
+<main class="content">
 
-        <div class="nav-section">TRAFFIC FLOW (TFMS)</div>
-        <a class="nav-item" data-key="tfm" href="/tfm">
-            <div class="title">TFM</div>
-            <div class="desc">TMI dashboard / flight data</div>
-            <div class="count" id="tfmCount"></div>
-        </a>
-        <a class="nav-item" data-key="tfm-route" href="/tfm/route">
-            <div class="title">ROUTE VIEWER</div>
-            <div class="desc">Route traversal with sectors</div>
-        </a>
-        <a class="nav-item" data-key="tfm-sectors" href="/tfm/sectors">
-            <div class="title">SECTOR LOADING</div>
-            <div class="desc">Predicted sector traffic</div>
-        </a>
-        <a class="nav-item" data-key="tfm-flow" href="/tfm/flow">
-            <div class="title">FLOW ADVISORY</div>
-            <div class="desc">FCA status and restrictions</div>
-        </a>
-        <a class="nav-item" data-key="tfm-aptc" href="/tfm/aptc">
-            <div class="title">APTC</div>
-            <div class="desc">Airport configurations — AAR/ADR, runway config, weather</div>
-        </a>
-        <a class="nav-item" data-key="edct" href="/edct">
-            <div class="title">EDCT</div>
-            <div class="desc">Departure clearance times (GDP/CTOP/GS)</div>
-            <div class="count" id="edctCount"></div>
-        </a>
-
-        <div class="nav-section">TERMINAL (STDDS)</div>
-        <a class="nav-item" data-key="tais" href="/tais">
-            <div class="title">TAIS</div>
-            <div class="desc">STARS terminal radar tracks</div>
-            <div class="count" id="taisCount"></div>
-        </a>
-        <a class="nav-item" data-key="asdex" href="/asdex">
-            <div class="title">ASDE-X</div>
-            <div class="desc">Airport surface surveillance</div>
-            <div class="count" id="asdexCount"></div>
-        </a>
-        <a class="nav-item" data-key="tdls" href="/tdls">
-            <div class="title">TDLS</div>
-            <div class="desc">CPDLC clearances / departures</div>
-            <div class="count" id="tdlsCount"></div>
-        </a>
-        <a class="nav-item" data-key="tdls-history" href="/tdls/history">
-            <div class="title">TDLS HISTORY</div>
-            <div class="desc">Searchable archive of past CPDLC + departures</div>
-        </a>
-
-        <div class="nav-section">WEATHER (ITWS)</div>
-        <a class="nav-item" data-key="itws" href="/itws">
-            <div class="title">ITWS</div>
-            <div class="desc">Terminal weather (winds, microbursts, storms, lightning)</div>
-            <div class="count" id="itwsCount"></div>
-        </a>
-
-        <div class="nav-section">SYSTEM</div>
-        <a class="nav-item" data-key="server" href="#">
-            <div class="title">SERVER STATUS</div>
-            <div class="desc">Performance, memory, uptime, clients</div>
-            <div class="count" id="serverCount"></div>
-        </a>
-    </div>
-
-    <div class="panel" id="panel">
-        <div class="welcome">
-            <div class="big">SWIM</div>
-            <div>FAA System Wide Information Management</div>
-            <div style="color:#444; margin-top: 12px;">Select a service to view details</div>
+    <section class="group">
+        <h2 class="group-title">EN ROUTE (SFDPS)</h2>
+        <div class="grid">
+            <a class="card" href="/eram">
+                <div class="title">ERAM SCOPE</div>
+                <div class="desc">Radar display with data blocks</div>
+                <div class="count" id="eramCount"></div>
+            </a>
+            <a class="card" href="/flight-table">
+                <div class="title">FLIGHT TABLE</div>
+                <div class="desc">Flight plan viewer with event history</div>
+            </a>
         </div>
-    </div>
-</div>
+    </section>
 
-<script src="/home/home.js?v=2"></script>
+    <section class="group">
+        <h2 class="group-title">TRAFFIC FLOW (TFMS)</h2>
+        <div class="grid">
+            <a class="card" href="/tfm">
+                <div class="title">TFM</div>
+                <div class="desc">TMI dashboard / flight data</div>
+                <div class="count" id="tfmCount"></div>
+            </a>
+            <a class="card" href="/tfm/route">
+                <div class="title">ROUTE VIEWER</div>
+                <div class="desc">Route traversal with sectors</div>
+            </a>
+            <a class="card" href="/tfm/sectors">
+                <div class="title">SECTOR LOADING</div>
+                <div class="desc">Predicted sector traffic</div>
+            </a>
+            <a class="card" href="/tfm/flow">
+                <div class="title">FLOW ADVISORY</div>
+                <div class="desc">FCA status and restrictions</div>
+            </a>
+            <a class="card" href="/tfm/aptc">
+                <div class="title">APTC</div>
+                <div class="desc">Airport configs — AAR/ADR, runways, weather</div>
+            </a>
+            <a class="card" href="/edct">
+                <div class="title">EDCT</div>
+                <div class="desc">Departure clearance times (GDP/CTOP/GS)</div>
+                <div class="count" id="edctCount"></div>
+            </a>
+        </div>
+    </section>
+
+    <section class="group">
+        <h2 class="group-title">TERMINAL (STDDS)</h2>
+        <div class="grid">
+            <a class="card" href="/tais">
+                <div class="title">TAIS</div>
+                <div class="desc">STARS terminal radar tracks</div>
+                <div class="count" id="taisCount"></div>
+            </a>
+            <a class="card" href="/asdex">
+                <div class="title">ASDE-X</div>
+                <div class="desc">Airport surface surveillance</div>
+                <div class="count" id="asdexCount"></div>
+            </a>
+            <a class="card" href="/dstars">
+                <div class="title">dSTARS FEED</div>
+                <div class="desc">DGScope ScopeServer feed — connect a client</div>
+            </a>
+            <a class="card" href="/tdls">
+                <div class="title">TDLS</div>
+                <div class="desc">CPDLC clearances / departures</div>
+                <div class="count" id="tdlsCount"></div>
+            </a>
+            <a class="card" href="/tdls/history">
+                <div class="title">TDLS HISTORY</div>
+                <div class="desc">Searchable archive of past CPDLC + departures</div>
+            </a>
+        </div>
+    </section>
+
+    <section class="group">
+        <h2 class="group-title">WEATHER (ITWS)</h2>
+        <div class="grid">
+            <a class="card" href="/itws">
+                <div class="title">ITWS</div>
+                <div class="desc">Terminal weather — winds, microbursts, storms, lightning</div>
+                <div class="count" id="itwsCount"></div>
+            </a>
+        </div>
+    </section>
+
+    <section class="group">
+        <h2 class="group-title">SYSTEM</h2>
+        <div class="grid">
+            <div class="card server-card" id="serverCard" role="button" tabindex="0" aria-expanded="false">
+                <div class="title">SERVER STATUS</div>
+                <div class="desc">Performance, memory, uptime — tap for detail</div>
+                <div class="count" id="serverCount"></div>
+                <div class="server-detail" id="serverDetail" hidden></div>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<script src="/home/home.js?v=3"></script>
 <script src="/idle-timer.js?v=2"></script>
 </body>
 </html>

@@ -20,6 +20,7 @@ static class StaticRoutes
         app.MapGet("/tdls-airport.html", (HttpContext c) => Results.Redirect($"/tdls{c.Request.QueryString}", permanent: true));
         app.MapGet("/tais.html", (HttpContext c) => Results.Redirect($"/tais{c.Request.QueryString}", permanent: true));
         app.MapGet("/tais-facility.html", (HttpContext c) => Results.Redirect($"/tais{c.Request.QueryString}", permanent: true));
+        app.MapGet("/dstars.html", (HttpContext c) => Results.Redirect($"/dstars{c.Request.QueryString}", permanent: true));
         app.MapGet("/tfm.html", (HttpContext c) => Results.Redirect($"/tfm{c.Request.QueryString}", permanent: true));
         app.MapGet("/tfm-flow.html", (HttpContext c) => Results.Redirect($"/tfm/flow{c.Request.QueryString}", permanent: true));
         app.MapGet("/tfm-route.html", (HttpContext c) => Results.Redirect($"/tfm/route{c.Request.QueryString}", permanent: true));

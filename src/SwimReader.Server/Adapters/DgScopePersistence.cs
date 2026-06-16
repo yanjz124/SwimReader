@@ -48,7 +48,7 @@ public static class DgScopePersistence
     // Discard the whole cache if it predates this (a long outage → everything
     // stale). Within the window, per-target staleness is filtered on import.
     private static readonly TimeSpan MaxAge = TimeSpan.FromMinutes(60);
-    private static readonly TimeSpan TargetTimeout = TimeSpan.FromMinutes(5);   // = TrackStateManager._staleTimeout
+    private static readonly TimeSpan TargetTimeout = TimeSpan.FromSeconds(45);   // = TrackStateManager._staleTimeout
 
     public static string ResolvePath() =>
         Environment.GetEnvironmentVariable("DSTARS_CACHE_PATH")

@@ -139,11 +139,23 @@ class StarsBridge
         {
             // Extract a few quick-stat fields for the picker UI
             int? videoMapCount = null;
-            int? areaCount = null;
             if (sc.TryGetProperty("videoMapIds", out var vmIds) && vmIds.ValueKind == JsonValueKind.Array)
                 videoMapCount = vmIds.GetArrayLength();
+
+            // Areas (id + name) so the picker can offer them as a submenu —
+            // bigger TRACONs (e.g. PCT) define many; most ATCT/TRACONs have one.
+            var areaList = new List<object>();
             if (sc.TryGetProperty("areas", out var areas) && areas.ValueKind == JsonValueKind.Array)
-                areaCount = areas.GetArrayLength();
+            {
+                foreach (var a in areas.EnumerateArray())
+                {
+                    areaList.Add(new
+                    {
+                        id = a.TryGetProperty("id", out var aid) ? aid.GetString() : null,
+                        name = a.TryGetProperty("name", out var an) ? an.GetString() : null,
+                    });
+                }
+            }
 
             results.Add(new
             {
@@ -152,7 +164,8 @@ class StarsBridge
                 type,
                 parentId,
                 videoMapCount,
-                areaCount,
+                areaCount = areaList.Count,
+                areas = areaList,
             });
         }
 

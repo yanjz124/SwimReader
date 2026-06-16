@@ -52,6 +52,11 @@
   .row.active { background: #0a3a0a; color: #fff; }
   .row .id { color: #00ff00; font-weight: bold; }
   .row .meta { color: #6f6; font-size: 11px; }
+  .row .caret { display: inline-block; width: 12px; color: #6f6; }
+  .row.area { padding-left: 34px; background: #030903; }
+  .row.area .id { color: #9c9; font-weight: normal; }
+  .row.area .meta { color: #585; }
+  .areas { border-bottom: 1px solid #0a1a0a; }
   .placeholder { padding: 16px; color: #6f6; }
   .nostars { color: #888; font-style: italic; padding: 16px; }
 </style>
@@ -108,11 +113,34 @@ async function selectArtcc(id) {
     const mapsBanner = avail.available.length
       ? `<div style="padding:8px 16px;background:#0a2a0a;border-bottom:1px solid #1a3a1a;color:#6f6;font-size:11px;">${avail.available.length} video maps available for ${id} on the server</div>`
       : `<div style="padding:8px 16px;background:#2a1a0a;border-bottom:1px solid #3a2a1a;color:#fb6;font-size:11px;">No video maps on the server for ${id} — targets will still display.</div>`;
-    const facilityRows = data.facilities.map(f =>
-      `<div class="row" data-id="${f.id}">
-        <span class="id">${f.id}</span>
-        <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${f.areaCount || 0} areas</span>
-      </div>`).join("");
+    // Live per-facility track counts from TAIS — same STDDS source as the
+    // scope feed, and facility ids align with vNAS (e.g. RDU↔RDU). Best-effort;
+    // facilities without a TAIS feed just show no count.
+    const taisCounts = {};
+    try {
+      for (const t of await fetch("/api/tais").then(r => r.json())) taisCounts[t.facility] = t.trackCount;
+    } catch {}
+    const facilityRows = data.facilities.map(f => {
+      const areas = Array.isArray(f.areas) ? f.areas.filter(a => a && a.id) : [];
+      const multi = areas.length > 1;
+      const cnt = taisCounts[f.id];
+      const cntStr = (cnt != null) ? ` · ${cnt}T` : "";
+      const caret = multi ? `<span class="caret">▸</span>` : `<span class="caret"></span>`;
+      const head =
+        `<div class="row fac" data-id="${f.id}" data-multi="${multi ? 1 : 0}">
+          <span class="id">${caret}${f.id}</span>
+          <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${areas.length} area${areas.length === 1 ? "" : "s"}${cntStr}</span>
+        </div>`;
+      const sub = multi
+        ? `<div class="areas" data-for="${f.id}" hidden>` +
+            areas.map(a =>
+              `<div class="row area" data-fac="${f.id}" data-area="${a.id}">
+                <span class="id">${a.name || a.id}</span>
+              </div>`).join("") +
+          `</div>`
+        : "";
+      return head + sub;
+    }).join("");
     $("facilities").innerHTML = mapsBanner + facilityRows;
     // Profile picker: if any DGScope profile XMLs exist for this ARTCC, show
     // them. Clicking a profile launches the scope with ?profile=... applied.
@@ -135,10 +163,25 @@ async function selectArtcc(id) {
         };
       }
     }
-    for (const el of document.querySelectorAll("#facilities .row:not([data-profile])"))
+    const launch = (facId, areaId) =>
+      location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(facId)}` +
+        (areaId ? `?area=${encodeURIComponent(areaId)}` : "");
+    // Facility row: multi-area facilities expand their area submenu; single/no
+    // area launches straight into the scope.
+    for (const el of document.querySelectorAll("#facilities .row.fac")) {
       el.onclick = () => {
-        location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(el.dataset.id)}`;
+        const facId = el.dataset.id;
+        if (el.dataset.multi === "1") {
+          const sub = document.querySelector(`#facilities .areas[data-for="${CSS.escape(facId)}"]`);
+          const caret = el.querySelector(".caret");
+          if (sub) { sub.hidden = !sub.hidden; if (caret) caret.textContent = sub.hidden ? "▸" : "▾"; }
+        } else {
+          launch(facId);
+        }
       };
+    }
+    for (const el of document.querySelectorAll("#facilities .row.area"))
+      el.onclick = () => launch(el.dataset.fac, el.dataset.area);
   } catch (e) {
     $("facilities").innerHTML = `<div class="placeholder">Error: ${e}</div>`;
   }

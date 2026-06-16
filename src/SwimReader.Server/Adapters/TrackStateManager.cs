@@ -12,7 +12,11 @@ public sealed class TrackStateManager
 {
     private readonly ConcurrentDictionary<string, TrackedTarget> _targets = new();
     private readonly ILogger<TrackStateManager> _logger;
-    private readonly TimeSpan _staleTimeout = TimeSpan.FromMinutes(5);
+    // 45 s matches SwimServer's TaisBridge purge. TAIS reassigns ("churns") track
+    // numbers for the same aircraft over time; a long timeout lets each aircraft's
+    // recent track numbers pile up as duplicates. Also > the client/DGScope 30 s
+    // LostTargetSeconds, so a track is hidden client-side before the server drops it.
+    private readonly TimeSpan _staleTimeout = TimeSpan.FromSeconds(45);
 
     public TrackStateManager(ILogger<TrackStateManager> logger)
     {

@@ -1443,17 +1443,18 @@ function _afterPrefChange() {
 function handleNumAdjust(id, dir) {
   switch (id) {
     case "RANGE":
-      // RadarWindow.cs:4636+ — cycles through standard preset ranges 5..400
-      prefSet.Range = clamp(prefSet.Range + dir, 1, 400);
+      // RadarWindow.cs:4193-4214 — increment ±1, clamp 6..512 (NOT a preset cycle).
+      prefSet.Range = clamp(prefSet.Range + dir, 6, 512);
       recomputeScale();
       break;
     case "RR_NUM":
-      // RadarWindow.cs:4636-4650 — cycles 2 → 5 → 10 → 2
+      // RadarWindow.cs:4638-4660 — cycle 2 ↔ 5 ↔ 10 ↔ 20 (floor 2, ceiling 20).
       switch (prefSet.RangeRingSpacing) {
+        case 2:  if (dir > 0) prefSet.RangeRingSpacing = 5;  break;
         case 5:  prefSet.RangeRingSpacing = dir > 0 ? 10 : 2; break;
-        case 10: prefSet.RangeRingSpacing = dir > 0 ? 2 : 5;  break;
-        case 2:  prefSet.RangeRingSpacing = dir > 0 ? 5 : 10; break;
-        default: prefSet.RangeRingSpacing = 5;
+        case 10: prefSet.RangeRingSpacing = dir > 0 ? 20 : 5; break;
+        case 20: if (dir < 0) prefSet.RangeRingSpacing = 10;  break;
+        default: prefSet.RangeRingSpacing = 2;
       }
       break;
     case "LDR_LEN":
@@ -1471,10 +1472,12 @@ function handleNumAdjust(id, dir) {
       prefSet.HistoryNum = clamp(prefSet.HistoryNum + dir, 0, 10);
       break;
     case "HIST_RATE":
-      prefSet.HistoryRate = clamp(prefSet.HistoryRate + dir * 0.5, 0.5, 10);
+      // RadarWindow.cs:4128-4140 — step ±0.5, clamp 0..4.5.
+      prefSet.HistoryRate = clamp(prefSet.HistoryRate + dir * 0.5, 0, 4.5);
       break;
     case "PTL_LEN":
-      prefSet.PTLLength = clamp(prefSet.PTLLength + dir, 0, 10);
+      // RadarWindow.cs:4174-4184 — step ±0.5, clamp 0..5.
+      prefSet.PTLLength = clamp(prefSet.PTLLength + dir * 0.5, 0, 5);
       break;
     case "PTL_OWN":  prefSet.PTLOwn = !prefSet.PTLOwn; break;
     case "PTL_ALL":  prefSet.PTLAll = !prefSet.PTLAll; break;

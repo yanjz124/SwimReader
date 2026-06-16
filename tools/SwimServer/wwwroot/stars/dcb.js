@@ -88,7 +88,7 @@ function mainMenu(state) {
   list.push(btn("BRITE", "BRITE", { submenu: "BRITE" }));                                // 80
   list.push(btn("LDR_DIR", `LDR DIR\n${ldrDirName(p.OwnedDataBlockPosition)}`,
     { half: true }));                                                                    // 40
-  list.push(btn("LDR_LEN", `LDR\n${p.LeaderLength}`, { half: true }));                   // 40
+  list.push(btn("LDR_LEN", `LDR LEN\n${p.LeaderLength}`, { half: true }));                // 40 (RadarWindow.cs:3946)
   list.push(btn("CHAR_SIZE", "CHAR\nSIZE", { submenu: "CHARSIZE" }));                    // 80
   list.push(btn("MODE", "MODE\nFSL", { disabled: true }));                               // 80
   list.push(btn("SITE", "SITE", { submenu: "SITE" }));                                   // 80
@@ -102,7 +102,7 @@ function auxMenu(state) {
   const list = [
     btn("VOL", "VOL\nN/A", { disabled: true }),                                            // 80
     btn("HIST_NUM", `HISTORY\n${p.HistoryNum}`, { half: true }),                          // 40
-    btn("HIST_RATE", `H RATE\n${p.HistoryRate.toFixed(1)}`, { half: true }),              // 40
+    btn("HIST_RATE", `H_RATE\n${p.HistoryRate.toFixed(1)}`, { half: true }),              // 40 (RadarWindow.cs:3953)
     btn("CURSOR_HOME", "CURSOR\nHOME", { disabled: true }),                                // 80
     btn("CURSOR_SPEED", "CSR SPD\nN/A", { disabled: true }),                              // 80
     btn("MAP_UNCOR", "MAP\nUNCOR", { disabled: true }),                                    // 80
@@ -114,7 +114,7 @@ function auxMenu(state) {
     btn("DCB_LEFT",   "DCB\nLEFT",   { active: p.DCBLocation === "Left",   half: true }), // 40
     btn("DCB_RIGHT",  "DCB\nRIGHT",  { active: p.DCBLocation === "Right",  half: true }), // 40
     btn("DCB_BOTTOM", "DCB\nBOTTOM", { active: p.DCBLocation === "Bottom", half: true }), // 40
-    btn("PTL_LEN", `PTL\nLEN ${p.PTLLength}`),                                             // 80
+    btn("PTL_LEN", `PTL\nLNTH\n${p.PTLLength}`),                                           // 80 (RadarWindow.cs:3954)
     btn("PTL_OWN", "PTL OWN", { active: p.PTLOwn, half: true }),                          // 40
     btn("PTL_ALL", "PTL ALL", { active: p.PTLAll, half: true }),                          // 40
     btn("SHIFT", "SHIFT", { submenu: "MAIN" }),                                            // 80
@@ -186,16 +186,15 @@ function charSizeMenu(state) {
 }
 
 function siteMenu(state) {
-  // RadarWindow.cs:3741+ — one button per ASR site (Phase 6 populates real
-  // ASR list); plus MULTI and FUSED.
-  const list = [
-    btn("SITE_MULTI", "MULTI"),
-    btn("SITE_FUSED", "FUSED", { active: true }),
-    btn("SITE_DONE",  "DONE", { submenu: "MAIN" }),
-  ];
+  // RadarWindow.cs:3737-3770 — one button per ASR site, then MULTI (disabled),
+  // then FUSED. No DONE button (WPF closes on a site click).
+  const list = [];
   for (const s of state.asrSites) {
-    list.push(btn(`SITE_${s.id}`, s.asrId || s.id.slice(0, 5)));
+    list.push(btn(`SITE_${s.id}`, s.asrId || s.id.slice(0, 5),
+      { active: state.radar === s.id }));
   }
+  list.push(btn("SITE_MULTI", "MULTI", { disabled: true }));            // RadarWindow.cs:3757 Enabled=false
+  list.push(btn("SITE_FUSED", "FUSED", { active: state.radar === "FUSED" || state.radar == null }));
   return list;
 }
 
@@ -463,7 +462,7 @@ class DCB {
       return;
     }
     if (el.dataset.map != null) { this.emit("mapToggle", +el.dataset.map); return; }
-    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, baseAdjust * 10); return; }
+    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, baseAdjust * 5); return; }
     if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   baseAdjust);     return; }
     this.emit("numAdjust", id, baseAdjust);
   }
@@ -485,7 +484,7 @@ class DCB {
     const el = this._btn(e.target);
     if (!el || el.dataset.disabled) return;
     const dir = e.deltaY < 0 ? +1 : -1;
-    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, dir * 10); return; }
+    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, dir * 5); return; }
     if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   dir);     return; }
     this.emit("numAdjust", el.dataset.id, dir);
   }
@@ -499,7 +498,7 @@ class DCB {
     if (!el || el.dataset.disabled) return;
     e.preventDefault();
     const dir = e.deltaY < 0 ? +1 : -1;
-    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, dir * 10); return; }
+    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, dir * 5); return; }
     if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   dir);     return; }
     this.emit("numAdjust", el.dataset.id, dir);
   }

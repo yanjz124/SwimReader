@@ -926,6 +926,13 @@ window.MCA = MCA;
 window.mcaSetClickedPlane = (plane) => {
   MCA.clickedPlane = plane;
   if (!MCA.buffer) {
+    // Clicking a track in an unacknowledged Conflict Alert acknowledges it first
+    // (CRC STARS § STCA: "click either of the two tracks") — silences the alert
+    // and turns CA solid red. Consumes the click.
+    if (plane && plane._stca && !plane._caAcked && window.starsAckCA?.(plane)) {
+      refreshMca();
+      return;
+    }
     // Empty buffer + click = the implied-command priority chain (accept handoff,
     // clear pointout, beacon readout, toggle FDB) — RadarWindow.cs:2708-2768.
     processImplied(plane);

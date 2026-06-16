@@ -8,6 +8,8 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 
 **Before implementing any ASDE-X display feature, command, or behavior, ALWAYS read `docs/crc-asdex-reference.md` first.** This is the authoritative CRC/vNAS ASDE-X specification with screenshots. It covers targets, data blocks, safety logic, display control bar, commands, and all ASDE-X display elements. Images are saved locally in `docs/img/asdex/`.
 
+**Before implementing any STARS display feature, command, color, or behavior, ALWAYS read `docs/crc-stars-reference.md` first.** This is a curated local capture of the authoritative CRC/vNAS STARS docs (https://docs.virtualnas.net/crc/stars/) — covers target/position symbols, data blocks (LDB/PDB/FDB), ownership colors, STCA/CA logic, special purpose codes, handoffs, and point outs. Match it exactly; if a detail is missing, fetch the live page and add it. This complements the DGScope WPF source in `../scope/` — use the source for rendering/algorithm details, the docs for user-facing behavior and appearance.
+
 ## Architecture Overview
 
 ```

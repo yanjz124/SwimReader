@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Mvc;
+using SwimReader.Server.Adapters;
 using SwimReader.Server.Streaming;
 
 namespace SwimReader.Server.Controllers;
@@ -15,11 +16,14 @@ public sealed class DstarsController : ControllerBase
 {
     private readonly ClientConnectionManager _clients;
     private readonly ILogger<DstarsController> _logger;
+    private readonly DgScopeAdapter _adapter;
 
-    public DstarsController(ClientConnectionManager clients, ILogger<DstarsController> logger)
+    public DstarsController(ClientConnectionManager clients, ILogger<DstarsController> logger,
+        DgScopeAdapter adapter)
     {
         _clients = clients;
         _logger = logger;
+        _adapter = adapter;
     }
 
     /// <summary>
@@ -32,6 +36,19 @@ public sealed class DstarsController : ControllerBase
     {
         var clientId = Guid.NewGuid().ToString("N");
         var client = _clients.AddClient(clientId, facility);
+
+        // Seed the new client's channel with the adapter's current snapshot
+        // (FPs first, then Tracks - so callsigns are present before symbols
+        // render). This means a freshly-loaded scope sees the full state on
+        // connect instead of waiting for the next sweep / TAIS batch.
+        int seedCount = 0;
+        foreach (var jsonLine in _adapter.GetSnapshot(facility))
+        {
+            client.TryWrite(jsonLine);
+            seedCount++;
+        }
+        if (seedCount > 0)
+            _logger.LogInformation("Seeded client {Id} with {N} snapshot updates", clientId, seedCount);
 
         if (HttpContext.WebSockets.IsWebSocketRequest)
         {

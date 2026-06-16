@@ -519,8 +519,8 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
   if (sub === "*" && k.length > 2) {
     const c = k[2];
     if (c === "J") {
-      // Clear all J-Rings
-      for (const t of tracks.values()) if (t.TPA?.type === "JRing") t.TPA = null;
+      // Clear all J-Rings (*J stores the radius in _jRing — clear that).
+      for (const t of tracks.values()) t._jRing = null;
       return;
     }
     if (c === "P") {
@@ -835,49 +835,29 @@ function geoToDms(geo) {
 //   6. Owned & has callsign         -> beacon readout in preview
 //   7. !Owned & has callsign        -> toggle FDB
 //   8. No callsign                  -> toggle FDB (unassociated)
+// ProcessImpliedCommand priority chain (RadarWindow.cs:2708-2768). Uses the same
+// model the renderer reads: fp.Owner (controlling sector) and t._forcedMode
+// (FDB/LDB override). Handoff/pointout mutations are local only (read-only feed, G18).
 function processImplied(plane) {
   const fp = trackToFp.get(plane.Guid) || {};
-  const me = window.ownTcp?.();
-  // 1. Accept handoff
-  if (fp.PendingHandoff && fp.PendingHandoff === me) {
-    fp.PositionInd = me;
-    fp.PendingHandoff = null;
-    return;
-  }
-  // 2. Recall handoff
-  if (fp.PositionInd === me && fp.PendingHandoff) {
-    fp.PendingHandoff = null;
-    return;
-  }
-  // 3. Clear pointout
-  if (plane._pointout) {
-    plane._pointout = false;
-    return;
-  }
-  // 4. Clear ForceQuickLook
-  if (plane._forceQuickLook) {
-    plane._forceQuickLook = false;
-    return;
-  }
-  // 5. Release ownership (we own but display is elsewhere)
-  if (plane._owned && fp.PositionInd && fp.PositionInd !== me) {
-    plane._owned = false;
-    return;
-  }
-  // 6. Beacon readout in preview area
-  if (plane._owned && fp.Callsign) {
+  const me = window.ownTcp?.() || "";
+  const owned = !!fp.Owner && fp.Owner === me;
+  // 1. Accept an inbound handoff (PendingHandoff == me).
+  if (fp.PendingHandoff && fp.PendingHandoff === me) { fp.Owner = me; fp.PendingHandoff = null; return; }
+  // 2. Recall a handoff I initiated.
+  if (owned && fp.PendingHandoff) { fp.PendingHandoff = null; return; }
+  // 3. Clear a pointout directed at us.
+  if (fp._pointoutTarget) { fp._pointoutTarget = null; return; }
+  // 4. Clear force-quicklook / marked.
+  if (plane._marked) { plane._marked = false; return; }
+  // 6. Beacon readout in the preview for an owned track with a callsign.
+  if (owned && fp.Callsign) {
     setResponse(`${fp.Callsign} ${plane.Squawk || ""} ${fp.AssignedSquawk || ""}`.trim());
     return;
   }
-  // 7. Toggle FDB on associated track we don't own
-  if (!plane._owned && fp.Callsign) {
-    plane._fdb = !plane._fdb;
-    return;
-  }
-  // 8. Toggle FDB on unassociated track
-  if (!fp.Callsign) {
-    plane._fdb = !plane._fdb;
-  }
+  // 7/8. Toggle the data block FDB <-> LDB on a track we don't own (or unassociated).
+  const cur = (typeof dataBlockMode === "function") ? dataBlockMode(plane, fp) : "LDB";
+  plane._forcedMode = (cur === "FDB") ? "LDB" : "FDB";
 }
 
 // ── KeyCode.RngRing  "RR <interval>" + enter (RadarWindow.cs:2528-2541) ──
@@ -945,9 +925,9 @@ window.MCA = MCA;
 window.mcaSetClickedPlane = (plane) => {
   MCA.clickedPlane = plane;
   if (!MCA.buffer) {
-    // Empty buffer + click = FDB toggle (Phase 3b _forcedMode).
-    plane._forcedMode = plane._forcedMode === "FDB" ? null : "FDB";
-    setResponse(`FDB ${plane._forcedMode || "OFF"}`);
+    // Empty buffer + click = the implied-command priority chain (accept handoff,
+    // clear pointout, beacon readout, toggle FDB) — RadarWindow.cs:2708-2768.
+    processImplied(plane);
   } else {
     // Buffer + click = execute command with this plane appended.
     const before = MCA.buffer;

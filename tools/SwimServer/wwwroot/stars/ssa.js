@@ -71,7 +71,7 @@ function mountSsa() {
   el.id = "ssa";
   el.style.cssText = `
     position:fixed;
-    left:8px; top:90px;     /* below DCB; PrefSet.StatusAreaLocation overrides */
+    left:20px; top:120px;   /* below the DCB, nudged in for breathing room; StatusAreaLocation overrides */
     background:transparent;
     color:#0f0;
     font-family:FixedDemiBold, ui-monospace, monospace; font-size:12px;
@@ -190,6 +190,17 @@ function refreshSsa() {
   const b = prefSet.Brightness.Lists / 100;
   el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
   el.style.fontSize = (prefSet.CharSize?.Lists ?? 12) + "px";
+
+  // DEFAULT the preview (MCA) to just below the SSA — ONCE. After that it's free
+  // to be moved (drag / PreviewLocation command); we don't keep re-pinning it.
+  const mca = document.getElementById("mca");
+  if (mca && !mca.dataset.positioned && !prefSet.PreviewLocation) {
+    const r = el.getBoundingClientRect();
+    mca.style.top = (r.bottom + 8) + "px";
+    mca.style.left = r.left + "px";
+    mca.style.bottom = "auto";
+    mca.dataset.positioned = "1";
+  }
 }
 
 function fa(altFt) {

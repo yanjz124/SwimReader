@@ -48,6 +48,7 @@ const FKEY_PREFIX = {
   F6:  "VP",   // was "FD" — corrected (VP=15=F6)
   F7:  "F",
   F9:  "FD",   // was "VP" — corrected (FltData=18=F9)
+  F12: "SIGN ON",   // SignOn=21=F12 — readout "SIGN ON", TCP typed on next line
 };
 
 // Ctrl+F-key bindings per CRC docs.
@@ -149,19 +150,6 @@ function refreshMca() {
 function onKeyDown(e) {
   // Ignore typing inside text inputs (none currently, but defensive).
   if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
-
-  // Ctrl+T — toggle Top-Down mode (crc-eram-reference.md:1503-1505). Surfaces
-  // the TDM-only video maps. NB: most browsers reserve Ctrl+T for "new tab" and
-  // intercept it before the page; where that happens this won't fire (the
-  // substantive change is that always-visible maps are now TDM-gated either way).
-  if (e.ctrlKey && !e.altKey && (e.key === "t" || e.key === "T")) {
-    e.preventDefault();
-    if (typeof window.toggleTopDown === "function") {
-      const on = window.toggleTopDown();
-      setResponse(on ? "TOP DOWN" : "TOP DOWN OFF", 2);
-    }
-    return;
-  }
 
   // STARS F-key handling per CRC docs / RadarWindow.cs Window_KeyDown.
   if (e.key && /^F\d+$/.test(e.key)) {

@@ -162,7 +162,10 @@ function onKeyDown(e) {
     // Other F-keys insert the STARS preview text from the KeyCode table.
     const prefix = FKEY_PREFIX[k];
     if (prefix) {
-      MCA.buffer = prefix + " ";
+      // The F7 multifunction subcommand concatenates into one token (WPF adds
+      // no separator), so "F" then "2ATPAE" → "F2ATPAE". Other prefixes keep a
+      // separating space (e.g. "SIGN ON 1N", "TC").
+      MCA.buffer = (prefix === "F") ? prefix : prefix + " ";
       refreshMca();
     }
     return;
@@ -304,9 +307,12 @@ function executeCommand(line, opts = {}) {
   if (first === "T" && keys[0].length === 2 && keys[0][1] === "C") {
     if (!clickedplane) { setResponse("NO FLIGHT"); return; }
     const fp = trackToFp.get(clicked.Guid);
-    if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
-    // Locally just hide; WPF calls plane.DeleteFP() which terminates the FP.
-    tracks.delete(clicked.Guid);
+    // WPF: ILL TRK unless owned by me (PendingHandoff set or not my position).
+    if (fp && (fp.PendingHandoff || (fp.Owner && fp.Owner !== window.ownTcp?.()))) {
+      setResponse("ILL TRK"); return;
+    }
+    // DeleteFP — terminate the flight-plan association (keep the radar track).
+    if (fp) { fp.Owner = null; fp.Callsign = null; fp.AircraftType = null; trackToFp.delete(clicked.Guid); }
     return;
   }
 

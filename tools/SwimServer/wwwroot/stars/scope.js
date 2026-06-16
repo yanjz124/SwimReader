@@ -946,12 +946,16 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // `LeaderLength + 0.5` char-heights, data block hangs off the leader's
   // endpoint. Cardinal directions => block centered perpendicular to leader.
   // Diagonals => block's near corner sits at leader end.
+  // WPF (OffsetDatablockLocation): the block hangs (0.5+LeaderLength) char-heights
+  // off the EDGE of the position symbol (PositionIndicator.BoundsF), so add the
+  // symbol's half-size to the offset — gives the proper gap instead of a cramped one.
   const offsetPx = (0.5 + prefSet.LeaderLength) * charHeight;
+  const symbolRadius = prefSet.CharSize.Position * 0.5;
   const screen = geoToScreen(posNow);
   const isDiag = (v.x !== 0 && v.y !== 0);
   const k = isDiag ? Math.SQRT1_2 : 1;
-  const leaderEndX = screen.x + v.x * offsetPx * k;
-  const leaderEndY = screen.y + v.y * offsetPx * k;
+  const leaderEndX = screen.x + v.x * (symbolRadius + offsetPx) * k;
+  const leaderEndY = screen.y + v.y * (symbolRadius + offsetPx) * k;
 
   const blockWidth = Math.max(...lines.map(l => l.length)) * charWidth;
   const blockHeight = lines.length * charHeight;
@@ -1006,9 +1010,8 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   if (prefSet.LeaderLength > 0) {
     ctx.strokeStyle = ctx.fillStyle;
     ctx.lineWidth = 1;
-    const tgtRadius = 5;
-    const leaderStartX = screen.x + v.x * k * tgtRadius;
-    const leaderStartY = screen.y + v.y * k * tgtRadius;
+    const leaderStartX = screen.x + v.x * k * symbolRadius;
+    const leaderStartY = screen.y + v.y * k * symbolRadius;
     ctx.beginPath();
     ctx.moveTo(leaderStartX, leaderStartY);
     ctx.lineTo(leaderEndX, leaderEndY);

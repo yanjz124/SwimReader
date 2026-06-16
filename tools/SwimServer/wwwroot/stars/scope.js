@@ -671,6 +671,13 @@ function handleTrackUpdate(u) {
   if (u.ModeSCode != null)    t.ModeSCode = u.ModeSCode;
   if (u.IsOnGround != null)   t.IsOnGround = u.IsOnGround;
   if (u.Ident != null)        t.Ident = u.Ident;
+  // Snapshot-seeded history (server-side cache) — only present on connect.
+  // Newest-first {Latitude,Longitude} list; seed so the trail shows instantly
+  // instead of taking HistoryRate×N seconds to build. radarSweep continues it.
+  if (Array.isArray(u.History) && u.History.length) {
+    t._history = u.History.map(p => ({ Latitude: p.Latitude, Longitude: p.Longitude }));
+    t._lastHistoryT = Date.now();   // don't immediately re-add the latest point
+  }
 }
 
 function handleFlightPlanUpdate(u) {

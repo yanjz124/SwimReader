@@ -310,14 +310,17 @@ function executeCommand(line, opts = {}) {
     return;
   }
 
-  // ── F12 → set ThisPositionIndicator (1623-1635). Typed as ".SO <tcp>". ──
-  // (".SO *" clears to NONE; ".SO XX" sets to XX). This is our extension; WPF
-  // uses the F12 dedicated key.
-  if (first === "." && keys[0].length === 3 && keys[0][1] === "S" && keys[0][2] === "O") {
-    const newpos = parts[1] || "";
-    if (newpos === "*" || newpos === "") window.setOwnTcp?.("NONE");
-    else window.setOwnTcp?.(newpos.toUpperCase());
-    return;
+  // ── Sign on / off (F12) — set ThisPositionIndicator (1623-1635). Accepts the
+  // F12 "SIGN ON <tcp>" form and the typed ".SO <tcp>" shorthand. Empty or "*"
+  // signs off (back to observer mode). ──
+  {
+    const so = line.trim().match(/^(?:SIGN\s+ON|\.SO)\s*(\S*)$/i);
+    if (so) {
+      const tcp = so[1].toUpperCase();
+      if (tcp === "" || tcp === "*") { window.setOwnTcp?.(""); setResponse("SIGNED OFF"); }
+      else { window.setOwnTcp?.(tcp); setResponse(`SIGN ON ${tcp}`); }
+      return;
+    }
   }
 
   // ── '*' splat commands (1636-1893) ──────────────────────────────────────
@@ -451,17 +454,14 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
   // *J<miles>  + clicked plane (cs:1802-1828): J-Ring (TPA ring) of N miles
   //   no miles -> remove plane's TPA
   if (sub === "J") {
-    if (!clickedplane) return;
+    if (!clickedplane) { setResponse("NO TRK"); return; }
     if (k.length >= 3 && k.length <= 5) {
       const miles = parseFloat(k.slice(2).join(""));
-      if (!Number.isFinite(miles)) return;
-      if (miles > 0 && miles <= 30) {
-        clicked.TPA = { type: "JRing", miles, color: "#0f0", showSize: window.starsState.TPASize };
-      } else {
-        setResponse("FORMAT");
-      }
+      if (!Number.isFinite(miles)) { setResponse("FORMAT"); return; }
+      if (miles > 0 && miles <= 30) clicked._jRing = miles;   // drawJRings reads _jRing
+      else setResponse("FORMAT");
     } else {
-      clicked.TPA = null;
+      clicked._jRing = null;   // *J with no value removes the ring
     }
     return;
   }

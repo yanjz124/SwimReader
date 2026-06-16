@@ -382,16 +382,15 @@ async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
   // starsConfig.videoMapIds is the ordered list this facility uses.
   if (!Array.isArray(vnasMaps)) return;
   for (const m of vnasMaps) {
+    // Drop starsAlwaysVisible maps entirely (airport diagrams / towers /
+    // runways) — we don't render them.
+    if (m.starsAlwaysVisible) continue;
     videoMaps.push({
       id: m.id,
       name: m.name || "",
       shortName: m.shortName || "",
       starsId: m.starsId ?? null,
       category: (m.starsBrightnessCategory === "B") ? "B" : "A",
-      // starsAlwaysVisible maps are airport diagrams / towers / runways — per the
-      // CRC ref these are Top-Down-Mode-only elements, NOT always on. They render
-      // only while TDM is engaged (Ctrl+T); see drawVideoMapLines + toggleTopDown.
-      alwaysVisible: !!m.starsAlwaysVisible,
       visible: false,
       lines: null,        // lazy
       _loading: false,
@@ -450,12 +449,9 @@ function drawVideoMapLines() {
 
     let count = 0;
     ctx.beginPath();
-    const tdm = !!starsState.topDownMode;
     for (const m of videoMaps) {
       if (m.category !== cat) continue;
-      // Always-visible maps are TDM-only (shown only in Top-Down mode); all
-      // others follow their normal toggle state.
-      if (!(m.alwaysVisible ? tdm : m.visible)) continue;
+      if (!m.visible) continue;
       if (m.lines === null) { ensureMapLoaded(m); continue; }
       for (const ln of m.lines) {
         const p1 = geoToScreen({ Latitude: ln.lat1, Longitude: ln.lon1 });
@@ -1137,11 +1133,20 @@ function drawJRings() {
     ctx.beginPath();
     ctx.arc(center.x, center.y, px, 0, Math.PI * 2);
     ctx.stroke();
-    // Radius label
-    ctx.fillStyle = ctx.strokeStyle;
-    ctx.font = "10px FixedDemiBold, ui-monospace, monospace";
-    ctx.textAlign = "center";
-    ctx.fillText(`J${t._jRing}`, center.x, center.y - px - 4);
+    // Radius label — DGScope DrawJRing (RadarWindow.cs:5169-5233): the bare
+    // mileage (NO 'J'; decimal if <10, else integer), drawn ONLY when ShowSize
+    // (the *D+ / TPASize toggle) is on, positioned at the ring edge toward the
+    // track's leader direction. Default TPASize is off → ring only, no text.
+    if (window.starsState?.TPASize) {
+      const txt = t._jRing < 10 ? String(t._jRing) : String(Math.trunc(t._jRing));
+      const v = leaderDirToVector(effectiveLeaderDir(t, trackToFp.get(t.Guid)));
+      const len = Math.hypot(v.x, v.y) || 1;
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.font = "10px FixedDemiBold, ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(txt, center.x + (v.x / len) * (px - 8), center.y + (v.y / len) * (px - 8));
+    }
   }
 }
 
@@ -1551,18 +1556,6 @@ const starsState = {
   asrSites: [],
   wxLevels: [false, false, false, false, false, false],
   dcbMapAt,
-  topDownMode: false,   // Ctrl+T — shows TDM-only (starsAlwaysVisible) maps
-};
-
-// Top-Down Mode toggle (crc-eram-reference.md:1503 — Ctrl+T). Surfaces the
-// TDM-only video maps (airport diagrams / towers / runways). Bridged from the
-// keyboard handler in mca.js, which lives on window.starsState (a separate
-// object), so expose a function rather than sharing the flag.
-window.toggleTopDown = () => {
-  starsState.topDownMode = !starsState.topDownMode;
-  if (starsState.topDownMode)                       // warm the lazy line cache
-    for (const m of videoMaps) if (m.alwaysVisible && m.lines === null) ensureMapLoaded(m);
-  return starsState.topDownMode;
 };
 
 let dcb;

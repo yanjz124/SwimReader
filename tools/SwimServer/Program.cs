@@ -72,6 +72,8 @@ var routeCache = new ConcurrentDictionary<string, List<double[]>>();
 long _procCount = 0;
 long _noGufiCount = 0;
 long lastMessageTicks = DateTime.UtcNow.Ticks;
+int sfdpsEverDelivered = 0;   // set once the SFDPS feed delivers its first message (gates the process-level watchdog)
+int sfdpsWatchdogTripped = 0; // ensures the process-restart escalation fires at most once per process
 
 // XML element discovery — tracks all unique element paths + attribute names seen in FIXM messages
 var xmlElements = new ConcurrentDictionary<string, long>();
@@ -937,12 +939,27 @@ var statsTimer = new Timer(_ =>
     Broadcast(new WsMsg("stats", stats.Snapshot(fc)));
 }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 
-// Health check — log stale connection warnings
+// Health check — log stale connection warnings, and escalate to a process restart if the
+// in-thread Solace watchdog (90s graceful reconnect) fails to recover the SFDPS feed.
+// Observed failure (2026-06): the receiver thread hung inside the Solace SDK during reconnect,
+// so the in-thread watchdog could not heal itself and the feed sat dead for ~37h. A clean host
+// stop lets systemd (Restart=always) relaunch the process for a fresh connection.
+const double SfdpsRestartSilenceSec = 240;  // ~20 missed 12s update cycles; well past the 90s in-thread reconnect
 var healthTimer = new Timer(_ =>
 {
     var silence = (DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastMessageTicks), DateTimeKind.Utc)).TotalSeconds;
     if (silence > 60)
         Console.WriteLine($"[HEALTH] Warning: no messages for {silence:F0}s");
+
+    // Only escalate once the feed has actually delivered at least once (avoids restart loops when
+    // SFDPS never connects, e.g. bad credentials) and at most once per process.
+    if (silence > SfdpsRestartSilenceSec
+        && Interlocked.CompareExchange(ref sfdpsEverDelivered, 1, 1) == 1
+        && Interlocked.Exchange(ref sfdpsWatchdogTripped, 1) == 0)
+    {
+        Console.Error.WriteLine($"[HEALTH] SFDPS feed dead for {silence:F0}s — in-thread reconnect failed; stopping process for systemd restart.");
+        lifetime.StopApplication();
+    }
 }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 
 // ── NASR data (background download + parse) ─────────────────────────────────
@@ -1064,6 +1081,7 @@ void ProcessMessage(IMessage message)
     if (body is null) return;
     stats.IncrementTotal();
     Interlocked.Exchange(ref lastMessageTicks, DateTime.UtcNow.Ticks);
+    Interlocked.Exchange(ref sfdpsEverDelivered, 1);
 
     try
     {

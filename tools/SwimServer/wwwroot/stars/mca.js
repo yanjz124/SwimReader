@@ -150,6 +150,19 @@ function onKeyDown(e) {
   // Ignore typing inside text inputs (none currently, but defensive).
   if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
 
+  // Ctrl+T — toggle Top-Down mode (crc-eram-reference.md:1503-1505). Surfaces
+  // the TDM-only video maps. NB: most browsers reserve Ctrl+T for "new tab" and
+  // intercept it before the page; where that happens this won't fire (the
+  // substantive change is that always-visible maps are now TDM-gated either way).
+  if (e.ctrlKey && !e.altKey && (e.key === "t" || e.key === "T")) {
+    e.preventDefault();
+    if (typeof window.toggleTopDown === "function") {
+      const on = window.toggleTopDown();
+      setResponse(on ? "TOP DOWN" : "TOP DOWN OFF", 2);
+    }
+    return;
+  }
+
   // STARS F-key handling per CRC docs / RadarWindow.cs Window_KeyDown.
   if (e.key && /^F\d+$/.test(e.key)) {
     e.preventDefault();

@@ -388,7 +388,11 @@ async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
       shortName: m.shortName || "",
       starsId: m.starsId ?? null,
       category: (m.starsBrightnessCategory === "B") ? "B" : "A",
-      visible: !!m.starsAlwaysVisible,
+      // starsAlwaysVisible maps are airport diagrams / towers / runways — per the
+      // CRC ref these are Top-Down-Mode-only elements, NOT always on. They render
+      // only while TDM is engaged (Ctrl+T); see drawVideoMapLines + toggleTopDown.
+      alwaysVisible: !!m.starsAlwaysVisible,
+      visible: false,
       lines: null,        // lazy
       _loading: false,
     });
@@ -446,9 +450,12 @@ function drawVideoMapLines() {
 
     let count = 0;
     ctx.beginPath();
+    const tdm = !!starsState.topDownMode;
     for (const m of videoMaps) {
       if (m.category !== cat) continue;
-      if (!m.visible) continue;
+      // Always-visible maps are TDM-only (shown only in Top-Down mode); all
+      // others follow their normal toggle state.
+      if (!(m.alwaysVisible ? tdm : m.visible)) continue;
       if (m.lines === null) { ensureMapLoaded(m); continue; }
       for (const ln of m.lines) {
         const p1 = geoToScreen({ Latitude: ln.lat1, Longitude: ln.lon1 });
@@ -1544,6 +1551,18 @@ const starsState = {
   asrSites: [],
   wxLevels: [false, false, false, false, false, false],
   dcbMapAt,
+  topDownMode: false,   // Ctrl+T — shows TDM-only (starsAlwaysVisible) maps
+};
+
+// Top-Down Mode toggle (crc-eram-reference.md:1503 — Ctrl+T). Surfaces the
+// TDM-only video maps (airport diagrams / towers / runways). Bridged from the
+// keyboard handler in mca.js, which lives on window.starsState (a separate
+// object), so expose a function rather than sharing the flag.
+window.toggleTopDown = () => {
+  starsState.topDownMode = !starsState.topDownMode;
+  if (starsState.topDownMode)                       // warm the lazy line cache
+    for (const m of videoMaps) if (m.alwaysVisible && m.lines === null) ensureMapLoaded(m);
+  return starsState.topDownMode;
 };
 
 let dcb;

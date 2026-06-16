@@ -13,7 +13,15 @@
   }
   header { padding: 12px 20px; border-bottom: 1px solid #1a3a1a; }
   header h1 { margin: 0; font-size: 18px; letter-spacing: 2px; color: #00ff00; }
+  header h1 .wip {
+    font-size: 10px; letter-spacing: 1px; color: #ffb300;
+    border: 1px solid #5a4300; background: #1a1400; border-radius: 2px;
+    padding: 1px 5px; vertical-align: middle; margin-left: 8px;
+  }
+  header h1 a.home { font-size: 11px; color: #6f6; text-decoration: none; margin-left: 12px; letter-spacing: 1px; }
+  header h1 a.home:hover { color: #00ff00; }
   header .sub { color: #6f6; font-size: 11px; margin-top: 4px; }
+  header .wipnote { color: #ffb300; font-size: 11px; margin-top: 4px; }
   .layout {
     display: grid;
     grid-template-columns: 260px 1fr;
@@ -50,8 +58,9 @@
 </head>
 <body>
 <header>
-  <h1>STARS</h1>
+  <h1>STARS <span class="wip">WORK IN PROGRESS</span><a class="home" href="/">&larr; HOME</a></h1>
   <div class="sub">Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.</div>
+  <div class="wipnote">Active DGScope port — expect rough edges. Video maps require a local CRC export and won't render on this hosted instance; live targets stream from the dSTARS feed.</div>
 </header>
 <div class="layout">
   <div class="col">

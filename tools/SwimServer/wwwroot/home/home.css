@@ -90,6 +90,17 @@ header .sub {
     color: #fff;
     letter-spacing: 1px;
 }
+.card .title .wip {
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: #ffb300;
+    border: 1px solid #5a4300;
+    background: #1a1400;
+    border-radius: 2px;
+    padding: 1px 4px;
+    vertical-align: middle;
+    margin-left: 4px;
+}
 .card .desc {
     font-size: 11px;
     color: #666;

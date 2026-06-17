@@ -475,6 +475,9 @@ lifetime.ApplicationStopping.Register(() =>
     // Console.WriteLine($"[PO] Shutdown — {Interlocked.Read(ref poLogCount) + poRemaining.Count} entries → {poLogPath}");
 });
 
+// Background so a Solace receiver hung inside the SDK can't keep the process
+// alive and block the watchdog's graceful restart (observed: feed dead for hours).
+solaceThread.IsBackground = true;
 solaceThread.Start();
 asdex.Start();
 tfms.Start();
@@ -967,8 +970,18 @@ var healthTimer = new Timer(_ =>
         && Interlocked.CompareExchange(ref sfdpsEverDelivered, 1, 1) == 1
         && Interlocked.Exchange(ref sfdpsWatchdogTripped, 1) == 0)
     {
-        Console.Error.WriteLine($"[HEALTH] SFDPS feed dead for {silence:F0}s — in-thread reconnect failed; stopping process for systemd restart.");
-        lifetime.StopApplication();
+        Console.Error.WriteLine($"[HEALTH] SFDPS feed dead for {silence:F0}s — in-thread reconnect failed; restarting process for systemd restart.");
+        try { lifetime.StopApplication(); } catch { }
+        // Backstop: graceful stop can hang if the Solace receiver is stuck inside
+        // the SDK. Force-exit shortly after so systemd (Restart=always) always
+        // relaunches with a fresh connection — this is what failed before, leaving
+        // the feed dead for ~1h49m even though the watchdog had tripped.
+        new Thread(() =>
+        {
+            Thread.Sleep(20000);
+            Console.Error.WriteLine("[HEALTH] Graceful stop did not complete in 20s — hard exit.");
+            Environment.Exit(1);
+        }) { IsBackground = true }.Start();
     }
 }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 

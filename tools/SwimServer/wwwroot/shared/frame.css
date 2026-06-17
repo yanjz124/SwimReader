@@ -65,10 +65,12 @@ header #status,
     text-decoration: none; line-height: 1.4; user-select: none; cursor: pointer;
 }
 .nav-up:hover { background: #333; border-color: #cccc44; }
-/* Nested pages show HOME + UP, so widen the bar's left gutter to clear both. */
+/* Nested pages show HOME + UP, so widen the bar's left gutter to clear both.
+ * !important so it beats the inline `style="padding-left:100px"` several pages
+ * carry — otherwise the HOME+UP cluster overlaps the title. */
 body.has-up header,
-body.has-up .topbar { padding-left: 160px; }
+body.has-up .topbar { padding-left: 168px !important; }
 @media (max-width: 600px) {
     body.has-up header,
-    body.has-up .topbar { padding-left: 12px; padding-top: 38px; }
+    body.has-up .topbar { padding-left: 12px !important; padding-top: 38px; }
 }

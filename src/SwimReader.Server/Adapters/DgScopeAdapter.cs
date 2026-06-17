@@ -379,7 +379,9 @@ public sealed class DgScopeAdapter : BackgroundService
 
     private async Task PurgeLoopAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        // Every 10s (matching SwimServer's TaisBridge) so churned-track-number
+        // duplicates are shed promptly rather than lingering up to 30s extra.
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
 
         while (await timer.WaitForNextTickAsync(ct))
         {

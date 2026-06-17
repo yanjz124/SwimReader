@@ -1,0 +1,73 @@
+/* ── Shared menu-page frame ────────────────────────────────────────────────
+ * Canonical top bar (HOME button + title + status/stats) for the data/list/menu
+ * pages so they all look the same. Loaded AFTER each page's own stylesheet so it
+ * overrides per-page header divergence. NOT used on the radar simulators
+ * (ERAM / ASDE-X scope / STARS scope), which own their full-screen chrome.
+ *
+ * Works with both header conventions in use: a <header> element and a .topbar.
+ * The HOME button is .nav-home (floating top-left, from common.css); the bar
+ * keeps 100px of left padding so the title clears it.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+header,
+.topbar {
+    background: #0a0a0a;
+    border-bottom: 1px solid #333;
+    padding: 10px 18px 10px 100px;
+    display: flex;
+    align-items: center;
+    gap: 8px 16px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+header h1,
+.topbar h1 {
+    font-size: 15px;
+    color: #cccc44;
+    font-weight: normal;
+    letter-spacing: 2px;
+    margin: 0;
+}
+
+/* Connection/status pill — pages set #status text and toggle .ok when live. */
+#status,
+header #status,
+.topbar .status {
+    font-size: 11px;
+    color: #666;
+}
+#status.ok,
+.topbar .status.ok { color: #44aa44; }
+
+/* A right-aligned stats slot (counts, rates) where a page provides one. */
+.topbar .stats,
+header .stats,
+#count-bar { margin-left: auto; font-size: 11px; color: #888; }
+
+@media (max-width: 600px) {
+    header,
+    .topbar { padding: 8px 12px 8px 86px; gap: 6px 12px; }
+    header h1,
+    .topbar h1 { font-size: 13px; }
+    .topbar .stats,
+    header .stats { margin-left: 0; flex-basis: 100%; }
+}
+
+/* ── HOME + up-one-level breadcrumb (frame.js builds the cluster) ──────────── */
+.nav-cluster { position: absolute; top: 8px; left: 8px; z-index: 1000; display: flex; gap: 6px; }
+.nav-cluster .nav-home,
+.nav-cluster .nav-up { position: static; }
+.nav-up {
+    background: #1a1a1a; color: #cccc44; border: 1px solid #444;
+    padding: 4px 10px; font-family: 'Consolas', monospace; font-size: 11px;
+    text-decoration: none; line-height: 1.4; user-select: none; cursor: pointer;
+}
+.nav-up:hover { background: #333; border-color: #cccc44; }
+/* Nested pages show HOME + UP, so widen the bar's left gutter to clear both. */
+body.has-up header,
+body.has-up .topbar { padding-left: 160px; }
+@media (max-width: 600px) {
+    body.has-up header,
+    body.has-up .topbar { padding-left: 12px; padding-top: 38px; }
+}

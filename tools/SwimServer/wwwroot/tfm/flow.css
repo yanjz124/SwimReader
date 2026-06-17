@@ -1,3 +1,13 @@
+/* Page layout (was missing — body had no flex/height/background, collapsing the map). */
+html, body { height: 100%; }
+body {
+    margin: 0;
+    display: flex; flex-direction: column;
+    background: #0a0a0a; color: #ccc;
+    font-family: Consolas, "Courier New", monospace; font-size: 13px;
+    overflow: hidden;
+}
+
 header {
     background: #0a0a0a;
     border-bottom: 1px solid #333;

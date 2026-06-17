@@ -59,6 +59,13 @@
   .areas { border-bottom: 1px solid #0a1a0a; }
   .placeholder { padding: 16px; color: #6f6; }
   .nostars { color: #888; font-style: italic; padding: 16px; }
+  .fac-tcps { padding: 0 16px 7px 30px; display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #0a1a0a; }
+  .fac-tcps .tcp-chip {
+    font-size: 10px; color: #9c9;
+    background: #0c160c; border: 1px solid #1a3a1a; border-radius: 2px;
+    padding: 0 5px; line-height: 1.6;
+  }
+  .fac-tcps .tcp-chip b { color: #cccc44; font-weight: normal; margin-left: 3px; }
 </style>
 </head>
 <body>
@@ -120,17 +127,27 @@ async function selectArtcc(id) {
     try {
       for (const t of await fetch("/api/tais").then(r => r.json())) taisCounts[t.facility] = t.trackCount;
     } catch {}
+    // Live active controller positions (TCPs owning tracks) per facility.
+    const tcpByFac = {};
+    try {
+      for (const t of await fetch("/api/tais/tcps").then(r => r.json())) tcpByFac[t.facility] = t;
+    } catch {}
     const facilityRows = data.facilities.map(f => {
       const areas = Array.isArray(f.areas) ? f.areas.filter(a => a && a.id) : [];
       const multi = areas.length > 1;
       const cnt = taisCounts[f.id];
       const cntStr = (cnt != null) ? ` · ${cnt}T` : "";
+      const tcp = tcpByFac[f.id];
+      const posStr = (tcp && tcp.tcpCount) ? ` · ${tcp.tcpCount} pos` : "";
       const caret = multi ? `<span class="caret">▸</span>` : `<span class="caret"></span>`;
       const head =
         `<div class="row fac" data-id="${f.id}" data-multi="${multi ? 1 : 0}">
           <span class="id">${caret}${f.id}</span>
-          <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${areas.length} area${areas.length === 1 ? "" : "s"}${cntStr}</span>
+          <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${areas.length} area${areas.length === 1 ? "" : "s"}${cntStr}${posStr}</span>
         </div>`;
+      const tcpLine = (tcp && tcp.tcps.length)
+        ? `<div class="fac-tcps">${tcp.tcps.map(t => `<span class="tcp-chip">${t.tcp}<b>${t.count}</b></span>`).join("")}</div>`
+        : "";
       const sub = multi
         ? `<div class="areas" data-for="${f.id}" hidden>` +
             areas.map(a =>
@@ -139,7 +156,7 @@ async function selectArtcc(id) {
               </div>`).join("") +
           `</div>`
         : "";
-      return head + sub;
+      return head + tcpLine + sub;
     }).join("");
     $("facilities").innerHTML = mapsBanner + facilityRows;
     // Profile picker: if any DGScope profile XMLs exist for this ARTCC, show

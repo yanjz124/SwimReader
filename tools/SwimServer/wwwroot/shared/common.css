@@ -1,6 +1,27 @@
 /* ── Shared base styles for all SwimReader frontends ── */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* ── Global dark-themed scrollbars ── */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #444;
+}
+/* Firefox scrollbar styling */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #333 #1a1a1a;
+}
+
 /* ── HOME navigation button (top-left, floating) ── */
 .nav-home {
     position: absolute; top: 8px; left: 8px; z-index: 1000;

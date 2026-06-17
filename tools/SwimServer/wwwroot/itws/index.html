@@ -295,8 +295,11 @@
   .product-row .pname { color: var(--text); }
   .product-row .pmeta { color: var(--dim); font-size: 11px; }
 </style>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/shared/frame.css?v=2">
 </head>
 <body>
+<a class="nav-home" href="/">&larr; HOME</a>
 
 <header>
   <h1>ITWS</h1>
@@ -1126,5 +1129,6 @@ pollOverview().then(() => { if (state.selected) loadAirport(state.selected); });
 setInterval(pollOverview, 10000);
 setInterval(() => { if (state.selected) loadAirport(state.selected); }, 30000);
 </script>
+<script src="/shared/frame.js?v=2"></script>
 </body>
 </html>

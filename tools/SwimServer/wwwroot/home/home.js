@@ -39,6 +39,26 @@ function renderServerDetail() {
     ).join('');
 }
 
+// ── Active STARS positions (TCPs owning tracks) ───────────────
+function renderTcps(facs) {
+    const grid = document.getElementById('tcpGrid');
+    const summary = document.getElementById('tcpSummary');
+    if (!grid) return;
+    if (!Array.isArray(facs) || facs.length === 0) {
+        grid.innerHTML = '<div class="tcp-empty">No active positions</div>';
+        if (summary) summary.textContent = '';
+        return;
+    }
+    const totalPos = facs.reduce((s, f) => s + f.tcpCount, 0);
+    if (summary) summary.textContent = `· ${totalPos} positions across ${facs.length} facilities`;
+    grid.innerHTML = facs.map(f =>
+        `<a class="card tcp-card" href="/tais/${encodeURIComponent(f.facility)}">
+            <div class="title">${f.facility} <span class="tcp-n">${f.tcpCount} pos · ${f.trackCount} trk</span></div>
+            <div class="tcp-chips">${f.tcps.map(t =>
+                `<span class="tcp-chip">${t.tcp}<b>${t.count}</b></span>`).join('')}</div>
+        </a>`).join('');
+}
+
 // ── Live stats polling ────────────────────────────────────────
 async function refreshStats() {
     try {
@@ -87,6 +107,11 @@ async function refreshStats() {
             document.getElementById('taisCount').textContent =
                 `${facilities.length} facilities  ${totalTracks} tracks`;
         }
+    } catch {}
+
+    try {
+        const pr = await fetch('/api/tais/tcps');
+        if (pr.ok) renderTcps(await pr.json());
     } catch {}
 
     try {

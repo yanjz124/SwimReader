@@ -114,6 +114,19 @@ header .sub {
     min-height: 13px;
 }
 
+/* ── Active TCP positions ─────────────────────────────────── */
+#tcpSummary { font-size: 10px; color: #44aa44; letter-spacing: 1px; }
+.tcp-empty { color: #555; font-size: 11px; padding: 4px 2px; }
+.tcp-card .title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.tcp-card .tcp-n { font-size: 10px; color: #44aa44; letter-spacing: 0; white-space: nowrap; }
+.tcp-chips { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 4px; }
+.tcp-chip {
+    font-size: 10px; color: #aaa;
+    background: #161616; border: 1px solid #2a2a2a; border-radius: 2px;
+    padding: 1px 5px; line-height: 1.5;
+}
+.tcp-chip b { color: #cccc44; font-weight: normal; margin-left: 3px; }
+
 /* ── Server card (expand inline) ──────────────────────────── */
 .server-card { cursor: pointer; }
 .server-card.open { border-color: #cccc44; background: #14140a; }

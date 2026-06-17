@@ -40,9 +40,10 @@ header #status,
 #status.ok,
 .topbar .status.ok { color: #44aa44; }
 
-/* A right-aligned stats slot (counts, rates) where a page provides one. */
+/* A right-aligned stats slot (counts, rates) where a page provides one. Scoped
+ * to .topbar / #count-bar; pages with their own header .stats layout (e.g. itws)
+ * keep theirs. */
 .topbar .stats,
-header .stats,
 #count-bar { margin-left: auto; font-size: 11px; color: #888; }
 
 @media (max-width: 600px) {

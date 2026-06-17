@@ -10,22 +10,20 @@
     color: #00ff00;
     font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
     font-size: 13px;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
   }
-  header { padding: 12px 20px; border-bottom: 1px solid #1a3a1a; }
-  header h1 { margin: 0; font-size: 18px; letter-spacing: 2px; color: #00ff00; }
   header h1 .wip {
     font-size: 10px; letter-spacing: 1px; color: #ffb300;
     border: 1px solid #5a4300; background: #1a1400; border-radius: 2px;
     padding: 1px 5px; vertical-align: middle; margin-left: 8px;
   }
-  header h1 a.home { font-size: 11px; color: #6f6; text-decoration: none; margin-left: 12px; letter-spacing: 1px; }
-  header h1 a.home:hover { color: #00ff00; }
-  header .sub { color: #6f6; font-size: 11px; margin-top: 4px; }
-  header .wipnote { color: #ffb300; font-size: 11px; margin-top: 4px; }
+  .subhead { padding: 6px 20px 8px; border-bottom: 1px solid #1a3a1a; }
+  .subhead .sub { color: #6f6; font-size: 11px; }
+  .subhead .wipnote { color: #ffb300; font-size: 11px; margin-top: 4px; }
   .layout {
     display: grid;
     grid-template-columns: 260px 1fr;
-    height: calc(100vh - 60px);
+    flex: 1; min-height: 0;
   }
   .col { overflow-y: auto; border-right: 1px solid #1a3a1a; }
   .col:last-child { border-right: none; }
@@ -67,13 +65,18 @@
   }
   .fac-tcps .tcp-chip b { color: #cccc44; font-weight: normal; margin-left: 3px; }
 </style>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/shared/frame.css?v=2">
 </head>
 <body>
+<a class="nav-home" href="/">&larr; HOME</a>
 <header>
-  <h1>STARS <span class="wip">WORK IN PROGRESS</span><a class="home" href="/">&larr; HOME</a></h1>
+  <h1>STARS <span class="wip">WORK IN PROGRESS</span></h1>
+</header>
+<div class="subhead">
   <div class="sub">Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.</div>
   <div class="wipnote">Active DGScope port — expect rough edges. Video maps are served from the hosted CRC export (where seeded); live targets stream from the dSTARS feed.</div>
-</header>
+</div>
 <div class="layout">
   <div class="col">
     <h2>ARTCC</h2>
@@ -206,5 +209,6 @@ async function selectArtcc(id) {
 
 loadArtccs();
 </script>
+<script src="/shared/frame.js?v=2"></script>
 </body>
 </html>

@@ -12,7 +12,7 @@ const EMRG_COLOR = '#ff4444';
 const MAP_COLOR = '#555555';
 const RENDER_INTERVAL = 2000;  // render repaint interval (ms)
 const SCAN_INTERVAL = 12000;   // SFDPS update cadence (used for history decay cutoff)
-const SETTINGS_VERSION = 2;    // Increment when pushing breaking changes to reset user settings to defaults once
+const SETTINGS_VERSION = 3;    // Increment when pushing breaking changes to reset user settings to defaults once
 
 let myFacility = '';
 let mySectors = new Set();
@@ -27,9 +27,9 @@ let msgRate = 0;
 let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
-let ldbBrightness = 70;     // 0-100, opacity for LDB history symbols (data block brightness now controlled by PR/UNP TGT sliders)
+let ldbBrightness = 50;     // 0-100, opacity for LDB history symbols (data block brightness now controlled by PR/UNP TGT sliders)
 let scopeBckgrd = 40;       // 0-100, scope background brightness (BCKGRD DCB slider)
-let scopeBcklght = 80;      // 0-100, scope backlight brightness (BCKLGHT DCB slider)
+let scopeBcklght = 70;      // 0-100, scope backlight brightness (BCKLGHT DCB slider)
 let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
@@ -1450,7 +1450,7 @@ const BOUNDARY_CATS = ['Ultra High', 'High Altitude', 'Low Altitude', 'Approach 
 const BOUNDARY_CAT_LABELS = { 'Ultra High': 'UHI', 'High Altitude': 'HI', 'Low Altitude': 'LO', 'Approach Control': 'APP' };
 const BOUNDARY_CAT_SLIDER = { 'Ultra High': 'rng-bnd-uhi', 'High Altitude': 'rng-bnd-hi', 'Low Altitude': 'rng-bnd-lo', 'Approach Control': 'rng-bnd-app' };
 const BOUNDARY_CAT_LABEL = { 'Ultra High': 'lbl-bnd-uhi', 'High Altitude': 'lbl-bnd-hi', 'Low Altitude': 'lbl-bnd-lo', 'Approach Control': 'lbl-bnd-app' };
-let boundaryBrightness = { 'Ultra High': 60, 'High Altitude': 60, 'Low Altitude': 60, 'Approach Control': 30 };
+let boundaryBrightness = { 'Ultra High': 60, 'High Altitude': 60, 'Low Altitude': 0, 'Approach Control': 30 };
 
 function bndColor(brightness) {
     const v = Math.round(brightness * 2.55);
@@ -1606,7 +1606,7 @@ loadKml();
 // ════════════════════════════════════════════════════════════════════════════
 const nasrLayers = {};    // 'jroutes'|'vroutes'|'vors'|'proc:DCA' → L.layerGroup
 const nasrCache = {};     // same keys → raw API data (cache across toggles)
-const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 15, airports: 0, centerlines: 0, proc: 0 };
+const nasrBrightness = { jroutes: 0, vroutes: 0, vors: 0, airports: 0, centerlines: 0, proc: 0 };
 let airportOverlayData = null; // cached from /api/nasr/airports
 let centerlineData = null;     // cached from /api/nasr/centerlines
 
@@ -8085,8 +8085,8 @@ const tbState = {
     // Brightness values (0-100) for buttons not yet wired
     bright: {
         bckgrd: 40, cursor: 100, text: 100, prTgtr: 80, unpTgt: 80,
-        prHist: 80, unpHist: 80, ldb: 70, bcklght: 80, button: 70,
-        border: 30, toolbar: 40, tbBrdr: 30, fdb: 80, portal: 50,
+        prHist: 80, unpHist: 80, ldb: 50, bcklght: 70, button: 70,
+        border: 30, toolbar: 30, tbBrdr: 30, fdb: 80, portal: 50,
         onFreq: 70, line4b: 50, dwell: 50, fence: 80, sldb: 50,
     },
     // Cursor sub-menu

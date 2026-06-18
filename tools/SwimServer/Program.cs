@@ -1782,23 +1782,44 @@ void ProcessFlight(XElement flight, string rawXml)
 
 void SendSnapshot(WsClient client)
 {
-    // Only send flights that would be visible on the scope — skip stale/position-less flights.
-    // This reduces the snapshot from ~88MB (all 44K flights) to a few MB (active flights only).
+    // Send every flight the flight table or scope might want to show. ERAM
+    // null-checks f.latitude before rendering (see eram.js), so position-less
+    // flights coming through are silently skipped on the scope side. The
+    // flight TABLE needs them so newly-filed flight plans (FH-only, no TH yet)
+    // appear immediately rather than only when the airplane gets airborne and
+    // a track message lands. SFDPS data is ~14% flight-plan-only at any time;
+    // dropping the Latitude filter raises snapshot size from ~few MB to
+    // ~6 MB extra, which is well within budget.
     var now = DateTime.UtcNow;
     var summaries = flights.Values
         .Where(f =>
         {
-            if (!f.Latitude.HasValue || !f.Longitude.HasValue) return false;
             if (f.FlightStatus == "CANCELLED") return false;
-            var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
-            if (f.FlightStatus == "DROPPED" && posAge > 60) return false;
-            if (f.FlightStatus == "ACTIVE" && posAge > 300 && f.HandoffEvent == null) return false;
+            // Long-dropped flights are noise — drop them.
+            if (f.FlightStatus == "DROPPED")
+            {
+                var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
+                if (posAge > 60) return false;
+            }
+            // ACTIVE without position is fine (PROPOSED / filed-but-not-airborne).
+            // ACTIVE with stale position past 5 min is dropped unless there's an
+            // active handoff event keeping the strip relevant.
+            if (f.FlightStatus == "ACTIVE" && f.Latitude.HasValue)
+            {
+                var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
+                if (posAge > 300 && f.HandoffEvent == null) return false;
+            }
+            // ACTIVE-no-position: keep if we have any flight-plan content
+            if (f.FlightStatus == "ACTIVE" && !f.Latitude.HasValue)
+            {
+                if (string.IsNullOrEmpty(f.Callsign) && string.IsNullOrEmpty(f.Destination)) return false;
+            }
             if (f.FlightStatus is not null and not "ACTIVE" and not "DROPPED") return false;
             return true;
         })
         .Select(f => f.ToSummary(includeHistory: true))
         .ToArray();
-    Console.WriteLine($"[WS] Snapshot: {summaries.Length} visible flights (of {flights.Count} total)");
+    Console.WriteLine($"[WS] Snapshot: {summaries.Length} flights (of {flights.Count} total)");
     var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("snapshot", summaries), jsonOpts);
     client.Enqueue(json);
 }
@@ -1823,8 +1844,12 @@ void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
     var summaries = new List<object>(gufis.Length);
     foreach (var gufi in gufis)
     {
-        // Skip flights without position — client can't display them
-        if (flights.TryGetValue(gufi, out var f) && f.Latitude.HasValue)
+        // Include position-less flights too: the flight table renders them
+        // (their row is just blank for lat/lon/altitude/speed columns), and
+        // ERAM null-checks f.latitude before rendering so it ignores them
+        // safely. Dropping these here was the root cause of "some flight
+        // plans never show up" in the flight table.
+        if (flights.TryGetValue(gufi, out var f))
             summaries.Add(f.ToSummary());
     }
     if (summaries.Count == 0) return;

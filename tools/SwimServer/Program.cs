@@ -1809,8 +1809,12 @@ void SendSnapshot(WsClient client)
                 var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
                 if (posAge > 300 && f.HandoffEvent == null) return false;
             }
-            // ACTIVE-no-position: keep if we have any flight-plan content
-            if (f.FlightStatus == "ACTIVE" && !f.Latitude.HasValue)
+            // Any non-position flight needs identifying flight-plan content
+            // (callsign or destination) - prevents empty stub records from
+            // being shipped. SFDPS uses status=ACTIVE for filed-but-not-yet-
+            // departed flights, so this branch is the "active flight plan,
+            // aircraft not yet airborne" case the user asked for.
+            if (!f.Latitude.HasValue)
             {
                 if (string.IsNullOrEmpty(f.Callsign) && string.IsNullOrEmpty(f.Destination)) return false;
             }

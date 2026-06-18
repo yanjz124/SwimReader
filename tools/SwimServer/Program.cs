@@ -1822,6 +1822,12 @@ void SendSnapshot(WsClient client)
     // dropping the Latitude filter raises snapshot size from ~few MB to
     // ~6 MB extra, which is well within budget.
     var now = DateTime.UtcNow;
+    // Observed fdpsFlightStatus values in SFDPS (from raw XML survey 2026-06-18):
+    //   ACTIVE     - normal in-flight or filed-and-airborne
+    //   PROPOSED   - filed flight plan, aircraft not yet departed (ET messages)
+    //   COMPLETED  - flight terminated normally / handoff complete (HV messages)
+    //   DROPPED    - track dropped by radar (RH messages)
+    //   CANCELLED  - flight plan cancelled
     var summaries = flights.Values
         .Where(f =>
         {
@@ -1832,9 +1838,15 @@ void SendSnapshot(WsClient client)
                 var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
                 if (posAge > 60) return false;
             }
-            // ACTIVE without position is fine (PROPOSED / filed-but-not-airborne).
-            // ACTIVE with stale position past 5 min is dropped unless there's an
-            // active handoff event keeping the strip relevant.
+            // COMPLETED flights are useful briefly so the user sees them land,
+            // then they age out via the same 60s window as DROPPED.
+            if (f.FlightStatus == "COMPLETED")
+            {
+                var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
+                if (posAge > 60) return false;
+            }
+            // ACTIVE with stale position past 5 min is dropped unless there's
+            // an active handoff event keeping the strip relevant.
             if (f.FlightStatus == "ACTIVE" && f.Latitude.HasValue)
             {
                 var posAge = f.LastPositionTime == default ? int.MaxValue : (int)(now - f.LastPositionTime).TotalSeconds;
@@ -1842,14 +1854,18 @@ void SendSnapshot(WsClient client)
             }
             // Any non-position flight needs identifying flight-plan content
             // (callsign or destination) - prevents empty stub records from
-            // being shipped. SFDPS uses status=ACTIVE for filed-but-not-yet-
-            // departed flights, so this branch is the "active flight plan,
-            // aircraft not yet airborne" case the user asked for.
+            // being shipped. PROPOSED flights are the common case here:
+            // filed but not yet departed.
             if (!f.Latitude.HasValue)
             {
                 if (string.IsNullOrEmpty(f.Callsign) && string.IsNullOrEmpty(f.Destination)) return false;
             }
-            if (f.FlightStatus is not null and not "ACTIVE" and not "DROPPED") return false;
+            // Allow ACTIVE / PROPOSED / COMPLETED / DROPPED / null. Anything
+            // else is an unknown state we'd rather drop than silently include.
+            if (f.FlightStatus is not null
+                and not "ACTIVE" and not "DROPPED"
+                and not "PROPOSED" and not "COMPLETED")
+                return false;
             return true;
         })
         .Select(f => f.ToSummary(includeHistory: true))

@@ -1644,7 +1644,12 @@ void ProcessFlight(XElement flight, string rawXml)
         }
     }
 
-    // Route (FH, AH, HU)
+    // Route (FH, AH, HU, HX). FH/AH/HU carry the canonical `nasRouteText`
+    // attribute. HX (handoff route transfer) does NOT include the attribute
+    // — it instead carries an `<expandedRoute>` of ordered `<routePoint>`s,
+    // each with a `<point fix="...">` child. For flights we miss the FH on
+    // (e.g. joined mid-flight), HX is the only route-bearing source, so we
+    // synthesize a route string by concatenating fix names.
     var agreed = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "agreed");
     if (agreed is not null)
     {
@@ -1652,6 +1657,21 @@ void ProcessFlight(XElement flight, string rawXml)
         if (route is not null)
         {
             var routeText = route.Attribute("nasRouteText")?.Value;
+            // Fall back to expandedRoute when nasRouteText is absent.
+            if (string.IsNullOrEmpty(routeText))
+            {
+                var expanded = route.Elements().FirstOrDefault(e => e.Name.LocalName == "expandedRoute");
+                if (expanded is not null)
+                {
+                    var fixes = expanded.Elements()
+                        .Where(e => e.Name.LocalName == "routePoint")
+                        .Select(rp => rp.Elements().FirstOrDefault(e => e.Name.LocalName == "point")?.Attribute("fix")?.Value)
+                        .Where(s => !string.IsNullOrEmpty(s))
+                        .ToList();
+                    if (fixes.Count > 0)
+                        routeText = string.Join("..", fixes);
+                }
+            }
             if (!string.IsNullOrEmpty(routeText))
             {
                 if (string.IsNullOrEmpty(state.OriginalRoute)) state.OriginalRoute = routeText;

@@ -1151,26 +1151,28 @@ const RotatedCanvasLayer = L.Layer.extend({
     L.DomUtil.setPosition(c, topLeftPt);
     const ctx = c.getContext("2d");
     ctx.clearRect(0, 0, c.width, c.height);
-    // Compute 3 corner screen positions for the grid:
-    //   (0,0), (gw,0), (0,gh)
-    const p00 = this._gridCornerLatLon(0, 0);
-    const pW0 = this._gridCornerLatLon(this._gw, 0);
-    const p0H = this._gridCornerLatLon(0, this._gh);
-    const sp00 = map.latLngToContainerPoint(p00);
-    const spW0 = map.latLngToContainerPoint(pW0);
-    const sp0H = map.latLngToContainerPoint(p0H);
-    // Affine transform from grid-pixel (gx,gy) to screen (sx,sy):
-    //   sx = a*gx + c*gy + e
-    //   sy = b*gx + d*gy + f
-    // With  (gx,gy)=(0,0)        -> sp00
-    //       (gx,gy)=(gw, 0)      -> spW0
-    //       (gx,gy)=(0, gh)      -> sp0H
-    const a = (spW0.x - sp00.x) / this._gw;
-    const b = (spW0.y - sp00.y) / this._gw;
-    const cM = (sp0H.x - sp00.x) / this._gh;
-    const d = (sp0H.y - sp00.y) / this._gh;
-    const e = sp00.x;
-    const f = sp00.y;
+    // ITWS grid convention: grid (0,0) is the SW corner with +y = north.
+    // Image (canvas) convention: pixel (0,0) is the TOP-left with +y = down.
+    // So we map image pixel (col, row) -> grid (col, gh - row).
+    //   image (0,    0)     -> grid (0,  gh)   = NW corner
+    //   image (gw,   0)     -> grid (gw, gh)   = NE corner
+    //   image (0,    gh)    -> grid (0,  0)    = SW corner
+    const pNW = this._gridCornerLatLon(0, this._gh);
+    const pNE = this._gridCornerLatLon(this._gw, this._gh);
+    const pSW = this._gridCornerLatLon(0, 0);
+    const sNW = map.latLngToContainerPoint(pNW);
+    const sNE = map.latLngToContainerPoint(pNE);
+    const sSW = map.latLngToContainerPoint(pSW);
+    // Affine from image-pixel (px, py) to screen (sx, sy):
+    //   (0, 0)   -> sNW
+    //   (gw, 0)  -> sNE
+    //   (0, gh)  -> sSW
+    const a = (sNE.x - sNW.x) / this._gw;
+    const b = (sNE.y - sNW.y) / this._gw;
+    const cM = (sSW.x - sNW.x) / this._gh;
+    const d = (sSW.y - sNW.y) / this._gh;
+    const e = sNW.x;
+    const f = sNW.y;
     ctx.setTransform(a, b, cM, d, e, f);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this._src, 0, 0);

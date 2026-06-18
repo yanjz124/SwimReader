@@ -6834,6 +6834,11 @@ document.addEventListener('keydown', e => {
         const next = idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1];
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
+        // The VECTOR toolbar button reads its display value from sel-vector via
+        // getSelectVal(). Setting .value directly doesn't fire 'change', so we
+        // also refresh the toolbar button cache, mirroring what the inc/dec
+        // button click path does after onInc/onDec.
+        refreshAllButtons();
         lastRenderTime = 0;  // redraw vectors immediately instead of waiting for the render interval
         saveSettingsToLocalStorage();
         e.preventDefault(); return;
@@ -6843,7 +6848,8 @@ document.addEventListener('keydown', e => {
         const next = idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0];
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
-        lastRenderTime = 0;  // redraw vectors immediately instead of waiting for the render interval
+        refreshAllButtons();
+        lastRenderTime = 0;
         saveSettingsToLocalStorage();
         e.preventDefault(); return;
     }

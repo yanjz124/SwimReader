@@ -28,7 +28,7 @@ let altFilterLow = 0;      // FL (hundreds of feet), 0 = no filter
 let altFilterHigh = 999;    // FL (hundreds of feet), 999 = no filter
 let fontSize = 10;          // data block font size in px
 let ldbBrightness = 50;     // 0-100, opacity for LDB history symbols (data block brightness now controlled by PR/UNP TGT sliders)
-let scopeBckgrd = 40;       // 0-100, scope background brightness (BCKGRD DCB slider)
+let scopeBckgrd = 0;        // 0-100, scope background brightness (BCKGRD). Default 0 = full black, matching real ERAM.
 let scopeBcklght = 70;      // 0-100, scope backlight brightness (BCKLGHT DCB slider)
 let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
@@ -8119,7 +8119,7 @@ const tbState = {
     openSubMenu: null,    // nested sub-menu id (e.g. 'weather' under 'atc-tools')
     // Brightness values (0-100) for buttons not yet wired
     bright: {
-        bckgrd: 40, cursor: 100, text: 100, prTgtr: 80, unpTgt: 80,
+        bckgrd: 0, cursor: 100, text: 100, prTgtr: 80, unpTgt: 80,
         prHist: 80, unpHist: 80, ldb: 50, bcklght: 70, button: 70,
         border: 30, toolbar: 30, tbBrdr: 30, fdb: 80, portal: 50,
         onFreq: 70, line4b: 50, dwell: 50, fence: 80, sldb: 50,
@@ -8622,7 +8622,7 @@ const TB_BRIGHT = {
         [
             menu('MAP\nBRIGHT', 'map-bright', { cls: 'tb-blue' }),
             nosim('CPDLC', { cls: 'tb-blue' }),
-            incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 10); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
+            incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 1); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 1); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
             incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); updateCursorBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); updateCursorBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); updatePrTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); updatePrTgtBrightness(); saveSettingsToLocalStorage(); } }),

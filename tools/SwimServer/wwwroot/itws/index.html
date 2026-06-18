@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8" />
 <title>ITWS — Integrated Terminal Weather System</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   :root {
     --bg: #0a0a0a;
@@ -229,6 +233,24 @@
     overflow-y: auto;
   }
 
+  /* ── Weather map ───────── */
+  #wxMap { width: 100%; height: 560px; background: #050505; border: 1px solid var(--border);
+           filter: invert(0); }
+  /* Dim the OSM tiles so the radar overlay reads better */
+  #wxMap .leaflet-tile { filter: invert(1) hue-rotate(180deg) saturate(0.6) brightness(0.7); }
+  #wxMap .leaflet-control-attribution {
+    background: rgba(0,0,0,0.6) !important; color: var(--dim) !important;
+    font-size: 9px;
+  }
+  #wxMap .leaflet-control-attribution a { color: var(--accent) !important; }
+  .wxmap-legend {
+    display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px;
+    color: var(--dim); padding: 6px 0 0 2px;
+  }
+  .wxmap-legend .sw {
+    display: inline-block; width: 14px; height: 10px; vertical-align: middle;
+    margin-right: 4px; border: 1px solid #222;
+  }
   /* ── Precip canvas ───────── */
   .precip-wrap { display: flex; gap: 12px; align-items: flex-start; }
   #precipCanvas { background: #050505; border: 1px solid var(--border); image-rendering: pixelated; }
@@ -500,9 +522,7 @@ function parsePrecip(xml) {
   // ITWS precip XML declares TWO sets of dimensions:
   //   prcp_nrows × prcp_ncols           = bounding box of valid data (display crop)
   //   prcp_grid_max_x × prcp_grid_max_y = actual square RLE grid (always N×N)
-  // The compressed grid is encoded for the FULL grid_max_x/y square. Using
-  // nrows/ncols as the stride caused horizontal banding for every airport
-  // where ncols ≠ grid_max_x (visible as half-row offsets accumulating).
+  // The compressed grid is encoded for the FULL grid_max_x/y square.
   const maxX = num(p, "prcp_grid_max_x") || 0;
   const maxY = num(p, "prcp_grid_max_y") || 0;
   const nrows = num(p, "prcp_nrows") || maxY;
@@ -523,8 +543,83 @@ function parsePrecip(xml) {
     if (!isFinite(v) || !isFinite(c)) continue;
     for (let k = 0; k < c && i < grid.length; k++) grid[i++] = v;
   }
+  // Geo anchors: TRP is the airport reference point; xOffset/yOffset locate
+  // the grid origin (cell 0,0) in meters from TRP in the GRID's local frame
+  // (rotated by `rotation` degrees clockwise from true north). dx/dy = 1km
+  // cell size. precision attributes are in the XML but the parsed values
+  // are already raw integer×precision.
+  const trpLat = num(p, "prcp_TRP_latitude") * 1e-6;
+  const trpLon = num(p, "prcp_TRP_longitude") * 1e-6;
+  const xOff   = num(p, "prcp_xoffset");
+  const yOff   = num(p, "prcp_yoffset");
+  const dx     = num(p, "prcp_dx") || 1000;
+  const dy     = num(p, "prcp_dy") || 1000;
+  const rot    = (num(p, "prcp_rotation") || 0) * 1e-3;  // milli-degrees -> degrees
+  const geo = (isFinite(trpLat) && isFinite(trpLon))
+    ? { trpLat, trpLon, xOffsetM: xOff, yOffsetM: yOff,
+        dxM: dx, dyM: dy, rotationDeg: rot }
+    : null;
   return { rows, cols, grid, noCov, apd, att, bad, maxLevel: maxLvl,
-           displayRows: nrows, displayCols: ncols };
+           displayRows: nrows, displayCols: ncols, geo };
+}
+
+// Storm Motion / Storm Extrapolated Position (SM SEP) — per-storm cell with
+// position, motion vector, and forecast contour polylines.
+function parseSmSep(xml) {
+  const doc = parseXml(xml);
+  const sep = doc.getElementsByTagName("sm_sep")[0];
+  if (!sep) return null;
+  const trpLat = parseFloat(txt(sep, "sm_latitude"));
+  const trpLon = parseFloat(txt(sep, "sm_longitude"));
+  const rot    = parseFloat(txt(sep, "sm_rotation")) || 0;
+  const numStorms = parseInt(txt(sep, "sm_num_storms")) || 0;
+  const storms = [];
+  for (const s of sep.getElementsByTagName("sm_storm")) {
+    const x = parseFloat(txt(s, "sm_storm_x"));
+    const y = parseFloat(txt(s, "sm_storm_y"));
+    const id = txt(s, "sm_storm_id");
+    const maxNws = parseInt(txt(s, "sm_storm_max_nws")) || 0;
+    let vx = 0, vy = 0;
+    const vec = s.getElementsByTagName("sm_vector")[0];
+    if (vec) {
+      vx = parseFloat(txt(vec, "sm_vec_velocity_x")) || 0;
+      vy = parseFloat(txt(vec, "sm_vec_velocity_y")) || 0;
+    }
+    const contours = [];
+    for (const c of s.getElementsByTagName("sm_contour")) {
+      const extrapMin = parseInt(txt(c, "sm_con_extrap_time")) || 0;
+      const segs = [];
+      for (const seg of c.getElementsByTagName("sm_segment")) {
+        const points = [];
+        for (const pt of seg.getElementsByTagName("sm_segment_points")) {
+          const px = parseFloat(txt(pt, "sm_seg_point_x"));
+          const py = parseFloat(txt(pt, "sm_seg_point_y"));
+          if (isFinite(px) && isFinite(py)) points.push([px, py]);
+        }
+        if (points.length) segs.push(points);
+      }
+      contours.push({ extrapMin, segs });
+    }
+    storms.push({ id, x, y, maxNws, vx, vy, contours });
+  }
+  if (!isFinite(trpLat) || !isFinite(trpLon)) return null;
+  return { trpLat, trpLon, rotationDeg: rot, numStorms, storms };
+}
+
+// Convert a point in the grid's local frame (meters from TRP, in the
+// rotated frame) to lat/lon. The grid's local +x axis is rotated
+// `rotationDeg` clockwise from true east, +y from true north.
+//   Standard convention: positive rotation = clockwise on the screen.
+function gridPointToLatLon(trpLat, trpLon, xMeters, yMeters, rotationDeg) {
+  const theta = -rotationDeg * Math.PI / 180;  // negate: lat/lon is left-handed
+  const ct = Math.cos(theta), st = Math.sin(theta);
+  // Rotate the grid offset into true-north frame
+  const trueX = xMeters * ct - yMeters * st;
+  const trueY = xMeters * st + yMeters * ct;
+  // Approximate meters -> degrees (good to ~0.1% within a TRACON)
+  const dLat = trueY / 111320;
+  const dLon = trueX / (111320 * Math.cos(trpLat * Math.PI / 180));
+  return [trpLat + dLat, trpLon + dLon];
 }
 
 // ───────── Server history fetch ─────────────────────
@@ -953,6 +1048,207 @@ function countPrecipLevels(precip) {
   };
 }
 
+// ── Leaflet weather map ─────────────────────────────────────────────
+// Builds an OSM-backed map centered on the airport TRP, with the precip
+// grid overlaid as a rotated canvas, plus storm cells / motion vectors
+// when available. Replaces the old static-canvas card for everyone who
+// wants spatial context.
+function renderWeatherMapCard(precip, sm) {
+  if (!precip?.geo) return "";
+  return `
+    <div class="card span12">
+      <h3>WEATHER MAP — ${precip.geo.trpLat.toFixed(4)}, ${precip.geo.trpLon.toFixed(4)}
+        <span class="ago">${precip.cols}×${precip.rows} @ ${precip.geo.dxM}m/cell</span></h3>
+      <div id="wxMap"></div>
+      <div class="wxmap-legend">
+        <span><span class="sw" style="background: var(--nws1)"></span>L1</span>
+        <span><span class="sw" style="background: var(--nws2)"></span>L2</span>
+        <span><span class="sw" style="background: var(--nws3)"></span>L3</span>
+        <span><span class="sw" style="background: var(--nws4)"></span>L4</span>
+        <span><span class="sw" style="background: var(--nws5)"></span>L5</span>
+        <span><span class="sw" style="background: var(--nws6)"></span>L6</span>
+        <span style="margin-left:18px">${sm?.numStorms || 0} storm cell(s) tracked</span>
+      </div>
+    </div>`;
+}
+
+// Build the offscreen RGBA canvas for the precip grid (transparent for
+// no-coverage so the basemap shows through, opaque colors for the precip
+// levels). Returns an HTMLCanvasElement sized rows×cols.
+function buildPrecipCanvas(precip) {
+  const cnv = document.createElement("canvas");
+  cnv.width = precip.cols;
+  cnv.height = precip.rows;
+  const ctx = cnv.getContext("2d");
+  const img = ctx.createImageData(precip.cols, precip.rows);
+  // Opacity 0 for no-data lets the basemap show through. Precip levels
+  // get high opacity but not full so terrain remains legible.
+  const palette = {
+    0: [0, 0, 0, 0],
+    1: [0, 176,  80, 200],
+    2: [0, 255,   0, 210],
+    3: [255, 255, 0, 220],
+    4: [255, 128, 0, 230],
+    5: [255, 0,   0, 235],
+    6: [255, 0, 255, 240],
+  };
+  for (let y = 0; y < precip.rows; y++) {
+    for (let x = 0; x < precip.cols; x++) {
+      const v = precip.grid[y * precip.cols + x];
+      let c;
+      if (v === precip.noCov || v === 0)      c = [0, 0, 0, 0];
+      else if (v === precip.bad || v === precip.apd || v === precip.att) c = [0,0,0,0];
+      else c = palette[v] || [0, 0, 0, 0];
+      const o = (y * precip.cols + x) * 4;
+      img.data[o]=c[0]; img.data[o+1]=c[1]; img.data[o+2]=c[2]; img.data[o+3]=c[3];
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return cnv;
+}
+
+// Custom Leaflet layer: a rotated affine-transformed canvas of the precip
+// grid. The grid's 3 anchor corners are projected via gridPointToLatLon
+// each redraw; the canvas context's setTransform handles the rotation +
+// scale + translation in one matrix multiply.
+const RotatedCanvasLayer = L.Layer.extend({
+  initialize(srcCanvas, geo, gridCols, gridRows) {
+    this._src = srcCanvas;
+    this._geo = geo;       // {trpLat, trpLon, xOffsetM, yOffsetM, dxM, dyM, rotationDeg}
+    this._gw = gridCols;
+    this._gh = gridRows;
+  },
+  onAdd(map) {
+    this._map = map;
+    if (!this._canvas) {
+      const c = L.DomUtil.create("canvas", "leaflet-zoom-animated");
+      c.style.pointerEvents = "none";
+      c.style.willChange = "transform";
+      this._canvas = c;
+    }
+    map.getPanes().overlayPane.appendChild(this._canvas);
+    map.on("viewreset zoom move zoomend moveend resize", this._reset, this);
+    this._reset();
+  },
+  onRemove() {
+    L.DomUtil.remove(this._canvas);
+    this._map.off("viewreset zoom move zoomend moveend resize", this._reset, this);
+  },
+  _gridCornerLatLon(col, row) {
+    const g = this._geo;
+    const xm = g.xOffsetM + col * g.dxM;
+    const ym = g.yOffsetM + row * g.dyM;
+    return gridPointToLatLon(g.trpLat, g.trpLon, xm, ym, g.rotationDeg);
+  },
+  _reset() {
+    if (!this._map || !this._canvas) return;
+    const map = this._map;
+    const size = map.getSize();
+    const c = this._canvas;
+    c.width = size.x; c.height = size.y;
+    // Position the canvas at the map's current top-left corner.
+    const topLeftPt = map.containerPointToLayerPoint([0, 0]);
+    L.DomUtil.setPosition(c, topLeftPt);
+    const ctx = c.getContext("2d");
+    ctx.clearRect(0, 0, c.width, c.height);
+    // Compute 3 corner screen positions for the grid:
+    //   (0,0), (gw,0), (0,gh)
+    const p00 = this._gridCornerLatLon(0, 0);
+    const pW0 = this._gridCornerLatLon(this._gw, 0);
+    const p0H = this._gridCornerLatLon(0, this._gh);
+    const sp00 = map.latLngToContainerPoint(p00);
+    const spW0 = map.latLngToContainerPoint(pW0);
+    const sp0H = map.latLngToContainerPoint(p0H);
+    // Affine transform from grid-pixel (gx,gy) to screen (sx,sy):
+    //   sx = a*gx + c*gy + e
+    //   sy = b*gx + d*gy + f
+    // With  (gx,gy)=(0,0)        -> sp00
+    //       (gx,gy)=(gw, 0)      -> spW0
+    //       (gx,gy)=(0, gh)      -> sp0H
+    const a = (spW0.x - sp00.x) / this._gw;
+    const b = (spW0.y - sp00.y) / this._gw;
+    const cM = (sp0H.x - sp00.x) / this._gh;
+    const d = (sp0H.y - sp00.y) / this._gh;
+    const e = sp00.x;
+    const f = sp00.y;
+    ctx.setTransform(a, b, cM, d, e, f);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this._src, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  },
+});
+
+let _wxMap = null;
+function paintWeatherMap(precip, sm) {
+  if (!precip?.geo) return;
+  const el = document.getElementById("wxMap");
+  if (!el) return;
+  // Tear down + rebuild on every airport switch (geo changes).
+  if (_wxMap) { _wxMap.remove(); _wxMap = null; }
+  _wxMap = L.map(el, {
+    center: [precip.geo.trpLat, precip.geo.trpLon],
+    zoom: 8, minZoom: 5, maxZoom: 12, zoomControl: true,
+    attributionControl: true,
+  });
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap | ITWS via SWIM",
+    maxZoom: 19,
+  }).addTo(_wxMap);
+
+  // Precip overlay
+  const srcCnv = buildPrecipCanvas(precip);
+  new RotatedCanvasLayer(srcCnv, precip.geo, precip.cols, precip.rows).addTo(_wxMap);
+
+  // Airport TRP marker
+  L.circleMarker([precip.geo.trpLat, precip.geo.trpLon], {
+    radius: 6, color: "#fff", weight: 2, fillColor: "#cccc44", fillOpacity: 1,
+  }).addTo(_wxMap).bindTooltip("TRP", { permanent: false });
+
+  // Storm cells (if SM SEP product present)
+  if (sm?.storms?.length) {
+    for (const s of sm.storms) {
+      const [lat, lon] = gridPointToLatLon(sm.trpLat, sm.trpLon, s.x, s.y, sm.rotationDeg);
+      // Cell marker color by NWS level
+      const nwsColor = ["#333", "#00b050", "#00ff00", "#ffff00", "#ff8000", "#ff0000", "#ff00ff"];
+      const col = nwsColor[Math.max(0, Math.min(6, s.maxNws))];
+      L.circleMarker([lat, lon], {
+        radius: 5, color: col, weight: 2, fillColor: col, fillOpacity: 0.7,
+      }).addTo(_wxMap).bindTooltip(`Storm ${s.id} L${s.maxNws}`);
+      // Motion vector — draw 10-minute extrapolation arrow
+      const speed = Math.hypot(s.vx, s.vy);
+      if (speed > 0.5) {
+        // 10 min projection: vx/vy in knots × 10 min × 1852 m/nm / 60 min/h
+        const dxM = s.vx * 10 / 60 * 1852;
+        const dyM = s.vy * 10 / 60 * 1852;
+        const [lat2, lon2] = gridPointToLatLon(sm.trpLat, sm.trpLon, s.x + dxM, s.y + dyM, sm.rotationDeg);
+        L.polyline([[lat, lon], [lat2, lon2]], {
+          color: col, weight: 2, opacity: 0.85, dashArray: "4,4",
+        }).addTo(_wxMap);
+      }
+      // Forecast contour polylines
+      for (const con of s.contours || []) {
+        for (const seg of con.segs) {
+          const path = seg.map(([px, py]) =>
+            gridPointToLatLon(sm.trpLat, sm.trpLon, px, py, sm.rotationDeg));
+          L.polyline(path, {
+            color: col, weight: 1.5, opacity: 0.5,
+            dashArray: con.extrapMin > 0 ? "2,3" : null,
+          }).addTo(_wxMap);
+        }
+      }
+    }
+  }
+
+  // Auto-fit to cover the precip grid (with some padding)
+  const cornerNW = gridPointToLatLon(precip.geo.trpLat, precip.geo.trpLon,
+    precip.geo.xOffsetM, precip.geo.yOffsetM, precip.geo.rotationDeg);
+  const cornerSE = gridPointToLatLon(precip.geo.trpLat, precip.geo.trpLon,
+    precip.geo.xOffsetM + precip.cols * precip.geo.dxM,
+    precip.geo.yOffsetM + precip.rows * precip.geo.dyM,
+    precip.geo.rotationDeg);
+  _wxMap.fitBounds([cornerNW, cornerSE], { padding: [10, 10] });
+}
+
 function paintPrecip(precip) {
   if (!precip) return;
   const cnv = document.getElementById("precipCanvas");
@@ -1062,11 +1358,15 @@ async function loadAirport(airport) {
       ${renderStormTrendCard()}
       ${renderPrecipTrendCard()}
       ${renderHazardCard(graphics, twxText)}
+      ${renderWeatherMapCard(precip, sm)}
       ${renderPrecipCard(precip)}
       ${renderProductsCard(airport)}
     </div>`;
 
   if (precip) paintPrecip(precip);
+  // Leaflet needs an active DOM container; tear down/build after the
+  // dashboard innerHTML replace is committed.
+  if (precip?.geo) requestAnimationFrame(() => paintWeatherMap(precip, sm));
   for (const el of document.querySelectorAll(".ap-row")) {
     el.classList.toggle("active", el.dataset.ap === airport);
   }

@@ -1750,7 +1750,34 @@ function clearProcOverlay() {
 let nexradLayer = null;
 let nexradLevel = 3;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=all(123)
 let nexradBrightness = 30;
+let _nexradReplaySlot = null;  // last IEM 5-min archive slot rendered during replay
 const MRMS_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows';
+// Iowa Environmental Mesonet archived NEXRAD N0Q (base reflectivity), addressable by TIME at
+// 5-minute resolution. Used during replay so the weather matches the replay clock instead of now.
+const IEM_N0Q_URL = 'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi';
+
+// Replay clock snapped to the IEM 5-minute archive slot (null when live → use nowCOAST).
+function nexradReplayTime() {
+    if (!replayActive || !replayCurrentTime) return null;
+    const t = new Date(replayCurrentTime);
+    if (isNaN(t)) return null;
+    t.setUTCSeconds(0, 0);
+    t.setUTCMinutes(Math.floor(t.getUTCMinutes() / 5) * 5);
+    return t.toISOString().slice(0, 19) + 'Z';
+}
+
+// WMS GetMap URL for one tile: live MRMS mosaic, or the time-matched IEM archive during replay.
+function nexradTileUrl(bbox) {
+    const rt = nexradReplayTime();
+    if (rt) {
+        return `${IEM_N0Q_URL}?service=WMS&version=1.1.1&request=GetMap` +
+            `&layers=nexrad-n0q&srs=EPSG:4326&bbox=${bbox}&width=256&height=256` +
+            `&format=image/png&transparent=true&time=${rt}`;
+    }
+    return `${MRMS_WMS_URL}?service=WMS&version=1.1.1&request=GetMap` +
+        `&layers=conus_base_reflectivity_mosaic&srs=EPSG:4326` +
+        `&bbox=${bbox}&width=256&height=256&format=image/png&transparent=true`;
+}
 
 // Classify NWS radar pixel to ERAM NEXRAD level (0=none, 1=moderate, 2=heavy, 3=extreme)
 // MRMS reflectivity palette: blue/cyan (5-20 dBZ) → green (20-35) → yellow (35-45) → orange (45-50) → red (50-65) → magenta (65+)
@@ -1781,9 +1808,7 @@ const MrmsEramLayer = L.GridLayer.extend({
         const bounds = this._tileCoordsToBounds(coords);
         const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
         const bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
-        const url = `${MRMS_WMS_URL}?service=WMS&version=1.1.1&request=GetMap` +
-            `&layers=conus_base_reflectivity_mosaic&srs=EPSG:4326` +
-            `&bbox=${bbox}&width=256&height=256&format=image/png&transparent=true`;
+        const url = nexradTileUrl(bbox);
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
@@ -1841,11 +1866,10 @@ function updateNexrad() {
     nexradLayer.addTo(map);
 }
 
-// Auto-refresh every 5 minutes (nowCOAST updates every ~4 min)
-if (nexradLevel > 0) updateNexrad();
-setInterval(() => {
+// Double-buffer refresh: add a fresh layer on top, remove the old one once new tiles load.
+// Used by the 5-min live timer AND when the replay clock crosses a 5-min archive slot.
+function refreshNexrad() {
     if (!nexradLayer) return;
-    // Double-buffer: add new layer on top, remove old after new tiles finish loading
     const oldLayer = nexradLayer;
     const newLayer = createNexradLayer();
     nexradLayer = newLayer;
@@ -1853,7 +1877,11 @@ setInterval(() => {
     newLayer.once('load', () => { if (map.hasLayer(oldLayer)) map.removeLayer(oldLayer); });
     // Safety: remove old layer after 15s even if load event doesn't fire
     setTimeout(() => { if (map.hasLayer(oldLayer)) map.removeLayer(oldLayer); }, 15000);
-}, 5 * 60 * 1000);
+}
+
+// Auto-refresh every 5 minutes (nowCOAST updates every ~4 min)
+if (nexradLevel > 0) updateNexrad();
+setInterval(refreshNexrad, 5 * 60 * 1000);
 
 document.getElementById('sel-nxlvl').addEventListener('change', function () {
     const v = this.value;
@@ -7585,19 +7613,24 @@ document.addEventListener('mousedown', e => {
 // Zulu Time View
 // ════════════════════════════════════════════════════════════════════════════
 setupBoxDrag(document.getElementById('time-view'));
-setInterval(() => {
-    const now = new Date();
+// During replay the clock shows the REPLAY time (Zulu), so it matches what's on the scope;
+// it tracks replayCurrentTime (which freezes when paused). Live shows wall-clock Zulu.
+function clockNow() {
+    if (replayActive && replayCurrentTime) {
+        const d = new Date(replayCurrentTime);
+        if (!isNaN(d)) return d;
+    }
+    return new Date();
+}
+function renderClock() {
+    const now = clockNow();
     const hh = String(now.getUTCHours()).padStart(2, '0');
     const mm = String(now.getUTCMinutes()).padStart(2, '0');
     const ss = String(now.getUTCSeconds()).padStart(2, '0');
     document.getElementById('time-view').textContent = `${hh}${mm} ${ss}`;
-}, 1000);
-// Trigger immediately
-{
-    const now = new Date();
-    document.getElementById('time-view').textContent =
-        `${String(now.getUTCHours()).padStart(2,'0')}${String(now.getUTCMinutes()).padStart(2,'0')} ${String(now.getUTCSeconds()).padStart(2,'0')}`;
 }
+setInterval(renderClock, 1000);
+renderClock();  // immediate
 // Middle-click toggles border
 document.getElementById('time-view').addEventListener('auxclick', e => {
     if (e.button === 1) { e.preventDefault(); e.currentTarget.classList.toggle('bordered'); }
@@ -10240,6 +10273,7 @@ function startReplay(startTime) {
 
     replayActive = true;
     replayPaused = false;
+    _nexradReplaySlot = null;  // force a NEXRAD archive swap on the first replay frame
     replayPauseBtn.textContent = '\u23F8'; // pause icon
     replayBar.style.display = '';
     replayStatusEl.textContent = 'Connecting...';
@@ -10275,7 +10309,13 @@ function startReplay(startTime) {
             replayCurrentTime = msg.replayTime;
             const t = new Date(msg.replayTime);
             replayTimeEl.textContent = t.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
+            renderClock();  // keep the scope clock on replay time
             replayThrottleSave();
+            // Swap NEXRAD to the matching archive frame when the replay clock crosses a 5-min slot
+            if (nexradLevel > 0) {
+                const slot = nexradReplayTime();
+                if (slot && slot !== _nexradReplaySlot) { _nexradReplaySlot = slot; refreshNexrad(); }
+            }
         }
 
         if (msg.type === 'snapshot') {
@@ -10362,6 +10402,9 @@ function stopReplay() {
     replayBar.style.display = 'none';
     replayStatusEl.textContent = '';
     replayTimeEl.textContent = '';
+    _nexradReplaySlot = null;
+    renderClock();           // back to wall-clock
+    if (nexradLevel > 0) refreshNexrad();  // back to live weather
     saveSettingsToLocalStorage();
     updateReplayUrl();  // strip replay params from the URL when returning to live
 

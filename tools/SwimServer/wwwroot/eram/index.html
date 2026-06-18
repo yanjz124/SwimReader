@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="/shared/common.css?v=10">
-<link rel="stylesheet" href="/eram/eram.css?v=11">
+<link rel="stylesheet" href="/eram/eram.css?v=12">
 </head>
 <body>
 <div id="app">
@@ -261,6 +261,12 @@
         <span class="cmd">/&lt;0-3&gt; &lt;FLID&gt;</span> <span class="desc">— Set leader line length</span><br>
         <span class="cmd">&lt;FLID&gt;</span> <span class="desc">— Toggle FDB/LDB</span><br>
         <span class="cmd">// &lt;FLID&gt;</span> <span class="desc">— Toggle VCI indicator</span><br>
+        <h4>FACILITY / SECTORS</h4>
+        <span class="cmd">XX FAC &lt;id&gt;</span> <span class="desc">— Change facility (e.g. XX FAC ZDC)</span><br>
+        <span class="cmd">XX SEC &lt;sectors&gt;</span> <span class="desc">— Set sectors, replacing current (e.g. XX SEC 32 33 34)</span><br>
+        <span class="cmd">XX SEC +&lt;s&gt; -&lt;s&gt;</span> <span class="desc">— Add/remove individual sectors (e.g. XX SEC +34 -32)</span><br>
+        <span class="cmd">XX SEC ALL | NONE</span> <span class="desc">— Select all sectors / clear all</span><br>
+        <span class="cmd">XX FAC &lt;id&gt; SEC &lt;sectors&gt;</span> <span class="desc">— Change facility and sectors together</span><br>
         <h4>QUERIES</h4>
         <span class="cmd">QF &lt;FLID&gt;</span> <span class="desc">— Query flight plan → Response Area</span><br>
         <span class="cmd">QD</span> <span class="desc">— Clear Response Area</span><br>
@@ -403,7 +409,7 @@
     </div>
 </div>
 
-<script src="/eram/eram.js?v=11"></script>
+<script src="/eram/eram.js?v=12"></script>
 <script src="/idle-timer.js?v=10"></script>
 </body>
 </html>

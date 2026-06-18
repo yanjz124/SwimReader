@@ -497,8 +497,18 @@ function parsePrecip(xml) {
   const doc = parseXml(xml);
   const p = doc.getElementsByTagName("precip")[0];
   if (!p) return null;
-  const rows = num(p, "prcp_nrows") || 0;
-  const cols = num(p, "prcp_ncols") || 0;
+  // ITWS precip XML declares TWO sets of dimensions:
+  //   prcp_nrows × prcp_ncols           = bounding box of valid data (display crop)
+  //   prcp_grid_max_x × prcp_grid_max_y = actual square RLE grid (always N×N)
+  // The compressed grid is encoded for the FULL grid_max_x/y square. Using
+  // nrows/ncols as the stride caused horizontal banding for every airport
+  // where ncols ≠ grid_max_x (visible as half-row offsets accumulating).
+  const maxX = num(p, "prcp_grid_max_x") || 0;
+  const maxY = num(p, "prcp_grid_max_y") || 0;
+  const nrows = num(p, "prcp_nrows") || maxY;
+  const ncols = num(p, "prcp_ncols") || maxX;
+  const cols = maxX || ncols;
+  const rows = maxY || nrows;
   const noCov = num(p, "prcp_no_coverage");
   const apd = num(p, "prcp_ap_detected");
   const att = num(p, "prcp_attenuated");
@@ -513,7 +523,8 @@ function parsePrecip(xml) {
     if (!isFinite(v) || !isFinite(c)) continue;
     for (let k = 0; k < c && i < grid.length; k++) grid[i++] = v;
   }
-  return { rows, cols, grid, noCov, apd, att, bad, maxLevel: maxLvl };
+  return { rows, cols, grid, noCov, apd, att, bad, maxLevel: maxLvl,
+           displayRows: nrows, displayCols: ncols };
 }
 
 // ───────── Server history fetch ─────────────────────

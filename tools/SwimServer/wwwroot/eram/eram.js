@@ -1135,6 +1135,8 @@ const map = L.map('map', {
     zoomSnap: 0.1,        // granular zoom (0.1 steps)
     zoomDelta: 0.1,       // each scroll/click zooms by 0.1
     wheelPxPerZoomLevel: 200,  // smooth scroll zoom
+    zoomAnimation: false, // instant zoom — no animation phase, so overlay elements (history,
+                          // vectors/PTL, rings) don't vanish-and-reappear on every zoom step
 });
 
 const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
@@ -1208,10 +1210,6 @@ function drawSymbolGeometry(ctx, sym, cx, cy, color) {
 }
 
 function drawOverlay() {
-    // During a zoom animation the canvas is scaled via a CSS transform (see 'zoomanim').
-    // Skip redraws then — resetting the canvas position/size here would fight that transform
-    // and reintroduce the jank. The 'zoomend' handler redraws crisply once the animation ends.
-    if (map._animatingZoom) return;
     const size = map.getSize();
     if (size.x === 0 || size.y === 0) return;
     const bounds = map.getBounds();
@@ -1425,23 +1423,11 @@ function drawOverlay() {
     ctx.globalAlpha = 1;
 }
 
-// Smooth zoom: scale + translate the existing overlay bitmap along with the map's zoom
-// animation (the same technique Leaflet uses for image/tile layers), then redraw it crisply
-// when the animation ends. This keeps history dots, velocity vectors (PTL) and range rings
-// glued to their targets during the zoom instead of being cleared and snapping back.
-map.on('zoomanim', (e) => {
-    if (!overlayCanvas.width) return;
-    const scale = map.getZoomScale(e.zoom);
-    const nw = map.containerPointToLatLng([0, 0]);          // canvas top-left corner
-    const offset = map._latLngToNewLayerPoint(nw, e.zoom, e.center);
-    L.DomUtil.setTransform(overlayCanvas, offset, scale);
-});
-
-// Redraw on pan/resize and at the end of a zoom (drawOverlay's setPosition resets the zoom
-// transform back to scale 1). 'zoom' is intentionally excluded so the mid-animation transform
-// above isn't fought by a reprojected redraw.
+// Redraw the overlay on pan/zoom/resize. Zoom is instant (zoomAnimation:false), so each step
+// just reprojects and redraws — the canvas is never cleared mid-zoom, so the overlay elements
+// (history dots, velocity vectors/PTL, range rings) track the targets without popping in/out.
 let _overlayRafPending = false;
-map.on('move viewreset resize zoomend', () => {
+map.on('move zoom viewreset resize', () => {
     closePointoutMenu();
     closeFieldMenu();
     if (!_overlayRafPending) {

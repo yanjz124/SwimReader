@@ -750,18 +750,26 @@ function buildIcaoFpl(d) {
     } else if (d.groundSpeed) {
         speed = 'N' + String(Math.round(d.groundSpeed)).padStart(4, '0');
     }
+    // ICAO Field 15 shows the FILED level, not the current ATC-assigned one.
+    // Prefer originalAssignedAltitude (snapshotted on first assignment, never
+    // overwritten) and fall back to the current value if the flight came in
+    // before the initial-altitude capture was deployed.
+    const filedAlt = d.originalAssignedAltitude ?? d.assignedAltitude;
+    const filedVfr = d.originalAssignedVfr ?? d.assignedVfr;
     let level = 'F000';
-    if (d.assignedVfr) {
+    if (filedVfr) {
         level = 'VFR';
-        if (d.assignedAltitude) level += '/' + String(Math.round(d.assignedAltitude / 100)).padStart(3, '0');
+        if (filedAlt) level += '/' + String(Math.round(filedAlt / 100)).padStart(3, '0');
     } else if (d.blockFloor && d.blockCeiling) {
+        // Block altitude is rare; use current since block isn't captured as
+        // an "original" field.
         level = 'F' + String(Math.round(d.blockFloor / 100)).padStart(3, '0') +
                 'F' + String(Math.round(d.blockCeiling / 100)).padStart(3, '0');
-    } else if (d.assignedAltitude) {
-        if (d.assignedAltitude >= 18000) {
-            level = 'F' + String(Math.round(d.assignedAltitude / 100)).padStart(3, '0');
+    } else if (filedAlt) {
+        if (filedAlt >= 18000) {
+            level = 'F' + String(Math.round(filedAlt / 100)).padStart(3, '0');
         } else {
-            level = 'A' + String(Math.round(d.assignedAltitude / 100)).padStart(3, '0');
+            level = 'A' + String(Math.round(filedAlt / 100)).padStart(3, '0');
         }
     }
     // Use original (filed) route for ICAO FPL, fall back to current

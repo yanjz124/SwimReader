@@ -1295,6 +1295,17 @@ void ProcessFlight(XElement flight, string rawXml)
             }
         }
 
+        // First-ever assignment: snapshot as OriginalAssignedAltitude so the
+        // initial flight-plan altitude is retained even after ATC amends it
+        // later. Mirrors OriginalRoute. Once set (either numeric or VFR), it
+        // is never overwritten.
+        if (state.OriginalAssignedAltitude is null && !state.OriginalAssignedVfr &&
+            (state.AssignedAltitude.HasValue || state.AssignedVfr))
+        {
+            state.OriginalAssignedAltitude = state.AssignedAltitude;
+            state.OriginalAssignedVfr = state.AssignedVfr;
+        }
+
         // Log altitude changes
         if (state.AssignedAltitude != prevAA || state.AssignedVfr != prevVfr || state.BlockFloor != prevBlkF || state.BlockCeiling != prevBlkC)
         {

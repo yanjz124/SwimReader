@@ -125,7 +125,31 @@ async function refreshStats() {
     } catch {}
 }
 
+// Deployed build (git commit + time) so you can confirm what's actually live.
+async function refreshVersion() {
+    const el = document.getElementById('buildFooter');
+    if (!el) return;
+    try {
+        const r = await fetch('/api/version');
+        if (!r.ok) return;
+        const v = await r.json();
+        let when = '';
+        if (v.commitTime) {
+            const d = new Date(v.commitTime);
+            const z = (n) => String(n).padStart(2, '0');
+            const abs = `${d.getUTCFullYear()}-${z(d.getUTCMonth() + 1)}-${z(d.getUTCDate())} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())}Z`;
+            const mins = Math.round((Date.now() - d.getTime()) / 60000);
+            const rel = mins < 1 ? 'just now' : mins < 60 ? `${mins}m ago`
+                : mins < 1440 ? `${Math.round(mins / 60)}h ago` : `${Math.round(mins / 1440)}d ago`;
+            when = `  ·  updated ${abs} (${rel})`;
+        }
+        el.textContent = `build ${v.commit || '?'}${when}`;
+    } catch {}
+}
+
 refreshStats();
+refreshVersion();
+setInterval(refreshVersion, 60000);
 let _pollTimer = setInterval(refreshStats, 10000);
 window.idleOnPause = () => { clearInterval(_pollTimer); };
 window.idleOnResume = () => { refreshStats(); _pollTimer = setInterval(refreshStats, 10000); };

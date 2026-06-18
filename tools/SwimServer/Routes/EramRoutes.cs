@@ -82,6 +82,9 @@ static class EramRoutes
         // Server performance / health: CPU, memory, GC, threads, uptime, WS clients, disk.
         app.MapGet("/api/system", () => Results.Json(SystemStats.Snapshot(ctx.Clients.Count, ctx.Flights.Count), ctx.JsonOpts));
 
+        // Deployed build: current git commit + commit time (so the homepage can show what's live).
+        app.MapGet("/api/version", () => Results.Json(VersionInfo.Get(ctx.RepoRoot), ctx.JsonOpts));
+
         // EDCT (Expected Departure Clearance Time) — flights currently under a GDP/CTOP/Ground Stop slot.
         // Returns ALL flights with EdctTime set, regardless of whether they've already departed.
         // Client can filter as needed.

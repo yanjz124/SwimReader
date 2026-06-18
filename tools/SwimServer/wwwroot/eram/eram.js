@@ -1208,6 +1208,10 @@ function drawSymbolGeometry(ctx, sym, cx, cy, color) {
 }
 
 function drawOverlay() {
+    // During a zoom animation the canvas is scaled via a CSS transform (see 'zoomanim').
+    // Skip redraws then — resetting the canvas position/size here would fight that transform
+    // and reintroduce the jank. The 'zoomend' handler redraws crisply once the animation ends.
+    if (map._animatingZoom) return;
     const size = map.getSize();
     if (size.x === 0 || size.y === 0) return;
     const bounds = map.getBounds();
@@ -1421,14 +1425,23 @@ function drawOverlay() {
     ctx.globalAlpha = 1;
 }
 
-// Clear canvas immediately on zoom start to prevent ghost shadows
-map.on('zoomstart', () => {
-    const ctx = overlayCanvas.getContext('2d');
-    ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+// Smooth zoom: scale + translate the existing overlay bitmap along with the map's zoom
+// animation (the same technique Leaflet uses for image/tile layers), then redraw it crisply
+// when the animation ends. This keeps history dots, velocity vectors (PTL) and range rings
+// glued to their targets during the zoom instead of being cleared and snapping back.
+map.on('zoomanim', (e) => {
+    if (!overlayCanvas.width) return;
+    const scale = map.getZoomScale(e.zoom);
+    const nw = map.containerPointToLatLng([0, 0]);          // canvas top-left corner
+    const offset = map._latLngToNewLayerPoint(nw, e.zoom, e.center);
+    L.DomUtil.setTransform(overlayCanvas, offset, scale);
 });
 
+// Redraw on pan/resize and at the end of a zoom (drawOverlay's setPosition resets the zoom
+// transform back to scale 1). 'zoom' is intentionally excluded so the mid-animation transform
+// above isn't fought by a reprojected redraw.
 let _overlayRafPending = false;
-map.on('move zoom viewreset resize', () => {
+map.on('move viewreset resize zoomend', () => {
     closePointoutMenu();
     closeFieldMenu();
     if (!_overlayRafPending) {
@@ -4101,17 +4114,18 @@ function updateOnFreqBrightness() {
             document.head.appendChild(styleEl);
         }
 
-        // Piecewise interpolation: black → #606038 (0-30) → #FFFF44 (30-100)
+        // VCI is the "on frequency" indicator — it must be GREEN. Piecewise brightness ramp:
+        // black → #307030 (0-30) → #44FF44 (30-100).
         let onFreqColor;
         if (brightness <= 30) {
-            // 0-30: interpolate from black to #606038
+            // 0-30: interpolate from black to #307030
             const factor = brightness / 30;
-            onFreqColor = interpolateColor('#606038', factor);
+            onFreqColor = interpolateColor('#307030', factor);
         } else {
-            // 30-100: interpolate from #606038 to #FFFF44
+            // 30-100: interpolate from #307030 to #44FF44
             const factor = (brightness - 30) / 70;
-            const r0 = 96, g0 = 96, b0 = 56;  // #606038
-            const r1 = 255, g1 = 255, b1 = 68;  // #FFFF44
+            const r0 = 48, g0 = 112, b0 = 48;   // #307030
+            const r1 = 68, g1 = 255, b1 = 68;   // #44FF44
             const r = Math.round(r0 + (r1 - r0) * factor);
             const g = Math.round(g0 + (g1 - g0) * factor);
             const b = Math.round(b0 + (b1 - b0) * factor);
@@ -4120,7 +4134,7 @@ function updateOnFreqBrightness() {
 
         styleEl.textContent = `
             .on-freq { color: ${onFreqColor} !important; }
-            .on-freq.dwell { color: #FFFF44 !important; }
+            .on-freq.dwell { color: #66FF66 !important; }
         `;
     } catch (e) {
         // tbState not yet initialized
@@ -6806,6 +6820,7 @@ document.addEventListener('keydown', e => {
         const next = idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1];
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
+        lastRenderTime = 0;  // redraw vectors immediately instead of waiting for the render interval
         saveSettingsToLocalStorage();
         e.preventDefault(); return;
     }
@@ -6814,6 +6829,7 @@ document.addEventListener('keydown', e => {
         const next = idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0];
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
+        lastRenderTime = 0;  // redraw vectors immediately instead of waiting for the render interval
         saveSettingsToLocalStorage();
         e.preventDefault(); return;
     }
@@ -10277,10 +10293,10 @@ function startReplay(startTime) {
         }
 
         if (msg.type === 'snapshot') {
-            for (const [, m] of markers) map.removeLayer(m);
-            markers.clear();
-            flights.clear();
-            flightHistory.clear();
+            // Reconcile instead of clear-all: update/add flights in the snapshot, then drop only
+            // the ones no longer present (e.g. panned out of view). Markers that remain on screen
+            // are left untouched, so a viewport re-snapshot (on pan/zoom) doesn't flash/blink.
+            const seen = new Set();
             for (const f of msg.data) {
                 f._clientLastUpdate = performance.now();
                 if (f.assignedAltitude != null && f.reportedAltitude != null) {
@@ -10294,6 +10310,14 @@ function startReplay(startTime) {
                 if (f.clearanceHeading || f.clearanceSpeed || f.clearanceText) {
                     hsfShowMap.add(f.gufi);
                 }
+                seen.add(f.gufi);
+            }
+            for (const gufi of [...flights.keys()]) {
+                if (seen.has(gufi)) continue;
+                flights.delete(gufi);
+                flightHistory.delete(gufi);
+                const m = markers.get(gufi);
+                if (m) { map.removeLayer(m); markers.delete(gufi); }
             }
             replayStatusEl.textContent = `Playing — ${flights.size} flights`;
         } else if (msg.type === 'batch') {
@@ -10353,18 +10377,49 @@ function stopReplay() {
     replayStatusEl.textContent = '';
     replayTimeEl.textContent = '';
     saveSettingsToLocalStorage();
+    updateReplayUrl();  // strip replay params from the URL when returning to live
 
     // Reconnect to live
     connectWs();
 }
 
-// Throttled URL save during replay (every 3 seconds)
+// Reflect the current replay position + speed in the URL hash so the page can be shared:
+// opening the link auto-starts replay at that time/speed (see the auto-start block below).
+// Other hash params (toolbar state etc.) are preserved.
+function updateReplayUrl() {
+    try {
+        const params = new URLSearchParams(window.location.hash.slice(1));
+        if (replayActive && replayCurrentTime) {
+            params.set('replay', replayCurrentTime);
+            params.set('rspd', replaySpeedSel.value || '1');
+        } else {
+            params.delete('replay');
+            params.delete('rspd');
+        }
+        const h = params.toString();
+        history.replaceState(null, '', h ? '#' + h : location.pathname + location.search);
+    } catch {}
+}
+
+// Copy the current (replay-stamped) page URL to the clipboard for easy sharing.
+function copyReplayLink() {
+    updateReplayUrl();
+    const url = location.href;
+    const done = () => { replayStatusEl.textContent = 'Link copied'; };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(done, done);
+    else done();
+}
+const replayShareBtn = document.getElementById('replay-share');
+if (replayShareBtn) replayShareBtn.addEventListener('click', copyReplayLink);
+
+// Throttled save during replay (every 3 seconds) — persist settings + update the shareable URL.
 let _replaySaveTimer = null;
 function replayThrottleSave() {
     if (_replaySaveTimer) return;
     _replaySaveTimer = setTimeout(() => {
         _replaySaveTimer = null;
         saveSettingsToLocalStorage();
+        updateReplayUrl();
     }, 3000);
 }
 

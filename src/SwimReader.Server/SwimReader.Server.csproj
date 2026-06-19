@@ -4,6 +4,12 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Workstation GC: the Pi has only 3.7 GB RAM and runs this alongside the
+         SwimServer process. Server GC (default) keeps a heap per core and is
+         very memory-hungry; Workstation GC keeps a single, far smaller heap. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <RetainVMGarbageCollection>false</RetainVMGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

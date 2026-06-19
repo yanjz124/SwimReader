@@ -6799,22 +6799,24 @@ document.addEventListener('keydown', e => {
         e.preventDefault(); return;
     }
 
-    // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8)
+    // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8). Route through
+    // setSelectVal (same path as scrolling the VECTOR button) so the change event
+    // fires — updating vectorMinutes, redrawing the vector line via
+    // invalidateAllMarkers, and saving — then refresh the toolbar so the VECTOR
+    // button's value updates too. PageUp increases, PageDown decreases.
     const vectorSteps = [0, 1, 2, 4, 8];
     if (e.key === 'PageUp' && !e.ctrlKey) {
         const idx = vectorSteps.indexOf(vectorMinutes);
         const next = idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1];
-        vectorMinutes = next;
-        document.getElementById('sel-vector').value = vectorMinutes;
-        saveSettingsToLocalStorage();
+        setSelectVal('sel-vector', next);
+        refreshAllButtons();
         e.preventDefault(); return;
     }
     if (e.key === 'PageDown' && !e.ctrlKey) {
         const idx = vectorSteps.indexOf(vectorMinutes);
         const next = idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0];
-        vectorMinutes = next;
-        document.getElementById('sel-vector').value = vectorMinutes;
-        saveSettingsToLocalStorage();
+        setSelectVal('sel-vector', next);
+        refreshAllButtons();
         e.preventDefault(); return;
     }
 

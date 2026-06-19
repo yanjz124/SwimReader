@@ -4,6 +4,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- The Pi has only 3.7 GB RAM. Server GC (the ASP.NET Core default) keeps a
+         separate heap per core and is very memory-hungry; Workstation GC keeps a
+         single, much smaller heap — the right fit here (throughput is plenty for
+         ~240 msg/s) and stops the process swapping the box to death. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <RetainVMGarbageCollection>false</RetainVMGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

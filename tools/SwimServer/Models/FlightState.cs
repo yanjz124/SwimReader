@@ -128,8 +128,8 @@ class FlightState
     private readonly List<FlightEvent> _events = new();
     private readonly List<FlightEvent> _allEvents = new();
     private const int MaxEvents = 50;
-    private const int MaxAllEvents = 200;
-    private const int MaxXmlEvents = 50;     // Only keep RawXml on the most recent N events
+    private const int MaxAllEvents = 100;
+    private const int MaxXmlEvents = 20;     // Only keep RawXml on the most recent N events (RawXml dominates per-flight RAM; trimmed for the 3.7 GB Pi)
 
     public void AddEvent(FlightEvent e)
     {

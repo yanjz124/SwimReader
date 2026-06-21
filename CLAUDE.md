@@ -1079,8 +1079,9 @@ dotnet build tools/SwimServer
 ## Deployment (Raspberry Pi)
 
 ### Host
-- **Pi**: `JY@JY5` (Debian 12 bookworm, ARM64, 4 cores, 3.7GB RAM)
-- **SSH**: `ssh JY@JY5` (no password needed)
+- **Pi**: `JY@JY5` (Debian 12 bookworm, ARM64, 4 cores, 8GB RAM)
+- **Co-tenant services**: the Pi also runs unrelated user services that compete for the 4 cores — `vncrcc.service` (uvicorn web app), `larperdetectorv3.service` (bot), and `vatsim2m.service` (VATSIM→JSON; disabled 2026-06-21 as it burned ~⅔ of a core). RAM is ample (8GB); **CPU is the scarce resource** — when diagnosing "high load", check per-process CPU (`ps -eo pid,pcpu,comm --sort=-pcpu`), not memory.
+- **SSH**: `ssh JY@JY5` (no password needed). If SSH hangs/`Permission denied`, it's almost always a **local Tailscale problem, not the Pi** — e.g. the PIA VPN kill-switch blocking tailscaled's control-plane traffic. Disable PIA + `tailscale up --reset`. The Pi stays reachable via Cloudflare (`https://swim.vncrcc.org`) regardless.
 - **.NET 8**: installed at `/home/JY/.dotnet`
 - **Repo**: `/home/JY/SwimReader`
 - **Credentials**: `/home/JY/SwimReader/.env` (same format as local `.env`)

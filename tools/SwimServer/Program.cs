@@ -813,7 +813,14 @@ asdex.OnEnrich = (track) =>
     // Path 2b: TFMS via callsign (fills gaps SFDPS doesn't have — route, STAR, ETA)
     // Prefer the leg whose origin or destination matches this airport, to avoid
     // matching the wrong reused-callsign leg (e.g., RPA3477 EWR→PIT vs SFO leg).
-    if (track.Callsign is not null)
+    // Only consult TFMS while the track is still missing data TFMS can supply.
+    // OnEnrich runs for every track on every 1s flush; the FindByCallsign
+    // airport-preference scan is O(n) over all TFMS flights, so re-running it for
+    // already-enriched tracks dominated CPU (one full core). Once these fields are
+    // filled the lookups are no-ops anyway — skipping them is behavior-preserving.
+    if (track.Callsign is not null &&
+        (track.FpRoute is null || track.FpDestination is null ||
+         track.FpOrigin is null || track.FpStar is null || track.AircraftType is null))
     {
         var tfmsFlight = tfms.FindByCallsign(track.Callsign, track.Airport);
         if (tfmsFlight is not null)

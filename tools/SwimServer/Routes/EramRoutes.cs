@@ -79,6 +79,76 @@ static class EramRoutes
         // REST API for stats
         app.MapGet("/api/stats", () => Results.Json(ctx.Stats.Snapshot(ctx.Flights.Count), ctx.JsonOpts));
 
+        // Per-facility/sector active-track breakdown.
+        //   Returns: [{ facility, totalTracks, sectorCount,
+        //                sectors: [{ id, tracks, handoffsIn, handoffsOut }] }, ...]
+        // A flight contributes one track to its controllingFacility/sector. Handoff
+        // legs that name a facility add to handoffsIn (this facility is receiving)
+        // or handoffsOut (this facility is transferring) so the page can flag
+        // sectors currently in transition. Anything without a controllingFacility
+        // falls under "(none)".
+        app.MapGet("/api/sectors", () =>
+        {
+            var byFac = new Dictionary<string, Dictionary<string, (int tracks, int hIn, int hOut)>>(StringComparer.OrdinalIgnoreCase);
+            string Norm(string? s) => string.IsNullOrEmpty(s) ? "" : s.Trim().ToUpperInvariant();
+            (string fac, string sec) Split(string? raw)
+            {
+                if (string.IsNullOrEmpty(raw)) return ("", "");
+                var slash = raw.IndexOf('/');
+                if (slash < 0) return (Norm(raw), "");
+                return (Norm(raw[..slash]), Norm(raw[(slash + 1)..]));
+            }
+            void Bump(string fac, string sec, bool isOwn, bool hIn, bool hOut)
+            {
+                if (string.IsNullOrEmpty(fac)) fac = "(none)";
+                if (string.IsNullOrEmpty(sec)) sec = "(none)";
+                if (!byFac.TryGetValue(fac, out var inner))
+                {
+                    inner = new(StringComparer.OrdinalIgnoreCase);
+                    byFac[fac] = inner;
+                }
+                inner.TryGetValue(sec, out var cur);
+                cur.tracks    += isOwn ? 1 : 0;
+                cur.hIn       += hIn   ? 1 : 0;
+                cur.hOut      += hOut  ? 1 : 0;
+                inner[sec] = cur;
+            }
+            foreach (var f in ctx.Flights.Values)
+            {
+                if (f.FlightStatus is "CANCELLED" or "COMPLETED") continue;
+                var fac = Norm(f.ControllingFacility);
+                var sec = Norm(f.ControllingSector);
+                if (!string.IsNullOrEmpty(fac)) Bump(fac, sec, isOwn: true, hIn: false, hOut: false);
+                var (rFac, rSec) = Split(f.HandoffReceiving);
+                if (!string.IsNullOrEmpty(rFac))  Bump(rFac, rSec, false, true,  false);
+                var (tFac, tSec) = Split(f.HandoffTransferring);
+                if (!string.IsNullOrEmpty(tFac) && (tFac != fac || tSec != sec))
+                    Bump(tFac, tSec, false, false, true);
+            }
+            var rows = byFac
+                .Select(kv => new
+                {
+                    facility    = kv.Key,
+                    totalTracks = kv.Value.Values.Sum(v => v.tracks),
+                    sectorCount = kv.Value.Count(s => s.Value.tracks > 0),
+                    sectors = kv.Value
+                        .OrderByDescending(s => s.Value.tracks)
+                        .ThenBy(s => s.Key, StringComparer.OrdinalIgnoreCase)
+                        .Select(s => new
+                        {
+                            id          = s.Key,
+                            tracks      = s.Value.tracks,
+                            handoffsIn  = s.Value.hIn,
+                            handoffsOut = s.Value.hOut,
+                        })
+                        .ToArray()
+                })
+                .OrderByDescending(r => r.totalTracks)
+                .ThenBy(r => r.facility, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return Results.Json(rows, ctx.JsonOpts);
+        });
+
         // Server performance / health: CPU, memory, GC, threads, uptime, WS clients, disk.
         app.MapGet("/api/system", () => Results.Json(SystemStats.Snapshot(ctx.Clients.Count, ctx.Flights.Count), ctx.JsonOpts));
 

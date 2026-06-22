@@ -100,8 +100,15 @@ static class EramRoutes
             int.TryParse(id.AsSpan(0, i), out var n);
             return (n, id.Length > i ? id[i..] : "");
         }
-        app.MapGet("/api/sectors", () =>
+        app.MapGet("/api/sectors", (int? rangeMin) =>
         {
+            // Inline sparkline window. Defaults to 1h; values are clamped to the
+            // SectorTracker retention (24h). Server max-pools the full 1-min
+            // ring buffer into 60 buckets covering the requested window so
+            // the payload stays tiny regardless of which window is chosen.
+            int windowMin = Math.Clamp(rangeMin ?? 60, 5, SectorTracker.HistorySamples);
+            int totalSamples = SectorTracker.HistorySamples;
+            int samplesInWindow = Math.Min(windowMin, totalSamples);
             var byFac = new Dictionary<string, Dictionary<string, (int tracks, int hIn, int hOut)>>(StringComparer.OrdinalIgnoreCase);
             string Norm(string? s) => string.IsNullOrEmpty(s) ? "" : s.Trim().ToUpperInvariant();
             (string fac, string sec) Split(string? raw)
@@ -160,13 +167,44 @@ static class EramRoutes
                     sectors = kv.Value
                         .OrderBy(s => SectorSortKey(s.Key).num)
                         .ThenBy(s => SectorSortKey(s.Key).suffix, StringComparer.OrdinalIgnoreCase)
-                        .Select(s => new
+                        .Select(s =>
                         {
-                            id          = s.Key,
-                            tracks      = s.Value.tracks,
-                            handoffsIn  = s.Value.hIn,
-                            handoffsOut = s.Value.hOut,
-                            history     = ctx.SectorTracker.GetHistory(kv.Key, s.Key),
+                            // Pull the last `samplesInWindow` samples from
+                            // the ring and max-pool to 60 buckets.
+                            var full = ctx.SectorTracker.GetHistory(kv.Key, s.Key);
+                            int[] window;
+                            if (full.Length == 0) window = Array.Empty<int>();
+                            else
+                            {
+                                int start = Math.Max(0, full.Length - samplesInWindow);
+                                window = new int[full.Length - start];
+                                Array.Copy(full, start, window, 0, window.Length);
+                            }
+                            // Down-sample to 60 buckets max-pooled.
+                            const int Buckets = 60;
+                            int[] hist;
+                            if (window.Length <= Buckets) hist = window;
+                            else
+                            {
+                                hist = new int[Buckets];
+                                double step = (double)window.Length / Buckets;
+                                for (int b = 0; b < Buckets; b++)
+                                {
+                                    int a = (int)(b * step);
+                                    int e = Math.Min(window.Length, (int)((b + 1) * step));
+                                    int m = 0;
+                                    for (int i = a; i < e; i++) if (window[i] > m) m = window[i];
+                                    hist[b] = m;
+                                }
+                            }
+                            return new
+                            {
+                                id          = s.Key,
+                                tracks      = s.Value.tracks,
+                                handoffsIn  = s.Value.hIn,
+                                handoffsOut = s.Value.hOut,
+                                history     = hist,
+                            };
                         })
                         .ToArray()
                 })
@@ -176,7 +214,30 @@ static class EramRoutes
                 .OrderBy(r => r.facility.StartsWith("Z", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(r => r.facility, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            return Results.Json(rows, ctx.JsonOpts);
+            return Results.Json(new
+            {
+                rangeMinutes = windowMin,
+                buckets      = 60,                          // page knows each bucket = windowMin/60 mins
+                maxRangeMinutes = SectorTracker.HistorySamples,
+                facilities   = rows,
+            }, ctx.JsonOpts);
+        });
+
+        // Full per-minute history for a single sector. Returns the entire
+        // 24-hour ring buffer (1440 ints) so a detail view can render at
+        // full resolution without each /api/sectors poll shipping the same
+        // mass of bytes for every sector.
+        app.MapGet("/api/sectors/{fac}/{sec}/history", (string fac, string sec) =>
+        {
+            var hist = ctx.SectorTracker.GetHistory(fac, sec);
+            return Results.Json(new
+            {
+                facility = fac.ToUpperInvariant(),
+                sector   = sec.ToUpperInvariant(),
+                sampleSeconds = 60,
+                windowMinutes = SectorTracker.HistorySamples,
+                history  = hist,
+            }, ctx.JsonOpts);
         });
 
         // Top handoff transitions in / out of a given sector. Used by the

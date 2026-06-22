@@ -29,10 +29,12 @@
     padding:8px 16px; display:flex; align-items:center; gap:12px;
     border-bottom:1px solid var(--border); background:#0e0e0e;
   }
-  .controls input[type="text"] {
+  .controls input[type="text"],
+  .controls select {
     background:#1a1a1a; color:var(--text); border:1px solid #333;
-    padding:3px 8px; font-family:inherit; font-size:12px; min-width:200px;
+    padding:3px 8px; font-family:inherit; font-size:12px;
   }
+  .controls input[type="text"] { min-width:200px; }
   .controls .lbl { color:var(--dim); font-size:11px; }
   .controls .reload-note { color:var(--dim); font-size:11px; margin-left:auto; }
 
@@ -143,6 +145,14 @@
 <div class="controls">
     <span class="lbl">FILTER</span>
     <input type="text" id="filter" placeholder="Facility ID (e.g. ZDC, ZTL)…" autofocus>
+    <span class="lbl" style="margin-left:14px;">WINDOW</span>
+    <select id="rangeSel" title="Time range shown on the per-sector sparkline">
+        <option value="60">1 h</option>
+        <option value="180">3 h</option>
+        <option value="360">6 h</option>
+        <option value="720">12 h</option>
+        <option value="1440">24 h</option>
+    </select>
     <span class="reload-note">Auto-refreshes every 5s</span>
 </div>
 <main>
@@ -154,17 +164,27 @@
 const facList = document.getElementById("facList");
 const detail = document.getElementById("detail");
 const filter = document.getElementById("filter");
-let data = [];
+const rangeSel = document.getElementById("rangeSel");
+let data = [];        // array of facilities (was the whole body before; now from `.facilities`)
+let rangeMin = 60;    // mirrors rangeSel
 let selected = null;
 
-// Allow ?facility=ZDC in the URL.
-const initFac = (new URLSearchParams(location.search)).get("facility");
+// Allow ?facility=ZDC and ?range=180 in the URL.
+const initParams = new URLSearchParams(location.search);
+const initFac = initParams.get("facility");
 if (initFac) selected = initFac.toUpperCase();
+const initRange = initParams.get("range");
+if (initRange && /^\d+$/.test(initRange)) {
+    rangeMin = parseInt(initRange, 10);
+    if (rangeSel) rangeSel.value = String(rangeMin);
+}
 
 async function refresh() {
     try {
-        const r = await fetch("/api/sectors");
-        data = await r.json();
+        const r = await fetch(`/api/sectors?rangeMin=${rangeMin}`);
+        const body = await r.json();
+        // Backwards-compat: older responses were a bare facility array.
+        data = Array.isArray(body) ? body : (body.facilities || []);
         document.getElementById("totFac").textContent = data.length;
         document.getElementById("totSec").textContent = data.reduce((a, f) => a + f.sectorCount, 0);
         document.getElementById("totTrk").textContent = data.reduce((a, f) => a + f.totalTracks, 0).toLocaleString();
@@ -225,8 +245,11 @@ function renderDetail() {
     if (!selected) { detail.innerHTML = `<div class="empty">Select a facility on the left</div>`; return; }
     const d = data.find(x => x.facility === selected);
     if (!d) { detail.innerHTML = `<div class="empty">${selected} has no current tracks</div>`; return; }
+    const rangeLabel = rangeMin >= 60
+        ? `${rangeMin / 60} h`
+        : `${rangeMin} min`;
     detail.innerHTML = `
-        <h2>${d.facility} <small>${d.sectorCount} active sectors / ${d.sectors.length} known (last hour)</small></h2>
+        <h2>${d.facility} <small>${d.sectorCount} active sectors / ${d.sectors.length} known &middot; sparkline ${rangeLabel} (oldest → now)</small></h2>
         <div class="summary">
             <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
             <div class="stat accent"><b>${d.sectorCount}</b>Active sectors</div>
@@ -306,6 +329,14 @@ function renderTransitionPanel() {
 }
 
 filter.addEventListener("input", renderList);
+if (rangeSel) rangeSel.addEventListener("change", () => {
+    rangeMin = parseInt(rangeSel.value, 10);
+    const url = new URL(location.href);
+    if (rangeMin !== 60) url.searchParams.set("range", String(rangeMin));
+    else url.searchParams.delete("range");
+    history.replaceState(null, "", url);
+    refresh();
+});
 refresh();
 if (selected && selectedSector) loadTransitions();
 setInterval(refresh, 5000);

@@ -21,7 +21,11 @@ namespace SwimServer;
 /// </summary>
 sealed class SectorTracker
 {
-    const int HistorySamples = 60;   // 60 × 1 min = 1 hour
+    // 24 hours of per-minute samples. Memory cost: ~5.6 KB per sector × a
+    // few thousand observed sectors = under 15 MB resident. The full array
+    // is queryable via /api/sectors/{fac}/{sec}/history; the main /sectors
+    // poll downsamples to a much smaller bucket count to keep payload tiny.
+    public const int HistorySamples = 60 * 24;
 
     // FAC|SEC → ring buffer of recent counts. We keep zero entries so a sector
     // that was active and is now empty still has a non-empty timeline (which
@@ -80,6 +84,32 @@ sealed class SectorTracker
         for (int i = 0; i < buf.Length; i++)
             rotated[i] = buf[(oldest + i) % buf.Length];
         return rotated;
+    }
+
+    /// <summary>
+    /// Same as <see cref="GetHistory"/> but max-pooled into <paramref name="buckets"/>
+    /// equal-size slices, so a 24h window can be shipped to the page as a
+    /// small sparkline-sized array. Max-pool (not average) keeps peaks
+    /// visible — a sector that pinned at 8 tracks for one minute still
+    /// stands out on the timeline.
+    /// </summary>
+    public int[] GetDownsampledHistory(string fac, string sec, int buckets = 60)
+    {
+        var full = GetHistory(fac, sec);
+        if (full.Length == 0) return Array.Empty<int>();
+        if (buckets >= full.Length) return full;
+        var step = (double)full.Length / buckets;
+        var outArr = new int[buckets];
+        for (int b = 0; b < buckets; b++)
+        {
+            int start = (int)(b * step);
+            int end   = (int)((b + 1) * step);
+            if (end > full.Length) end = full.Length;
+            int m = 0;
+            for (int i = start; i < end; i++) if (full[i] > m) m = full[i];
+            outArr[b] = m;
+        }
+        return outArr;
     }
 
     /// <summary>True if the sector had ≥1 track in any of the last `withinSamples` samples.</summary>

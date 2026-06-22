@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SFDPS — Sectors & Tracks</title>
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<style>
+  :root {
+    --bg:#0a0a0a; --panel:#141414; --border:#2a2a2a; --text:#d4d4aa;
+    --dim:#888; --accent:#cccc44; --good:#6f6; --warn:#ff8c00; --emerg:#ff4444;
+  }
+  *  { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace; font-size:13px; }
+  header {
+    display:flex; align-items:baseline; gap:12px;
+    padding:10px 16px; border-bottom:1px solid var(--border);
+    background:var(--panel);
+  }
+  header a.home { color:var(--dim); text-decoration:none; padding:2px 6px; border:1px solid var(--border); border-radius:3px; font-size:11px; }
+  header a.home:hover { color:var(--accent); border-color:var(--accent); }
+  header h1 { font-size:18px; color:var(--accent); margin:0; letter-spacing:1px; }
+  header .sub { color:var(--dim); font-size:11px; letter-spacing:0.5px; }
+  header .right { margin-left:auto; display:flex; gap:14px; align-items:baseline; }
+  header .right .stat b { color:var(--text); }
+  header .right .stat { color:var(--dim); font-size:11px; }
+
+  .controls {
+    padding:8px 16px; display:flex; align-items:center; gap:12px;
+    border-bottom:1px solid var(--border); background:#0e0e0e;
+  }
+  .controls input[type="text"] {
+    background:#1a1a1a; color:var(--text); border:1px solid #333;
+    padding:3px 8px; font-family:inherit; font-size:12px; min-width:200px;
+  }
+  .controls .lbl { color:var(--dim); font-size:11px; }
+  .controls .reload-note { color:var(--dim); font-size:11px; margin-left:auto; }
+
+  main { padding:16px; display:grid; grid-template-columns: 280px 1fr; gap:16px; max-width:1600px; margin:0 auto; }
+  .fac-list {
+    background:var(--panel); border:1px solid var(--border); border-radius:4px;
+    overflow:hidden; max-height:calc(100vh - 140px); overflow-y:auto;
+  }
+  .fac-list .row {
+    display:flex; align-items:center; gap:8px;
+    padding:6px 10px; cursor:pointer; border-bottom:1px solid #1f1f1f;
+    transition:background-color .08s;
+  }
+  .fac-list .row:hover { background:#1a1a1a; }
+  .fac-list .row.active { background:#2d2d10; color:var(--accent); border-left:3px solid var(--accent); padding-left:7px; }
+  .fac-list .row .name { font-weight:bold; font-size:13px; min-width:50px; }
+  .fac-list .row .stats { color:var(--dim); font-size:10px; margin-left:auto; text-align:right; font-variant-numeric:tabular-nums; }
+  .fac-list .row.active .stats { color:#bb9; }
+  .fac-list .row .tracks { color:var(--accent); font-weight:bold; }
+
+  .detail {
+    background:var(--panel); border:1px solid var(--border); border-radius:4px;
+    padding:16px;
+  }
+  .detail h2 {
+    margin:0 0 6px 0; color:var(--accent); font-size:18px;
+    display:flex; gap:14px; align-items:baseline;
+  }
+  .detail h2 small { color:var(--dim); font-size:11px; font-weight:normal; }
+  .summary {
+    display:flex; gap:24px; margin-bottom:18px; padding-bottom:12px;
+    border-bottom:1px solid var(--border);
+  }
+  .summary .stat { color:var(--dim); font-size:11px; }
+  .summary .stat b { display:block; color:var(--text); font-size:22px; font-weight:bold; }
+  .summary .stat.accent b { color:var(--accent); }
+
+  .sec-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(110px, 1fr));
+    gap:8px;
+  }
+  .sec-cell {
+    background:#1a1a1a; border:1px solid #333; border-radius:3px;
+    padding:8px; display:flex; flex-direction:column; gap:2px;
+  }
+  .sec-cell .id {
+    color:var(--accent); font-weight:bold; font-size:14px;
+    font-variant-numeric:tabular-nums;
+  }
+  .sec-cell .tracks { color:var(--text); font-size:13px; font-variant-numeric:tabular-nums; }
+  .sec-cell .meta { color:var(--dim); font-size:10px; display:flex; gap:8px; }
+  .sec-cell .meta span.h-in  { color:var(--good); }
+  .sec-cell .meta span.h-out { color:var(--warn); }
+  .sec-cell.zero { opacity:0.4; }
+
+  .empty { color:var(--dim); padding:24px; text-align:center; }
+
+  @media (max-width:900px) {
+    main { grid-template-columns:1fr; }
+    .fac-list { max-height:none; }
+  }
+</style>
+</head>
+<body>
+<header>
+    <a class="home" href="/">← HOME</a>
+    <h1>SECTORS</h1>
+    <span class="sub">Active sectors & tracks per facility — live SFDPS</span>
+    <div class="right">
+        <span class="stat">Facilities <b id="totFac">—</b></span>
+        <span class="stat">Sectors <b id="totSec">—</b></span>
+        <span class="stat">Tracks <b id="totTrk">—</b></span>
+        <span class="stat">Updated <b id="updated">—</b></span>
+    </div>
+</header>
+<div class="controls">
+    <span class="lbl">FILTER</span>
+    <input type="text" id="filter" placeholder="Facility ID (e.g. ZDC, ZTL)…" autofocus>
+    <span class="reload-note">Auto-refreshes every 5s</span>
+</div>
+<main>
+    <div class="fac-list" id="facList"><div class="empty">Loading…</div></div>
+    <div class="detail" id="detail"><div class="empty">Select a facility on the left</div></div>
+</main>
+
+<script>
+const facList = document.getElementById("facList");
+const detail = document.getElementById("detail");
+const filter = document.getElementById("filter");
+let data = [];
+let selected = null;
+
+// Allow ?facility=ZDC in the URL.
+const initFac = (new URLSearchParams(location.search)).get("facility");
+if (initFac) selected = initFac.toUpperCase();
+
+async function refresh() {
+    try {
+        const r = await fetch("/api/sectors");
+        data = await r.json();
+        document.getElementById("totFac").textContent = data.length;
+        document.getElementById("totSec").textContent = data.reduce((a, f) => a + f.sectorCount, 0);
+        document.getElementById("totTrk").textContent = data.reduce((a, f) => a + f.totalTracks, 0).toLocaleString();
+        document.getElementById("updated").textContent = new Date().toISOString().slice(11, 19) + "Z";
+        renderList();
+        renderDetail();
+    } catch (e) {
+        facList.innerHTML = `<div class="empty">Error loading /api/sectors</div>`;
+    }
+}
+
+function renderList() {
+    const q = filter.value.trim().toUpperCase();
+    const filtered = q ? data.filter(d => d.facility.toUpperCase().includes(q)) : data;
+    if (!filtered.length) { facList.innerHTML = `<div class="empty">No facilities match</div>`; return; }
+    facList.innerHTML = filtered.map(d => {
+        const active = selected === d.facility ? " active" : "";
+        return `<div class="row${active}" data-fac="${d.facility}">
+            <span class="name">${d.facility}</span>
+            <span class="stats"><span class="tracks">${d.totalTracks}</span> trk · ${d.sectorCount} sec</span>
+        </div>`;
+    }).join("");
+    facList.querySelectorAll(".row").forEach(el => {
+        el.addEventListener("click", () => {
+            selected = el.dataset.fac;
+            const url = new URL(location.href);
+            url.searchParams.set("facility", selected);
+            history.replaceState(null, "", url);
+            renderList(); renderDetail();
+        });
+    });
+}
+
+function renderDetail() {
+    if (!selected) { detail.innerHTML = `<div class="empty">Select a facility on the left</div>`; return; }
+    const d = data.find(x => x.facility === selected);
+    if (!d) { detail.innerHTML = `<div class="empty">${selected} has no current tracks</div>`; return; }
+    const active = d.sectors.filter(s => s.tracks > 0);
+    detail.innerHTML = `
+        <h2>${d.facility} <small>${d.sectorCount} active sectors / ${d.sectors.length} known</small></h2>
+        <div class="summary">
+            <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
+            <div class="stat accent"><b>${d.sectorCount}</b>Active sectors</div>
+            <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsIn,0)}</b>Handoffs in</div>
+            <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsOut,0)}</b>Handoffs out</div>
+        </div>
+        <div class="sec-grid">
+        ${d.sectors.map(s => {
+            const zero = s.tracks === 0 ? ' zero' : '';
+            const hin  = s.handoffsIn  ? `<span class="h-in">↘${s.handoffsIn}</span>` : '';
+            const hout = s.handoffsOut ? `<span class="h-out">↗${s.handoffsOut}</span>` : '';
+            const meta = (hin || hout) ? `<div class="meta">${hin}${hout}</div>` : '';
+            return `<div class="sec-cell${zero}" title="Sector ${s.id}">
+                <div class="id">${s.id}</div>
+                <div class="tracks">${s.tracks} trk</div>
+                ${meta}
+            </div>`;
+        }).join("")}
+        </div>`;
+}
+
+filter.addEventListener("input", renderList);
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

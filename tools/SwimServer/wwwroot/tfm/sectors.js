@@ -10,17 +10,11 @@ async function loadSectors() {
         sectors = await r.json();
         maxCount = Math.max(1, ...sectors.map(s => s.count));
 
-        // Populate ARTCC filter
+        // Populate ARTCC filter — uses the same grouping function as the
+        // grouped grid below, so what the dropdown shows always matches the
+        // headers users see.
         const artccs = new Set();
-        sectors.forEach(s => {
-            const artcc = s.sector.replace(/[0-9]+$/, '').replace(/[A-Z]{2}$/, function(m) {
-                // Keep full sector ID but extract ARTCC prefix (e.g., ZOA from ZOA13)
-                return '';
-            });
-            // Simple extraction: first 3-4 chars (Z** pattern)
-            const m = s.sector.match(/^(Z[A-Z]{2})/);
-            if (m) artccs.add(m[1]);
-        });
+        sectors.forEach(s => artccs.add(groupOf(s.sector)));
         const sel = document.getElementById('artccFilter');
         const current = sel.value;
         sel.innerHTML = '<option value="">ALL</option>';
@@ -33,30 +27,76 @@ async function loadSectors() {
     } catch {}
 }
 
-// ── Render sector grid ───────────────────────────────────────
+// Pull the ARTCC/facility prefix off a sector ID. Z** is the common case
+// (e.g. ZNY77 → ZNY); fall back to letters before the first digit; else "OTHER".
+function groupOf(sectorId) {
+    const s = String(sectorId).toUpperCase();
+    const m = s.match(/^(Z[A-Z]{2})/);
+    if (m) return m[1];
+    const m2 = s.match(/^([A-Z]+)/);
+    if (m2) return m2[1];
+    return 'OTHER';
+}
+
+// ── Render sector grid, grouped by facility/ARTCC ────────────
 function renderGrid() {
     const search = (document.getElementById('searchInput').value || '').toUpperCase();
-    const artcc = document.getElementById('artccFilter').value;
+    const artcc  = document.getElementById('artccFilter').value;
 
     const filtered = sectors.filter(s => {
         if (search && !s.sector.toUpperCase().includes(search)) return false;
-        if (artcc && !s.sector.toUpperCase().startsWith(artcc)) return false;
+        if (artcc && groupOf(s.sector) !== artcc) return false;
         return true;
     });
 
+    // Bucket by ARTCC. Each bucket sums totalTransits + max so the heatmap
+    // colour normalizes against the whole network (not just within a bucket).
+    const groups = new Map();
+    for (const s of filtered) {
+        const g = groupOf(s.sector);
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push(s);
+    }
+
     const grid = document.getElementById('sectorGrid');
-    grid.innerHTML = filtered.map(s => {
-        const pct = Math.round((s.count / maxCount) * 100);
-        const sel = selectedSector === s.sector ? 'selected' : '';
-        // Color by load
-        const color = s.count > maxCount * 0.8 ? '#cc4444'
-            : s.count > maxCount * 0.5 ? '#cccc44' : '#44aa44';
-        return `<div class="sector-card ${sel}" data-sector="${esc(s.sector)}">
-            <div class="sec-name">${esc(s.sector)}</div>
-            <div class="sec-count" style="color:${color}">${s.count}</div>
-            <div class="sec-label">predicted transits</div>
-            <div class="bar"><div class="bar-fill" style="width:${pct}%; background:${color}"></div></div>
-        </div>`;
+    if (filtered.length === 0) {
+        grid.innerHTML = `<div class="empty-grid">No sectors match the current filter</div>`;
+        return;
+    }
+
+    // Sort groups: known ARTCCs alphabetically; "OTHER" at the bottom.
+    const sortedGroups = [...groups.entries()].sort((a, b) => {
+        if (a[0] === 'OTHER') return 1;
+        if (b[0] === 'OTHER') return -1;
+        return a[0].localeCompare(b[0]);
+    });
+
+    grid.innerHTML = sortedGroups.map(([g, items]) => {
+        const total = items.reduce((a, s) => a + s.count, 0);
+        const cards = items
+            .sort((a, b) => b.count - a.count || a.sector.localeCompare(b.sector))
+            .map(s => {
+                const pct = Math.round((s.count / maxCount) * 100);
+                const sel = selectedSector === s.sector ? 'selected' : '';
+                const color = s.count > maxCount * 0.8 ? '#cc4444'
+                            : s.count > maxCount * 0.5 ? '#cccc44' : '#44aa44';
+                // Strip the ARTCC prefix from the displayed sector ID so cards
+                // read e.g. "77" under the ZNY group rather than "ZNY77".
+                const short = s.sector.toUpperCase().startsWith(g) ? s.sector.slice(g.length) : s.sector;
+                return `<div class="sector-card ${sel}" data-sector="${esc(s.sector)}">
+                    <div class="sec-name">${esc(short || s.sector)}</div>
+                    <div class="sec-count" style="color:${color}">${s.count}</div>
+                    <div class="sec-label">transits</div>
+                    <div class="bar"><div class="bar-fill" style="width:${pct}%; background:${color}"></div></div>
+                </div>`;
+            }).join('');
+        return `<section class="artcc-group" data-artcc="${esc(g)}">
+            <div class="artcc-header">
+                <span class="artcc-name">${esc(g)}</span>
+                <span class="artcc-meta">${items.length} sector${items.length === 1 ? '' : 's'} · ${total.toLocaleString()} transits</span>
+            </div>
+            <div class="artcc-cards">${cards}</div>
+        </section>`;
     }).join('');
 
     grid.querySelectorAll('.sector-card').forEach(el => {

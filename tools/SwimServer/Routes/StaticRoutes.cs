@@ -50,6 +50,13 @@ static class StaticRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "flight-table", "index.html"));
         });
 
+        // SFDPS sector activity page
+        app.MapGet("/sectors", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "sectors", "index.html"));
+        });
+
         app.MapGet("/tfm", async (HttpContext c) =>
         {
             c.Response.ContentType = "text/html";

@@ -58,37 +58,59 @@ header .sub { font-size: 11px; color: #555; }
     overflow: hidden;
 }
 
-/* ── Left: Sector grid ────────────────────────────────────── */
+/* ── Left: Sector grid (grouped by ARTCC) ────────────────────── */
 .sector-grid {
     flex: 1;
     overflow-y: auto;
     padding: 12px;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 8px;
     align-content: start;
+    /* The inner .artcc-group sections stack vertically; their .artcc-cards
+       child uses its own grid. */
+    display: block;
 }
+.artcc-group { margin-bottom: 14px; }
+.artcc-group:last-child { margin-bottom: 0; }
+.artcc-header {
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 4px 2px 6px 2px;
+    border-bottom: 1px solid #1a1a1a;
+    margin-bottom: 8px;
+}
+.artcc-name {
+    font-size: 14px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    color: #cccc44;
+}
+.artcc-meta { color: #555; font-size: 10px; }
+.artcc-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 6px;
+}
+.empty-grid { color:#444; padding: 32px; text-align: center; font-size: 12px; }
 .sector-card {
     background: #0a0a0a;
     border: 1px solid #1a1a1a;
-    padding: 10px 12px;
+    padding: 6px 8px;
     cursor: pointer;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s, background-color 0.15s;
 }
 .sector-card:hover { border-color: #444; }
-.sector-card.selected { border-color: #cccc44; background: #0a0f0a; }
+.sector-card.selected { border-color: #cccc44; background: #1a1a0a; }
 .sector-card .sec-name {
     font-size: 13px;
     color: #cccc44;
-    letter-spacing: 1px;
+    letter-spacing: 0.5px;
+    font-variant-numeric: tabular-nums;
 }
 .sector-card .sec-count {
-    font-size: 20px;
+    font-size: 16px;
     color: #44aa44;
-    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
 }
 .sector-card .sec-label {
-    font-size: 10px;
+    font-size: 9px;
     color: #555;
 }
 .sector-card .bar {

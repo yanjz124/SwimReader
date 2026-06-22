@@ -71,6 +71,7 @@ const searchEl   = document.getElementById('search');
 const countEl    = document.getElementById('resultCount');
 const filterStatus   = document.getElementById('filterStatus');
 const filterFacility = document.getElementById('filterFacility');
+const filterSector   = document.getElementById('filterSector');
 const filterRules    = document.getElementById('filterRules');
 const detailPanel = document.getElementById('detailPanel');
 const detailBody  = document.getElementById('detailBody');
@@ -123,18 +124,72 @@ function connect() {
     ws.onerror = () => ws.close();
 }
 
+// Per-facility set of known sector IDs — used to populate the SECTOR dropdown
+// when the user picks a facility. Sectors here are observed from any flight
+// whose controllingFacility/handoffReceiving/handoffTransferring matches.
+const knownSectors = new Map();  // facility (uppercase) -> Set<sector>
+let _facDropdownDirty = false, _secDropdownDirty = false;
+
 function noteFacility(f) {
+    let changed = false;
     if (f.reportingFacility && !knownFacilities.has(f.reportingFacility)) {
         knownFacilities.add(f.reportingFacility);
-        rebuildFacilityDropdown();
+        changed = true;
     }
+    // Track sectors keyed by facility so the SECTOR dropdown can narrow
+    // its options to whichever facility is currently selected.
+    function note(facRaw, secRaw) {
+        if (!facRaw || !secRaw) return;
+        const fac = facRaw.trim().toUpperCase();
+        const sec = secRaw.trim().toUpperCase();
+        if (!fac || !sec) return;
+        let s = knownSectors.get(fac);
+        if (!s) { s = new Set(); knownSectors.set(fac, s); }
+        if (!s.has(sec)) { s.add(sec); if (fac === (filterFacility.value || '').toUpperCase()) _secDropdownDirty = true; }
+    }
+    note(f.controllingFacility, f.controllingSector);
+    if (f.handoffReceiving) {
+        const [hf, hs] = String(f.handoffReceiving).split('/');
+        note(hf, hs);
+    }
+    if (f.handoffTransferring) {
+        const [hf, hs] = String(f.handoffTransferring).split('/');
+        note(hf, hs);
+    }
+    if (changed) _facDropdownDirty = true;
 }
+
+// Defer dropdown rebuilds to the next animation frame so a snapshot of
+// thousands of flights doesn't trigger thousands of innerHTML rewrites.
+function flushDropdowns() {
+    if (_facDropdownDirty) { _facDropdownDirty = false; rebuildFacilityDropdown(); }
+    if (_secDropdownDirty) { _secDropdownDirty = false; rebuildSectorDropdown(); }
+}
+setInterval(flushDropdowns, 1000);
 
 function rebuildFacilityDropdown() {
     const current = filterFacility.value;
     const sorted = [...knownFacilities].sort();
     filterFacility.innerHTML = '<option value="">All</option>' +
         sorted.map(f => `<option value="${f}"${f === current ? ' selected' : ''}>${f}</option>`).join('');
+}
+
+function rebuildSectorDropdown() {
+    const fac = (filterFacility.value || '').toUpperCase();
+    const current = filterSector.value;
+    if (!fac) {
+        // No facility selected → sector filter is disabled (everything else doesn't make sense).
+        filterSector.innerHTML = '<option value="">All</option>';
+        filterSector.disabled = true;
+        return;
+    }
+    filterSector.disabled = false;
+    const secs = [...(knownSectors.get(fac) || [])].sort();
+    filterSector.innerHTML = '<option value="">All</option>' +
+        secs.map(s => `<option value="${s}"${s === current ? ' selected' : ''}>${s}</option>`).join('');
+    // If the previously-selected sector no longer matches the new facility,
+    // fall back to "All" so we don't silently filter everyone out.
+    if (current && !secs.includes(current)) filterSector.value = '';
 }
 
 // ── Render — virtualized rows ──
@@ -171,6 +226,7 @@ function render() {
     lastRenderAt = Date.now();
     const fStatus = filterStatus.value;
     const fFacility = filterFacility.value;
+    const fSector = filterSector.value;
     const fRules = filterRules.value;
     const q = searchTerm.toUpperCase();
     const searching = q.length > 0;
@@ -198,6 +254,18 @@ function render() {
 
         if (!passesStatus) continue;
         if (fFacility && f.reportingFacility !== fFacility) continue;
+        // SECTOR filter: match controlling OR either side of a handoff so
+        // flights being handed in/out of the sector still show up in its view.
+        if (fSector) {
+            const want = fSector.toUpperCase();
+            const cFac = (f.controllingFacility || '').toUpperCase();
+            const cSec = (f.controllingSector || '').toUpperCase();
+            const [hrFac, hrSec] = String(f.handoffReceiving || '').toUpperCase().split('/');
+            const [htFac, htSec] = String(f.handoffTransferring || '').toUpperCase().split('/');
+            const facMatch = (cFac === fFacility) || (hrFac === fFacility) || (htFac === fFacility);
+            const secMatch = cSec === want || (hrSec === want) || (htSec === want);
+            if (!facMatch || !secMatch) continue;
+        }
         if (fRules && f.flightRules !== fRules) continue;
         if (searching && !matchesSearch(f, q)) continue;
         filtered.push(f);
@@ -1272,6 +1340,7 @@ function saveSearchToUrl() {
         if (searchField && searchField !== 'all') p.set('field', searchField);
         if (filterStatus && filterStatus.value) p.set('status', filterStatus.value);
         if (filterFacility && filterFacility.value) p.set('facility', filterFacility.value);
+        if (filterSector && filterSector.value) p.set('sector', filterSector.value);
         if (filterRules && filterRules.value) p.set('rules', filterRules.value);
         const s = p.toString();
         history.replaceState(null, '', s ? '#' + s : location.pathname + location.search);
@@ -1286,7 +1355,13 @@ function saveSearchToUrl() {
         const f = p.get('field'); if (f && searchFieldEl) { searchField = f; searchFieldEl.value = f; }
         const st = p.get('status'); if (st && filterStatus) filterStatus.value = st;
         const fac = p.get('facility'); if (fac && filterFacility) filterFacility.value = fac;
+        const sec = p.get('sector');   if (sec && filterSector)   filterSector.value   = sec;
         const r = p.get('rules'); if (r && filterRules) filterRules.value = r;
+        // Initial sector dropdown reflects facility (if any).
+        if (filterSector) {
+            rebuildSectorDropdown();
+            if (sec) filterSector.value = sec;     // re-apply after rebuild
+        }
     } catch {}
 })();
 
@@ -1312,7 +1387,13 @@ if (searchFieldEl) {
     });
 }
 filterStatus.addEventListener('change', () => { renderNow(); saveSearchToUrl(); });
-filterFacility.addEventListener('change', () => { renderNow(); saveSearchToUrl(); });
+filterFacility.addEventListener('change', () => {
+    // Facility changed → narrow the sector list to that facility (or disable it for All).
+    rebuildSectorDropdown();
+    renderNow();
+    saveSearchToUrl();
+});
+filterSector.addEventListener('change', () => { renderNow(); saveSearchToUrl(); });
 filterRules.addEventListener('change', () => { renderNow(); saveSearchToUrl(); });
 
 // ── Pin / unpin (server-side, persists across users + restarts) ─

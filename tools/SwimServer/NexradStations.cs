@@ -56,18 +56,30 @@ public sealed class NexradStations
             if (line.Length < 100) continue;
             if (line.StartsWith("NCDCID", StringComparison.OrdinalIgnoreCase)) continue;
             if (line.StartsWith("--")) continue;
-            // Fixed-width columns from inspection of the header:
-            //   NCDCID (8) ICAO(4) WBAN(5) NAME(30) COUNTRY(20) ST(2) COUNTY(30)
-            //   LAT(9) LON(10) ELEV(6) UTC(5) STNTYPE(50)
-            // Offsets are stable so we slice; whitespace-pad survives this.
+            // Fixed-width columns from inspection of the divider row in the
+            // live NOAA file (each column is [start, end), 0-based):
+            //   NCDCID   [  0..  8)
+            //   ICAO     [  9.. 13)
+            //   WBAN     [ 14.. 19)
+            //   NAME     [ 20.. 50)
+            //   COUNTRY  [ 51.. 71)
+            //   ST       [ 72.. 74)
+            //   COUNTY   [ 75..105)
+            //   LAT      [106..115)
+            //   LON      [116..126)
+            //   ELEV     [127..133)
+            //   UTC      [134..139)
+            //   STNTYPE  [140..190)
+            // Previous offsets were off by ~5 which read garbage state/lat/lon
+            // and made the "nearest" lookup return random TDWR sites.
             string col(int start, int len) => line.Length >= start + len ? line.Substring(start, len).Trim() : "";
             var icao = col(9, 4);
-            var name = col(15, 30);
-            var state = col(67, 2);
-            var lat = col(101, 9);
-            var lon = col(111, 10);
-            var elev = col(122, 6);
-            var type = col(135, 50);
+            var name = col(20, 30);
+            var state = col(72, 2);
+            var lat = col(106, 9);
+            var lon = col(116, 10);
+            var elev = col(127, 6);
+            var type = col(140, 50);
             if (icao.Length != 4) continue;
             if (!double.TryParse(lat, NumberStyles.Float, CultureInfo.InvariantCulture, out var latD)) continue;
             if (!double.TryParse(lon, NumberStyles.Float, CultureInfo.InvariantCulture, out var lonD)) continue;
@@ -81,20 +93,31 @@ public sealed class NexradStations
         return rows.ToArray();
     }
 
-    /// <summary>Nearest station to the given point. Returns null only if the table is empty.</summary>
-    public Station? Nearest(double lat, double lon)
+    /// <summary>
+    /// Nearest station to the given point. Prefers WSR-88D NEXRAD over TDWR
+    /// by default since STARS scope range (usually 50-100nm) exceeds TDWR
+    /// coverage (~50nm) and the WSR-88D 248nm sweep matches the imagery
+    /// the rest of the page is built around. Pass <paramref name="preferNexrad"/>=false
+    /// to allow TDWR if it's truly the closer site (used by a "near terminal"
+    /// product mode someday). Returns null only if the table is empty.
+    /// </summary>
+    public Station? Nearest(double lat, double lon, bool preferNexrad = true)
     {
         if (_stations.Length == 0) return null;
         Station? best = null;
         double bestD = double.MaxValue;
         foreach (var s in _stations)
         {
+            // Skip TDWRs in the default mode.
+            if (preferNexrad && s.Type.Contains("TDWR", StringComparison.OrdinalIgnoreCase)) continue;
             // Squared planar distance is fine for "nearest of ~150 sites in CONUS".
             var dx = s.Lon - lon;
             var dy = s.Lat - lat;
             var d = dx * dx + dy * dy;
             if (d < bestD) { bestD = d; best = s; }
         }
+        // If preferNexrad excluded everything (unlikely with NOAA's table), fall back.
+        if (best is null && preferNexrad) return Nearest(lat, lon, preferNexrad: false);
         return best;
     }
 }

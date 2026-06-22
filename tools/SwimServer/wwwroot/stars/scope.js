@@ -1668,7 +1668,7 @@ async function bootstrap() {
   // Phase 4: mount the Display Control Bar.
   mountDcb();
   // Phase 5: mount MCA / preview area.
-  if (window.mountMca) window.mountMca();
+  if (window.mountPreview) window.mountPreview();
   // Phase 7: mount SSA / status area.
   if (window.mountSsa) window.mountSsa();
   // Phase 3a: DSTARS streaming connection. Runs independent of facility load.
@@ -1878,7 +1878,7 @@ cv.addEventListener("click", (e) => {
   }
   // Aircraft hit-test
   const hit = pickAircraft(e.clientX, e.clientY);
-  if (hit && window.mcaSetClickedPlane) window.mcaSetClickedPlane(hit);
+  if (hit && window.previewSetClickedPlane) window.previewSetClickedPlane(hit);
 });
 function pickAircraft(px, py) {
   let best = null, bestD = Infinity;

@@ -868,13 +868,30 @@ function cmdRangeRings(parts) {
   if (Number.isFinite(interval)) prefSet.RangeRingSpacing = Math.floor(interval);
 }
 
-// ── KeyCode.WX  "WX <level>" + enter (RadarWindow.cs:2542-2557) ───────────
+// ── KeyCode.WX  weather overlay control (CRC docs § DCB / WX)
+// Accepted forms (CRC spec):
+//   WX <1-6>     toggle individual intensity layer
+//   WX A         enable all layers + turn the overlay on
+//   WX OFF       disable the entire overlay (clears the scope)
+//   WX ON        enable the overlay (don't change individual layers)
+//   WX <prod>    switch to a different NWS product (p94r0, p38cr, …)
 function cmdWeather(parts) {
-  if (parts.length < 2 || parts[1].length !== 1) return;
-  const level = parseInt(parts[1], 10);
-  if (level > 0 && level < 7 && window.starsState?.Nexrad) {
+  if (parts.length < 2) return;
+  const arg = (parts[1] || "").toUpperCase();
+  const NX = window.Nexrad;
+  if (!NX) { setResponse("WX UNAVAIL", true); return; }
+  if (arg === "A" || arg === "ALL")   { NX.enable(true);  if (prefSet.Nexrad) prefSet.Nexrad.levels = 0b111111; setResponse("WX ALL", true); return; }
+  if (arg === "OFF")                  { NX.enable(false); setResponse("WX OFF", true); return; }
+  if (arg === "ON")                   { NX.enable(true);  setResponse("WX ON",  true); return; }
+  if (/^[1-6]$/.test(arg))            { NX.toggleLevel(parseInt(arg, 10)); NX.enable(true); setResponse(`WX ${arg}`, true); return; }
+  // Product code (e.g. p94r0, p38cr) — pass through to nexrad.js setProduct.
+  if (/^[A-Z0-9-]{4,6}$/i.test(arg))  { NX.setProduct(arg.toLowerCase()); NX.enable(true); setResponse(`WX ${arg.toLowerCase()}`, true); return; }
+  // Also keep the legacy starsState.Nexrad.LevelsEnabled in sync for any
+  // older code paths still reading it.
+  if (window.starsState?.Nexrad && /^[1-6]$/.test(arg)) {
     const arr = window.starsState.Nexrad.LevelsEnabled ||= [];
-    arr[level - 1] = !arr[level - 1];
+    const idx = parseInt(arg, 10) - 1;
+    arr[idx] = !arr[idx];
   }
 }
 

@@ -140,6 +140,14 @@ PersistenceBudget.Watch("replay", replayDir, "*.jsonl.gz");
 var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), long.MaxValue, replayDir);
 var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
 var sectorTracker = new SwimServer.SectorTracker();
+var nexradStations = new SwimServer.NexradStations();
+// Lazy: first /api/stars/nexrad/* request triggers a fetch. Refresh once a
+// day in the background so the table stays current with NOAA without
+// stalling startup if the upstream is briefly unreachable.
+var nexradRefreshTimer = new Timer(async _ => {
+    try { await nexradStations.RefreshAsync(); }
+    catch (Exception ex) { Console.Error.WriteLine($"[NEXRAD] periodic refresh failed: {ex.Message}"); }
+}, null, TimeSpan.FromMinutes(1), TimeSpan.FromHours(24));
 
 // Flight history directory (declared early so route lambdas can capture it)
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
@@ -285,6 +293,7 @@ var serverCtx = new ServerContext
     EramRecorder = eramRecorder,
     ReplayServer = replayServer,
     SectorTracker = sectorTracker,
+    NexradStations = nexradStations,
     WebRootPath = builder.Environment.WebRootPath,
     HistoryDir = historyDir,
     TdlsHistoryDir = tdlsHistoryDir,
@@ -335,6 +344,9 @@ DebugRoutes.Register(app, serverCtx);
 
 // NEXRAD tile proxy + METAR fetch + KML files
 MiscRoutes.Register(app, serverCtx);
+
+// STARS NEXRAD single-radar product proxy (per-station GIF from NWS).
+NexradStarsRoutes.Register(app, serverCtx);
 
 // (ASDE-X / TDLS / TAIS / TFMS REST endpoints are registered above by their feature routes.)
 
@@ -1098,7 +1110,7 @@ var asdexSnapshotTimer = new Timer(_ =>
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, sectorTrackerTimer /*, poFlushTimer, investigationFlushTimer */ };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer /*, poFlushTimer, investigationFlushTimer */ };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); itws.SaveHistory(); });
 
 // Replay endpoints (WebSocket + REST)

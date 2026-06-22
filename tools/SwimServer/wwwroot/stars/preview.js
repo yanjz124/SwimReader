@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// STARS MCA (Message Composition Area) and Preview Area — Phase 5.
+// STARS Preview Area (PA) — Phase 5.
 //
 // Sources of truth:
 //   • scope/RadarWindow.cs:1417-2900   — ProcessCommand giant switch
@@ -13,7 +13,7 @@
 // the command and Enter executes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MCA = {
+const PA = {
   buffer: "",          // current preview-area input
   response: "",        // last system response shown to user
   responseColor: null,
@@ -37,7 +37,7 @@ const MCA = {
 //   F7  — MULTI FUNC → "F"   (MultiFunc=16=F7)
 //   F9  — FLT DATA   → "FD"  (FltData=18=F9)
 //   F12 — SIGN ON    → "SIGN ON" (SignOn=21=F12; handler is the typed equivalent)
-// F2 (plain) and F11 are NOT STARS MCA prefixes (no GeneratePreviewString case).
+// F2 (plain) and F11 are NOT STARS preview prefixes (no GeneratePreviewString case).
 //
 // NOTE: previous ERAM-style mappings (QF, QP, QX, QZ, QU, QL, QQ, QB, QS) were
 // wrong - those are ERAM commands, NOT STARS. Removed entirely.
@@ -66,7 +66,7 @@ const FKEY_CTRL_ACTION = {
 };
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
-function mountMca() {
+function mountPreview() {
   // Preview area + status area DOM (positioned per PrefSet.PreviewAreaLocation
   // in the WPF; web port renders bottom-left for now — exact corner is
   // user-configurable via dot command later).
@@ -114,7 +114,7 @@ function mountMca() {
     if (e.key !== "End") return;
     e.preventDefault();
     const ms = window.starsState.minSeps ||= [];
-    const clicked = MCA.clickedPlane;
+    const clicked = PA.clickedPlane;
     if (clicked) {
       window.starsState.tempLine = null;
       if (!window.starsState.tempMinSep) {
@@ -129,17 +129,17 @@ function mountMca() {
       window.starsState.tempMinSep = null;
     }
   });
-  refreshMca();
+  refreshPreview();
 }
 
-function refreshMca() {
+function refreshPreview() {
   const el = document.getElementById("mca");
   if (!el) return;
   // RenderPreview (RadarWindow.cs:2920-2945): show exactly ONE thing — the readout
   // message while the buffer is empty (DisplayPreviewMessage clears the buffer),
   // else the typed buffer + a trailing-space cursor (GeneratePreviewString :3261).
   // Colour = DataBlockColor * Brightness.FullDataBlocks (cs:2928), NOT Lists.
-  el.textContent = (MCA.response && !MCA.buffer) ? MCA.response : (MCA.buffer + " ");
+  el.textContent = (PA.response && !PA.buffer) ? PA.response : (PA.buffer + " ");
   if (window.prefSet) {
     const b = (window.prefSet.Brightness.DataBlock ?? 100) / 100;
     el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
@@ -185,36 +185,36 @@ function onKeyDown(e) {
       // its own line and the typed value goes on the next (e.g. "SIGN ON" then
       // "1N"). EXCEPT F7 multifunction, whose subcommand concatenates into one
       // token ("F" + "2ATPAE" → "F2ATPAE"); whitespace there would break parsing.
-      MCA.buffer = (prefix === "F") ? prefix : prefix + "\n";
-      refreshMca();
+      PA.buffer = (prefix === "F") ? prefix : prefix + "\n";
+      refreshPreview();
     }
     return;
   }
 
   if (e.key === "Enter") {
     e.preventDefault();
-    executeCommand(MCA.buffer.trim());
-    MCA.buffer = "";
-    refreshMca();
+    executeCommand(PA.buffer.trim());
+    PA.buffer = "";
+    refreshPreview();
     return;
   }
   if (e.key === "Escape") {
     e.preventDefault();
-    MCA.buffer = "";
-    refreshMca();
+    PA.buffer = "";
+    refreshPreview();
     return;
   }
   if (e.key === "Backspace") {
     e.preventDefault();
-    MCA.buffer = MCA.buffer.slice(0, -1);
-    refreshMca();
+    PA.buffer = PA.buffer.slice(0, -1);
+    refreshPreview();
     return;
   }
   // Printable
   if (e.key.length === 1) {
     e.preventDefault();
-    MCA.buffer += e.key.toUpperCase();
-    refreshMca();
+    PA.buffer += e.key.toUpperCase();
+    refreshPreview();
     return;
   }
 }
@@ -247,11 +247,11 @@ function setResponse(msg, seconds = 5) {
   // DisplayPreviewMessage (RadarWindow.cs:2935-2940): store message + expiry and
   // CLEAR the typed buffer (cs:2937) — the readout replaces the buffer. Default
   // expiry 5s (some call-sites override to 10s/30s).
-  MCA.response = msg;
-  MCA.buffer = "";
-  refreshMca();
+  PA.response = msg;
+  PA.buffer = "";
+  refreshPreview();
   setTimeout(() => {
-    if (MCA.response === msg) { MCA.response = ""; refreshMca(); }
+    if (PA.response === msg) { PA.response = ""; refreshPreview(); }
   }, seconds * 1000);
 }
 
@@ -301,7 +301,7 @@ function illTrk(plane, fp) {
 // (or null). `enter` distinguishes Enter-pressed (true) from click-executed
 // (false) - matches the WPF `enter` flag (RadarWindow.cs:1421-1431).
 function executeCommand(line, opts = {}) {
-  const clicked = opts.clickedPlane || MCA.clickedPlane;
+  const clicked = opts.clickedPlane || PA.clickedPlane;
   const clickedplane = clicked != null;
   const enter = opts.enter !== false;     // default = Enter-key path
 
@@ -694,7 +694,7 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
     if (geo) setResponse(geoToDms(geo));
     return;
   }
-  // F P  set MCA/PreviewArea location to clicked screen point (cs:2316-2322)
+  // F P  set Preview Area location to clicked screen point (cs:2316-2322)
   if (sub === "P" && !clickedplane) {
     const m = window.mouseScreen?.();
     if (m) {
@@ -826,37 +826,68 @@ function geoToDms(geo) {
   return `${fmt(geo.lat, "N", "S")} ${fmt(geo.lon, "E", "W")}`;
 }
 
-// ── ProcessImpliedCommand (RadarWindow.cs:2688-2769) ─────────────────────
-// Priority chain when user clicks an aircraft with an empty MCA buffer:
-//   1. PendingHandoff == us         -> accept handoff
-//   2. PositionInd == us && pending -> recall handoff
-//   3. Pointout                     -> clear pointout
-//   4. ForceQuickLook               -> clear FQL
-//   5. Owned & PositionInd != us    -> release ownership
-//   6. Owned & has callsign         -> beacon readout in preview
-//   7. !Owned & has callsign        -> toggle FDB
-//   8. No callsign                  -> toggle FDB (unassociated)
-// ProcessImpliedCommand priority chain (RadarWindow.cs:2708-2768). Uses the same
-// model the renderer reads: fp.Owner (controlling sector) and t._forcedMode
-// (FDB/LDB override). Handoff/pointout mutations are local only (read-only feed, G18).
+// ── ProcessImpliedCommand — verbatim from RadarWindow.cs:2688-2769 ───────
+// Empty-Preview click on an aircraft. DGScope's 8-step priority chain:
+//   1. PendingHandoff == us            -> ACCEPT  (cs:2712-2717)
+//                                          plane.PositionInd = me
+//                                          plane.PendingHandoff = null
+//                                          plane.SendUpdate()
+//   2. PositionInd == us && pending    -> RECALL  (cs:2718-2722)
+//                                          plane.PendingHandoff = null
+//   3. Pointout                         -> clear pointout (cs:2724-2727)
+//   4. ForceQuickLook                   -> clear FQL (cs:2728-2731)
+//   5. Owned && PositionInd != us       -> RELEASE (cs:2744-2747)
+//                                          plane.Owned = false
+//   6. Owned && callsign                -> BEACON READOUT (cs:2752-2755)
+//                                          "{callsign} {squawk} {assigned}"
+//   7. !Owned && callsign               -> toggle FDB (cs:2757-2760)
+//   8. no callsign (unassociated)       -> toggle FDB (cs:2764-2767)
+//
+// Our model maps DGScope state as:
+//   fp.Owner          = PositionInd  (controlling sector ID string)
+//   plane._owned      = Owned bool   (set true on accept, false on release)
+//   fp.PendingHandoff = same name    (target sector during a handoff)
+//   plane._forcedMode = FDB/LDB override the renderer reads
+//   plane._forceQuickLook = ForceQuickLook
+//
+// Handoff mutations are local-only (read-only SFDPS feed, G18).
 function processImplied(plane) {
   const fp = trackToFp.get(plane.Guid) || {};
   const me = window.ownTcp?.() || "";
-  const owned = !!fp.Owner && fp.Owner === me;
-  // 1. Accept an inbound handoff (PendingHandoff == me).
-  if (fp.PendingHandoff && fp.PendingHandoff === me) { fp.Owner = me; fp.PendingHandoff = null; return; }
-  // 2. Recall a handoff I initiated.
-  if (owned && fp.PendingHandoff) { fp.PendingHandoff = null; return; }
-  // 3. Clear a pointout directed at us.
-  if (fp._pointoutTarget) { fp._pointoutTarget = null; return; }
-  // 4. Clear force-quicklook / marked.
-  if (plane._marked) { plane._marked = false; return; }
-  // 6. Beacon readout in the preview for an owned track with a callsign.
-  if (owned && fp.Callsign) {
-    setResponse(`${fp.Callsign} ${plane.Squawk || ""} ${fp.AssignedSquawk || ""}`.trim());
+  const callsign = fp.Callsign || "";
+  // 1. ACCEPT
+  if (fp.PendingHandoff && fp.PendingHandoff === me) {
+    fp.Owner = me;
+    fp.PendingHandoff = null;
+    plane._owned = true;
+    setResponse(`ACCEPT ${callsign}`);
     return;
   }
-  // 7/8. Toggle the data block FDB <-> LDB on a track we don't own (or unassociated).
+  // 2. RECALL
+  if (fp.Owner === me && fp.PendingHandoff) {
+    const target = fp.PendingHandoff;
+    fp.PendingHandoff = null;
+    setResponse(`RECALL ${callsign} -> ${target}`);
+    return;
+  }
+  // 3. Clear pointout
+  if (fp._pointoutTarget) { fp._pointoutTarget = null; return; }
+  // 4. Clear force-quicklook
+  if (plane._forceQuickLook) { plane._forceQuickLook = false; return; }
+  // 5. RELEASE — Owned bool true but controlling sector has moved away.
+  // Happens after the receiver accepts a handoff we initiated: the SFDPS
+  // feed flips fp.Owner to the new sector but our _owned bool stays true
+  // until the user clicks once to acknowledge.
+  if (plane._owned && fp.Owner && fp.Owner !== me) {
+    plane._owned = false;
+    return;
+  }
+  // 6. BEACON READOUT on owned + associated tracks.
+  if (plane._owned && callsign) {
+    setResponse(`${callsign} ${plane.Squawk || ""} ${fp.AssignedSquawk || ""}`.trim());
+    return;
+  }
+  // 7/8. Toggle FDB on/off for both associated-not-owned and unassociated.
   const cur = (typeof dataBlockMode === "function") ? dataBlockMode(plane, fp) : "LDB";
   plane._forcedMode = (cur === "FDB") ? "LDB" : "FDB";
 }
@@ -925,15 +956,15 @@ function cmdDefaultClickedPlane(line, clicked) {
 
 // Aircraft click → set as "clicked plane" + handle implicit commands.
 // scope.js binds clicks; we expose this entry point.
-window.MCA = MCA;
-window.mcaSetClickedPlane = (plane) => {
-  MCA.clickedPlane = plane;
-  if (!MCA.buffer) {
+window.PA = PA;
+window.previewSetClickedPlane = (plane) => {
+  PA.clickedPlane = plane;
+  if (!PA.buffer) {
     // Clicking a track in an unacknowledged Conflict Alert acknowledges it first
     // (CRC STARS § STCA: "click either of the two tracks") — silences the alert
     // and turns CA solid red. Consumes the click.
     if (plane && plane._stca && !plane._caAcked && window.starsAckCA?.(plane)) {
-      refreshMca();
+      refreshPreview();
       return;
     }
     // Empty buffer + click = the implied-command priority chain (accept handoff,
@@ -941,12 +972,12 @@ window.mcaSetClickedPlane = (plane) => {
     processImplied(plane);
   } else {
     // Buffer + click = execute command with this plane appended.
-    const before = MCA.buffer;
+    const before = PA.buffer;
     const plid = (plane.Callsign || plane.Squawk || "");
-    MCA.buffer = (before + " " + plid).trim();
-    executeCommand(MCA.buffer);
-    MCA.buffer = "";
+    PA.buffer = (before + " " + plid).trim();
+    executeCommand(PA.buffer);
+    PA.buffer = "";
   }
-  refreshMca();
+  refreshPreview();
 };
-window.mountMca = mountMca;
+window.mountPreview = mountPreview;

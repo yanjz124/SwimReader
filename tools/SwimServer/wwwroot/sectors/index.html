@@ -209,9 +209,17 @@ function renderList() {
     }).join("");
     facList.querySelectorAll(".row").forEach(el => {
         el.addEventListener("click", () => {
-            selected = el.dataset.fac;
+            const newFac = el.dataset.fac;
+            // Switching facility invalidates any sector selection from the
+            // previous facility — its transitions panel was facility-scoped.
+            if (newFac !== selected) {
+                selectedSector = null;
+                transitionsCache = null;
+            }
+            selected = newFac;
             const url = new URL(location.href);
             url.searchParams.set("facility", selected);
+            url.searchParams.delete("sector");
             history.replaceState(null, "", url);
             renderList(); renderDetail();
         });

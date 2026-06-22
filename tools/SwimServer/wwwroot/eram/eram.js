@@ -6908,16 +6908,31 @@ document.addEventListener('keydown', e => {
     }
 
     // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8).
-    // Hot path: bump the value, sync the hidden <select>, repaint the
-    // VECTOR toolbar valDiv directly (no full toolbar refresh — that was
-    // the source of the ~500ms delay), and force an immediate marker
-    // redraw. localStorage write is async-throttled so it never lands
-    // in the keypress critical path.
+    //
+    // We update the toolbar VECTOR button's text DIRECTLY via DOM query
+    // rather than going through refreshButton(key) / tbElements. The
+    // tbElements path proved unreliable here — likely because of tearoff
+    // clones or panel-rebuild lifecycle — and the user kept seeing the
+    // old number even though the vector LINE on the scope updated. A
+    // direct DOM write hits every visible button (master + tearoff +
+    // sub-menu copies) in one pass and is what the user actually
+    // observes.
     const vectorSteps = [0, 1, 2, 4, 8];
     const applyVectorChange = (next) => {
         vectorMinutes = next;
-        document.getElementById('sel-vector').value = vectorMinutes;
-        refreshButtonsByLabel('VECTOR');
+        const sel = document.getElementById('sel-vector');
+        if (sel) sel.value = vectorMinutes;
+        // Find every visible VECTOR toolbar cell (master panel + tearoffs)
+        // and rewrite its value display in place.
+        const display = String(vectorMinutes);
+        for (const btn of document.querySelectorAll('.tb-btn')) {
+            const labelEl = btn.querySelector('.tb-label');
+            if (!labelEl) continue;
+            if ((labelEl.textContent || '').trim() === 'VECTOR') {
+                const valDiv = btn.querySelector('.tb-value');
+                if (valDiv) valDiv.textContent = display;
+            }
+        }
         lastRenderTime = 0;
         // 250ms throttle: rapid PageUp presses don't write LS each tap.
         if (!applyVectorChange._t) {

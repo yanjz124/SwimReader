@@ -345,15 +345,19 @@ function executeCommand(line, opts = {}) {
     return;
   }
 
-  // ── Sign on / off (F12) — set ThisPositionIndicator (1623-1635). Accepts the
-  // F12 "SIGN ON <tcp>" form and the typed ".SO <tcp>" shorthand. Empty or "*"
-  // signs off (back to observer mode). ──
+  // ── F12 SIGN ON (cs:1623-1635) — set ThisPositionIndicator ──
+  // DGScope reads keys[0] (the F12 KeyCode token + the TCP string the user
+  // typed after it). KeyCode.SignOn renders as "SIGN ON\r\n" in the
+  // preview area (GeneratePreviewString cs:3208-3210), so by the time the
+  // line reaches us it looks like  "SIGN ON" + "\n" + "<tcp>"  or, after
+  // Enter joins the lines via the executeCommand path,  "SIGN ON TCP".
+  // The plain "SIGN ON*" form clears the position.  No invented ".SO"
+  // shorthand and no preview echo — DGScope doesn't echo either.
   {
-    const so = line.trim().match(/^(?:SIGN\s+ON|\.SO)\s*(\S*)$/i);
+    const so = line.trim().match(/^SIGN\s+ON\s*(\S*)$/i);
     if (so) {
       const tcp = so[1].toUpperCase();
-      if (tcp === "" || tcp === "*") { window.setOwnTcp?.(""); setResponse("SIGNED OFF"); }
-      else { window.setOwnTcp?.(tcp); setResponse(`SIGN ON ${tcp}`); }
+      window.setOwnTcp?.(tcp === "*" ? "" : tcp);
       return;
     }
   }
@@ -855,19 +859,18 @@ function processImplied(plane) {
   const fp = trackToFp.get(plane.Guid) || {};
   const me = window.ownTcp?.() || "";
   const callsign = fp.Callsign || "";
-  // 1. ACCEPT
+  // 1. ACCEPT — cs:2712-2717 sets PositionInd + clears PendingHandoff +
+  // SendUpdate(). No preview-area text in DGScope. SendUpdate() side effect
+  // is server-bound; we just mutate local state.
   if (fp.PendingHandoff && fp.PendingHandoff === me) {
     fp.Owner = me;
     fp.PendingHandoff = null;
     plane._owned = true;
-    setResponse(`ACCEPT ${callsign}`);
     return;
   }
-  // 2. RECALL
+  // 2. RECALL — cs:2718-2722. Clear PendingHandoff. No preview text in DGScope.
   if (fp.Owner === me && fp.PendingHandoff) {
-    const target = fp.PendingHandoff;
     fp.PendingHandoff = null;
-    setResponse(`RECALL ${callsign} -> ${target}`);
     return;
   }
   // 3. Clear pointout

@@ -1495,6 +1495,10 @@ function drawTracks() {
 // ── Main render loop ────────────────────────────────────────────────────────
 function frame() {
   clear();
+  // NEXRAD sits below the video map so map lines / range rings / tracks all
+  // remain legible over weather. nexrad.js is a no-op until the user
+  // enables it via the MCA `WX A` / DCB BRITE WX path.
+  if (window.Nexrad?.draw) window.Nexrad.draw(ctx);
   drawVideoMapLines();
   drawRangeRings();
   drawCompass();
@@ -1662,6 +1666,11 @@ async function bootstrap() {
   if (window.mountSsa) window.mountSsa();
   // Phase 3a: DSTARS streaming connection. Runs independent of facility load.
   startDstars();
+
+  // NEXRAD overlay (off by default — user enables via MCA `WX A` / DCB).
+  // Run after the screen-centre is known so the nearest-station lookup
+  // resolves to the right radar.
+  if (window.Nexrad?.init) window.Nexrad.init();
 
   // G1 workaround: wait for the STARS font (FixedDemiBold) before the first
   // paint so a cold load never renders the scope in fallback monospace.
@@ -1859,6 +1868,9 @@ window.trackToFp        = trackToFp;
 window.videoMaps        = videoMaps;
 window.mapButtonAssignments = mapButtonAssignments;
 window.ClockPhase       = ClockPhase;
+// Exposed for the NEXRAD overlay (nexrad.js) which needs to project image
+// corners from radar-centred lat/lon into the current scope view.
+window.geoToScreen      = geoToScreen;
 
 // ── URL state persistence ───────────────────────────────────────────────────
 // Encodes range, leader length, ptl length, range-ring spacing, brightness

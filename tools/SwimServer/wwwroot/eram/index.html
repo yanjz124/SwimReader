@@ -7,7 +7,9 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="/shared/common.css?v=10">
+<link rel="stylesheet" href="/shared/replay-bar.css?v=1">
 <link rel="stylesheet" href="/eram/eram.css?v=12">
+<script defer src="/shared/replay-bar.js?v=1"></script>
 </head>
 <body>
 <div id="app">
@@ -205,37 +207,10 @@
             <div id="fd-body"></div>
         </div>
 
-        <div class="panel-section" id="replay-section" style="display:none;">
-            <div class="panel-label">REPLAY</div>
-            <div id="replay-controls">
-                <div class="ctrl-row" style="flex-wrap:wrap;gap:4px;">
-                    <input type="text" id="replay-start" inputmode="numeric"
-                        placeholder="YYYY-MM-DD HH:MM:SS" title="Start time in Zulu (UTC), 24-hour clock"
-                        style="flex:1;min-width:140px;background:#1a1a1a;color:#cccc44;border:1px solid #333;padding:2px 4px;font-family:inherit;font-size:10px;">
-                    <span style="color:#cccc44;font-size:10px;align-self:center;">Z</span>
-                    <button id="replay-go" style="background:#006800;color:#fff;border:1px solid #333;padding:2px 8px;font-family:inherit;font-size:10px;cursor:pointer;">GO</button>
-                </div>
-                <div id="replay-bar" style="display:none;margin-top:6px;">
-                    <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
-                        <button id="replay-pause" style="background:#333;color:#fff;border:1px solid #555;padding:1px 6px;font-family:inherit;font-size:10px;cursor:pointer;">&#10074;&#10074;</button>
-                        <select id="replay-speed" style="background:#1a1a1a;color:#cccc44;border:1px solid #333;font-family:inherit;font-size:10px;">
-                            <option value="0.5">0.5x</option>
-                            <option value="1" selected>1x</option>
-                            <option value="2">2x</option>
-                            <option value="4">4x</option>
-                            <option value="8">8x</option>
-                            <option value="16">16x</option>
-                            <option value="60">60x</option>
-                        </select>
-                        <span id="replay-time" style="color:#cccc44;font-size:10px;flex:1;text-align:right;"></span>
-                    </div>
-                    <div id="replay-status" style="color:#888;font-size:10px;"></div>
-                    <button id="replay-stop" style="background:#880000;color:#fff;border:1px solid #333;padding:1px 8px;font-family:inherit;font-size:10px;cursor:pointer;margin-top:4px;">LIVE</button>
-                    <button id="replay-share" title="Copy a shareable link to this replay moment" style="background:#222;color:#cccc44;border:1px solid #444;padding:1px 8px;font-family:inherit;font-size:10px;cursor:pointer;margin-top:4px;margin-left:4px;">🔗 LINK</button>
-                </div>
-            </div>
-            <div id="replay-range" style="color:#666;font-size:9px;margin-top:4px;"></div>
-        </div>
+        <!-- Replay UI now lives in the shared floating ReplayBar at the bottom
+             of the page (loaded from /shared/replay-bar.{js,css}). The sidebar
+             REPLAY button toggles its visibility. -->
+
 
         <div id="sidebar-footer">
             <span id="stat-rate">0</span> msg/s &middot;

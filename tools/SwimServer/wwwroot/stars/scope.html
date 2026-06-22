@@ -5,6 +5,10 @@
 <title>STARS Scope</title>
 <base href="/stars/" />
 <link rel="stylesheet" href="scope.css" />
+<!-- Shared floating ReplayBar (no STARS-specific replay backend yet; bar shows
+     'No replay data' until the server adds /replay/stars/ws/{facility}). -->
+<link rel="stylesheet" href="/shared/replay-bar.css?v=1" />
+<script defer src="/shared/replay-bar.js?v=1"></script>
 </head>
 <body>
 <canvas id="scope"></canvas>

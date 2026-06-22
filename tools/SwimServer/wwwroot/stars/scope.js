@@ -1141,13 +1141,21 @@ function positionSymbolText(t, fp) {
 
 function drawPosition(t, posNow) {
   const fp = trackToFp.get(t.Guid);
-  // Position-symbol colour follows the data-block priority (RadarWindow.cs:5469,
-  // 5580-5584): emergency red > marked cyan > owned/inbound-handoff white > green.
+  // Position-symbol colour per RadarWindow.cs:
+  //   primary-only return (no beacon code)            → ReturnColor       (blue, line 72)
+  //   beacon target (has squawk, not owned)           → BeaconTargetColor (green, line 74)
+  //   owned / inbound handoff                          → OwnedColor       (white, line 83)
+  //   marked (cyan)                                    → Selected
+  //   emergency / SPC (7500/7600/7700)                 → Emerg
+  // DataBlockColor / ReturnColor were swapped before; this is the corrected priority.
   const inbound = fp?.PendingHandoff && fp.PendingHandoff === ownTcp();
-  let baseColor = COLORS.Return;
+  const hasBeacon = !!(t.Squawk && t.Squawk !== "0000" && t.Squawk !== "1200");
+  let baseColor;
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) baseColor = COLORS.Emerg;
-  else if (t._marked) baseColor = COLORS.Selected;
-  else if (fp?.Owner === ownTcp() || inbound) baseColor = COLORS.Owned;
+  else if (t._marked)                                              baseColor = COLORS.Selected;
+  else if (fp?.Owner === ownTcp() || inbound)                      baseColor = COLORS.Owned;
+  else if (hasBeacon || fp)                                        baseColor = COLORS.BeaconTarget;  // green
+  else                                                             baseColor = COLORS.Return;        // primary-only blue
 
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;
@@ -1158,9 +1166,9 @@ function drawPosition(t, posNow) {
   ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Glyph colour matches the return so the whole position symbol is one colour:
-  // white when owned, blue (== history) for everyone else, red emergency, cyan
-  // marked. (Owned tracks render white only when signed on; see ownTcp.)
+  // Glyph colour matches the return so the whole position symbol is one
+  // colour — owned white, beacon green, primary-only blue, emergency red,
+  // marked cyan. (Owned only renders white when signed on; see ownTcp.)
   ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
   ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
   ctx.textBaseline = "middle";

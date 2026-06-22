@@ -117,8 +117,8 @@
   padding: 0 6px;
   font-variant-numeric: tabular-nums;
 }
-/* datetime-local picker — native control, themed to match the bar */
-#rb-bar input[type="datetime-local"] {
+/* Native date picker for the Zulu calendar, plus the HHMM[SS] time input */
+#rb-bar input[type="date"] {
   background: #1a1a1a;
   color: var(--rb-text);
   border: 1px solid #333;
@@ -126,12 +126,13 @@
   font-family: inherit;
   font-size: 11px;
   color-scheme: dark;
-  min-width: 180px;
+  min-width: 130px;
+  font-variant-numeric: tabular-nums;
 }
 .rb-zlabel {
-  color: var(--rb-dim);
+  color: var(--rb-accent);
   font-size: 11px;
-  font-variant-numeric: tabular-nums;
+  font-weight: bold;
   letter-spacing: 0.5px;
 }
 #rb-range {

@@ -47,7 +47,7 @@
     bar.innerHTML = `
       <div class="rb-handle">
         <span>REPLAY</span>
-        <span class="rb-status" id="rb-status">—</span>
+        <span class="rb-status" id="rb-status"></span>
         <span class="rb-btns">
           <button id="rb-toggle" title="Minimize">▾</button>
           <button id="rb-closebtn" title="Hide bar">×</button>
@@ -55,9 +55,12 @@
       </div>
       <div class="rb-body">
         <div class="rb-pickrow" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;width:100%;">
-          <input type="datetime-local" id="rb-start" step="1"
-                 title="Start time (your local clock; the bar shows the equivalent Zulu)">
-          <span class="rb-zlabel" id="rb-zlabel" title="UTC equivalent of the picked local time">Z —</span>
+          <input type="date" id="rb-date" title="Date (Zulu)">
+          <input type="text" id="rb-tin" inputmode="numeric" maxlength="6"
+                 placeholder="HHMM"
+                 title="Time in Zulu (UTC) 24-hour clock — HHMM or HHMMSS"
+                 style="width:74px;text-align:center;font-variant-numeric:tabular-nums;">
+          <span class="rb-zlabel">Z</span>
           <button id="rb-go" class="rb-go">GO</button>
           <span id="rb-range"></span>
         </div>
@@ -95,24 +98,23 @@
       if (bar.classList.contains("rb-min")) { minimize(false); e.stopPropagation(); }
     });
 
-    // Keep the "Z" label in sync as the user changes the local-time picker.
-    const startEl = bar.querySelector("#rb-start");
-    const zEl = bar.querySelector("#rb-zlabel");
-    function refreshZLabel() {
-      const d = parseLocalInput(startEl.value);
-      zEl.textContent = d ? "Z " + d.toISOString().replace("T", " ").slice(0, 19) : "Z —";
-    }
-    startEl.addEventListener("input", refreshZLabel);
-    startEl.addEventListener("change", refreshZLabel);
+    // Restrict time input to digits.
+    const tin = bar.querySelector("#rb-tin");
+    tin.addEventListener("input", () => {
+      const cleaned = tin.value.replace(/\D/g, "").slice(0, 6);
+      if (cleaned !== tin.value) tin.value = cleaned;
+    });
 
     bar.querySelector("#rb-go").onclick = () => {
-      const d = parseLocalInput(startEl.value) || parseZulu(startEl.value);
-      if (!d) { setStatus("Pick a date/time", "warn"); return; }
+      const d = parseDateTime(bar.querySelector("#rb-date").value, tin.value);
+      if (!d) { setStatus("Pick a date and time (HHMM Zulu)", "warn"); return; }
       startReplay(d.toISOString());
     };
-    startEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") bar.querySelector("#rb-go").click();
-    });
+    for (const el of [bar.querySelector("#rb-date"), tin]) {
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") bar.querySelector("#rb-go").click();
+      });
+    }
 
     bar.querySelector("#rb-pause").onclick = () => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -150,22 +152,29 @@
   }
   function fmtZuluInput(d) { return d.toISOString().replace("T", " ").slice(0, 19); }
 
-  // Format a Date as the value an <input type="datetime-local" step="1">
-  // expects: "YYYY-MM-DDTHH:MM:SS" in the user's local timezone. The browser
-  // surfaces this back as a wall-clock string the same way; we convert to
-  // UTC at submit time.
-  function fmtLocalInput(d) {
+  // Format a UTC Date as "YYYY-MM-DD" — used to populate the date <input>.
+  function fmtZuluDate(d) {
     const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T` +
-           `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
   }
-  // Parse the value of a datetime-local input (local wall clock, no offset).
-  // Returns a UTC Date or null.
-  function parseLocalInput(s) {
-    if (!s) return null;
-    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
-    if (!m) return null;
-    const d = new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +(m[6] || 0));
+  // Format a UTC Date as "HHMM" — used to populate the time text <input>.
+  function fmtZuluHHMM(d) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}`;
+  }
+  // Combine a "YYYY-MM-DD" date string + an "HHMM"/"HHMMSS" time string,
+  // both Zulu, into a UTC Date. Returns null on bad input.
+  function parseDateTime(dateStr, timeStr) {
+    if (!dateStr) return null;
+    const dm = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!dm) return null;
+    const tDigits = String(timeStr || "").replace(/\D/g, "");
+    if (tDigits.length !== 4 && tDigits.length !== 6) return null;
+    const hh = parseInt(tDigits.slice(0,2), 10);
+    const mm = parseInt(tDigits.slice(2,4), 10);
+    const ss = tDigits.length === 6 ? parseInt(tDigits.slice(4,6), 10) : 0;
+    if (hh > 23 || mm > 59 || ss > 59) return null;
+    const d = new Date(Date.UTC(+dm[1], +dm[2]-1, +dm[3], hh, mm, ss));
     return isNaN(d) ? null : d;
   }
 
@@ -302,29 +311,23 @@
       const d = await r.json();
       let info = d?.[cfg.rangeKey];
       if (info && typeof info === "object" && !info.start && cfg.rangeSubKey) info = info[cfg.rangeSubKey];
-      const startEl = bar.querySelector("#rb-start");
-      const zEl = bar.querySelector("#rb-zlabel");
+      const dateEl = bar.querySelector("#rb-date");
+      const tEl = bar.querySelector("#rb-tin");
+      // Default the picker to "1 hour ago" in Zulu.
+      const defaultD = new Date(Date.now() - 3600000);
       if (info?.start && info?.end) {
         startMs = new Date(info.start).getTime();
         endMs = new Date(info.end).getTime();
         bar.querySelector("#rb-range").textContent =
           `Available: ${fmtClock(new Date(startMs))} — ${fmtClock(new Date(endMs))}  ` +
           `(${info.hours || ""}h${info.totalSizeMB ? ", " + info.totalSizeMB.toFixed(1) + " MB" : ""})`;
-        // Also constrain the native picker to the available window.
-        startEl.min = fmtLocalInput(new Date(startMs));
-        startEl.max = fmtLocalInput(new Date(endMs));
-        // Default to 1h ago (your local clock).
-        const defaultLocal = new Date(Date.now() - 3600000);
-        startEl.value = fmtLocalInput(defaultLocal);
-        if (zEl) zEl.textContent = "Z " + defaultLocal.toISOString().replace("T", " ").slice(0, 19);
+        dateEl.min = fmtZuluDate(new Date(startMs));
+        dateEl.max = fmtZuluDate(new Date(endMs));
       } else {
         bar.querySelector("#rb-range").textContent = "No replay data yet (recording…)";
-        startEl.value = fmtLocalInput(new Date(Date.now() - 3600000));
-        if (zEl) {
-          const dt = parseLocalInput(startEl.value);
-          zEl.textContent = dt ? "Z " + dt.toISOString().replace("T", " ").slice(0, 19) : "Z —";
-        }
       }
+      if (!dateEl.value) dateEl.value = fmtZuluDate(defaultD);
+      if (!tEl.value)    tEl.value    = fmtZuluHHMM(defaultD);
     } catch {
       bar.querySelector("#rb-range").textContent = "Error fetching replay range";
     }

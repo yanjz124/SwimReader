@@ -79,14 +79,27 @@ static class EramRoutes
         // REST API for stats
         app.MapGet("/api/stats", () => Results.Json(ctx.Stats.Snapshot(ctx.Flights.Count), ctx.JsonOpts));
 
-        // Per-facility/sector active-track breakdown.
+        // Per-facility/sector active-track breakdown + 1h sparkline history.
         //   Returns: [{ facility, totalTracks, sectorCount,
-        //                sectors: [{ id, tracks, handoffsIn, handoffsOut }] }, ...]
-        // A flight contributes one track to its controllingFacility/sector. Handoff
-        // legs that name a facility add to handoffsIn (this facility is receiving)
-        // or handoffsOut (this facility is transferring) so the page can flag
-        // sectors currently in transition. Anything without a controllingFacility
-        // falls under "(none)".
+        //                sectors: [{ id, tracks, handoffsIn, handoffsOut,
+        //                             history: [c,c,c,...] }] }, ...]
+        // A flight contributes one track to its controllingFacility/sector.
+        // Handoff legs add to handoffsIn (this facility receiving) or
+        // handoffsOut (this facility transferring). Sectors with 0 current
+        // tracks are STILL listed if they had a non-zero count anytime in
+        // the last hour — so a sector that just closed remains visible.
+        // Sectors are sorted by numeric ID ascending; non-numeric trailing
+        // chars (e.g. "30R", "07A") break ties alphabetically.
+        static (int num, string suffix) SectorSortKey(string id)
+        {
+            // Strip a leading run of digits for the numeric portion. Empty
+            // numeric → -1 sorts before everything else.
+            int i = 0;
+            while (i < id.Length && char.IsDigit(id[i])) i++;
+            if (i == 0) return (-1, id);
+            int.TryParse(id.AsSpan(0, i), out var n);
+            return (n, id.Length > i ? id[i..] : "");
+        }
         app.MapGet("/api/sectors", () =>
         {
             var byFac = new Dictionary<string, Dictionary<string, (int tracks, int hIn, int hOut)>>(StringComparer.OrdinalIgnoreCase);
@@ -125,6 +138,19 @@ static class EramRoutes
                 if (!string.IsNullOrEmpty(tFac) && (tFac != fac || tSec != sec))
                     Bump(tFac, tSec, false, false, true);
             }
+            // Surface sectors that were active recently but currently have
+            // zero tracks (closed-recently). Add them with empty buckets so
+            // the page still renders a row and its history sparkline.
+            foreach (var (fac, sec) in ctx.SectorTracker.AllKnownSectors())
+            {
+                if (!byFac.TryGetValue(fac, out var inner))
+                {
+                    inner = new(StringComparer.OrdinalIgnoreCase);
+                    byFac[fac] = inner;
+                }
+                if (!inner.ContainsKey(sec) && ctx.SectorTracker.WasRecentlyActive(fac, sec))
+                    inner[sec] = (0, 0, 0);
+            }
             var rows = byFac
                 .Select(kv => new
                 {
@@ -132,14 +158,15 @@ static class EramRoutes
                     totalTracks = kv.Value.Values.Sum(v => v.tracks),
                     sectorCount = kv.Value.Count(s => s.Value.tracks > 0),
                     sectors = kv.Value
-                        .OrderByDescending(s => s.Value.tracks)
-                        .ThenBy(s => s.Key, StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(s => SectorSortKey(s.Key).num)
+                        .ThenBy(s => SectorSortKey(s.Key).suffix, StringComparer.OrdinalIgnoreCase)
                         .Select(s => new
                         {
                             id          = s.Key,
                             tracks      = s.Value.tracks,
                             handoffsIn  = s.Value.hIn,
                             handoffsOut = s.Value.hOut,
+                            history     = ctx.SectorTracker.GetHistory(kv.Key, s.Key),
                         })
                         .ToArray()
                 })
@@ -147,6 +174,18 @@ static class EramRoutes
                 .ThenBy(r => r.facility, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             return Results.Json(rows, ctx.JsonOpts);
+        });
+
+        // Top handoff transitions in / out of a given sector. Used by the
+        // /sectors page's "where do my flights come from / go to" panel.
+        // Counts accumulate since the server started.
+        app.MapGet("/api/sectors/{fac}/{sec}/transitions", (string fac, string sec) =>
+        {
+            var into = ctx.SectorTracker.TopIn(fac, sec, 12)
+                .Select(t => new { facility = t.Fac, sector = t.Sec, count = t.Count }).ToArray();
+            var outOf = ctx.SectorTracker.TopOut(fac, sec, 12)
+                .Select(t => new { facility = t.Fac, sector = t.Sec, count = t.Count }).ToArray();
+            return Results.Json(new { facility = fac.ToUpperInvariant(), sector = sec.ToUpperInvariant(), into, outOf }, ctx.JsonOpts);
         });
 
         // Server performance / health: CPU, memory, GC, threads, uptime, WS clients, disk.

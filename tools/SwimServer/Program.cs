@@ -139,6 +139,7 @@ PersistenceBudget.Watch("replay", replayDir, "*.jsonl.gz");
 // Recorders pass long.MaxValue so their internal cleanup never triggers — central enforcer owns it.
 var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), long.MaxValue, replayDir);
 var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
+var sectorTracker = new SwimServer.SectorTracker();
 
 // Flight history directory (declared early so route lambdas can capture it)
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
@@ -283,6 +284,7 @@ var serverCtx = new ServerContext
     Stars = stars,
     EramRecorder = eramRecorder,
     ReplayServer = replayServer,
+    SectorTracker = sectorTracker,
     WebRootPath = builder.Environment.WebRootPath,
     HistoryDir = historyDir,
     TdlsHistoryDir = tdlsHistoryDir,
@@ -1019,6 +1021,14 @@ var nasrTimer = new Timer(async _ =>
 // Batch broadcast timers — flush dirty flights to all connected clients
 var batchTimer = new Timer(_ => FlushDirtyBatch(_dirty), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
+// Per-sector tracker: snapshot every minute so closed sectors still show on
+// the /sectors timeline. Transition counts accrue lazily via ProcessFlight.
+var sectorTrackerTimer = new Timer(_ =>
+{
+    try { sectorTracker.Snapshot(flights); }
+    catch (Exception ex) { Console.Error.WriteLine($"[SectorTracker] {ex.GetType().Name}: {ex.Message}"); }
+}, null, TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(1));
+
 // ASDEX: flush dirty airports every 1s, purge stale tracks every 10s
 var asdexBatchTimer = new Timer(_ => asdex.FlushDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 var asdexPurgeTimer = new Timer(_ => asdex.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
@@ -1088,7 +1098,7 @@ var asdexSnapshotTimer = new Timer(_ =>
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer /*, poFlushTimer, investigationFlushTimer */ };
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, sectorTrackerTimer /*, poFlushTimer, investigationFlushTimer */ };
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); itws.SaveHistory(); });
 
 // Replay endpoints (WebSocket + REST)
@@ -1365,12 +1375,21 @@ void ProcessFlight(XElement flight, string rawXml)
         }
     }
 
-    // controllingUnit
+    // controllingUnit — also record the sector→sector transition for the
+    // /sectors page's Markov-style "where do my flights come from / go to"
+    // panel. Only count actual changes; new-flight first-set isn't a
+    // transition.
     var cu = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "controllingUnit");
     if (cu is not null)
     {
-        state.ControllingFacility = cu.Attribute("unitIdentifier")?.Value ?? "";
-        state.ControllingSector = cu.Attribute("sectorIdentifier")?.Value ?? "";
+        var newFac = cu.Attribute("unitIdentifier")?.Value ?? "";
+        var newSec = cu.Attribute("sectorIdentifier")?.Value ?? "";
+        var prevFac = state.ControllingFacility ?? "";
+        var prevSec = state.ControllingSector ?? "";
+        if ((newFac != prevFac || newSec != prevSec) && !string.IsNullOrEmpty(prevFac))
+            sectorTracker.RecordTransition(prevFac, prevSec, newFac, newSec);
+        state.ControllingFacility = newFac;
+        state.ControllingSector = newSec;
     }
 
     // flightPlan

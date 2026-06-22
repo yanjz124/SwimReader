@@ -6898,30 +6898,34 @@ document.addEventListener('keydown', e => {
         e.preventDefault(); return;
     }
 
-    // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8)
+    // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8).
+    // Hot path: bump the value, sync the hidden <select>, repaint the
+    // VECTOR toolbar valDiv directly (no full toolbar refresh — that was
+    // the source of the ~500ms delay), and force an immediate marker
+    // redraw. localStorage write is async-throttled so it never lands
+    // in the keypress critical path.
     const vectorSteps = [0, 1, 2, 4, 8];
-    if (e.key === 'PageUp' && !e.ctrlKey) {
-        const idx = vectorSteps.indexOf(vectorMinutes);
-        const next = idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1];
+    const applyVectorChange = (next) => {
         vectorMinutes = next;
         document.getElementById('sel-vector').value = vectorMinutes;
-        // The VECTOR toolbar button reads its display value from sel-vector via
-        // getSelectVal(). Setting .value directly doesn't fire 'change', so we
-        // also refresh the toolbar button cache, mirroring what the inc/dec
-        // button click path does after onInc/onDec.
-        refreshAllButtons();
-        lastRenderTime = 0;  // redraw vectors immediately instead of waiting for the render interval
-        saveSettingsToLocalStorage();
+        refreshButtonsByLabel('VECTOR');
+        lastRenderTime = 0;
+        // 250ms throttle: rapid PageUp presses don't write LS each tap.
+        if (!applyVectorChange._t) {
+            applyVectorChange._t = setTimeout(() => {
+                applyVectorChange._t = null;
+                saveSettingsToLocalStorage();
+            }, 250);
+        }
+    };
+    if (e.key === 'PageUp' && !e.ctrlKey) {
+        const idx = vectorSteps.indexOf(vectorMinutes);
+        applyVectorChange(idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1]);
         e.preventDefault(); return;
     }
     if (e.key === 'PageDown' && !e.ctrlKey) {
         const idx = vectorSteps.indexOf(vectorMinutes);
-        const next = idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0];
-        vectorMinutes = next;
-        document.getElementById('sel-vector').value = vectorMinutes;
-        refreshAllButtons();
-        lastRenderTime = 0;
-        saveSettingsToLocalStorage();
+        applyVectorChange(idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0]);
         e.preventDefault(); return;
     }
 
@@ -9704,6 +9708,21 @@ function refreshButton(key) {
 function refreshAllButtons() {
     for (const key of tbElements.keys()) {
         refreshButton(key);
+    }
+}
+
+// Cheap, targeted refresh of just the buttons whose spec.label matches the
+// given string. Avoids the per-button reflow that refreshAllButtons() forces
+// (`void el.offsetHeight`), which was responsible for the visible ~500ms
+// delay when PageUp/PageDown cycled vector length on a fully-built toolbar.
+function refreshButtonsByLabel(label) {
+    for (const [, entry] of tbElements) {
+        if (entry.spec?.label === label) {
+            const { spec, valDiv } = entry;
+            if (valDiv && spec.getValue) {
+                valDiv.textContent = String(spec.formatValue(spec.getValue()));
+            }
+        }
     }
 }
 

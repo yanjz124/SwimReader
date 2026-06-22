@@ -41,6 +41,7 @@ class ServerContext
     public required StarsBridge Stars { get; init; }
     public required ReplayRecorder EramRecorder { get; init; }
     public required ReplayServer ReplayServer { get; init; }
+    public required SectorTracker SectorTracker { get; init; }
 
     // ── Filesystem paths ────────────────────────────────────────────────────
     public required string WebRootPath { get; init; }

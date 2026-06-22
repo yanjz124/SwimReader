@@ -4907,6 +4907,10 @@ function loadSettingsFromLocalStorage() {
         if (settings.scopeBckgrd !== undefined) scopeBckgrd = settings.scopeBckgrd;
         if (settings.scopeBcklght !== undefined) scopeBcklght = settings.scopeBcklght;
         if (settings.tbVisible !== undefined) window._tbVisible = settings.tbVisible;
+        // DB-fields toggles
+        if (settings.showPortalFence !== undefined) showPortalFence = settings.showPortalFence;
+        if (settings.crrRdbEnabled !== undefined) crrRdbEnabled = settings.crrRdbEnabled;
+        if (settings.crrRdbOffset !== undefined) crrRdbOffset = settings.crrRdbOffset;
 
         // Sync button state with restored global variables
         tbState.bright.bckgrd = scopeBckgrd;
@@ -4995,6 +4999,11 @@ function saveSettingsToLocalStorage() {
         nexradBrightness,
         scopeBckgrd,
         scopeBcklght,
+        // DB-fields toggles — user explicitly asked these be persisted so
+        // PORTAL FENCE doesn't have to be turned off on every page refresh.
+        showPortalFence,
+        crrRdbEnabled,
+        crrRdbOffset,
         tbVisible: window._tbVisible,
         tbState: { bright: tbState.bright },
         // Map position/zoom
@@ -8929,7 +8938,11 @@ const TB_DB_FIELDS = {
             toggle('PORTAL\nFENCE', {
                 cls: 'tb-toggle-grey',
                 isOn: () => showPortalFence,
-                onToggle: (on) => { showPortalFence = on; invalidateAllMarkers(); },
+                onToggle: (on) => {
+                    showPortalFence = on;
+                    invalidateAllMarkers();
+                    saveSettingsToLocalStorage();   // persist across refreshes
+                },
             }),
         ],
         [
@@ -8962,6 +8975,7 @@ const TB_DB_FIELDS = {
                     crrRdbEnabled = on;
                     crrRdbOffset = 3;  // Reset offset to bottom-left when toggling on
                     invalidateAllMarkers();
+                    saveSettingsToLocalStorage();
                 },
             }),
             toggle('STA RDB', {
@@ -9711,18 +9725,16 @@ function refreshAllButtons() {
     }
 }
 
-// Cheap, targeted refresh of just the buttons whose spec.label matches the
-// given string. Avoids the per-button reflow that refreshAllButtons() forces
-// (`void el.offsetHeight`), which was responsible for the visible ~500ms
-// delay when PageUp/PageDown cycled vector length on a fully-built toolbar.
+// Refresh ONLY the buttons whose spec.label matches the given string. Goes
+// through the full refreshButton(key) path (which also syncs floating
+// tearoff clones, momentary indicators, etc.) so a label-targeted refresh
+// is indistinguishable from a click-driven one — just without iterating
+// all ~100 buttons on every keystroke. The previous "manual valDiv set"
+// shortcut skipped the tearoff-clone sync (line 9667), which is why
+// PageUp/PageDown looked broken when VECTOR lived in a floating tearoff.
 function refreshButtonsByLabel(label) {
-    for (const [, entry] of tbElements) {
-        if (entry.spec?.label === label) {
-            const { spec, valDiv } = entry;
-            if (valDiv && spec.getValue) {
-                valDiv.textContent = String(spec.formatValue(spec.getValue()));
-            }
-        }
+    for (const [key, entry] of tbElements) {
+        if (entry.spec?.label === label) refreshButton(key);
     }
 }
 

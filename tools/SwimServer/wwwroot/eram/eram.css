@@ -142,17 +142,45 @@ input[type="checkbox"]:checked::after {
 #sector-checkboxes::-webkit-scrollbar-track { background: #1a1a1a; }
 #sector-checkboxes::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
 #sector-checkboxes::-webkit-scrollbar-thumb:hover { background: #666; }
-#sector-checkboxes label {
-    cursor: default;
-    padding: 2px 4px;
-    border: 1px solid transparent;
-    border-radius: 2px;
-    transition: border-color 0.1s ease;
+.sec-empty { color: #666; font-size: 10px; }
+.sec-actions {
+    display: flex; align-items: center; gap: 4px;
+    margin-bottom: 4px;
 }
-#sector-checkboxes label:hover {
+.sec-actions .sec-count {
+    flex: 1; color: #888; font-size: 10px; font-variant-numeric: tabular-nums;
+}
+.sec-actions .sec-act {
+    background: #1a1a1a; color: #cccc44;
+    border: 1px solid #333;
+    padding: 1px 6px; font-family: inherit; font-size: 10px;
+    cursor: pointer; border-radius: 2px;
+}
+.sec-actions .sec-act:hover { border-color: #cccc44; background: #222; }
+.sec-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+    gap: 3px;
+}
+.sec-chip {
+    background: #1a1a1a;
+    color: #777;
+    border: 1px solid #2a2a2a;
+    padding: 2px 0;
+    text-align: center;
+    font-family: inherit; font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+    border-radius: 2px;
+    user-select: none;
+    transition: background-color 0.08s, color 0.08s, border-color 0.08s;
+}
+.sec-chip:hover { border-color: #cccc44; color: #bbb; }
+.sec-chip.on {
+    background: #2d2d10;
+    color: #cccc44;
     border-color: #cccc44;
 }
-#sector-checkboxes input[type="checkbox"] { cursor: pointer; margin-left: 4px; }
 
 .traffic-row { font-size: 12px; padding: 2px 0; display: flex; justify-content: space-between; }
 .traffic-row.own { color: #cccc44; }

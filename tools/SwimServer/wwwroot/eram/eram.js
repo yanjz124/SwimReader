@@ -3082,32 +3082,58 @@ function rebuildFacilityDropdown() {
 function rebuildSectorCheckboxes() {
     const container = document.getElementById('sector-checkboxes');
     if (!myFacility) {
-        container.innerHTML = '<span style="color:#666; font-size:10px;">Select facility first</span>';
+        container.innerHTML = '<span class="sec-empty">Select facility first</span>';
         return;
     }
     const secs = knownFacilities.has(myFacility) ? [...knownFacilities.get(myFacility)].sort() : [];
     if (secs.length === 0) {
-        container.innerHTML = '<span style="color:#666; font-size:10px;">No sectors found yet</span>';
+        container.innerHTML = '<span class="sec-empty">No sectors found yet</span>';
         return;
     }
-    let html = '';
+    // Compact chip grid: each sector is a button that toggles its membership
+    // in `mySectors`. Layout: 5-col grid (auto-shrinks via the CSS minmax).
+    // Quick-actions row up top: ALL / NONE so users don't have to click each chip.
+    const activeCount = secs.filter(s => mySectors.has(s)).length;
+    let html = '<div class="sec-actions">' +
+        `<span class="sec-count">${activeCount}/${secs.length}</span>` +
+        '<button type="button" class="sec-act" data-act="all">ALL</button>' +
+        '<button type="button" class="sec-act" data-act="none">NONE</button>' +
+        '</div><div class="sec-grid">';
     for (const sec of secs) {
-        const checked = mySectors.has(sec) ? ' checked' : '';
-        html += `<label style="display:block; padding:1px 0; cursor:pointer; color:#aaa;">` +
-            `<input type="checkbox" class="sec-chk" value="${esc(sec)}"${checked} style="accent-color:#cccc44;"> ${esc(sec)}` +
-            `</label>`;
+        const on = mySectors.has(sec);
+        html += `<button type="button" class="sec-chip${on ? ' on' : ''}" data-sec="${esc(sec)}">${esc(sec)}</button>`;
     }
+    html += '</div>';
     container.innerHTML = html;
-    container.querySelectorAll('.sec-chk').forEach(chk => {
-        chk.addEventListener('change', function () {
-            if (this.checked) {
-                mySectors.add(this.value);
+
+    container.querySelectorAll('.sec-chip').forEach(btn => {
+        btn.addEventListener('click', function () {
+            const sec = this.dataset.sec;
+            if (mySectors.has(sec)) {
+                mySectors.delete(sec);
+                this.classList.remove('on');
+                demoteSectorFlights(sec);
             } else {
-                mySectors.delete(this.value);
-                // Deactivating a sector: revert all flights associated with that sector to LDB
-                demoteSectorFlights(this.value);
+                mySectors.add(sec);
+                this.classList.add('on');
             }
-            invalidateAllMarkers(); // immediately update R indicators and FDB/LDB
+            const cnt = container.querySelector('.sec-count');
+            if (cnt) cnt.textContent = `${mySectors.size}/${secs.length}`;
+            invalidateAllMarkers();
+            saveSettingsToLocalStorage();
+        });
+    });
+    container.querySelectorAll('.sec-act').forEach(btn => {
+        btn.addEventListener('click', function () {
+            if (this.dataset.act === 'all') {
+                for (const s of secs) mySectors.add(s);
+            } else {
+                // demote any previously-tracked flight from removed sectors
+                for (const s of [...mySectors]) demoteSectorFlights(s);
+                mySectors.clear();
+            }
+            rebuildSectorCheckboxes();
+            invalidateAllMarkers();
             saveSettingsToLocalStorage();
         });
     });

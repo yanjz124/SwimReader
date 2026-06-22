@@ -170,7 +170,10 @@ static class EramRoutes
                         })
                         .ToArray()
                 })
-                .OrderByDescending(r => r.totalTracks)
+                // Z-prefix ARTCCs first (alphabetical), then everything else
+                // (TRACONs / towers) alphabetical. Within each band ties are
+                // broken by name so the order is stable across refreshes.
+                .OrderBy(r => r.facility.StartsWith("Z", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(r => r.facility, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             return Results.Json(rows, ctx.JsonOpts);

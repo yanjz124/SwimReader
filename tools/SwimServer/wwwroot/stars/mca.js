@@ -868,31 +868,17 @@ function cmdRangeRings(parts) {
   if (Number.isFinite(interval)) prefSet.RangeRingSpacing = Math.floor(interval);
 }
 
-// ── KeyCode.WX  weather overlay control (CRC docs § DCB / WX)
-// Accepted forms (CRC spec):
-//   WX <1-6>     toggle individual intensity layer
-//   WX A         enable all layers + turn the overlay on
-//   WX OFF       disable the entire overlay (clears the scope)
-//   WX ON        enable the overlay (don't change individual layers)
-//   WX <prod>    switch to a different NWS product (p94r0, p38cr, …)
+// ── KeyCode.WX — RadarWindow.cs:2542-2557 ─────────────────────────────────
+// In real STARS the WX1-WX6 buttons live on the DCB (RadarWindow.cs:3568-3572
+// & DcbWxButtonClick at :3886). Wired in scope.js handleWxToggle().
+// This Preview Area handler exists only because the WPF code path accepts
+// "WX <1-6> ENTER" too — DcbButtonClick / KeyCode.WX both end up at the
+// same LevelsEnabled[i] flip. We forward to the DCB toggle so the buttons
+// stay in sync.
 function cmdWeather(parts) {
-  if (parts.length < 2) return;
-  const arg = (parts[1] || "").toUpperCase();
-  const NX = window.Nexrad;
-  if (!NX) { setResponse("WX UNAVAIL", true); return; }
-  if (arg === "A" || arg === "ALL")   { NX.enable(true);  if (prefSet.Nexrad) prefSet.Nexrad.levels = 0b111111; setResponse("WX ALL", true); return; }
-  if (arg === "OFF")                  { NX.enable(false); setResponse("WX OFF", true); return; }
-  if (arg === "ON")                   { NX.enable(true);  setResponse("WX ON",  true); return; }
-  if (/^[1-6]$/.test(arg))            { NX.toggleLevel(parseInt(arg, 10)); NX.enable(true); setResponse(`WX ${arg}`, true); return; }
-  // Product code (e.g. p94r0, p38cr) — pass through to nexrad.js setProduct.
-  if (/^[A-Z0-9-]{4,6}$/i.test(arg))  { NX.setProduct(arg.toLowerCase()); NX.enable(true); setResponse(`WX ${arg.toLowerCase()}`, true); return; }
-  // Also keep the legacy starsState.Nexrad.LevelsEnabled in sync for any
-  // older code paths still reading it.
-  if (window.starsState?.Nexrad && /^[1-6]$/.test(arg)) {
-    const arr = window.starsState.Nexrad.LevelsEnabled ||= [];
-    const idx = parseInt(arg, 10) - 1;
-    arr[idx] = !arr[idx];
-  }
+  if (parts.length < 2 || parts[1].length !== 1) return;
+  const level = parseInt(parts[1], 10);
+  if (level >= 1 && level <= 6 && window.handleWxToggle) window.handleWxToggle(level);
 }
 
 // ── KeyCode.RecenterEverything  "RECENTER <ICAO>" (RadarWindow.cs:2558-2577)

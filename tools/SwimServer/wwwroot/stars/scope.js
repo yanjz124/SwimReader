@@ -1141,39 +1141,46 @@ function positionSymbolText(t, fp) {
 
 function drawPosition(t, posNow) {
   const fp = trackToFp.get(t.Guid);
-  // Position-symbol colour per RadarWindow.cs:
-  //   primary-only return (no beacon code)            → ReturnColor       (blue, line 72)
-  //   beacon target (has squawk, not owned)           → BeaconTargetColor (green, line 74)
-  //   owned / inbound handoff                          → OwnedColor       (white, line 83)
-  //   marked (cyan)                                    → Selected
-  //   emergency / SPC (7500/7600/7700)                 → Emerg
-  // DataBlockColor / ReturnColor were swapped before; this is the corrected priority.
+  // DGScope splits the position symbol into TWO independently-coloured
+  // primitives (RadarWindow.cs:6045-6109 vs :5469/5582):
+  //   • Primary RETURN (filled dot)  — always ReturnColor (blue). Radar
+  //                                    sweep echo; doesn't care who owns
+  //                                    the track.
+  //   • Beacon OVERLAY (glyph)       — BeaconTargetColor (green) by
+  //                                    default. Promotes to OwnedColor
+  //                                    (white) when this position
+  //                                    indicator owns the track. Promotes
+  //                                    to Emerg / Selected for those
+  //                                    states. PrimaryIndicatorOnly
+  //                                    targets (no beacon code) skip the
+  //                                    glyph and only show the blue dot.
   const inbound = fp?.PendingHandoff && fp.PendingHandoff === ownTcp();
   const hasBeacon = !!(t.Squawk && t.Squawk !== "0000" && t.Squawk !== "1200");
-  let baseColor;
-  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) baseColor = COLORS.Emerg;
-  else if (t._marked)                                              baseColor = COLORS.Selected;
-  else if (fp?.Owner === ownTcp() || inbound)                      baseColor = COLORS.Owned;
-  else if (hasBeacon || fp)                                        baseColor = COLORS.BeaconTarget;  // green
-  else                                                             baseColor = COLORS.Return;        // primary-only blue
+  let glyphColor;
+  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) glyphColor = COLORS.Emerg;
+  else if (t._marked)                                              glyphColor = COLORS.Selected;
+  else if (fp?.Owner === ownTcp() || inbound)                      glyphColor = COLORS.Owned;
+  else                                                             glyphColor = COLORS.BeaconTarget;  // green for unowned beacon
 
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;
 
   // Primary return — filled circle, FMATargetSymbols.Radius=3 (cs:616,6141-6143).
-  ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
+  // ALWAYS ReturnColor (blue) — independent of ownership.
+  ctx.fillStyle = adjusted(COLORS.Return, prefSet.Brightness.Position);
   ctx.beginPath();
   ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Glyph colour matches the return so the whole position symbol is one
-  // colour — owned white, beacon green, primary-only blue, emergency red,
-  // marked cyan. (Owned only renders white when signed on; see ownTcp.)
-  ctx.fillStyle = adjusted(baseColor, prefSet.Brightness.Position);
-  ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
-  ctx.textBaseline = "middle";
-  ctx.textAlign = "center";
-  ctx.fillText(positionSymbolText(t, fp), px, py);
+  // Beacon overlay glyph — only if there's a beacon code OR a flight plan.
+  // Primary-only returns (no squawk, no FP) show just the blue dot.
+  if (hasBeacon || fp) {
+    ctx.fillStyle = adjusted(glyphColor, prefSet.Brightness.Position);
+    ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.fillText(positionSymbolText(t, fp), px, py);
+  }
 }
 
 // ── Phase 9: J-Ring + MinSep + STCA ─────────────────────────────────────────
@@ -1711,10 +1718,40 @@ function mountDcb() {
   dcb.on("briteAdjust", (which, d) => handleBriteAdjust(which, d));
   dcb.on("cszAdjust", (which, d) => handleCszAdjust(which, d));
   dcb.on("mapToggle", (idx) => handleMapToggle(idx));
+  // WX1-WX6: per RadarWindow.cs:3886-3896, each click toggles that
+  // intensity layer (Nexrad.LevelsEnabled[i] flip). Buttons live on the
+  // main DCB itself (cs:3568-3573), not in a submenu. We mirror that —
+  // wxLevels[] drives the button's active state; Nexrad.draw() reads it
+  // via prefSet.Nexrad.levels.
+  dcb.on("wxToggle", (n) => handleWxToggle(n));
   dcb.on("click", ({ id }) => handleDcbClick(id));
   dcb.render();
   // Re-render DCB on prefSet changes (cheap; only DOM in DCB region).
   setInterval(() => dcb.render(), 1000);
+}
+
+// DcbWxButtonClick (RadarWindow.cs:3886-3896) — toggles Nexrad.LevelsEnabled[i].
+// Click any WX# button to flip that layer; turning on a layer when the
+// overlay is off also turns the master enable on (so users don't have to
+// chase a separate switch).
+function handleWxToggle(n) {
+  const idx = n - 1;
+  if (idx < 0 || idx > 5) return;
+  starsState.wxLevels[idx] = !starsState.wxLevels[idx];
+  if (prefSet.Nexrad) {
+    if (starsState.wxLevels[idx]) prefSet.Nexrad.levels |= (1 << idx);
+    else                          prefSet.Nexrad.levels &= ~(1 << idx);
+    // If any layer is on, ensure the master enable is on too. If the user
+    // turned the last layer off, leave the master alone — they may want
+    // it back later without re-enabling each band.
+    if (starsState.wxLevels.some(Boolean)) prefSet.Nexrad.enabled = true;
+  }
+  if (window.Nexrad && !window.Nexrad.getStation()) {
+    // First WX click — kick off the image fetch in case init() hadn't yet.
+    window.Nexrad.init?.();
+  }
+  if (dcb) dcb.render();
+  _afterPrefChange();
 }
 
 function _afterPrefChange() {
@@ -1871,6 +1908,9 @@ window.ClockPhase       = ClockPhase;
 // Exposed for the NEXRAD overlay (nexrad.js) which needs to project image
 // corners from radar-centred lat/lon into the current scope view.
 window.geoToScreen      = geoToScreen;
+// Exposed so mca.js's KeyCode.WX path can route through the same DCB
+// toggle the WX1-6 buttons use (RadarWindow.cs:3886).
+window.handleWxToggle   = handleWxToggle;
 
 // ── URL state persistence ───────────────────────────────────────────────────
 // Encodes range, leader length, ptl length, range-ring spacing, brightness

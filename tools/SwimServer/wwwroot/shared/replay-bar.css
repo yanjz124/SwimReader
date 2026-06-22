@@ -1,0 +1,153 @@
+/* ─────────────────────────────────────────────────────────────────────────
+ * Shared replay bar used by ERAM, ASDE-X, STARS.
+ * Floats at bottom-center, ~ATC-tooling aesthetic, minimizable to a thin
+ * pill at the screen edge. CSS variables let each host scope tweak accent
+ * + background colors to match its own theme.
+ * ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --rb-bg:        rgba(20, 20, 20, 0.94);
+  --rb-bg-solid:  #141414;
+  --rb-border:    #2a2a2a;
+  --rb-text:      #d4d4aa;
+  --rb-dim:       #888;
+  --rb-accent:    #cccc44;
+  --rb-good:      #6f6;
+  --rb-warn:      #ff8c00;
+  --rb-stop:      #ff4444;
+  --rb-blue:      #6cf;
+}
+
+#rb-bar {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9100;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  min-width: 480px;
+  max-width: 92vw;
+  background: var(--rb-bg);
+  color: var(--rb-text);
+  border: 1px solid var(--rb-border);
+  border-radius: 8px;
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+  user-select: none;
+  pointer-events: auto;
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+/* Minimized state: collapses to a thin tab at the bottom edge. */
+#rb-bar.rb-min {
+  min-width: 0;
+  padding: 4px 14px;
+  bottom: 0;
+  border-radius: 8px 8px 0 0;
+  border-bottom: 0;
+  cursor: pointer;
+}
+#rb-bar.rb-min .rb-body { display: none; }
+#rb-bar.rb-min .rb-handle { color: var(--rb-dim); font-size: 11px; }
+
+#rb-bar.rb-hidden { opacity: 0; transform: translate(-50%, 60px); pointer-events: none; }
+
+/* Title / handle */
+.rb-handle {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  color: var(--rb-accent);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.rb-handle .rb-status {
+  flex: 1;
+  text-align: right;
+  color: var(--rb-dim);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rb-handle .rb-btns { display: flex; gap: 4px; }
+.rb-handle button {
+  background: transparent;
+  color: var(--rb-dim);
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.rb-handle button:hover { color: var(--rb-text); }
+
+.rb-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.rb-body input,
+.rb-body select,
+.rb-body button {
+  background: #1a1a1a;
+  color: var(--rb-text);
+  border: 1px solid #333;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.rb-body input { cursor: text; min-width: 0; }
+.rb-body input::placeholder { color: #555; }
+.rb-body button:hover { background: #222; color: var(--rb-accent); }
+.rb-body button.rb-go { background: #064; color: #cfc; }
+.rb-body button.rb-stop { background: #401010; color: #fff; border-color: #602020; }
+.rb-body button.rb-active { background: var(--rb-accent); color: #000; }
+.rb-body select { padding: 3px; }
+
+#rb-time {
+  font-size: 12px;
+  color: var(--rb-accent);
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+#rb-range {
+  color: var(--rb-dim);
+  font-size: 10px;
+  margin-top: 2px;
+}
+#rb-scrub {
+  flex: 1;
+  min-width: 160px;
+  height: 18px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+#rb-scrub::-webkit-slider-runnable-track {
+  height: 4px;
+  background: #2a2a2a;
+  border-radius: 2px;
+}
+#rb-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px; height: 12px;
+  background: var(--rb-accent);
+  border: 0;
+  border-radius: 50%;
+  margin-top: -4px;
+}
+#rb-scrub::-moz-range-track { height: 4px; background: #2a2a2a; border-radius: 2px; }
+#rb-scrub::-moz-range-thumb { width: 12px; height: 12px; background: var(--rb-accent); border: 0; border-radius: 50%; }
+
+/* Hide controls until replay started (start mode only shows date input + GO). */
+.rb-playback { display: none; }
+#rb-bar.rb-playing .rb-pickrow { display: none; }
+#rb-bar.rb-playing .rb-playback { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }

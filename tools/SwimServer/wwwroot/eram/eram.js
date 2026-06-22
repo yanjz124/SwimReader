@@ -6630,7 +6630,7 @@ function processCommand(cmd) {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // XX — Facility/sector selection
+    // XX — Facility/sector selection + Replay control
     // XX FAC ZDC — select facility
     // XX SEC 01 02 — select sectors
     // XX FAC ZDC SEC 03 05 — select facility + sectors
@@ -6638,10 +6638,55 @@ function processCommand(cmd) {
     // XX SEC -03 — remove sector
     // XX SEC NONE — deselect all sectors
     // XX SEC ALL — select all sectors
+    // XX RP | XX REPLAY                       — open/toggle the replay bar
+    // XX REPLAY <time>                        — open + start replay at Zulu time
+    //   Accepted time formats:
+    //     YYYY-MM-DD HH:MM[:SS]    (ISO-ish; trailing Z optional)
+    //     HHMMSSMMDDYYYY           (14 packed digits, e.g. 235906222026)
+    //     HHMMMMDDYYYY             (12 packed digits, e.g. 235906222026 short)
+    //     HHMM[Z] DDMMMYYYY        (e.g. 2359Z 22JUN2026 or 2359 22JUN2026)
+    //     HHMM[SS]                 (today UTC; if future, slides to yesterday)
+    // XX REPLAY +<sec>|-<sec>                  — seek relative (e.g. +60 or -300)
+    // XX REPLAY 0.5X|1X|2X|4X|8X|16X|60X       — set playback speed
+    // XX REPLAY STOP | XX RP STOP              — back to LIVE
+    // XX REPLAY MIN | XX RP MIN                — minimize the bar
     // ═══════════════════════════════════════════════════════════════════════
     if (verb === 'XX') {
         const args = parts.slice(1).map(s => s.toUpperCase());
-        if (args.length === 0) return { feedback: [{ type: 'err', text: 'XX FAC <id> | XX SEC <sectors>' }] };
+        if (args.length === 0) return { feedback: [{ type: 'err', text: 'XX FAC <id> | XX SEC <sectors> | XX REPLAY [time]' }] };
+
+        // XX RP | XX REPLAY  — replay control. Delegates to the shared bar.
+        if (args[0] === 'RP' || args[0] === 'REPLAY') {
+            const RB = window.ReplayBar;
+            if (!RB) return { feedback: [{ type: 'err', text: 'REPLAY BAR NOT READY' }] };
+            const sub = args.slice(1);
+            if (sub.length === 0) { RB.toggle(); return { feedback: [{ type: 'ok', text: RB.isOpen() ? 'REPLAY OPEN' : 'REPLAY CLOSED' }] }; }
+            if (sub[0] === 'STOP' || sub[0] === 'LIVE')  { RB.stop(); return { feedback: [{ type: 'ok', text: 'LIVE' }] }; }
+            if (sub[0] === 'MIN'  || sub[0] === 'MINIMIZE') { RB.open(); RB.minimize(true); return { feedback: [{ type: 'ok', text: 'REPLAY MIN' }] }; }
+            // Relative seek: +N or -N (seconds)
+            const relMatch = sub[0].match(/^([+-])(\d+)$/);
+            if (relMatch) {
+                if (!RB.isActive()) return { feedback: [{ type: 'err', text: 'NO REPLAY' }] };
+                const sec = parseInt(relMatch[2], 10) * (relMatch[1] === '-' ? -1 : 1);
+                RB.relSeek(sec);
+                return { feedback: [{ type: 'ok', text: `SEEK ${relMatch[1]}${relMatch[2]}s` }] };
+            }
+            // Speed: e.g. 0.5X, 2X
+            const spdMatch = sub[0].match(/^(\d+(?:\.\d+)?)X$/);
+            if (spdMatch && sub.length === 1) {
+                if (!RB.isActive()) return { feedback: [{ type: 'err', text: 'NO REPLAY' }] };
+                RB.setSpeed(spdMatch[1]);
+                return { feedback: [{ type: 'ok', text: `SPEED ${spdMatch[1]}X` }] };
+            }
+            // Otherwise: treat the rest as a time string (could be 1-2 tokens, e.g. "2359 22JUN2026")
+            const timeStr = sub.join(' ');
+            const d = RB.parseZulu(timeStr);
+            if (!d) return { feedback: [{ type: 'err', text: `BAD TIME: ${timeStr}` }] };
+            // If already in replay → seek; else start fresh.
+            if (RB.isActive()) { RB.seek(d.toISOString()); return { feedback: [{ type: 'ok', text: `SEEK ${d.toISOString().slice(11,19)}Z` }] }; }
+            const ok = RB.startAt(d);
+            return { feedback: [{ type: ok ? 'ok' : 'err', text: ok ? `REPLAY ${d.toISOString().slice(0,19)}Z` : 'REPLAY FAILED' }] };
+        }
 
         let newFacility = null;
         let secArgs = null;
@@ -10136,28 +10181,18 @@ if (tbState.masterVisible) {
 })();  // end toolbar IIFE
 
 // ════════════════════════════════════════════════════════════════════════════
-// Replay system
+// Replay system — delegates UI to /shared/replay-bar.js. The callbacks here
+// stitch its high-level events (snapshot/batch/remove/time/seek/stop/start)
+// into ERAM's existing flight-table, marker rendering, NEXRAD archive swap,
+// and clock display.
 // ════════════════════════════════════════════════════════════════════════════
 (function() {
 
-const replaySection = document.getElementById('replay-section');
 const replayToggleBtn = document.getElementById('replay-toggle-btn');
-const replayGoBtn = document.getElementById('replay-go');
-const replayStartInput = document.getElementById('replay-start');
-const replayBar = document.getElementById('replay-bar');
-const replayPauseBtn = document.getElementById('replay-pause');
-const replaySpeedSel = document.getElementById('replay-speed');
-const replayTimeEl = document.getElementById('replay-time');
-const replayStatusEl = document.getElementById('replay-status');
-const replayStopBtn = document.getElementById('replay-stop');
-const replayRangeEl = document.getElementById('replay-range');
 
-let replayWs = null;
-let replayPaused = false;
 let replayPendingFlights = new Map(); // gufi → latest flight object (merged across batches)
 let replayPendingRemoves = []; // gufi list
 let replayRafId = null;
-let _vpTimer = null;
 
 // Current map bounds expanded by a 50% buffer, as the server's viewport filter expects.
 // The buffer keeps edge tracks (and their leaders/vectors) present and absorbs small pans.
@@ -10168,20 +10203,6 @@ function paddedBounds() {
         maxLat: b.getNorth(), maxLon: b.getEast()
     };
 }
-
-// Push the current viewport to the replay server (it responds with a region snapshot).
-function sendViewport() {
-    if (!replayActive || !replayWs || replayWs.readyState !== WebSocket.OPEN) return;
-    replayWs.send(JSON.stringify(Object.assign({ cmd: 'viewport' }, paddedBounds())));
-}
-
-// Debounce viewport updates so a drag/zoom only sends once it settles.
-function scheduleViewport() {
-    if (!replayActive) return;
-    if (_vpTimer) clearTimeout(_vpTimer);
-    _vpTimer = setTimeout(sendViewport, 300);
-}
-map.on('moveend zoomend', scheduleViewport);
 
 function replayFlush() {
     replayRafId = null;
@@ -10199,277 +10220,105 @@ function replayFlush() {
         for (const [, f] of replayPendingFlights) {
             processFlightUpdate(f);
         }
-        replayStatusEl.textContent = `Playing — ${flights.size} flights`;
         replayPendingFlights.clear();
     }
 }
 
-// Toggle replay section visibility
-replayToggleBtn.addEventListener('click', () => {
-    const vis = replaySection.style.display === 'none';
-    replaySection.style.display = vis ? '' : 'none';
-    replayToggleBtn.style.color = vis ? '#cccc44' : '';
-    if (vis) fetchReplayRange();
-});
 
-// Fetch available replay range
-async function fetchReplayRange() {
-    try {
-        const resp = await fetch('/api/replay/range');
-        const data = await resp.json();
-        if (data.eram) {
-            const s = new Date(data.eram.start);
-            const e = new Date(data.eram.end);
-            replayRangeEl.textContent = `Available: ${fmtDt(s)} — ${fmtDt(e)} (${data.eram.hours}h, ${data.eram.totalSizeMB.toFixed(1)} MB)`;
-            // Default start input to 1 hour ago, in Zulu (24-hour, UTC).
-            replayStartInput.value = fmtZuluInput(new Date(Date.now() - 3600000));
-        } else {
-            replayRangeEl.textContent = 'No replay data yet (recording...)';
+function applyReplaySnapshot(arr) {
+    // Reconcile instead of clear-all: update/add flights in the snapshot, then drop only
+    // the ones no longer present (e.g. panned out of view).
+    const seen = new Set();
+    for (const f of arr) {
+        f._clientLastUpdate = performance.now();
+        if (f.assignedAltitude != null && f.reportedAltitude != null) {
+            const aAlt = Math.round(f.assignedAltitude / 100);
+            const rAlt = Math.round(f.reportedAltitude / 100);
+            const d = rAlt - aAlt;
+            f._altInitialSide = Math.abs(d) <= 2 ? 0 : (d < 0 ? -1 : 1);
         }
-    } catch(e) {
-        replayRangeEl.textContent = 'Error fetching replay range';
+        flights.set(f.gufi, f);
+        trackFacility(f);
+        if (f.clearanceHeading || f.clearanceSpeed || f.clearanceText) {
+            hsfShowMap.add(f.gufi);
+        }
+        seen.add(f.gufi);
+    }
+    for (const gufi of [...flights.keys()]) {
+        if (seen.has(gufi)) continue;
+        flights.delete(gufi);
+        flightHistory.delete(gufi);
+        const m = markers.get(gufi);
+        if (m) { map.removeLayer(m); markers.delete(gufi); }
     }
 }
 
-// All replay times are Zulu (UTC), 24-hour clock — no local time, no AM/PM.
-function fmtDt(d) {
-    return d.toISOString().replace('T', ' ').slice(0, 16) + 'Z';
-}
-
-// Format a Date as the Zulu text the start input expects: "YYYY-MM-DD HH:MM:SS".
-function fmtZuluInput(d) {
-    return d.toISOString().replace('T', ' ').slice(0, 19);
-}
-
-// Parse a Zulu start-time string entered by the user. Accepts "YYYY-MM-DD HH:MM[:SS]"
-// (space or T separator, optional trailing Z), and ALWAYS interprets it as UTC.
-function parseZulu(s) {
-    if (!s) return null;
-    s = s.trim().replace(/\s*[zZ]$/, '').replace(' ', 'T');
-    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
-    if (!m) return null;
-    const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6] || '00'}Z`);
-    return isNaN(d.getTime()) ? null : d;
-}
-
-// Start replay
-replayGoBtn.addEventListener('click', () => {
-    const d = parseZulu(replayStartInput.value);
-    if (!d) {
-        replayRangeEl.textContent = 'Enter Zulu start time as YYYY-MM-DD HH:MM:SS';
-        replayRangeEl.style.color = '#ff8c00';
-        return;
-    }
-    replayRangeEl.style.color = '';
-    startReplay(d.toISOString());
-});
-
-function startReplay(startTime) {
-    // Close any existing replay connection first
-    if (replayWs) { replayWs.onclose = null; replayWs.close(); replayWs = null; }
-    // Disconnect live WS
-    if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
-    wsConnected = false;
-
-    // Clear current state
+function clearReplayState() {
     for (const [, m] of markers) map.removeLayer(m);
     markers.clear();
     flights.clear();
     flightHistory.clear();
+    replayPendingFlights.clear();
+    replayPendingRemoves = [];
+    if (replayRafId) { cancelAnimationFrame(replayRafId); replayRafId = null; }
+}
 
-    replayActive = true;
-    replayPaused = false;
-    _nexradReplaySlot = null;  // force a NEXRAD archive swap on the first replay frame
-    replayPauseBtn.textContent = '\u23F8'; // pause icon
-    replayBar.style.display = '';
-    replayStatusEl.textContent = 'Connecting...';
-
-    document.getElementById('connection-status').textContent = 'REPLAY';
-    document.getElementById('connection-status').style.color = '#ff8c00';
-
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const speed = replaySpeedSel.value || '1';
-    // Viewport filtering: stream only tracks within the visible area (+ buffer) so the
-    // client isn't parsing/processing thousands of off-screen NAS tracks. Bounds are sent
-    // at connect (URL) and on every pan/zoom (viewport command); the server re-snapshots
-    // the new region so panning never reveals blank areas.
-    const vp = paddedBounds();
-    const vpQuery = `&minLat=${vp.minLat}&minLon=${vp.minLon}&maxLat=${vp.maxLat}&maxLon=${vp.maxLon}`;
-    replayWs = new WebSocket(`${proto}//${location.host}/replay/ws?start=${encodeURIComponent(startTime)}&speed=${speed}${vpQuery}`);
-
-    replayWs.onopen = () => {
-        replayStatusEl.textContent = 'Loading...';
-    };
-
-    replayWs.onclose = () => {
-        if (replayActive) {
-            replayStatusEl.textContent = 'Disconnected';
-        }
-    };
-
-    replayWs.onmessage = (evt) => {
-        const msg = JSON.parse(evt.data);
-
-        // Update replay time display + URL
-        if (msg.replayTime) {
-            replayCurrentTime = msg.replayTime;
-            const t = new Date(msg.replayTime);
-            replayTimeEl.textContent = t.toISOString().replace('T', ' ').slice(0, 19) + 'Z';
-            renderClock();  // keep the scope clock on replay time
-            replayThrottleSave();
-            // Swap NEXRAD to the matching archive frame when the replay clock crosses a 5-min slot
+function initReplayBar() {
+    if (!window.ReplayBar) { setTimeout(initReplayBar, 50); return; }
+    window.ReplayBar.init({
+        wsPath:   '/replay/ws',
+        rangeKey: 'eram',
+        viewport: paddedBounds,
+        onStart: () => {
+            if (_ws) { _ws.onclose = null; _ws.close(); _ws = null; }
+            wsConnected = false;
+            clearReplayState();
+            replayActive = true;
+            _nexradReplaySlot = null;
+            document.getElementById('connection-status').textContent = 'REPLAY';
+            document.getElementById('connection-status').style.color = '#ff8c00';
+        },
+        onTime: (iso) => {
+            replayCurrentTime = iso;
+            renderClock();
             if (nexradLevel > 0) {
                 const slot = nexradReplayTime();
                 if (slot && slot !== _nexradReplaySlot) { _nexradReplaySlot = slot; refreshNexrad(); }
             }
-        }
-
-        if (msg.type === 'snapshot') {
-            // Reconcile instead of clear-all: update/add flights in the snapshot, then drop only
-            // the ones no longer present (e.g. panned out of view). Markers that remain on screen
-            // are left untouched, so a viewport re-snapshot (on pan/zoom) doesn't flash/blink.
-            const seen = new Set();
-            for (const f of msg.data) {
-                f._clientLastUpdate = performance.now();
-                if (f.assignedAltitude != null && f.reportedAltitude != null) {
-                    const aAlt = Math.round(f.assignedAltitude / 100);
-                    const rAlt = Math.round(f.reportedAltitude / 100);
-                    const d = rAlt - aAlt;
-                    f._altInitialSide = Math.abs(d) <= 2 ? 0 : (d < 0 ? -1 : 1);
-                }
-                flights.set(f.gufi, f);
-                trackFacility(f);
-                if (f.clearanceHeading || f.clearanceSpeed || f.clearanceText) {
-                    hsfShowMap.add(f.gufi);
-                }
-                seen.add(f.gufi);
-            }
-            for (const gufi of [...flights.keys()]) {
-                if (seen.has(gufi)) continue;
-                flights.delete(gufi);
-                flightHistory.delete(gufi);
-                const m = markers.get(gufi);
-                if (m) { map.removeLayer(m); markers.delete(gufi); }
-            }
-            replayStatusEl.textContent = `Playing — ${flights.size} flights`;
-        } else if (msg.type === 'batch') {
-            // Merge into pending map — latest update per gufi wins
-            for (const f of msg.data) {
-                if (f.gufi) replayPendingFlights.set(f.gufi, f);
-            }
+        },
+        onSnapshot: (arr) => { applyReplaySnapshot(arr); },
+        onBatch: (arr) => {
+            for (const f of arr) if (f.gufi) replayPendingFlights.set(f.gufi, f);
             if (!replayRafId) replayRafId = requestAnimationFrame(replayFlush);
-        } else if (msg.type === 'remove') {
-            replayPendingRemoves.push(msg.data.gufi);
+        },
+        onRemove: (data) => {
+            if (data && data.gufi) replayPendingRemoves.push(data.gufi);
             if (!replayRafId) replayRafId = requestAnimationFrame(replayFlush);
-        } else if (msg.type === 'replay_start') {
-            replayStatusEl.textContent = 'Seeking...';
-        } else if (msg.type === 'replay_seek') {
-            // Clear state on seek
-            for (const [, m] of markers) map.removeLayer(m);
-            markers.clear();
-            flights.clear();
-            flightHistory.clear();
-            replayStatusEl.textContent = 'Seeking...';
-        } else if (msg.type === 'replay_gap') {
-            replayStatusEl.textContent = `Gap: ${msg.from?.slice(11,19) || ''} — ${msg.to?.slice(11,19) || ''}`;
-        } else if (msg.type === 'replay_end') {
-            replayStatusEl.textContent = 'End of replay data';
-        } else if (msg.type === 'replay_error') {
-            replayStatusEl.textContent = msg.message || 'Error';
-        }
-    };
-}
+        },
+        onSeek: () => clearReplayState(),
+        onStop: () => {
+            replayActive = false;
+            replayCurrentTime = null;
+            clearReplayState();
+            _nexradReplaySlot = null;
+            renderClock();
+            if (nexradLevel > 0) refreshNexrad();
+            saveSettingsToLocalStorage();
+            connectWs();
+        },
+    });
 
-// Pause/resume
-replayPauseBtn.addEventListener('click', () => {
-    if (!replayWs || replayWs.readyState !== WebSocket.OPEN) return;
-    replayPaused = !replayPaused;
-    replayWs.send(JSON.stringify({ cmd: replayPaused ? 'pause' : 'resume' }));
-    replayPauseBtn.textContent = replayPaused ? '\u25B6' : '\u23F8';
-    replayStatusEl.textContent = replayPaused ? 'Paused' : `Playing — ${flights.size} flights`;
-});
+    // Push viewport updates when the map moves.
+    map.on('moveend zoomend', () => window.ReplayBar.scheduleViewportSend && window.ReplayBar.scheduleViewportSend());
 
-// Speed change
-replaySpeedSel.addEventListener('change', () => {
-    if (!replayWs || replayWs.readyState !== WebSocket.OPEN) return;
-    replayWs.send(JSON.stringify({ cmd: 'speed', value: parseFloat(replaySpeedSel.value) }));
-});
-
-// Stop replay → back to live
-replayStopBtn.addEventListener('click', stopReplay);
-
-function stopReplay() {
-    replayActive = false;
-    replayCurrentTime = null;
-    replayPendingFlights.clear();
-    replayPendingRemoves = [];
-    if (replayRafId) { cancelAnimationFrame(replayRafId); replayRafId = null; }
-    if (replayWs) { replayWs.onclose = null; replayWs.close(); replayWs = null; }
-    replayBar.style.display = 'none';
-    replayStatusEl.textContent = '';
-    replayTimeEl.textContent = '';
-    _nexradReplaySlot = null;
-    renderClock();           // back to wall-clock
-    if (nexradLevel > 0) refreshNexrad();  // back to live weather
-    saveSettingsToLocalStorage();
-    updateReplayUrl();  // strip replay params from the URL when returning to live
-
-    // Reconnect to live
-    connectWs();
-}
-
-// Reflect the current replay position + speed in the URL hash so the page can be shared:
-// opening the link auto-starts replay at that time/speed (see the auto-start block below).
-// Other hash params (toolbar state etc.) are preserved.
-function updateReplayUrl() {
-    try {
-        const params = new URLSearchParams(window.location.hash.slice(1));
-        if (replayActive && replayCurrentTime) {
-            params.set('replay', replayCurrentTime);
-            params.set('rspd', replaySpeedSel.value || '1');
-        } else {
-            params.delete('replay');
-            params.delete('rspd');
-        }
-        const h = params.toString();
-        history.replaceState(null, '', h ? '#' + h : location.pathname + location.search);
-    } catch {}
-}
-
-// Copy the current (replay-stamped) page URL to the clipboard for easy sharing.
-function copyReplayLink() {
-    updateReplayUrl();
-    const url = location.href;
-    const done = () => { replayStatusEl.textContent = 'Link copied'; };
-    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(done, done);
-    else done();
-}
-const replayShareBtn = document.getElementById('replay-share');
-if (replayShareBtn) replayShareBtn.addEventListener('click', copyReplayLink);
-
-// Throttled save during replay (every 3 seconds) — persist settings + update the shareable URL.
-let _replaySaveTimer = null;
-function replayThrottleSave() {
-    if (_replaySaveTimer) return;
-    _replaySaveTimer = setTimeout(() => {
-        _replaySaveTimer = null;
-        saveSettingsToLocalStorage();
-        updateReplayUrl();
-    }, 3000);
-}
-
-// Auto-start replay from URL params
-{
-    const initParams = new URLSearchParams(window.location.hash.slice(1));
-    const replayParam = initParams.get('replay');
-    if (replayParam) {
-        const rspd = initParams.get('rspd');
-        if (rspd) replaySpeedSel.value = rspd;
-        replaySection.style.display = '';
-        replayToggleBtn.style.color = '#cccc44';
-        // Delay slightly to let the live WS connect first, then override
-        setTimeout(() => startReplay(replayParam), 500);
+    // Sidebar REPLAY launcher toggles the floating bar.
+    if (replayToggleBtn) {
+        replayToggleBtn.addEventListener('click', () => {
+            window.ReplayBar.toggle();
+            replayToggleBtn.style.color = window.ReplayBar.isOpen() ? '#cccc44' : '';
+        });
     }
 }
+initReplayBar();
 
 })();  // end replay IIFE

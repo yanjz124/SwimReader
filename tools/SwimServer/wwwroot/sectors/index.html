@@ -72,13 +72,17 @@
 
   .sec-grid {
     display:grid;
-    grid-template-columns:repeat(auto-fill, minmax(110px, 1fr));
+    grid-template-columns:repeat(auto-fill, minmax(120px, 1fr));
     gap:8px;
   }
   .sec-cell {
     background:#1a1a1a; border:1px solid #333; border-radius:3px;
-    padding:8px; display:flex; flex-direction:column; gap:2px;
+    padding:8px; display:flex; flex-direction:column; gap:3px;
+    cursor:pointer; transition:border-color .08s, background-color .08s;
   }
+  .sec-cell:hover { border-color:var(--accent); }
+  .sec-cell.selected { border-color:var(--accent); background:#2a2a10; }
+  .sec-cell .top { display:flex; align-items:baseline; justify-content:space-between; gap:6px; }
   .sec-cell .id {
     color:var(--accent); font-weight:bold; font-size:14px;
     font-variant-numeric:tabular-nums;
@@ -87,7 +91,34 @@
   .sec-cell .meta { color:var(--dim); font-size:10px; display:flex; gap:8px; }
   .sec-cell .meta span.h-in  { color:var(--good); }
   .sec-cell .meta span.h-out { color:var(--warn); }
-  .sec-cell.zero { opacity:0.4; }
+  .sec-cell .spark { display:block; width:100%; height:16px; }
+  .sec-cell.zero { opacity:0.55; }
+  .sec-cell.zero .id { color:#888; }
+
+  /* Markov transition panel */
+  .trans-panel {
+    margin-top:16px; padding-top:12px; border-top:1px solid var(--border);
+  }
+  .trans-panel h3 {
+    margin:0 0 6px 0; color:var(--accent); font-size:14px; letter-spacing:1px;
+    display:flex; align-items:baseline; gap:8px;
+  }
+  .trans-panel h3 small { color:var(--dim); font-weight:normal; font-size:10px; }
+  .trans-cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .trans-col { background:#0e0e0e; border:1px solid var(--border); border-radius:3px; padding:10px; }
+  .trans-col .title { font-size:11px; color:var(--dim); letter-spacing:1px; margin-bottom:8px; }
+  .trans-col .title.in { color:var(--good); }
+  .trans-col .title.out { color:var(--warn); }
+  .trans-row {
+    display:flex; align-items:center; gap:8px; padding:3px 0; font-size:12px;
+    font-variant-numeric:tabular-nums;
+  }
+  .trans-row .who { flex:1; color:var(--text); }
+  .trans-row .cnt { color:var(--dim); min-width:30px; text-align:right; }
+  .trans-row .bar { height:4px; background:#222; flex:1; max-width:80px; border-radius:2px; overflow:hidden; }
+  .trans-row .bar > i { display:block; height:100%; background:var(--accent); }
+  .trans-row.in .bar > i  { background:var(--good); }
+  .trans-row.out .bar > i { background:var(--warn); }
 
   .empty { color:var(--dim); padding:24px; text-align:center; }
 
@@ -167,37 +198,119 @@ function renderList() {
     });
 }
 
+let selectedSector = null;     // sector ID within the current facility
+let transitionsCache = null;   // last fetched { into, outOf }
+const initSec = (new URLSearchParams(location.search)).get("sector");
+if (initSec) selectedSector = initSec.toUpperCase();
+
+// Build an inline SVG sparkline path for the per-sector history array. The
+// poly-line is normalized against the local max (so a sector with steady 1
+// track is still visibly flat, not a screaming spike). Empty / all-zero
+// histories return a tiny baseline so the cell still looks consistent.
+function sparkSvg(history, w = 100, h = 16) {
+    if (!history || history.length === 0) return "";
+    const max = Math.max(1, ...history);
+    const stepX = w / Math.max(1, history.length - 1);
+    const pts = history.map((v, i) => {
+        const x = i * stepX;
+        const y = h - 1 - (v / max) * (h - 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+        <polyline fill="none" stroke="var(--accent)" stroke-width="1" points="${pts.join(' ')}"/>
+    </svg>`;
+}
+
 function renderDetail() {
     if (!selected) { detail.innerHTML = `<div class="empty">Select a facility on the left</div>`; return; }
     const d = data.find(x => x.facility === selected);
     if (!d) { detail.innerHTML = `<div class="empty">${selected} has no current tracks</div>`; return; }
-    const active = d.sectors.filter(s => s.tracks > 0);
     detail.innerHTML = `
-        <h2>${d.facility} <small>${d.sectorCount} active sectors / ${d.sectors.length} known</small></h2>
+        <h2>${d.facility} <small>${d.sectorCount} active sectors / ${d.sectors.length} known (last hour)</small></h2>
         <div class="summary">
             <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
             <div class="stat accent"><b>${d.sectorCount}</b>Active sectors</div>
             <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsIn,0)}</b>Handoffs in</div>
             <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsOut,0)}</b>Handoffs out</div>
         </div>
-        <div class="sec-grid">
+        <div class="sec-grid" id="secGrid">
         ${d.sectors.map(s => {
             const zero = s.tracks === 0 ? ' zero' : '';
+            const sel  = s.id === selectedSector ? ' selected' : '';
             const hin  = s.handoffsIn  ? `<span class="h-in">↘${s.handoffsIn}</span>` : '';
             const hout = s.handoffsOut ? `<span class="h-out">↗${s.handoffsOut}</span>` : '';
             const meta = (hin || hout) ? `<div class="meta">${hin}${hout}</div>` : '';
-            return `<div class="sec-cell${zero}" title="Sector ${s.id}">
-                <div class="id">${s.id}</div>
-                <div class="tracks">${s.tracks} trk</div>
+            return `<div class="sec-cell${zero}${sel}" data-sec="${s.id}" title="Sector ${s.id}">
+                <div class="top">
+                    <span class="id">${s.id}</span>
+                    <span class="tracks">${s.tracks} trk</span>
+                </div>
+                ${sparkSvg(s.history)}
                 ${meta}
             </div>`;
         }).join("")}
+        </div>
+        <div class="trans-panel" id="transPanel" ${selectedSector ? '' : 'style="display:none;"'}>
+        </div>`;
+
+    detail.querySelectorAll(".sec-cell").forEach(el => {
+        el.addEventListener("click", () => {
+            selectedSector = (selectedSector === el.dataset.sec) ? null : el.dataset.sec;
+            const url = new URL(location.href);
+            if (selectedSector) url.searchParams.set("sector", selectedSector);
+            else url.searchParams.delete("sector");
+            history.replaceState(null, "", url);
+            transitionsCache = null;
+            renderDetail();
+            if (selectedSector) loadTransitions();
+        });
+    });
+    if (selectedSector) renderTransitionPanel();
+}
+
+async function loadTransitions() {
+    if (!selected || !selectedSector) return;
+    try {
+        const r = await fetch(`/api/sectors/${encodeURIComponent(selected)}/${encodeURIComponent(selectedSector)}/transitions`);
+        transitionsCache = await r.json();
+        renderTransitionPanel();
+    } catch {}
+}
+
+function renderTransitionPanel() {
+    const el = document.getElementById("transPanel");
+    if (!el || !selectedSector) return;
+    if (!transitionsCache) {
+        el.innerHTML = `<h3>${selected}/${selectedSector} <small>loading transitions…</small></h3>`;
+        return;
+    }
+    const t = transitionsCache;
+    const max = Math.max(1, ...t.into.map(x=>x.count), ...t.outOf.map(x=>x.count));
+    const row = (kind, x) => `<div class="trans-row ${kind}">
+        <span class="who">${x.facility}/${x.sector}</span>
+        <span class="bar"><i style="width:${(x.count/max*100).toFixed(0)}%"></i></span>
+        <span class="cnt">${x.count}</span>
+    </div>`;
+    el.innerHTML = `
+        <h3>${selected}/${selectedSector} <small>handoff history since server start</small></h3>
+        <div class="trans-cols">
+            <div class="trans-col">
+                <div class="title in">↘ FROM (top 12)</div>
+                ${t.into.length ? t.into.map(x => row('in', x)).join("") : '<div style="color:var(--dim);font-size:11px;">No data yet</div>'}
+            </div>
+            <div class="trans-col">
+                <div class="title out">↗ TO (top 12)</div>
+                ${t.outOf.length ? t.outOf.map(x => row('out', x)).join("") : '<div style="color:var(--dim);font-size:11px;">No data yet</div>'}
+            </div>
         </div>`;
 }
 
 filter.addEventListener("input", renderList);
 refresh();
+if (selected && selectedSector) loadTransitions();
 setInterval(refresh, 5000);
+// Refresh transitions slower since counts only change on handoffs.
+setInterval(() => { if (selected && selectedSector) loadTransitions(); }, 30000);
 </script>
 </body>
 </html>

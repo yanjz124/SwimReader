@@ -463,6 +463,7 @@ class DCB {
       return;
     }
     if (el.dataset.map != null) { this.emit("mapToggle", +el.dataset.map); return; }
+    if (el.dataset.wx)    { this.emit("wxToggle",   +el.dataset.wx);                   return; }
     if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, baseAdjust * 5); return; }
     if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   baseAdjust);     return; }
     this.emit("numAdjust", id, baseAdjust);

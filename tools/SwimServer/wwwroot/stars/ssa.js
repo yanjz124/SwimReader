@@ -46,24 +46,43 @@ async function fetchMetar(station) {
     const r = await fetch(`/api/metar/${encodeURIComponent(icao)}`);
     if (!r.ok) return null;
     const text = (await r.text()).trim();
-    const m = text.match(/\bA(\d{4})\b/);   // A2986 = 29.86 inHg
-    const pressure = m ? parseInt(m[1], 10) / 100 : null;
-    SSA.metars.set(icao, { pressure, raw: text });
+    if (!text) return null;
+    // A2986 = 29.86 inHg. Also accept Q#### (hPa, ICAO format) and convert.
+    const m = text.match(/\bA(\d{4})\b/);
+    const q = text.match(/\bQ(\d{4})\b/);
+    let pressure = null;
+    if (m)      pressure = parseInt(m[1], 10) / 100;
+    else if (q) pressure = parseInt(q[1], 10) * 0.029530;   // hPa → inHg
+    // Only store when we got a real pressure; avoids rendering "00.00" rows
+    // for airports whose METAR is unavailable or unparseable.
+    if (pressure != null) SSA.metars.set(icao, { pressure, raw: text });
     return pressure;
   } catch { return null; }
 }
 async function pollMetars() {
   const stations = ssaStations();
+  if (!stations.length) return false;          // facility not loaded yet
   let header = null;
   for (const s of stations) {
     const p = await fetchMetar(s);
     if (header == null && p != null) header = p;
   }
   if (header != null) SSA.altimeter = header;   // header line uses the first station
+  return true;
 }
-function startMetarPoll() {
-  pollMetars();
-  setInterval(pollMetars, 5 * 60 * 1000);   // every 5 min
+
+// Boot loop: keep retrying every 3s until we get the first successful poll
+// (i.e. until starsState.area has populated and at least one airport returned
+// a parseable METAR). Once we have data, fall back to the 5-minute cadence
+// matching the publish frequency of METAR. Without this, an empty first poll
+// would leave the SSA stuck on "00.00 …" for 5 full minutes after page load.
+async function startMetarPoll() {
+  let ready = false;
+  while (!ready) {
+    ready = await pollMetars();
+    if (!ready) await new Promise(r => setTimeout(r, 3000));
+  }
+  setInterval(pollMetars, 5 * 60 * 1000);
 }
 
 function mountSsa() {

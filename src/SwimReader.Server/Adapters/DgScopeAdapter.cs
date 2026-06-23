@@ -74,23 +74,33 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly ConcurrentDictionary<Guid, string> _enrichedCallsigns = new();
 
     /// <summary>
-    /// Per-aircraft handoff state machine. TAIS v4-0 does not publish the
-    /// receiving sector on a pending handoff (verified 2026-06-23 against
-    /// 8 active live handoffs at PCT — every record carried only cps + ocr
-    /// + standard fields, no receiver TCP). We INFER the receiver by
-    /// observing the cps TRANSITION:
-    ///   if (prev: cps=X, ocr=pending) then (now: cps=Y, ocr=no change)
-    ///   then Y was the receiver of that handoff.
-    /// While ocr is pending, we remember (cps, last-seen-receiver) so
-    /// the client can render a sensible inbound flash when an aircraft
-    /// is being passed back to a controller we've seen receive it before.
-    /// Not a perfect substitute for an explicit receiver field, but the
-    /// best inference TAIS allows.
+    /// Per-aircraft handoff state machine — REVISED 2026-06-23 after
+    /// inspecting an NCT TAIS sample.
+    ///
+    /// Key insight: TAIS DOES publish the receiver — it lives in &lt;cps&gt;
+    /// while &lt;ocr&gt; is a handoff state. The "current owner" mental model
+    /// is wrong: cps during a handoff is the PRE-STAGED RECEIVER, not the
+    /// owner. SFO departures show cps="C" with ocr="normal handoff" — "C"
+    /// isn't a TRACON sector, it's STARS's code for Center (the receiver).
+    /// The actual current owner is whatever cps WAS the last time ocr was
+    /// "no change".
+    ///
+    /// We track both values per aircraft:
+    ///   ConfirmedOwner = last cps seen while ocr was idle ("no change")
+    ///                    OR null if we've only ever seen the aircraft in
+    ///                    a handoff state.
+    ///   HandoffTo      = current cps while ocr is a handoff state — the
+    ///                    receiver. Null when ocr is idle.
+    ///
+    /// Emitted on the wire:
+    ///   Owner          = ConfirmedOwner (so the position symbol stays at
+    ///                    the actual controller, not the proposed receiver)
+    ///   PendingHandoff = HandoffTo       (so line-2 shows where it's going)
     /// </summary>
     private sealed class HandoffState
     {
-        public string? PrevCps;       // cps value during the previous pending observation
-        public string? LastReceiver;  // receiver inferred from the most recent completed handoff
+        public string? ConfirmedOwner;  // last cps observed with ocr=no_change
+        public string? HandoffTo;       // current cps while ocr is in handoff
     }
     private readonly ConcurrentDictionary<Guid, HandoffState> _handoffState = new();
 
@@ -328,6 +338,10 @@ public sealed class DgScopeAdapter : BackgroundService
             _enrichedCallsigns.TryGetValue(guid, out effectiveCallsign);
         }
 
+        // Resolve owner vs receiver from the per-aircraft handoff state
+        // machine BEFORE building the update — see ResolveHandoff comments.
+        var (resolvedOwner, resolvedReceiver) = ResolveHandoff(guid, fp);
+
         var update = new DstarsFlightPlanUpdate
         {
             Guid = guid,
@@ -345,16 +359,8 @@ public sealed class DgScopeAdapter : BackgroundService
             Scratchpad1 = fp.Scratchpad1 ?? "",
             Scratchpad2 = fp.Scratchpad2 ?? "",
             Runway = fp.Runway,
-            Owner = fp.Owner,
-            // Inferred receiver — only emit when we actually have one. The
-            // earlier "?" placeholder fired on too many tracks because TAIS
-            // OCR stays in handoff states longer than a controller would
-            // expect (intrafacility handoffs can dwell for 30s+ past visual
-            // completion). The client uses IsHandoffInProgress (bool) for
-            // flash + outbound-FDB-promotion; only the receiver string
-            // matters here, and we only know it after the cps transition
-            // is observed.
-            PendingHandoff = InferHandoffReceiver(guid, fp) ?? "",
+            Owner = resolvedOwner,
+            PendingHandoff = resolvedReceiver ?? "",
             HandoffOcr = fp.HandoffOcr,
             IsHandoffInProgress = fp.IsHandoffInProgress,
             AssignedSquawk = StripLeadingZeros(fp.AssignedSquawk),
@@ -388,37 +394,39 @@ public sealed class DgScopeAdapter : BackgroundService
         $"{u.HandoffOcr}|{u.IsHandoffInProgress}";
 
     /// <summary>
-    /// Infer the handoff receiver TCP by tracking cps transitions across
-    /// updates. TAIS doesn't publish the receiver; we reconstruct it from
-    /// the cps transition pattern:
-    ///   - While ocr is a handoff state (pending/normal handoff/intra),
-    ///     remember cps as "prevCps" — the originator.
-    ///   - When ocr returns to "no change" AND cps has CHANGED relative
-    ///     to prevCps, the new cps IS the receiver. Stash it as
-    ///     "lastReceiver" so the NEXT handoff inherits the inference.
-    ///   - While in-handoff, emit the previously-inferred receiver (best
-    ///     guess) on the wire. Until we have any data, return null and
-    ///     the caller falls back to "?" placeholder.
+    /// Resolve per-aircraft (owner, receiver) given the latest TAIS update.
+    ///
+    /// When ocr is "no change": cps IS the current owner. Record it as
+    /// ConfirmedOwner and clear HandoffTo. Returned (owner=cps, receiver=null).
+    ///
+    /// When ocr is in a handoff state: cps is the PRE-STAGED RECEIVER, not
+    /// the owner. Stash it as HandoffTo and return (owner=ConfirmedOwner,
+    /// receiver=cps). If we've never seen ocr="no change" for this aircraft,
+    /// ConfirmedOwner is null — fall back to cps as the owner too (best we
+    /// can do without prior history) so the position symbol isn't blank.
     /// </summary>
-    private string? InferHandoffReceiver(Guid guid, FlightPlanDataEvent fp)
+    private (string? owner, string? receiver) ResolveHandoff(Guid guid, FlightPlanDataEvent fp)
     {
+        var s = _handoffState.GetOrAdd(guid, _ => new HandoffState());
+        var cps = fp.Owner;       // FlightPlanDataEvent.Owner = the <cps> field
+
         if (!fp.IsHandoffInProgress)
         {
-            // Idle observation — see if this completes a previously-pending handoff.
-            if (_handoffState.TryGetValue(guid, out var s0) && s0.PrevCps is not null
-                && fp.Owner is not null && fp.Owner != s0.PrevCps)
-            {
-                s0.LastReceiver = fp.Owner;             // the new cps IS the receiver
-                s0.PrevCps = null;                       // mark idle
-            }
-            return null;
+            // Idle: cps is the actual owner. Lock it in, clear any prior
+            // pending receiver.
+            if (cps is not null) s.ConfirmedOwner = cps;
+            s.HandoffTo = null;
+            return (s.ConfirmedOwner, null);
         }
-        // In-handoff observation — record the originator if we don't have it.
-        var s = _handoffState.GetOrAdd(guid, _ => new HandoffState());
-        if (s.PrevCps is null) s.PrevCps = fp.Owner;
-        // Best guess of receiver. May be null on the FIRST observed handoff
-        // for this aircraft (we have no prior cps transition to learn from).
-        return s.LastReceiver;
+
+        // Handoff in progress: cps is the receiver.
+        s.HandoffTo = cps;
+        // First time we see this aircraft AND it's already in a handoff —
+        // we have no prior owner observation. Use cps as both owner and
+        // receiver so the FDB renders SOMETHING; once a no-change update
+        // arrives, ConfirmedOwner will lock in correctly.
+        var owner = s.ConfirmedOwner ?? cps;
+        return (owner, s.HandoffTo);
     }
 
     /// <summary>

@@ -115,17 +115,20 @@ class TaisBridge
                     track.Owner = NullIfUnassigned(ElVal(fp, "cps")) ?? track.Owner;
                     track.WakeCategory = NullIfEmpty(ElVal(fp, "category")) ?? track.WakeCategory;
                     track.EquipmentSuffix = NullIfUnavailable(ElVal(fp, "eqptSuffix")) ?? track.EquipmentSuffix;
-                    // TAIS doesn't publish <pendingHandoff>. Handoff state is in
-                    // <ocr> (Operational Control Required). The receiver TCP
-                    // is NOT in TAIS — verified by inspecting 8 active live
-                    // handoffs at PCT on 2026-06-23: every track in
-                    // pending/normal handoff/intrafacility handoff carried the
-                    // identical field list (cps, ocr, scratchPad1/2, runway,
-                    // beacon, alt, category, acid, acType, entryFix, exitFix,
-                    // airport, flightRules, lld, ECID, eqptSuffix, status) —
-                    // no receiver-TCP field exists in the v4-0 schema.
+                    // TAIS publishes the handoff state in <ocr>. The receiver TCP
+                    // appears to be ENCODED as raw single bytes (0x80-0xFF) in
+                    // <scratchPad2> and <runway> on inter-facility handoffs —
+                    // observed in real A90 capture (UAL1392/JBU312): 1-2 high-
+                    // byte chars appear in those fields exactly when ocr =
+                    // "normal handoff", with 1 byte for 1-char sectors and 2
+                    // bytes for 2-char sectors. We capture them as hex so the
+                    // client can decode.
                     track.HandoffOcr = NullIfEmpty(ElVal(fp, "ocr"));
                     track.PendingHandoff = NullIfEmpty(ElVal(fp, "pendingHandoff")) ?? track.PendingHandoff;
+                    var sp2 = ElVal(fp, "scratchPad2");
+                    var rwy = ElVal(fp, "runway");
+                    track.ScratchPad2Hex = HexIfNonAscii(sp2);
+                    track.RunwayHex      = HexIfNonAscii(rwy);
                 }
 
                 // Enhanced data (origin/destination airports)
@@ -151,6 +154,22 @@ class TaisBridge
     private static string? NullIfEmpty(string? v) => string.IsNullOrWhiteSpace(v) ? null : v;
     private static string? NullIfUnavailable(string? v) => v is null or "unavailable" ? null : v;
     private static string? NullIfUnassigned(string? v) => v is null or "unassigned" ? null : v;
+    /// <summary>
+    /// Returns a hex string of the bytes in <paramref name="v"/> ONLY if it
+    /// contains non-ASCII chars (i.e. raw 0x80-0xFF bytes from ISO-8859-1
+    /// decode of FAA TAIS XML). Returns null for empty / pure-ASCII so the
+    /// JSON stays clean for the 99% of records that don't carry binary data.
+    /// </summary>
+    private static string? HexIfNonAscii(string? v)
+    {
+        if (string.IsNullOrEmpty(v)) return null;
+        bool hasHigh = false;
+        foreach (var ch in v) { if (ch > 0x7F) { hasHigh = true; break; } }
+        if (!hasHigh) return null;
+        var sb = new System.Text.StringBuilder(v.Length * 2);
+        foreach (var ch in v) sb.AppendFormat("{0:X2}", (int)ch & 0xFF);
+        return sb.ToString();
+    }
 
     /// <summary>Namespace-agnostic element lookup by local name.</summary>
     private static XElement? El(XElement parent, string localName) =>
@@ -307,6 +326,12 @@ class TaisTrack
     public string? Owner { get; set; }           // CPS controller ID
     public string? PendingHandoff { get; set; }
     public string? HandoffOcr { get; set; }      // raw <ocr> value
+    // Hex byte values for scratchPad2 / runway IF they contain non-ASCII bytes
+    // (FAA TAIS appears to encode the receiving sector here as raw 0x80-0xFF
+    // single bytes on inter-facility handoffs). Null when the field is empty
+    // or pure ASCII.
+    public string? ScratchPad2Hex { get; set; }
+    public string? RunwayHex { get; set; }
 
     // Track (from track element)
     public double Latitude { get; set; }
@@ -342,6 +367,8 @@ class TaisTrack
         owner = Owner,
         handoff = PendingHandoff,
         handoffOcr = HandoffOcr,
+        scratchPad2Hex = ScratchPad2Hex,
+        runwayHex = RunwayHex,
         lat = Latitude,
         lon = Longitude,
         altFt = AltitudeFeet,

@@ -132,10 +132,20 @@ class AsdexBridge
                         else if (OnOtherMessage is not null)
                         {
                             string? body = null;
+                            // FAA TAIS publishes XML declared as encoding="UTF-8" but
+                            // stuffs raw single-byte sector codes (0x80-0xFF) into
+                            // <scratchPad2> and <runway> on inter-facility handoffs.
+                            // UTF-8 decode replaces those bytes with U+FFFD, losing
+                            // the receiver-TCP data. Decode as ISO-8859-1 instead —
+                            // round-trips every byte 0x00-0xFF to U+0000-U+00FF
+                            // losslessly. The XML body is essentially ASCII + a
+                            // handful of high bytes, so Latin-1 is safe here even
+                            // though the declared encoding lies.
+                            var enc = Encoding.GetEncoding(28591); // ISO-8859-1
                             if (m.BinaryAttachment is { Length: > 0 })
-                                body = Encoding.UTF8.GetString(m.BinaryAttachment);
+                                body = enc.GetString(m.BinaryAttachment);
                             else if (m.XmlContent is { Length: > 0 })
-                                body = Encoding.UTF8.GetString(m.XmlContent);
+                                body = enc.GetString(m.XmlContent);
                             if (body is not null) OnOtherMessage(topic, body);
                         }
                     },

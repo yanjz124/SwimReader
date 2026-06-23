@@ -951,18 +951,31 @@ function buildDataBlock(t, fp) {
   else                                  fdb3line2 = `${yscratch2}${handoffChar}${type} `;
 
   if (mode === "FDB") {
-    // Line 1: callsign or squawk (Aircraft.cs:449-489)
+    // Line 1 — Aircraft.cs:448-489:
+    //   if (FlightPlanCallsign && !ShowCallsignWithNoSquawk) → callsign
+    //   else if (Squawk != null)                              → squawk
+    //   else                                                  → ""
     let line1 = "";
     if (fp?.Callsign) line1 = fp.Callsign;
     else if (t.Squawk) line1 = t.Squawk;
     lines.push(line1);
-    // Line 2: pick variant by ClockPhase.
+    // Line 2 — Aircraft.cs:497-499. ClockPhase picks one of 3 variants.
     const variants = [fdb1line2, fdb2line2, fdb3line2];
     lines.push(variants[ClockPhase.phase] || fdb1line2);
-    // Line 3: AssignedSquawk mismatch OR ATPA mileage OR blank
-    if (fp?.AssignedSquawk && t.Squawk && t.Squawk !== String(fp.AssignedSquawk).padStart(4, "0"))
-      lines.push(`${t.Squawk} ${String(fp.AssignedSquawk).padStart(4, "0")}`);
-    else lines.push(" ");
+    // Line 3 — Aircraft.cs:500-521 priority:
+    //   AssignedSquawk mismatch  → "{squawk} {assigned}"  (cs:503-507)
+    //   else if ATPAMileageNow   → mileage.ToString("0.00")  (cs:509-514)
+    //   else                     → " "  (blank)
+    const assigned = fp?.AssignedSquawk
+      ? String(fp.AssignedSquawk).padStart(4, "0")
+      : "";
+    if (assigned && t.Squawk && t.Squawk !== assigned) {
+      lines.push(`${t.Squawk} ${assigned}`);
+    } else if (t.ATPAMileageNow != null) {
+      lines.push(Number(t.ATPAMileageNow).toFixed(2));
+    } else {
+      lines.push(" ");
+    }
   } else if (mode === "PDB") {
     // PDB — associated track owned by ANOTHER controller. Per CRC docs
     // § Data Blocks: "Line-2 content only (altitude / ground speed
@@ -971,15 +984,28 @@ function buildDataBlock(t, fp) {
     // variants FDB shows on line 2 (per ClockPhase).
     const variants = [fdb1line2, fdb2line2, fdb3line2];
     lines.push(variants[ClockPhase.phase] || fdb1line2);
-  } else { // LDB — unassociated tracks. Per CRC docs § Data Blocks:
-    // "Beacon code + altitude by default". DGScope Aircraft.cs:565-613
-    // matches — 2 visible lines (squawk + altitude). BCB inhibited drops
-    // to altitude-only.
-    if (prefSet.LdbBeaconCodesInhibited) {
+  } else { // LDB — Aircraft.cs:565-613. THREE branches:
+    if (t.ShowCallsignWithNoSquawk) {
+      // Aircraft.cs:575-593 — F1 beacon-readout 3-line variant.
+      const sq = t.Squawk || "";
+      const cs = fp?.Callsign || "";
+      lines.push(sq);
       lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+      lines.push(cs);
+    } else if (prefSet.LdbBeaconCodesInhibited) {
+      // Aircraft.cs:571-573 — BCB inhibited. Always 3 lines (altitude +
+      // 2 blanks); the blanks preserve the data-block bbox so adjacent
+      // tracks don't reflow when the BCB toggles.
+      lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+      lines.push("     ");
+      lines.push("     ");
     } else {
+      // Aircraft.cs:595-613 — normal LDB. Always 3 lines (squawk,
+      // altitude, blank). Blank line 3 padded so colour-tier height
+      // stays constant across LDB <-> PDB <-> FDB toggles.
       lines.push(t.Squawk || "");
       lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+      lines.push("     ");
     }
   }
   return lines;
@@ -1224,20 +1250,43 @@ function drawDataBlockAndLeader(t, fp, posNow) {
 //        - else "◇" if PrimaryOnly
 //        - else "*"
 function positionSymbolText(t, fp) {
-  // STARS position symbol per DGScope Aircraft.cs:616-623:
-  //   PositionInd set         → last char of PositionInd (sector ID tail)
-  //   selected-squawk match   → selectedSquawkChar  [not yet ported]
-  //   PrimaryOnly             → ◇   (Squawk empty AND ModeS=0 AND no alt)
-  //   else                    → *   (covers 1200, any beacon code, etc.)
-  // PrimaryOnly definition is Aircraft.cs:145-151 — note 1200 is NOT primary,
-  // it gets the asterisk.
-  const owner = fp?.Owner || t.PositionInd;
-  if (owner && owner.length > 0) return owner.slice(-1);
-  // PrimaryOnly: no beacon code at all, no Mode-S, no Mode-C altitude.
+  // Aircraft.cs:616-623 verbatim priority chain:
+  //   if (!string.IsNullOrEmpty(PositionInd)) → PositionInd.Substring(-1)
+  //   else if (isSquawkSelected())           → selectedSquawkChar
+  //   else if (PrimaryOnly)                  → ◇
+  //   else                                   → *
+  // Our data model: server populates fp.Owner from the controlling sector
+  // (equivalent to DGScope's per-aircraft PositionInd). t.PositionInd is
+  // present on STDDS tracks. Check both, fp first (newer, OH-driven).
+  const positionInd = fp?.Owner || t.PositionInd;
+  if (positionInd && positionInd.length > 0) return positionInd.slice(-1);
+
+  // isSquawkSelected — Aircraft.cs:633-643. F B <squawk> command writes
+  // into SSA.selectedBeaconCodes; selectedSquawkChar comes from <Selected-
+  // BeaconCodeChar> in the profile (PrefSet.cs / RadarWindow.cs:1040).
+  const sel = window.SSA?.selectedBeaconCodes;
+  if (sel && t.Squawk) {
+    for (const s of sel) {
+      if (t.Squawk.startsWith(s)) {
+        // SelectedBeaconCodeChar default 9633 = □ (white square). RDU
+        // profile sets it explicitly; we read either from prefSet or
+        // fall back to the default.
+        const code = prefSet.SelectedBeaconCodeChar;
+        return Number.isFinite(code) ? String.fromCharCode(code) : "□";
+      }
+    }
+  }
+
+  // PrimaryOnly — Aircraft.cs:145-151:
+  //   IsNullOrEmpty(Squawk) && ModeSCode == 0 &&
+  //   (Altitude == null || Altitude.AltitudeType == AltitudeType.Unknown)
+  // AltitudeType enum: Unknown = 2. The previous port only checked null
+  // ReportedAltitude, missing tracks whose feed carries an Unknown-type
+  // altitude object (still primary-only per spec).
   const noBeacon = !t.Squawk || t.Squawk === "0000";
   const noModeS  = !t.ModeSCode;
-  const noAlt    = t.ReportedAltitude == null;
-  if (noBeacon && noModeS && noAlt) return "◇";
+  const altUnknown = (t.Altitude == null) || (t.Altitude.AltitudeType === 2);
+  if (noBeacon && noModeS && altUnknown) return "◇";   // ◇
   return "*";
 }
 
@@ -1922,15 +1971,27 @@ function handleCszAdjust(which, d) {
 
 function handleBriteAdjust(which, d) {
   const b = prefSet.Brightness;
+  // Per BrightnessSettings (PrefSet.cs:72-152) — 15 distinct fields.
+  // Map button label → property name. Legacy aliases (DataBlock/Position/
+  // VideoMap*) are kept in sync for callers that haven't been split yet.
   const map = {
-    DCB: "DCB", BKC: "Background", MPA: "VideoMapA", MPB: "VideoMapB",
-    FDB: "DataBlock", LST: "Lists", POS: "Position",
-    LDB: "DataBlock", OTH: "DataBlock", TLS: "Lists",
-    RR: "RangeRings", CMP: "Compass", BCN: "Position", PRI: "Position",
-    HST: "History", WX: "Weather", WXC: "Weather",
+    DCB: "DCB", BKC: "Background",
+    MPA: "MapA",            MPB: "MapB",
+    FDB: "FullDataBlocks",  LDB: "LimitedDataBlocks", OTH: "OtherFDBs",
+    LST: "Lists",           TLS: "Tools",
+    RR:  "RangeRings",      CMP: "Compass",
+    POS: "PositionSymbols", BCN: "BeaconTargets", PRI: "PrimaryTargets",
+    HST: "History",         WX:  "Weather",       WXC: "WeatherContrast",
   };
   const k = map[which];
-  if (k) b[k] = clamp(b[k] + d, 0, 100);
+  if (!k) return;
+  const cur = b[k] ?? 100;
+  b[k] = clamp(cur + d, 0, 100);
+  // Keep legacy aliases in sync so renderers that read the old names update.
+  if (k === "FullDataBlocks")  b.DataBlock = b[k];
+  if (k === "PositionSymbols") b.Position  = b[k];
+  if (k === "MapA")            b.VideoMapA = b[k];
+  if (k === "MapB")            b.VideoMapB = b[k];
   dcb.render();
   _afterPrefChange();
 }

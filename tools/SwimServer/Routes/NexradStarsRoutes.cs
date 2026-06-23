@@ -89,8 +89,16 @@ static class NexradStarsRoutes
                 var bytes = await resp.Content.ReadAsByteArrayAsync();
 
                 // Mirror NexradDisplay.GetRadarData (cs:66-95) verbatim.
+                // IMPORTANT: NexradDecoder's BZip2 path (NexradDecoder.cs:407-419)
+                // writes decompressed Symbology data BACK into the input stream
+                // via `inputStream.CopyTo(fs)`. That requires the stream to be
+                // expandable — `new MemoryStream(byte[])` is fixed-size and
+                // throws "Memory stream is not expandable" on the CopyTo.
+                // Use the default ctor + Write so the capacity can grow.
                 var decoder = new RadialPacketDecoder();
-                using var ms = new MemoryStream(bytes);
+                using var ms = new MemoryStream();
+                ms.Write(bytes, 0, bytes.Length);
+                ms.Position = 0;
                 decoder.setStreamResource(ms);
                 decoder.parseMHB();
                 var description = decoder.parsePDB();

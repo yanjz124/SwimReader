@@ -229,7 +229,12 @@ public sealed class TaisMessageParser : IStddsMessageParser
     {
         if (string.IsNullOrWhiteSpace(ocr)) return false;
         var v = ocr.Trim().ToLowerInvariant();
-        return v is "pending" or "normal handoff" or "intrafacility handoff";
+        // OCR values observed in live A90 + PCT data, plus "no change" for idle.
+        // "directed handoff" and "manual" added 2026-06-23 after A90 sample
+        // showed those values on real records.
+        return v is
+            "pending" or "normal handoff" or "intrafacility handoff"
+            or "directed handoff" or "manual";
     }
 
     /// <summary>

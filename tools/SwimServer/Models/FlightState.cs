@@ -42,6 +42,11 @@ class FlightState
     // amends the cleared altitude later. Mirrors how OriginalRoute works.
     public double? OriginalAssignedAltitude { get; set; }
     public bool OriginalAssignedVfr { get; set; }
+    // Filed cruise altitude from the pilot's flight plan
+    // (field-15 N{TAS}A{alt/100} → SFDPS <requestedAltitude><simple>).
+    // Distinct from AssignedAltitude (what ATC has cleared) — used by the
+    // flight table to fill a value for PROPOSED plans not yet assigned.
+    public double? RequestedAltitude { get; set; }
 
     // Position
     public double? Latitude { get; set; }
@@ -221,6 +226,7 @@ class FlightState
         AssignedAltitude = AssignedAltitude, AssignedVfr = AssignedVfr,
         BlockFloor = BlockFloor, BlockCeiling = BlockCeiling,
         OriginalAssignedAltitude = OriginalAssignedAltitude, OriginalAssignedVfr = OriginalAssignedVfr,
+        RequestedAltitude = RequestedAltitude,
         InterimAltitude = InterimAltitude, ReportedAltitude = ReportedAltitude,
         Latitude = Latitude, Longitude = Longitude,
         GroundSpeed = GroundSpeed, RequestedSpeed = RequestedSpeed,
@@ -263,6 +269,7 @@ class FlightState
             AssignedAltitude = s.AssignedAltitude, AssignedVfr = s.AssignedVfr,
             BlockFloor = s.BlockFloor, BlockCeiling = s.BlockCeiling,
             OriginalAssignedAltitude = s.OriginalAssignedAltitude, OriginalAssignedVfr = s.OriginalAssignedVfr,
+            RequestedAltitude = s.RequestedAltitude,
             InterimAltitude = s.InterimAltitude, ReportedAltitude = s.ReportedAltitude,
             Latitude = s.Latitude, Longitude = s.Longitude,
             GroundSpeed = s.GroundSpeed, RequestedSpeed = s.RequestedSpeed,
@@ -316,6 +323,7 @@ class FlightState
         ClearanceHeading, ClearanceSpeed, ClearanceText,
         DataLinkCode, OtherDataLink,
         OriginalAssignedAltitude, OriginalAssignedVfr,
+        RequestedAltitude,
         Route, OriginalRoute, FlightRules, FlightType, STAR, Remarks,
         Registration, EquipmentQualifier, AircraftPerformance, RequestedSpeed,
         OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
@@ -357,6 +365,7 @@ class FlightState
             Route, OriginalRoute, STAR, Remarks,
             AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
             OriginalAssignedAltitude, OriginalAssignedVfr,
+            RequestedAltitude,
             InterimAltitude, ReportedAltitude,
             Latitude, Longitude, GroundSpeed, RequestedSpeed,
             ActualDepartureTime, ETA, EdctTime, CoordinationTime, CoordinationFix,
@@ -417,6 +426,7 @@ class FlightSnapshot
     public double? BlockCeiling { get; set; }
     public double? OriginalAssignedAltitude { get; set; }
     public bool OriginalAssignedVfr { get; set; }
+    public double? RequestedAltitude { get; set; }
     public double? InterimAltitude { get; set; }
     public double? ReportedAltitude { get; set; }
     public double? Latitude { get; set; }

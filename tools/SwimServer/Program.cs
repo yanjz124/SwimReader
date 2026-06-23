@@ -1429,6 +1429,23 @@ void ProcessFlight(XElement flight, string rawXml)
     var ras = flight.Descendants().FirstOrDefault(e => e.Name.LocalName == "nasAirspeed");
     if (ras is not null && double.TryParse(ras.Value, out var spd)) state.RequestedSpeed = spd;
 
+    // requestedAltitude — the FILED cruise altitude from the pilot's flight plan
+    // (field-15 N{TAS}A{alt/100}). Same sub-types as assignedAltitude (simple,
+    // vfr, vfrPlus, block) but typically simple. We only need the numeric for
+    // the flight table to display a filed value when ATC hasn't yet assigned
+    // an altitude (PROPOSED plans).
+    var reqAlt = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "requestedAltitude");
+    if (reqAlt is not null)
+    {
+        var simple = reqAlt.Descendants().FirstOrDefault(e => e.Name.LocalName == "simple")?.Value;
+        if (double.TryParse(simple, out var ra)) state.RequestedAltitude = ra;
+        else
+        {
+            var vfrPlus = reqAlt.Descendants().FirstOrDefault(e => e.Name.LocalName == "vfrPlus")?.Value;
+            if (double.TryParse(vfrPlus, out var raVfr)) state.RequestedAltitude = raVfr;
+        }
+    }
+
     // enRoute
     var enRoute = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "enRoute");
     if (enRoute is not null)

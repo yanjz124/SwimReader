@@ -68,4 +68,14 @@ public sealed class DstarsFlightPlanUpdate
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Guid? AssociatedTrackGuid { get; init; }
+
+    // Handoff state derived from TAIS <ocr>. NOT part of DGScope's
+    // FlightPlanUpdate schema — web-port extension because TAIS lacks an
+    // explicit pending-handoff receiver field. See FlightPlanDataEvent.cs
+    // for the source values.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? HandoffOcr { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? IsHandoffInProgress { get; init; }
 }

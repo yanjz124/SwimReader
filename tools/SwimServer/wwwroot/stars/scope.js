@@ -1062,6 +1062,12 @@ function dataBlockMode(t, fp) {
   // set in RadarWindow.cs:1085 from PositionInd or PendingHandoff equality.
   // Single source of truth: Handoff.isOwned().
   if (window.Handoff && window.Handoff.isOwned(t, fp)) return "FDB";
+  // Outbound handoff WE initiated — DGScope renders this in FDB because
+  // Owned bool is true on the originating side (PositionInd == me still).
+  // Our isOwned already returns true for that case via the cps == me leg.
+  // Extra explicit promotion when isOutboundHandoff to cover the TAIS
+  // "ocr pending" case where IsHandoffInProgress is set but no receiver.
+  if (window.Handoff && window.Handoff.isOutboundHandoff(t, fp)) return "FDB";
   // QuickLookList promotion — RadarWindow.cs:5685-5711. An aircraft is
   // QuickLook=true if any of:
   //   • QuickLookedTCPs contains its controlling position (or ALL/ALL+)
@@ -1192,10 +1198,15 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // The previous port used an invented `_pointoutTarget` here; replaced
   // with `_forceQuickLook` to match the source priority.
   // Source-of-truth predicates from handoff.js (RadarWindow.cs:1085-1087).
-  // Both `owned` and `inbound` come from the same Handoff module so they
-  // can't drift apart across renderers.
-  const inboundHandoff = window.Handoff && window.Handoff.isInboundHandoff(t, fp);
-  const ownedOrInbound = window.Handoff && window.Handoff.isOwned(t, fp);
+  // Flash on EITHER inbound or outbound — DGScope flashes on inbound only
+  // (cs:1086 PendingHandoff == me), but our TAIS feed lacks the receiver
+  // TCP, so for OUTBOUND tracks (cps == me, ocr pending) we flash as a
+  // visible "your handoff is in progress" indicator until the feed grows
+  // a receiver field.
+  const inboundHandoff  = window.Handoff && window.Handoff.isInboundHandoff(t, fp);
+  const outboundHandoff = window.Handoff && window.Handoff.isOutboundHandoff(t, fp);
+  const dbFlashing      = inboundHandoff || outboundHandoff;
+  const ownedOrInbound  = window.Handoff && window.Handoff.isOwned(t, fp);
   let baseColor = COLORS.DataBlock;
   // Conflict Alert is NOT a whole-block colour change — CA annotation only
   // (CRC STARS § STCA; handled below).
@@ -1210,7 +1221,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   }
   // Inbound handoff flashes ~1 Hz — DataBlock.Flashing at cs:1086-1087.
   // Hide the block on the off phase (~500ms).
-  if (inboundHandoff && (Date.now() % 1000) >= 500) return;
+  if (dbFlashing && window.Handoff && window.Handoff.flashPhaseHidden()) return;
   ctx.textBaseline = "top";
   ctx.textAlign = padLeft ? "right" : "left";
   // textX = side of the block closest to the target = block's leader-side edge.

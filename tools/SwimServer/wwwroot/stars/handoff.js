@@ -99,14 +99,32 @@
   function isInboundHandoff(t, fp) {
     const meTcp = me();
     if (!meTcp) return false;
-    return pendingHandoff(t, fp) === meTcp;
+    // TAIS feed: the receiving sector is NOT published, so inbound cannot
+    // be detected on TAIS-sourced flight plans. The check still applies to
+    // SFDPS-sourced ones (DGScope NAS feed parses the receiver from
+    // <handoff> element) — and to any future feed that does carry it.
+    const ph = pendingHandoff(t, fp);
+    if (!ph || ph === "?") return false;            // placeholder = unknown rx
+    return ph === meTcp;
   }
   function isOutboundHandoff(t, fp) {
     const meTcp = me();
     if (!meTcp) return false;
-    // Outbound: we are the controlling position AND a PendingHandoff to
-    // SOMEONE ELSE is set. Used to render the handoff char on line-2.
-    return positionInd(t, fp) === meTcp && pendingHandoff(t, fp) && pendingHandoff(t, fp) !== meTcp;
+    // Outbound: we are the controlling position AND a handoff is in
+    // progress. The receiver TCP is only known when ph !== "?" (non-TAIS
+    // feeds); for TAIS we use IsHandoffInProgress as the trigger.
+    if (positionInd(t, fp) !== meTcp) return false;
+    if (fp && fp.IsHandoffInProgress) return true;
+    const ph = pendingHandoff(t, fp);
+    return ph && ph !== "?" && ph !== meTcp;
+  }
+  // Any handoff in progress on this track (regardless of direction). Used
+  // for the data-block flash when we can't determine inbound/outbound
+  // (TAIS captures show <ocr>=pending without a receiver).
+  function isHandoffInProgress(t, fp) {
+    if (fp && fp.IsHandoffInProgress) return true;
+    const ph = pendingHandoff(t, fp);
+    return !!ph;
   }
 
   // ── ProcessImpliedCommand — RadarWindow.cs:2688-2769 ────────────────────
@@ -213,7 +231,7 @@
 
   window.Handoff = {
     positionInd, pendingHandoff, me,
-    isOwned, isInboundHandoff, isOutboundHandoff,
+    isOwned, isInboundHandoff, isOutboundHandoff, isHandoffInProgress,
     onPositionChange,
     processImplied,
     flashPhaseHidden,

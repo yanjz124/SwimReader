@@ -166,7 +166,25 @@ public sealed class TaisMessageParser : IStddsMessageParser
                 Scratchpad1 = fp.Element("scratchPad1")?.Value,
                 Scratchpad2 = fp.Element("scratchPad2")?.Value,
                 Owner = NullIfUnassigned(fp.Element("cps")?.Value),
-                PendingHandoff = fp.Element("pendingHandoff")?.Value,
+                // TAIS does NOT publish <pendingHandoff>. The handoff state lives
+                // in <ocr> (Operational Control Required), values observed in
+                // captured XML: "no change", "pending", "normal handoff",
+                // "intrafacility handoff". The RECEIVING sector is never
+                // published in this feed — we can only signal "a handoff is
+                // happening" and (downstream) infer direction from cps == me.
+                //
+                // For client-side compat with handoff.js which keys off
+                // PendingHandoff being non-empty: set it to "?" placeholder
+                // when a handoff is in progress so the data-block flash +
+                // FDB promotion fire. When DGScope's verbatim
+                // `PendingHandoff == ThisPositionIndicator` predicate runs
+                // it returns false — we cannot detect INBOUND without the
+                // receiver TCP, so the flash is a generic "something is
+                // happening on this track" signal until we find a TAIS
+                // extension or alt feed that carries the receiver field.
+                HandoffOcr = NullIfEmpty(fp.Element("ocr")?.Value),
+                IsHandoffInProgress = IsHandoffOcr(fp.Element("ocr")?.Value),
+                PendingHandoff = IsHandoffOcr(fp.Element("ocr")?.Value) ? "?" : null,
                 WakeCategory = NullIfEmpty(fp.Element("category")?.Value),
                 LdrDirection = ParseLdrDirection(fp.Element("lld")?.Value),
                 Facility = facility
@@ -200,6 +218,19 @@ public sealed class TaisMessageParser : IStddsMessageParser
 
     private static string? NullIfUnassigned(string? value)
         => value is null or "unassigned" ? null : value;
+
+    /// <summary>
+    /// TAIS &lt;ocr&gt; (Operational Control Required) → handoff-in-progress.
+    /// "no change" is the idle / no-handoff state; everything else indicates
+    /// a handoff is happening (pending, normal handoff, intrafacility
+    /// handoff). The receiving sector is NOT published in this feed.
+    /// </summary>
+    private static bool IsHandoffOcr(string? ocr)
+    {
+        if (string.IsNullOrWhiteSpace(ocr)) return false;
+        var v = ocr.Trim().ToLowerInvariant();
+        return v is "pending" or "normal handoff" or "intrafacility handoff";
+    }
 
     /// <summary>
     /// Maps TAIS leader line direction string to DGScope LDRDirection enum value.

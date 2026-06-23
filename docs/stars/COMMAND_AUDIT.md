@@ -49,9 +49,9 @@ Symbol legend:
 | --- | --- | --- | --- |
 | `*B` | `*B [E\|I]` ATPA monitor cones toggle/E/I | cs:1641-1651 | ✅ |
 | `*D+` | `*D+ [E\|I]` TPA size toggle/E/I (per-plane or system) | cs:1652-1717 | ✅ |
-| `*T` | RBL — clicked plane + `*T`, `*T<idx>` enter (delete), `*T<wp>` enter (start from waypoint), `*T` enter (clear all), click empty + `*T` | cs:1718-1801 | ⚠️ wired but RBL rendering on canvas not yet implemented |
-| `*J<miles>` | J-Ring of N miles on clicked plane (0 < N ≤ 30) | cs:1802-1828 | ⚠️ state captured; canvas render TODO |
-| `*P<miles>` | P-Cone of N miles on clicked plane | cs:1829-1858 | ⚠️ state captured; canvas render TODO |
+| `*T` | RBL — clicked plane + `*T`, `*T<idx>` enter (delete), `*T<wp>` enter (start from waypoint), `*T` enter (clear all), click empty + `*T` | cs:1718-1801 | ✅ verbatim line-by-line; canvas render still TODO |
+| `*J<miles>` | J-Ring of N miles on clicked plane (0 < N ≤ 30) | cs:1802-1828 | ✅ now uses `TPA = { type: "JRing", miles, color: COLORS.TPA }` instead of invented `_jRing` field; no `"NO TRK"` on `*J` |
+| `*P<miles>` | P-Cone of N miles on clicked plane | cs:1829-1858 | ✅ now uses `COLORS.TPA` (blue) instead of invented hardcoded green; `"NO TRK"` only on `*P` per cs:1855-1858 |
 | `**J` | clear all J-Rings | cs:1865-1869 | ✅ |
 | `**P` | clear all P-Cones | cs:1870-1874 | ✅ |
 | `**<pos>` | ForceQuickLook when pos == ThisPositionIndicator | cs:1875-1887 | ✅ |

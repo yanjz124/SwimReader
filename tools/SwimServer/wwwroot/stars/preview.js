@@ -438,44 +438,57 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
     }
     return;
   }
-  // *T  Range/Bearing Line tool (cs:1718-1801)
-  //   click plane + *T               -> start RBL from plane to mouse
-  //   *T then click plane            -> finalize end-plane
-  //   *T<idx> enter                  -> remove RBL at index
-  //   *T<waypoint> enter             -> new RBL from waypoint to mouse
-  //   *T enter                       -> clear all RBLs
-  //   click empty + *T               -> start RBL from clicked geo to mouse
+  // *T Range/Bearing Line tool (cs:1718-1801)
+  // Three operating modes, mirroring the WPF case structure exactly:
+  //   clicked-plane branch (cs:1719-1757)
+  //     • If no tempLine yet, create one anchored to the clicked plane.
+  //     • If keys[0].Length > 2 (typed extra chars after "*T"), the
+  //       entered string is Substring(1) of the full token (so "*T5"
+  //       becomes "T5"). int.TryParse("T5") FAILS — that branch only
+  //       matters when the user typed a pure-digit prefix that we
+  //       skipped, which doesn't happen here. The waypoint branch
+  //       looks up "T5" as a fix name (cs:1742); if found, redirect
+  //       tempLine.StartGeo to it. Either way, since clickedplane is
+  //       still true, the line then bound to EndPlane = clicked and
+  //       tempLine = null (cs:1750-1754).
+  //   enter branch (cs:1758-1792)
+  //     • length == 2  → rangeBearingLines.Clear()  (cs:1762)
+  //     • length > 2  → entered = Substring(2), int parses index for
+  //                     delete or waypoint creates a new RBL.
+  //   click-empty branch (cs:1793-1798)
+  //     • tempLine == null → start new RBL from ScreenToGeoPoint(clicked).
   if (sub === "T") {
     const rbls = window.starsState.rangeBearingLines ||= [];
+    const tokenAfterStar = k.slice(1).join("");           // "T" + optional suffix
     if (clickedplane) {
+      // Create an open RBL anchored to the clicked plane if we don't have one yet.
       if (!window.starsState.tempLine) {
         window.starsState.tempLine = { startPlane: clicked, end: window.mouseGeo?.() };
         rbls.push(window.starsState.tempLine);
       }
       if (k.length > 2) {
-        const entered = k.slice(1).join("").substring(1);
-        const idx = parseInt(entered, 10);
-        if (Number.isFinite(idx)) {
-          if (idx <= rbls.length) rbls.splice(idx - 1, 1);
-        } else {
-          const wp = (window.starsWaypoints || []).find(w => w.id === entered);
-          if (wp) window.starsState.tempLine.startGeo = { lat: wp.lat, lon: wp.lon };
-        }
+        // DGScope Substring(1) on "*T<rest>" gives "T<rest>" — int parse
+        // on a string starting with 'T' fails, so only the waypoint
+        // lookup branch is reachable here. Matching that behaviour.
+        const entered = tokenAfterStar;                                // "T..."
+        const wp = (window.starsWaypoints || []).find(w => w.id === entered);
+        if (wp) window.starsState.tempLine.startGeo = { lat: wp.lat, lon: wp.lon };
+        // Bind to the clicked plane and finalize.
         window.starsState.tempLine.endPlane = clicked;
         window.starsState.tempLine = null;
       }
       return;
     }
     if (enter) {
-      if (k.length === 2) { rbls.length = 0; return; }
+      if (k.length === 2) { rbls.length = 0; return; }                  // cs:1762
       if (k.length > 2) {
-        const entered = k.slice(2).join("");
+        const entered = k.slice(2).join("");                            // strip "*T"
         const idx = parseInt(entered, 10);
-        if (Number.isFinite(idx)) {
-          if (idx <= rbls.length) rbls.splice(idx - 1, 1);
+        if (Number.isFinite(idx) && String(idx) === entered) {
+          if (idx <= rbls.length && idx >= 1) rbls.splice(idx - 1, 1);  // cs:1770-1775
         } else {
           const wp = (window.starsWaypoints || []).find(w => w.id === entered);
-          if (wp) {
+          if (wp) {                                                     // cs:1779-1789
             window.starsState.tempLine = { startGeo: { lat: wp.lat, lon: wp.lon }, end: window.mouseGeo?.() };
             rbls.push(window.starsState.tempLine);
           }
@@ -483,57 +496,65 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
       }
       return;
     }
-    if (!window.starsState.tempLine) {
-      // Clicked empty location, start RBL from there
+    // No clicked plane and no Enter → user clicked an empty map location.
+    if (!window.starsState.tempLine) {                                  // cs:1793-1798
       window.starsState.tempLine = { startGeo: window.mouseGeo?.() };
       rbls.push(window.starsState.tempLine);
     }
     return;
   }
-  // *J<miles>  + clicked plane (cs:1802-1828): J-Ring (TPA ring) of N miles
-  //   no miles -> remove plane's TPA
+  // *J<miles> + clicked plane (cs:1802-1828): JRing TPA of N miles.
+  // No miles (just "*J" + click) -> plane.TPA = null (clears ANY TPA).
+  // DGScope's `if (clickedplane)` wrapper means no-clicked-plane is a silent
+  // no-op — there is NO "NO TRK" response on *J.
   if (sub === "J") {
-    if (!clickedplane) { setResponse("NO TRK"); return; }
+    if (!clickedplane) return;                                       // cs:1803 wrapper
     if (k.length >= 3 && k.length <= 5) {
       const miles = parseFloat(k.slice(2).join(""));
-      if (!Number.isFinite(miles)) { setResponse("FORMAT"); return; }
-      if (miles > 0 && miles <= 30) clicked._jRing = miles;   // drawJRings reads _jRing
-      else setResponse("FORMAT");
-    } else {
-      clicked._jRing = null;   // *J with no value removes the ring
-    }
-    return;
-  }
-  // *P<miles>  + clicked plane (cs:1829-1858): P-Cone (predictive cone)
-  if (sub === "P") {
-    if (!clickedplane) { setResponse("NO TRK"); return; }
-    if (k.length >= 3 && k.length <= 5) {
-      const miles = parseFloat(k.slice(2).join(""));
-      if (!Number.isFinite(miles)) return;
+      if (!Number.isFinite(miles)) return;                            // decimal.TryParse fail = silent (cs:1809)
       if (miles > 0 && miles <= 30) {
-        clicked.TPA = { type: "PCone", miles, color: "#0f0", showSize: window.starsState.TPASize };
+        clicked.TPA = { type: "JRing", miles, color: COLORS.TPA, showSize: window.starsState.TPASize };
       } else {
-        setResponse("FORMAT");
+        setResponse("FORMAT");                                        // cs:1817
       }
     } else {
-      clicked.TPA = null;
+      clicked.TPA = null;                                             // cs:1824
     }
     return;
   }
-  // **J / **P / **<pos>  (cs:1860-1889)
+  // *P<miles> + clicked plane (cs:1829-1858): PCone TPA of N miles.
+  // Unlike *J, the *P case has an explicit `else DisplayPreviewMessage("NO TRK")`
+  // when there's no clicked plane (cs:1855-1858).
+  if (sub === "P") {
+    if (!clickedplane) { setResponse("NO TRK"); return; }            // cs:1856-1857
+    if (k.length >= 3 && k.length <= 5) {
+      const miles = parseFloat(k.slice(2).join(""));
+      if (!Number.isFinite(miles)) return;                            // silent on parse fail
+      if (miles > 0 && miles <= 30) {
+        clicked.TPA = { type: "PCone", miles, color: COLORS.TPA, showSize: window.starsState.TPASize };
+      } else {
+        setResponse("FORMAT");                                        // cs:1844
+      }
+    } else {
+      clicked.TPA = null;                                             // cs:1851
+    }
+    return;
+  }
+  // **J / **P / **<pos> (cs:1860-1889)
   if (sub === "*" && k.length > 2) {
     const c = k[2];
+    // **J — clear every TPA whose Type == JRing (cs:1865-1868).
     if (c === "J") {
-      // Clear all J-Rings (*J stores the radius in _jRing — clear that).
-      for (const t of tracks.values()) t._jRing = null;
+      for (const t of tracks.values()) if (t.TPA?.type === "JRing") t.TPA = null;
       return;
     }
+    // **P — clear every TPA whose Type == PCone (cs:1870-1873).
     if (c === "P") {
-      // Clear all P-Cones
       for (const t of tracks.values()) if (t.TPA?.type === "PCone") t.TPA = null;
       return;
     }
-    // **<pos>  4 chars total = ForceQuickLook when pos == us
+    // **<pos> 4 chars + clicked plane: if pos == ThisPositionIndicator set
+    // ForceQuickLook (cs:1875-1887).
     if (k.length === 4) {
       const pos = k.slice(2).join("");
       if (clickedplane && pos === window.ownTcp?.()) {

@@ -174,5 +174,37 @@ static class DebugRoutes
                 return Results.Text(sample, "application/xml");
             return Results.NotFound();
         });
+
+        // Debug: enable raw-XML capture for matching callsigns. Body is a
+        // CSV or comma-separated list. Empty body clears the watch list.
+        // GET returns the current watch list + log file path + log size.
+        app.MapGet("/api/debug/tais-watch", () =>
+        {
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tais-watch.log");
+            long size = System.IO.File.Exists(path) ? new System.IO.FileInfo(path).Length : 0;
+            return Results.Json(new {
+                callsigns = TaisBridge.WatchCallsigns.Keys.ToList(),
+                logPath = path,
+                logBytes = size,
+            }, ctx.JsonOpts);
+        });
+        app.MapPut("/api/debug/tais-watch", async (HttpRequest req) =>
+        {
+            using var sr = new System.IO.StreamReader(req.Body);
+            var body = (await sr.ReadToEndAsync()).Trim();
+            TaisBridge.WatchCallsigns.Clear();
+            foreach (var cs in body.Split(new[] { ',', '\n', ' ' }, StringSplitOptions.RemoveEmptyEntries))
+                TaisBridge.WatchCallsigns.TryAdd(cs.Trim().ToUpperInvariant(), 0);
+            return Results.Json(new { watching = TaisBridge.WatchCallsigns.Keys.ToList() }, ctx.JsonOpts);
+        });
+        // Read (and optionally clear) the captured log.
+        app.MapGet("/api/debug/tais-watch/log", (bool? clear) =>
+        {
+            var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tais-watch.log");
+            if (!System.IO.File.Exists(path)) return Results.Text("", "text/plain");
+            var content = System.IO.File.ReadAllText(path);
+            if (clear == true) System.IO.File.WriteAllText(path, "");
+            return Results.Text(content, "text/plain");
+        });
     }
 }

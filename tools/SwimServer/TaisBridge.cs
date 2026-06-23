@@ -33,6 +33,14 @@ class TaisBridge
     // ── Message processing ─────────────────────────────────────────────────────
 
     /// <summary>Called by AsdexBridge for non-SMES messages.</summary>
+    // Debug: when set, log full XML of any record whose flightPlan.acid matches
+    // one of these callsigns. File: /tmp/tais-watch.log (or platform tmp).
+    // Toggle via PUT /api/debug/tais-watch with body {"callsigns":["SWA4308",...]}.
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> WatchCallsigns =
+        new(StringComparer.OrdinalIgnoreCase);
+    static readonly object _watchLock = new();
+    static readonly string _watchLogPath = Path.Combine(Path.GetTempPath(), "tais-watch.log");
+
     public void ProcessMessage(string topic, string body)
     {
         if (!topic.StartsWith("TAIS/", StringComparison.OrdinalIgnoreCase)) return;
@@ -47,6 +55,28 @@ class TaisBridge
 
             var facility = ElVal(root, "src");
             if (facility is null) return;
+
+            // Debug-watch: log full record XML for matched callsigns.
+            if (!WatchCallsigns.IsEmpty)
+            {
+                foreach (var record in Els(root, "record"))
+                {
+                    var fp = El(record, "flightPlan");
+                    var acid = fp is null ? null : ElVal(fp, "acid");
+                    if (acid is not null && WatchCallsigns.ContainsKey(acid))
+                    {
+                        lock (_watchLock)
+                        {
+                            try
+                            {
+                                File.AppendAllText(_watchLogPath,
+                                    $"\n=== {DateTime.UtcNow:HH:mm:ss.fff} {facility} {acid} ===\n" + record.ToString() + "\n");
+                            }
+                            catch { /* best effort */ }
+                        }
+                    }
+                }
+            }
 
             var facilityTracks = _state.GetOrAdd(facility,
                 _ => new ConcurrentDictionary<string, TaisTrack>());

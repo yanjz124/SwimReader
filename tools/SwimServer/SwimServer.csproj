@@ -15,6 +15,10 @@
 
   <ItemGroup>
     <PackageReference Include="SolaceSystems.Solclient.Messaging" Version="10.28.3" />
+    <!-- BZip2 decompression for NEXRAD Level III symbology blocks
+         (DescriptionBlock.ProductSpecific_8 == 1). Matches the version
+         DGScope's NexradDecoder library pulls in. -->
+    <PackageReference Include="SharpZipLib" Version="1.4.2" />
   </ItemGroup>
 
 </Project>

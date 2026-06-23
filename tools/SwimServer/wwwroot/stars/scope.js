@@ -985,8 +985,14 @@ function buildDataBlock(t, fp) {
   const fdb1line2 = `${altstring}${handoffChar}${speedField} `;
   const fdb2line2 = `${yscratch}${handoffChar}${reqalt} `;
   let fdb3line2;
+  // Aircraft.cs:441-444 literally drops the handoff char in the
+  // yscratch2.Length==4 branch (`yscratch2 + type` — no handoffchar).
+  // User-observed STARS scopes keep the handoff char visible in EVERY
+  // ClockPhase variant. Documented deviation: include handoffChar in
+  // all three branches so a track in handoff doesn't blink its line-2
+  // char in/out every ~7s as the variant rotates past phase 2.
   if (!yscratch2 || !yscratch2.trim()) fdb3line2 = `${yscratch}${handoffChar}${type} `;
-  else if (yscratch2.length === 4)     fdb3line2 = `${yscratch2}${type}`;       // scratchpad2 "+" form
+  else if (yscratch2.length === 4)     fdb3line2 = `${yscratch2}${handoffChar}${type}`;
   else                                  fdb3line2 = `${yscratch2}${handoffChar}${type} `;
 
   if (mode === "FDB") {

@@ -81,7 +81,15 @@ static class NexradStarsRoutes
             if (_cache.TryGetValue(cacheKey, out var e) && DateTime.UtcNow - e.At < Ttl)
                 return Results.Bytes(e.Bytes, e.ContentType);
 
-            var url = $"https://tgftp.nws.noaa.gov/SL.us008001/DF.of/DC.radar/DS.{product}/SI.{station.ToLowerInvariant()}/sn.last";
+            // RIDGE-II rendered GIF from radar.weather.gov. The previous
+            // tgftp URL returned the raw Level III bulletin (binary NIDS —
+            // "SDUS62 KRAH ..."), which createImageBitmap can't decode and
+            // silently failed in the browser. radar.weather.gov serves a
+            // true 600×550 palette-rendered GIF suitable for canvas pixel
+            // reads. The product code is ignored by the standard renderer
+            // (always base reflectivity); kept in the URL so per-product
+            // variants can be added later without a URL break.
+            var url = $"https://radar.weather.gov/ridge/standard/{station}_0.gif";
             try
             {
                 using var resp = await Http.GetAsync(url);

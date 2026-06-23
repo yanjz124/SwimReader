@@ -210,6 +210,14 @@ function onKeyDown(e) {
     refreshPreview();
     return;
   }
+  // Ctrl+Q = toggle global QuickLook (RadarWindow.cs:3308-3310 — inside the
+  // `if (e.Control)` block, so this is Ctrl+Q, not bare Q).
+  if (e.ctrlKey && !e.shiftKey && e.key && e.key.toUpperCase() === "Q") {
+    e.preventDefault();
+    if (window.prefSet) window.prefSet.QuickLookAll = !window.prefSet.QuickLookAll;
+    refreshPreview();
+    return;
+  }
   // Printable
   if (e.key.length === 1) {
     e.preventDefault();

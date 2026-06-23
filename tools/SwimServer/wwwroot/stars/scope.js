@@ -977,24 +977,34 @@ function dataBlockMode(t, fp) {
   if (t._forcedMode) return t._forcedMode;
   // Emergency / SPC always promote (Aircraft.cs:158 fdb()).
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) return "FDB";
-  // QuickLook list and ForceQuickLook auto-FDB regardless of association.
-  if (t._quickLook || t._forceQuickLook) return "FDB";
+  // ForceQuickLook auto-FDB regardless of association (set by **<pos>).
+  if (t._forceQuickLook) return "FDB";
+  // QuickLookList promotion — RadarWindow.cs:5685-5711. An aircraft is
+  // QuickLook=true if any of:
+  //   • QuickLookedTCPs contains its controlling position (or ALL/ALL+)
+  //   • QuickLookedTCPs contains "<pos>+" (QuickLookPlus form)
+  //   • global RadarWindow.QuickLook is true AND track is in altitude filter
+  // Associated-only check is done via fp.Owner presence; ALL/ALL+ only apply
+  // when the track is associated (cs:5689-5690).
+  const associated = !!fp?.Owner;
+  const ql = prefSet.QuickLookedTCPs || [];
+  if (associated && (ql.includes("ALL") || ql.includes("ALL+"))) return "FDB";
+  if (fp?.Owner && (ql.includes(fp.Owner) || ql.includes(fp.Owner + "+"))) return "FDB";
+  if (prefSet.QuickLookAll) return "FDB";   // bare Key.Q toggle (cs:3308-3310)
   // No FP — unassociated track, true LDB (Aircraft.cs render path).
   if (!fp) return "LDB";
-  // Owned (PositionInd == me) OR inbound handoff (PendingHandoff == me).
+  // Owned (PositionInd == me) OR inbound handoff (PendingHandoff == me)
+  // — both flip Owned bool true (RadarWindow.cs:1085), auto-promoting to FDB
+  // via Aircraft.FDB getter (cs:119-136).
   const me = ownTcp();
   if (me) {
     if (fp.Owner === me) return "FDB";
     if (fp.PendingHandoff === me) return "FDB";
-  } else {
-    // Observer mode (no signed-on TCP) — documented deviation: show FDB
-    // for every associated track so the scope is readable.
-    return "FDB";
   }
   // Associated but owned by another position → PDB (callsign + altitude).
-  // Per CRC docs § Data Blocks. DGScope renders this as LDB (beacon code)
-  // but real STARS shows the callsign so the controller can identify the
-  // track without expanding it.
+  // Per CRC docs § Data Blocks. Observer mode (no me) falls here too: every
+  // associated track gets the partial data block so callsigns are visible
+  // without forcing every block to full FDB animation.
   if (fp.Callsign) return "PDB";
   return "LDB";                                                       // associated but no callsign → still beacon code
 }

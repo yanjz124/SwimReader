@@ -927,8 +927,14 @@ function buildDataBlock(t, fp) {
       lines.push(`${t.Squawk} ${String(fp.AssignedSquawk).padStart(4, "0")}`);
     else lines.push(" ");
   } else if (mode === "PDB") {
+    // PDB — associated track owned by another position. Per CRC docs:
+    //   line 1: callsign
+    //   line 2: altitude + handoff char + speed + cat (FDB line-2 shape
+    //           without the 3-variant rotation)
+    //   line 3: blank
     lines.push(fp?.Callsign || t.Callsign || t.Squawk || "");
-    lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+    lines.push(`${altstring}${handoffChar}${speedField}`);
+    lines.push("     ");
   } else { // LDB — WPF Aircraft.cs:565-613 (always 3 lines)
     if (prefSet.LdbBeaconCodesInhibited) {
       // BCB inhibited: altitude on line 1, two blank lines (Aircraft.cs:571-573)
@@ -944,7 +950,8 @@ function buildDataBlock(t, fp) {
   return lines;
 }
 
-// dataBlockMode — direct port of Aircraft.FDB getter + fdb() helper.
+// dataBlockMode — direct port of Aircraft.FDB getter + fdb() helper, with
+// the CRC STARS docs' PDB tier added for associated-but-not-owned tracks.
 //   Aircraft.cs:119-136 FDB getter:
 //     if (Owned && !QuickLook) _fdb = true   (owned tracks auto-promote)
 //     else if (QuickLook)      return true   (QL list always FDB)
@@ -955,7 +962,15 @@ function buildDataBlock(t, fp) {
 //     return _fdb
 //   RadarWindow.cs:1085 Owned bool: PositionInd==me OR PendingHandoff==me
 //     (so inbound handoff promotes to Owned → FDB).
-//   There is NO separate "PDB" mode in STARS — FDB or LDB only.
+//
+// CRC STARS docs distinguish:
+//   LDB: unassociated tracks → beacon code + altitude
+//   PDB: associated but owned by ANOTHER position → callsign on line 1,
+//        altitude+speed on line 2
+//   FDB: associated + owned-or-receiving → full 3-line block
+// DGScope conflates LDB+PDB into a single beacon-code-on-line-1 render
+// (Aircraft.cs:595-613); we split them so tracked tracks show the
+// callsign instead of the raw squawk, per user-visible STARS behaviour.
 function dataBlockMode(t, fp) {
   // Explicit per-track toggle (Aircraft._fdb when user clicks). This is the
   // "store" the FDB getter writes to; takes priority over the auto-derive.
@@ -964,10 +979,9 @@ function dataBlockMode(t, fp) {
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) return "FDB";
   // QuickLook list and ForceQuickLook auto-FDB regardless of association.
   if (t._quickLook || t._forceQuickLook) return "FDB";
-  // No FP — unassociated track, LDB by default (Aircraft.cs render path).
+  // No FP — unassociated track, true LDB (Aircraft.cs render path).
   if (!fp) return "LDB";
-  // Owned (PositionInd == me) OR inbound handoff (PendingHandoff == me)
-  // — both flip Owned bool true, which auto-promotes to FDB.
+  // Owned (PositionInd == me) OR inbound handoff (PendingHandoff == me).
   const me = ownTcp();
   if (me) {
     if (fp.Owner === me) return "FDB";
@@ -977,7 +991,12 @@ function dataBlockMode(t, fp) {
     // for every associated track so the scope is readable.
     return "FDB";
   }
-  return "LDB";                                                       // non-owned associated → LDB
+  // Associated but owned by another position → PDB (callsign + altitude).
+  // Per CRC docs § Data Blocks. DGScope renders this as LDB (beacon code)
+  // but real STARS shows the callsign so the controller can identify the
+  // track without expanding it.
+  if (fp.Callsign) return "PDB";
+  return "LDB";                                                       // associated but no callsign → still beacon code
 }
 
 // Leader-direction offset (RadarWindow.cs OffsetDatablockLocation, ~5750+).
@@ -1766,22 +1785,21 @@ function mountDcb() {
 // DcbWxButtonClick (RadarWindow.cs:3886-3896) — toggles Nexrad.LevelsEnabled[i].
 // Click any WX# button to flip that layer; turning on a layer when the
 // overlay is off also turns the master enable on (so users don't have to
-// chase a separate switch).
+// chase a separate switch). Also kicks off the radar-image fetch on the
+// first toggle — init() may have been delayed waiting for ScreenCenterPoint.
 function handleWxToggle(n) {
   const idx = n - 1;
   if (idx < 0 || idx > 5) return;
   starsState.wxLevels[idx] = !starsState.wxLevels[idx];
+  // Nexrad.enable(true) ensures prefSet.Nexrad exists (it loads BEFORE
+  // scope.js, so its module-time init may have skipped that block) AND
+  // kicks off station pick + image fetch on first call.
+  if (starsState.wxLevels.some(Boolean) && window.Nexrad) {
+    window.Nexrad.enable(true);                  // master on + lazy init
+  }
   if (prefSet.Nexrad) {
     if (starsState.wxLevels[idx]) prefSet.Nexrad.levels |= (1 << idx);
     else                          prefSet.Nexrad.levels &= ~(1 << idx);
-    // If any layer is on, ensure the master enable is on too. If the user
-    // turned the last layer off, leave the master alone — they may want
-    // it back later without re-enabling each band.
-    if (starsState.wxLevels.some(Boolean)) prefSet.Nexrad.enabled = true;
-  }
-  if (window.Nexrad && !window.Nexrad.getStation()) {
-    // First WX click — kick off the image fetch in case init() hadn't yet.
-    window.Nexrad.init?.();
   }
   if (dcb) dcb.render();
   _afterPrefChange();

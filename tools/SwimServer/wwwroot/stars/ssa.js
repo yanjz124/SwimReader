@@ -62,12 +62,16 @@ async function fetchMetar(station) {
 async function pollMetars() {
   const stations = ssaStations();
   if (!stations.length) return false;          // facility not loaded yet
-  let header = null;
+  // Per WeatherService.Altimeter (WeatherService.cs:51-83): sum all valid
+  // station pressures, divide by count of pressures that parsed. Default
+  // 29.92 when none. Single-station case still goes through the average
+  // and just returns that one station's value.
+  let sum = 0, count = 0;
   for (const s of stations) {
     const p = await fetchMetar(s);
-    if (header == null && p != null) header = p;
+    if (p != null && Number.isFinite(p)) { sum += p; count++; }
   }
-  if (header != null) SSA.altimeter = header;   // header line uses the first station
+  SSA.altimeter = (count > 0) ? (sum / count) : 29.92;
   return true;
 }
 
@@ -150,17 +154,19 @@ function refreshSsa() {
   if (!el) return;
   const lines = [];
 
-  // Line 0 (Phase 8) — signed-on TCP indicator, only when present.
-  const tcp = window.ownTcp && window.ownTcp();
-  if (tcp) lines.push(`TCP ${tcp}`);
-
-  // Line 1 — Time HHmm/ss + sync + altimeter
+  // RenderStatus — RadarWindow.cs:2947 verbatim:
+  //   CurrentTime.ToString("HHmm/ss") + timesyncind + wx.Altimeter.Value.ToString("00.00")
+  // No TCP line, no other prefix lines. DGScope simply does not display a
+  // signed-on TCP in the SSA — that earlier addition was invented; removed.
   const d = new Date();
   const hhmm = String(d.getUTCHours()).padStart(2, "0") + String(d.getUTCMinutes()).padStart(2, "0");
   const ss = String(d.getUTCSeconds()).padStart(2, "0");
   const syncInd = SSA.timeSynchronized ? " " : "*";
-  const altimeterStr = SSA.altimeter != null ? SSA.altimeter.toFixed(2) : "00.00";  // cs:2947 always 00.00
-  lines.push(`${hhmm}/${ss}${syncInd}${altimeterStr}`);
+  // wx.Altimeter.Value defaults to 29.92 (WeatherService.cs:172) when no
+  // METARs are loaded; we use the same fallback instead of "00.00" so the
+  // SSA never shows a value that's outside the realistic 28-31 inHg range.
+  const altInHg = (SSA.altimeter != null) ? SSA.altimeter : 29.92;
+  lines.push(`${hhmm}/${ss}${syncInd}${altInHg.toFixed(2)}`);
 
   // Line 2..N — ATIS
   for (let i = 0; i < 10; i++) {

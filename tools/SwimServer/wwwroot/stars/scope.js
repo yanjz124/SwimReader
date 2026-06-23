@@ -263,16 +263,17 @@ function drawCompass() {
 
     if (i % 10 === 0) {
       const line = i / 10;
-      // DGScope offsets labels inward by the label height (cs:4809) — gives a
-      // clear gap between the tick and the number.
+      // DGScope offsets labels inward by the label height (cs:4809).
       const lh = 14;
-      labelAt(`${i}`,         x1, h1 - lh);
-      labelAt(`${i + 180}`,  -x1, -h1 + lh);
+      // RadarWindow.cs:4791-4803 — special case for i=0: top-centre label
+      // reads "360" not "0", AND the south-centre tick stays "180" (we
+      // already emit that via `${i + 180}`). For i>0 the symmetric labels
+      // at 180-i (south) and 360-i (north, west side) also render.
+      labelAt(line === 0 ? "360" : `${i}`, x1, h1 - lh);
+      labelAt(`${i + 180}`,                -x1, -h1 + lh);
       if (line > 0) {
         labelAt(`${180 - i}`,  x1, -h1 + lh);
         labelAt(`${360 - i}`, -x1,  h1 - lh);
-      } else {
-        // 360 (=0 at top center)
       }
     }
   }
@@ -791,8 +792,17 @@ function drawHistory(t) {
 //     OR per-track ShowPTL flag.
 function drawPTL(t, posNow) {
   if (!posNow || t.GroundSpeed == null || t.GroundTrack == null) return;
-  const enable = prefSet.PTLAll || t.ShowPTL ||
-    (prefSet.PTLOwn && trackToFp.get(t.Guid)?.Owner === ownTcp());
+  if (!(prefSet.PTLLength > 0)) return;                          // cs:6291 PTLLength gate
+  // RadarWindow.cs:6291: ShowPTL || (Owned && PTLOwn) || (FDB && PTLAll)
+  //   Owned (cs:1085) = PositionInd==me OR PendingHandoff==me
+  //   FDB   = dataBlockMode(...) === "FDB"
+  const fp = trackToFp.get(t.Guid);
+  const me = ownTcp();
+  const owned = !!(me && (fp?.Owner === me || fp?.PendingHandoff === me));
+  const isFdb = (typeof dataBlockMode === "function") && dataBlockMode(t, fp) === "FDB";
+  const enable = t._showPtl ||
+    (owned && prefSet.PTLOwn) ||
+    (isFdb && prefSet.PTLAll);
   if (!enable) return;
   const distNM = (t.GroundSpeed * prefSet.PTLLength) / 60;
   const θ = t.GroundTrack * Math.PI / 180;

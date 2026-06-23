@@ -100,6 +100,11 @@
   async function pickStation() {
     if (!window.prefSet?.ScreenCenterPoint) return null;
     const ctr = prefSet.ScreenCenterPoint;
+    // ScreenCenterPoint defaults to {0,0} (mid-Atlantic) until vNAS facility
+    // load populates it. Bail until we have a real centre so the nearest
+    // station isn't a random WSR somewhere near the equator.
+    if (!Number.isFinite(ctr.Latitude) || !Number.isFinite(ctr.Longitude)) return null;
+    if (Math.abs(ctr.Latitude) < 0.01 && Math.abs(ctr.Longitude) < 0.01) return null;
     try {
       const r = await fetch(`/api/stars/nexrad/nearest?lat=${ctr.Latitude}&lon=${ctr.Longitude}`);
       if (!r.ok) return null;
@@ -205,9 +210,17 @@
 
   async function init() {
     ensureNexradPrefs();
-    _station = await pickStation();
+    // Retry station pick every 2s until ScreenCenterPoint is populated by the
+    // vNAS facility load. Without this guard, init() once at module load
+    // would silently fail before the scope knows where it is and the user
+    // would later toggle WX# buttons with nothing to draw.
+    for (let i = 0; i < 30; i++) {
+      _station = await pickStation();
+      if (_station) break;
+      await new Promise(r => setTimeout(r, 2000));
+    }
     if (!_station) {
-      console.warn("[STARS NEXRAD] no station found near scope centre");
+      console.warn("[STARS NEXRAD] no station found near scope centre after 60s");
       return;
     }
     console.log(`[STARS NEXRAD] using ${_station.icao} ${_station.name}, ${_station.state}`);

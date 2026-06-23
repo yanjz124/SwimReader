@@ -944,21 +944,39 @@ function buildDataBlock(t, fp) {
   return lines;
 }
 
-// dataBlockMode — CRC docs § Data Blocks. Owned/quick-look tracks default
-// to FDB; non-owned associated default to PDB; non-associated default to LDB.
-// Phase 4 (DCB) and Phase 5 (commands) let the user toggle individual blocks.
+// dataBlockMode — direct port of Aircraft.FDB getter + fdb() helper.
+//   Aircraft.cs:119-136 FDB getter:
+//     if (Owned && !QuickLook) _fdb = true   (owned tracks auto-promote)
+//     else if (QuickLook)      return true   (QL list always FDB)
+//     else if (ForceQuickLook) return true   (**<pos> always FDB)
+//     return _fdb                            (manual toggle persisted)
+//   Aircraft.cs:156-166 fdb() helper used by colour tier:
+//     if (Emergency || QuickLook) return true
+//     return _fdb
+//   RadarWindow.cs:1085 Owned bool: PositionInd==me OR PendingHandoff==me
+//     (so inbound handoff promotes to Owned → FDB).
+//   There is NO separate "PDB" mode in STARS — FDB or LDB only.
 function dataBlockMode(t, fp) {
-  // WPF Aircraft.FDB (Aircraft.cs:119-136): FDB iff Owned, QuickLook,
-  // ForceQuickLook, Emergency, or manually toggled — otherwise LDB. There is
-  // no separate "PDB" mode.
-  if (t._forcedMode) return t._forcedMode;                            // manual toggle
+  // Explicit per-track toggle (Aircraft._fdb when user clicks). This is the
+  // "store" the FDB getter writes to; takes priority over the auto-derive.
+  if (t._forcedMode) return t._forcedMode;
+  // Emergency / SPC always promote (Aircraft.cs:158 fdb()).
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) return "FDB";
-  if (!fp) return "LDB";                                              // unassociated
-  if (fp.Owner && fp.Owner === ownTcp()) return "FDB";               // owned
-  if (t._quickLook) return "FDB";                                    // quick-looked
-  // Observer convenience (documented deviation): with no position signed on,
-  // show full blocks for every associated track so the scope is readable.
-  if (!ownTcp()) return "FDB";
+  // QuickLook list and ForceQuickLook auto-FDB regardless of association.
+  if (t._quickLook || t._forceQuickLook) return "FDB";
+  // No FP — unassociated track, LDB by default (Aircraft.cs render path).
+  if (!fp) return "LDB";
+  // Owned (PositionInd == me) OR inbound handoff (PendingHandoff == me)
+  // — both flip Owned bool true, which auto-promotes to FDB.
+  const me = ownTcp();
+  if (me) {
+    if (fp.Owner === me) return "FDB";
+    if (fp.PendingHandoff === me) return "FDB";
+  } else {
+    // Observer mode (no signed-on TCP) — documented deviation: show FDB
+    // for every associated track so the scope is readable.
+    return "FDB";
+  }
   return "LDB";                                                       // non-owned associated → LDB
 }
 
@@ -1044,27 +1062,39 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // right edge (closest to target); pad-left otherwise.
   const padLeft = (v.x < 0);
 
-  // Data-block colour priority — RadarWindow.cs:5436-5468:
-  //   Emergency→red > Marked→Selected(cyan) > ForceQuickLook→Pointout(yellow)
-  //   > Owned||QuickLookPlus→Owned(white) > FDB/LDB→DataBlock(green).
-  // An inbound handoff (PendingHandoff == my position) is treated as Owned and
-  // FLASHES (DataBlock.Flashing, cs:1067-1070) — NOT a yellow tier.
-  const inboundHandoff = fp?.PendingHandoff && fp.PendingHandoff === ownTcp();
-  const owned = (fp?.Owner === ownTcp()) || inboundHandoff;
+  // Data-block colour priority — verbatim from RadarWindow.cs:5436-5468:
+  //   5436  if (Emergency)                  → DataBlockEmergencyColor (red)
+  //   5442  else if (Marked)                → SelectedColor          (cyan)
+  //   5448  else if (ForceQuickLook)        → PointoutColor          (yellow)
+  //   5454  else if (Owned || QuickLookPlus)→ OwnedColor             (white)
+  //   5459  else if (FDB)                   → DataBlockColor         (green)
+  //   5464  else                            → LDBColor               (green; tunable)
+  //
+  // Owned (Aircraft.Owned, RadarWindow.cs:1085) = PositionInd==me OR
+  // PendingHandoff==me — so an inbound handoff is already covered by the
+  // Owned branch. The visual difference for inbound is the DataBlock.Flashing
+  // bit set at RadarWindow.cs:1086-1087.
+  //
+  // Pointout (Aircraft.cs:20) is a SEPARATE flag in DGScope, only read at
+  // RadarWindow.cs:2692/2724 (clear-on-click) — it does NOT drive colour.
+  // The previous port used an invented `_pointoutTarget` here; replaced
+  // with `_forceQuickLook` to match the source priority.
+  const inboundHandoff = !!(fp?.PendingHandoff && fp.PendingHandoff === ownTcp());
+  const ownedOrInbound = (fp?.Owner === ownTcp()) || inboundHandoff;
   let baseColor = COLORS.DataBlock;
-  // Conflict Alert is NOT a whole-block colour change — it adds a red "CA"
-  // annotation to the top line (handled below). The block keeps its normal
-  // ownership colour (CRC STARS § STCA).
+  // Conflict Alert is NOT a whole-block colour change — CA annotation only
+  // (CRC STARS § STCA; handled below).
   if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
     baseColor = COLORS.Emerg;
   } else if (t._marked) {
     baseColor = COLORS.Selected;            // cyan
-  } else if (fp?._pointoutTarget && (fp._pointoutTarget === ownTcp() || fp._pointoutTarget === "ANY")) {
-    baseColor = COLORS.Pointout;            // ForceQuickLook → yellow
-  } else if (owned) {
-    baseColor = COLORS.Owned;               // white
+  } else if (t._forceQuickLook) {
+    baseColor = COLORS.Pointout;            // yellow (cs:5448-5452)
+  } else if (ownedOrInbound || t._quickLookPlus) {
+    baseColor = COLORS.Owned;               // white (cs:5454-5458)
   }
-  // Inbound handoff flashes ~1 Hz — hide the block on the off phase (cs:1068).
+  // Inbound handoff flashes ~1 Hz — DataBlock.Flashing at cs:1086-1087.
+  // Hide the block on the off phase (~500ms).
   if (inboundHandoff && (Date.now() % 1000) >= 500) return;
   ctx.textBaseline = "top";
   ctx.textAlign = padLeft ? "right" : "left";

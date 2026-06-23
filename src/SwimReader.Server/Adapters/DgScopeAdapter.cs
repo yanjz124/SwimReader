@@ -174,6 +174,15 @@ public sealed class DgScopeAdapter : BackgroundService
         foreach (var kv in _enrichedCallsigns) s.EnrichedCallsigns[kv.Key.ToString()] = kv.Value;
         foreach (var g in _taisHasCallsign.Keys) s.TaisHasCallsign.Add(g.ToString());
         foreach (var kv in _trackHistory) s.TrackHistory[kv.Key.ToString()] = kv.Value.ToList();
+        // Handoff state — see PersistedHandoffState comments.
+        foreach (var kv in _handoffState)
+        {
+            s.HandoffStates[kv.Key.ToString()] = new PersistedHandoffState
+            {
+                ConfirmedOwner = kv.Value.ConfirmedOwner,
+                HandoffTo      = kv.Value.HandoffTo,
+            };
+        }
     }
 
     /// <summary>Restore caches, keeping only entries whose GUID is a live target
@@ -196,6 +205,19 @@ public sealed class DgScopeAdapter : BackgroundService
         {
             var set = _facilityFlightPlans.GetOrAdd(kv.Key, _ => new());
             foreach (var idStr in kv.Value) if (Guid.TryParse(idStr, out var g) && live.Contains(g)) set[g] = 0;
+        }
+        // Handoff state — restore only for live targets so we don't keep
+        // state for tracks the manager has already aged out.
+        foreach (var kv in s.HandoffStates)
+        {
+            if (Guid.TryParse(kv.Key, out var g) && live.Contains(g))
+            {
+                _handoffState[g] = new HandoffState
+                {
+                    ConfirmedOwner = kv.Value.ConfirmedOwner,
+                    HandoffTo      = kv.Value.HandoffTo,
+                };
+            }
         }
     }
 

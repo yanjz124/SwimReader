@@ -124,27 +124,37 @@ function auxMenu(state) {
 
 function briteMenu(state) {
   const b = state.prefSet.Brightness;
-  // BRITE submenu — every adjustment button is 40 tall per RadarWindow.cs
-  // :3511+ (briteDCBbutton..briteWXCbutton all have Height = 40). They pair
-  // 2-per-column. DONE button is 80 (full) per briteDoneButton declaration.
+  // BRITE submenu — every adjustment button reads the SPECIFIC PrefSet
+  // BrightnessSettings field per RadarWindow.cs:3963-3975 + cs:3511-3526:
+  //   POS → PositionSymbols      (cs:3963)
+  //   BCN → BeaconTargets        (cs:3969)
+  //   PRI → PrimaryTargets       (cs:3970)
+  //   FDB → FullDataBlocks       (cs:3964)
+  //   LDB → LimitedDataBlocks    (cs:3967)
+  //   OTH → OtherFDBs            (cs:3968)
+  //   TLS → Tools                (cs:3966 — TLS = TOOLS, not Lists)
+  //   LST → Lists                (cs:3965)
+  //   MPA / MPB → MapA / MapB    (cs:3961-3962)
+  //   WX  / WXC → Weather / WeatherContrast (cs:3974-3975)
+  // The 15-field BrightnessSettings split happened in PrefSet.cs:72-152.
   const items = [
     ["DCB",     "DCB",     b.DCB],
     ["BKC",     "BKC",     b.Background],
-    ["MPA",     "MPA",     b.VideoMapA],
-    ["MPB",     "MPB",     b.VideoMapB],
-    ["FDB",     "FDB",     b.DataBlock],
+    ["MPA",     "MPA",     b.MapA            ?? b.VideoMapA],
+    ["MPB",     "MPB",     b.MapB            ?? b.VideoMapB],
+    ["FDB",     "FDB",     b.FullDataBlocks  ?? b.DataBlock],
     ["LST",     "LST",     b.Lists],
-    ["POS",     "POS",     b.Position],
-    ["LDB",     "LDB",     b.DataBlock],
-    ["OTH",     "OTH",     b.DataBlock],
-    ["TLS",     "TLS",     b.Lists],
+    ["POS",     "POS",     b.PositionSymbols ?? b.Position],
+    ["LDB",     "LDB",     b.LimitedDataBlocks ?? b.DataBlock],
+    ["OTH",     "OTH",     b.OtherFDBs       ?? b.DataBlock],
+    ["TLS",     "TLS",     b.Tools],
     ["RR",      "RR",      b.RangeRings],
     ["CMP",     "CMP",     b.Compass],
-    ["BCN",     "BCN",     b.Position],
-    ["PRI",     "PRI",     b.Position],
+    ["BCN",     "BCN",     b.BeaconTargets   ?? b.Position],
+    ["PRI",     "PRI",     b.PrimaryTargets  ?? b.Position],
     ["HST",     "HST",     b.History],
     ["WX",      "WX",      b.Weather],
-    ["WXC",     "WXC",     b.Weather],
+    ["WXC",     "WXC",     b.WeatherContrast ?? b.Weather],
   ];
   const list = items.map(([id, label, v]) =>
     btn(`BRITE_${id}`, `${label} ${v}`, { brite: id, half: true }));
@@ -473,8 +483,16 @@ class DCB {
     if (submenu) {
       // SHIFT/Aux replace; everything else pops out.
       if (POPOUT_SUBMENUS.has(submenu)) {
-        this.popout = submenu;
-        this.popoutAnchorId = id;
+        // DCBSubmenuButton.OnClick (DCBButton.cs:313-326) toggles the
+        // submenu's Active state — re-clicking the parent CLOSES the popout.
+        // Web port mirrors that: same id + same popout already open → close.
+        if (this.popout === submenu && this.popoutAnchorId === id) {
+          this.popout = null;
+          this.popoutAnchorId = null;
+        } else {
+          this.popout = submenu;
+          this.popoutAnchorId = id;
+        }
       } else if (submenu === "AUX" || submenu === "MAIN") {
         this.active = submenu;
         this.popout = null; this.popoutAnchorId = null;

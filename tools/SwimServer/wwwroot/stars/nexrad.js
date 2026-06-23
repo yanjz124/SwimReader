@@ -28,7 +28,9 @@
   //   new WXColor(45, Color.FromArgb(100, 100, 51))
   //   new WXColor(50, Color.FromArgb(100, 100, 51), White, LIGHT)
   //   new WXColor(55, Color.FromArgb(100, 100, 51), White, DENSE)
-  const WX_COLORS = [
+  // Defaults from NexradDisplay.cs:127-138; profile.js overwrites the full
+  // array when the loaded XML carries <Nexrad><ColorTable> entries.
+  let WX_COLORS = [
     { minValue: 20, color: [ 38,  77,  77], stipple: "none"  },
     { minValue: 30, color: [ 38,  77,  77], stipple: "light" },
     { minValue: 40, color: [ 38,  77,  77], stipple: "dense" },
@@ -36,6 +38,9 @@
     { minValue: 50, color: [100, 100,  51], stipple: "light" },
     { minValue: 55, color: [100, 100,  51], stipple: "dense" },
   ];
+  function setColorTable(table) {
+    if (Array.isArray(table) && table.length > 0) WX_COLORS = table;
+  }
 
   // WXColorTable.GetWXColor (WXColorTable.cs:15-38): walk highest→lowest,
   // return the highest WXColor whose MinValue is exceeded AND whose level
@@ -248,5 +253,6 @@
       if (!ensureNexradPrefs()) return;
       prefSet.Nexrad.levels ^= (1 << (n - 1));
     },
+    setColorTable,
   };
 })();

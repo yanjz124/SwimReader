@@ -130,24 +130,31 @@
     set("ScopeCentered",                 "ScopeCentered",                  (t) => t.toLowerCase() === "true");
     set("LdbBeaconCodesInhibited",       "LdbBeaconCodesInhibited",        (t) => t.toLowerCase() === "true");
 
-    // Brightness — each named child under <Brightness>.
+    // Brightness — every named child under <Brightness> per
+    // BrightnessSettings (PrefSet.cs:72-152). 15 fields total. The legacy
+    // collapsed aliases (DataBlock / Position / VideoMapA / VideoMapB) are
+    // also written so call sites that haven't been split yet still work.
     const br = directChild(psEl, "Brightness");
     if (br) {
       prefSet.Brightness = prefSet.Brightness || {};
       const fields = [
-        "DCB", "Background", "FullDataBlocks", "Lists", "PositionSymbols",
-        "LimitedDataBlocks", "OtherFDBs", "Tools", "RangeRings", "Compass",
-        "BeaconTargets", "PrimaryTargets", "History", "Weather", "WeatherContrast",
+        "DCB", "Background",
+        "MapA", "MapB",
+        "FullDataBlocks", "LimitedDataBlocks", "OtherFDBs",
+        "Lists", "Tools", "RangeRings", "Compass",
+        "PositionSymbols", "BeaconTargets", "PrimaryTargets",
+        "History", "Weather", "WeatherContrast",
       ];
       for (const f of fields) {
         const v = directChild(br, f);
         if (v != null) prefSet.Brightness[f] = parseInt(v.textContent, 10);
       }
-      // The earlier 3-into-1 collapse (DataBlock / Position) is preserved
-      // — last-write-wins from the most-specific WPF field. KNOWN-DEVIATIONS.md
-      // A2/A3 explains why the split isn't yet wired through every renderer.
-      if (prefSet.Brightness.FullDataBlocks != null) prefSet.Brightness.DataBlock = prefSet.Brightness.FullDataBlocks;
-      if (prefSet.Brightness.PositionSymbols != null) prefSet.Brightness.Position = prefSet.Brightness.PositionSymbols;
+      // Legacy alias mirrors — preserved until every renderer reads the
+      // specific WPF field. Last-write-wins (most-specific source).
+      if (prefSet.Brightness.FullDataBlocks  != null) prefSet.Brightness.DataBlock = prefSet.Brightness.FullDataBlocks;
+      if (prefSet.Brightness.PositionSymbols != null) prefSet.Brightness.Position  = prefSet.Brightness.PositionSymbols;
+      if (prefSet.Brightness.MapA            != null) prefSet.Brightness.VideoMapA = prefSet.Brightness.MapA;
+      if (prefSet.Brightness.MapB            != null) prefSet.Brightness.VideoMapB = prefSet.Brightness.MapB;
     }
 
     // <CharSize> sub-block with DataBlock/Lists/DCB/Tools/Position pixel sizes.

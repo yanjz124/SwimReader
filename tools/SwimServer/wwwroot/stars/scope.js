@@ -53,13 +53,24 @@ const prefSet = {
   AltitudeFilterUnAssociatedMax: 99900,
   AltitudeFilterUnAssociatedMin: -9900,
   LdbBeaconCodesInhibited: false,
-  // PrefSet.cs:55-63 — every Brightness category defaults to 100. Profiles
-  // override via applyProfile; URL `?b=...` further overrides per-category.
+  // PrefSet.cs:47 → BrightnessSettings: 15 separate fields per cs:72-152.
+  // Each defaults to 100 (the WPF property getters return 100 when unset).
+  // Compass defaults to 100 in WPF; the user's RDU profile turns it to 0 —
+  // profile load supplies the override.
+  // The renderer reads the SPECIFIC field per element type so the BRITE
+  // submenu sliders can move them independently. Legacy collapsed aliases
+  // (DataBlock / Position / Weather sole) live alongside as last-write-wins
+  // mirrors for renderers that haven't been split yet.
   Brightness: {
-    DCB: 100, Background: 100, RangeRings: 20, Compass: 100,
-    VideoMapA: 100, VideoMapB: 100, DataBlock: 100,
-    Lists: 100, Position: 100, History: 100, Weather: 100,
-    Tools: 100,
+    DCB: 100, Background: 100,
+    MapA: 100, MapB: 100,
+    FullDataBlocks: 100, LimitedDataBlocks: 100, OtherFDBs: 100,
+    Lists: 100, Tools: 100, RangeRings: 100, Compass: 100,
+    PositionSymbols: 100, BeaconTargets: 100, PrimaryTargets: 100,
+    History: 100, Weather: 100, WeatherContrast: 100,
+    // Legacy aliases (KEEP — many call sites still reference these):
+    VideoMapA: 100, VideoMapB: 100,
+    DataBlock: 100, Position: 100,
   },
   // Per CRC § CHAR SIZE — 5 adjustable categories. Sizes here are in pixels.
   // The DCB CHAR SIZE submenu cycles each value in steps.
@@ -145,24 +156,37 @@ function recomputeScale() {
 window.addEventListener("resize", resize);
 
 // Geo → screen px (origin at canvas center).
+// RadarWindow.cs applies GL.Rotate(ScreenRotation, 0, 0, 1) to the scope
+// matrix before rendering tracks/maps/rings. We fold the equivalent
+// rotation into the projection so every consumer (drawTracks, drawRBLs,
+// nexrad polygons, video maps) honours it without a separate ctx transform.
 function geoToScreen(geo) {
   const ctr = prefSet.ScreenCenterPoint;
   const latFactor = Math.cos(ctr.Latitude * Math.PI / 180);
-  const dx_deg = geo.Longitude - ctr.Longitude;
-  const dy_deg = geo.Latitude - ctr.Latitude;
   // 1 degree latitude = 60 NM. Longitude shrinks by cos(lat).
-  const dx_NM = dx_deg * 60 * latFactor;
-  const dy_NM = dy_deg * 60;
+  const dx_NM = (geo.Longitude - ctr.Longitude) * 60 * latFactor;
+  const dy_NM = (geo.Latitude  - ctr.Latitude)  * 60;
+  const rot = ((prefSet.ScreenRotation || 0) * Math.PI) / 180;
+  const cosR = Math.cos(rot), sinR = Math.sin(rot);
+  // Positive rotation = CCW in math; WPF GL.Rotate uses the same convention.
+  // North (dy_NM > 0) at ScreenRotation=0 lands at top of screen (y = -dy_NM/scale).
+  const rx = dx_NM * cosR - dy_NM * sinR;
+  const ry = dx_NM * sinR + dy_NM * cosR;
   return {
-    x: view.W / 2 + dx_NM / view.scale,
-    y: view.H / 2 - dy_NM / view.scale, // screen Y inverted
+    x: view.W / 2 + rx / view.scale,
+    y: view.H / 2 - ry / view.scale, // screen Y inverted
   };
 }
 function screenToGeo(px, py) {
   const ctr = prefSet.ScreenCenterPoint;
   const latFactor = Math.cos(ctr.Latitude * Math.PI / 180);
-  const dx_NM = (px - view.W / 2) * view.scale;
-  const dy_NM = -(py - view.H / 2) * view.scale;
+  // Invert the rotation when going back screen → geo.
+  const rx = (px - view.W / 2) * view.scale;
+  const ry = -(py - view.H / 2) * view.scale;
+  const rot = ((prefSet.ScreenRotation || 0) * Math.PI) / 180;
+  const cosR = Math.cos(rot), sinR = Math.sin(rot);
+  const dx_NM =  rx * cosR + ry * sinR;
+  const dy_NM = -rx * sinR + ry * cosR;
   return {
     Latitude: ctr.Latitude + dy_NM / 60,
     Longitude: ctr.Longitude + dx_NM / (60 * latFactor),

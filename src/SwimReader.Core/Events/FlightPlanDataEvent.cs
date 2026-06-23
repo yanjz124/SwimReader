@@ -37,6 +37,18 @@ public sealed class FlightPlanDataEvent : ISwimEvent
     public string? PendingHandoff { get; init; }
     public int? LdrDirection { get; init; }
 
+    // Handoff state — derived from TAIS <ocr> (Operational Control Required).
+    // TAIS does NOT publish the receiving sector in the standard feed; we can
+    // detect that a handoff is in progress and (when cps == us) infer
+    // OUTBOUND direction, but INBOUND is not derivable without richer data.
+    // Raw OCR string values seen in TAIS samples:
+    //   "no change"             — idle, no handoff
+    //   "pending"               — handoff request out / awaiting accept
+    //   "normal handoff"        — handoff in progress
+    //   "intrafacility handoff" — local handoff within facility
+    public string? HandoffOcr { get; init; }
+    public bool   IsHandoffInProgress { get; init; }
+
     // Source facility
     public string? Facility { get; init; }
 }

@@ -326,6 +326,8 @@ public sealed class DgScopeAdapter : BackgroundService
             Runway = fp.Runway,
             Owner = fp.Owner,
             PendingHandoff = fp.PendingHandoff ?? "",
+            HandoffOcr = fp.HandoffOcr,
+            IsHandoffInProgress = fp.IsHandoffInProgress ? true : (bool?)null,
             AssignedSquawk = StripLeadingZeros(fp.AssignedSquawk),
             EquipmentSuffix = fp.EquipmentSuffix,
             LDRDirection = fp.LdrDirection,
@@ -353,7 +355,8 @@ public sealed class DgScopeAdapter : BackgroundService
         $"{u.Origin}|{u.Destination}|{u.EntryFix}|{u.ExitFix}|{u.Route}|" +
         $"{u.RequestedAltitude}|{u.Scratchpad1}|{u.Scratchpad2}|{u.Runway}|" +
         $"{u.Owner}|{u.PendingHandoff}|{u.AssignedSquawk}|{u.EquipmentSuffix}|" +
-        $"{u.LDRDirection}|{u.AssociatedTrackGuid}";
+        $"{u.LDRDirection}|{u.AssociatedTrackGuid}|" +
+        $"{u.HandoffOcr}|{u.IsHandoffInProgress}";
 
     /// <summary>
     /// Convert ICAO airport code to FAA LID (e.g. KDCA → DCA, KORD → ORD).

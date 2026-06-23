@@ -43,13 +43,18 @@
   let _imageLoaded = false;
   let _lastEtag = null;      // cheap "did the bytes change" tag (length+head)
 
-  // Sync prefSet defaults if the page hasn't set them.
-  if (window.prefSet) {
+  // prefSet.Nexrad defaults — set LAZILY because nexrad.js loads BEFORE
+  // scope.js (per scope.html script order) so window.prefSet isn't defined
+  // when this module first runs. Call from any public entry point that
+  // touches the namespace.
+  function ensureNexradPrefs() {
+    if (!window.prefSet) return false;
     prefSet.Nexrad = prefSet.Nexrad || {};
     if (prefSet.Nexrad.enabled === undefined) prefSet.Nexrad.enabled = false;
-    if (prefSet.Nexrad.levels === undefined)  prefSet.Nexrad.levels  = 0b011111; // 1-5 on, 6 muted
+    if (prefSet.Nexrad.levels  === undefined) prefSet.Nexrad.levels  = 0;        // start all off — DCB WX1-6 toggles light them
     if (prefSet.Nexrad.brightness === undefined) prefSet.Nexrad.brightness = 80;
     if (prefSet.Nexrad.contrast   === undefined) prefSet.Nexrad.contrast   = 50;
+    return true;
   }
 
   function rgbToHsv(r, g, b) {
@@ -199,6 +204,7 @@
   }
 
   async function init() {
+    ensureNexradPrefs();
     _station = await pickStation();
     if (!_station) {
       console.warn("[STARS NEXRAD] no station found near scope centre");
@@ -217,9 +223,17 @@
     setProduct(p) { _product = p; _lastEtag = null; fetchImage(); },
     getStation()  { return _station; },
     draw,
-    enable(v)     { if (window.prefSet?.Nexrad) prefSet.Nexrad.enabled = !!v; if (v && !_imageLoaded) fetchImage(); },
+    enable(v) {
+      if (!ensureNexradPrefs()) return;
+      prefSet.Nexrad.enabled = !!v;
+      // First enable triggers fetch + station pick if we haven't yet.
+      if (v && !_imageLoaded) {
+        if (!_station) init();
+        else fetchImage();
+      }
+    },
     toggleLevel(n) {
-      if (!window.prefSet?.Nexrad) return;
+      if (!ensureNexradPrefs()) return;
       prefSet.Nexrad.levels ^= (1 << (n - 1));
     },
   };

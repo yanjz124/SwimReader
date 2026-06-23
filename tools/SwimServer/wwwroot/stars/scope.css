@@ -1,22 +1,31 @@
 @font-face {
   font-family: "FixedDemiBold";
   src: url("FixedDemiBold.otf") format("opentype");
+  /* DGScope uses this font at its native (demi) weight via GDI+ DrawString.
+   * Declaring the face as the only weight available stops the browser from
+   * synthesising faux-bold when something inherits font-weight: bold
+   * (which makes the glyphs render double-struck and visibly heavier than
+   * the original). */
+  font-weight: normal;
+  font-style:  normal;
   font-display: block;
 }
 /* STARS scope styling.
  * Background mirrors WPF RadarWindow.BackColor (= Color.Black = #000000).
- * Topbar is web-only chrome (NOT part of the WPF program) used during the
- * port to expose state for debugging. Phase 4 removes it in favor of the
- * actual STARS SSA + DCB. Listed in KNOWN-DEVIATIONS.md as TEMP.
  */
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0;
+    /* Belt + braces: stops cascaded font-weight: bold from triggering
+       browser-synthesised bold anywhere in the scope DOM. */
+    font-weight: normal; font-style: normal; }
 html, body {
   width: 100%; height: 100%; overflow: hidden; background: #000; color: #ddd;
-  /* STARS crisp text (KNOWN-DEVIATIONS G1): disable sub-pixel smoothing on
-     DOM-rendered chrome (SSA/DCB) so it matches the WPF pixel look. */
-  -webkit-font-smoothing: none;
+  /* Subpixel AA enabled — DGScope renders at native resolution via GDI+
+   * with greyscale antialiasing. Earlier `text-rendering: geometricPrecision`
+   * combined with `font-smoothing: none` was painting strokes thicker than
+   * the source font on high-DPI displays, contributing to the "everything
+   * looks bold" feel. */
+  -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  text-rendering: geometricPrecision;
 }
 #scope {
   position: absolute; inset: 0;

@@ -859,7 +859,16 @@ function geoToDms(geo) {
   return `${fmt(geo.lat, "N", "S")} ${fmt(geo.lon, "E", "W")}`;
 }
 
-// ── ProcessImpliedCommand — verbatim from RadarWindow.cs:2688-2769 ───────
+// ── ProcessImpliedCommand — DELEGATED to handoff.js ─────────────────────
+// The canonical state machine + 8-step chain (RadarWindow.cs:2688-2769)
+// lives in handoff.js. This wrapper kept for the existing call sites.
+function processImplied(plane) {
+  if (window.Handoff) return window.Handoff.processImplied(plane);
+  // Fallback to the local copy below if handoff.js failed to load.
+  return processImpliedLocal(plane);
+}
+
+// ── ProcessImpliedCommand — local fallback (kept for safety) ─────────────
 // Empty-Preview click on an aircraft. DGScope's 8-step priority chain:
 //   1. PendingHandoff == us            -> ACCEPT  (cs:2712-2717)
 //                                          plane.PositionInd = me
@@ -884,7 +893,7 @@ function geoToDms(geo) {
 //   plane._forceQuickLook = ForceQuickLook
 //
 // Handoff mutations are local-only (read-only SFDPS feed, G18).
-function processImplied(plane) {
+function processImpliedLocal(plane) {
   const fp = trackToFp.get(plane.Guid) || {};
   const me = window.ownTcp?.() || "";
   const callsign = fp.Callsign || "";
@@ -988,6 +997,7 @@ function cmdDefaultClickedPlane(line, clicked) {
 
 // Aircraft click → set as "clicked plane" + handle implicit commands.
 // scope.js binds clicks; we expose this entry point.
+window.setResponse = setResponse;
 window.PA = PA;
 window.previewSetClickedPlane = (plane) => {
   PA.clickedPlane = plane;

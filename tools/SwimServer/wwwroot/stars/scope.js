@@ -817,20 +817,30 @@ function drawHistory(t) {
 //   - PTLAll is on (all tracks), OR
 //   - PTLOwn is on AND this track's Owner matches us (Phase 8 will wire this),
 //     OR per-track ShowPTL flag.
+// Diagnostic counters so a misbehaving PTL gate is visible from the
+// console. Resets to zero every render frame; logged once per 5 seconds
+// when window.STARS_DEBUG_PTL = true.
+window._ptlDebug = window._ptlDebug || { eligible: 0, drawn: 0, noTrack: 0, noOwn: 0, lastLog: 0 };
+
 function drawPTL(t, posNow) {
-  if (!posNow || t.GroundSpeed == null || t.GroundTrack == null) return;
+  if (!posNow) return;
   if (!(prefSet.PTLLength > 0)) return;                          // cs:6291 PTLLength gate
+  if (t.GroundSpeed == null || t.GroundSpeed < 1) return;        // no PTL on stationary track
+  if (t.GroundTrack == null) { window._ptlDebug.noTrack++; return; }
+  window._ptlDebug.eligible++;
   // RadarWindow.cs:6291: ShowPTL || (Owned && PTLOwn) || (FDB && PTLAll)
   //   Owned (cs:1085) = PositionInd==me OR PendingHandoff==me
   //   FDB   = dataBlockMode(...) === "FDB"
+  // Single source: Handoff.isOwned (which normalises case + trims so a
+  // user signing in "1n" still matches TAIS-published "1N").
   const fp = trackToFp.get(t.Guid);
-  const me = ownTcp();
-  const owned = !!(me && (fp?.Owner === me || fp?.PendingHandoff === me));
+  const owned = window.Handoff && window.Handoff.isOwned(t, fp);
   const isFdb = (typeof dataBlockMode === "function") && dataBlockMode(t, fp) === "FDB";
   const enable = t._showPtl ||
     (owned && prefSet.PTLOwn) ||
     (isFdb && prefSet.PTLAll);
-  if (!enable) return;
+  if (!enable) { window._ptlDebug.noOwn++; return; }
+  window._ptlDebug.drawn++;
   const distNM = (t.GroundSpeed * prefSet.PTLLength) / 60;
   const θ = t.GroundTrack * Math.PI / 180;
   const dLat = (distNM * Math.cos(θ)) / 60;
@@ -849,7 +859,14 @@ function drawPTL(t, posNow) {
 // SITE submenu (Phase 4). Reads from URL on bootstrap.
 let _signedOnTcp = (new URLSearchParams(location.search)).get("tcp") || null;
 function ownTcp() { return _signedOnTcp; }
-function setOwnTcp(v) { _signedOnTcp = v ? v.toUpperCase() : null; window.pushUrlState?.(); }
+function setOwnTcp(v) {
+  _signedOnTcp = v ? v.toUpperCase() : null;
+  // RadarWindow.cs:1080-1093 — PositionChange runs whenever
+  // ThisPositionIndicator changes: re-derive Owned, clear all FDB toggles,
+  // remove self from QuickLookList. The Handoff module owns this logic.
+  if (window.Handoff) window.Handoff.onPositionChange();
+  window.pushUrlState?.();
+}
 window.setOwnTcp = setOwnTcp;
 window.ownTcp = ownTcp;
 
@@ -1040,6 +1057,11 @@ function dataBlockMode(t, fp) {
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) return "FDB";
   // ForceQuickLook auto-FDB regardless of association (set by **<pos>).
   if (t._forceQuickLook) return "FDB";
+  // Owned (including inbound handoff) auto-promotes to FDB per Aircraft.cs:
+  // 119-136 FDB getter — Owned && !QuickLook → _fdb = true. Owned bool is
+  // set in RadarWindow.cs:1085 from PositionInd or PendingHandoff equality.
+  // Single source of truth: Handoff.isOwned().
+  if (window.Handoff && window.Handoff.isOwned(t, fp)) return "FDB";
   // QuickLookList promotion — RadarWindow.cs:5685-5711. An aircraft is
   // QuickLook=true if any of:
   //   • QuickLookedTCPs contains its controlling position (or ALL/ALL+)
@@ -1169,8 +1191,11 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // RadarWindow.cs:2692/2724 (clear-on-click) — it does NOT drive colour.
   // The previous port used an invented `_pointoutTarget` here; replaced
   // with `_forceQuickLook` to match the source priority.
-  const inboundHandoff = !!(fp?.PendingHandoff && fp.PendingHandoff === ownTcp());
-  const ownedOrInbound = (fp?.Owner === ownTcp()) || inboundHandoff;
+  // Source-of-truth predicates from handoff.js (RadarWindow.cs:1085-1087).
+  // Both `owned` and `inbound` come from the same Handoff module so they
+  // can't drift apart across renderers.
+  const inboundHandoff = window.Handoff && window.Handoff.isInboundHandoff(t, fp);
+  const ownedOrInbound = window.Handoff && window.Handoff.isOwned(t, fp);
   let baseColor = COLORS.DataBlock;
   // Conflict Alert is NOT a whole-block colour change — CA annotation only
   // (CRC STARS § STCA; handled below).

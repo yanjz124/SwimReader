@@ -25,6 +25,24 @@ public sealed class PersistedState
     public Dictionary<string, string> EnrichedCallsigns { get; set; } = new();
     public List<string> TaisHasCallsign { get; set; } = new();
     public Dictionary<string, List<DstarsGeoPoint>> TrackHistory { get; set; } = new();
+
+    /// <summary>
+    /// Per-aircraft handoff state — ConfirmedOwner + HandoffTo. Persisted
+    /// so a server restart doesn't lose the "we observed this aircraft
+    /// owned by 1Y before it entered a handoff to C" context. Without this,
+    /// every aircraft currently in handoff at restart-time appears to have
+    /// "first observation already in handoff" → ConfirmedOwner falls back
+    /// to cps (the receiver), and the position symbol shows the receiver
+    /// instead of the original controller.
+    /// Keyed by FlightPlan guid (string) to match the other dictionaries.
+    /// </summary>
+    public Dictionary<string, PersistedHandoffState> HandoffStates { get; set; } = new();
+}
+
+public sealed class PersistedHandoffState
+{
+    public string? ConfirmedOwner { get; set; }
+    public string? HandoffTo { get; set; }
 }
 
 public sealed class PersistedTarget

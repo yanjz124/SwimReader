@@ -917,7 +917,20 @@ function buildDataBlock(t, fp) {
   if (t.Ident) { vfrChar = "I"; catChar = "D"; }
   else if (fp?.Category) catChar = fp.Category;
 
-  const handoffChar = fp?.PendingHandoff ? fp.PendingHandoff.slice(-1) : " ";
+  // Handoff char on line 2 — DGScope shows the last char of PendingHandoff
+  // (Aircraft.cs:347-348). Since TAIS doesn't publish the receiver TCP and
+  // we substitute a "?" placeholder, only show the char on tracks where
+  // WE initiated the handoff (cps == me). Other in-progress handoffs would
+  // spam "?" across every active TRACON sector's data block — not useful.
+  const handoffChar = (() => {
+    const ph = fp?.PendingHandoff;
+    if (!ph) return " ";
+    if (ph === "?") {
+      // Placeholder: only render on our own outbound handoffs.
+      return (window.Handoff && window.Handoff.isOutboundHandoff(t, fp)) ? "?" : " ";
+    }
+    return ph.slice(-1);
+  })();
 
   // destination — falls back to altstring when null/unassigned (Aircraft.cs:373-393)
   let destination = altstring;

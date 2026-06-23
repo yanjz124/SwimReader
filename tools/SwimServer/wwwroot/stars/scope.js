@@ -711,12 +711,27 @@ function handleTrackUpdate(u) {
 function handleFlightPlanUpdate(u) {
   let fp = flightPlans.get(u.Guid);
   if (!fp) { fp = { Guid: u.Guid }; flightPlans.set(u.Guid, fp); }
+  // Capture previous Owner so we can detect a cps transition and flash the
+  // data block when ownership just moved to us. TAIS doesn't publish the
+  // receiver TCP so we can't flash IN ADVANCE of a handoff completion, but
+  // we can flash for 5s AFTER cps becomes me — useful "you just got this"
+  // signal for the receiving controller.
+  const prevOwner = fp.Owner;
   for (const k of ["Callsign","AircraftType","WakeCategory","FlightRules",
        "Origin","Destination","EntryFix","ExitFix","Route","RequestedAltitude",
        "Scratchpad1","Scratchpad2","Runway","Owner","PendingHandoff",
        "AssignedSquawk","EquipmentSuffix","LDRDirection","AssociatedTrackGuid",
        "HandoffOcr","IsHandoffInProgress"]) {
     if (u[k] !== undefined) fp[k] = u[k];
+  }
+  // cps transition detection: if Owner just changed AND the new value
+  // matches our signed-on TCP, stamp acquisition time. handoff.js reads
+  // this to drive a short post-acquire flash.
+  if (u.Owner !== undefined && prevOwner && fp.Owner && prevOwner !== fp.Owner) {
+    const me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
+    if (me && String(fp.Owner).trim().toUpperCase() === me) {
+      fp._justAcquiredAt = Date.now();
+    }
   }
   if (fp.AssociatedTrackGuid) trackToFp.set(fp.AssociatedTrackGuid, fp);
 }
@@ -1210,7 +1225,11 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // a receiver field.
   const inboundHandoff  = window.Handoff && window.Handoff.isInboundHandoff(t, fp);
   const outboundHandoff = window.Handoff && window.Handoff.isOutboundHandoff(t, fp);
-  const dbFlashing      = inboundHandoff || outboundHandoff;
+  // Brief post-acquire flash for the receiving controller — fires when
+  // cps just transitioned to me (handoff.js justAcquired, 5s window).
+  // TAIS doesn't give us inbound notice; this is the next best signal.
+  const justGot         = window.Handoff && window.Handoff.justAcquired(t, fp);
+  const dbFlashing      = inboundHandoff || outboundHandoff || justGot;
   const ownedOrInbound  = window.Handoff && window.Handoff.isOwned(t, fp);
   let baseColor = COLORS.DataBlock;
   // Conflict Alert is NOT a whole-block colour change — CA annotation only

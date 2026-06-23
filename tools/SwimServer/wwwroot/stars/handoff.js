@@ -126,6 +126,17 @@
     const ph = pendingHandoff(t, fp);
     return !!ph;
   }
+  // "Just acquired" — fired when cps just transitioned to me. Set in
+  // scope.js handleFlightPlanUpdate; expires 5s later. Used by the data
+  // block renderer to flash white briefly so the receiving controller
+  // sees a clear "you just got this" indicator, since TAIS doesn't give
+  // us advance notice of an inbound handoff.
+  const JUST_ACQUIRED_WINDOW_MS = 5000;
+  function justAcquired(t, fp) {
+    if (!fp || !fp._justAcquiredAt) return false;
+    if (Date.now() - fp._justAcquiredAt > JUST_ACQUIRED_WINDOW_MS) return false;
+    return true;
+  }
 
   // ── ProcessImpliedCommand — RadarWindow.cs:2688-2769 ────────────────────
   // C# source (verbatim — comments below mirror the WPF blocks):
@@ -232,6 +243,7 @@
   window.Handoff = {
     positionInd, pendingHandoff, me,
     isOwned, isInboundHandoff, isOutboundHandoff, isHandoffInProgress,
+    justAcquired,
     onPositionChange,
     processImplied,
     flashPhaseHidden,

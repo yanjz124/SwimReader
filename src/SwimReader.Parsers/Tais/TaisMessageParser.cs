@@ -229,12 +229,24 @@ public sealed class TaisMessageParser : IStddsMessageParser
     {
         if (string.IsNullOrWhiteSpace(ocr)) return false;
         var v = ocr.Trim().ToLowerInvariant();
-        // OCR values observed in live A90 + PCT data, plus "no change" for idle.
-        // "directed handoff" and "manual" added 2026-06-23 after A90 sample
-        // showed those values on real records.
-        return v is
-            "pending" or "normal handoff" or "intrafacility handoff"
-            or "directed handoff" or "manual";
+        // OCR values observed in live PCT data. Empirically determined from a
+        // T1 vs T2 snapshot comparison (2026-06-23): 30/82 tracks changed
+        // state in 90s; ZERO transitions back to "no change" were observed.
+        // Several transitions WERE pending → intrafacility handoff at the
+        // SAME cps — strongly suggesting "intrafacility handoff" is the
+        // STEADY state for any aircraft tracked under a TRACON sector, NOT
+        // an in-progress handoff. Treating it as in-progress made the
+        // handoff char stick on every routinely-tracked aircraft.
+        //
+        // Real in-progress handoff states:
+        //   "pending"          — handoff request out, awaiting accept
+        //   "normal handoff"   — interfacility handoff in progress
+        //   "directed handoff" — directed (forced) handoff
+        //   "manual"           — manual handoff
+        // NOT a handoff (routine):
+        //   "no change"             — no coordination event
+        //   "intrafacility handoff" — under terminal control by some sector
+        return v is "pending" or "normal handoff" or "directed handoff" or "manual";
     }
 
     /// <summary>

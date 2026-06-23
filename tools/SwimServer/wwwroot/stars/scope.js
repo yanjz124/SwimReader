@@ -927,24 +927,22 @@ function buildDataBlock(t, fp) {
       lines.push(`${t.Squawk} ${String(fp.AssignedSquawk).padStart(4, "0")}`);
     else lines.push(" ");
   } else if (mode === "PDB") {
-    // PDB — associated track owned by another position. Per CRC docs:
-    //   line 1: callsign
-    //   line 2: altitude + handoff char + speed + cat (FDB line-2 shape
-    //           without the 3-variant rotation)
-    //   line 3: blank
-    lines.push(fp?.Callsign || t.Callsign || t.Squawk || "");
-    lines.push(`${altstring}${handoffChar}${speedField}`);
-    lines.push("     ");
-  } else { // LDB — WPF Aircraft.cs:565-613 (always 3 lines)
+    // PDB — associated track owned by ANOTHER controller. Per CRC docs
+    // § Data Blocks: "Line-2 content only (altitude / ground speed
+    // time-sharing with scratchpad and aircraft type)". NO callsign on
+    // line 1 — that's FDB. PDB is a single line rotating the same three
+    // variants FDB shows on line 2 (per ClockPhase).
+    const variants = [fdb1line2, fdb2line2, fdb3line2];
+    lines.push(variants[ClockPhase.phase] || fdb1line2);
+  } else { // LDB — unassociated tracks. Per CRC docs § Data Blocks:
+    // "Beacon code + altitude by default". DGScope Aircraft.cs:565-613
+    // matches — 2 visible lines (squawk + altitude). BCB inhibited drops
+    // to altitude-only.
     if (prefSet.LdbBeaconCodesInhibited) {
-      // BCB inhibited: altitude on line 1, two blank lines (Aircraft.cs:571-573)
       lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
-      lines.push("     ");
-      lines.push("     ");
     } else {
-      lines.push(t.Squawk || "");                                    // line 1 squawk
-      lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);  // line 2 altitude
-      lines.push("     ");                                           // line 3 blank
+      lines.push(t.Squawk || "");
+      lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
     }
   }
   return lines;

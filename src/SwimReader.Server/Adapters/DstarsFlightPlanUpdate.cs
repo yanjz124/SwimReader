@@ -76,6 +76,8 @@ public sealed class DstarsFlightPlanUpdate
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? HandoffOcr { get; init; }
 
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public bool? IsHandoffInProgress { get; init; }
+    // Always serialised (no JsonIgnore) so the client sees `false` on
+    // transitions to no-handoff — otherwise an earlier `true` value would
+    // stay sticky on the client when the next broadcast omits the field.
+    public bool IsHandoffInProgress { get; init; }
 }

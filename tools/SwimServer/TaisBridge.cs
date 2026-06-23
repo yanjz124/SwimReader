@@ -115,7 +115,23 @@ class TaisBridge
                     track.Owner = NullIfUnassigned(ElVal(fp, "cps")) ?? track.Owner;
                     track.WakeCategory = NullIfEmpty(ElVal(fp, "category")) ?? track.WakeCategory;
                     track.EquipmentSuffix = NullIfUnavailable(ElVal(fp, "eqptSuffix")) ?? track.EquipmentSuffix;
+                    // TAIS doesn't publish <pendingHandoff>. The handoff state
+                    // is in <ocr> (Operational Control Required). Capture it
+                    // raw + ALL other flightPlan child element names + their
+                    // values when in a handoff so we can hunt for a receiver
+                    // TCP field in the live PCT feed.
+                    track.HandoffOcr = NullIfEmpty(ElVal(fp, "ocr"));
                     track.PendingHandoff = NullIfEmpty(ElVal(fp, "pendingHandoff")) ?? track.PendingHandoff;
+                    // Live FP-element discovery — only when ocr is non-idle so
+                    // we don't blow up the response with idle records. Strips
+                    // value to keep payload small.
+                    if (track.HandoffOcr is not null && track.HandoffOcr != "no change")
+                    {
+                        var bag = new Dictionary<string, string>();
+                        foreach (var el in fp.Elements())
+                            bag[el.Name.LocalName] = el.Value ?? "";
+                        track.FpElements = bag;
+                    }
                 }
 
                 // Enhanced data (origin/destination airports)
@@ -296,6 +312,12 @@ class TaisTrack
     public string? Scratchpad2 { get; set; }
     public string? Owner { get; set; }           // CPS controller ID
     public string? PendingHandoff { get; set; }
+    public string? HandoffOcr { get; set; }      // raw <ocr> value
+    // Discovery payload: ALL flightPlan child elements + values seen while
+    // this aircraft was in a handoff. Used to hunt the receiver-TCP field
+    // that DGScope expects but our TAIS samples didn't include. Cleared on
+    // each idle update.
+    public Dictionary<string, string>? FpElements { get; set; }
 
     // Track (from track element)
     public double Latitude { get; set; }
@@ -330,6 +352,8 @@ class TaisTrack
         sp2 = Scratchpad2,
         owner = Owner,
         handoff = PendingHandoff,
+        handoffOcr = HandoffOcr,
+        fpElements = FpElements,
         lat = Latitude,
         lon = Longitude,
         altFt = AltitudeFeet,

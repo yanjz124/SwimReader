@@ -714,7 +714,8 @@ function handleFlightPlanUpdate(u) {
   for (const k of ["Callsign","AircraftType","WakeCategory","FlightRules",
        "Origin","Destination","EntryFix","ExitFix","Route","RequestedAltitude",
        "Scratchpad1","Scratchpad2","Runway","Owner","PendingHandoff",
-       "AssignedSquawk","EquipmentSuffix","LDRDirection","AssociatedTrackGuid"]) {
+       "AssignedSquawk","EquipmentSuffix","LDRDirection","AssociatedTrackGuid",
+       "HandoffOcr","IsHandoffInProgress"]) {
     if (u[k] !== undefined) fp[k] = u[k];
   }
   if (fp.AssociatedTrackGuid) trackToFp.set(fp.AssociatedTrackGuid, fp);
@@ -917,20 +918,11 @@ function buildDataBlock(t, fp) {
   if (t.Ident) { vfrChar = "I"; catChar = "D"; }
   else if (fp?.Category) catChar = fp.Category;
 
-  // Handoff char on line 2 — DGScope shows the last char of PendingHandoff
-  // (Aircraft.cs:347-348). Since TAIS doesn't publish the receiver TCP and
-  // we substitute a "?" placeholder, only show the char on tracks where
-  // WE initiated the handoff (cps == me). Other in-progress handoffs would
-  // spam "?" across every active TRACON sector's data block — not useful.
-  const handoffChar = (() => {
-    const ph = fp?.PendingHandoff;
-    if (!ph) return " ";
-    if (ph === "?") {
-      // Placeholder: only render on our own outbound handoffs.
-      return (window.Handoff && window.Handoff.isOutboundHandoff(t, fp)) ? "?" : " ";
-    }
-    return ph.slice(-1);
-  })();
+  // Handoff char on line 2 — DGScope (Aircraft.cs:347-348) shows the last
+  // char of PendingHandoff. The server only emits PendingHandoff once it
+  // has INFERRED a real receiver TCP from cps transitions (DgScopeAdapter
+  // InferHandoffReceiver). No placeholder — blank when we don't know.
+  const handoffChar = fp?.PendingHandoff ? fp.PendingHandoff.slice(-1) : " ";
 
   // destination — falls back to altstring when null/unassigned (Aircraft.cs:373-393)
   let destination = altstring;
@@ -1654,8 +1646,19 @@ function dedupByCallsign(now) {
     const fresh = t.lastPosUpdate ?? t.lastUpdate ?? 0;
     const cur = byKey.get(key);
     if (!cur) { byKey.set(key, { guid: t.Guid, fresh }); continue; }
-    if (fresh > cur.fresh) { suppressed.add(cur.guid); byKey.set(key, { guid: t.Guid, fresh }); }
-    else suppressed.add(t.Guid);
+    // Tight-race tie-breaker: when two GUIDs share a callsign and updated
+    // within 3 seconds of each other (e.g. mid-handoff TAIS publishes a
+    // transient new trackNum before the old one ages out), keep the
+    // INCUMBENT — flipping suppression each frame causes the data block
+    // and target to visibly flicker. Only swap the winner when the new
+    // track is meaningfully newer (>3s gap).
+    const gap = fresh - cur.fresh;
+    if (gap > 3000) {
+      suppressed.add(cur.guid);
+      byKey.set(key, { guid: t.Guid, fresh });
+    } else {
+      suppressed.add(t.Guid);
+    }
   }
   return suppressed;
 }

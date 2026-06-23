@@ -346,12 +346,17 @@ public sealed class DgScopeAdapter : BackgroundService
             Scratchpad2 = fp.Scratchpad2 ?? "",
             Runway = fp.Runway,
             Owner = fp.Owner,
-            // Inferred receiver — see _handoffState declaration above. When
-            // we can't infer yet, fall back to "?" placeholder so client
-            // logic that gates on PendingHandoff non-empty still fires.
-            PendingHandoff = InferHandoffReceiver(guid, fp) ?? (fp.IsHandoffInProgress ? "?" : ""),
+            // Inferred receiver — only emit when we actually have one. The
+            // earlier "?" placeholder fired on too many tracks because TAIS
+            // OCR stays in handoff states longer than a controller would
+            // expect (intrafacility handoffs can dwell for 30s+ past visual
+            // completion). The client uses IsHandoffInProgress (bool) for
+            // flash + outbound-FDB-promotion; only the receiver string
+            // matters here, and we only know it after the cps transition
+            // is observed.
+            PendingHandoff = InferHandoffReceiver(guid, fp) ?? "",
             HandoffOcr = fp.HandoffOcr,
-            IsHandoffInProgress = fp.IsHandoffInProgress ? true : (bool?)null,
+            IsHandoffInProgress = fp.IsHandoffInProgress,
             AssignedSquawk = StripLeadingZeros(fp.AssignedSquawk),
             EquipmentSuffix = fp.EquipmentSuffix,
             LDRDirection = fp.LdrDirection,

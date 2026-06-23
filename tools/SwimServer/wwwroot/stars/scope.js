@@ -1647,8 +1647,15 @@ window.starsMinSepClear = () => { minSepPair = null; };
 // ERAM scope's callsign dedup: when several live tracks share a callsign, keep
 // only the freshest and suppress the rest. Tracks with no callsign are never
 // deduped (they're genuinely distinct primaries).
+// Per-frame "merge map" — for each dedup key, the chosen primary GUID and
+// the list of sibling GUIDs whose data should fill in any missing fields on
+// the primary. Built by dedupByCallsign; consumed by mergedFp() so renderers
+// see the most complete view of an aircraft even when its data is split
+// across several TAIS/ADS-B GUIDs.
+let _siblingsByPrimary = new Map();   // primary guid -> [sibling guids]
+
 function dedupByCallsign(now) {
-  const byKey = new Map();         // dedup key → { guid, fresh }
+  const byKey = new Map();         // dedup key → { primaryGuid, fresh, siblings: [] }
   const suppressed = new Set();
   for (const t of tracks.values()) {
     if (!t.Location) continue;
@@ -1664,22 +1671,61 @@ function dedupByCallsign(now) {
     if (!key) continue;
     const fresh = t.lastPosUpdate ?? t.lastUpdate ?? 0;
     const cur = byKey.get(key);
-    if (!cur) { byKey.set(key, { guid: t.Guid, fresh }); continue; }
-    // Tight-race tie-breaker: when two GUIDs share a callsign and updated
-    // within 3 seconds of each other (e.g. mid-handoff TAIS publishes a
-    // transient new trackNum before the old one ages out), keep the
-    // INCUMBENT — flipping suppression each frame causes the data block
-    // and target to visibly flicker. Only swap the winner when the new
-    // track is meaningfully newer (>3s gap).
+    if (!cur) { byKey.set(key, { primaryGuid: t.Guid, fresh, siblings: [] }); continue; }
+    // Tight-race stability: keep the INCUMBENT primary unless the challenger
+    // is more than 3s newer. The "loser" GUID is added to siblings[] so its
+    // fp/track data can fill in any fields missing on the primary (see
+    // mergedFp). This replaces the previous suppress-and-discard behaviour
+    // that lost real data (Owner, PendingHandoff, scratchpads) whenever
+    // TAIS briefly published the same callsign on a transient new trackNum.
     const gap = fresh - cur.fresh;
     if (gap > 3000) {
-      suppressed.add(cur.guid);
-      byKey.set(key, { guid: t.Guid, fresh });
+      // Demote the old primary, keep its history as a sibling.
+      suppressed.add(cur.primaryGuid);
+      cur.siblings.push(cur.primaryGuid);
+      cur.primaryGuid = t.Guid;
+      cur.fresh = fresh;
     } else {
       suppressed.add(t.Guid);
+      cur.siblings.push(t.Guid);
     }
   }
+  // Build the primary->siblings map for mergedFp() lookups.
+  _siblingsByPrimary = new Map();
+  for (const v of byKey.values()) {
+    if (v.siblings.length) _siblingsByPrimary.set(v.primaryGuid, v.siblings);
+  }
   return suppressed;
+}
+
+// mergedFp(primaryGuid) — returns the primary's fp augmented with any
+// non-null fields from sibling tracks' fps. Used by the data-block
+// renderer so a handoff state published on a transient sibling GUID
+// still shows up on the primary's data block.
+function mergedFp(primaryGuid) {
+  const primary = trackToFp.get(primaryGuid);
+  const siblings = _siblingsByPrimary.get(primaryGuid);
+  if (!siblings || !siblings.length) return primary;
+  // Shallow clone primary so we don't mutate stored state.
+  const out = primary ? { ...primary } : {};
+  // Fields we'll patch from siblings if primary lacks them.
+  const PATCHABLE = [
+    "Callsign","AircraftType","WakeCategory","FlightRules",
+    "Origin","Destination","EntryFix","ExitFix","Route","RequestedAltitude",
+    "Scratchpad1","Scratchpad2","Runway","Owner","PendingHandoff",
+    "AssignedSquawk","EquipmentSuffix","LDRDirection",
+    "HandoffOcr","IsHandoffInProgress",
+  ];
+  for (const sg of siblings) {
+    const sib = trackToFp.get(sg);
+    if (!sib) continue;
+    for (const k of PATCHABLE) {
+      if ((out[k] == null || out[k] === "") && sib[k] != null && sib[k] !== "") {
+        out[k] = sib[k];
+      }
+    }
+  }
+  return out;
 }
 
 // ── Main per-track draw ─────────────────────────────────────────────────────
@@ -1688,10 +1734,13 @@ function drawTracks() {
   const suppressed = dedupByCallsign(now);
   for (const t of tracks.values()) {
     if (!t.Location) continue;
-    if (suppressed.has(t.Guid)) continue;             // transient duplicate GUID
+    if (suppressed.has(t.Guid)) continue;             // transient duplicate GUID (siblings merged via mergedFp)
     if (t.IsOnGround) continue;                       // Radar.cs Scan skips on-ground
     if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue; // lost target → hidden (LostTargetSeconds, by position movement)
-    const fp = trackToFp.get(t.Guid);
+    // Use the MERGED fp so the data block sees fields published on
+    // sibling GUIDs (handoff state, scratchpads, etc.) and nothing is
+    // lost just because the primary's FP update was thinner.
+    const fp = mergedFp(t.Guid);
     // Altitude filter — PrefSet AltitudeFilterAssociated{Min,Max} / UnAssociated.
     const altFt = t.Altitude?.Value;
     if (altFt != null) {

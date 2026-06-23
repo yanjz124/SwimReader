@@ -420,6 +420,21 @@ public sealed class DgScopeAdapter : BackgroundService
         }
 
         // Handoff in progress: cps is the receiver.
+        //
+        // Chained handoff: TAIS sometimes skips the ocr="no change" window
+        // entirely when one sector accepts and immediately re-hands-off.
+        // Example sequence observed for SWA480 — 1Y owned, ocr flipped to
+        // handoff with cps=1L (1L is receiver), then NEXT update was still
+        // in-handoff but cps=C (Center) — meaning 1L accepted (implicit)
+        // and is now sending it to Center. Without this branch the owner
+        // would still show 1Y on the position symbol.
+        //
+        // Detection: if we already have a HandoffTo, and the new cps is
+        // different, the previous HandoffTo IS the new ConfirmedOwner.
+        if (s.HandoffTo is not null && cps is not null && cps != s.HandoffTo)
+        {
+            s.ConfirmedOwner = s.HandoffTo;
+        }
         s.HandoffTo = cps;
         // First time we see this aircraft AND it's already in a handoff —
         // we have no prior owner observation. Use cps as both owner and

@@ -348,6 +348,10 @@ MiscRoutes.Register(app, serverCtx);
 // STARS NEXRAD single-radar product proxy (per-station GIF from NWS).
 NexradStarsRoutes.Register(app, serverCtx);
 
+// STARS profile XML loader — serves DGScope-format XML to the web port
+// so per-facility colours, brightness, ColorTable, etc. apply.
+StarsProfileRoutes.Register(app, serverCtx);
+
 // (ASDE-X / TDLS / TAIS / TFMS REST endpoints are registered above by their feature routes.)
 
 // Flight history search and retrieval

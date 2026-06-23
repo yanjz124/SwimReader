@@ -73,7 +73,10 @@ const prefSet = {
 };
 
 // ── Colors — direct from RadarWindow.cs lines 60-110 ────────────────────────
-const COLORS = {
+// MUTABLE so profile.js can overwrite each field from <BackColor>/<ReturnColor>
+// /etc. in the DGScope XML. The defaults below are the RadarWindow.cs ctor
+// values; a loaded profile replaces only the fields it carries.
+const COLORS = window.COLORS = {
   Back:        [0, 0, 0],         // BackColor = Color.Black
   RangeRing:   [140, 140, 140],   // line 63
   VideoMapA:   [140, 140, 140],   // line 66
@@ -1727,10 +1730,20 @@ async function bootstrap() {
     // Phase 4: ASR sites for SITE submenu (vNAS starsConfiguration → areas → asrSites if present)
     starsState.asrSites = fac?.starsConfiguration?.areas?.flatMap(a => a.asrSites || []) || [];
 
-    // Optional profile from URL ?profile=NAME — pulls DGScope profile XML
-    // from %LOCALAPPDATA%/DGScope Profile Manager/profiles/profiles/{ARTCC}/.
+    // Optional vNAS profile from URL ?profile=NAME (web-only artifact).
     const profileName = (new URLSearchParams(location.search)).get("profile");
     if (profileName) await applyProfile(profileName);
+
+    // DGScope XML profile — the same file the WPF Profile Manager writes.
+    // Auto-load `<ARTCC>/<FACILITY>_TRACON.xml` from the server's
+    // stars-profiles/ root, then any `?dgprofile=NAME` override. This applies
+    // top-level COLORS, ScreenRotation, NEXRAD ColorTable, and
+    // CurrentPrefSet/Brightness so the scope matches the user's WPF setup.
+    if (window.StarsProfile) {
+      const dgOverride = (new URLSearchParams(location.search)).get("dgprofile");
+      const name = dgOverride || `${FACILITY}_TRACON`;
+      await window.StarsProfile.load(ARTCC, name);
+    }
   } catch (e) {
     console.error("[STARS] Failed to load facility:", e);
   }

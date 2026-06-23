@@ -71,3 +71,7 @@ tools/SwimServer/pointout-investigation-*.jsonl
 .stars-reference/
 tools/SwimServer/crc-export/
 *.lscache
+stars-profiles/
+tools/SwimServer/flight-history/
+tools/SwimServer/tdls-history/
+tools/SwimServer/itws-history/

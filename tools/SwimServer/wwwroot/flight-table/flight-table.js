@@ -819,10 +819,15 @@ function buildIcaoFpl(d) {
         speed = 'N' + String(Math.round(d.groundSpeed)).padStart(4, '0');
     }
     // ICAO Field 15 shows the FILED level, not the current ATC-assigned one.
-    // Prefer originalAssignedAltitude (snapshotted on first assignment, never
-    // overwritten) and fall back to the current value if the flight came in
-    // before the initial-altitude capture was deployed.
-    const filedAlt = d.originalAssignedAltitude ?? d.assignedAltitude;
+    // Three-tier fallback:
+    //   1) originalAssignedAltitude — first ATC-assigned value, snapshotted
+    //      so amendments don't overwrite the originally-filed cruise level
+    //   2) requestedAltitude — the pilot's filed value from SFDPS
+    //      <requestedAltitude>, populated even on PROPOSED plans before
+    //      ATC has issued any clearance
+    //   3) current assignedAltitude — last resort if neither of the above
+    //      exists (very old flights, pre-feature deploy)
+    const filedAlt = d.originalAssignedAltitude ?? d.requestedAltitude ?? d.assignedAltitude;
     const filedVfr = d.originalAssignedVfr ?? d.assignedVfr;
     let level = 'F000';
     if (filedVfr) {

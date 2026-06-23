@@ -319,9 +319,21 @@ class DCB {
                 : b.active   ? DCB_COLOR.ACTIVE_BG
                              : DCB_COLOR.INACTIVE_BG;
       const fg = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
-      // border lives INSIDE the box via box-sizing:border-box so two 40px
-      // half buttons stack inside 80px column exactly. No margin.
       const fs = (p.CharSize?.DCB ?? 11);
+      // DCBButton.Draw (DCBButton.cs:60-130) renders a 3-pixel BEVEL:
+      //   inactive (raised):
+      //     top-left poly  = DarkGray  (cs:71  drawactive=false)
+      //     bot-right poly = Black     (cs:81  drawactive=false → drawactive used inverted)
+      //   active (pressed) — colours SWAP, looks recessed.
+      // bordersize is 3 (cs:12). Easiest CSS analog is 4 differently-coloured
+      // borders. AdjustedColor scales DarkGray (128,128,128) by Brightness.DCB.
+      const bri = (p.Brightness?.DCB ?? 100) / 100;
+      const dark    = `rgb(${(128*bri)|0},${(128*bri)|0},${(128*bri)|0})`;  // Color.DarkGray
+      const black   = "rgb(0,0,0)";
+      // drawactive in WPF starts true when Active != (mousePressed && mouseInside).
+      // Without hover state in our HTML render path, treat active = pressed look.
+      const tl = b.active ? black : dark;       // top + left bevel
+      const br = b.active ? dark  : black;      // bottom + right bevel
       return `<div class="dcb-btn" data-id="${b.id}"
         ${b.mapIdx != null ? `data-map="${b.mapIdx}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
@@ -333,8 +345,10 @@ class DCB {
           width:${w}px; height:${h}px;
           background:${dcbAdjust(bg, p.Brightness.DCB)};
           color:${fg};
-          outline:1px solid ${DCB_COLOR.BORDER};
-          outline-offset:-1px;
+          border-top:3px solid ${tl};
+          border-left:3px solid ${tl};
+          border-right:3px solid ${br};
+          border-bottom:3px solid ${br};
           display:flex; align-items:center; justify-content:center;
           text-align:center; line-height:1.05; font-size:${fs}px;
           white-space:pre; cursor:${b.disabled ? "default" : "pointer"};
@@ -405,6 +419,12 @@ class DCB {
                              : DCB_COLOR.INACTIVE_BG;
       const fg = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
       const fs = (p.CharSize?.DCB ?? 11);
+      // Bevel — same as main DCB (DCBButton.cs:60-130).
+      const bri = (p.Brightness?.DCB ?? 100) / 100;
+      const dark  = `rgb(${(128*bri)|0},${(128*bri)|0},${(128*bri)|0})`;
+      const black = "rgb(0,0,0)";
+      const tl = b.active ? black : dark;
+      const br = b.active ? dark  : black;
       return `<div class="dcb-btn" data-id="${b.id}"
         ${b.mapIdx != null ? `data-map="${b.mapIdx}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
@@ -416,8 +436,10 @@ class DCB {
           width:${w}px; height:${h}px;
           background:${dcbAdjust(bg, p.Brightness.DCB)};
           color:${fg};
-          outline:1px solid ${DCB_COLOR.BORDER};
-          outline-offset:-1px;
+          border-top:3px solid ${tl};
+          border-left:3px solid ${tl};
+          border-right:3px solid ${br};
+          border-bottom:3px solid ${br};
           display:flex; align-items:center; justify-content:center;
           text-align:center; line-height:1.05; font-size:${fs}px;
           white-space:pre; cursor:${b.disabled ? "default" : "pointer"};

@@ -1,44 +1,42 @@
 using System.Collections.Concurrent;
+using NexradDecoder;
 
 namespace SwimServer;
 
 /// <summary>
-/// STARS NEXRAD endpoints — list of stations + per-station product image proxy.
-/// We proxy the NWS single-radar GIF so the browser can pull pixels via
-/// canvas.getImageData() without CORS getting in the way.
+/// STARS NEXRAD endpoints. The previous implementation proxied tgftp's raw
+/// NIDS bytes to the browser and tried to read a rendered RIDGE GIF to
+/// reverse-engineer dBZ — both wrong vs DGScope.
 ///
-/// Product codes from tgftp.nws.noaa.gov (subset; the rest are easy to add):
-///   p94r0  Base Reflectivity Tilt 1 (0.5° cut, 248nm range)
-///   p38cr  Composite Reflectivity (max-of-all-tilts)
-///   p19r0  Storm Total Precipitation
-///   p27v0  Base Velocity
+/// DGScope (NexradDisplay.cs:60-95 + RecomputeVertices :125-193) downloads
+/// the same tgftp NIDS file but DECODES it with the NexradDecoder library
+/// (RadialPacketDecoder). It then generates one Polygon per radial × bin
+/// where dBZ > 0, looks up colour via WXColorTable, and renders polygons.
 ///
-/// URL template:
-///   https://tgftp.nws.noaa.gov/SL.us008001/DF.of/DC.radar/DS.{prod}/SI.{kxxx}/sn.last
+/// We do the same here: server fetches NIDS, decodes radials, and ships
+/// the radial structure to the client as JSON. The client mirrors
+/// RecomputeVertices's polygon loop in canvas, using the same DGScope
+/// default ColorTable (NexradDisplay.cs:127-138).
+///
+/// Product codes:
+///   p94r0  Base Reflectivity Tilt 1 (0.5°, 248nm range)  → range 248
+///   p180   (legacy 48nm)                                  → range 48
 /// </summary>
 static class NexradStarsRoutes
 {
-    // Allow-list of products so a malicious client can't proxy arbitrary URLs.
     static readonly HashSet<string> Allowed = new(StringComparer.OrdinalIgnoreCase)
     {
-        "p94r0",   // Base Reflectivity
-        "p38cr",   // Composite Reflectivity
-        "p19r0",   // Storm Total Precipitation
-        "p27v0",   // Base Velocity
-        "p20-r",   // 0.5deg reflectivity (newer 256-level)
-        "p25-r",
-        "p37cr",
+        "p94r0",   // Base Reflectivity (0.5°)
+        "p38cr",   // Composite Reflectivity (max-of-all-tilts)
     };
 
-    record CacheEntry(byte[] Bytes, DateTime At, string ContentType);
+    record CacheEntry(object Payload, DateTime At);
     static readonly ConcurrentDictionary<string, CacheEntry> _cache = new();
-    static readonly TimeSpan Ttl = TimeSpan.FromMinutes(4);   // NWS updates every ~4-10 min
+    static readonly TimeSpan Ttl = TimeSpan.FromMinutes(4);   // NWS publishes every ~4-10 min
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
 
     public static void Register(WebApplication app, ServerContext ctx)
     {
-        // The station table is owned by the server context (see Program.cs
-        // hookup). On first GET we trigger a refresh if it's never been loaded.
         app.MapGet("/api/stars/nexrad/stations", async () =>
         {
             if (ctx.NexradStations.LoadedAt == DateTime.MinValue)
@@ -54,7 +52,6 @@ static class NexradStarsRoutes
             }, ctx.JsonOpts);
         });
 
-        // Nearest station to a given point.
         app.MapGet("/api/stars/nexrad/nearest", async (double lat, double lon) =>
         {
             if (ctx.NexradStations.LoadedAt == DateTime.MinValue)
@@ -68,9 +65,10 @@ static class NexradStarsRoutes
             }, ctx.JsonOpts);
         });
 
-        // Image proxy. The NWS image is a small GIF with a known palette;
-        // we serve the bytes verbatim so the client can canvas-decode them.
-        app.MapGet("/api/stars/nexrad/image/{station}/{product}", async (string station, string product) =>
+        // Decode tgftp NIDS → radials JSON, mirroring DGScope's
+        // NexradDisplay.GetRadarData + RecomputeVertices NWSNexrad branch
+        // (.stars-reference/scope/NexradDisplay.cs:66-193).
+        app.MapGet("/api/stars/nexrad/radials/{station}/{product}", async (string station, string product) =>
         {
             station = station.ToUpperInvariant();
             product = product.ToLowerInvariant();
@@ -79,32 +77,78 @@ static class NexradStarsRoutes
 
             var cacheKey = $"{station}:{product}";
             if (_cache.TryGetValue(cacheKey, out var e) && DateTime.UtcNow - e.At < Ttl)
-                return Results.Bytes(e.Bytes, e.ContentType);
+                return Results.Json(e.Payload, ctx.JsonOpts);
 
-            // RIDGE-II rendered GIF from radar.weather.gov. The previous
-            // tgftp URL returned the raw Level III bulletin (binary NIDS —
-            // "SDUS62 KRAH ..."), which createImageBitmap can't decode and
-            // silently failed in the browser. radar.weather.gov serves a
-            // true 600×550 palette-rendered GIF suitable for canvas pixel
-            // reads. The product code is ignored by the standard renderer
-            // (always base reflectivity); kept in the URL so per-product
-            // variants can be added later without a URL break.
-            var url = $"https://radar.weather.gov/ridge/standard/{station}_0.gif";
+            // tgftp serves the raw NIDS file at sn.last — the same URL
+            // DGScope's NexradDisplay.URL (NexradDisplay.cs:42) points at.
+            var url = $"https://tgftp.nws.noaa.gov/SL.us008001/DF.of/DC.radar/DS.{product}/SI.{station.ToLowerInvariant()}/sn.last";
             try
             {
                 using var resp = await Http.GetAsync(url);
                 if (!resp.IsSuccessStatusCode) return Results.StatusCode((int)resp.StatusCode);
                 var bytes = await resp.Content.ReadAsByteArrayAsync();
-                var ct = resp.Content.Headers.ContentType?.MediaType ?? "image/gif";
-                _cache[cacheKey] = new CacheEntry(bytes, DateTime.UtcNow, ct);
-                return Results.Bytes(bytes, ct);
+
+                // Mirror NexradDisplay.GetRadarData (cs:66-95) verbatim.
+                var decoder = new RadialPacketDecoder();
+                using var ms = new MemoryStream(bytes);
+                decoder.setStreamResource(ms);
+                decoder.parseMHB();
+                var description = decoder.parsePDB();
+                var symbology   = (RadialSymbologyBlock)decoder.parsePSB();
+
+                // RecomputeVertices NWSNexrad branch (cs:150-192).
+                int range = description.Code switch
+                {
+                    94  => 248,
+                    180 =>  48,
+                    _   => 248,                         // unknown code → assume max
+                };
+                // scanrange = range * cos(ProductSpecific_3 deg) (cs:164)
+                double scanrange  = range * Math.Cos(description.ProductSpecific_3 * (Math.PI / 180));
+                double resolution = scanrange / symbology.LayerNumberOfRangeBins;
+
+                // Strip per-radial: startAngle, angleDelta, values[]. We
+                // SKIP bins whose dBZ value is 0 server-side — saves a
+                // significant chunk of payload (typical scan is 90%+ zero).
+                var radials = new object[symbology.NumberOfRadials];
+                for (int i = 0; i < symbology.NumberOfRadials; i++)
+                {
+                    var r = symbology.Radials[i];
+                    // Pack as parallel arrays of bin-index + value for
+                    // compactness vs a sparse [0,0,0,12,0,0,...] array.
+                    var bins   = new List<int>(r.Values.Length / 8);
+                    var values = new List<double>(r.Values.Length / 8);
+                    for (int j = 0; j < r.Values.Length; j++)
+                    {
+                        if (r.Values[j] <= 0) continue;
+                        bins.Add(j);
+                        values.Add(r.Values[j]);
+                    }
+                    radials[i] = new {
+                        startAngle = r.StartAngle,
+                        angleDelta = r.AngleDelta,
+                        bins, values,
+                    };
+                }
+
+                var payload = new
+                {
+                    radarLat   = description.Latitude,
+                    radarLon   = description.Longitude,
+                    range,
+                    scanrange,
+                    resolution,                          // NM per bin
+                    numRadials = symbology.NumberOfRadials,
+                    numBins    = symbology.LayerNumberOfRangeBins,
+                    radials,
+                };
+                _cache[cacheKey] = new CacheEntry(payload, DateTime.UtcNow);
+                return Results.Json(payload, ctx.JsonOpts);
             }
-            catch
+            catch (Exception ex)
             {
-                // If a fetch fails but we have a previous cached image, serve that
-                // (stale-while-error) so weather doesn't disappear from the scope.
-                if (e is not null) return Results.Bytes(e.Bytes, e.ContentType);
-                return Results.StatusCode(502);
+                if (e is not null) return Results.Json(e.Payload, ctx.JsonOpts);   // stale-while-error
+                return Results.Problem($"nexrad decode failed: {ex.Message}", statusCode: 502);
             }
         });
     }

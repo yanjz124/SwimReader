@@ -1130,12 +1130,20 @@ function drawDataBlockAndLeader(t, fp, posNow) {
 //        - else "◇" if PrimaryOnly
 //        - else "*"
 function positionSymbolText(t, fp) {
-  // STARS position symbol (WPF Aircraft.cs:616-623): the controlling position's
-  // sector char if owned/handed-off; ◇ for primary-only (no beacon); else "*".
-  // STARS has NO ERAM-style coast "#" / "\" / "+" glyphs.
+  // STARS position symbol per DGScope Aircraft.cs:616-623:
+  //   PositionInd set         → last char of PositionInd (sector ID tail)
+  //   selected-squawk match   → selectedSquawkChar  [not yet ported]
+  //   PrimaryOnly             → ◇   (Squawk empty AND ModeS=0 AND no alt)
+  //   else                    → *   (covers 1200, any beacon code, etc.)
+  // PrimaryOnly definition is Aircraft.cs:145-151 — note 1200 is NOT primary,
+  // it gets the asterisk.
   const owner = fp?.Owner || t.PositionInd;
   if (owner && owner.length > 0) return owner.slice(-1);
-  if (!t.Squawk || t.Squawk === "0000") return "◇";  // PrimaryOnly
+  // PrimaryOnly: no beacon code at all, no Mode-S, no Mode-C altitude.
+  const noBeacon = !t.Squawk || t.Squawk === "0000";
+  const noModeS  = !t.ModeSCode;
+  const noAlt    = t.ReportedAltitude == null;
+  if (noBeacon && noModeS && noAlt) return "◇";
   return "*";
 }
 
@@ -1143,19 +1151,16 @@ function drawPosition(t, posNow) {
   const fp = trackToFp.get(t.Guid);
   // DGScope splits the position symbol into TWO independently-coloured
   // primitives (RadarWindow.cs:6045-6109 vs :5469/5582):
-  //   • Primary RETURN (filled dot)  — always ReturnColor (blue). Radar
-  //                                    sweep echo; doesn't care who owns
-  //                                    the track.
-  //   • Beacon OVERLAY (glyph)       — BeaconTargetColor (green) by
-  //                                    default. Promotes to OwnedColor
-  //                                    (white) when this position
-  //                                    indicator owns the track. Promotes
-  //                                    to Emerg / Selected for those
-  //                                    states. PrimaryIndicatorOnly
-  //                                    targets (no beacon code) skip the
-  //                                    glyph and only show the blue dot.
+  //   • Primary RETURN (filled dot) — always ReturnColor (blue). Radar
+  //                                    echo, indifferent to ownership.
+  //   • Beacon OVERLAY (glyph)      — BeaconTargetColor (green) by
+  //                                    default; OwnedColor (white) when
+  //                                    this position controls it; Emerg
+  //                                    / Selected per state.
+  // DGScope ALWAYS draws the glyph (Aircraft.cs:616-623 picks one of four
+  // strings — never empty). The glyph text comes from positionSymbolText
+  // which encodes the same 4-way pick.
   const inbound = fp?.PendingHandoff && fp.PendingHandoff === ownTcp();
-  const hasBeacon = !!(t.Squawk && t.Squawk !== "0000" && t.Squawk !== "1200");
   let glyphColor;
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) glyphColor = COLORS.Emerg;
   else if (t._marked)                                              glyphColor = COLORS.Selected;
@@ -1166,21 +1171,19 @@ function drawPosition(t, posNow) {
   const px = p.x | 0, py = p.y | 0;
 
   // Primary return — filled circle, FMATargetSymbols.Radius=3 (cs:616,6141-6143).
-  // ALWAYS ReturnColor (blue) — independent of ownership.
+  // Always ReturnColor (blue), independent of ownership.
   ctx.fillStyle = adjusted(COLORS.Return, prefSet.Brightness.Position);
   ctx.beginPath();
   ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Beacon overlay glyph — only if there's a beacon code OR a flight plan.
-  // Primary-only returns (no squawk, no FP) show just the blue dot.
-  if (hasBeacon || fp) {
-    ctx.fillStyle = adjusted(glyphColor, prefSet.Brightness.Position);
-    ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
-    ctx.textBaseline = "middle";
-    ctx.textAlign = "center";
-    ctx.fillText(positionSymbolText(t, fp), px, py);
-  }
+  // Beacon overlay glyph — drawn for EVERY target. positionSymbolText
+  // returns the right symbol (sector char / asterisk / diamond) for each.
+  ctx.fillStyle = adjusted(glyphColor, prefSet.Brightness.Position);
+  ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.fillText(positionSymbolText(t, fp), px, py);
 }
 
 // ── Phase 9: J-Ring + MinSep + STCA ─────────────────────────────────────────

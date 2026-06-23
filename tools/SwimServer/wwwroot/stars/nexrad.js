@@ -22,15 +22,25 @@
 // ─────────────────────────────────────────────────────────────────────────
 
 (function () {
-  // Canonical STARS WX colours per CRC docs (level → [r,g,b]).
-  const WX_COLORS = [
+  // DGScope STARS WX palette — DEFAULT ColorTable from NexradDisplay.cs:127-138
+  // (the ColorTable a profile can override; defaults are the reference).
+  //   Level 1 (dBZ ≥20): teal  rgb(38,77,77)  no stipple
+  //   Level 2 (dBZ ≥30): teal  rgb(38,77,77)  LIGHT white stipple
+  //   Level 3 (dBZ ≥40): teal  rgb(38,77,77)  DENSE white stipple
+  //   Level 4 (dBZ ≥45): olive rgb(100,100,51) no stipple
+  //   Level 5 (dBZ ≥50): olive rgb(100,100,51) LIGHT white stipple
+  //   Level 6 (dBZ ≥55): olive rgb(100,100,51) DENSE white stipple
+  // Stipple = an 8×8 white dot pattern overlaid on the base fill.
+  // WXColorTable.cs:83-120 ships two patterns (LIGHT/DENSE); we
+  // approximate with regular dot grids of different spacings.
+  const WX_LEVELS = [
     null,
-    [   0,  78,   0],   // 1 light
-    [   0, 130,   0],   // 2 moderate
-    [   0, 255,   0],   // 3 heavy
-    [ 255, 255,   0],   // 4 heavy (yellow)
-    [ 255, 128,   0],   // 5 extreme (orange)
-    [ 255,   0,   0],   // 6 extreme (red/magenta)
+    { color: [ 38,  77,  77], stipple: "none"  },  // 1
+    { color: [ 38,  77,  77], stipple: "light" },  // 2
+    { color: [ 38,  77,  77], stipple: "dense" },  // 3
+    { color: [100, 100,  51], stipple: "none"  },  // 4
+    { color: [100, 100,  51], stipple: "light" },  // 5
+    { color: [100, 100,  51], stipple: "dense" },  // 6
   ];
 
   const FETCH_INTERVAL_MS = 4 * 60 * 1000;   // NWS pushes every ~4-10 min
@@ -181,31 +191,56 @@
     if (dw <= 0 || dh <= 0) return;
     if (dx + dw < 0 || dy + dh < 0) return;
 
-    // Composite the enabled levels in order so heavier intensities sit
-    // on top. Brightness modulates global alpha; contrast biases the
-    // lighter levels darker.
+    // Composite per DGScope (NexradDisplay.cs:166-191): fill each polygon
+    // with WXColor.MinColor; if the level has a stipple, overlay the
+    // stipple pattern in WXColor.StippleColor. Web port mirrors that —
+    // mask + base-fill, then mask + stipple-fill, per enabled level.
     const enabledMask = prefSet.Nexrad.levels;
     const brightness  = Math.max(0, Math.min(100, prefSet.Nexrad.brightness ?? 80)) / 100;
-    const contrast    = Math.max(0, Math.min(100, prefSet.Nexrad.contrast   ?? 50)) / 100;
+    const patterns    = stipplePatterns(ctx);
     ctx.save();
     for (let l = 1; l <= 6; l++) {
       if (((enabledMask >> (l - 1)) & 1) === 0) continue;
-      const [r, g, b] = WX_COLORS[l];
-      // Per-level alpha: heavier levels stay closer to full brightness
-      // even when the contrast slider dims the lighter ones.
-      const levelAlpha = brightness * (1 - (1 - contrast) * (1 - l / 6));
-      // Tint by drawing a solid rectangle then masking with the level
-      // canvas via destination-in.
-      ctx.globalAlpha = levelAlpha;
+      const lvl = WX_LEVELS[l];
+      const [r, g, b] = lvl.color;
+      ctx.globalAlpha = brightness;
+      // 1) Mask + MinColor fill.
       ctx.globalCompositeOperation = "source-over";
       ctx.drawImage(_levelCanvases[l], dx, dy, dw, dh);
       ctx.globalCompositeOperation = "source-in";
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(dx, dy, dw, dh);
-      // Reset composite for next iteration.
+      // 2) Stipple — only inside the area we just painted.
+      if (lvl.stipple !== "none") {
+        ctx.globalCompositeOperation = "source-atop";
+        ctx.fillStyle = patterns[lvl.stipple];
+        ctx.fillRect(dx, dy, dw, dh);
+      }
       ctx.globalCompositeOperation = "source-over";
     }
     ctx.restore();
+  }
+
+  // Stipple patterns — DGScope WXColorTable.cs:83-120 ships two 8×8 bitmaps
+  // ("LIGHT" ≈ 2 dots / 8², "DENSE" ≈ 6 dots / 8²). We build CanvasPatterns
+  // once (per ctx) and reuse them every frame.
+  let _patternsCtx = null, _patterns = null;
+  function stipplePatterns(ctx) {
+    if (_patterns && _patternsCtx === ctx) return _patterns;
+    const make = (cells) => {
+      const c = document.createElement("canvas");
+      c.width = 8; c.height = 8;
+      const cx = c.getContext("2d");
+      cx.fillStyle = "rgba(255,255,255,0.9)";
+      for (const [x, y] of cells) cx.fillRect(x, y, 1, 1);
+      return ctx.createPattern(c, "repeat");
+    };
+    _patterns = {
+      light: make([[1,1], [5,5]]),
+      dense: make([[1,1], [5,1], [3,3], [1,5], [5,5], [3,7]]),
+    };
+    _patternsCtx = ctx;
+    return _patterns;
   }
 
   async function init() {

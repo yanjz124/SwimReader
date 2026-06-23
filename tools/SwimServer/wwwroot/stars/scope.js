@@ -1706,43 +1706,53 @@ function dedupByCallsign(now) {
   return suppressed;
 }
 
-// mergedFp(primaryGuid) — returns a per-field view that takes each field
-// from whichever fp (primary or any sibling) was updated MOST RECENTLY.
-// `_updatedAt` is stamped on every fp object by handleFlightPlanUpdate.
+// mergedFp(primaryGuid) — split-rule merge.
 //
-// Field-by-field freshness fixes two earlier bugs:
-//   - "split-second handoff char flash" — sibling had stale state, but
-//     a global "patch only when primary is null" merge re-introduced it.
-//   - "handoff to C doesn't go through" — handoff state was published on
-//     a sibling guid; without merging we'd never see it. Now whichever
-//     fp last received the field's value wins.
+// STATE fields (Owner / PendingHandoff / IsHandoffInProgress / HandoffOcr):
+//   Pure freshness: whichever fp has the newest _updatedAt wins, INCLUDING
+//   when its value is the empty string "". Treating "" as "missing" let a
+//   stale sibling re-introduce a cleared handoff — the bug behind both
+//   "handoffs not clearing" and the split-second C flash.
+//
+// ENRICHMENT fields (callsign, type, scratchpad, route, etc.):
+//   Primary if it has a value; sibling fallback if primary is null/empty.
+//   Static data, no oscillation risk; the "fall back to anything that has
+//   it" rule is what makes thin TAIS FPs still render with full info.
 function mergedFp(primaryGuid) {
   const primary = trackToFp.get(primaryGuid);
   const siblings = _siblingsByPrimary.get(primaryGuid);
   if (!siblings || !siblings.length) return primary;
   const out = primary ? { ...primary } : {};
-  const ALL = [
+  const STATE = ["Owner","PendingHandoff","IsHandoffInProgress","HandoffOcr"];
+  const ENRICH = [
     "Callsign","AircraftType","WakeCategory","FlightRules",
     "Origin","Destination","EntryFix","ExitFix","Route","RequestedAltitude",
-    "Scratchpad1","Scratchpad2","Runway","Owner","PendingHandoff",
+    "Scratchpad1","Scratchpad2","Runway",
     "AssignedSquawk","EquipmentSuffix","LDRDirection",
-    "HandoffOcr","IsHandoffInProgress",
   ];
   const primaryAt = primary?._updatedAt || 0;
+  // Pick the single FRESHEST source per STATE field. Sibling wins only when
+  // its update is strictly newer than the primary's; primary's "" wins over
+  // a sibling's "C" if primary updated more recently.
+  let stateWinner = primary;
+  let stateWinAt = primaryAt;
   for (const sg of siblings) {
     const sib = trackToFp.get(sg);
     if (!sib) continue;
     const sibAt = sib._updatedAt || 0;
-    // For static enrichment we still patch when primary lacks the field
-    // regardless of timestamps (callsign etc. doesn't change often).
-    // For live state we ONLY take from sibling if its update is newer.
-    const sibIsNewer = sibAt > primaryAt;
-    for (const k of ALL) {
-      const primaryEmpty = out[k] == null || out[k] === "";
-      const sibHas = sib[k] != null && sib[k] !== "";
-      if (!sibHas) continue;
-      if (primaryEmpty) out[k] = sib[k];                       // enrichment fallback
-      else if (sibIsNewer) out[k] = sib[k];                    // freshness override
+    if (sibAt > stateWinAt) { stateWinner = sib; stateWinAt = sibAt; }
+  }
+  if (stateWinner && stateWinner !== primary) {
+    for (const k of STATE) out[k] = stateWinner[k];
+  }
+  // ENRICHMENT — primary already in out; fall back to siblings when missing.
+  for (const sg of siblings) {
+    const sib = trackToFp.get(sg);
+    if (!sib) continue;
+    for (const k of ENRICH) {
+      if ((out[k] == null || out[k] === "") && sib[k] != null && sib[k] !== "") {
+        out[k] = sib[k];
+      }
     }
   }
   return out;

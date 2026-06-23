@@ -73,6 +73,27 @@ public sealed class DgScopeAdapter : BackgroundService
     /// </summary>
     private readonly ConcurrentDictionary<Guid, string> _enrichedCallsigns = new();
 
+    /// <summary>
+    /// Per-aircraft handoff state machine. TAIS v4-0 does not publish the
+    /// receiving sector on a pending handoff (verified 2026-06-23 against
+    /// 8 active live handoffs at PCT — every record carried only cps + ocr
+    /// + standard fields, no receiver TCP). We INFER the receiver by
+    /// observing the cps TRANSITION:
+    ///   if (prev: cps=X, ocr=pending) then (now: cps=Y, ocr=no change)
+    ///   then Y was the receiver of that handoff.
+    /// While ocr is pending, we remember (cps, last-seen-receiver) so
+    /// the client can render a sensible inbound flash when an aircraft
+    /// is being passed back to a controller we've seen receive it before.
+    /// Not a perfect substitute for an explicit receiver field, but the
+    /// best inference TAIS allows.
+    /// </summary>
+    private sealed class HandoffState
+    {
+        public string? PrevCps;       // cps value during the previous pending observation
+        public string? LastReceiver;  // receiver inferred from the most recent completed handoff
+    }
+    private readonly ConcurrentDictionary<Guid, HandoffState> _handoffState = new();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -325,7 +346,10 @@ public sealed class DgScopeAdapter : BackgroundService
             Scratchpad2 = fp.Scratchpad2 ?? "",
             Runway = fp.Runway,
             Owner = fp.Owner,
-            PendingHandoff = fp.PendingHandoff ?? "",
+            // Inferred receiver — see _handoffState declaration above. When
+            // we can't infer yet, fall back to "?" placeholder so client
+            // logic that gates on PendingHandoff non-empty still fires.
+            PendingHandoff = InferHandoffReceiver(guid, fp) ?? (fp.IsHandoffInProgress ? "?" : ""),
             HandoffOcr = fp.HandoffOcr,
             IsHandoffInProgress = fp.IsHandoffInProgress ? true : (bool?)null,
             AssignedSquawk = StripLeadingZeros(fp.AssignedSquawk),
@@ -357,6 +381,40 @@ public sealed class DgScopeAdapter : BackgroundService
         $"{u.Owner}|{u.PendingHandoff}|{u.AssignedSquawk}|{u.EquipmentSuffix}|" +
         $"{u.LDRDirection}|{u.AssociatedTrackGuid}|" +
         $"{u.HandoffOcr}|{u.IsHandoffInProgress}";
+
+    /// <summary>
+    /// Infer the handoff receiver TCP by tracking cps transitions across
+    /// updates. TAIS doesn't publish the receiver; we reconstruct it from
+    /// the cps transition pattern:
+    ///   - While ocr is a handoff state (pending/normal handoff/intra),
+    ///     remember cps as "prevCps" — the originator.
+    ///   - When ocr returns to "no change" AND cps has CHANGED relative
+    ///     to prevCps, the new cps IS the receiver. Stash it as
+    ///     "lastReceiver" so the NEXT handoff inherits the inference.
+    ///   - While in-handoff, emit the previously-inferred receiver (best
+    ///     guess) on the wire. Until we have any data, return null and
+    ///     the caller falls back to "?" placeholder.
+    /// </summary>
+    private string? InferHandoffReceiver(Guid guid, FlightPlanDataEvent fp)
+    {
+        if (!fp.IsHandoffInProgress)
+        {
+            // Idle observation — see if this completes a previously-pending handoff.
+            if (_handoffState.TryGetValue(guid, out var s0) && s0.PrevCps is not null
+                && fp.Owner is not null && fp.Owner != s0.PrevCps)
+            {
+                s0.LastReceiver = fp.Owner;             // the new cps IS the receiver
+                s0.PrevCps = null;                       // mark idle
+            }
+            return null;
+        }
+        // In-handoff observation — record the originator if we don't have it.
+        var s = _handoffState.GetOrAdd(guid, _ => new HandoffState());
+        if (s.PrevCps is null) s.PrevCps = fp.Owner;
+        // Best guess of receiver. May be null on the FIRST observed handoff
+        // for this aircraft (we have no prior cps transition to learn from).
+        return s.LastReceiver;
+    }
 
     /// <summary>
     /// Convert ICAO airport code to FAA LID (e.g. KDCA → DCA, KORD → ORD).

@@ -459,11 +459,21 @@ public sealed class DgScopeAdapter : BackgroundService
         }
         s.HandoffTo = cps;
         // First time we see this aircraft AND it's already in a handoff —
-        // we have no prior owner observation. Use cps as both owner and
-        // receiver so the FDB renders SOMETHING; once a no-change update
-        // arrives, ConfirmedOwner will lock in correctly.
-        var owner = s.ConfirmedOwner ?? cps;
-        return (owner, s.HandoffTo);
+        // we have no prior owner observation. Use cps as the owner; SUPPRESS
+        // the receiver in that case to avoid the "Y handoff to Y" glitch
+        // (position symbol = line-2 char both equal cps). Once a no-change
+        // update arrives, ConfirmedOwner will lock in correctly and a real
+        // pending handoff with a known originator will render a receiver
+        // that's actually different from the owner.
+        if (s.ConfirmedOwner is null)
+        {
+            return (cps, null);
+        }
+        var owner = s.ConfirmedOwner;
+        // If somehow ConfirmedOwner == HandoffTo (chained logic edge case),
+        // also suppress to avoid the self-handoff display.
+        var receiver = (owner == s.HandoffTo) ? null : s.HandoffTo;
+        return (owner, receiver);
     }
 
     /// <summary>

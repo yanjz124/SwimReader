@@ -44,10 +44,11 @@ const prefSet = {
   PTLLength: 1,
   PTLOwn: false,
   PTLAll: false,
-  HistoryNum: 5,
+  HistoryNum: 10,                 // PrefSet.cs:38 — WPF default 10
   HistoryRate: 4.5,
   LeaderLength: 1,
-  Range: 50,
+  Range: 6,                       // PrefSet.cs:41 — WPF default 6 NM
+
   AltitudeFilterAssociatedMax: 99900,
   AltitudeFilterAssociatedMin: -9900,
   AltitudeFilterUnAssociatedMax: 99900,
@@ -570,17 +571,21 @@ async function applyProfile(profileName) {
       if (b.History         != null) prefSet.Brightness.History    = b.History;
       if (b.RangeRings      != null) prefSet.Brightness.RangeRings = b.RangeRings;
       if (b.Compass         != null) prefSet.Brightness.Compass    = b.Compass;
-      if (b.Weather         != null) prefSet.Brightness.Weather    = b.Weather;
-      if (b.WeatherContrast != null) prefSet.Brightness.Weather    = b.WeatherContrast;
-      // DataBlock collapses 3 WPF categories — last-write-wins is fine
-      // since they're usually equal in practice.
-      if (b.FullDataBlocks    != null) prefSet.Brightness.DataBlock = b.FullDataBlocks;
-      if (b.LimitedDataBlocks != null) prefSet.Brightness.DataBlock = b.LimitedDataBlocks;
-      if (b.OtherFDBs         != null) prefSet.Brightness.DataBlock = b.OtherFDBs;
-      // Position collapses 3 WPF categories.
-      if (b.PositionSymbols != null) prefSet.Brightness.Position = b.PositionSymbols;
-      if (b.BeaconTargets   != null) prefSet.Brightness.Position = b.BeaconTargets;
-      if (b.PrimaryTargets  != null) prefSet.Brightness.Position = b.PrimaryTargets;
+      if (b.Weather         != null) prefSet.Brightness.Weather         = b.Weather;
+      if (b.WeatherContrast != null) prefSet.Brightness.WeatherContrast = b.WeatherContrast;
+      // Per PrefSet.cs:92,107,112 these are 3 distinct fields — load each
+      // into its own slot. The BRITE FDB/LDB/OTH buttons drive them
+      // independently. Collapsed Brightness.DataBlock alias is mirrored
+      // last-write-wins for renderers that haven't been split yet.
+      if (b.FullDataBlocks    != null) prefSet.Brightness.FullDataBlocks    = b.FullDataBlocks;
+      if (b.LimitedDataBlocks != null) prefSet.Brightness.LimitedDataBlocks = b.LimitedDataBlocks;
+      if (b.OtherFDBs         != null) prefSet.Brightness.OtherFDBs         = b.OtherFDBs;
+      prefSet.Brightness.DataBlock = prefSet.Brightness.FullDataBlocks;
+      // Per PrefSet.cs:102-110 these are 3 distinct fields.
+      if (b.PositionSymbols != null) prefSet.Brightness.PositionSymbols = b.PositionSymbols;
+      if (b.BeaconTargets   != null) prefSet.Brightness.BeaconTargets   = b.BeaconTargets;
+      if (b.PrimaryTargets  != null) prefSet.Brightness.PrimaryTargets  = b.PrimaryTargets;
+      prefSet.Brightness.Position = prefSet.Brightness.PositionSymbols;
     }
     if (p.screenCenterPoint) {
       prefSet.ScreenCenterPoint = {
@@ -1262,7 +1267,16 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   ctx.textAlign = padLeft ? "right" : "left";
   // textX = side of the block closest to the target = block's leader-side edge.
   const textX = padLeft ? (blockX + blockWidth) : blockX;
-  const normColor = adjusted(baseColor, prefSet.Brightness.DataBlock);
+  // Brightness category per RadarWindow.cs:6391-6399 — Owned → FullDataBlocks,
+  // other FDB → OtherFDBs, LDB → LimitedDataBlocks. The collapsed
+  // Brightness.DataBlock alias is only kept for renderers that haven't been
+  // split yet.
+  const dbMode = dataBlockMode(t, fp);
+  const dbBright = ownedOrInbound
+    ? prefSet.Brightness.FullDataBlocks
+    : (dbMode === "FDB" ? prefSet.Brightness.OtherFDBs
+                        : prefSet.Brightness.LimitedDataBlocks);
+  const normColor = adjusted(baseColor, dbBright);
   // CA annotation: "CA" in red on the top line, blinking until acknowledged then
   // solid. Space for it is always reserved while in conflict so the callsign
   // doesn't jump as it blinks.
@@ -1276,13 +1290,13 @@ function drawDataBlockAndLeader(t, fp, posNow) {
         ctx.fillStyle = normColor; ctx.textAlign = "right";
         ctx.fillText(lines[0], textX, y);
         if (caShow) {
-          ctx.fillStyle = adjusted(COLORS.Emerg, prefSet.Brightness.DataBlock);
+          ctx.fillStyle = adjusted(COLORS.Emerg, dbBright);
           ctx.fillText("CA", textX - ctx.measureText(lines[0]).width - caGap, y);
         }
       } else {                                // left-aligned: CA at textX, callsign reserved-shifted
         ctx.textAlign = "left";
         if (caShow) {
-          ctx.fillStyle = adjusted(COLORS.Emerg, prefSet.Brightness.DataBlock);
+          ctx.fillStyle = adjusted(COLORS.Emerg, dbBright);
           ctx.fillText("CA", textX, y);
         }
         ctx.fillStyle = normColor;
@@ -1386,15 +1400,21 @@ function drawPosition(t, posNow) {
   const px = p.x | 0, py = p.y | 0;
 
   // Primary return — filled circle, FMATargetSymbols.Radius=3 (cs:616,6141-6143).
-  // Always ReturnColor (blue), independent of ownership.
-  ctx.fillStyle = adjusted(COLORS.Return, prefSet.Brightness.Position);
+  // Always ReturnColor (blue), driven by PrimaryTargets brightness
+  // (RadarWindow.cs:6076 / 6157).
+  ctx.fillStyle = adjusted(COLORS.Return, prefSet.Brightness.PrimaryTargets);
   ctx.beginPath();
   ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
 
   // Beacon overlay glyph — drawn for EVERY target. positionSymbolText
   // returns the right symbol (sector char / asterisk / diamond) for each.
-  ctx.fillStyle = adjusted(glyphColor, prefSet.Brightness.Position);
+  // Brightness category per RadarWindow.cs:6387/6391 — Owned glyph uses
+  // PositionSymbols, otherwise BeaconTargets.
+  const glyphBright = (fp?.Owner === ownTcp() || inbound)
+    ? prefSet.Brightness.PositionSymbols
+    : prefSet.Brightness.BeaconTargets;
+  ctx.fillStyle = adjusted(glyphColor, glyphBright);
   ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
@@ -1419,7 +1439,8 @@ function drawJRings() {
     const center = geoToScreen(pos);
     // NM → px: 1 NM = (1/60) deg lat = (1/60)/view.scale px
     const px = (t._jRing / view.scale);
-    ctx.strokeStyle = adjusted(COLORS.TPA, prefSet.Brightness.DataBlock);
+    // J-Ring is a TPA tool — Tools brightness (RadarWindow.cs:5319, 4934-39).
+    ctx.strokeStyle = adjusted(COLORS.TPA, prefSet.Brightness.Tools);
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.arc(center.x, center.y, px, 0, Math.PI * 2);
@@ -1604,7 +1625,8 @@ function drawMinSep() {
   const p2 = displayPos(minSepPair.p2);
   if (!p1 || !p2) return;
   const s1 = geoToScreen(p1), s2 = geoToScreen(p2);
-  ctx.strokeStyle = adjusted(COLORS.RBL, prefSet.Brightness.DataBlock);
+  // MinSep / RBL — Tools brightness (RadarWindow.cs:4998-4999).
+  ctx.strokeStyle = adjusted(COLORS.RBL, prefSet.Brightness.Tools);
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 3]);
   ctx.beginPath();

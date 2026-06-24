@@ -1332,7 +1332,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
 //   1. Filled circle for beacon target (Return color, Brightness.PrimaryTargets)
 //   2. PositionIndicator TransparentLabel with text:
 //        - PositionInd.Substring(-1)  (last char of controller sector / Owner)
-//        - else selectedSquawkChar    (when squawk is in selected list — TODO)
+//        - else selectedSquawkChar    (SelectedBeaconCodes prefix match)
 //        - else "◇" if PrimaryOnly
 //        - else "*"
 function positionSymbolText(t, fp) {
@@ -1788,6 +1788,28 @@ function mergedFp(primaryGuid) {
 function drawTracks() {
   const now = Date.now();
   const suppressed = dedupByCallsign(now);
+  // Per-track sync of ShowCallsignWithNoSquawk from the global F1-hold flag,
+  // mirroring RadarWindow.cs:6239-6241 inside the render loop. Hold-F1
+  // promotes every LDB to the 3-line beacon-readout variant (callsign on
+  // line 3). preview.js:108 clears the global flag on keyup.
+  const showAll = !!window.showAllCallsigns;
+  const ql = (window.prefSet && window.prefSet.QuickLookedTCPs) || [];
+  for (const t of tracks.values()) {
+    t.ShowCallsignWithNoSquawk = showAll;
+    // QuickLook / QuickLookPlus per-aircraft sync — RadarWindow.cs:5719-5742.
+    // Drives data-block color (QLPlus → OwnedColor white at cs:5454-5458) and
+    // FDB promotion (handled inside dataBlockMode).
+    const fp = window.trackToFp ? window.trackToFp.get(t.Guid) : null;
+    const owner = (fp && fp.Owner) || t.PositionInd || "";
+    const associated = !!(owner && owner !== "*");
+    if (ql.includes(owner) || (associated && ql.includes("ALL"))) {
+      t._quickLook = true; t._quickLookPlus = false;
+    } else if (ql.includes(owner + "+") || (associated && ql.includes("ALL+"))) {
+      t._quickLook = true; t._quickLookPlus = true;
+    } else {
+      t._quickLook = false; t._quickLookPlus = false;
+    }
+  }
   for (const t of tracks.values()) {
     if (!t.Location) continue;
     if (suppressed.has(t.Guid)) continue;             // transient duplicate GUID (siblings merged via mergedFp)

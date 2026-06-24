@@ -459,15 +459,13 @@ public sealed class DgScopeAdapter : BackgroundService
         }
         s.HandoffTo = cps;
         // First time we see this aircraft AND it's already in a handoff —
-        // we have no prior owner observation. Use cps as the owner; SUPPRESS
-        // the receiver in that case to avoid the "Y handoff to Y" glitch
-        // (position symbol = line-2 char both equal cps). Once a no-change
-        // update arrives, ConfirmedOwner will lock in correctly and a real
-        // pending handoff with a known originator will render a receiver
-        // that's actually different from the owner.
+        // we have no prior owner observation. Don't invent one. Return
+        // owner=null with receiver=cps so the track renders unowned
+        // (default position symbol) and flashes to the receiver TCP. Once
+        // an ocr=no change update arrives, ConfirmedOwner will lock in.
         if (s.ConfirmedOwner is null)
         {
-            return (cps, null);
+            return (null, cps);
         }
         var owner = s.ConfirmedOwner;
         // If somehow ConfirmedOwner == HandoffTo (chained logic edge case),

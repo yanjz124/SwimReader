@@ -112,12 +112,11 @@ Ordered by impact. Each cite is `<file>:<line>`.
   RadarWindow.cs:6291. Was already wired; original audit missed the
   enable check.
 
-- **B2.6 — `End` key Min Sep tool** — RadarWindow.cs:2579-2605.
-  Keyboard binding (Window_KeyDown cs:3428). First End-click on plane:
-  `tempMinSep = new MinSep(plane, null)`. Second End-click on a different
-  plane: `minSeps.Add(new MinSep(p1, p2))`. End with no clicked plane:
-  `minSeps.Clear()`. Not in preview.js; render side has `minSepPair`
-  state but never gets populated.
+- [shipped] **B2.6 — `End` key Min Sep tool** — preview.js:110-130 binds
+  End to the WPF tempMinSep / minSeps state pair, and drawMinSep now
+  iterates `window.starsState.minSeps` per frame in addition to the
+  legacy single-pair `minSepPair` (used by the MCA `LL` shortcut).
+  Mirrors RadarWindow.cs:2579-2605.
 
 - **B2.7 — `Ctrl+Shift+O` CRR RDB offset cycle** — RadarWindow.cs:2822-2828.
   Keyboard binding (Window_KeyDown). Cycles 0/1/2/3 offset on the

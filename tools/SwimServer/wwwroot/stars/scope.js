@@ -1620,24 +1620,36 @@ function distanceNMGeo(a, b) {
 }
 
 function drawMinSep() {
-  if (!minSepPair) return;
-  const p1 = displayPos(minSepPair.p1);
-  const p2 = displayPos(minSepPair.p2);
-  if (!p1 || !p2) return;
-  const s1 = geoToScreen(p1), s2 = geoToScreen(p2);
   // MinSep / RBL — Tools brightness (RadarWindow.cs:4998-4999).
-  ctx.strokeStyle = adjusted(COLORS.RBL, prefSet.Brightness.Tools);
-  ctx.lineWidth = 1;
-  ctx.setLineDash([4, 3]);
-  ctx.beginPath();
-  ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  const mx = (s1.x + s2.x) / 2, my = (s1.y + s2.y) / 2;
-  ctx.fillStyle = ctx.strokeStyle;
-  ctx.font = "11px FixedDemiBold, ui-monospace, monospace";
-  ctx.textAlign = "center";
-  ctx.fillText(`${minSepPair.dist.toFixed(2)} NM`, mx, my - 6);
+  const stroke = adjusted(COLORS.RBL, prefSet.Brightness.Tools);
+  const drawPair = (a, b) => {
+    const p1 = displayPos(a), p2 = displayPos(b);
+    if (!p1 || !p2) return;
+    const s1 = geoToScreen(p1), s2 = geoToScreen(p2);
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const mx = (s1.x + s2.x) / 2, my = (s1.y + s2.y) / 2;
+    const dist = distanceNMGeo(p1, p2);
+    ctx.fillStyle = stroke;
+    ctx.font = "11px FixedDemiBold, ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(`${dist.toFixed(2)} NM`, mx, my - 6);
+  };
+  // Per-pair entries from the End-key tool (preview.js:110-130, mirrors
+  // RadarWindow.cs:2579-2605 minSeps list). Draw each pair.
+  const ms = window.starsState && window.starsState.minSeps;
+  if (Array.isArray(ms)) {
+    for (const pair of ms) {
+      if (pair.plane1 && pair.plane2) drawPair(pair.plane1, pair.plane2);
+    }
+  }
+  // Legacy single-pair from MCA `LL` shortcut (window.starsMinSep).
+  if (minSepPair) drawPair(minSepPair.p1, minSepPair.p2);
 }
 
 window.starsJRing = (flid, radius) => {

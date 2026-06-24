@@ -101,8 +101,20 @@ public sealed class DgScopeAdapter : BackgroundService
     {
         public string? ConfirmedOwner;  // last cps observed with ocr=no_change
         public string? HandoffTo;       // current cps while ocr is in handoff
+        // Outbound-complete flash: when a handoff transitions from in-progress
+        // to settled with a new owner, we remember the PREVIOUS owner and the
+        // acceptance timestamp. For OutboundFlashWindow after, ResolveHandoff
+        // returns PendingHandoff=PreviousOwner so DGScope's render loop
+        // (RadarWindow.cs:6178, "if (x.PendingHandoff == ThisPositionIndicator)
+        // ... Flashing=true") fires on the originator's scope. This matches the
+        // CRC STARS spec: "data block blinks white for 5 seconds" after the
+        // receiver accepts an outbound handoff. The OG dStars server used the
+        // same trick — DGScope has no separate outbound-flash event.
+        public string? JustTransferredFrom;
+        public DateTime JustTransferredAt;
     }
     private readonly ConcurrentDictionary<Guid, HandoffState> _handoffState = new();
+    private static readonly TimeSpan OutboundFlashWindow = TimeSpan.FromSeconds(5);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -436,8 +448,26 @@ public sealed class DgScopeAdapter : BackgroundService
         {
             // Idle: cps is the actual owner. Lock it in, clear any prior
             // pending receiver.
+            //
+            // Acceptance detection: if a handoff was in progress (HandoffTo
+            // matches the new cps) AND the prior ConfirmedOwner differs from
+            // the new cps, the receiver just accepted. Stamp JustTransferred*
+            // so subsequent broadcasts within the flash window trigger DGScope's
+            // outbound-complete blink on the originator's scope.
+            if (cps is not null && s.HandoffTo == cps && s.ConfirmedOwner is not null && s.ConfirmedOwner != cps)
+            {
+                s.JustTransferredFrom = s.ConfirmedOwner;
+                s.JustTransferredAt = DateTime.UtcNow;
+            }
             if (cps is not null) s.ConfirmedOwner = cps;
             s.HandoffTo = null;
+
+            if (s.JustTransferredFrom is not null)
+            {
+                if (DateTime.UtcNow - s.JustTransferredAt < OutboundFlashWindow)
+                    return (s.ConfirmedOwner, s.JustTransferredFrom);
+                s.JustTransferredFrom = null;  // expired
+            }
             return (s.ConfirmedOwner, null);
         }
 

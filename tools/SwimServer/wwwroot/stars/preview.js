@@ -402,6 +402,30 @@ function executeCommand(line, opts = {}) {
   if (parts[0] === "WX")       return cmdWeather(parts);          // 2542-2557
   if (parts[0] === "RECENTER") return cmdRecenter(parts);         // 2558-2577
 
+  // ── Y[+][text]  scratchpad clear/set on clicked plane — RadarWindow.cs:2420-2480 ──
+  // Same shape as F Y, but typed without the F prefix.
+  //   Y        clear Scratchpad1
+  //   Y+       clear Scratchpad2
+  //   Y<text>  set Scratchpad1 (3-6 chars total incl. Y)
+  //   Y+<text> set Scratchpad2 (4-7 chars total incl. Y+)
+  if (first === "Y" && clickedplane) {
+    const fp = trackToFp.get(clicked.Guid);
+    if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
+    const k = keys[0];
+    if (k.length === 1) { if (fp) fp.Scratchpad1 = ""; return; }
+    if (k.length === 2 && k[1] === "+") { if (fp) fp.Scratchpad2 = ""; return; }
+    if (k.length >= 2 && k.length <= 5 && k[1] !== "+") {
+      if (fp) fp.Scratchpad1 = k.slice(1).join("");
+      return;
+    }
+    if (k.length >= 3 && k.length <= 6 && k[1] === "+") {
+      if (fp) fp.Scratchpad2 = k.slice(2).join("");
+      return;
+    }
+    setResponse("FORMAT");
+    return;
+  }
+
   // ── Q<pos>[+]  QuickLook toggle — RadarWindow.cs:2342-2376 ──────────────
   // Q<pos>   → toggle pos in QuickLookList (also clears any pos+ if set)
   // Q<pos>+  → toggle pos+ (clears plain pos if set)

@@ -94,23 +94,23 @@ Ordered by impact. Each cite is `<file>:<line>`.
   that handles `F S` (set StatusArea location) only — the
   letter-+-text form is incomplete.
 
-- **B2.3 — `Y` command — scratchpad clear/set** — RadarWindow.cs:2420-2460.
-  Clicked plane:
-    `Y` clears Scratchpad1,
-    `Y+` clears Scratchpad2,
-    `Y<text>` sets Scratchpad1,
-    `Y+<text>` sets Scratchpad2.
-  Untyped form on the typed-FLID path. Partially in our `F Y` multifunction
-  (preview.js:671) but the typed-without-`F` form is missing.
+- [shipped] **B2.3 — `Y` command — scratchpad clear/set** — preview.js
+  dispatcher now handles `Y` / `Y+` / `Y<text>` / `Y+<text>` typed
+  without the F prefix on a clicked plane (added next to the `Q` branch).
+  F Y multifunction form was already there.
 
 - **B2.4 — `O E|I` AutoOffset toggle** — RadarWindow.cs:2400-2410.
-  Multifunction `F O E` / `F O I`. We have the multifunction branch
-  (preview.js:660) but no AutoOffset state in scope.js and no rendering
-  side effect that consumes it.
+  Multifunction wired in preview.js + state lives at scope.js:1921, but
+  the rendering side effect at RadarWindow.cs:5958-6000 (8-direction
+  overlap scan that picks the lowest-conflict leader direction per FDB)
+  is non-trivial and not yet implemented. Default OFF; renderer ignores
+  the flag.
 
-- **B2.5 — `R` PTL toggle on clicked plane** — RadarWindow.cs:2412-2418.
-  `F R` + clicked. preview.js:666 has the branch; it sets `_showPtl` but
-  the renderer doesn't read it (only the global PTLOwn / PTLAll flags).
+- [shipped] **B2.5 — `R` PTL toggle on clicked plane** — preview.js sets
+  `_showPtl`, and drawPTL (scope.js ~870) reads it as the first leg of
+  `enable = _showPtl || (Owned && PTLOwn) || (FDB && PTLAll)` matching
+  RadarWindow.cs:6291. Was already wired; original audit missed the
+  enable check.
 
 - **B2.6 — `End` key Min Sep tool** — RadarWindow.cs:2579-2605.
   Keyboard binding (Window_KeyDown cs:3428). First End-click on plane:
@@ -131,10 +131,10 @@ Ordered by impact. Each cite is `<file>:<line>`.
 
 ### B3. ATPA / separation tools
 
-- **B3.1 — ATPA mileage in FDB line 3** — Aircraft.cs:509-512.
-  When `ATPAMileageNow != null`, line 3 renders the mileage instead of
-  the AssignedSquawk-mismatch indicator. Our scope.js:926-928 only does
-  the squawk-mismatch path.
+- [shipped] **B3.1 — ATPA mileage in FDB line 3** — buildDataBlock
+  (scope.js ~1032) priority chain: AssignedSquawk mismatch → mileage →
+  blank. Matches Aircraft.cs:500-521. Source `t.ATPAMileageNow` not yet
+  populated by feeds, but the render path is wired and ready.
 
 - **B3.2 — ATPA volume polygon draw** — ATPAVolume.cs.
   2D polygons defining the approach volumes. Our state holds a list but

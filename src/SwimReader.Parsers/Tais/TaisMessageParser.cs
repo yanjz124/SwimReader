@@ -229,24 +229,30 @@ public sealed class TaisMessageParser : IStddsMessageParser
     {
         if (string.IsNullOrWhiteSpace(ocr)) return false;
         var v = ocr.Trim().ToLowerInvariant();
-        // OCR values observed in live PCT data. Empirically determined from a
-        // T1 vs T2 snapshot comparison (2026-06-23): 30/82 tracks changed
-        // state in 90s; ZERO transitions back to "no change" were observed.
-        // Several transitions WERE pending → intrafacility handoff at the
-        // SAME cps — strongly suggesting "intrafacility handoff" is the
-        // STEADY state for any aircraft tracked under a TRACON sector, NOT
-        // an in-progress handoff. Treating it as in-progress made the
-        // handoff char stick on every routinely-tracked aircraft.
+        // Empirically derived from tracking JIA5085 (DCA → BNA departure)
+        // from 2300ft to FL259 — full 12-minute climb captured on 2026-06-24:
         //
-        // Real in-progress handoff states:
-        //   "pending"          — handoff request out, awaiting accept
-        //   "normal handoff"   — interfacility handoff in progress
-        //   "directed handoff" — directed (forced) handoff
-        //   "manual"           — manual handoff
-        // NOT a handoff (routine):
-        //   "no change"             — no coordination event
-        //   "intrafacility handoff" — under terminal control by some sector
-        return v is "pending" or "normal handoff" or "directed handoff" or "manual";
+        //   alt  2300ft  ocr="pending"          (handoff initiated)
+        //   alt 13000ft  ocr="normal handoff"   ← TRANSITION (receiver accepted)
+        //   alt 13000ft → FL259: stays "normal handoff" forever
+        //
+        // Interpretation:
+        //   "pending"          — handoff REQUEST sent, receiver not yet accepted.
+        //                        Controller's ACTION ITEM (flash + line-2 char).
+        //   "normal handoff"   — receiver has ACCEPTED. Handoff executing /
+        //                        track has been transferred. NOT an action item.
+        //   "intrafacility handoff" — same post-acceptance state for intra.
+        //   "no change"        — idle, no coordination event.
+        //
+        // Treating "normal handoff" as an in-progress action item kept the
+        // handoff char visible from acceptance to coverage-exit (often 10+
+        // minutes), making it look like the handoff "never went through".
+        // Now only PENDING fires the in-progress display.
+        //
+        // "directed handoff" and "manual" retained as in-progress: they
+        // indicate active forced/manual coordination events that controllers
+        // do want to see.
+        return v is "pending" or "directed handoff" or "manual";
     }
 
     /// <summary>

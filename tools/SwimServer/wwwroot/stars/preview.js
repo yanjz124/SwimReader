@@ -402,6 +402,30 @@ function executeCommand(line, opts = {}) {
   if (parts[0] === "WX")       return cmdWeather(parts);          // 2542-2557
   if (parts[0] === "RECENTER") return cmdRecenter(parts);         // 2558-2577
 
+  // ── Q<pos>[+]  QuickLook toggle — RadarWindow.cs:2342-2376 ──────────────
+  // Q<pos>   → toggle pos in QuickLookList (also clears any pos+ if set)
+  // Q<pos>+  → toggle pos+ (clears plain pos if set)
+  // Length range from cs:2343: keys[0].Length >= 4 || keys[0].Length <= 6
+  // (i.e. Q + 3-5 char pos string). Fires on Enter.
+  if (first === "Q" && enter && keys[0].length >= 4 && keys[0].length <= 6) {
+    const qlstring = keys[0].slice(1);                 // strip leading Q
+    const qlplus = qlstring.endsWith("+");
+    const qlpos = qlplus ? qlstring.slice(0, -1) : qlstring;
+    if (!qlpos) { setResponse("ILL POS"); return; }
+    const ql = (prefSet.QuickLookedTCPs ||= []);
+    const idx = (s) => ql.indexOf(s);
+    if (qlplus) {
+      if (idx(qlpos) >= 0)        ql.splice(idx(qlpos), 1);
+      if (idx(qlpos + "+") >= 0)  ql.splice(idx(qlpos + "+"), 1);
+      else                        ql.push(qlpos + "+");
+    } else {
+      if (idx(qlpos) >= 0)             ql.splice(idx(qlpos), 1);
+      else if (idx(qlpos + "+") >= 0)  ql.splice(idx(qlpos + "+"), 1);
+      else                             ql.push(qlpos);
+    }
+    return;
+  }
+
   // ── Default catchall on clicked plane (cs:2606-2683) ───────────────────
   if (clickedplane && keys[0].length >= 2 && keys[0].length <= 4) {
     return cmdDefaultClickedPlane(line, clicked);

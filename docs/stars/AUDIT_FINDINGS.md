@@ -82,10 +82,11 @@ Ordered by impact. Each cite is `<file>:<line>`.
 
 ### B2. Preview / command dispatch holes
 
-- **B2.1 — `Q` command (QuickLook TCP list)** — RadarWindow.cs:2323-2356.
-  `QORD` toggles ORD in QuickLookList; `QORD+` toggles ORD+ (plus form).
-  Missing entirely from preview.js. State field
-  `prefSet.QuickLookedTCPs` exists but is never written.
+- [shipped] **B2.1 — `Q` command (QuickLook TCP list)** — wired in
+  preview.js (dispatcher branch after RECENTER). `Q<pos>` toggles pos,
+  `Q<pos>+` toggles pos+, with mutual-exclusion: setting pos+ clears
+  pos, and vice versa (cs:2342-2376). Writes to prefSet.QuickLookedTCPs;
+  SSA QL line + drawTracks per-frame sync (B1.2) consume it.
 
 - **B2.2 — `S<letter> [text…]` ATIS setter** — RadarWindow.cs:2358-2399.
   Sets ATIS slot 0 letter + optional gentext suffix. Our
@@ -171,10 +172,9 @@ Ordered by impact. Each cite is `<file>:<line>`.
   "INTRAIL 2.5 ON: <vol>" for 2.5nm operations.
   ssa.js:28 has the state field; render never emits.
 
-- **B5.2 — Quick Look TCPs line** — RadarWindow.cs:2999+.
-  SSA shows "QL: <tcp> <tcp>" of active quick-look positions.
-  Render is in ssa.js but the source list is empty because Q command
-  (B2.1) isn't wired.
+- [shipped] **B5.2 — Quick Look TCPs line** — ssa.js:208 renders
+  "QL: …" from prefSet.QuickLookedTCPs; now populated by the Q
+  command (B2.1).
 
 ### B6. Keyboard / hardware
 

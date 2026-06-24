@@ -713,11 +713,11 @@ function handleFlightPlanUpdate(u) {
   if (!fp) { fp = { Guid: u.Guid }; flightPlans.set(u.Guid, fp); }
   // Stamp every update for mergedFp's per-field freshness comparison.
   fp._updatedAt = Date.now();
-  // Capture previous Owner so we can detect a cps transition and flash the
-  // data block when ownership just moved to us. TAIS doesn't publish the
-  // receiver TCP so we can't flash IN ADVANCE of a handoff completion, but
-  // we can flash for 5s AFTER cps becomes me — useful "you just got this"
-  // signal for the receiving controller.
+  // Capture previous Owner so we can detect a cps transition matching the
+  // DGScope Aircraft.Transferred event (Aircraft.cs:46-55, RadarWindow.cs
+  // Aircraft_Transferred) — fires when ownership moves AWAY from us, i.e.
+  // a receiver just accepted our outbound handoff. CRC STARS spec: data
+  // block blinks white for 5 seconds, then stays white until clicked.
   const prevOwner = fp.Owner;
   for (const k of ["Callsign","AircraftType","WakeCategory","FlightRules",
        "Origin","Destination","EntryFix","ExitFix","Route","RequestedAltitude",
@@ -726,19 +726,20 @@ function handleFlightPlanUpdate(u) {
        "HandoffOcr","IsHandoffInProgress"]) {
     if (u[k] !== undefined) fp[k] = u[k];
   }
-  // cps transition detection: stamp _justAcquiredAt ONLY when the ownership
-  // moved AWAY from us. This is the "outbound handoff just got accepted by
-  // the other side" event — surprising and noteworthy. Inbound acceptance
-  // (we became owner) is OUR action; we initiated it, no flash needed.
-  // Inbound PENDING flash is already covered separately by isInboundHandoff
-  // → dbFlashing while PendingHandoff == me.
+  // cps transition detection: stamp _justTransferredAt ONLY when the
+  // ownership moved AWAY from us. Mirrors DGScope's PositionInd setter
+  // firing Transferred with PositionFrom=prevOwner, and the handler at
+  // RadarWindow.cs Aircraft_Transferred which checks PositionFrom == me.
+  // Inbound acceptance (we became owner) is OUR action — no flash needed.
+  // Inbound PENDING flash is covered separately by isInboundHandoff →
+  // dbFlashing while PendingHandoff == me.
   if (u.Owner !== undefined && prevOwner && fp.Owner && prevOwner !== fp.Owner) {
     const me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
     if (me) {
       const prev = String(prevOwner).trim().toUpperCase();
       const next = String(fp.Owner).trim().toUpperCase();
       if (prev === me && next !== me) {
-        fp._justAcquiredAt = Date.now();
+        fp._justTransferredAt = Date.now();
       }
     }
   }
@@ -1232,19 +1233,15 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // RadarWindow.cs:2692/2724 (clear-on-click) — it does NOT drive colour.
   // The previous port used an invented `_pointoutTarget` here; replaced
   // with `_forceQuickLook` to match the source priority.
-  // Source-of-truth predicates from handoff.js (RadarWindow.cs:1085-1087).
-  // Flash on EITHER inbound or outbound — DGScope flashes on inbound only
-  // (cs:1086 PendingHandoff == me), but our TAIS feed lacks the receiver
-  // TCP, so for OUTBOUND tracks (cps == me, ocr pending) we flash as a
-  // visible "your handoff is in progress" indicator until the feed grows
-  // a receiver field.
-  const inboundHandoff  = window.Handoff && window.Handoff.isInboundHandoff(t, fp);
-  const outboundHandoff = window.Handoff && window.Handoff.isOutboundHandoff(t, fp);
-  // Brief post-acquire flash for the receiving controller — fires when
-  // cps just transitioned to me (handoff.js justAcquired, 5s window).
-  // TAIS doesn't give us inbound notice; this is the next best signal.
-  const justGot         = window.Handoff && window.Handoff.justAcquired(t, fp);
-  const dbFlashing      = inboundHandoff || outboundHandoff || justGot;
+  // Source-of-truth predicates from handoff.js. DGScope flash sites:
+  //   - RadarWindow.cs:1086 inbound (PendingHandoff == me)
+  //   - Aircraft_Transferred → 5s outbound-complete blink (CRC STARS spec)
+  // We do NOT flash for in-progress outbound (PositionInd==me, ocr=pending)
+  // — DGScope doesn't, and faking it as a "your handoff is in progress"
+  // indicator was an invention that confused real STARS users.
+  const inboundHandoff   = window.Handoff && window.Handoff.isInboundHandoff(t, fp);
+  const justTransferred  = window.Handoff && window.Handoff.justTransferred(t, fp);
+  const dbFlashing       = inboundHandoff || justTransferred;
   const ownedOrInbound  = window.Handoff && window.Handoff.isOwned(t, fp);
   let baseColor = COLORS.DataBlock;
   // Conflict Alert is NOT a whole-block colour change — CA annotation only

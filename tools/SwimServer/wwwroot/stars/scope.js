@@ -726,13 +726,20 @@ function handleFlightPlanUpdate(u) {
        "HandoffOcr","IsHandoffInProgress"]) {
     if (u[k] !== undefined) fp[k] = u[k];
   }
-  // cps transition detection: if Owner just changed AND the new value
-  // matches our signed-on TCP, stamp acquisition time. handoff.js reads
-  // this to drive a short post-acquire flash.
+  // cps transition detection: stamp _justAcquiredAt whenever ownership of
+  // this track JUST CHANGED and the change involves us, in EITHER direction.
+  //   prev != me, new == me → inbound complete (we received the handoff)
+  //   prev == me, new != me → outbound complete (our handoff was accepted)
+  // DGScope-faithful behaviour: both directions flash the data block for
+  // ~5 seconds so the controller sees the ownership swap.
   if (u.Owner !== undefined && prevOwner && fp.Owner && prevOwner !== fp.Owner) {
     const me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
-    if (me && String(fp.Owner).trim().toUpperCase() === me) {
-      fp._justAcquiredAt = Date.now();
+    if (me) {
+      const prev = String(prevOwner).trim().toUpperCase();
+      const next = String(fp.Owner).trim().toUpperCase();
+      if (next === me || prev === me) {
+        fp._justAcquiredAt = Date.now();
+      }
     }
   }
   if (fp.AssociatedTrackGuid) trackToFp.set(fp.AssociatedTrackGuid, fp);

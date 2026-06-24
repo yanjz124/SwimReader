@@ -126,15 +126,18 @@
     const ph = pendingHandoff(t, fp);
     return !!ph;
   }
-  // "Just acquired" — fired when cps just transitioned to me. Set in
-  // scope.js handleFlightPlanUpdate; expires 5s later. Used by the data
-  // block renderer to flash white briefly so the receiving controller
-  // sees a clear "you just got this" indicator, since TAIS doesn't give
-  // us advance notice of an inbound handoff.
-  const JUST_ACQUIRED_WINDOW_MS = 5000;
-  function justAcquired(t, fp) {
-    if (!fp || !fp._justAcquiredAt) return false;
-    if (Date.now() - fp._justAcquiredAt > JUST_ACQUIRED_WINDOW_MS) return false;
+  // "Just transferred" — fired when cps transitioned AWAY from me (an
+  // outbound handoff just got accepted by the receiver). Mirrors DGScope
+  // Aircraft.Transferred event + Aircraft_Transferred handler stamping
+  // JustTransferredAt + render-loop guard at RadarWindow.cs:6200 which
+  // skips clearing Flashing while the 5s window is active.
+  // CRC STARS spec: data block blinks white for 5 seconds after the
+  // receiving controller accepts your outbound handoff, then stays
+  // white until clicked.
+  const JUST_TRANSFERRED_WINDOW_MS = 5000;
+  function justTransferred(t, fp) {
+    if (!fp || !fp._justTransferredAt) return false;
+    if (Date.now() - fp._justTransferredAt > JUST_TRANSFERRED_WINDOW_MS) return false;
     return true;
   }
 
@@ -206,6 +209,17 @@
     if (plane._pointout) { plane._pointout = false; return; }
     // 4. Clear ForceQuickLook — cs:2728-2731
     if (plane._forceQuickLook) { plane._forceQuickLook = false; return; }
+    // 4.5 Stop the outbound-complete blink. Matches DGScope click handler
+    // step added alongside Aircraft_Transferred: first click during the 5s
+    // blink stops the flashing (data block stays white). Second click hits
+    // RELEASE below to go green.
+    if (fp && fp._justTransferredAt && pi && pi !== meTcp && ph !== meTcp) {
+      const age = Date.now() - fp._justTransferredAt;
+      if (age >= 0 && age < 5000) {
+        fp._justTransferredAt = 0;
+        return;
+      }
+    }
     // 5. RELEASE — cs:2744-2747
     if (plane._owned && pi && pi !== meTcp) {
       plane._owned = false;
@@ -243,7 +257,7 @@
   window.Handoff = {
     positionInd, pendingHandoff, me,
     isOwned, isInboundHandoff, isOutboundHandoff, isHandoffInProgress,
-    justAcquired,
+    justTransferred,
     onPositionChange,
     processImplied,
     flashPhaseHidden,

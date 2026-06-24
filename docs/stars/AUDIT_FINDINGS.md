@@ -14,33 +14,27 @@ is open.
 
 Most of the port stays close to DGScope. Concrete inventions still in tree:
 
-1. **scope.js `Brightness.Weather` collapse** — PrefSet.cs:148+152 has
-   `Weather` AND `WeatherContrast` as two separate sliders. Our
-   `applyProfile` (scope.js:546) collapses both into `Brightness.Weather`.
-   Effect: the BRITE WXC button on the DCB has nothing to drive.
-   **Fix:** add `Brightness.WeatherContrast` field; let WXC adjust it
-   independently; use it in NEXRAD draw alpha.
+1. [shipped cac9cf9] **scope.js `Brightness.Weather` collapse** —
+   PrefSet.cs:148+152 `Weather` + `WeatherContrast` now load into separate
+   slots; the WXC button still needs to be wired to the WeatherContrast
+   slot (the NEXRAD draw alpha can consume it independently).
 
-2. **scope.js `Brightness.DataBlock` 3→1 collapse** — PrefSet.cs:92,107,112
-   has `FullDataBlocks`, `LimitedDataBlocks`, `OtherFDBs` as 3 separate
-   brightness fields. applyProfile (scope.js:549-551) last-write-wins
-   into `Brightness.DataBlock`. Low impact in practice (usually equal)
-   but the FDB / LDB / OTH BRITE buttons can't be moved independently.
+2. [shipped cac9cf9] **scope.js `Brightness.DataBlock` 3→1 collapse** —
+   FullDataBlocks / LimitedDataBlocks / OtherFDBs now load into their own
+   slots; data-block renderer picks the right one per Owned/FDB/LDB.
 
-3. **scope.js `Brightness.Position` 3→1 collapse** — PrefSet.cs:102-110
-   has `PositionSymbols`, `BeaconTargets`, `PrimaryTargets`. We collapse
-   to `Brightness.Position`. BCN / PRI / POS BRITE buttons can't drift
-   apart on our port.
+3. [shipped cac9cf9] **scope.js `Brightness.Position` 3→1 collapse** —
+   PositionSymbols / BeaconTargets / PrimaryTargets now load into their
+   own slots; position-symbol renderer uses PositionSymbols when owned
+   else BeaconTargets, primary return uses PrimaryTargets.
 
 4. **scope.js `OtherOwnersLeaderDirections`** — PrefSet.cs:31 maps each
    other-controller TCP → leader direction. We only have
    `OwnedDataBlockPosition` + `UnownedDataBlockPosition` so a facility
    that configures per-TCP leader directions has them silently ignored.
 
-5. **PrefSet defaults differ** — WPF defaults (PrefSet.cs):
-   `HistoryNum = 10` (38), `Range = 6` (41).
-   Our scope.js:47 sets HistoryNum=5, scope.js:50 Range=50. Cold-start
-   without a profile renders differently than WPF.
+5. [shipped cac9cf9] **PrefSet defaults differ** — scope.js now matches
+   PrefSet.cs: HistoryNum=10, Range=6.
 
 6. **CA blink phase** — scope.js:1077 blinks on `Date.now() % 1000 < 500`.
    WPF (RadarWindow.cs:5454-5468) keys blink off the radar sweep counter
@@ -194,9 +188,11 @@ Ordered by impact. Each cite is `<file>:<line>`.
 
 ### B7. Render / visual details
 
-- **B7.1 — Data-block flash on inbound handoff** — RadarWindow.cs:1086-1087.
-  `aclist.ForEach(x => x.DataBlock.Flashing = x.PendingHandoff == ThisPositionIndicator)`.
-  Track being handed TO us → data block blinks. Not in our render.
+- [shipped] **B7.1 — Data-block flash on inbound handoff** — wired via
+  handoff.js `isInboundHandoff()` + scope.js `dbFlashing` (line ~1244) +
+  `flashPhaseHidden()` (handoff.js:241). Inbound flash uses the same
+  blink phase logic DGScope drives off the OpenGL frame counter.
+  Outbound-complete blink also implemented (3653055) per CRC STARS spec.
 
 - **B7.2 — ClockPhase per-update vs per-tick** — ClockPhase.cs.
   WPF increments phase on each Aircraft update arrival. We tick the

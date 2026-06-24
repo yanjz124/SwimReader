@@ -726,18 +726,18 @@ function handleFlightPlanUpdate(u) {
        "HandoffOcr","IsHandoffInProgress"]) {
     if (u[k] !== undefined) fp[k] = u[k];
   }
-  // cps transition detection: stamp _justAcquiredAt whenever ownership of
-  // this track JUST CHANGED and the change involves us, in EITHER direction.
-  //   prev != me, new == me → inbound complete (we received the handoff)
-  //   prev == me, new != me → outbound complete (our handoff was accepted)
-  // DGScope-faithful behaviour: both directions flash the data block for
-  // ~5 seconds so the controller sees the ownership swap.
+  // cps transition detection: stamp _justAcquiredAt ONLY when the ownership
+  // moved AWAY from us. This is the "outbound handoff just got accepted by
+  // the other side" event — surprising and noteworthy. Inbound acceptance
+  // (we became owner) is OUR action; we initiated it, no flash needed.
+  // Inbound PENDING flash is already covered separately by isInboundHandoff
+  // → dbFlashing while PendingHandoff == me.
   if (u.Owner !== undefined && prevOwner && fp.Owner && prevOwner !== fp.Owner) {
     const me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
     if (me) {
       const prev = String(prevOwner).trim().toUpperCase();
       const next = String(fp.Owner).trim().toUpperCase();
-      if (next === me || prev === me) {
+      if (prev === me && next !== me) {
         fp._justAcquiredAt = Date.now();
       }
     }

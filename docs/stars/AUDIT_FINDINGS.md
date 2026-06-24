@@ -62,21 +62,23 @@ Ordered by impact. Each cite is `<file>:<line>`.
   ProcessCommand fall-through (cs:1438-1450) is the click-no-keys
   handler that flips `plane.FDB`.
 
-- **B1.2 — `QuickLookPlus` per-aircraft** — Aircraft.cs:113.
-  Has both `QuickLook` and `QuickLookPlus`. We track only the global
-  list. Color priority (cs:158-160) tests QLPlus → Owned (white).
-  Q command at RadarWindow.cs:2344 adds the `+` form.
+- [shipped] **B1.2 — `QuickLookPlus` per-aircraft** — drawTracks now
+  syncs `t._quickLook` / `t._quickLookPlus` per frame from
+  prefSet.QuickLookedTCPs (mirrors RadarWindow.cs:5719-5742). The
+  color tier check at scope.js ~1260 already handled QLPlus → white,
+  it just had no source. (Setting prefSet.QuickLookedTCPs entries is
+  still B2.1 — the Q command isn't yet wired.)
 
-- **B1.3 — `SelectedSquawkChar` rendering** — Aircraft.cs:618-619.
-  When a squawk matches the SelectedBeaconCodes list, the position
-  glyph is the selected char (e.g. 'X' for "select on X"). Our
-  positionSymbolText:1142 has a TODO marker but no implementation.
-  Trigger: `F B <squawk>` command — already wired (cs:2111-2119), but
-  never feeds the per-track display.
+- [shipped] **B1.3 — `SelectedSquawkChar` rendering** — implemented in
+  positionSymbolText (scope.js ~1353-1364); reads `window.SSA.selected-
+  BeaconCodes` and returns `prefSet.SelectedBeaconCodeChar` on a startsWith
+  match. The earlier TODO marker was stale.
 
-- **B1.4 — `ShowCallsignWithNoSquawk` mode** — Aircraft.cs:448.
-  When true, aircraft with no squawk still show callsign on line 1
-  instead of nothing/RDR. Not in our port.
+- [shipped] **B1.4 — `ShowCallsignWithNoSquawk` mode** — the per-aircraft
+  flag is consumed in buildDataBlock (scope.js ~1046) which renders the
+  3-line LDB beacon-readout variant when true. Drawn from the global
+  `window.showAllCallsigns` F1-hold flag, synced into each track per
+  frame in drawTracks (mirrors RadarWindow.cs:6239-6241).
 
 ### B2. Preview / command dispatch holes
 
@@ -182,9 +184,10 @@ Ordered by impact. Each cite is `<file>:<line>`.
   file. Our leaderDirFromDigit accepts an `invert` arg but it's
   hardcoded to `false`.
 
-- **B6.2 — F1 (Beacon Code Readout hold)** — cs:3421-3426.
-  Hold F1 → show all aircraft callsigns even on LDBs. Our preview.js
-  binds it (keyboard handler) but the renderer doesn't check the flag.
+- [shipped] **B6.2 — F1 (Beacon Code Readout hold)** — drawTracks now
+  syncs `t.ShowCallsignWithNoSquawk = window.showAllCallsigns` per
+  frame (mirrors RadarWindow.cs:6239-6241); buildDataBlock already
+  rendered the 3-line beacon-readout variant when the flag is true.
 
 ### B7. Render / visual details
 

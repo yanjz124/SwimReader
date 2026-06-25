@@ -187,11 +187,18 @@ function refreshSsa() {
              `${fa(prefSet.AltitudeFilterAssociatedMin)} ${fa(prefSet.AltitudeFilterAssociatedMax)} A`);
 
   // INTRAIL (RenderStatus order: after the altitude filter, before METARs).
-  const onVols = SSA.intrailVolumes.filter(v => v.active);
-  if (onVols.length) {
-    lines.push(`INTRAIL ON: ${onVols.map(v => v.id).join(" ")}`);
-    const t25 = onVols.filter(v => v.twoPointFive);
-    if (t25.length) lines.push(`INTRAIL 2.5 ON: ${t25.map(v => v.id).join(" ")}`);
+  // Reads window.starsState.ATPA — single source of truth, written by the
+  // F 2 ATPA command (preview.js). Mirrors RadarWindow.cs:3001-3019:
+  // emit "INTRAIL ON: …" when ATPA.Active and the volume is Active,
+  // then "INTRAIL 2.5 ON: …" for active 2.5nm-enabled volumes.
+  const atpa = window.starsState && window.starsState.ATPA;
+  if (atpa && atpa.Active && Array.isArray(atpa.Volumes)) {
+    const onVols = atpa.Volumes.filter(v => v.Active);
+    if (onVols.length) {
+      lines.push(`INTRAIL ON: ${onVols.map(v => v.VolumeId).join(" ")}`);
+      const t25 = onVols.filter(v => v.TwoPointFiveEnabled && v.TwoPointFiveActive);
+      if (t25.length) lines.push(`INTRAIL 2.5 ON: ${t25.map(v => v.VolumeId).join(" ")}`);
+    }
   }
 
   // METAR altimeters — DGScope packs 3 stations per line (RadarWindow.cs:3019-3028).

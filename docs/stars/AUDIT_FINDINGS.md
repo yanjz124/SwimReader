@@ -88,11 +88,10 @@ Ordered by impact. Each cite is `<file>:<line>`.
   pos, and vice versa (cs:2342-2376). Writes to prefSet.QuickLookedTCPs;
   SSA QL line + drawTracks per-frame sync (B1.2) consume it.
 
-- **B2.2 — `S<letter> [text…]` ATIS setter** — RadarWindow.cs:2358-2399.
-  Sets ATIS slot 0 letter + optional gentext suffix. Our
-  `processMultifunction` has a `sub === "S"` branch (preview.js:718)
-  that handles `F S` (set StatusArea location) only — the
-  letter-+-text form is incomplete.
+- [shipped] **B2.2 — `S<letter> [text…]` ATIS setter** — preview.js:799
+  handles `F S<letter>[text]` (atis slot 0 + free text into gentext[0]).
+  StatusLocation form at preview.js:790 also covered. Was already wired;
+  original audit was stale.
 
 - [shipped] **B2.3 — `Y` command — scratchpad clear/set** — preview.js
   dispatcher now handles `Y` / `Y+` / `Y<text>` / `Y+<text>` typed
@@ -118,9 +117,11 @@ Ordered by impact. Each cite is `<file>:<line>`.
   legacy single-pair `minSepPair` (used by the MCA `LL` shortcut).
   Mirrors RadarWindow.cs:2579-2605.
 
-- **B2.7 — `Ctrl+Shift+O` CRR RDB offset cycle** — RadarWindow.cs:2822-2828.
-  Keyboard binding (Window_KeyDown). Cycles 0/1/2/3 offset on the
-  "Coordination Required Receiver-Data-Block" display. Not in preview.js.
+- [n/a] **B2.7 — `Ctrl+Shift+O` CRR RDB offset cycle** — original cite
+  RadarWindow.cs:2822-2828 was wrong; those lines are letter-case
+  branches in KeysToString. No CRR / RDBOffset / "Coordination Required"
+  text exists anywhere in the .stars-reference tree. Feature doesn't
+  exist in DGScope — audit item dropped.
 
 - **B2.8 — Numeric typed input** — RadarWindow.cs:1545-1700+.
   `340` + click sets altitude target (?), `230` + click sets speed
@@ -166,10 +167,11 @@ Ordered by impact. Each cite is `<file>:<line>`.
 
 ### B5. System Status Area
 
-- **B5.1 — INTRAIL volume display** — RadarWindow.cs:2970-2986.
-  SSA shows "INTRAIL ON: <vol> <vol>" when ATPA volumes are active +
-  "INTRAIL 2.5 ON: <vol>" for 2.5nm operations.
-  ssa.js:28 has the state field; render never emits.
+- [shipped] **B5.1 — INTRAIL volume display** — ssa.js now reads
+  window.starsState.ATPA directly (single source of truth populated by
+  the F 2 ATPA command) and emits "INTRAIL ON: …" + "INTRAIL 2.5 ON: …"
+  per RadarWindow.cs:3001-3019. The stale standalone SSA.intrailVolumes
+  array is no longer the source.
 
 - [shipped] **B5.2 — Quick Look TCPs line** — ssa.js:208 renders
   "QL: …" from prefSet.QuickLookedTCPs; now populated by the Q

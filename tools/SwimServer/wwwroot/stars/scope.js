@@ -1198,77 +1198,92 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const blockWidth  = Math.max(...lines.map(l => l.length)) * charWidth;
   const blockHeight = lines.length * charHeight;
 
-  // Block top-left + leader start/end per direction. Each `case` mirrors the
-  // VISUAL intent of DGScope cs:5773-5828 + 5865-5912; the actual coords are
-  // canvas Y-down equivalents. For cardinal directions DGScope keeps the
-  // perpendicular axis at target center (cs:5774/5778/5782/5785 only mutate
-  // one axis); diagonals override both. W/NW/SW subtract blockWidth so the
-  // top-left convention works for left-extending blocks (cs:5786-5792).
+  // Block top-left + leader start/end per direction.
   //
-  // The commented-out condition at cs:5860 (`!(direction == N || NE || NW)`)
-  // is the WPF author noting that the -=2.5*scale baseline shift at cs:5862
-  // visually disagrees with the N-family directions. In our Y-down canvas
-  // the same intuition applies: text is drawn top-down (textBaseline="top")
-  // so N-family blocks have empty padding between the symbol and the BOTTOM
-  // line of text. Tightening by 0.5*scale brings the perceived gap into
-  // line with S-family (where the first/closest line is line-1 = callsign,
-  // which always has content).
-  const nGapTrim = dataBlockOffsetScale * 0.5;
+  // DGScope translation: TransparentLabel.LocationF is the label's BOTTOM-
+  // LEFT in OpenGL Y-up (verified at cs:6449-6459 where the quad vertices
+  // are (x, y) → (x, y+height) with y+height being visually higher).
+  // RadarWindow.cs:5773-5828 sets blockLocation.Y per direction, then
+  // cs:5862 unconditionally subtracts 2.5*dataBlockOffsetScale from it.
+  // In Y-up "Y -= 2.5*scale" means the label shifts visually DOWN — in
+  // canvas Y-down (where label coord is top-left, not bottom-left), the
+  // equivalent shift is "blockY += 2.5*scale" applied AFTER converting
+  // label-bottom-Y to label-top-Y via "- blockHeight".
+  //
+  // Net for canvas:  blockY = canvasLabelBottom - blockHeight
+  //                  canvasLabelBottom = (visual position of DGScope label
+  //                                       bottom translated to canvas Y)
+  //
+  // For N direction: DGScope label bottom (Y-up) = posBottom_yup + offset
+  //                  − 2.5*scale = symbol_visual_top + 1.5*scale − 2.5*scale
+  //                  = symbol_visual_top − 1*scale (visually 1 scale below
+  //                  symbol top, i.e. INSIDE the symbol vertically by 1
+  //                  char-height — DGScope's actual block placement OVERLAPS
+  //                  the symbol slightly for the N-family).
+  //                  Canvas equivalent: posTop + 1*scale.
+  //                  blockY = posTop + 1*scale − blockHeight  (= posTop −
+  //                  (lines−1)*scale for 3-line FDB).
+  //
+  // For E/W (cardinal horizontal): DGScope leaves blockLocation.Y at
+  // LocationF.Y (target Y in Y-up) then -=2.5*scale → label bottom
+  // visually 2.5 scale below target. Canvas: blockLabelBottom = screen.y
+  // + 2.5*scale → blockY = screen.y + 2.5*scale − blockHeight.
+  const SHIFT = dataBlockOffsetScale * 2.5;
   let blockX, blockY;
   let leaderStartX, leaderStartY;
   let leaderEndX,   leaderEndY;
   switch (dir) {
-    case 2: /* N  — block above target */
+    case 2: /* N  — block above target (overlaps symbol by 1 scale) */
       blockX = screen.x - blockWidth / 2;
-      blockY = posTop - dataBlockOffset - blockHeight + nGapTrim;
+      blockY = posTop - dataBlockOffset + SHIFT - blockHeight;
       leaderStartX = screen.x;    leaderStartY = posTop;
-      leaderEndX   = screen.x;    leaderEndY   = blockY + blockHeight;
+      leaderEndX   = screen.x;    leaderEndY   = posTop - dataBlockOffset;
       break;
     case 8: /* S  — block below */
       blockX = screen.x - blockWidth / 2;
-      blockY = posBottom + dataBlockOffset;
+      blockY = posBottom + dataBlockOffset + SHIFT - blockHeight;
       leaderStartX = screen.x;    leaderStartY = posBottom;
-      leaderEndX   = screen.x;    leaderEndY   = blockY;
+      leaderEndX   = screen.x;    leaderEndY   = posBottom + dataBlockOffset;
       break;
     case 6: /* E  — block right */
       blockX = posRight + dataBlockOffset;
-      blockY = screen.y - blockHeight / 2;
+      blockY = screen.y + SHIFT - blockHeight;
       leaderStartX = posRight;    leaderStartY = screen.y;
       leaderEndX   = blockX;      leaderEndY   = screen.y;
       break;
     case 4: /* W  — block left */
       blockX = posLeft - dataBlockOffset - blockWidth;
-      blockY = screen.y - blockHeight / 2;
+      blockY = screen.y + SHIFT - blockHeight;
       leaderStartX = posLeft;     leaderStartY = screen.y;
       leaderEndX   = blockX + blockWidth; leaderEndY = screen.y;
       break;
     case 3: /* NE — block upper-right */
       blockX = posRight + dataBlockDiagonalOffset;
-      blockY = posTop   - dataBlockDiagonalOffset - blockHeight + nGapTrim;
+      blockY = posTop   - dataBlockDiagonalOffset + SHIFT - blockHeight;
       leaderStartX = posRight;    leaderStartY = posTop;
-      leaderEndX   = blockX;      leaderEndY   = blockY + blockHeight;
+      leaderEndX   = blockX;      leaderEndY   = posTop - dataBlockDiagonalOffset;
       break;
     case 9: /* SE — block lower-right */
       blockX = posRight  + dataBlockDiagonalOffset;
-      blockY = posBottom + dataBlockDiagonalOffset;
+      blockY = posBottom + dataBlockDiagonalOffset + SHIFT - blockHeight;
       leaderStartX = posRight;    leaderStartY = posBottom;
-      leaderEndX   = blockX;      leaderEndY   = blockY;
+      leaderEndX   = blockX;      leaderEndY   = posBottom + dataBlockDiagonalOffset;
       break;
     case 1: /* NW — block upper-left */
       blockX = posLeft - dataBlockDiagonalOffset - blockWidth;
-      blockY = posTop  - dataBlockDiagonalOffset - blockHeight + nGapTrim;
+      blockY = posTop  - dataBlockDiagonalOffset + SHIFT - blockHeight;
       leaderStartX = posLeft;     leaderStartY = posTop;
-      leaderEndX   = blockX + blockWidth; leaderEndY = blockY + blockHeight;
+      leaderEndX   = blockX + blockWidth; leaderEndY = posTop - dataBlockDiagonalOffset;
       break;
     case 7: /* SW — block lower-left */
       blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
-      blockY = posBottom + dataBlockDiagonalOffset;
+      blockY = posBottom + dataBlockDiagonalOffset + SHIFT - blockHeight;
       leaderStartX = posLeft;     leaderStartY = posBottom;
-      leaderEndX   = blockX + blockWidth; leaderEndY = blockY;
+      leaderEndX   = blockX + blockWidth; leaderEndY = posBottom + dataBlockDiagonalOffset;
       break;
     default:
       blockX = posRight + dataBlockOffset;
-      blockY = screen.y - blockHeight / 2;
+      blockY = screen.y + SHIFT - blockHeight;
       leaderStartX = posRight;    leaderStartY = screen.y;
       leaderEndX   = blockX;      leaderEndY   = screen.y;
   }
@@ -2224,8 +2239,10 @@ function savePrefsToLocalStorage() {
       LdbBeaconCodesInhibited: prefSet.LdbBeaconCodesInhibited,
       Brightness: { ...prefSet.Brightness },
       CharSize: { ...prefSet.CharSize },
-      ScreenCenterPoint: prefSet.ScreenCenterPoint,
-      RangeRingLocation: prefSet.RangeRingLocation,
+      // NOT persisted: ScreenCenterPoint, RangeRingLocation — these are
+      // FACILITY-specific (each TRACON/RAPCON has its own visibilityCenter
+      // from the vNAS API per area). Saving them globally meant opening
+      // ILM after RDU centered the scope on RDU.
       InvertKeyboard: prefSet.InvertKeyboard,
       Nexrad: prefSet.Nexrad ? { ...prefSet.Nexrad } : undefined,
     };
@@ -2237,9 +2254,15 @@ function loadPrefsFromLocalStorage() {
     const raw = localStorage.getItem(STARS_PREFS_KEY);
     if (!raw) return;
     const snap = JSON.parse(raw);
+    // Ignore facility-specific fields that an older save (pre-stale-data
+    // cleanup) might still have — these come from the per-area
+    // visibilityCenter at facility load and should never be cross-facility
+    // sticky.
+    const ignore = new Set(["ScreenCenterPoint", "RangeRingLocation"]);
     // Shallow-merge scalars; deep-merge sub-objects so a new default field
     // added later isn't wiped by the saved snapshot.
     for (const k of Object.keys(snap)) {
+      if (ignore.has(k)) continue;
       if (snap[k] == null) continue;
       if (typeof snap[k] === "object" && !Array.isArray(snap[k])) {
         prefSet[k] = { ...prefSet[k], ...snap[k] };

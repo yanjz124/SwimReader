@@ -807,17 +807,22 @@ function extrapolatedPosition(t) {
   };
 }
 
-// ── History (Phase 3b) ──────────────────────────────────────────────────────
-// RadarWindow.cs:5512 — every HistoryRate seconds (default 4.5s), push the
-// current position to history[0], shift older entries; cap at HistoryNum
-// (default 10). Dots use the fixed 5-step HistoryColors palette indexed by age,
-// oldest clamped to the last entry (RadarWindow.cs:235,5530-5533; HistoryFade
-// default false → discrete steps, no continuous fade).
+// ── HistoryColors — RadarWindow.cs:235 default array ───────────────────────
+// PrefSet HistoryColors palette indexed by slot age. RadarWindow.cs:5547-5566
+// (when HistoryFade=false, default cs:296): newest goes to slot 0, every other
+// slot shifts down one, color cycles through the palette by index (cs:5564);
+// any slot index >= palette length uses the last color (cs:5562). Values
+// transcribed verbatim from cs:235.
 const HISTORY_COLORS = [
   [30, 80, 200], [70, 70, 170], [50, 50, 130], [40, 40, 110], [30, 30, 90],
 ];
 
 function tickHistory(t, posNow) {
+  // History recording — RadarWindow.cs:5540-5566: every HistoryRate seconds,
+  // shift History[N-1..1] down, new TargetReturn at slot 0. We don't have
+  // multi-radar SweptTimes so we gate on wall-clock instead. Capped at
+  // HistoryNum (PrefSet.cs:38 default 10) so a slot >= cap is dropped — same
+  // net effect as History.Length in DGScope (a fixed-size array).
   if (!posNow) return;
   if (!t._history) t._history = [];
   if (!t._lastHistoryT) t._lastHistoryT = 0;
@@ -829,21 +834,16 @@ function tickHistory(t, posNow) {
 }
 
 function drawHistory(t) {
-  // History rendering per RadarWindow.cs:6171-6175 (RadarType.FUSED, history
-  // branch). Each TargetReturn in aircraft.History is a small filled circle
-  // of size FMATargetSymbols.Radius. Color = target.ForeColor (ReturnColor)
-  // modulated by Intensity when PrimaryFade is true (cs:298 default false;
-  // PrimaryReturn.cs:74-85 multiplies alpha by pow(initialAlpha, Intensity)).
-  // Drop after cs:6073: index >= HistoryNum is culled.
+  // History rendering — RadarWindow.cs:6171-6175 (RadarType.FUSED history
+  // branch): small filled circle, size FMATargetSymbols.Radius * pixelScale.
+  // ForeColor cycles through HistoryColors by slot (cs:5564 + 5561-5562
+  // last-color clamp). Brightness.History applies (cs:6174).
+  // Cull index >= HistoryNum per cs:6073.
   if (!t._history || t._history.length === 0) return;
   const max = Math.min(t._history.length, prefSet.HistoryNum);
   for (let i = 0; i < max; i++) {
     const p = geoToScreen(t._history[i]);
     if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
-    // HistoryFade is a port-side choice — DGScope default is no fade
-    // (PrimaryFade=false). We use the gradient palette so older trails
-    // look correctly dimmer than fresh ones (real STARS uses a hardware
-    // intensity fade we can't easily replicate). Documented deviation.
     const c = HISTORY_COLORS[Math.min(i, HISTORY_COLORS.length - 1)];
     ctx.fillStyle = adjusted(c, prefSet.Brightness.History);
     ctx.beginPath();
@@ -1132,11 +1132,26 @@ function leaderDirToVector(dir) {
   }
 }
 function effectiveLeaderDir(t, fp) {
-  // RedrawDataBlock priority: explicit override > LDRDirection (FP) > owner default.
+  // RadarWindow.cs:5919-5951 OffsetDatablockLocation(thisAircraft) priority:
+  //   1. Aircraft.LDRDirection (per-track override) — cs:5923-5927
+  //   2. PositionInd==me && OwnerLeaderDirection != null — cs:5932-5936
+  //      (OwnerLeaderDirection is declared at Aircraft.cs:132 but never set
+  //       in the source tree — effectively dead, so we skip.)
+  //   3. PositionInd==me → PrefSet.OwnedDataBlockPosition — cs:5937-5941
+  //   4. OtherOwnersLeaderDirections[PositionInd] hit — cs:5942-5946
+  //      (per-TCP map; A4 in AUDIT_FINDINGS, deferred.)
+  //   5. Associated → PrefSet.UnownedDataBlockPosition — cs:5947-5950
+  //   6. default → PrefSet.UnassociatedDataBlockPosition — cs:5921
+  // LDRDirection split in our port: fp.LDRDirection (server-published from
+  // the FP feed) AND t._leaderOverride (set by single-digit + click in
+  // preview.js, mirrors cs:1524-1612 which sets aircraft.LDRDirection).
+  // Both map to the same DGScope field; we keep them separate so the user
+  // click doesn't mutate the FP object.
   if (t._leaderOverride) return ldrEnum(t._leaderOverride);
-  if (fp?.LDRDirection) return ldrEnum(fp.LDRDirection);
-  if (fp?.Owner === ownTcp()) return ldrEnum(prefSet.OwnedDataBlockPosition);
-  if (fp) return ldrEnum(prefSet.UnownedDataBlockPosition);
+  if (fp?.LDRDirection)  return ldrEnum(fp.LDRDirection);
+  const me = ownTcp();
+  if (me && fp?.Owner === me) return ldrEnum(prefSet.OwnedDataBlockPosition);
+  if (fp?.Owner)              return ldrEnum(prefSet.UnownedDataBlockPosition);
   return ldrEnum(prefSet.UnassociatedDataBlockPosition);
 }
 const LDR_NAME_TO_ENUM = { NW: 1, N: 2, NE: 3, W: 4, E: 6, SW: 7, S: 8, SE: 9 };

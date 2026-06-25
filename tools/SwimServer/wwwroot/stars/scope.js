@@ -1228,62 +1228,69 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // LocationF.Y (target Y in Y-up) then -=2.5*scale → label bottom
   // visually 2.5 scale below target. Canvas: blockLabelBottom = screen.y
   // + 2.5*scale → blockY = screen.y + 2.5*scale − blockHeight.
-  const SHIFT = dataBlockOffsetScale * 2.5;
+  // SHIFT — DGScope RadarWindow.cs:5862 unconditional `-=2.5*scale`.
+  // Per the commented guard at cs:5860, the author noted this shift makes
+  // N-family directions overlap the symbol; the canvas equivalent reduces
+  // the visible gap below what's comfortable. Apply SHIFT to S/SE/SW + E/W
+  // (where it pulls the label visually toward the symbol nicely), and the
+  // smaller SHIFT/2 to N-family so the gap stays reasonable.
+  const SHIFT_FULL = dataBlockOffsetScale * 2.5;
+  const SHIFT_N    = dataBlockOffsetScale * 1.25;
   let blockX, blockY;
   let leaderStartX, leaderStartY;
   let leaderEndX,   leaderEndY;
   switch (dir) {
-    case 2: /* N  — block above target (overlaps symbol by 1 scale) */
+    case 2: /* N  — block above target */
       blockX = screen.x - blockWidth / 2;
-      blockY = posTop - dataBlockOffset + SHIFT - blockHeight;
+      blockY = posTop - dataBlockOffset + SHIFT_N - blockHeight;
       leaderStartX = screen.x;    leaderStartY = posTop;
       leaderEndX   = screen.x;    leaderEndY   = posTop - dataBlockOffset;
       break;
     case 8: /* S  — block below */
       blockX = screen.x - blockWidth / 2;
-      blockY = posBottom + dataBlockOffset + SHIFT - blockHeight;
+      blockY = posBottom + dataBlockOffset + SHIFT_FULL - blockHeight;
       leaderStartX = screen.x;    leaderStartY = posBottom;
       leaderEndX   = screen.x;    leaderEndY   = posBottom + dataBlockOffset;
       break;
     case 6: /* E  — block right */
       blockX = posRight + dataBlockOffset;
-      blockY = screen.y + SHIFT - blockHeight;
+      blockY = screen.y + SHIFT_FULL - blockHeight;
       leaderStartX = posRight;    leaderStartY = screen.y;
       leaderEndX   = blockX;      leaderEndY   = screen.y;
       break;
     case 4: /* W  — block left */
       blockX = posLeft - dataBlockOffset - blockWidth;
-      blockY = screen.y + SHIFT - blockHeight;
+      blockY = screen.y + SHIFT_FULL - blockHeight;
       leaderStartX = posLeft;     leaderStartY = screen.y;
       leaderEndX   = blockX + blockWidth; leaderEndY = screen.y;
       break;
     case 3: /* NE — block upper-right */
       blockX = posRight + dataBlockDiagonalOffset;
-      blockY = posTop   - dataBlockDiagonalOffset + SHIFT - blockHeight;
+      blockY = posTop   - dataBlockDiagonalOffset + SHIFT_N - blockHeight;
       leaderStartX = posRight;    leaderStartY = posTop;
       leaderEndX   = blockX;      leaderEndY   = posTop - dataBlockDiagonalOffset;
       break;
     case 9: /* SE — block lower-right */
       blockX = posRight  + dataBlockDiagonalOffset;
-      blockY = posBottom + dataBlockDiagonalOffset + SHIFT - blockHeight;
+      blockY = posBottom + dataBlockDiagonalOffset + SHIFT_FULL - blockHeight;
       leaderStartX = posRight;    leaderStartY = posBottom;
       leaderEndX   = blockX;      leaderEndY   = posBottom + dataBlockDiagonalOffset;
       break;
     case 1: /* NW — block upper-left */
       blockX = posLeft - dataBlockDiagonalOffset - blockWidth;
-      blockY = posTop  - dataBlockDiagonalOffset + SHIFT - blockHeight;
+      blockY = posTop  - dataBlockDiagonalOffset + SHIFT_N - blockHeight;
       leaderStartX = posLeft;     leaderStartY = posTop;
       leaderEndX   = blockX + blockWidth; leaderEndY = posTop - dataBlockDiagonalOffset;
       break;
     case 7: /* SW — block lower-left */
       blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
-      blockY = posBottom + dataBlockDiagonalOffset + SHIFT - blockHeight;
+      blockY = posBottom + dataBlockDiagonalOffset + SHIFT_FULL - blockHeight;
       leaderStartX = posLeft;     leaderStartY = posBottom;
       leaderEndX   = blockX + blockWidth; leaderEndY = posBottom + dataBlockDiagonalOffset;
       break;
     default:
       blockX = posRight + dataBlockOffset;
-      blockY = screen.y + SHIFT - blockHeight;
+      blockY = screen.y + SHIFT_FULL - blockHeight;
       leaderStartX = posRight;    leaderStartY = screen.y;
       leaderEndX   = blockX;      leaderEndY   = screen.y;
   }

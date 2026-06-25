@@ -179,11 +179,11 @@ Ordered by impact. Each cite is `<file>:<line>`.
 
 ### B6. Keyboard / hardware
 
-- **B6.1 — InvertKeyboard** — RadarWindow.cs:1508-1511. Some facilities
-  flip the numeric-keypad orientation (1=SW vs 1=NW). The field source
-  isn't in PrefSet.cs; might be a separate config or a flag in another
-  file. Our leaderDirFromDigit accepts an `invert` arg but it's
-  hardcoded to `false`.
+- [shipped] **B6.1 — InvertKeyboard** — profile.js:223 loads
+  `<InvertKeyboard>` from the profile XML into prefSet.InvertKeyboard;
+  preview.js call sites (`leaderDirFromDigit(d, prefSet?.InvertKeyboard)`
+  at :333 and :704) honor it. Audit was stale on the "hardcoded false"
+  claim.
 
 - [shipped] **B6.2 — F1 (Beacon Code Readout hold)** — drawTracks now
   syncs `t.ShowCallsignWithNoSquawk = window.showAllCallsigns` per

@@ -1204,13 +1204,23 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // perpendicular axis at target center (cs:5774/5778/5782/5785 only mutate
   // one axis); diagonals override both. W/NW/SW subtract blockWidth so the
   // top-left convention works for left-extending blocks (cs:5786-5792).
+  //
+  // The commented-out condition at cs:5860 (`!(direction == N || NE || NW)`)
+  // is the WPF author noting that the -=2.5*scale baseline shift at cs:5862
+  // visually disagrees with the N-family directions. In our Y-down canvas
+  // the same intuition applies: text is drawn top-down (textBaseline="top")
+  // so N-family blocks have empty padding between the symbol and the BOTTOM
+  // line of text. Tightening by 0.5*scale brings the perceived gap into
+  // line with S-family (where the first/closest line is line-1 = callsign,
+  // which always has content).
+  const nGapTrim = dataBlockOffsetScale * 0.5;
   let blockX, blockY;
   let leaderStartX, leaderStartY;
   let leaderEndX,   leaderEndY;
   switch (dir) {
     case 2: /* N  — block above target */
       blockX = screen.x - blockWidth / 2;
-      blockY = posTop - dataBlockOffset - blockHeight;
+      blockY = posTop - dataBlockOffset - blockHeight + nGapTrim;
       leaderStartX = screen.x;    leaderStartY = posTop;
       leaderEndX   = screen.x;    leaderEndY   = blockY + blockHeight;
       break;
@@ -1234,7 +1244,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
       break;
     case 3: /* NE — block upper-right */
       blockX = posRight + dataBlockDiagonalOffset;
-      blockY = posTop   - dataBlockDiagonalOffset - blockHeight;
+      blockY = posTop   - dataBlockDiagonalOffset - blockHeight + nGapTrim;
       leaderStartX = posRight;    leaderStartY = posTop;
       leaderEndX   = blockX;      leaderEndY   = blockY + blockHeight;
       break;
@@ -1246,7 +1256,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
       break;
     case 1: /* NW — block upper-left */
       blockX = posLeft - dataBlockDiagonalOffset - blockWidth;
-      blockY = posTop  - dataBlockDiagonalOffset - blockHeight;
+      blockY = posTop  - dataBlockDiagonalOffset - blockHeight + nGapTrim;
       leaderStartX = posLeft;     leaderStartY = posTop;
       leaderEndX   = blockX + blockWidth; leaderEndY = blockY + blockHeight;
       break;

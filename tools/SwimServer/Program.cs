@@ -460,6 +460,7 @@ var cacheJsonOpts = new JsonSerializerOptions
 };
 
 FlightCacheService.Load(flights, cacheDir, cacheJsonOpts);
+sectorTracker.Load(cacheDir);
 
 // ── Flight history persistence (save purged flights to daily JSONL files) ─────
 // History budget: keep total disk usage under 85%. Calculated dynamically each cleanup cycle.
@@ -480,6 +481,7 @@ lifetime.ApplicationStopping.Register(() =>
 {
     Console.WriteLine("[Cache] Shutdown — saving flight state...");
     FlightCacheService.Save(flights, cacheDir, cacheJsonOpts);
+    sectorTracker.Save(cacheDir);
 
     // Investigation: flush remaining log entries (uncomment with investigation logger)
     // var remaining = new List<string>();
@@ -1039,9 +1041,15 @@ var batchTimer = new Timer(_ => FlushDirtyBatch(_dirty), null, TimeSpan.FromSeco
 
 // Per-sector tracker: snapshot every minute so closed sectors still show on
 // the /sectors timeline. Transition counts accrue lazily via ProcessFlight.
+// Persist after each snapshot so the rolling 24h history survives a restart
+// (sfdps-eram auto-deploys would otherwise wipe the ring buffer each push).
 var sectorTrackerTimer = new Timer(_ =>
 {
-    try { sectorTracker.Snapshot(flights); }
+    try
+    {
+        sectorTracker.Snapshot(flights);
+        sectorTracker.Save(cacheDir);
+    }
     catch (Exception ex) { Console.Error.WriteLine($"[SectorTracker] {ex.GetType().Name}: {ex.Message}"); }
 }, null, TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(1));
 

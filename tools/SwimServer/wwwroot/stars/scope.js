@@ -1175,77 +1175,97 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const charWidth  = fontSize * 0.55;
 
   // ── OffsetDatablockLocation — RadarWindow.cs:4044-4046 + 5765-5828 ─────
-  // dataBlockOffsetScale = Font.Height * pixelScale  (cs:4044)
-  // dataBlockOffset      = (0.5 + LeaderLength) * dataBlockOffsetScale  (cs:4045)
-  // dataBlockDiagonalOffset = dataBlockOffset * Math.Sqrt(2) / 2          (cs:4046)
-  // Block position is measured from the EDGE of PositionIndicator.BoundsF,
-  // not the target center — that's why our prior gap looked wrong (it added
-  // symbolRadius to the offset for both cardinals AND diagonals).
-  const dataBlockOffsetScale = charHeight;
-  const dataBlockOffset       = (0.5 + prefSet.LeaderLength) * dataBlockOffsetScale;
+  // dataBlockOffsetScale = Font.Height * pixelScale     (cs:4044)
+  // dataBlockOffset      = (0.5 + LeaderLength) * scale (cs:4045)
+  // dataBlockDiagonalOffset = dataBlockOffset * √2/2    (cs:4046)
+  //
+  // PLATFORM NOTE: DGScope renders in OpenGL Y-UP (geoToScreen at cs:4037-
+  // 4040 has positive Y scale; higher lat = north = higher Y). RectangleF
+  // .Bottom is therefore the NORTH edge (higher Y) and adding offset moves
+  // FURTHER NORTH. Canvas is Y-DOWN, so a literal "Bottom + offset"
+  // translation goes SOUTH. We translate by direction-vector semantics:
+  // the visual placement is identical to DGScope per LeaderDirection name.
+  const dataBlockOffsetScale    = charHeight;
+  const dataBlockOffset         = (0.5 + prefSet.LeaderLength) * dataBlockOffsetScale;
   const dataBlockDiagonalOffset = dataBlockOffset * Math.SQRT2 / 2;
   const symbolRadius = prefSet.CharSize.Position * 0.5;
   const screen = geoToScreen(posNow);
   const posLeft   = screen.x - symbolRadius;
   const posRight  = screen.x + symbolRadius;
-  const posTop    = screen.y - symbolRadius;
-  const posBottom = screen.y + symbolRadius;
+  const posTop    = screen.y - symbolRadius;     // canvas: top = lower Y = north visually
+  const posBottom = screen.y + symbolRadius;     // canvas: bottom = higher Y = south
 
-  const blockWidth = Math.max(...lines.map(l => l.length)) * charWidth;
+  const blockWidth  = Math.max(...lines.map(l => l.length)) * charWidth;
   const blockHeight = lines.length * charHeight;
 
-  // Block position per direction — Aircraft.cs:5773-5828 verbatim.
-  // blockLocation starts at (LocationF.X, LocationF.Y) per cs:5768-5769;
-  // each case overrides only the axis the direction affects. For N/S the
-  // X stays at target center (block extends RIGHT from target.X, NOT
-  // centered horizontally — DGScope's actual behavior per the commented-
-  // out `blockLocation.X = …Right` at cs:5775). For E/W the Y stays at
-  // target.Y (block extends DOWN from target.Y). Diagonals override both.
-  // W/NW/SW subtract the widest of DataBlock/DataBlock2/DataBlock3 (cs:
-  // 5786-5792) — we approximate with our single computed blockWidth since
-  // we don't track per-variant sizes.
-  let blockX = screen.x, blockY = screen.y;
+  // Block top-left + leader start/end per direction. Each `case` mirrors the
+  // VISUAL intent of DGScope cs:5773-5828 + 5865-5912; the actual coords are
+  // canvas Y-down equivalents. For cardinal directions DGScope keeps the
+  // perpendicular axis at target center (cs:5774/5778/5782/5785 only mutate
+  // one axis); diagonals override both. W/NW/SW subtract blockWidth so the
+  // top-left convention works for left-extending blocks (cs:5786-5792).
+  let blockX, blockY;
+  let leaderStartX, leaderStartY;
+  let leaderEndX,   leaderEndY;
   switch (dir) {
-    case 2: /* N  */ blockY = posBottom + dataBlockOffset; break;
-    case 8: /* S  */ blockY = posTop    - dataBlockOffset; break;
-    case 6: /* E  */ blockX = posRight  + dataBlockOffset; break;
-    case 4: /* W  */ blockX = posLeft   - dataBlockOffset - blockWidth; break;
-    case 3: /* NE */ blockX = posRight  + dataBlockDiagonalOffset;
-                     blockY = posBottom + dataBlockDiagonalOffset; break;
-    case 9: /* SE */ blockX = posRight  + dataBlockDiagonalOffset;
-                     blockY = posTop    - dataBlockDiagonalOffset; break;
-    case 1: /* NW */ blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
-                     blockY = posBottom + dataBlockDiagonalOffset; break;
-    case 7: /* SW */ blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
-                     blockY = posTop    - dataBlockDiagonalOffset; break;
+    case 2: /* N  — block above target */
+      blockX = screen.x - blockWidth / 2;
+      blockY = posTop - dataBlockOffset - blockHeight;
+      leaderStartX = screen.x;    leaderStartY = posTop;
+      leaderEndX   = screen.x;    leaderEndY   = blockY + blockHeight;
+      break;
+    case 8: /* S  — block below */
+      blockX = screen.x - blockWidth / 2;
+      blockY = posBottom + dataBlockOffset;
+      leaderStartX = screen.x;    leaderStartY = posBottom;
+      leaderEndX   = screen.x;    leaderEndY   = blockY;
+      break;
+    case 6: /* E  — block right */
+      blockX = posRight + dataBlockOffset;
+      blockY = screen.y - blockHeight / 2;
+      leaderStartX = posRight;    leaderStartY = screen.y;
+      leaderEndX   = blockX;      leaderEndY   = screen.y;
+      break;
+    case 4: /* W  — block left */
+      blockX = posLeft - dataBlockOffset - blockWidth;
+      blockY = screen.y - blockHeight / 2;
+      leaderStartX = posLeft;     leaderStartY = screen.y;
+      leaderEndX   = blockX + blockWidth; leaderEndY = screen.y;
+      break;
+    case 3: /* NE — block upper-right */
+      blockX = posRight + dataBlockDiagonalOffset;
+      blockY = posTop   - dataBlockDiagonalOffset - blockHeight;
+      leaderStartX = posRight;    leaderStartY = posTop;
+      leaderEndX   = blockX;      leaderEndY   = blockY + blockHeight;
+      break;
+    case 9: /* SE — block lower-right */
+      blockX = posRight  + dataBlockDiagonalOffset;
+      blockY = posBottom + dataBlockDiagonalOffset;
+      leaderStartX = posRight;    leaderStartY = posBottom;
+      leaderEndX   = blockX;      leaderEndY   = blockY;
+      break;
+    case 1: /* NW — block upper-left */
+      blockX = posLeft - dataBlockDiagonalOffset - blockWidth;
+      blockY = posTop  - dataBlockDiagonalOffset - blockHeight;
+      leaderStartX = posLeft;     leaderStartY = posTop;
+      leaderEndX   = blockX + blockWidth; leaderEndY = blockY + blockHeight;
+      break;
+    case 7: /* SW — block lower-left */
+      blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
+      blockY = posBottom + dataBlockDiagonalOffset;
+      leaderStartX = posLeft;     leaderStartY = posBottom;
+      leaderEndX   = blockX + blockWidth; leaderEndY = blockY;
+      break;
+    default:
+      blockX = posRight + dataBlockOffset;
+      blockY = screen.y - blockHeight / 2;
+      leaderStartX = posRight;    leaderStartY = screen.y;
+      leaderEndX   = blockX;      leaderEndY   = screen.y;
   }
-  // cs:5862 — blockLocation.Y -= dataBlockOffsetScale * 2.5f
-  blockY -= dataBlockOffsetScale * 2.5;
-
-  // Leader start — Aircraft.cs:5863-5899. Per direction, anchored to a
-  // specific edge of the position symbol (cardinal mid-edge, diagonal corner).
-  let leaderStartX = screen.x, leaderStartY = screen.y;
-  switch (dir) {
-    case 2: /* N  */ leaderStartY = posBottom; break;
-    case 8: /* S  */ leaderStartY = posTop;    break;
-    case 6: /* E  */ leaderStartX = posRight;  break;
-    case 4: /* W  */ leaderStartX = posLeft;   break;
-    case 3: /* NE */ leaderStartX = posRight; leaderStartY = posBottom; break;
-    case 9: /* SE */ leaderStartX = posRight; leaderStartY = posTop;    break;
-    case 1: /* NW */ leaderStartX = posLeft;  leaderStartY = posBottom; break;
-    case 7: /* SW */ leaderStartX = posLeft;  leaderStartY = posTop;    break;
-  }
-  // Leader end — ConnectingLine.End at cs:5900-5912. End.X = block right
-  // edge when block is left of target (cs:5900-5907), else block X.
-  // End.Y = blockY + dataBlockOffsetScale * 2.5 (cs:5904/5911) — this
-  // reverses the `blockY -= 2.5*scale` above, putting End on the block's
-  // first-line midpoint.
-  const leaderEndX = (blockX < screen.x) ? (blockX + blockWidth) : blockX;
-  const leaderEndY = blockY + dataBlockOffsetScale * 2.5;
-
-  // padLeft = block extends to the left of the target (text right-aligned to
-  // hug the leader-side edge).
-  const padLeft = (blockX + blockWidth) <= screen.x;
+  // padLeft = block extends to the left of the target (text right-aligned
+  // so it hugs the leader-side edge — matches DGScope's PadLeft(9) in
+  // Aircraft.cs:485-498 for the W/NW/SW direction cases).
+  const padLeft = blockX + blockWidth <= screen.x;
 
   // Data-block colour priority — verbatim from RadarWindow.cs:5436-5468:
   //   5436  if (Emergency)                  → DataBlockEmergencyColor (red)

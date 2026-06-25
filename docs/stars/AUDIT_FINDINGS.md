@@ -155,10 +155,14 @@ Ordered by impact. Each cite is `<file>:<line>`.
 - **B4.1 — `MODE` button (FSL/STARS cycle)** — RadarWindow.cs:3484.
   Disabled in DGScope too, so leaving disabled is faithful.
 
-- **B4.2 — BRITE WXC slider** — see A1. Needs the field + button.
+- [shipped] **B4.2 — BRITE WXC slider** — WeatherContrast field exists
+  (cac9cf9), DCB button reads + writes it via handleBriteAdjust map at
+  scope.js:2194.
 
-- **B4.3 — BRITE LDB / OTH slider drift** — see A2. Buttons exist on
-  our DCB but they all drive Brightness.DataBlock.
+- [shipped] **B4.3 — BRITE LDB / OTH slider drift** — handleBriteAdjust
+  map (scope.js:2190) writes each button to its own field
+  (FullDataBlocks / LimitedDataBlocks / OtherFDBs); the data-block
+  renderer picks the right one per Owned/FDB/LDB (cac9cf9).
 
 - **B4.4 — Per-position leader-direction sub-buttons** — RadarWindow.cs
   in BRITE / leader menus. `F L <pos><dir>` is wired (cs:2206-2314)

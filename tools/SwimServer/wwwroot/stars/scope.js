@@ -1388,43 +1388,36 @@ function positionSymbolText(t, fp) {
 
 function drawPosition(t, posNow) {
   const fp = trackToFp.get(t.Guid);
-  // DGScope splits the position symbol into TWO independently-coloured
-  // primitives (RadarWindow.cs:6045-6109 vs :5469/5582):
-  //   • Primary RETURN (filled dot) — always ReturnColor (blue). Radar
-  //                                    echo, indifferent to ownership.
-  //   • Beacon OVERLAY (glyph)      — BeaconTargetColor (green) by
-  //                                    default; OwnedColor (white) when
-  //                                    this position controls it; Emerg
-  //                                    / Selected per state.
-  // DGScope ALWAYS draws the glyph (Aircraft.cs:616-623 picks one of four
-  // strings — never empty). The glyph text comes from positionSymbolText
-  // which encodes the same 4-way pick.
-  const inbound = fp?.PendingHandoff && fp.PendingHandoff === ownTcp();
-  let glyphColor;
-  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) glyphColor = COLORS.Emerg;
-  else if (t._marked)                                              glyphColor = COLORS.Selected;
-  else if (fp?.Owner === ownTcp() || inbound)                      glyphColor = COLORS.Owned;
-  else                                                             glyphColor = COLORS.BeaconTarget;  // green for unowned beacon
-
   const p = geoToScreen(posNow);
   const px = p.x | 0, py = p.y | 0;
 
-  // Primary return — filled circle, FMATargetSymbols.Radius=3 (cs:616,6141-6143).
-  // Always ReturnColor (blue), driven by PrimaryTargets brightness
-  // (RadarWindow.cs:6076 / 6157).
+  // ── Primary target return — RadarWindow.cs:6134-6175 (RadarType.FUSED) ──
+  // Non-PrimaryOnly: filled circle, primarycolor (ReturnColor blue), radius
+  // = TargetExtentSymbols.TargetWidth/2 ≈ 3px at default scale (cs:6138-6140).
+  // PrimaryTargets brightness per cs:6076. PrimaryOnly + history variants
+  // not yet ported (square shape via GL polygon at cs:6155-6164).
   ctx.fillStyle = adjusted(COLORS.Return, prefSet.Brightness.PrimaryTargets);
   ctx.beginPath();
   ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // Beacon overlay glyph — drawn for EVERY target. positionSymbolText
-  // returns the right symbol (sector char / asterisk / diamond) for each.
-  // Brightness category per RadarWindow.cs:6387/6391 — Owned glyph uses
-  // PositionSymbols, otherwise BeaconTargets.
-  const glyphBright = (fp?.Owner === ownTcp() || inbound)
-    ? prefSet.Brightness.PositionSymbols
-    : prefSet.Brightness.BeaconTargets;
-  ctx.fillStyle = adjusted(glyphColor, glyphBright);
+  // ── PositionIndicator label — RadarWindow.cs:6337-6342 + 5605-5615 ──────
+  // Only FDB tracks render the position glyph (cs:6340: `if (FDB && acSet
+  // .Contains(...))  DrawLabel(x)`). Non-FDB tracks show only the blue dot.
+  // Color (cs:5610-5615): Marked → SelectedColor, Owned → OwnedColor, else
+  // → DataBlockColor.  Brightness (cs:6387-6399): PositionSymbols when
+  // Owned+IsPositionIndicator, else fall through to FullDataBlocks /
+  // OtherFDBs / LimitedDataBlocks chain — PositionIndicator only renders
+  // for FDB so OtherFDBs is the right "else" here.
+  if (dataBlockMode(t, fp) !== "FDB") return;
+  const Owned = window.Handoff && window.Handoff.isOwned(t, fp);
+  let color;
+  if (t._marked) color = COLORS.Selected;
+  else if (Owned) color = COLORS.Owned;
+  else           color = COLORS.DataBlock;
+  const bright = Owned ? prefSet.Brightness.PositionSymbols
+                       : prefSet.Brightness.OtherFDBs;
+  ctx.fillStyle = adjusted(color, bright);
   ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";

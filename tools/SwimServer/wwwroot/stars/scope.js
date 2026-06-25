@@ -1701,17 +1701,20 @@ window.starsMinSep = (flid1, flid2) => {
 };
 window.starsMinSepClear = () => { minSepPair = null; };
 
-// Hide transient duplicate GUIDs for one physical aircraft. The dStars adapter
-// can briefly assign two GUIDs to the same target (e.g. a TAIS track-number
-// target plus an ADS-B Mode-S injection) before they correlate. Mirrors the
-// ERAM scope's callsign dedup: when several live tracks share a callsign, keep
-// only the freshest and suppress the rest. Tracks with no callsign are never
-// deduped (they're genuinely distinct primaries).
-// Per-frame "merge map" — for each dedup key, the chosen primary GUID and
-// the list of sibling GUIDs whose data should fill in any missing fields on
-// the primary. Built by dedupByCallsign; consumed by mergedFp() so renderers
-// see the most complete view of an aircraft even when its data is split
-// across several TAIS/ADS-B GUIDs.
+// ── PORT-ONLY: dedupByCallsign + mergedFp ────────────────────────────────
+// DGScope: one Aircraft per physical plane. The server-side dStars adapter
+// in this project (DgScopeAdapter.cs) is wire-faithful to the dstars
+// protocol but its UPSTREAM (TAIS) can emit MULTIPLE GUIDs for the same
+// aircraft (different track-numbers per radar source, plus optional ADS-B
+// Mode-S injection). DGScope would never see that — its single dstars
+// stream merges upstream.
+//
+// dedupByCallsign picks one primary GUID per (callsign or discrete squawk)
+// key and routes the rest to mergedFp so renderers see the most complete
+// view of an aircraft. STATE fields (Owner / PendingHandoff / etc.) use
+// freshness-wins to prevent oscillation; ENRICH fields use primary-if-
+// has-value with sibling fallback. Without these helpers, the same plane
+// would render as two ghost tracks with split data.
 let _siblingsByPrimary = new Map();   // primary guid -> [sibling guids]
 
 function dedupByCallsign(now) {
@@ -1812,40 +1815,51 @@ function mergedFp(primaryGuid) {
 
 // ── Main per-track draw ─────────────────────────────────────────────────────
 function drawTracks() {
+  // Main per-frame aircraft draw — equivalent to DGScope's RadarWindow
+  // DrawTargets + ProcessDataBlocks (cs:6184-6342). DGScope iterates
+  // Aircraft, drops those past LostTargetSeconds (cs:5588 / 6187), and
+  // calls RedrawTarget + GenerateDataBlock per cs:5590-5597.
   const now = Date.now();
   const suppressed = dedupByCallsign(now);
-  // Per-track sync of ShowCallsignWithNoSquawk from the global F1-hold flag,
-  // mirroring RadarWindow.cs:6239-6241 inside the render loop. Hold-F1
-  // promotes every LDB to the 3-line beacon-readout variant (callsign on
-  // line 3). preview.js:108 clears the global flag on keyup.
-  const showAll = !!window.showAllCallsigns;
-  const ql = (window.prefSet && window.prefSet.QuickLookedTCPs) || [];
+  // ── Pre-pass: per-aircraft state sync (mirrors DGScope cs:5719-5742 +
+  //    6239-6241). Both loops are inside DrawTargets; we split for clarity.
+  const showAllCallsigns = !!window.showAllCallsigns;
+  const QuickLookList = (window.prefSet && window.prefSet.QuickLookedTCPs) || [];
   for (const t of tracks.values()) {
-    t.ShowCallsignWithNoSquawk = showAll;
-    // QuickLook / QuickLookPlus per-aircraft sync — RadarWindow.cs:5719-5742.
-    // Drives data-block color (QLPlus → OwnedColor white at cs:5454-5458) and
-    // FDB promotion (handled inside dataBlockMode).
+    // cs:6239-6241 — sync ShowCallsignWithNoSquawk from global F1-hold flag.
+    t.ShowCallsignWithNoSquawk = showAllCallsigns;
+    // cs:5719-5742 — per-aircraft QuickLook / QuickLookPlus derivation
+    // from PositionInd against QuickLookList ("ALL" / "ALL+" handled too).
     const fp = window.trackToFp ? window.trackToFp.get(t.Guid) : null;
-    const owner = (fp && fp.Owner) || t.PositionInd || "";
-    const associated = !!(owner && owner !== "*");
-    if (ql.includes(owner) || (associated && ql.includes("ALL"))) {
-      t._quickLook = true; t._quickLookPlus = false;
-    } else if (ql.includes(owner + "+") || (associated && ql.includes("ALL+"))) {
-      t._quickLook = true; t._quickLookPlus = true;
+    const PositionInd = (fp && fp.Owner) || t.PositionInd || "";
+    const associated  = !!(PositionInd && PositionInd !== "*");
+    const qlall       = associated && QuickLookList.includes("ALL");
+    const qlallplus   = associated && QuickLookList.includes("ALL+");
+    if (QuickLookList.includes(PositionInd) || qlall) {
+      t._quickLookPlus = false;
+      t._quickLook     = true;
+    } else if (QuickLookList.includes(PositionInd + "+") || qlallplus) {
+      t._quickLook     = true;
+      t._quickLookPlus = true;
     } else {
-      t._quickLook = false; t._quickLookPlus = false;
+      t._quickLookPlus = false;
+      t._quickLook     = false;
     }
   }
+  // ── Draw pass — cs:6184-6342 ────────────────────────────────────────────
   for (const t of tracks.values()) {
-    if (!t.Location) continue;
-    if (suppressed.has(t.Guid)) continue;             // transient duplicate GUID (siblings merged via mergedFp)
-    if (t.IsOnGround) continue;                       // Radar.cs Scan skips on-ground
-    if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue; // lost target → hidden (LostTargetSeconds, by position movement)
-    // Use the MERGED fp so the data block sees fields published on
-    // sibling GUIDs (handoff state, scratchpads, etc.) and nothing is
-    // lost just because the primary's FP update was thinner.
+    if (!t.Location) continue;                       // no position fix yet
+    if (suppressed.has(t.Guid)) continue;            // sibling of another GUID (port-only)
+    if (t.IsOnGround) continue;                      // Radar.cs Scan skips ground
+    // cs:5588 — LastMessageTime > CurrentTime - LostTargetSeconds gate.
+    if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue;
+    // mergedFp — see PORT-ONLY block above. DGScope reads fp fields off the
+    // single Aircraft instance; we merge across sibling GUIDs.
     const fp = mergedFp(t.Guid);
-    // Altitude filter — PrefSet AltitudeFilterAssociated{Min,Max} / UnAssociated.
+    // PrefSet AltitudeFilterAssociated{Min,Max} / UnAssociated{Min,Max}
+    // gate — RadarWindow.cs InFilter (called from cs:5595). DGScope's
+    // InFilter also checks SelectedBeaconCodes / overrides; we apply the
+    // pure altitude bracket here, the rest falls out of dataBlockMode.
     const altFt = t.Altitude?.Value;
     if (altFt != null) {
       if (fp) {
@@ -1856,12 +1870,13 @@ function drawTracks() {
         if (altFt > prefSet.AltitudeFilterUnAssociatedMax) continue;
       }
     }
-    // Use the 1 Hz swept position (radarSweep), not a per-frame extrapolation.
+    // displayPos = SweptLocation equivalent — extrapolated to "now" so the
+    // target paints between feed updates. Off-screen cull (cs has no
+    // equivalent — canvas is the screen, DGScope's OpenGL viewport culls).
     const posNow = displayPos(t);
     if (!posNow) continue;
     const sp = geoToScreen(posNow);
     if (sp.x < -50 || sp.x > view.W + 50 || sp.y < -50 || sp.y > view.H + 50) continue;
-
     drawHistory(t);
     drawPTL(t, posNow);
     drawPosition(t, posNow);

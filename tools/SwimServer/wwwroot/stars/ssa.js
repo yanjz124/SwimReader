@@ -20,12 +20,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SSA = {
-  atises: new Array(10).fill(null),      // 10 ATIS slots per ATIS ID
-  gentexts: new Array(10).fill(null),    // free-text suffix per ATIS slot
+  // Mirrors RadarWindow.cs:1042-1057 — atises (char[10]) + gentexts (string[10]).
+  atises: new Array(10).fill(null),
+  gentexts: new Array(10).fill(null),
+  // SelectedBeaconCodes — RadarWindow.cs:1058 (List<string>). Written by F B
+  // command in preview.js.
   selectedBeaconCodes: [],
+  // METAR cache — port-only (DGScope fetches via Weather.cs MetarRequester).
   metars: new Map(),                     // ICAO → { pressure, raw }
-  altimeter: null,                        // primary station altimeter for header
-  intrailVolumes: [],                     // [{id, twoPointFive}]
+  altimeter: null,                       // primary station altimeter for header
+  // timesync.Synchronized — RadarWindow.cs:2978. Set from /api/time-sync.
   timeSynchronized: true,
 };
 

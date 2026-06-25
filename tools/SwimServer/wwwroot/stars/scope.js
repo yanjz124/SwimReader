@@ -2160,13 +2160,16 @@ function _afterPrefChange() {
   savePrefsToLocalStorage();
 }
 
-// ── DCB pref persistence ──────────────────────────────────────────────────
-// Saves the full prefSet to localStorage on every DCB-driven change so the
-// scope comes back exactly as the user left it after a reload. URL params
-// still override on load (so a deep link with ?r=20 wins); profile load
-// overwrites the localStorage snapshot since the user explicitly chose a
-// profile. Excludes transient state (selected beacon codes, QL TCPs etc.)
-// which live in the SSA module and on per-track flags.
+// ── PORT-ONLY: DCB pref persistence ───────────────────────────────────────
+// DGScope has no equivalent: WPF Settings.SaveCurrent() writes the prefSet
+// to a .stars settings file on disk on Exit (cs Run/window.Closed handler).
+// In a browser tab there's no on-disk write path AND no reliable Exit
+// callback (closing a tab can run a quick beforeunload but not always
+// reliable), so we save eagerly to localStorage from _afterPrefChange.
+// loadPrefsFromLocalStorage runs in bootstrap AFTER profile.js so the
+// user's customizations beat a re-applied profile; URL params still apply
+// last for deep-link semantics. Excludes transient SSA / per-track state
+// (which DGScope also doesn't persist beyond the session).
 const STARS_PREFS_KEY = "stars.prefs.v1";
 function savePrefsToLocalStorage() {
   try {
@@ -2219,12 +2222,12 @@ function loadPrefsFromLocalStorage() {
 function handleNumAdjust(id, dir) {
   switch (id) {
     case "RANGE":
-      // RadarWindow.cs:4193-4214 — increment ±1, clamp 6..512 (NOT a preset cycle).
+      // RadarWindow.cs:4224-4246 dcbRangeButton — ±1 step, clamp 6..512.
       prefSet.Range = clamp(prefSet.Range + dir, 6, 512);
       recomputeScale();
       break;
     case "RR_NUM":
-      // RadarWindow.cs:4638-4660 — cycle 2 ↔ 5 ↔ 10 ↔ 20 (floor 2, ceiling 20).
+      // RadarWindow.cs:4670-4694 — cycle 2 → 5 → 10 → 20 (and reverse).
       switch (prefSet.RangeRingSpacing) {
         case 2:  if (dir > 0) prefSet.RangeRingSpacing = 5;  break;
         case 5:  prefSet.RangeRingSpacing = dir > 0 ? 10 : 2; break;
@@ -2234,25 +2237,32 @@ function handleNumAdjust(id, dir) {
       }
       break;
     case "LDR_LEN":
-      // 0..8 clamp (RadarWindow.cs:4159)
+      // RadarWindow.cs:4178-4199 dcbLdrLenButton — ±1 step, clamp 0..8.
       prefSet.LeaderLength = clamp(prefSet.LeaderLength + dir, 0, 8);
       break;
-    case "LDR_DIR":
-      // cycle through 1,2,3,4,6,7,8,9 (skip 5)
-      const order = [1, 2, 3, 6, 9, 8, 7, 4];
-      let i = order.indexOf(prefSet.OwnedDataBlockPosition);
-      i = (i + (dir > 0 ? 1 : order.length - 1)) % order.length;
-      prefSet.OwnedDataBlockPosition = order[i];
+    case "LDR_DIR": {
+      // RadarWindow.cs:3694-3722 (DcbLdrDirButton_Down) + 3725-3753 (_Up).
+      // Down cycles counterclockwise: N→NW→W→SW→S→SE→E→NE→N (cs:3699-3721).
+      // Our prefSet stores LeaderDirection as the keypad enum 1-9; the cycle
+      // order here is N,NW,W,SW,S,SE,E,NE matching cs:3694-3722 explicitly.
+      const ccw = [2, 1, 4, 7, 8, 9, 6, 3];   // N → NW → W → SW → S → SE → E → NE
+      const cur = ccw.indexOf(prefSet.OwnedDataBlockPosition);
+      const next = (cur < 0)
+        ? ccw[0]
+        : ccw[(cur + (dir > 0 ? ccw.length - 1 : 1)) % ccw.length];
+      prefSet.OwnedDataBlockPosition = next;
       break;
+    }
     case "HIST_NUM":
+      // RadarWindow.cs:4133-4153 dcbHistoryNumButton — ±1 step, clamp 0..10.
       prefSet.HistoryNum = clamp(prefSet.HistoryNum + dir, 0, 10);
       break;
     case "HIST_RATE":
-      // RadarWindow.cs:4128-4140 — step ±0.5, clamp 0..4.5.
+      // RadarWindow.cs:4155-4177 dcbHistoryRateButton — ±0.5 step, clamp 0..4.5.
       prefSet.HistoryRate = clamp(prefSet.HistoryRate + dir * 0.5, 0, 4.5);
       break;
     case "PTL_LEN":
-      // RadarWindow.cs:4174-4184 — step ±0.5, clamp 0..5.
+      // RadarWindow.cs:4201-4223 dcbPtlLengthButton — ±0.5 step, clamp 0..5.
       prefSet.PTLLength = clamp(prefSet.PTLLength + dir * 0.5, 0, 5);
       break;
     case "PTL_OWN":
@@ -2284,23 +2294,35 @@ function handleCszAdjust(which, d) {
 
 function handleBriteAdjust(which, d) {
   const b = prefSet.Brightness;
-  // Per BrightnessSettings (PrefSet.cs:72-152) — 15 distinct fields.
-  // Map button label → property name. Legacy aliases (DataBlock/Position/
-  // VideoMap*) are kept in sync for callers that haven't been split yet.
+  // Per-button [field, min] tuples — RadarWindow.cs:4247-4659 (each
+  // `else if (button == briteXXXbutton)` block has its own min; all share
+  // step=5, max=100). DCB / LST default min 25 (cs:4256, 4376); MPA / MPB
+  // / WX / WXC use min 5 (cs:4304, 4328, 4616, 4640); the rest 0.
   const map = {
-    DCB: "DCB", BKC: "Background",
-    MPA: "MapA",            MPB: "MapB",
-    FDB: "FullDataBlocks",  LDB: "LimitedDataBlocks", OTH: "OtherFDBs",
-    LST: "Lists",           TLS: "Tools",
-    RR:  "RangeRings",      CMP: "Compass",
-    POS: "PositionSymbols", BCN: "BeaconTargets", PRI: "PrimaryTargets",
-    HST: "History",         WX:  "Weather",       WXC: "WeatherContrast",
+    DCB: ["DCB",               25],
+    BKC: ["Background",         0],
+    MPA: ["MapA",               5],
+    MPB: ["MapB",               5],
+    FDB: ["FullDataBlocks",     0],
+    LST: ["Lists",             25],
+    POS: ["PositionSymbols",    0],
+    LDB: ["LimitedDataBlocks",  0],
+    OTH: ["OtherFDBs",          0],
+    TLS: ["Tools",              0],
+    RR:  ["RangeRings",         0],
+    CMP: ["Compass",            0],
+    BCN: ["BeaconTargets",      0],
+    PRI: ["PrimaryTargets",     0],
+    HST: ["History",            0],
+    WX:  ["Weather",            5],
+    WXC: ["WeatherContrast",    5],
   };
-  const k = map[which];
-  if (!k) return;
+  const entry = map[which]; if (!entry) return;
+  const [k, min] = entry;
   const cur = b[k] ?? 100;
-  b[k] = clamp(cur + d, 0, 100);
-  // Keep legacy aliases in sync so renderers that read the old names update.
+  b[k] = clamp(cur + d, min, 100);
+  // Legacy aliases — see prefSet.Brightness declaration. Renderers that
+  // haven't been split yet read the alias; mirror last-write-wins.
   if (k === "FullDataBlocks")  b.DataBlock = b[k];
   if (k === "PositionSymbols") b.Position  = b[k];
   if (k === "MapA")            b.VideoMapA = b[k];
@@ -2392,10 +2414,11 @@ window.geoToScreen      = geoToScreen;
 // toggle the WX1-6 buttons use (RadarWindow.cs:3886).
 window.handleWxToggle   = handleWxToggle;
 
-// ── URL state persistence ───────────────────────────────────────────────────
-// Encodes range, leader length, ptl length, range-ring spacing, brightness
-// overrides, signed-on TCP, dstars facility, profile, menu (debug) into the
-// URL so a refresh / bookmark preserves the scope state. Format keeps params
+// ── PORT-ONLY: URL state persistence ────────────────────────────────────
+// DGScope has no equivalent (WPF takes its config from the .stars file +
+// command-line args). In a browser we want deep links to work
+// (bookmark / share a particular scope) AND want a reload to preserve
+// the most-recently-set range / brightness etc. Format keeps params
 // short:
 //   ?p=PROFILE   profile name (already supported on load)
 //   ?r=50        range

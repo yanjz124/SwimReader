@@ -865,7 +865,9 @@ function drawPTL(t, posNow) {
   if (t.GroundSpeed == null || t.GroundSpeed < 1) return;        // no PTL on stationary
   if (t.GroundTrack == null) return;
   const fp = trackToFp.get(t.Guid);
-  const Owned = window.Handoff && window.Handoff.isOwned(t, fp);
+  // Sticky Owned per cs:5454 — same flag the color tier uses; consistent
+  // with how DGScope reads Aircraft.Owned at cs:6323 for the PTL gate.
+  const Owned = !!t._owned;
   const FDB   = (typeof dataBlockMode === "function") && dataBlockMode(t, fp) === "FDB";
   const ShowPTL = !!t._showPtl;
   if (!(ShowPTL || (Owned && prefSet.PTLOwn) || (FDB && prefSet.PTLAll))) return;
@@ -1085,17 +1087,13 @@ function dataBlockMode(t, fp) {
   if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) return "FDB";
   // ForceQuickLook auto-FDB regardless of association (set by **<pos>).
   if (t._forceQuickLook) return "FDB";
-  // Owned (including inbound handoff) auto-promotes to FDB per Aircraft.cs:
-  // 119-136 FDB getter — Owned && !QuickLook → _fdb = true. Owned bool is
-  // set in RadarWindow.cs:1085 from PositionInd or PendingHandoff equality.
-  // Single source of truth: Handoff.isOwned().
-  if (window.Handoff && window.Handoff.isOwned(t, fp)) return "FDB";
-  // Outbound handoff WE initiated — DGScope renders this in FDB because
-  // Owned bool is true on the originating side (PositionInd == me still).
-  // Our isOwned already returns true for that case via the cps == me leg.
-  // Extra explicit promotion when isOutboundHandoff to cover the TAIS
-  // "ocr pending" case where IsHandoffInProgress is set but no receiver.
-  if (window.Handoff && window.Handoff.isOutboundHandoff(t, fp)) return "FDB";
+  // Owned (sticky bool) auto-promotes to FDB per Aircraft.cs:119-136 FDB
+  // getter — Owned && !QuickLook → _fdb = true. The sticky bool is set in
+  // drawTracks pre-pass (cs:6172-6173) when PositionInd or PendingHandoff
+  // matches me, and cleared only by sign-on (cs:1648-1651) or click-to-
+  // release (cs:2775-2778). This is what keeps a track FDB after an
+  // outbound handoff completes — Owned remains true from the prior frame.
+  if (t._owned) return "FDB";
   // QuickLookList promotion — RadarWindow.cs:5685-5711. An aircraft is
   // QuickLook=true if any of:
   //   • QuickLookedTCPs contains its controlling position (or ALL/ALL+)
@@ -1325,7 +1323,14 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const inboundHandoff   = window.Handoff && window.Handoff.isInboundHandoff(t, fp);
   const justTransferred  = window.Handoff && window.Handoff.justTransferred(t, fp);
   const dbFlashing       = inboundHandoff || justTransferred;
-  const ownedOrInbound  = window.Handoff && window.Handoff.isOwned(t, fp);
+  // STICKY Owned per RadarWindow.cs:5454 — uses Aircraft.Owned bool (stored,
+  // not live-computed). Set per-frame to TRUE in drawTracks pre-pass when
+  // PositionInd==me OR PendingHandoff==me (cs:6172-6173 + 6178-6185);
+  // cleared only by F12 sign-on (cs:1648-1651) or click-to-release
+  // (cs:2775-2778 / processImplied step 5). This is what keeps an outbound
+  // data block WHITE after TAIS flips cps to the receiver and through the
+  // 5s post-accept blink, until the user clicks to acknowledge.
+  const ownedSticky = !!t._owned;
   let baseColor = COLORS.DataBlock;
   // Conflict Alert is NOT a whole-block colour change — CA annotation only
   // (CRC STARS § STCA; handled below).
@@ -1335,7 +1340,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
     baseColor = COLORS.Selected;            // cyan
   } else if (t._forceQuickLook) {
     baseColor = COLORS.Pointout;            // yellow (cs:5448-5452)
-  } else if (ownedOrInbound || t._quickLookPlus) {
+  } else if (ownedSticky || t._quickLookPlus) {
     baseColor = COLORS.Owned;               // white (cs:5454-5458)
   }
   // Flash visual handled via dbBright above — TransparentLabel dims to
@@ -1350,7 +1355,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // Brightness.DataBlock alias is only kept for renderers that haven't been
   // split yet.
   const dbMode = dataBlockMode(t, fp);
-  const dbBrightBase = ownedOrInbound
+  const dbBrightBase = ownedSticky
     ? prefSet.Brightness.FullDataBlocks
     : (dbMode === "FDB" ? prefSet.Brightness.OtherFDBs
                         : prefSet.Brightness.LimitedDataBlocks);
@@ -1471,7 +1476,10 @@ function drawPosition(t, posNow) {
   // else → DataBlockColor. Brightness (cs:6387-6399): PositionSymbols
   // when Owned+IsPositionIndicator (only happens when Owned ⇒ FDB), else
   // OtherFDBs for FDB tracks and LimitedDataBlocks for LDB tracks.
-  const Owned = window.Handoff && window.Handoff.isOwned(t, fp);
+  // Sticky Owned per cs:5612 — same flag the data-block color tier uses,
+  // mirroring DGScope's Aircraft.Owned property read at PositionIndicator
+  // color computation.
+  const Owned = !!t._owned;
   const FDB   = dataBlockMode(t, fp) === "FDB";
   let color;
   if (t._marked)   color = COLORS.Selected;
@@ -1877,6 +1885,7 @@ function drawTracks() {
   //    6239-6241). Both loops are inside DrawTargets; we split for clarity.
   const showAllCallsigns = !!window.showAllCallsigns;
   const QuickLookList = (window.prefSet && window.prefSet.QuickLookedTCPs) || [];
+  const meTcp = ((window.ownTcp && window.ownTcp()) || "").trim().toUpperCase();
   for (const t of tracks.values()) {
     // cs:6239-6241 — sync ShowCallsignWithNoSquawk from global F1-hold flag.
     t.ShowCallsignWithNoSquawk = showAllCallsigns;
@@ -1884,6 +1893,17 @@ function drawTracks() {
     // from PositionInd against QuickLookList ("ALL" / "ALL+" handled too).
     const fp = window.trackToFp ? window.trackToFp.get(t.Guid) : null;
     const PositionInd = (fp && fp.Owner) || t.PositionInd || "";
+    // cs:6172-6173 — `if (x.PositionInd == ThisPositionIndicator) x.Owned = true`
+    // Sticky Owned bool: SET when PositionInd == me, never auto-cleared (only
+    // via F12 sign-on or click-to-release at cs:2775-2778 / processImplied
+    // step 5). This is what keeps an outbound-handoff data block WHITE after
+    // TAIS flips cps to the receiver — Owned remains true from the prior
+    // frame's set, until the user clicks to acknowledge.
+    if (meTcp) {
+      const pi = PositionInd ? String(PositionInd).trim().toUpperCase() : "";
+      const ph = fp?.PendingHandoff ? String(fp.PendingHandoff).trim().toUpperCase() : "";
+      if (pi === meTcp || ph === meTcp) t._owned = true;
+    }
     const associated  = !!(PositionInd && PositionInd !== "*");
     const qlall       = associated && QuickLookList.includes("ALL");
     const qlallplus   = associated && QuickLookList.includes("ALL+");

@@ -1154,7 +1154,6 @@ function ldrEnum(v) {
 
 function drawDataBlockAndLeader(t, fp, posNow) {
   const dir = effectiveLeaderDir(t, fp);
-  const v = leaderDirToVector(dir);
   const lines = buildDataBlock(t, fp);
   if (lines.length === 0) return;
 
@@ -1163,42 +1162,71 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const charHeight = fontSize + 2;
   const charWidth  = fontSize * 0.55;
 
-  // Leader-line model: target is the clock center, leader points in `dir` for
-  // `LeaderLength + 0.5` char-heights, data block hangs off the leader's
-  // endpoint. Cardinal directions => block centered perpendicular to leader.
-  // Diagonals => block's near corner sits at leader end.
-  // WPF (OffsetDatablockLocation): the block hangs (0.5+LeaderLength) char-heights
-  // off the EDGE of the position symbol (PositionIndicator.BoundsF), so add the
-  // symbol's half-size to the offset — gives the proper gap instead of a cramped one.
-  const offsetPx = (0.5 + prefSet.LeaderLength) * charHeight;
+  // ── OffsetDatablockLocation — RadarWindow.cs:4044-4046 + 5765-5828 ─────
+  // dataBlockOffsetScale = Font.Height * pixelScale  (cs:4044)
+  // dataBlockOffset      = (0.5 + LeaderLength) * dataBlockOffsetScale  (cs:4045)
+  // dataBlockDiagonalOffset = dataBlockOffset * Math.Sqrt(2) / 2          (cs:4046)
+  // Block position is measured from the EDGE of PositionIndicator.BoundsF,
+  // not the target center — that's why our prior gap looked wrong (it added
+  // symbolRadius to the offset for both cardinals AND diagonals).
+  const dataBlockOffsetScale = charHeight;
+  const dataBlockOffset       = (0.5 + prefSet.LeaderLength) * dataBlockOffsetScale;
+  const dataBlockDiagonalOffset = dataBlockOffset * Math.SQRT2 / 2;
   const symbolRadius = prefSet.CharSize.Position * 0.5;
   const screen = geoToScreen(posNow);
-  const isDiag = (v.x !== 0 && v.y !== 0);
-  const k = isDiag ? Math.SQRT1_2 : 1;
-  const leaderEndX = screen.x + v.x * (symbolRadius + offsetPx) * k;
-  const leaderEndY = screen.y + v.y * (symbolRadius + offsetPx) * k;
+  const posLeft   = screen.x - symbolRadius;
+  const posRight  = screen.x + symbolRadius;
+  const posTop    = screen.y - symbolRadius;
+  const posBottom = screen.y + symbolRadius;
 
   const blockWidth = Math.max(...lines.map(l => l.length)) * charWidth;
   const blockHeight = lines.length * charHeight;
 
-  // Block position derived from leader endpoint + direction vector:
-  //   v.x < 0  -> block extends LEFT  (right edge at leaderEnd)
-  //   v.x > 0  -> block extends RIGHT (left  edge at leaderEnd)
-  //   v.x = 0  -> block CENTERED horizontally on leaderEnd
-  //   v.y < 0  -> block extends UP    (bottom at leaderEnd)
-  //   v.y > 0  -> block extends DOWN  (top    at leaderEnd)
-  //   v.y = 0  -> block CENTERED vertically on leaderEnd
-  let blockX, blockY;
-  if (v.x < 0)      blockX = leaderEndX - blockWidth;
-  else if (v.x > 0) blockX = leaderEndX;
-  else              blockX = leaderEndX - blockWidth / 2;
-  if (v.y < 0)      blockY = leaderEndY - blockHeight;
-  else if (v.y > 0) blockY = leaderEndY;
-  else              blockY = leaderEndY - blockHeight / 2;
+  // Block position per direction — Aircraft.cs:5773-5828 exact branching.
+  // Note: W/NW/SW subtract the block width because blockLocation is the
+  // top-LEFT corner; for left-pointing leaders that means start with the
+  // right edge at posLeft-offset and subtract blockWidth.
+  let blockX = screen.x, blockY = screen.y;
+  switch (dir) {
+    case 2: /* N  */ blockY = posBottom + dataBlockOffset; blockX = screen.x - blockWidth / 2; break;
+    case 8: /* S  */ blockY = posTop    - dataBlockOffset - blockHeight; blockX = screen.x - blockWidth / 2; break;
+    case 6: /* E  */ blockX = posRight  + dataBlockOffset; blockY = screen.y - blockHeight / 2; break;
+    case 4: /* W  */ blockX = posLeft   - dataBlockOffset - blockWidth; blockY = screen.y - blockHeight / 2; break;
+    case 3: /* NE */ blockX = posRight  + dataBlockDiagonalOffset;
+                     blockY = posBottom + dataBlockDiagonalOffset; break;
+    case 9: /* SE */ blockX = posRight  + dataBlockDiagonalOffset;
+                     blockY = posTop    - dataBlockDiagonalOffset - blockHeight; break;
+    case 1: /* NW */ blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
+                     blockY = posBottom + dataBlockDiagonalOffset; break;
+    case 7: /* SW */ blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
+                     blockY = posTop    - dataBlockDiagonalOffset - blockHeight; break;
+    default: blockX = posRight + dataBlockOffset; blockY = screen.y - blockHeight / 2;
+  }
+  // cs:5862 — blockLocation.Y -= dataBlockOffsetScale * 2.5f
+  // Vertical baseline adjustment so the connecting line lands on the data-block
+  // first-line midpoint instead of the top edge.
+  blockY -= dataBlockOffsetScale * 2.5;
 
-  // Text alignment: pad-right when block extends left so text hugs the
-  // right edge (closest to target); pad-left otherwise.
-  const padLeft = (v.x < 0);
+  // Leader line — cs:5863-5899. Start point is on the EDGE of the
+  // position symbol (not the center); end point is the block corner
+  // nearest the target (cs:5900-5912 — ConnectingLine.End).
+  let leaderStartX = screen.x, leaderStartY = screen.y;
+  let leaderEndX, leaderEndY;
+  switch (dir) {
+    case 2: /* N  */ leaderStartY = posBottom; leaderEndX = blockX + blockWidth / 2; leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
+    case 8: /* S  */ leaderStartY = posTop;    leaderEndX = blockX + blockWidth / 2; leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
+    case 6: /* E  */ leaderStartX = posRight;  leaderEndX = blockX;                  leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
+    case 4: /* W  */ leaderStartX = posLeft;   leaderEndX = blockX + blockWidth;     leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
+    case 3: /* NE */ leaderStartX = posRight;  leaderStartY = posBottom; leaderEndX = blockX;                  leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
+    case 9: /* SE */ leaderStartX = posRight;  leaderStartY = posTop;    leaderEndX = blockX;                  leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
+    case 1: /* NW */ leaderStartX = posLeft;   leaderStartY = posBottom; leaderEndX = blockX + blockWidth;     leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
+    case 7: /* SW */ leaderStartX = posLeft;   leaderStartY = posTop;    leaderEndX = blockX + blockWidth;     leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
+    default: leaderEndX = blockX; leaderEndY = blockY + dataBlockOffsetScale * 2.5;
+  }
+
+  // padLeft = block extends to the left of the target (text right-aligned to
+  // hug the leader-side edge).
+  const padLeft = (blockX + blockWidth) <= screen.x;
 
   // Data-block colour priority — verbatim from RadarWindow.cs:5436-5468:
   //   5436  if (Emergency)                  → DataBlockEmergencyColor (red)
@@ -1294,20 +1322,17 @@ function drawDataBlockAndLeader(t, fp, posNow) {
     }
   }
 
-  // Leader line — straight line from target edge to leader endpoint (where
-  // the block hangs). The block's own bounding box already aligns to the
-  // leader endpoint via the cases above; we don't need to compute a
-  // separate "block edge" point.
-  if (prefSet.LeaderLength > 0) {
-    ctx.strokeStyle = ctx.fillStyle;
-    ctx.lineWidth = 1;
-    const leaderStartX = screen.x + v.x * k * symbolRadius;
-    const leaderStartY = screen.y + v.y * k * symbolRadius;
-    ctx.beginPath();
-    ctx.moveTo(leaderStartX, leaderStartY);
-    ctx.lineTo(leaderEndX, leaderEndY);
-    ctx.stroke();
-  }
+  // Leader line — Aircraft.ConnectingLine (RadarWindow.cs:5913).
+  // Start = position-symbol edge (per direction, set above); End = data-
+  // block corner nearest the target. cs:4045 — LeaderLength=0 means
+  // dataBlockOffset shrinks to 0.5*scale so the gap closes; the line is
+  // still drawn (a 1-pixel adornment), matching DGScope.
+  ctx.strokeStyle = ctx.fillStyle;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(leaderStartX, leaderStartY);
+  ctx.lineTo(leaderEndX, leaderEndY);
+  ctx.stroke();
 }
 
 // ── Position symbol render ──────────────────────────────────────────────────

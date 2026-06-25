@@ -82,6 +82,19 @@ function mountPreview() {
   `;
   document.body.appendChild(pa);
 
+  // Restore saved PreviewAreaLocation if profile/localStorage has one.
+  // DGScope cs:2960 anchors LocationF as BOTTOM-LEFT (Y - SizeF.Height), so
+  // translate to CSS top-left by waiting for the first render to get height.
+  const savedPL = window.prefSet && window.prefSet.PreviewAreaLocation;
+  if (savedPL && typeof savedPL.X === "number") {
+    pa.style.left = savedPL.X + "px";
+    requestAnimationFrame(() => {
+      const h = pa.getBoundingClientRect().height || 0;
+      pa.style.top = (savedPL.Y - h) + "px";
+      pa.dataset.userMoved = "1";  // suppress SSA auto-pin below SSA
+    });
+  }
+
   // Shift+drag to move the preview area (its default is below the SSA). Plain
   // clicks pass through so they don't interfere with scope commands.
   {
@@ -97,7 +110,17 @@ function mountPreview() {
       pa.style.left = (e.clientX - ox) + "px";
       pa.style.top = (e.clientY - oy) + "px";
       pa.style.bottom = "auto";
-      if (window.prefSet) window.prefSet.PreviewLocation = { X: e.clientX - ox, Y: e.clientY - oy };
+      // PrefSet uses PreviewAreaLocation (cs:STARS/PrefSet.cs:20), and DGScope
+      // anchors it BOTTOM-LEFT (RadarWindow.cs:2960 — LocationF = Location.Y -
+      // SizeF.Height). Save as bottom-left so a profile/localStorage reload
+      // restores the same visible position.
+      if (window.prefSet) {
+        const h = pa.getBoundingClientRect().height || 0;
+        window.prefSet.PreviewAreaLocation = {
+          X: e.clientX - ox,
+          Y: e.clientY - oy + h,
+        };
+      }
     });
     window.addEventListener("mouseup", () => { dragging = false; });
   }
@@ -135,15 +158,20 @@ function mountPreview() {
 function refreshPreview() {
   const el = document.getElementById("mca");
   if (!el) return;
-  // RenderPreview (RadarWindow.cs:2920-2945): show exactly ONE thing — the readout
-  // message while the buffer is empty (DisplayPreviewMessage clears the buffer),
-  // else the typed buffer + a trailing-space cursor (GeneratePreviewString :3261).
-  // Colour = DataBlockColor * Brightness.FullDataBlocks (cs:2928), NOT Lists.
+  // RenderPreview — RadarWindow.cs:2949-2961. Priority:
+  //   1. previewmessage set, not expired, buffer empty → message  (cs:2954-2955)
+  //   2. else → GeneratePreviewString(Preview)                    (cs:2957)
+  //   Color = AdjustedColor(DataBlockColor, FullDataBlocks)       (cs:2959)
+  //   Font  = standard scope font                                  (cs:2956)
   el.textContent = (PA.response && !PA.buffer) ? PA.response : (PA.buffer + " ");
   if (window.prefSet) {
-    const b = (window.prefSet.Brightness.DataBlock ?? 100) / 100;
+    // FullDataBlocks brightness per cs:2959 — was reading the collapsed
+    // DataBlock alias before the cac9cf9 split which is now wrong.
+    const b = (window.prefSet.Brightness.FullDataBlocks ?? 100) / 100;
     el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
-    el.style.fontSize = (window.prefSet.CharSize?.Lists ?? 13) + "px";
+    // DGScope uses the scope's standard Font (typically DataBlock CharSize);
+    // Lists fontsize is for the SSA list area, not the preview.
+    el.style.fontSize = (window.prefSet.CharSize?.DataBlock ?? 14) + "px";
   }
 }
 
@@ -777,13 +805,21 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
     if (geo) setResponse(geoToDms(geo));
     return;
   }
-  // F P  set Preview Area location to clicked screen point (cs:2316-2322)
+  // F P  set Preview Area location to clicked screen point (cs:2316-2322 /
+  // cs:2338 `PreviewLocation = (PointF)clicked`). DGScope anchors LocationF
+  // as BOTTOM-LEFT — the click point becomes the bottom edge of the preview,
+  // which floats UP from there.
   if (sub === "P" && !clickedplane) {
     const m = window.mouseScreen?.();
     if (m) {
       prefSet.PreviewAreaLocation = { X: m.x, Y: m.y };
       const el = document.getElementById("mca");
-      if (el) { el.style.left = m.x + "px"; el.style.bottom = "auto"; el.style.top = m.y + "px"; }
+      if (el) {
+        el.style.left = m.x + "px"; el.style.bottom = "auto";
+        const h = el.getBoundingClientRect().height || 0;
+        el.style.top = (m.y - h) + "px";
+        el.dataset.userMoved = "1";
+      }
     }
     return;
   }
@@ -791,9 +827,14 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
   if (sub === "S" && k.length === 2 && !clickedplane) {
     const m = window.mouseScreen?.();
     if (m) {
+      // cs:2380 `StatusLocation = (PointF)clicked` — bottom-left anchor.
       prefSet.StatusAreaLocation = { X: m.x, Y: m.y };
       const el = document.getElementById("ssa");
-      if (el) { el.style.left = m.x + "px"; el.style.top = m.y + "px"; }
+      if (el) {
+        el.style.left = m.x + "px";
+        const h = el.getBoundingClientRect().height || 0;
+        el.style.top = (m.y - h) + "px";
+      }
     }
     return;
   }

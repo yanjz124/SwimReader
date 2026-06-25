@@ -114,10 +114,12 @@ function mountSsa() {
   refreshSsa();
   startMetarPoll();
 
-  // PrefSet.StatusAreaLocation = where the user dragged this. We let the user
-  // drag the SSA around with the mouse and persist to PrefSet.
+  // PrefSet.StatusAreaLocation = where the user dragged this. DGScope cs:3080
+  // anchors it BOTTOM-LEFT, so save bottom-anchored too — restoreSsaLocation
+  // will reverse the height offset on next load.
   makeDraggable(el, (x, y) => {
-    prefSet.StatusAreaLocation = { X: x, Y: y };
+    const h = el.getBoundingClientRect().height || 0;
+    prefSet.StatusAreaLocation = { X: x, Y: y + h };
   });
 }
 
@@ -145,11 +147,18 @@ function makeDraggable(el, onMove) {
 }
 
 // Restore from PrefSet (saved location) if present.
+// DGScope cs:3080 anchors StatusLocation as BOTTOM-LEFT
+// (`StatusArea.LocationF = (StatusLocation.X, StatusLocation.Y - SizeF.Height)`).
+// Our CSS positions use top-left. Translate by subtracting the SSA's
+// rendered height — defer to next animation frame to get the real height.
 function restoreSsaLocation(el) {
   const l = prefSet.StatusAreaLocation;
   if (l && typeof l.X === "number") {
     el.style.left = l.X + "px";
-    el.style.top  = l.Y + "px";
+    requestAnimationFrame(() => {
+      const h = el.getBoundingClientRect().height || 0;
+      el.style.top = (l.Y - h) + "px";
+    });
   }
 }
 

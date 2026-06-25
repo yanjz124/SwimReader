@@ -257,11 +257,17 @@
     }
   }
 
-  // ── Inbound-handoff flash phase ─────────────────────────────────────────
-  // RadarWindow.cs:1086 sets DataBlock.Flashing = true when PendingHandoff
-  // == me; the actual blink phase is driven by the OpenGL frame counter
-  // and pulses ~1 Hz. We mirror with wall-clock mod 1000.
-  function flashPhaseHidden() { return (Date.now() % 1000) >= 500; }
+  // ── Flash phase ────────────────────────────────────────────────────────
+  // TransparentLabel.cs:38 — `_flashtimer = new System.Timers.Timer(750)`.
+  // FlashTimer_Elapsed (cs:46-49) toggles a STATIC flashOn bool every 750ms,
+  // shared across every flashing label. We mirror with wall-clock so every
+  // flashing block on the canvas blinks in sync, matching DGScope.
+  //
+  // TransparentLabel.DrawColor (cs:74-87) returns full color on the ON
+  // phase and a half-intensity gray (Color.FromArgb(a, a*0.5, a*0.5, a*0.5))
+  // on the OFF phase — NOT a hide. flashPhaseDim() returns true on the
+  // OFF phase so the caller can dim its text color accordingly.
+  function flashPhaseDim() { return Math.floor(Date.now() / 750) % 2 === 1; }
 
   window.Handoff = {
     positionInd, pendingHandoff, me,
@@ -269,6 +275,6 @@
     justTransferred,
     onPositionChange,
     processImplied,
-    flashPhaseHidden,
+    flashPhaseDim,
   };
 })();

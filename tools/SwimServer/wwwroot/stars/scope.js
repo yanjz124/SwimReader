@@ -2211,8 +2211,17 @@ function handleNumAdjust(id, dir) {
       // RadarWindow.cs:4174-4184 — step ±0.5, clamp 0..5.
       prefSet.PTLLength = clamp(prefSet.PTLLength + dir * 0.5, 0, 5);
       break;
-    case "PTL_OWN":  prefSet.PTLOwn = !prefSet.PTLOwn; break;
-    case "PTL_ALL":  prefSet.PTLAll = !prefSet.PTLAll; break;
+    case "PTL_OWN":
+      // RadarWindow.cs:3848-3853 — toggling PTL OWN clears PTL ALL (mutually
+      // exclusive — only one mode can be on at a time).
+      prefSet.PTLOwn = !prefSet.PTLOwn;
+      if (prefSet.PTLOwn) prefSet.PTLAll = false;
+      break;
+    case "PTL_ALL":
+      // RadarWindow.cs:3854-3857 — toggling PTL ALL clears PTL OWN.
+      prefSet.PTLAll = !prefSet.PTLAll;
+      if (prefSet.PTLAll) prefSet.PTLOwn = false;
+      break;
     case "RR_CNTR":
       prefSet.RangeRingsCentered = !prefSet.RangeRingsCentered;
       if (prefSet.RangeRingsCentered) prefSet.RangeRingLocation = { ...prefSet.ScreenCenterPoint };

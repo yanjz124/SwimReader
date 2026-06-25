@@ -1028,6 +1028,10 @@ function cmdDefaultClickedPlane(line, clicked) {
   if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
   if (!fp) return;
   const token = line.trim();
+  // RadarWindow.cs:2646-2702 default catchall on clicked plane. Length-based
+  // routing: 3 → scratchpad, 4+'+' → scratchpad2, 4 → aircraft type, 2 →
+  // PendingHandoff. STATE-field mutations (PendingHandoff) bump _updatedAt
+  // so mergedFp's freshest-wins rule doesn't shadow them with stale siblings.
   if (token.length === 3) {
     fp.Scratchpad1 = token;
     return;
@@ -1042,6 +1046,7 @@ function cmdDefaultClickedPlane(line, clicked) {
   }
   if (token.length === 2) {
     fp.PendingHandoff = token;
+    fp._updatedAt = Date.now();
     return;
   }
 }

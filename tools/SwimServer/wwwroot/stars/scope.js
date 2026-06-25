@@ -931,146 +931,136 @@ const ClockPhase = {
 };
 ClockPhase.start();
 
+// buildDataBlock — 1:1 port of Aircraft.RedrawDataBlock (Aircraft.cs:318-630).
+// Returns the array of text lines for the active ClockPhase variant. Right-
+// alignment for W/NW/SW leader directions is handled by the caller via
+// ctx.textAlign (the only canvas-specific deviation — DGScope pads strings
+// with PadLeft(9) instead).
 function buildDataBlock(t, fp) {
-  const mode = dataBlockMode(t, fp);
-  const lines = [];
-  // ── Field formatters — Aircraft.RedrawDataBlock lines 328-440 ──────────
-  const dbAlt = t.Altitude?.Value ?? null;
-  const altstring = dbAlt != null && t.Altitude.AltitudeType !== 2  // 2 = Unknown
-    ? String(Math.round((dbAlt + 50) / 100)).padStart(3, "0")
+  // ── Field formatters — Aircraft.cs:344-360 ──────────────────────────────
+  // Altitude is rounded to flight-level hundreds; "RDR" when AltitudeType
+  // is Unknown (enum value 2) or null.
+  let dbAlt = t.Altitude?.Value;
+  const altstring = (dbAlt != null && t.Altitude.AltitudeType !== 2)
+    ? (() => { if (dbAlt % 100 > 50) dbAlt = ((dbAlt / 100) | 0) * 100 + 100;
+               return String((dbAlt / 100) | 0).padStart(3, "0"); })()
     : "RDR";
   const dbSpeed = t.GroundSpeed ?? 0;
-  const speed10 = String(Math.floor(dbSpeed / 10)).padStart(2, "0");
 
-  // vfrchar — FlightRules[0] when not 'I' (Aircraft.cs:355-365)
-  let vfrChar = " ", catChar = " ";
-  if (fp?.FlightRules && fp.FlightRules[0] !== "I") vfrChar = fp.FlightRules[0];
-  if (t.Ident) { vfrChar = "I"; catChar = "D"; }
-  else if (fp?.Category) catChar = fp.Category;
+  // ── vfrchar / catchar — Aircraft.cs:360-386 ─────────────────────────────
+  let vfrchar = " ";
+  let catchar = " ";
+  if (fp?.FlightRules && fp.FlightRules[0] !== "I") vfrchar = fp.FlightRules[0];
+  // Aircraft.cs:378-381 — Ident overrides vfrchar to "I", catchar to "D".
+  if (t.Ident) { vfrchar = "I"; catchar = "D"; }
+  else if (fp?.Category) catchar = fp.Category;
 
-  // Handoff char on line 2 — DGScope (Aircraft.cs:347-348) shows the last
-  // char of PendingHandoff. The server only emits PendingHandoff once it
-  // has INFERRED a real receiver TCP from cps transitions (DgScopeAdapter
-  // InferHandoffReceiver). No placeholder — blank when we don't know.
-  const handoffChar = fp?.PendingHandoff ? fp.PendingHandoff.slice(-1) : " ";
+  // ── handoffchar — Aircraft.cs:362-364 ───────────────────────────────────
+  // Last char of PendingHandoff (or " " when none).
+  let handoffchar = " ";
+  if (fp?.PendingHandoff) handoffchar = fp.PendingHandoff.slice(-1);
 
-  // destination — falls back to altstring when null/unassigned (Aircraft.cs:373-393)
-  let destination = altstring;
-  if (fp?.Destination?.trim() && fp.Destination.trim() !== "unassigned")
-    destination = fp.Destination.trim().padEnd(3);
+  // ── destination — Aircraft.cs:387-406 ───────────────────────────────────
+  let destination;
+  if (!fp?.Destination) destination = altstring;
+  else if (fp.Destination.trim() !== "" && fp.Destination !== "unassigned")
+    destination = fp.Destination.padEnd(3);
+  else destination = String((dbAlt / 100) | 0).padStart(3, "0");
 
-  // yscratch — scratchpad else destination (Aircraft.cs:395-404)
-  const yscratch = (fp?.Scratchpad1?.trim() || destination).padEnd(3);
-  // yscratch2 — scratchpad2 + "+" (4ch) else scratchpad else destination (:406-417)
+  // ── yscratch / yscratch2 — Aircraft.cs:407-428 ──────────────────────────
+  const yscratch = fp?.Scratchpad1 ? fp.Scratchpad1.padEnd(3) : destination;
   let yscratch2;
-  if (fp?.Scratchpad2?.trim()) yscratch2 = (fp.Scratchpad2.trim() + "+").padEnd(4);
-  else if (fp?.Scratchpad1?.trim()) yscratch2 = fp.Scratchpad1.trim().padEnd(3);
+  if (fp?.Scratchpad2) yscratch2 = fp.Scratchpad2.padEnd(3) + "+";
+  else if (fp?.Scratchpad1) yscratch2 = fp.Scratchpad1.padEnd(3);
   else yscratch2 = destination;
 
-  // type — AircraftType else speed10+vfr+cat (Aircraft.cs:419-430)
-  const type = (fp?.AircraftType?.trim()) ? fp.AircraftType.trim().padEnd(4)
-             : `${speed10}${vfrChar}${catChar}`;
-  // reqalt — "R{flight level}" else type (Aircraft.cs:432-440)
+  // ── type / reqalt — Aircraft.cs:430-450 ─────────────────────────────────
+  let type;
+  if (!fp?.AircraftType) type = `${String((dbSpeed / 10) | 0).padStart(2, "0")}${vfrchar}${catchar}`;
+  else if (fp.AircraftType.trim() !== "") type = fp.AircraftType.padEnd(4);
+  else type = `${String((dbSpeed / 10) | 0).padStart(2, "0")}${vfrchar}${catchar}`;
   const reqalt = (fp?.RequestedAltitude > 0)
-    ? "R" + String(Math.floor(fp.RequestedAltitude / 100)).padStart(3, "0")
+    ? "R" + String((fp.RequestedAltitude / 100) | 0).padStart(3, "0")
     : type;
 
-  // ── Build all 3 FDB variants ───────────────────────────────────────────
-  // Per CRC docs § Data Blocks, line 2 rotates three variants:
-  //   Variant 1: altitude + handoff + ground speed + flight rules + category
-  //   Variant 2: scratchpad #1 + handoff + AIRCRAFT TYPE
-  //   Variant 3: scratchpad #2 + handoff + REQUESTED ALTITUDE (R-prefix)
-  // The WPF Aircraft.RedrawDataBlock has variants 2/3 swapped relative to
-  // CRC docs (reqalt on variant 2, type on variant 3); we follow CRC for
-  // clearer info display since each variant shows visibly different data
-  // even when fields fall back. Identical-content collapse still respected
-  // (yscratch2 length=4 collapse from Aircraft.cs:443-449).
-  // Format (per CRC visual reference): "LLL H RR C" or "LLL H TTTT"
-  // where LLL=3-char left, H=handoff or space, RR=2-char speed, C=1-char
-  // wake/IFR cat. For aircraft type / requested altitude variants, the
-  // right side is 4 chars (no extra space). All variants pad to 8 chars
-  // so the data block doesn't visually resize as ClockPhase rotates.
-  // FDB line-2 variants — exact WPF composition (Aircraft.cs:436-444):
-  //   phase0: altstring + handoff + speed/10 + vfr + cat
-  //   phase1: yscratch  + handoff + reqalt
-  //   phase2: yscratch2 (+type, with the scratchpad2 "+" 4-char collapse)
-  const speedField = `${speed10}${vfrChar}${catChar}`;
-  const fdb1line2 = `${altstring}${handoffChar}${speedField} `;
-  const fdb2line2 = `${yscratch}${handoffChar}${reqalt} `;
+  // ── FDB line-2 variants — Aircraft.cs:452-460 ───────────────────────────
+  // EXACT DGScope composition. Variant 3 deliberately drops handoffchar in
+  // the yscratch2.Length===4 branch (cs:458 `yscratch2 + type`); previous
+  // port had a deviation here, removed.
+  const speed10 = String((dbSpeed / 10) | 0).padStart(2, "0");
+  const fdb1line2 = `${altstring}${handoffchar}${speed10}${vfrchar}${catchar} `;
+  const fdb2line2 = `${yscratch}${handoffchar}${reqalt} `;
   let fdb3line2;
-  // Aircraft.cs:441-444 literally drops the handoff char in the
-  // yscratch2.Length==4 branch (`yscratch2 + type` — no handoffchar).
-  // User-observed STARS scopes keep the handoff char visible in EVERY
-  // ClockPhase variant. Documented deviation: include handoffChar in
-  // all three branches so a track in handoff doesn't blink its line-2
-  // char in/out every ~7s as the variant rotates past phase 2.
-  if (!yscratch2 || !yscratch2.trim()) fdb3line2 = `${yscratch}${handoffChar}${type} `;
-  else if (yscratch2.length === 4)     fdb3line2 = `${yscratch2}${handoffChar}${type}`;
-  else                                  fdb3line2 = `${yscratch2}${handoffChar}${type} `;
+  if (!yscratch2)                  fdb3line2 = `${yscratch}${handoffchar}${type} `;
+  else if (yscratch2.length === 4) fdb3line2 = `${yscratch2}${type}`;            // cs:458 — no handoffchar
+  else                              fdb3line2 = `${yscratch2}${handoffchar}${type} `;
 
-  if (mode === "FDB") {
-    // Line 1 — Aircraft.cs:448-489:
-    //   if (FlightPlanCallsign && !ShowCallsignWithNoSquawk) → callsign
-    //   else if (Squawk != null)                              → squawk
-    //   else                                                  → ""
+  // ── Mode (FDB / LDB) — Aircraft.cs:464 ─────────────────────────────────
+  // DGScope: `if (FDB || ShowCallsignWithNoSquawk)` else LDB. We compute
+  // FDB via dataBlockMode (handles Owned / QuickLook / per-aircraft toggle).
+  const isFdb = dataBlockMode(t, fp) === "FDB" || t.ShowCallsignWithNoSquawk;
+  const lines = [];
+
+  if (isFdb) {
+    // ── FDB line 1 — Aircraft.cs:466-505 ─────────────────────────────────
+    //   FlightPlanCallsign && !ShowCallsignWithNoSquawk → callsign
+    //   else Squawk → squawk
+    //   else ""
     let line1 = "";
-    if (fp?.Callsign) line1 = fp.Callsign;
+    if (fp?.Callsign && !t.ShowCallsignWithNoSquawk) line1 = fp.Callsign;
     else if (t.Squawk) line1 = t.Squawk;
     lines.push(line1);
-    // Line 2 — Aircraft.cs:497-499. ClockPhase picks one of 3 variants.
-    const variants = [fdb1line2, fdb2line2, fdb3line2];
-    lines.push(variants[ClockPhase.phase] || fdb1line2);
-    // Line 3 — Aircraft.cs:500-521 priority:
-    //   AssignedSquawk mismatch  → "{squawk} {assigned}"  (cs:503-507)
-    //   else if ATPAMileageNow   → mileage.ToString("0.00")  (cs:509-514)
-    //   else                     → " "  (blank)
-    const assigned = fp?.AssignedSquawk
-      ? String(fp.AssignedSquawk).padStart(4, "0")
-      : "";
-    if (assigned && t.Squawk && t.Squawk !== assigned) {
-      lines.push(`${t.Squawk} ${assigned}`);
-    } else if (t.ATPAMileageNow != null) {
-      lines.push(Number(t.ATPAMileageNow).toFixed(2));
+
+    // ── FDB line 2 — Aircraft.cs:511-515 (when FDB), else cs:541-554 ─────
+    if (dataBlockMode(t, fp) === "FDB") {
+      const variants = [fdb1line2, fdb2line2, fdb3line2];
+      lines.push(variants[ClockPhase.phase] ?? fdb1line2);
+
+      // ── FDB line 3 — Aircraft.cs:516-537 ─────────────────────────────
+      //   AssignedSquawk mismatch → "{squawk} {assigned}"
+      //   else if ATPAMileageNow → mileage.toFixed(2)
+      //   else                   → " "
+      const assigned = fp?.AssignedSquawk ? String(fp.AssignedSquawk).padStart(4, "0") : "";
+      if (assigned && t.Squawk !== assigned) lines.push(`${t.Squawk ?? ""} ${assigned}`);
+      else if (t.ATPAMileageNow != null)     lines.push(Number(t.ATPAMileageNow).toFixed(2));
+      else                                    lines.push(" ");
     } else {
-      lines.push(" ");
+      // ShowCallsignWithNoSquawk but not FDB — Aircraft.cs:541-554.
+      // Line 2 is the altstring + handoff + vfr + cat triplet (no time-share).
+      lines.push(`${altstring}${handoffchar}${vfrchar}${catchar}`);
+      // ── Line 3 — Aircraft.cs:556-579 ──────────────────────────────────
+      // ShowCallsignWithNoSquawk && Callsign && !Associated → callsign
+      // else (length<3) → " " padding
+      if (t.ShowCallsignWithNoSquawk && t.Callsign && !fp?.Owner) lines.push(t.Callsign);
+      else                                                          lines.push(" ");
     }
-  } else if (mode === "PDB") {
-    // PDB — associated track owned by ANOTHER controller. Per CRC docs
-    // § Data Blocks: "Line-2 content only (altitude / ground speed
-    // time-sharing with scratchpad and aircraft type)". NO callsign on
-    // line 1 — that's FDB. PDB is a single line rotating the same three
-    // variants FDB shows on line 2 (per ClockPhase).
-    const variants = [fdb1line2, fdb2line2, fdb3line2];
-    lines.push(variants[ClockPhase.phase] || fdb1line2);
-  } else { // LDB — Aircraft.cs:565-613. THREE branches:
-    if (t.ShowCallsignWithNoSquawk) {
-      // Aircraft.cs:575-593 — F1 beacon-readout 3-line variant.
-      const sq = t.Squawk || "";
-      const cs = fp?.Callsign || "";
-      lines.push(sq);
-      lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
-      lines.push(cs);
-    } else if (prefSet.LdbBeaconCodesInhibited) {
-      // Aircraft.cs:571-573 — BCB inhibited. Always 3 lines (altitude +
-      // 2 blanks); the blanks preserve the data-block bbox so adjacent
-      // tracks don't reflow when the BCB toggles.
-      lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+  } else {
+    // ── LDB — Aircraft.cs:581-630 ───────────────────────────────────────
+    if (prefSet.LdbBeaconCodesInhibited && !t.ShowCallsignWithNoSquawk) {
+      // BCB inhibited (cs:584-589): altitude line + 2 padding lines.
+      lines.push(`${altstring}${handoffchar}${vfrchar}${catchar}`);
       lines.push("     ");
       lines.push("     ");
+    } else if (t.ShowCallsignWithNoSquawk) {
+      // F1 beacon readout (cs:591-609): squawk + altitude + callsign.
+      lines.push(t.Squawk ?? "");
+      lines.push(`${altstring}${handoffchar}${vfrchar}${catchar}`);
+      lines.push(t.Callsign ?? "");
     } else {
-      // Aircraft.cs:595-613 — normal LDB. Always 3 lines (squawk,
-      // altitude, blank). Blank line 3 padded so colour-tier height
-      // stays constant across LDB <-> PDB <-> FDB toggles.
-      lines.push(t.Squawk || "");
-      lines.push(`${altstring}${handoffChar}${vfrChar}${catChar}`);
+      // Normal LDB (cs:611-628): squawk + altitude + blank.
+      lines.push(t.Squawk ?? "");
+      lines.push(`${altstring}${handoffchar}${vfrchar}${catchar}`);
       lines.push("     ");
     }
   }
   return lines;
 }
 
-// dataBlockMode — direct port of Aircraft.FDB getter + fdb() helper, with
-// the CRC STARS docs' PDB tier added for associated-but-not-owned tracks.
+// dataBlockMode — 1:1 port of Aircraft.FDB getter (Aircraft.cs:119-136).
+// Returns "FDB" or "LDB". DGScope has no PDB tier — non-owned associated
+// tracks render as LDB (squawk + altitude). The previous PDB invention was
+// removed; if you want callsigns on associated tracks, click them to toggle
+// FDB (ProcessCommand fall-through at cs:1438-1450 — `plane.FDB = !plane.FDB`).
 //   Aircraft.cs:119-136 FDB getter:
 //     if (Owned && !QuickLook) _fdb = true   (owned tracks auto-promote)
 //     else if (QuickLook)      return true   (QL list always FDB)
@@ -1121,22 +1111,11 @@ function dataBlockMode(t, fp) {
   if (associated && (ql.includes("ALL") || ql.includes("ALL+"))) return "FDB";
   if (fp?.Owner && (ql.includes(fp.Owner) || ql.includes(fp.Owner + "+"))) return "FDB";
   if (prefSet.QuickLookAll) return "FDB";   // bare Key.Q toggle (cs:3308-3310)
-  // No FP — unassociated track, true LDB (Aircraft.cs render path).
-  if (!fp) return "LDB";
-  // Owned (PositionInd == me) OR inbound handoff (PendingHandoff == me)
-  // — both flip Owned bool true (RadarWindow.cs:1085), auto-promoting to FDB
-  // via Aircraft.FDB getter (cs:119-136).
-  const me = ownTcp();
-  if (me) {
-    if (fp.Owner === me) return "FDB";
-    if (fp.PendingHandoff === me) return "FDB";
-  }
-  // Associated but owned by another position → PDB (callsign + altitude).
-  // Per CRC docs § Data Blocks. Observer mode (no me) falls here too: every
-  // associated track gets the partial data block so callsigns are visible
-  // without forcing every block to full FDB animation.
-  if (fp.Callsign) return "PDB";
-  return "LDB";                                                       // associated but no callsign → still beacon code
+  // Everything else → LDB. DGScope's FDB getter (Aircraft.cs:119-136) only
+  // returns true for Owned / QuickLook / ForceQuickLook / stored _fdb. The
+  // per-aircraft _fdb is toggled by clicking a non-owned track (cs:1438-1450
+  // ProcessCommand fall-through); we model that with t._forcedMode above.
+  return "LDB";
 }
 
 // Leader-direction offset (RadarWindow.cs OffsetDatablockLocation, ~5750+).

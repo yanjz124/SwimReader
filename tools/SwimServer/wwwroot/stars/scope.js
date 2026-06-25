@@ -829,57 +829,54 @@ function tickHistory(t, posNow) {
 }
 
 function drawHistory(t) {
+  // History rendering per RadarWindow.cs:6171-6175 (RadarType.FUSED, history
+  // branch). Each TargetReturn in aircraft.History is a small filled circle
+  // of size FMATargetSymbols.Radius. Color = target.ForeColor (ReturnColor)
+  // modulated by Intensity when PrimaryFade is true (cs:298 default false;
+  // PrimaryReturn.cs:74-85 multiplies alpha by pow(initialAlpha, Intensity)).
+  // Drop after cs:6073: index >= HistoryNum is culled.
   if (!t._history || t._history.length === 0) return;
   const max = Math.min(t._history.length, prefSet.HistoryNum);
   for (let i = 0; i < max; i++) {
-    const c = HISTORY_COLORS[Math.min(i, HISTORY_COLORS.length - 1)];
-    ctx.fillStyle = adjusted(c, prefSet.Brightness.History);
     const p = geoToScreen(t._history[i]);
     if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
+    // HistoryFade is a port-side choice — DGScope default is no fade
+    // (PrimaryFade=false). We use the gradient palette so older trails
+    // look correctly dimmer than fresh ones (real STARS uses a hardware
+    // intensity fade we can't easily replicate). Documented deviation.
+    const c = HISTORY_COLORS[Math.min(i, HISTORY_COLORS.length - 1)];
+    ctx.fillStyle = adjusted(c, prefSet.Brightness.History);
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);   // filled circle, FMATargetSymbols.Radius=3 (cs:616,6141-6143)
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
-// ── PTL (RadarWindow.cs:PTL.End1/End2) ──────────────────────────────────────
-// Predicted Track Line: from current pos, project along GroundTrack for
-// PrefSet.PTLLength minutes at GroundSpeed knots. Only drawn when:
-//   - PTLAll is on (all tracks), OR
-//   - PTLOwn is on AND this track's Owner matches us (Phase 8 will wire this),
-//     OR per-track ShowPTL flag.
-// Diagnostic counters so a misbehaving PTL gate is visible from the
-// console. Resets to zero every render frame; logged once per 5 seconds
-// when window.STARS_DEBUG_PTL = true.
-window._ptlDebug = window._ptlDebug || { eligible: 0, drawn: 0, noTrack: 0, noOwn: 0, lastLog: 0 };
-
 function drawPTL(t, posNow) {
+  // PTL — Aircraft.PTL.End1/End2 set in RadarWindow.cs:5591-5593, rendered
+  // in cs:6323-6326.
+  //   End1     = current Swept location
+  //   End2     = End1 projected (Speed/60 * PTLLength) NM along SweptTrack
+  //   ptldist  = (SweptSpeed / 60) * PrefSet.PTLLength    (NM)
+  //   gate     = PTLLength > 0 && (ShowPTL || (Owned && PTLOwn) || (FDB && PTLAll))
+  //   color    = AdjustedColor(RBLColor, Brightness.Tools)
   if (!posNow) return;
-  if (!(prefSet.PTLLength > 0)) return;                          // cs:6291 PTLLength gate
-  if (t.GroundSpeed == null || t.GroundSpeed < 1) return;        // no PTL on stationary track
-  if (t.GroundTrack == null) { window._ptlDebug.noTrack++; return; }
-  window._ptlDebug.eligible++;
-  // RadarWindow.cs:6291: ShowPTL || (Owned && PTLOwn) || (FDB && PTLAll)
-  //   Owned (cs:1085) = PositionInd==me OR PendingHandoff==me
-  //   FDB   = dataBlockMode(...) === "FDB"
-  // Single source: Handoff.isOwned (which normalises case + trims so a
-  // user signing in "1n" still matches TAIS-published "1N").
+  if (!(prefSet.PTLLength > 0)) return;
+  if (t.GroundSpeed == null || t.GroundSpeed < 1) return;        // no PTL on stationary
+  if (t.GroundTrack == null) return;
   const fp = trackToFp.get(t.Guid);
-  const owned = window.Handoff && window.Handoff.isOwned(t, fp);
-  const isFdb = (typeof dataBlockMode === "function") && dataBlockMode(t, fp) === "FDB";
-  const enable = t._showPtl ||
-    (owned && prefSet.PTLOwn) ||
-    (isFdb && prefSet.PTLAll);
-  if (!enable) { window._ptlDebug.noOwn++; return; }
-  window._ptlDebug.drawn++;
+  const Owned = window.Handoff && window.Handoff.isOwned(t, fp);
+  const FDB   = (typeof dataBlockMode === "function") && dataBlockMode(t, fp) === "FDB";
+  const ShowPTL = !!t._showPtl;
+  if (!(ShowPTL || (Owned && prefSet.PTLOwn) || (FDB && prefSet.PTLAll))) return;
   const distNM = (t.GroundSpeed * prefSet.PTLLength) / 60;
   const θ = t.GroundTrack * Math.PI / 180;
   const dLat = (distNM * Math.cos(θ)) / 60;
   const latFactor = Math.cos(posNow.Latitude * Math.PI / 180);
   const dLon = (distNM * Math.sin(θ)) / (60 * latFactor);
-  const end = { Latitude: posNow.Latitude + dLat, Longitude: posNow.Longitude + dLon };
-  const p1 = geoToScreen(posNow), p2 = geoToScreen(end);
-  // WPF: PTL drawn in RBLColor (white) at Brightness.Tools (RadarWindow.cs:6293).
+  const p1 = geoToScreen(posNow);
+  const p2 = geoToScreen({ Latitude: posNow.Latitude + dLat,
+                           Longitude: posNow.Longitude + dLon });
   ctx.strokeStyle = adjusted(COLORS.RBL, prefSet.Brightness.Tools);
   ctx.lineWidth = 1;
   ctx.beginPath();

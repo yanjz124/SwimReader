@@ -1194,47 +1194,54 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const blockWidth = Math.max(...lines.map(l => l.length)) * charWidth;
   const blockHeight = lines.length * charHeight;
 
-  // Block position per direction — Aircraft.cs:5773-5828 exact branching.
-  // Note: W/NW/SW subtract the block width because blockLocation is the
-  // top-LEFT corner; for left-pointing leaders that means start with the
-  // right edge at posLeft-offset and subtract blockWidth.
+  // Block position per direction — Aircraft.cs:5773-5828 verbatim.
+  // blockLocation starts at (LocationF.X, LocationF.Y) per cs:5768-5769;
+  // each case overrides only the axis the direction affects. For N/S the
+  // X stays at target center (block extends RIGHT from target.X, NOT
+  // centered horizontally — DGScope's actual behavior per the commented-
+  // out `blockLocation.X = …Right` at cs:5775). For E/W the Y stays at
+  // target.Y (block extends DOWN from target.Y). Diagonals override both.
+  // W/NW/SW subtract the widest of DataBlock/DataBlock2/DataBlock3 (cs:
+  // 5786-5792) — we approximate with our single computed blockWidth since
+  // we don't track per-variant sizes.
   let blockX = screen.x, blockY = screen.y;
   switch (dir) {
-    case 2: /* N  */ blockY = posBottom + dataBlockOffset; blockX = screen.x - blockWidth / 2; break;
-    case 8: /* S  */ blockY = posTop    - dataBlockOffset - blockHeight; blockX = screen.x - blockWidth / 2; break;
-    case 6: /* E  */ blockX = posRight  + dataBlockOffset; blockY = screen.y - blockHeight / 2; break;
-    case 4: /* W  */ blockX = posLeft   - dataBlockOffset - blockWidth; blockY = screen.y - blockHeight / 2; break;
+    case 2: /* N  */ blockY = posBottom + dataBlockOffset; break;
+    case 8: /* S  */ blockY = posTop    - dataBlockOffset; break;
+    case 6: /* E  */ blockX = posRight  + dataBlockOffset; break;
+    case 4: /* W  */ blockX = posLeft   - dataBlockOffset - blockWidth; break;
     case 3: /* NE */ blockX = posRight  + dataBlockDiagonalOffset;
                      blockY = posBottom + dataBlockDiagonalOffset; break;
     case 9: /* SE */ blockX = posRight  + dataBlockDiagonalOffset;
-                     blockY = posTop    - dataBlockDiagonalOffset - blockHeight; break;
+                     blockY = posTop    - dataBlockDiagonalOffset; break;
     case 1: /* NW */ blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
                      blockY = posBottom + dataBlockDiagonalOffset; break;
     case 7: /* SW */ blockX = posLeft   - dataBlockDiagonalOffset - blockWidth;
-                     blockY = posTop    - dataBlockDiagonalOffset - blockHeight; break;
-    default: blockX = posRight + dataBlockOffset; blockY = screen.y - blockHeight / 2;
+                     blockY = posTop    - dataBlockDiagonalOffset; break;
   }
   // cs:5862 — blockLocation.Y -= dataBlockOffsetScale * 2.5f
-  // Vertical baseline adjustment so the connecting line lands on the data-block
-  // first-line midpoint instead of the top edge.
   blockY -= dataBlockOffsetScale * 2.5;
 
-  // Leader line — cs:5863-5899. Start point is on the EDGE of the
-  // position symbol (not the center); end point is the block corner
-  // nearest the target (cs:5900-5912 — ConnectingLine.End).
+  // Leader start — Aircraft.cs:5863-5899. Per direction, anchored to a
+  // specific edge of the position symbol (cardinal mid-edge, diagonal corner).
   let leaderStartX = screen.x, leaderStartY = screen.y;
-  let leaderEndX, leaderEndY;
   switch (dir) {
-    case 2: /* N  */ leaderStartY = posBottom; leaderEndX = blockX + blockWidth / 2; leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
-    case 8: /* S  */ leaderStartY = posTop;    leaderEndX = blockX + blockWidth / 2; leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
-    case 6: /* E  */ leaderStartX = posRight;  leaderEndX = blockX;                  leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
-    case 4: /* W  */ leaderStartX = posLeft;   leaderEndX = blockX + blockWidth;     leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
-    case 3: /* NE */ leaderStartX = posRight;  leaderStartY = posBottom; leaderEndX = blockX;                  leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
-    case 9: /* SE */ leaderStartX = posRight;  leaderStartY = posTop;    leaderEndX = blockX;                  leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
-    case 1: /* NW */ leaderStartX = posLeft;   leaderStartY = posBottom; leaderEndX = blockX + blockWidth;     leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
-    case 7: /* SW */ leaderStartX = posLeft;   leaderStartY = posTop;    leaderEndX = blockX + blockWidth;     leaderEndY = blockY + dataBlockOffsetScale * 2.5; break;
-    default: leaderEndX = blockX; leaderEndY = blockY + dataBlockOffsetScale * 2.5;
+    case 2: /* N  */ leaderStartY = posBottom; break;
+    case 8: /* S  */ leaderStartY = posTop;    break;
+    case 6: /* E  */ leaderStartX = posRight;  break;
+    case 4: /* W  */ leaderStartX = posLeft;   break;
+    case 3: /* NE */ leaderStartX = posRight; leaderStartY = posBottom; break;
+    case 9: /* SE */ leaderStartX = posRight; leaderStartY = posTop;    break;
+    case 1: /* NW */ leaderStartX = posLeft;  leaderStartY = posBottom; break;
+    case 7: /* SW */ leaderStartX = posLeft;  leaderStartY = posTop;    break;
   }
+  // Leader end — ConnectingLine.End at cs:5900-5912. End.X = block right
+  // edge when block is left of target (cs:5900-5907), else block X.
+  // End.Y = blockY + dataBlockOffsetScale * 2.5 (cs:5904/5911) — this
+  // reverses the `blockY -= 2.5*scale` above, putting End on the block's
+  // first-line midpoint.
+  const leaderEndX = (blockX < screen.x) ? (blockX + blockWidth) : blockX;
+  const leaderEndY = blockY + dataBlockOffsetScale * 2.5;
 
   // padLeft = block extends to the left of the target (text right-aligned to
   // hug the leader-side edge).
@@ -1358,43 +1365,34 @@ function drawDataBlockAndLeader(t, fp, posNow) {
 //        - else "◇" if PrimaryOnly
 //        - else "*"
 function positionSymbolText(t, fp) {
-  // Aircraft.cs:616-623 verbatim priority chain:
-  //   if (!string.IsNullOrEmpty(PositionInd)) → PositionInd.Substring(-1)
-  //   else if (isSquawkSelected())           → selectedSquawkChar
-  //   else if (PrimaryOnly)                  → ◇
-  //   else                                   → *
-  // Our data model: server populates fp.Owner from the controlling sector
-  // (equivalent to DGScope's per-aircraft PositionInd). t.PositionInd is
-  // present on STDDS tracks. Check both, fp first (newer, OH-driven).
-  const positionInd = fp?.Owner || t.PositionInd;
-  if (positionInd && positionInd.length > 0) return positionInd.slice(-1);
-
-  // isSquawkSelected — Aircraft.cs:633-643. F B <squawk> command writes
-  // into SSA.selectedBeaconCodes; selectedSquawkChar comes from <Selected-
-  // BeaconCodeChar> in the profile (PrefSet.cs / RadarWindow.cs:1040).
+  // Aircraft.cs:632-639 verbatim:
+  //   if (!IsNullOrEmpty(PositionInd))  → PositionInd.Last().ToString()
+  //   else if (isSquawkSelected())      → selectedSquawkChar
+  //   else if (PrimaryOnly)             → "◇"
+  //   else                              → "*"
+  // Our data split: PositionInd source = fp.Owner (FP-published cps) ||
+  // t.PositionInd (TAIS track-side).
+  const PositionInd = fp?.Owner || t.PositionInd;
+  if (PositionInd && PositionInd.length > 0) return PositionInd.slice(-1);
+  // isSquawkSelected — Aircraft.cs:649-659. selectedSquawks list is set
+  // via F B <squawk>; selectedSquawkChar from PrefSet.SelectedBeaconCodeChar
+  // (defaults to ◽ U+25FD).
   const sel = window.SSA?.selectedBeaconCodes;
   if (sel && t.Squawk) {
     for (const s of sel) {
       if (t.Squawk.startsWith(s)) {
-        // SelectedBeaconCodeChar default 9633 = □ (white square). RDU
-        // profile sets it explicitly; we read either from prefSet or
-        // fall back to the default.
         const code = prefSet.SelectedBeaconCodeChar;
         return Number.isFinite(code) ? String.fromCharCode(code) : "□";
       }
     }
   }
-
   // PrimaryOnly — Aircraft.cs:145-151:
   //   IsNullOrEmpty(Squawk) && ModeSCode == 0 &&
   //   (Altitude == null || Altitude.AltitudeType == AltitudeType.Unknown)
-  // AltitudeType enum: Unknown = 2. The previous port only checked null
-  // ReportedAltitude, missing tracks whose feed carries an Unknown-type
-  // altitude object (still primary-only per spec).
-  const noBeacon = !t.Squawk || t.Squawk === "0000";
-  const noModeS  = !t.ModeSCode;
+  const noBeacon   = !t.Squawk || t.Squawk === "0000";
+  const noModeS    = !t.ModeSCode;
   const altUnknown = (t.Altitude == null) || (t.Altitude.AltitudeType === 2);
-  if (noBeacon && noModeS && altUnknown) return "◇";   // ◇
+  if (noBeacon && noModeS && altUnknown) return "◇";
   return "*";
 }
 
@@ -1413,22 +1411,23 @@ function drawPosition(t, posNow) {
   ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  // ── PositionIndicator label — RadarWindow.cs:6337-6342 + 5605-5615 ──────
-  // Only FDB tracks render the position glyph (cs:6340: `if (FDB && acSet
-  // .Contains(...))  DrawLabel(x)`). Non-FDB tracks show only the blue dot.
-  // Color (cs:5610-5615): Marked → SelectedColor, Owned → OwnedColor, else
-  // → DataBlockColor.  Brightness (cs:6387-6399): PositionSymbols when
-  // Owned+IsPositionIndicator, else fall through to FullDataBlocks /
-  // OtherFDBs / LimitedDataBlocks chain — PositionIndicator only renders
-  // for FDB so OtherFDBs is the right "else" here.
-  if (dataBlockMode(t, fp) !== "FDB") return;
+  // ── PositionIndicator label — DGScope draws for ALL tracks via TWO loops:
+  //   cs:6277-6285 (!FDB && acSet.Contains)  → drawn BEFORE data blocks
+  //   cs:6337-6342 ( FDB && acSet.Contains)  → drawn AFTER data blocks
+  // On flat canvas the layer order doesn't matter; combine into one path.
+  // Color tier (cs:5610-5615): Marked → SelectedColor, Owned → OwnedColor,
+  // else → DataBlockColor. Brightness (cs:6387-6399): PositionSymbols
+  // when Owned+IsPositionIndicator (only happens when Owned ⇒ FDB), else
+  // OtherFDBs for FDB tracks and LimitedDataBlocks for LDB tracks.
   const Owned = window.Handoff && window.Handoff.isOwned(t, fp);
+  const FDB   = dataBlockMode(t, fp) === "FDB";
   let color;
-  if (t._marked) color = COLORS.Selected;
-  else if (Owned) color = COLORS.Owned;
-  else           color = COLORS.DataBlock;
+  if (t._marked)   color = COLORS.Selected;
+  else if (Owned)  color = COLORS.Owned;
+  else             color = COLORS.DataBlock;
   const bright = Owned ? prefSet.Brightness.PositionSymbols
-                       : prefSet.Brightness.OtherFDBs;
+                       : FDB ? prefSet.Brightness.OtherFDBs
+                             : prefSet.Brightness.LimitedDataBlocks;
   ctx.fillStyle = adjusted(color, bright);
   ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
   ctx.textBaseline = "middle";

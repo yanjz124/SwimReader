@@ -694,7 +694,8 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
     setResponse("FORMAT");
     return;
   }
-  // F L  leader direction (2206-2314) — TODO(verify InvertKeyboard handling)
+  // F L  leader direction (2206-2314) — InvertKeyboard is honored via
+  // prefSet.InvertKeyboard loaded by profile.js:223 into leaderDirFromDigit.
   if (sub === "L") {
     if (k.length <= 2) return;
     let dirpos = 2, pos = null;

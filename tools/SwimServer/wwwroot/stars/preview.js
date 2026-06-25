@@ -598,12 +598,15 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
       const miles = parseFloat(k.slice(2).join(""));
       if (!Number.isFinite(miles)) return;                            // decimal.TryParse fail = silent (cs:1809)
       if (miles > 0 && miles <= 30) {
-        clicked.TPA = { type: "JRing", miles, color: COLORS.TPA, showSize: window.starsState.TPASize };
+        // drawJRings reads t._jRing (number = NM radius). Matches the
+        // MCA shortcut at window.starsJRing (scope.js:~1741). DGScope
+        // stores it on plane.TPA but our renderer uses the simpler scalar.
+        clicked._jRing = miles;
       } else {
         setResponse("FORMAT");                                        // cs:1817
       }
     } else {
-      clicked.TPA = null;                                             // cs:1824
+      clicked._jRing = 0;                                             // cs:1824 — clear
     }
     return;
   }
@@ -628,12 +631,13 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
   // **J / **P / **<pos> (cs:1860-1889)
   if (sub === "*" && k.length > 2) {
     const c = k[2];
-    // **J — clear every TPA whose Type == JRing (cs:1865-1868).
+    // **J — clear every J-Ring (cs:1865-1868).
     if (c === "J") {
-      for (const t of tracks.values()) if (t.TPA?.type === "JRing") t.TPA = null;
+      for (const t of tracks.values()) t._jRing = 0;
       return;
     }
-    // **P — clear every TPA whose Type == PCone (cs:1870-1873).
+    // **P — clear every PCone (cs:1870-1873). PCone render not yet ported;
+    // the state field is t.TPA when/if PCone draws land.
     if (c === "P") {
       for (const t of tracks.values()) if (t.TPA?.type === "PCone") t.TPA = null;
       return;

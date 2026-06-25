@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace SwimServer;
 
@@ -178,5 +179,71 @@ sealed class SectorTracker
                 var slash = kv.Key.from.IndexOf('|');
                 return (kv.Key.from[..slash], kv.Key.from[(slash + 1)..], kv.Value);
             });
+    }
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+    // The ring is in-memory only by default, so a sfdps-eram restart (from
+    // auto-deploy or otherwise) wipes the timeline. Save() writes the live
+    // ring buffers + transition counts to disk; Load() restores them on
+    // startup so the /sectors page survives restarts. JSON wire format kept
+    // small via short field names.
+    sealed class Persisted
+    {
+        public int WritePos { get; set; }
+        public Dictionary<string, int[]> History { get; set; } = new();
+        // Flatten the transition tuple key as "FROM>>TO" — JSON dict keys
+        // must be strings.
+        public Dictionary<string, int> Trans { get; set; } = new();
+    }
+
+    public void Save(string dir)
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var p = new Persisted { WritePos = _writePos };
+            foreach (var kv in _history) p.History[kv.Key] = kv.Value;
+            foreach (var kv in _trans)   p.Trans[$"{kv.Key.from}>>{kv.Key.to}"] = kv.Value;
+            var path = Path.Combine(dir, "sectors.json");
+            var tmp  = path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(p));
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[SectorTracker] save failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    public void Load(string dir)
+    {
+        try
+        {
+            var path = Path.Combine(dir, "sectors.json");
+            if (!File.Exists(path)) return;
+            var p = JsonSerializer.Deserialize<Persisted>(File.ReadAllText(path));
+            if (p is null) return;
+            _writePos = p.WritePos;
+            foreach (var kv in p.History)
+            {
+                // Defensive: clamp to expected buffer length so a stale file
+                // from a different HistorySamples value doesn't crash.
+                if (kv.Value is null) continue;
+                var buf = new int[HistorySamples];
+                Array.Copy(kv.Value, 0, buf, 0, Math.Min(kv.Value.Length, HistorySamples));
+                _history[kv.Key] = buf;
+            }
+            foreach (var kv in p.Trans)
+            {
+                var sep = kv.Key.IndexOf(">>", StringComparison.Ordinal);
+                if (sep <= 0) continue;
+                _trans[(kv.Key[..sep], kv.Key[(sep + 2)..])] = kv.Value;
+            }
+            Console.WriteLine($"[SectorTracker] loaded {_history.Count} sectors, {_trans.Count} transitions, writePos={_writePos}");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[SectorTracker] load failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 }

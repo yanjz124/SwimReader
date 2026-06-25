@@ -194,14 +194,23 @@
 
     // 1. ACCEPT — cs:2712-2717
     if (ph && ph === meTcp) {
-      if (fp) { fp.Owner = meTcp; fp.PendingHandoff = null; }
+      if (fp) {
+        fp.Owner = meTcp; fp.PendingHandoff = null;
+        // Bump freshness so mergedFp's "newest STATE wins" rule prefers
+        // our local mutation over any stale sibling. Without this, a
+        // sibling fp with an old Owner=other can shadow the accept and
+        // the data block flips to PDB green instead of FDB white.
+        // DGScope has no sibling merge (one Aircraft per plane) so this
+        // hook is a port-only necessity.
+        fp._updatedAt = Date.now();
+      }
       plane._owned = true;
       plane._flashing = false;
       return;
     }
     // 2. RECALL — cs:2718-2722
     if (pi === meTcp && ph) {
-      if (fp) fp.PendingHandoff = null;
+      if (fp) { fp.PendingHandoff = null; fp._updatedAt = Date.now(); }
       plane._flashing = false;
       return;
     }

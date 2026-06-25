@@ -952,12 +952,14 @@ function processImpliedLocal(plane) {
   if (fp.PendingHandoff && fp.PendingHandoff === me) {
     fp.Owner = me;
     fp.PendingHandoff = null;
+    fp._updatedAt = Date.now();   // mergedFp freshness — see handoff.js
     plane._owned = true;
     return;
   }
   // 2. RECALL — cs:2718-2722. Clear PendingHandoff. No preview text in DGScope.
   if (fp.Owner === me && fp.PendingHandoff) {
     fp.PendingHandoff = null;
+    fp._updatedAt = Date.now();
     return;
   }
   // 3. Clear pointout

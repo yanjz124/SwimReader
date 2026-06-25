@@ -1239,9 +1239,9 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   } else if (ownedOrInbound || t._quickLookPlus) {
     baseColor = COLORS.Owned;               // white (cs:5454-5458)
   }
-  // Inbound handoff flashes ~1 Hz — DataBlock.Flashing at cs:1086-1087.
-  // Hide the block on the off phase (~500ms).
-  if (dbFlashing && window.Handoff && window.Handoff.flashPhaseHidden()) return;
+  // Flash visual handled via dbBright above — TransparentLabel dims to
+  // half-intensity on the OFF phase rather than hiding (cs:74-87). The
+  // 750ms cadence comes from FlashTimer (TransparentLabel.cs:38).
   ctx.textBaseline = "top";
   ctx.textAlign = padLeft ? "right" : "left";
   // textX = side of the block closest to the target = block's leader-side edge.
@@ -1251,10 +1251,16 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // Brightness.DataBlock alias is only kept for renderers that haven't been
   // split yet.
   const dbMode = dataBlockMode(t, fp);
-  const dbBright = ownedOrInbound
+  const dbBrightBase = ownedOrInbound
     ? prefSet.Brightness.FullDataBlocks
     : (dbMode === "FDB" ? prefSet.Brightness.OtherFDBs
                         : prefSet.Brightness.LimitedDataBlocks);
+  // TransparentLabel.DrawColor (cs:74-87) — during the OFF half of the
+  // FlashTimer cycle, color is rendered at half intensity (gray). NOT a
+  // hide. Apply by halving the brightness multiplier; adjusted() does the
+  // RGB scaling.
+  const flashDim = dbFlashing && window.Handoff && window.Handoff.flashPhaseDim();
+  const dbBright = flashDim ? dbBrightBase * 0.5 : dbBrightBase;
   const normColor = adjusted(baseColor, dbBright);
   // CA annotation: "CA" in red on the top line, blinking until acknowledged then
   // solid. Space for it is always reserved while in conflict so the callsign
@@ -2010,6 +2016,13 @@ async function bootstrap() {
     console.error("[STARS] Failed to load facility:", e);
   }
 
+  // Restore the user's DCB-driven preference overrides AFTER profile load
+  // (so the user's customizations win over a fresh profile reload) but
+  // BEFORE applyUrlState (URL params still get the final word for things
+  // like deep-link ?r=20).
+  loadPrefsFromLocalStorage();
+  applyUrlState();
+
   // Phase 4: mount the Display Control Bar.
   mountDcb();
   // Phase 5: mount MCA / preview area.
@@ -2100,6 +2113,64 @@ function handleWxToggle(n) {
 
 function _afterPrefChange() {
   if (window.pushUrlState) window.pushUrlState();
+  savePrefsToLocalStorage();
+}
+
+// ── DCB pref persistence ──────────────────────────────────────────────────
+// Saves the full prefSet to localStorage on every DCB-driven change so the
+// scope comes back exactly as the user left it after a reload. URL params
+// still override on load (so a deep link with ?r=20 wins); profile load
+// overwrites the localStorage snapshot since the user explicitly chose a
+// profile. Excludes transient state (selected beacon codes, QL TCPs etc.)
+// which live in the SSA module and on per-track flags.
+const STARS_PREFS_KEY = "stars.prefs.v1";
+function savePrefsToLocalStorage() {
+  try {
+    const snap = {
+      Range: prefSet.Range,
+      RangeRingSpacing: prefSet.RangeRingSpacing,
+      LeaderLength: prefSet.LeaderLength,
+      HistoryNum: prefSet.HistoryNum,
+      HistoryRate: prefSet.HistoryRate,
+      PTLLength: prefSet.PTLLength,
+      PTLOwn: prefSet.PTLOwn,
+      PTLAll: prefSet.PTLAll,
+      DCBLocation: prefSet.DCBLocation,
+      DCBVisible: prefSet.DCBVisible,
+      OwnedDataBlockPosition: prefSet.OwnedDataBlockPosition,
+      UnownedDataBlockPosition: prefSet.UnownedDataBlockPosition,
+      UnassociatedDataBlockPosition: prefSet.UnassociatedDataBlockPosition,
+      AltitudeFilterAssociatedMin: prefSet.AltitudeFilterAssociatedMin,
+      AltitudeFilterAssociatedMax: prefSet.AltitudeFilterAssociatedMax,
+      AltitudeFilterUnAssociatedMin: prefSet.AltitudeFilterUnAssociatedMin,
+      AltitudeFilterUnAssociatedMax: prefSet.AltitudeFilterUnAssociatedMax,
+      LdbBeaconCodesInhibited: prefSet.LdbBeaconCodesInhibited,
+      Brightness: { ...prefSet.Brightness },
+      CharSize: { ...prefSet.CharSize },
+      ScreenCenterPoint: prefSet.ScreenCenterPoint,
+      RangeRingLocation: prefSet.RangeRingLocation,
+      InvertKeyboard: prefSet.InvertKeyboard,
+      Nexrad: prefSet.Nexrad ? { ...prefSet.Nexrad } : undefined,
+    };
+    localStorage.setItem(STARS_PREFS_KEY, JSON.stringify(snap));
+  } catch (e) { /* quota or disabled — silently skip */ }
+}
+function loadPrefsFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(STARS_PREFS_KEY);
+    if (!raw) return;
+    const snap = JSON.parse(raw);
+    // Shallow-merge scalars; deep-merge sub-objects so a new default field
+    // added later isn't wiped by the saved snapshot.
+    for (const k of Object.keys(snap)) {
+      if (snap[k] == null) continue;
+      if (typeof snap[k] === "object" && !Array.isArray(snap[k])) {
+        prefSet[k] = { ...prefSet[k], ...snap[k] };
+      } else {
+        prefSet[k] = snap[k];
+      }
+    }
+  } catch (e) { /* corrupt JSON — silently skip */ }
 }
 function handleNumAdjust(id, dir) {
   switch (id) {

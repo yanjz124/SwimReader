@@ -432,7 +432,8 @@ function executeCommand(line, opts = {}) {
   // Length range from cs:2343: keys[0].Length >= 4 || keys[0].Length <= 6
   // (i.e. Q + 3-5 char pos string). Fires on Enter.
   if (first === "Q" && enter && keys[0].length >= 4 && keys[0].length <= 6) {
-    const qlstring = keys[0].slice(1);                 // strip leading Q
+    // keys[0] is a char array; join into a string before strip/endsWith.
+    const qlstring = keys[0].slice(1).join("");        // strip leading Q
     const qlplus = qlstring.endsWith("+");
     const qlpos = qlplus ? qlstring.slice(0, -1) : qlstring;
     if (!qlpos) { setResponse("ILL POS"); return; }

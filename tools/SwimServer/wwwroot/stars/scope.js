@@ -968,6 +968,39 @@ const ClockPhase = {
 };
 ClockPhase.start();
 
+// buildLineZero — CRC STARS § STCA + § Special Purpose Codes. Returns the
+// space-separated flag strip rendered above the callsign:
+//   - Beacon SPCs from t.Squawk (HJ/RF/EM/MI/LL, Table 13)
+//   - Manual SPCs from t._spc (OD/ME/MF/LN, Table 14)
+//   - CA flag (t._stca), LA flag (t._msaw)
+// {text} is the full strip including unacked items. {solidText} is the strip
+// with only acknowledged items (rendered during the blink-OFF half so unacked
+// blink while acked stay solid). {allAcked} short-circuits the blink when
+// every active flag has been acknowledged.
+const BEACON_SPC = { "7500": "HJ", "7600": "RF", "7700": "EM", "7777": "MI", "7400": "LL" };
+function buildLineZero(t) {
+  const all = [];
+  const solid = [];
+  // CA — Conflict Alert (line 0 per CRC § STCA). Acknowledge via track click
+  // → t._caAcked. Blinks until acked.
+  if (t._stca) { all.push("CA"); if (t._caAcked) solid.push("CA"); }
+  // LA — Low Altitude / MSAW (line 0 per CRC § MSAW). Detector not yet
+  // wired, but render path is ready.
+  if (t._msaw) { all.push("LA"); if (t._laAcked) solid.push("LA"); }
+  // Beacon SPC from current squawk (Table 13). Slewing the track ACKs it.
+  const beacon = BEACON_SPC[t.Squawk];
+  if (beacon) { all.push(beacon); if (t._spcAcked) solid.push(beacon); }
+  // Manual SPCs (Table 14) — controller-assigned, stored on t._spc as an
+  // array of 2-char IDs. Acked via the same slew-to-ack t._spcAcked flag.
+  if (Array.isArray(t._spc)) {
+    for (const s of t._spc) { all.push(s); if (t._spcAcked) solid.push(s); }
+  }
+  const text = all.join(" ");
+  const solidText = solid.join(" ");
+  const allAcked = text.length > 0 && solidText === text;
+  return { text, solidText, allAcked };
+}
+
 // buildDataBlock — 1:1 port of Aircraft.RedrawDataBlock (Aircraft.cs:318-630).
 // Returns the array of text lines for the active ClockPhase variant. Right-
 // alignment for W/NW/SW leader directions is handled by the caller via
@@ -1404,36 +1437,38 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   const flashDim = dbFlashing && window.Handoff && window.Handoff.flashPhaseDim();
   const dbBright = flashDim ? dbBrightBase * 0.5 : dbBrightBase;
   const normColor = adjusted(baseColor, dbBright);
-  // CA annotation: "CA" in red on the top line, blinking until acknowledged then
-  // solid. Space for it is always reserved while in conflict so the callsign
-  // doesn't jump as it blinks.
-  const caShow = t._stca && (t._caAcked || (Date.now() % 1000) < 500);
-  const caGap = ctx.measureText(" ").width;
-  const caW = ctx.measureText("CA").width + caGap;
+  // Line 0 — flags strip ABOVE the callsign for CA / LA (MSAW) and Special
+  // Purpose Codes per CRC STARS § STCA + § Special Purpose Codes:
+  //   Beacon SPCs  (auto from t.Squawk): HJ 7500 / RF 7600 / EM 7700 /
+  //                                       MI 7777 / LL 7400
+  //   Manual SPCs  (controller-assigned via t._spc): OD / ME / MF / LN
+  //   CA (t._stca)  — Conflict Alert, blinks until t._caAcked
+  //   LA (t._msaw)  — Low Altitude (MSAW), blinks until t._laAcked
+  // CRC says CA/SPC text appears on the "top line of the data block"; we
+  // render it on its own line so the callsign + altitude lines never shift
+  // horizontally when an annotation appears/blinks (the previous inline-
+  // prefix approach jiggled the callsign as CA blinked).
+  ctx.textAlign = padLeft ? "right" : "left";
+  const line0 = buildLineZero(t);
+  if (line0.text) {
+    const y = blockY - charHeight;
+    // Blink — CRC: "blinking red until acknowledged then solid red". Items
+    // with their own acked flag survive the blink test.
+    const blinkPhase = (Date.now() % 1000) < 500;
+    const showAll = line0.allAcked || blinkPhase;
+    if (showAll) {
+      ctx.fillStyle = adjusted(COLORS.Emerg, dbBright);
+      ctx.fillText(line0.text, textX, y);
+    } else if (line0.solidText) {
+      // Mixed: acked items stay solid, unacked blink (currently OFF).
+      ctx.fillStyle = adjusted(COLORS.Emerg, dbBright);
+      ctx.fillText(line0.solidText, textX, y);
+    }
+  }
   for (let i = 0; i < lines.length; i++) {
     const y = blockY + i * charHeight;
-    if (i === 0 && t._stca) {
-      if (padLeft) {                          // right-aligned: callsign at textX, CA to its left
-        ctx.fillStyle = normColor; ctx.textAlign = "right";
-        ctx.fillText(lines[0], textX, y);
-        if (caShow) {
-          ctx.fillStyle = adjusted(COLORS.Emerg, dbBright);
-          ctx.fillText("CA", textX - ctx.measureText(lines[0]).width - caGap, y);
-        }
-      } else {                                // left-aligned: CA at textX, callsign reserved-shifted
-        ctx.textAlign = "left";
-        if (caShow) {
-          ctx.fillStyle = adjusted(COLORS.Emerg, dbBright);
-          ctx.fillText("CA", textX, y);
-        }
-        ctx.fillStyle = normColor;
-        ctx.fillText(lines[0], textX + caW, y);
-      }
-    } else {
-      ctx.fillStyle = normColor;
-      ctx.textAlign = padLeft ? "right" : "left";
-      ctx.fillText(lines[i], textX, y);
-    }
+    ctx.fillStyle = normColor;
+    ctx.fillText(lines[i], textX, y);
   }
 
   // Leader line — Aircraft.ConnectingLine (RadarWindow.cs:5913).

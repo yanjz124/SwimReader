@@ -15,17 +15,22 @@ var pass = GetArg(args, "--pass") ?? Environment.GetEnvironmentVariable("SCDSCON
 var queue = GetArg(args, "--queue") ?? Environment.GetEnvironmentVariable("SCDSCONNECTION__QUEUENAME") ?? "";
 var outputDir = GetArg(args, "--output") ?? "./captures";
 var maxCount = int.Parse(GetArg(args, "--count") ?? "0"); // 0 = unlimited
+// Topic-tap mode: --topic 'STDDS/TAIS/>' subscribes directly to a topic and
+// writes one JSONL line per matched message to --jsonl. Skips queue binding
+// entirely so prod queue consumers are unaffected. Optional --src PCT
+// filters to TAIS messages where <src>PCT</src>. --secs SECS bounds runtime.
+var topic = GetArg(args, "--topic");
+var jsonlPath = GetArg(args, "--jsonl");
+var srcFilter = GetArg(args, "--src")?.ToUpperInvariant();
+var maxSecs = int.Parse(GetArg(args, "--secs") ?? "0");
 
-if (string.IsNullOrEmpty(user) || string.IsNullOrEmpty(pass) || string.IsNullOrEmpty(queue))
+if (string.IsNullOrEmpty(user) || string.IsNullOrEmpty(pass) ||
+    (string.IsNullOrEmpty(queue) && string.IsNullOrEmpty(topic)))
 {
-    Console.Error.WriteLine("Usage: SwimReader.MessageCapture --user <user> --pass <pass> --queue <queue>");
+    Console.Error.WriteLine("Usage:");
+    Console.Error.WriteLine("  Queue mode: --user U --pass P --queue Q");
+    Console.Error.WriteLine("  Topic mode: --user U --pass P --topic 'STDDS/TAIS/>' --jsonl out.jsonl [--src PCT] [--secs 300]");
     Console.Error.WriteLine("  Or set SCDSCONNECTION__USERNAME, SCDSCONNECTION__PASSWORD, SCDSCONNECTION__QUEUENAME env vars.");
-    Console.Error.WriteLine();
-    Console.Error.WriteLine("Options:");
-    Console.Error.WriteLine("  --host    SCDS host URL (default: tcps://ems2.swim.faa.gov:55443)");
-    Console.Error.WriteLine("  --vpn     Message VPN (default: STDDS)");
-    Console.Error.WriteLine("  --output  Output directory (default: ./captures)");
-    Console.Error.WriteLine("  --count   Number of messages to capture (default: 0 = unlimited)");
     return 1;
 }
 
@@ -56,7 +61,37 @@ try
         SSLValidateCertificate = false
     };
 
-    using var session = context.CreateSession(sessionProps, null,
+    var topicCount = 0;
+    var topicWait = new ManualResetEvent(false);
+    var jsonlLock = new object();
+    using var session = context.CreateSession(sessionProps,
+        // ── Topic mode: direct subscription, MessageEvent fires here ──
+        (sender, msgArgs) =>
+        {
+            if (string.IsNullOrEmpty(topic)) return;        // queue mode handler below
+            using var message = msgArgs.Message;
+            var body = ExtractBody(message);
+            if (body is null) return;
+            if (srcFilter is not null)
+            {
+                // Cheap src-filter: TAIS messages have <src>XXX</src> near root.
+                var i = body.IndexOf("<src>", StringComparison.Ordinal);
+                if (i < 0) return;
+                var j = body.IndexOf("</src>", i + 5, StringComparison.Ordinal);
+                if (j < 0) return;
+                var src = body.Substring(i + 5, j - i - 5).Trim().ToUpperInvariant();
+                if (src != srcFilter) return;
+            }
+            Interlocked.Increment(ref topicCount);
+            if (jsonlPath is not null)
+            {
+                var rx = DateTime.UtcNow.ToString("o");
+                var safe = System.Text.Json.JsonSerializer.Serialize(body);
+                lock (jsonlLock)
+                    File.AppendAllText(jsonlPath, "{\"_rx\":\"" + rx + "\",\"xml\":" + safe + "}\n");
+            }
+            if (topicCount % 200 == 0) Console.WriteLine($"[topic] {topicCount} msgs");
+        },
         (sender, eventArgs) => Console.WriteLine($"Session event: {eventArgs.Event} - {eventArgs.Info}"));
 
     var returnCode = session.Connect();
@@ -65,10 +100,33 @@ try
         Console.Error.WriteLine($"Connection failed: {returnCode}");
         return 1;
     }
-
     Console.WriteLine("Connected to SCDS successfully.");
 
-    // Bind to queue
+    // ── Topic-tap branch ──────────────────────────────────────────────
+    if (!string.IsNullOrEmpty(topic))
+    {
+        var solTopic = ContextFactory.Instance.CreateTopic(topic);
+        var sub = session.Subscribe(solTopic, true);
+        if (sub != ReturnCode.SOLCLIENT_OK && sub != ReturnCode.SOLCLIENT_IN_PROGRESS)
+        {
+            Console.Error.WriteLine($"Subscribe failed: {sub}");
+            return 1;
+        }
+        Console.WriteLine($"Subscribed to topic: {topic}");
+        if (srcFilter is not null) Console.WriteLine($"  src filter: {srcFilter}");
+        if (jsonlPath is not null) Console.WriteLine($"  writing JSONL to: {Path.GetFullPath(jsonlPath)}");
+        if (maxSecs > 0) Console.WriteLine($"  capture window: {maxSecs}s");
+
+        var ctsTopic = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; topicWait.Set(); };
+        if (maxSecs > 0) topicWait.WaitOne(TimeSpan.FromSeconds(maxSecs));
+        else topicWait.WaitOne();
+
+        Console.WriteLine($"Topic capture complete. {topicCount} matched messages.");
+        return 0;
+    }
+
+    // Bind to queue (legacy mode)
     var solQueue = ContextFactory.Instance.CreateQueue(queue);
     var flowProps = new FlowProperties { AckMode = MessageAckMode.ClientAck };
 

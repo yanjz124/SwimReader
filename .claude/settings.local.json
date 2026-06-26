@@ -174,7 +174,11 @@
       "Bash(ssh JY@JY5 \"cat /home/JY/SwimReader/tools/SwimServer/holdbar-sample-2.xml && echo && cat /home/JY/SwimReader/tools/SwimServer/holdbar-sample-3.xml && echo && cat /home/JY/SwimReader/tools/SwimServer/holdbar-sample-4.xml && echo && cat /home/JY/SwimReader/tools/SwimServer/holdbar-sample-5.xml\")",
       "WebFetch(domain:www.google.com)",
       "WebFetch(domain:nsrr.faa.gov)",
-      "WebFetch(domain:scds.swim.faa.gov)"
+      "WebFetch(domain:scds.swim.faa.gov)",
+      "Bash(ssh JY@JY5 \"sudo sed -i ''s|tools/SfdpsERAM|tools/SwimServer|g'' /etc/systemd/system/sfdps-eram.service && sudo systemctl daemon-reload && cd /home/JY/SwimReader && git pull && sudo systemctl restart sfdps-eram\")",
+      "Bash(ssh JY@JY5 \"cd /home/JY/SwimReader && git stash && git pull && sudo systemctl restart sfdps-eram\")",
+      "Bash(ssh JY@JY5 \"cd /home/JY/SwimReader && ~/.dotnet/dotnet build tools/SwimServer/SwimServer.csproj -c Release --nologo -v q 2>&1 | tail -3 && sudo systemctl restart sfdps-eram && sleep 5 && journalctl -u sfdps-eram --no-pager -n 10 2>/dev/null | tail -10\")",
+      "Bash(ssh JY@JY5 \"sudo sed -i ''s|SfdpsERAM.dll|SwimServer.dll|g'' /etc/systemd/system/sfdps-eram.service && sudo systemctl daemon-reload && sudo systemctl restart sfdps-eram && sleep 8 && journalctl -u sfdps-eram --no-pager -n 8 2>/dev/null | tail -8\")"
     ]
   }
 }

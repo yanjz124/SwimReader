@@ -100,10 +100,23 @@ public sealed class ClientConnectionManager
         {
             if (string.Equals(kvp.Value.Facility, facility, StringComparison.OrdinalIgnoreCase))
             {
-                kvp.Value.TryWriteDeletion(jsonLine, guid);
+                if (kvp.Value.TryWriteDeletion(jsonLine, guid))
+                    System.Threading.Interlocked.Increment(ref _deletionAccepted);
+                else
+                    System.Threading.Interlocked.Increment(ref _deletionRejected);
             }
         }
     }
+
+    private long _deletionAccepted;
+    private long _deletionRejected;
+
+    /// <summary>Returns (accepted, rejected) UT=2 counts since last call and
+    /// resets both. Used by a diagnostic timer to expose per-client filter
+    /// effectiveness.</summary>
+    public (long Accepted, long Rejected) DrainDeletionStats()
+        => (System.Threading.Interlocked.Exchange(ref _deletionAccepted, 0),
+            System.Threading.Interlocked.Exchange(ref _deletionRejected, 0));
 }
 
 /// <summary>

@@ -562,8 +562,10 @@ public sealed class DgScopeAdapter : BackgroundService
 
                 if (deletedTargets.Count > 0)
                 {
-                    _logger.LogInformation("Purged {Count} stale targets ({Sent} sent as UT=2)",
-                        deletedTargets.Count, broadcastCount);
+                    var (accepted, rejected) = _clients.DrainDeletionStats();
+                    _logger.LogInformation(
+                        "Purged {Count} stale targets ({Sent} broadcast attempts; per-client filter accepted {Accepted}, rejected {Rejected})",
+                        deletedTargets.Count, broadcastCount, accepted, rejected);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

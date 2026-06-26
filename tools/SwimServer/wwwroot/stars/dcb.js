@@ -77,7 +77,9 @@ function mainMenu(state) {
       label = `MAP\n${i + 1}`;
     }
     list.push(btn(`MAP_${i}`, label, {
-      active: !!(m && m.visible), half: true, mapIdx: i,                                 // 40
+      active: !!(m && m.visible), half: true,                                            // 40
+      mapStarsId: m ? m.starsId : null,
+      disabled: !m,
     }));
   }
   for (let i = 0; i < 6; i++) {
@@ -165,17 +167,34 @@ function briteMenu(state) {
 function mapsMenu(state) {
   // MAPS submenu — verbatim heights from scope/RadarWindow.cs:3476-3477 +
   // 3563-3567 (DONE = 40, CLR ALL = 40, every per-map toggle = 40).
+  //
+  // STARS DCB carries 32 map toggle buttons total: 6 inline on the main page
+  // and 26 in this submenu (.stars-reference/GUIDE_MultipleVideoMaps.md:7).
+  // The 26 submenu slots come from the active vNAS Mapgroup mapIds[6..31];
+  // unbound slots render an empty "MAP <n>" placeholder, matching DGScope's
+  // dcbMapButton.Text fallback when VideoMaps.Where(...).FirstOrDefault()
+  // returns null (RadarWindow.cs:3957-3963).
   const list = [
     btn("MAPS_DONE", "DONE", { submenu: "MAIN", half: true }),
     btn("MAPS_CLEAR", "CLR ALL", { half: true }),
   ];
-  for (let i = 0; i < state.videoMaps.length; i++) {
-    const m = state.videoMaps[i];
-    const lbl = m.shortName || m.name || (m.starsId != null ? `MAP ${m.starsId}` : `MAP ${i + 1}`);
-    list.push(btn(`MAP_TOG_${i}`, lbl.slice(0, 8), {
-      active: !!m.visible,
-      mapIdx: i,
+  for (let i = 0; i < 26; i++) {
+    const slotNumber = i + 7;            // STARS button numbers 7..32
+    const m = state.dcbSubmenuMapAt ? state.dcbSubmenuMapAt(i) : null;
+    let label;
+    if (m) {
+      // First row = map number, second row = mnemonic (RadarWindow.cs:3962:
+      //   dcbMapButton[i].Text = map.Number + "\r\n" + map.Mnemonic;
+      const name = (m.shortName || m.name || "").slice(0, 8);
+      label = m.starsId != null ? `${m.starsId}\n${name}` : (name || `MAP ${slotNumber}`);
+    } else {
+      label = `MAP\n${slotNumber}`;
+    }
+    list.push(btn(`MAP_SUB_${i}`, label, {
+      active: !!(m && m.visible),
+      mapStarsId: m ? m.starsId : null,
       half: true,
+      disabled: !m,                       // empty slots greyed (Enabled=false)
     }));
   }
   return list;
@@ -345,7 +364,7 @@ class DCB {
       const tl = b.active ? black : dark;       // top + left bevel
       const br = b.active ? dark  : black;      // bottom + right bevel
       return `<div class="dcb-btn" data-id="${b.id}"
-        ${b.mapIdx != null ? `data-map="${b.mapIdx}"` : ""}
+        ${b.mapStarsId != null ? `data-map-stars="${b.mapStarsId}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
         ${b.wx ? `data-wx="${b.wx}"` : ""}
         ${b.csz ? `data-csz="${b.csz}"` : ""}
@@ -436,7 +455,7 @@ class DCB {
       const tl = b.active ? black : dark;
       const br = b.active ? dark  : black;
       return `<div class="dcb-btn" data-id="${b.id}"
-        ${b.mapIdx != null ? `data-map="${b.mapIdx}"` : ""}
+        ${b.mapStarsId != null ? `data-map-stars="${b.mapStarsId}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
         ${b.wx ? `data-wx="${b.wx}"` : ""}
         ${b.csz ? `data-csz="${b.csz}"` : ""}
@@ -502,7 +521,11 @@ class DCB {
       this.render();
       return;
     }
-    if (el.dataset.map != null) { this.emit("mapToggle", +el.dataset.map); return; }
+    if (el.dataset.mapStars != null) {
+      // Dispatch by STARS map number; scope.js resolves to the live videoMaps entry.
+      this.emit("mapToggle", +el.dataset.mapStars);
+      return;
+    }
     if (el.dataset.wx)    { this.emit("wxToggle",   +el.dataset.wx);                   return; }
     if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, baseAdjust * 5); return; }
     if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   baseAdjust);     return; }

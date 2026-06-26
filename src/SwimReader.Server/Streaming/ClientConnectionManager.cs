@@ -122,7 +122,12 @@ public sealed class ClientChannel
     public string Id { get; }
     public string Facility { get; }
 
-    public ClientChannel(string id, string facility, int capacity = 5000)
+    // Capacity bumped 5000 → 50000 (2026-06-26) after PCT recording showed
+    // 835 phantom UT=2 in 120s — channel was DropOldest-evicting earlier
+    // UT=0/UT=1 from the queue while their guids were still tracked in
+    // _knownGuids, so the matching UT=2 passed the per-client filter.
+    // Larger queue tolerates burstier writers without silent eviction.
+    public ClientChannel(string id, string facility, int capacity = 50000)
     {
         Id = id;
         Facility = facility;

@@ -78,14 +78,46 @@ public sealed class ClientConnectionManager
             }
         }
     }
+
+    /// <summary>Broadcast a UT=0 / UT=1 update for a specific guid. Each
+    /// client records that guid so a later UT=2 for it gets delivered.</summary>
+    public void BroadcastTracked(string jsonLine, string facility, Guid guid)
+    {
+        foreach (var kvp in _clients)
+        {
+            if (string.Equals(kvp.Value.Facility, facility, StringComparison.OrdinalIgnoreCase))
+            {
+                kvp.Value.TryWriteTracked(jsonLine, guid);
+            }
+        }
+    }
+
+    /// <summary>Broadcast a UT=2 deletion. Per-client filter suppresses it
+    /// for clients that never saw a UT=0/UT=1 for this guid.</summary>
+    public void BroadcastDeletion(string jsonLine, string facility, Guid guid)
+    {
+        foreach (var kvp in _clients)
+        {
+            if (string.Equals(kvp.Value.Facility, facility, StringComparison.OrdinalIgnoreCase))
+            {
+                kvp.Value.TryWriteDeletion(jsonLine, guid);
+            }
+        }
+    }
 }
 
 /// <summary>
 /// Per-client bounded channel for delivering JSON updates.
+/// Also tracks which Guids have been delivered as UT=0 / UT=1 so that UT=2
+/// deletions for never-seen Guids can be filtered. Without this, a purge
+/// firing between AddClient and GetSnapshot writes a UT=2 to a client that
+/// will never see the corresponding UT=0 (the purged Guid was already
+/// removed from _facilityTracks before snapshot read it).
 /// </summary>
 public sealed class ClientChannel
 {
     private readonly Channel<string> _channel;
+    private readonly ConcurrentDictionary<Guid, byte> _knownGuids = new();
 
     public string Id { get; }
     public string Facility { get; }
@@ -102,7 +134,27 @@ public sealed class ClientChannel
         });
     }
 
+    /// <summary>Untyped write — used by callers that don't carry guid context
+    /// (e.g. weather updates, stats). Always enqueued.</summary>
     public bool TryWrite(string jsonLine) => _channel.Writer.TryWrite(jsonLine);
+
+    /// <summary>Write a UT=0 / UT=1 update for <paramref name="guid"/>.
+    /// Marks the guid as seen by this client so the matching UT=2 deletion
+    /// (whenever it eventually fires) will be delivered.</summary>
+    public bool TryWriteTracked(string jsonLine, Guid guid)
+    {
+        _knownGuids[guid] = 0;
+        return _channel.Writer.TryWrite(jsonLine);
+    }
+
+    /// <summary>Write a UT=2 deletion. Suppressed if the client has never
+    /// seen the matching UT=0/UT=1 — preventing the "phantom delete" race
+    /// where a purge fires after AddClient but before GetSnapshot.</summary>
+    public bool TryWriteDeletion(string jsonLine, Guid guid)
+    {
+        if (!_knownGuids.TryRemove(guid, out _)) return false;
+        return _channel.Writer.TryWrite(jsonLine);
+    }
 
     public void Complete() => _channel.Writer.TryComplete();
 

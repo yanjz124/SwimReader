@@ -42,9 +42,13 @@ public sealed class DstarsController : ControllerBase
         // render). This means a freshly-loaded scope sees the full state on
         // connect instead of waiting for the next sweep / TAIS batch.
         int seedCount = 0;
-        foreach (var jsonLine in _adapter.GetSnapshot(facility))
+        foreach (var (guid, jsonLine) in _adapter.GetSnapshot(facility))
         {
-            client.TryWrite(jsonLine);
+            // Tracked write so the per-client guid set is populated — any
+            // later UT=2 deletion for this guid gets delivered. Without
+            // this, the deletion filter would reject ALL UT=2 since the
+            // client has only seen snapshot writes, not "tracked" writes.
+            client.TryWriteTracked(jsonLine, guid);
             seedCount++;
         }
         if (seedCount > 0)

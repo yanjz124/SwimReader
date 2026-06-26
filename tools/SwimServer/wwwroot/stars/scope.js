@@ -425,17 +425,40 @@ async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
       _loading: false,
     });
   }
+  // vNAS starsConfiguration.mapGroups is the canonical DCB-button binding
+  // table. Each Mapgroup (CRCARTCC.cs:171-176) has:
+  //   mapIds[38] → STARS map numbers for DCB slots 1..38
+  //                slots 1..6   = inline MAP buttons on the main DCB page
+  //                slots 7..32  = MAPS submenu (26 buttons, per
+  //                              .stars-reference/GUIDE_MultipleVideoMaps.md:7)
+  //                slots 33..38 = unused by DCB toolbar (reserved)
+  //   tcps[]    → controller positions (e.g. "1S","1B","3M") this group
+  //               applies to. Different positions in the same TRACON can
+  //               and do see different DCB map layouts.
+  // Selection: ?tcp=NAME overrides; otherwise first mapGroup.
+  starsState.mapGroups = Array.isArray(starsConfig?.mapGroups) ? starsConfig.mapGroups : [];
+  const tcpSel = new URLSearchParams(location.search).get("tcp");
+  let activeGroup = null;
+  if (tcpSel && starsState.mapGroups.length) {
+    activeGroup = starsState.mapGroups.find(g =>
+      Array.isArray(g.tcps) && g.tcps.some(t => (t || "").toUpperCase() === tcpSel.toUpperCase())
+    ) || null;
+  }
+  if (!activeGroup) activeGroup = starsState.mapGroups[0] || null;
+  starsState.activeMapGroup = activeGroup;
+  // Length-38 nullable starsId array (matches DGScope TCP.DCBMapList).
+  activeMapIds = Array(38).fill(null);
+  if (activeGroup && Array.isArray(activeGroup.mapIds)) {
+    for (let i = 0; i < Math.min(38, activeGroup.mapIds.length); i++) {
+      activeMapIds[i] = (activeGroup.mapIds[i] != null) ? activeGroup.mapIds[i] : null;
+    }
+  }
   // ?maps= overrides which maps are visible (persisted selection).
   if (_urlMapIds) {
     for (const m of videoMaps) m.visible = m.starsId != null && _urlMapIds.includes(m.starsId);
     for (const m of videoMaps) if (m.visible && m.lines === null) ensureMapLoaded(m);
   }
   prefSet.DisplayedMaps = videoMaps.filter(m => m.visible && m.starsId != null).map(m => m.starsId);
-  // Default DCB MAP1-6 bindings = first 6 catalog entries with a starsId.
-  // Profile XML (when loaded) overrides this.
-  if (mapButtonAssignments.length === 0) {
-    mapButtonAssignments = videoMaps.filter(m => m.starsId != null).slice(0, 6).map(m => m.starsId);
-  }
 }
 
 // Warm the lazy line cache for ALL of the facility's maps in the background,
@@ -443,7 +466,7 @@ async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
 // after the scope is interactive; DCB-assigned maps (MAP1-6) go first. A few
 // seconds of fetching up front is fine — the user opted into that tradeoff.
 async function warmAllMaps() {
-  const assigned = new Set(mapButtonAssignments);
+  const assigned = new Set(activeMapIds.filter(x => x != null));
   const queue = [...videoMaps].sort((a, b) =>
     (assigned.has(b.starsId) ? 1 : 0) - (assigned.has(a.starsId) ? 1 : 0));
   const CONCURRENCY = 6;
@@ -520,22 +543,37 @@ function drawVideoMapLines() {
 // Phase 2 temp map panel removed in Phase 4 — real DCB MAPS submenu serves the
 // same toggles. (G9 retirement.)
 
-// DCB state — first 6 inline MAP buttons each bind to a specific video-map
-// starsId. WPF: TCP.DCBMapList[i] = starsId (RadarWindow.cs:817-820). When
-// a DGScope profile is loaded, this array is overwritten from
-// TCP.DCBMapList; otherwise defaults to first 6 catalog entries' starsIds.
-let mapButtonAssignments = [];  // populated by loadVideoMapsCatalog and overridden by profile
+// DCB state — DGScope TCP.DCBMapList[38] (RadarWindow.cs:812-814, 3909, 3959):
+//   activeMapIds[0..5]  = inline MAP buttons on the main DCB page
+//   activeMapIds[6..31] = MAPS submenu (26 buttons)
+//   activeMapIds[32..37] = reserved/unused by DCB
+// Sourced from the vNAS Mapgroup matching the active TCP (per area /
+// position selection). A DGScope profile XML can still overwrite this when
+// loaded.
+let activeMapIds = Array(38).fill(null);
 function dcbMapAt(i) {
-  const starsId = mapButtonAssignments[i];
+  // i ∈ [0..5] for inline MAP buttons.
+  const starsId = activeMapIds[i];
   if (starsId == null) return null;
   return videoMaps.find(m => m.starsId === starsId) || null;
 }
+function dcbSubmenuMapAt(i) {
+  // i ∈ [0..25] for MAPS submenu (offsets into activeMapIds[6..31]).
+  const starsId = activeMapIds[i + 6];
+  if (starsId == null) return null;
+  return videoMaps.find(m => m.starsId === starsId) || null;
+}
+// Kept as a back-compat alias for the global window export below; the
+// underlying state is now `activeMapIds`.
+let mapButtonAssignments = activeMapIds;
 
 // Apply a DGScope profile XML: prefSet overrides + DCBMapList + DisplayedMaps.
 // Backend serializes with camelCase per ServerContext JsonSerializer settings.
 async function applyProfile(profileName) {
   try {
-    const p = await fetch(`/api/stars/profile/${encodeURIComponent(ARTCC)}/${encodeURIComponent(profileName)}`)
+    // vNAS-format JSON profile (?profile=NAME). DGScope XML profile lives at
+    // /api/stars/profile/{x}/{y} and is loaded by profile.js StarsProfile.load.
+    const p = await fetch(`/api/stars/profile-json/${encodeURIComponent(ARTCC)}/${encodeURIComponent(profileName)}`)
       .then(r => r.json());
     if (!p) return;
     // Map camelCase API field → PascalCase prefSet field.
@@ -2176,6 +2214,9 @@ const starsState = {
   asrSites: [],
   wxLevels: [false, false, false, false, false, false],
   dcbMapAt,
+  dcbSubmenuMapAt,
+  mapGroups: [],
+  activeMapGroup: null,
 };
 
 let dcb;
@@ -2411,12 +2452,15 @@ function handleBriteAdjust(which, d) {
   _afterPrefChange();
 }
 
-function handleMapToggle(idx) {
-  const m = videoMaps[idx];
+function handleMapToggle(starsId) {
+  // DCB MAP buttons (inline + MAPS submenu) emit the STARS map number.
+  // Mirrors DGScope DcbMapButtonClick (RadarWindow.cs:3903-3915): look up
+  // the bound map and flip its Visible flag.
+  const m = videoMaps.find(x => x.starsId === starsId);
   if (!m) return;
   m.visible = !m.visible;
   if (m.visible && m.lines === null) ensureMapLoaded(m);
-  if (window.pushUrlState) window.pushUrlState();   // persist map selection in URL
+  if (window.pushUrlState) window.pushUrlState();
 }
 
 function handleDcbClick(id) {

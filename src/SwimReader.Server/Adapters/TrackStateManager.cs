@@ -54,7 +54,7 @@ public sealed class TrackStateManager
     public Guid GetFlightPlanGuid(int? modeSCode, string? trackNumber, string? callsign, string? facility)
     {
         var key = BuildTrackKey(modeSCode, trackNumber, facility);
-        var target = _targets.GetOrAdd(key, _ => new TrackedTarget { TrackGuid = Guid.NewGuid() });
+        var target = _targets.GetOrAdd(key, _ => new TrackedTarget { TrackGuid = Guid.NewGuid(), Facility = facility });
 
         if (target.FlightPlanGuid == Guid.Empty)
         {
@@ -63,6 +63,13 @@ public sealed class TrackStateManager
         }
 
         target.LastSeen = DateTime.UtcNow;
+        // Make sure Facility is set even if the target was first created via
+        // GetFlightPlanGuid before GetTrackGuid ever fired (FP-only targets).
+        // Without this, target.Facility stayed null and PurgeStale emitted
+        // UT=2 with facility=null, which fell through to the untracked
+        // Broadcast(json, null) fan-out — bypassing the per-client filter
+        // and sending phantom deletes to every connected scope.
+        target.Facility ??= facility;
         target.Callsign = callsign ?? target.Callsign;
         return target.FlightPlanGuid;
     }

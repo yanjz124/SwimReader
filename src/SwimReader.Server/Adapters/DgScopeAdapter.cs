@@ -553,10 +553,18 @@ public sealed class DgScopeAdapter : BackgroundService
                     // for this guid get nothing — fixes the AddClient ↔
                     // GetSnapshot race where a purge runs between the two
                     // and the snapshot misses the guid.
-                    if (facility is not null)
-                        _clients.BroadcastDeletion(json, facility, guid);
-                    else
-                        _clients.Broadcast(json, facility);
+                    //
+                    // Never fan out a UT=2 with facility=null — that
+                    // bypasses both the facility filter AND the per-client
+                    // guid filter and floods every scope with deletes for
+                    // guids they've never seen.
+                    if (facility is null)
+                    {
+                        _logger.LogWarning(
+                            "Skipping UT=2 broadcast for {Guid} — null facility (orphan target)", guid);
+                        continue;
+                    }
+                    _clients.BroadcastDeletion(json, facility, guid);
                     broadcastCount++;
                 }
 

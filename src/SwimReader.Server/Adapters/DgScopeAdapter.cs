@@ -151,7 +151,13 @@ public sealed class DgScopeAdapter : BackgroundService
                             _facilityFlightPlans.GetOrAdd(facility, _ => new())[g] = 0;
                         }
                     }
-                    _clients.Broadcast(json, facility);
+                    // Tracked broadcast: each client records the guid so the
+                    // matching UT=2 deletion later is delivered. Untracked
+                    // updates (no guid) still go through the plain channel.
+                    if (guid is Guid g2 && facility is not null)
+                        _clients.BroadcastTracked(json, facility, g2);
+                    else
+                        _clients.Broadcast(json, facility);
                 }
             }
             catch (Exception ex)
@@ -227,12 +233,12 @@ public sealed class DgScopeAdapter : BackgroundService
     /// current state immediately. Order: flight plans first (so AssociatedTrackGuid
     /// resolves on the client side before tracks render).
     /// </summary>
-    public IEnumerable<string> GetSnapshot(string facility)
+    public IEnumerable<(Guid Guid, string Json)> GetSnapshot(string facility)
     {
         if (_facilityFlightPlans.TryGetValue(facility, out var fpGuids))
         {
             foreach (var g in fpGuids.Keys)
-                if (_lastFpJsonOut.TryGetValue(g, out var json)) yield return json;
+                if (_lastFpJsonOut.TryGetValue(g, out var json)) yield return (g, json);
         }
         if (_facilityTracks.TryGetValue(facility, out var tGuids))
         {
@@ -245,7 +251,7 @@ public sealed class DgScopeAdapter : BackgroundService
                 var hist = _trackHistory.GetValueOrDefault(g);
                 if (hist is { Length: > 1 })
                     json = json[..^1] + ",\"History\":" + JsonSerializer.Serialize(hist, JsonOptions) + "}";
-                yield return json;
+                yield return (g, json);
             }
         }
     }
@@ -543,7 +549,14 @@ public sealed class DgScopeAdapter : BackgroundService
                     };
 
                     var json = JsonSerializer.Serialize(deletion, JsonOptions);
-                    _clients.Broadcast(json, facility);
+                    // Per-client filter: clients that never saw a UT=0/UT=1
+                    // for this guid get nothing — fixes the AddClient ↔
+                    // GetSnapshot race where a purge runs between the two
+                    // and the snapshot misses the guid.
+                    if (facility is not null)
+                        _clients.BroadcastDeletion(json, facility, guid);
+                    else
+                        _clients.Broadcast(json, facility);
                     broadcastCount++;
                 }
 

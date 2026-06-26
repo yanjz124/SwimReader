@@ -157,9 +157,10 @@ public sealed class ReplayRecorder : IDisposable
                 await sw.WriteLineAsync(line);
                 recordCount++;
 
-                // Flush every 10 seconds for crash recovery
+                // Flush every 30 seconds for crash recovery (was 10): fewer flush/commit bursts
+                // to the SD card. Worst-case loss on a crash is the last ~30s of recording.
                 var now = DateTime.UtcNow;
-                if ((now - lastFlush).TotalSeconds >= 10)
+                if ((now - lastFlush).TotalSeconds >= 30)
                 {
                     await sw.FlushAsync();
                     await gz!.FlushAsync();

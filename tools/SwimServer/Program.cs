@@ -878,7 +878,9 @@ asdex.OnEnrich = (track) =>
 };
 
 // Save flight cache periodically (every 5 minutes)
-var cacheTimer = new Timer(_ => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+// Every 15 min (was 5): the cache is a ~78 MB write burst each time — less often = less SD-card
+// I/O pressure. Shutdown still saves the cache, so the worst-case loss window is just longer.
+var cacheTimer = new Timer(_ => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts), null, TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(15));
 
 // Purge stale flights every 60 seconds
 var purgeTimer = new Timer(_ =>
@@ -971,11 +973,14 @@ var purgeTimer = new Timer(_ =>
         Console.WriteLine($"[Purge] Early-retired {retired} stale duplicate GUFIs (inter-ARTCC handoff leftovers)");
 }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 
-// Broadcast stats every 5 seconds
+// Broadcast stats every 5 seconds (clients need it); log to the journal only every ~30s to
+// cut continuous journald disk writes on the SD card.
+var statsLogTick = 0;
 var statsTimer = new Timer(_ =>
 {
     var fc = flights.Count;
-    Console.WriteLine($"[Stats] flights={fc} proc={_procCount} nogufi={_noGufiCount}");
+    if (++statsLogTick % 6 == 0)
+        Console.WriteLine($"[Stats] flights={fc} proc={_procCount} nogufi={_noGufiCount}");
     Broadcast(new WsMsg("stats", stats.Snapshot(fc)));
 }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
 

@@ -1129,6 +1129,31 @@ app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t
 replayServer.MapEndpoints(app);
 
 await solaceReady.Task;
+
+// Guard against duplicate route registration. Two Register() calls landing on
+// the same (method, pattern) cause an AmbiguousMatchException on every match
+// — silent at startup, noisy per-request. Walk the endpoint table once and
+// abort loudly if any (method, pattern) collides.
+{
+    var seen = new Dictionary<string, string>();
+    foreach (var ep in app.Services
+                 .GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>()
+                 .Endpoints.OfType<Microsoft.AspNetCore.Routing.RouteEndpoint>())
+    {
+        var methods = ep.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.IHttpMethodMetadata>()?.HttpMethods
+                      ?? new[] { "*" };
+        foreach (var m in methods)
+        {
+            var key = $"{m} {ep.RoutePattern.RawText}";
+            if (seen.TryGetValue(key, out var prev))
+                throw new InvalidOperationException(
+                    $"Duplicate route registration: {key} (already registered as '{prev}'). " +
+                    "Two Routes/*.cs files mapped the same pattern — rename one or delete the older.");
+            seen[key] = ep.DisplayName ?? key;
+        }
+    }
+}
+
 Console.WriteLine("[Web] Starting on http://localhost:5001");
 app.Run();
 

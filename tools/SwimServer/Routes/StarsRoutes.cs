@@ -84,7 +84,11 @@ static class StarsRoutes
             Results.Json(new { artccId = artccId.ToUpperInvariant(),
                 profiles = ctx.Stars.ListProfiles(artccId.ToUpperInvariant()) }, ctx.JsonOpts));
 
-        app.MapGet("/api/stars/profile/{artccId}/{profileName}",
+        // /api/stars/profile/{x}/{y} was previously registered both here (JSON,
+        // vNAS-style) AND in StarsProfileRoutes.cs (XML, DGScope-style),
+        // throwing AmbiguousMatchException on every GET. The XML one is the
+        // documented public route; this vNAS variant is now at -json/.
+        app.MapGet("/api/stars/profile-json/{artccId}/{profileName}",
             (string artccId, string profileName) =>
             {
                 var p = ctx.Stars.LoadProfile(artccId.ToUpperInvariant(), profileName);

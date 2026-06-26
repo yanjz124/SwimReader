@@ -507,8 +507,20 @@ public sealed class DgScopeAdapter : BackgroundService
             try
             {
                 var deletedTargets = _trackState.PurgeStale();
+                int broadcastCount = 0;
                 foreach (var (guid, facility) in deletedTargets)
                 {
+                    // Phantom-delete guard: TrackStateManager keys by per-facility
+                    // TAIS track-number, and TAIS reassigns track numbers, so each
+                    // reassignment mints a fresh GUID. Most of those churned GUIDs
+                    // never produced a UT=0 / UT=1 broadcast (the track was already
+                    // re-keyed before its first emit). Emitting UT=2 for a GUID the
+                    // client has never seen sent 4,785 phantom deletes in a 5-min
+                    // window vs OG ScopeServer's 252 (verified on PCT, 2026-06-26).
+                    // Only broadcast when we've actually told clients about the GUID.
+                    bool everSentTrack = _lastTrackJson.ContainsKey(guid);
+                    bool everSentFp    = _lastFpJsonOut.ContainsKey(guid);
+
                     _lastFpJson.TryRemove(guid, out _);
                     _lastFpJsonOut.TryRemove(guid, out _);
                     _lastTrackJson.TryRemove(guid, out _);
@@ -522,6 +534,8 @@ public sealed class DgScopeAdapter : BackgroundService
                         if (_facilityFlightPlans.TryGetValue(facility, out var ff)) ff.TryRemove(guid, out _);
                     }
 
+                    if (!everSentTrack && !everSentFp) continue;
+
                     var deletion = new DstarsDeletionUpdate
                     {
                         Guid = guid,
@@ -530,11 +544,13 @@ public sealed class DgScopeAdapter : BackgroundService
 
                     var json = JsonSerializer.Serialize(deletion, JsonOptions);
                     _clients.Broadcast(json, facility);
+                    broadcastCount++;
                 }
 
                 if (deletedTargets.Count > 0)
                 {
-                    _logger.LogInformation("Purged {Count} stale targets", deletedTargets.Count);
+                    _logger.LogInformation("Purged {Count} stale targets ({Sent} sent as UT=2)",
+                        deletedTargets.Count, broadcastCount);
                 }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -71,6 +71,11 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<DgScopeAdapter>())
 // the matching load runs below, before app.Run(), so it precedes Solace data.
 builder.Services.AddHostedService<DgScopePersistenceService>();
 
+// Optional raw-XML diagnostic tap. Activates only when RAW_MESSAGE_LOG_PATH
+// env var is set; lets us spot-check that the parser+adapter aren't dropping
+// fields the upstream feed actually carries (e.g. <ident>, manual SPCs).
+builder.Services.AddHostedService<SwimReader.Server.RawMessageLogger>();
+
 // --- ADS-B hybrid enrichment (adsb.fi + adsb.lol + airplanes.live) ---
 builder.Services.Configure<AdsbFiOptions>(
     builder.Configuration.GetSection(AdsbFiOptions.SectionName));

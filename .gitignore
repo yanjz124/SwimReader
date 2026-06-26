@@ -1,77 +1,72 @@
-## .NET
-bin/
-obj/
-*.user
-*.suo
-*.userosscache
-*.sln.docstates
 
+!**/*.xsd
+!**/[Pp]ackages/build/
+# Investigation/debug logs
+## .NET
+## Build results
+## Environment
+## Flight state cache (persisted across restarts)
+## IDE
+## Learned holdbar bit mappings (per-deployment)
+## Message captures
+## NASR data (downloaded from FAA)
+## NuGet
+## Replay recordings (per-deployment, up to 72h)
+## User secrets
 ## Visual Studio
-.vs/
+## Windows artifacts
+**/[Pp]ackages/*
+*.log
+*.lscache
+*.nupkg
 *.rsuser
-[Dd]ebug/
-[Rr]elease/
-x64/
-x86/
+*.sln.docstates
+*.snupkg
+*.suo
+*.swo
+*.swp
+*.user
+*.userosscache
+*.xml
+*~
+.claude/scheduled_tasks.lock
+.env
+.idea/
+.stars-reference/
+.vs/
+NUL
+TwistedGia.png
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
-bld/
 [Bb]in/
-[Oo]bj/
+[Dd]ebug/
+[Dd]ebugPublic/
 [Ll]og/
 [Ll]ogs/
-
-## NuGet
-*.nupkg
-*.snupkg
-**/[Pp]ackages/*
-!**/[Pp]ackages/build/
-
-## Build results
-[Dd]ebugPublic/
+[Oo]bj/
+[Rr]elease/
 [Rr]eleases/
+bin/
+bld/
 build/
-publish/
-
-## User secrets
-secrets.json
-
-## Environment
-.env
-
-## Message captures
 captures/
-*.xml
-!**/*.xsd
-
-## NASR data (downloaded from FAA)
-nasr-data/
-
-## Flight state cache (persisted across restarts)
 flight-cache/
-
-## Learned holdbar bit mappings (per-deployment)
 holdbar-map/
-
-## Replay recordings (per-deployment, up to 72h)
+ilm.json
+nasr-data/
+node_modules/
+obj/
+pct-snap.log
+pct.json
+publish/
 replay/
-
-## IDE
-.idea/
-*.swp
-*.swo
-*~
-
-## Windows artifacts
-NUL
-
-# Investigation/debug logs
-tools/SwimServer/investigation-*.jsonl
-tools/SwimServer/pointout-investigation-*.jsonl
-.stars-reference/
-tools/SwimServer/crc-export/
-*.lscache
+secrets.json
 stars-profiles/
+tools/SwimServer/crc-export/
 tools/SwimServer/flight-history/
-tools/SwimServer/tdls-history/
+tools/SwimServer/investigation-*.jsonl
 tools/SwimServer/itws-history/
+tools/SwimServer/pointout-investigation-*.jsonl
+tools/SwimServer/tdls-history/
+x64/
+x86/

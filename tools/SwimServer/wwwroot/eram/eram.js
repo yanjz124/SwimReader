@@ -44,6 +44,12 @@ const manuallyHidden = new Set(); // GUFIs user explicitly hid via middle-click 
 // auto-revive it when SFDPS publishes a genuinely-new position (≠ a stale
 // resend with the same lat/lon). Cleared once the revive fires.
 const qxSnapshot = new Map();   // gufi → { lat, lon, posAge, at }
+// Auto-revived GUFIs — granted visibility unconditionally (subject to
+// status/age checks at the top of isVisible). Bypasses the facility-only
+// strict-mode bail and the wasOwnOrHo fallback so a track the user QX'd
+// stays visible after revive even if SFDPS handed it to another facility.
+// Cleared only by sector/facility reset or remove events.
+const qxAutoRevived = new Set();
 const lastVisibleAt = new Map(); // gufi → performance.now() — grace period prevents flicker on facility field changes
 
 const knownFacilities = new Map();
@@ -1934,6 +1940,11 @@ function isVisible(f) {
         }
     }
 
+    // Auto-revived (post-QX, new moving position arrived) — grant visibility
+    // unconditionally so the revive isn't a single-frame blink under
+    // facility-only mode or after a handoff out of our facility. Status/age
+    // filters above still apply, so a re-DROPPED ghost won't sneak back in.
+    if (qxAutoRevived.has(f.gufi)) return true;
     // No facility selected → show all
     if (!myFacility) return true;
     // Show if controlling/reporting facility matches
@@ -2837,12 +2848,14 @@ function processFlightUpdate(f) {
         if (moved && fresh) {
             manuallyHidden.delete(f.gufi);
             qxSnapshot.delete(f.gufi);
-            // QX also nuked wasOwnOrHo (the sticky "I once owned this"
-            // flag). Without it, a flight that's since been handed off to
-            // another facility classifies as 'other' and isVisible() drops
-            // it on the very next render — so the revive just produced a
-            // single-frame blink. Re-stick it so the auto-undo is durable.
+            // wasOwnOrHo is the sticky "I once owned this" flag; restore so
+            // the FDB-promotion path keeps treating the flight as familiar.
+            // qxAutoRevived is the visibility grant that survives
+            // facility-only mode AND post-handoff facility flips — the
+            // wasOwnOrHo fallback inside isVisible() lives BELOW the
+            // facility-only bail, so it alone wasn't enough.
             wasOwnOrHo.add(f.gufi);
+            qxAutoRevived.add(f.gufi);
             const m = markers.get(f.gufi);
             if (m) { const el = m.getElement(); if (el) el.style.display = ''; }
         }
@@ -3076,6 +3089,7 @@ function connectWs() {
             wasOwnOrHo.delete(msg.data.gufi);
             manuallyHidden.delete(msg.data.gufi);
             qxSnapshot.delete(msg.data.gufi);
+            qxAutoRevived.delete(msg.data.gufi);
             hoCompletedInfo.delete(msg.data.gufi);
             lastVisibleAt.delete(msg.data.gufi);
             driActive.delete(msg.data.gufi);
@@ -3713,6 +3727,7 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     wasOwnOrHo.clear();
     manuallyHidden.clear();
     qxSnapshot.clear();
+    qxAutoRevived.clear();
     pointoutBlocked.clear();
     closePointoutMenu();
     invalidateAllMarkers();
@@ -6883,6 +6898,8 @@ function processCommand(cmd) {
             quickLookDests.clear();
             wasOwnOrHo.clear();
             manuallyHidden.clear();
+            qxSnapshot.clear();
+            qxAutoRevived.clear();
             pointoutBlocked.clear();
             closePointoutMenu();
             rebuildSectorCheckboxes();

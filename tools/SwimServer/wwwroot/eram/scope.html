@@ -289,16 +289,16 @@
     </div>
     <div id="map-container">
         <div id="map"></div>
-        <div id="mca-ra-stack">
-            <div id="ra">
-                <div id="ra-content"></div>
-            </div>
-            <div id="mca">
-                <div id="mca-preview"><span class="mca-cursor">_</span></div>
-                <div id="mca-feedback"></div>
-                <button id="mca-kb-btn" title="Open on-screen keyboard (for touchscreen MCA input)" aria-label="Open keyboard">&#9000;&#xFE0E;</button>
-                <input id="mca-mobile-input" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">
-            </div>
+        <!-- RA + MCA are independent draggable boxes; positions clamped to
+             #map-container on resize so they can't fall off-screen. -->
+        <div id="ra">
+            <div id="ra-content"></div>
+        </div>
+        <div id="mca">
+            <div id="mca-preview"><span class="mca-cursor">_</span></div>
+            <div id="mca-feedback"></div>
+            <button id="mca-kb-btn" title="Open on-screen keyboard (for touchscreen MCA input)" aria-label="Open keyboard">&#9000;&#xFE0E;</button>
+            <input id="mca-mobile-input" autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">
         </div>
         <div id="po-menu" style="display:none;">
             <div id="po-menu-title">

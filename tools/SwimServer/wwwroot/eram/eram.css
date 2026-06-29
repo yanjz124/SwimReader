@@ -894,23 +894,23 @@ input[type="checkbox"]:checked::after {
 
 /* ── Target symbols are drawn as inline geometric divs (no font metrics dependency) ── */
 
-/* ── MCA (Message Composition Area) ── */
-#mca-ra-stack {
+/* ── MCA (Message Composition Area) ──
+   MCA + RA are independently positioned boxes. They start stacked at the
+   bottom-right (RA above MCA) but can be picked up and dropped anywhere
+   in the map area. Window resize re-clamps to keep them on-screen. */
+#mca {
     position: absolute; z-index: 1000;
     bottom: 30px; right: 30px;
-    display: flex; flex-direction: column; align-items: flex-end; gap: 0;
-}
-#mca {
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     user-select: none;
-    position: relative;
     cursor: var(--eram-cursor) !important;
 }
 #mca,
 #mca * {
     cursor: var(--eram-cursor) !important;
 }
-#mca-ra-stack.box-dragging {
+#mca.box-dragging,
+#ra.box-dragging {
     outline: 2px solid #fff; cursor: move;
 }
 #mca-preview {
@@ -944,10 +944,13 @@ input[type="checkbox"]:checked::after {
 
 /* ── RA (Response Area) ── */
 #ra {
+    position: absolute; z-index: 1000;
+    /* Default: above MCA (which sits at bottom: 30px with ~100px tall).
+       Both can be dragged independently; resize clamps both. */
+    bottom: 130px; right: 30px;
     max-width: calc(100vw - 60px);
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     user-select: none;
-    position: relative;
     cursor: var(--eram-cursor) !important;
 }
 #ra,

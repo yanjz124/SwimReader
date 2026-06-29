@@ -7158,10 +7158,17 @@ window.addEventListener('resize', () => {
     clampBox(document.getElementById('time-view'));
     const fm = document.getElementById('field-menu');
     if (fm.style.display !== 'none') clampBox(fm);
-    // Skip mca-ra-stack to prevent shifting its bottom/right positioned element
+    // MCA + RA: clamp ONLY if they've been dragged to an explicit position
+    // (style.left set). Otherwise leave them on their bottom/right CSS
+    // defaults so they re-anchor to the bottom-right corner automatically.
+    const mca = document.getElementById('mca');
+    const ra = document.getElementById('ra');
+    if (mca && mca.style.left) clampBox(mca);
+    if (ra && ra.style.left) clampBox(ra);
 });
 
-setupBoxDrag(document.getElementById('mca-ra-stack'));
+setupBoxDrag(document.getElementById('mca'));
+setupBoxDrag(document.getElementById('ra'));
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
 setupBoxDrag(document.getElementById('altim-menu'), document.getElementById('altim-menu-title'));
 setupBoxDrag(document.getElementById('wx-menu'), document.getElementById('wx-menu-title'));

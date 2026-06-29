@@ -2129,16 +2129,36 @@ function displayPosition(f) {
 // Built lazily on first call per render frame, then cached.
 const _cidOwnerCache = new Map();  // "facility/cid" → gufi of freshest owner
 let _cidCacheFrame = 0;
+// Treat a candidate as eligible to "claim" a CID only if it would actually
+// render — otherwise CANCELLED/COMPLETED/no-position/stale records (which
+// still carry a computerIds entry) silently steal the slot from a live
+// flight and hide it. Mirrors the status guards in the callsign-dedup pass
+// (renderTracks ~line 3241). Returns false for anything that isVisible()
+// would already reject so the cache and the renderer agree on who counts.
+function _cidEligible(f) {
+    if (!f) return false;
+    if (f.flightStatus === 'CANCELLED') return false;
+    if (f.latitude == null || f.longitude == null) return false;
+    if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) return false;
+    if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
+    if (f.flightStatus === 'ACTIVE' && effAgeSec(f) > 300 && !f.handoffEvent) return false;
+    return true;
+}
 function _buildCidCache() {
     _cidOwnerCache.clear();
     if (!myFacility) return;
     for (const [gufi, f] of flights) {
         const cid = f.computerIds?.[myFacility];
         if (!cid) continue;
+        if (!_cidEligible(f)) continue;   // ghost records can't claim a CID
         const prev = _cidOwnerCache.get(cid);
         if (!prev) { _cidOwnerCache.set(cid, gufi); continue; }
         const prevF = flights.get(prev);
-        if ((f.posAge ?? 0) < (prevF?.posAge ?? 0)) _cidOwnerCache.set(cid, gufi);
+        // Use a high default so "no posAge" loses to any concrete posAge,
+        // rather than the previous `?? 0` which made unknown look freshest.
+        const a = f.posAge ?? Number.POSITIVE_INFINITY;
+        const b = prevF?.posAge ?? Number.POSITIVE_INFINITY;
+        if (a < b) _cidOwnerCache.set(cid, gufi);
     }
 }
 function isCidRecycled(gufi, f) {

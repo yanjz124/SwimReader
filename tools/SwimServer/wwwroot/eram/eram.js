@@ -3771,11 +3771,13 @@ document.getElementById('sel-fontsize').addEventListener('change', function () {
 document.getElementById('inp-alt-low').addEventListener('change', function () {
     altFilterLow = parseInt(this.value) || 0;
     saveSettingsToLocalStorage();
+    refreshAltLimButtons();
 });
 
 document.getElementById('inp-alt-high').addEventListener('change', function () {
     altFilterHigh = parseInt(this.value) || 999;
     saveSettingsToLocalStorage();
+    refreshAltLimButtons();
 });
 
 function updateScopeBackground() {
@@ -3962,6 +3964,23 @@ function interpolateColor(hexColor, factor) {
     const newB = Math.round(b * factor);
 
     return `rgb(${newR}, ${newG}, ${newB})`;
+}
+
+// Refresh the ALT LIM toolbar value in-place (master panel + any tear-offs).
+// The button's getValue() reads altFilterLow/altFilterHigh but is only
+// re-invoked on a full toolbar re-render — invoke it directly so QD
+// commands and onDec middle-click clears flip the readout immediately.
+function refreshAltLimButtons() {
+    const display = (altFilterLow|0).toString().padStart(3, '0') + 'B' +
+                    (altFilterHigh|0).toString().padStart(3, '0');
+    for (const btn of document.querySelectorAll('.tb-btn')) {
+        const labelEl = btn.querySelector('.tb-label');
+        if (!labelEl) continue;
+        if ((labelEl.textContent || '').trim() === 'ALT LIM') {
+            const valDiv = btn.querySelector('.tb-value');
+            if (valDiv) valDiv.textContent = display;
+        }
+    }
 }
 
 function updateToolbarBrightness() {
@@ -5564,6 +5583,7 @@ function processCommand(cmd) {
             if (lo) lo.value = 0;
             if (hi) hi.value = 999;
             saveSettingsToLocalStorage();
+            refreshAltLimButtons();
             return { feedback: [{ type: 'ok', text: 'ACCEPT — ALT LIM CLEARED' }] };
         }
         // QD <lo>B<hi> — both bounds in hundreds of feet
@@ -5583,6 +5603,7 @@ function processCommand(cmd) {
             if (loEl) loEl.value = lo;
             if (hiEl) hiEl.value = hi;
             saveSettingsToLocalStorage();
+            refreshAltLimButtons();
             const fmt = (v) => String(v).padStart(3, '0');
             return { feedback: [{ type: 'ok', text: `ACCEPT — ALT LIM ${fmt(lo)}B${fmt(hi)}` }] };
         }
@@ -8487,6 +8508,7 @@ const TB_MASTER = {
                     if (lo) lo.value = 0;
                     if (hi) hi.value = 999;
                     saveSettingsToLocalStorage();
+                    refreshAltLimButtons();
                 },
                 // Left-click pre-fills the MCA with "QD " so the controller
                 // can finish typing limits (e.g. QD 100B230) and Enter.

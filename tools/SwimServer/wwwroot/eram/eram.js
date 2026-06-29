@@ -2837,6 +2837,12 @@ function processFlightUpdate(f) {
         if (moved && fresh) {
             manuallyHidden.delete(f.gufi);
             qxSnapshot.delete(f.gufi);
+            // QX also nuked wasOwnOrHo (the sticky "I once owned this"
+            // flag). Without it, a flight that's since been handed off to
+            // another facility classifies as 'other' and isVisible() drops
+            // it on the very next render — so the revive just produced a
+            // single-frame blink. Re-stick it so the auto-undo is durable.
+            wasOwnOrHo.add(f.gufi);
             const m = markers.get(f.gufi);
             if (m) { const el = m.getElement(); if (el) el.style.display = ''; }
         }

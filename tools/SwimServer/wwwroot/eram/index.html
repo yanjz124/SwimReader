@@ -190,8 +190,34 @@
 <div class="launch-bar">
   <span class="summary" id="summary">No selection</span>
   <button class="btn" id="btn-cmdref" title="MCA command reference + implementation status vs CRC ERAM docs">COMMAND REF</button>
+  <button class="btn" id="btn-hocodes" title="Edit the shared facility handoff display codes (e.g. PCT → E from a ZDC scope)">HO CODES</button>
   <button class="btn" id="btn-resume" title="Open ERAM with whatever facility + sectors you had selected last time">RESUME LAST SESSION</button>
   <button class="btn primary" id="btn-launch" disabled>LAUNCH ▸</button>
+</div>
+
+<!-- ── Handoff Codes editor overlay ─────────────────────────────────────── -->
+<div class="modal-back" id="ho-modal">
+  <div class="modal-head">
+    <h2>HANDOFF DISPLAY CODES</h2>
+    <span class="source">shared via <code style="color:#cccc44;">/api/handoff-codes</code> — edits affect every scope</span>
+    <div class="filter">
+      <button class="modal-close" id="ho-save"   style="background:#3a3a0a; color:#fff;">SAVE</button>
+      <button class="modal-close" id="ho-reload" title="Discard local edits, reload from server">RELOAD</button>
+      <button class="modal-close" id="ho-close">CLOSE</button>
+    </div>
+  </div>
+  <div class="modal-body" id="ho-body">
+    <div style="color:#888835; font-size:11px; margin-bottom:12px;">
+      Maps facility IDs to single-character (or short) codes shown on data-block Field E during handoffs.
+      The <b>default</b> section applies to all scopes; per-facility sections override for that scope's
+      perspective (e.g. PCT shows as <b>E</b> when viewed from ZDC, but as <b>P</b> by default).
+      Sector strings are appended automatically — e.g. PCT/2L renders as <b>E2L</b> on a ZDC scope.
+    </div>
+    <div id="ho-sections"></div>
+    <button id="ho-add-section" style="margin-top:14px; background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:6px 12px; font-family:inherit; font-size:11px; cursor:pointer;">
+      + ADD SECTION (per-facility override)
+    </button>
+  </div>
 </div>
 
 <!-- ── Command Reference overlay ────────────────────────────────────────── -->
@@ -500,6 +526,152 @@ document.getElementById('cmd-filter').addEventListener('input', (e) => {
   for (const tr of $cmdBody.querySelectorAll('tbody tr')) {
     tr.classList.toggle('hide', q.length > 0 && !tr.dataset.search.includes(q));
   }
+});
+
+// ── Handoff Codes editor ───────────────────────────────────────────────────
+// In-memory model mirrors the JSON file shape: { default: { FAC: code },
+// FAC1: { OTHERFAC: code }, ... }. _comment is preserved if present.
+let hoModel = { default: {} };
+const $hoModal = document.getElementById('ho-modal');
+const $hoSections = document.getElementById('ho-sections');
+
+function renderHoEditor() {
+  // Sort sections: default first, then alphabetical.
+  const sections = Object.keys(hoModel)
+    .filter(k => !k.startsWith('_'))
+    .sort((a, b) => (a === 'default' ? -1 : b === 'default' ? 1 : a.localeCompare(b)));
+  $hoSections.innerHTML = sections.map(sec => {
+    const isDefault = sec === 'default';
+    const rows = Object.entries(hoModel[sec])
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([fac, code]) => `
+        <tr>
+          <td><input type="text" class="ho-fac" data-section="${sec}" data-orig="${fac}" value="${fac}" maxlength="6" style="width:80px; text-transform:uppercase; background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:3px 6px; font-family:inherit; font-size:12px;"></td>
+          <td><input type="text" class="ho-code" data-section="${sec}" data-fac="${fac}" value="${code}" maxlength="4" style="width:60px; text-transform:uppercase; background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:3px 6px; font-family:inherit; font-size:12px;"></td>
+          <td><button class="ho-del-row" data-section="${sec}" data-fac="${fac}" style="background:#2a0a0a; color:#b85050; border:1px solid #5a1414; padding:2px 8px; font-family:inherit; font-size:11px; cursor:pointer;">DEL</button></td>
+        </tr>`).join('');
+    const sectionHead = isDefault
+      ? `<h3 style="margin-top:18px;">DEFAULT (applies to every scope)</h3>`
+      : `<h3 style="margin-top:18px; display:flex; align-items:center; gap:10px;">
+           SECTION <b style="color:#cccc44">${sec}</b>
+           <span style="color:#888835; font-size:11px; font-weight:normal; letter-spacing:0;">— overrides shown only when myFacility = ${sec}</span>
+           <button class="ho-del-section" data-section="${sec}" style="margin-left:auto; background:#2a0a0a; color:#b85050; border:1px solid #5a1414; padding:2px 10px; font-family:inherit; font-size:11px; cursor:pointer; letter-spacing:0;">DELETE SECTION</button>
+         </h3>`;
+    return `${sectionHead}
+      <table>
+        <thead><tr><th style="width:120px">FACILITY</th><th style="width:80px">CODE</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <button class="ho-add-row" data-section="${sec}" style="margin-top:6px; background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:4px 10px; font-family:inherit; font-size:11px; cursor:pointer;">+ ADD ROW</button>`;
+  }).join('');
+
+  // Row edits: rebuild that section's map so a renamed key is moved cleanly.
+  $hoSections.querySelectorAll('.ho-fac, .ho-code').forEach(inp => {
+    inp.addEventListener('change', (e) => {
+      const sec = e.target.dataset.section;
+      rebuildSectionFromInputs(sec);
+    });
+  });
+  $hoSections.querySelectorAll('.ho-add-row').forEach(b => {
+    b.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      // Add an empty row; user fills in. Use a unique placeholder key.
+      let i = 1;
+      while (hoModel[sec][`NEW${i}`] != null) i++;
+      hoModel[sec][`NEW${i}`] = '';
+      renderHoEditor();
+    });
+  });
+  $hoSections.querySelectorAll('.ho-del-row').forEach(b => {
+    b.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      const fac = e.target.dataset.fac;
+      delete hoModel[sec][fac];
+      renderHoEditor();
+    });
+  });
+  $hoSections.querySelectorAll('.ho-del-section').forEach(b => {
+    b.addEventListener('click', (e) => {
+      const sec = e.target.dataset.section;
+      if (sec === 'default') return alert("Can't delete the default section.");
+      if (!confirm(`Delete section "${sec}" and all its overrides?`)) return;
+      delete hoModel[sec];
+      renderHoEditor();
+    });
+  });
+}
+
+function rebuildSectionFromInputs(sec) {
+  const out = {};
+  $hoSections.querySelectorAll(`.ho-fac[data-section="${sec}"]`).forEach(facInp => {
+    const facKey = facInp.value.trim().toUpperCase();
+    if (!facKey) return;   // skip empty
+    const codeInp = $hoSections.querySelector(`.ho-code[data-section="${sec}"][data-fac="${facInp.dataset.orig}"]`);
+    const code = codeInp ? codeInp.value.trim().toUpperCase() : '';
+    if (!code) return;     // skip empty
+    out[facKey] = code;
+  });
+  hoModel[sec] = out;
+  renderHoEditor();
+}
+
+async function loadHoCodes() {
+  try {
+    const resp = await fetch('/api/handoff-codes', { cache: 'no-store' });
+    hoModel = await resp.json();
+    if (!hoModel.default) hoModel.default = {};
+    renderHoEditor();
+  } catch (e) {
+    $hoSections.innerHTML = `<div style="color:#b85050;">Failed to load: ${e}</div>`;
+  }
+}
+
+async function saveHoCodes() {
+  // Drop sections that have no entries (other than default which always
+  // exists) to keep the on-disk file tidy.
+  const clean = {};
+  if (hoModel._comment) clean._comment = hoModel._comment;
+  for (const [sec, map] of Object.entries(hoModel)) {
+    if (sec.startsWith('_')) continue;
+    if (sec !== 'default' && Object.keys(map).length === 0) continue;
+    clean[sec] = map;
+  }
+  try {
+    const resp = await fetch('/api/handoff-codes', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(clean, null, 2)
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      alert('Save failed: ' + err);
+      return;
+    }
+    const btn = document.getElementById('ho-save');
+    const orig = btn.textContent;
+    btn.textContent = 'SAVED ✓';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  } catch (e) {
+    alert('Save failed: ' + e);
+  }
+}
+
+document.getElementById('btn-hocodes').onclick = () => { loadHoCodes(); $hoModal.classList.add('open'); };
+document.getElementById('ho-close').onclick   = () => $hoModal.classList.remove('open');
+document.getElementById('ho-reload').onclick  = () => loadHoCodes();
+document.getElementById('ho-save').onclick    = () => saveHoCodes();
+document.getElementById('ho-add-section').onclick = () => {
+  const sec = prompt('New section facility ID (e.g. ZDC, ZNY):');
+  if (!sec) return;
+  const key = sec.trim().toUpperCase();
+  if (!/^[A-Z][A-Z0-9]{1,5}$/.test(key)) { alert('Invalid facility ID.'); return; }
+  if (hoModel[key]) { alert('Section already exists.'); return; }
+  hoModel[key] = {};
+  renderHoEditor();
+};
+$hoModal.addEventListener('click', (e) => { if (e.target === $hoModal) $hoModal.classList.remove('open'); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $hoModal.classList.contains('open')) $hoModal.classList.remove('open');
 });
 </script>
 <script src="/shared/frame.js?v=2"></script>

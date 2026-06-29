@@ -7073,6 +7073,49 @@ function clampBox(el) {
     let top = eRect.top - cRect.top;
     left = Math.max(0, Math.min(left, cRect.width - eRect.width));
     top = Math.max(0, Math.min(top, cRect.height - eRect.height));
+    // Push away from any "no-overlap" sibling (MCA ↔ RA pairing). The first
+    // siblingId that the element knows of wins; ties broken on the axis of
+    // smallest penetration so dragging slides along the sibling's edge.
+    const siblingId = el.dataset.noOverlapWith;
+    if (siblingId) {
+        const other = document.getElementById(siblingId);
+        if (other && other !== el) {
+            const oRect = other.getBoundingClientRect();
+            const oLeft = oRect.left - cRect.left;
+            const oTop = oRect.top - cRect.top;
+            const overlapX = Math.min(left + eRect.width, oLeft + oRect.width)
+                           - Math.max(left, oLeft);
+            const overlapY = Math.min(top + eRect.height, oTop + oRect.height)
+                           - Math.max(top, oTop);
+            if (overlapX > 0 && overlapY > 0) {
+                // Resolve along the smaller overlap axis. Pick the side with
+                // more free space so the box stays on-screen.
+                if (overlapX < overlapY) {
+                    const pushLeft  = oLeft - eRect.width;
+                    const pushRight = oLeft + oRect.width;
+                    const fitsLeft  = pushLeft >= 0;
+                    const fitsRight = pushRight + eRect.width <= cRect.width;
+                    if (fitsLeft && (!fitsRight || (left + eRect.width / 2) < (oLeft + oRect.width / 2)))
+                        left = pushLeft;
+                    else if (fitsRight) left = pushRight;
+                    else left = pushLeft;   // best effort — both sides clipped
+                } else {
+                    const pushUp   = oTop - eRect.height;
+                    const pushDown = oTop + oRect.height;
+                    const fitsUp   = pushUp >= 0;
+                    const fitsDown = pushDown + eRect.height <= cRect.height;
+                    if (fitsUp && (!fitsDown || (top + eRect.height / 2) < (oTop + oRect.height / 2)))
+                        top = pushUp;
+                    else if (fitsDown) top = pushDown;
+                    else top = pushUp;
+                }
+                // Final clamp after push, in case the resolution moved us
+                // outside the container.
+                left = Math.max(0, Math.min(left, cRect.width - eRect.width));
+                top  = Math.max(0, Math.min(top,  cRect.height - eRect.height));
+            }
+        }
+    }
     el.style.left = left + 'px';
     el.style.top = top + 'px';
     el.style.bottom = 'auto';
@@ -7129,17 +7172,18 @@ function setupBoxDrag(el, handleEl) {
 
 document.addEventListener('mousemove', e => {
     if (!_boxDragging) return;
+    // Apply the new mouse position, then defer to clampBox for boundary +
+    // sibling no-overlap resolution. clampBox reads getBoundingClientRect
+    // which means we must commit the desired position first, then clamp.
     const container = _boxDragging.parentElement;
     const cRect = container.getBoundingClientRect();
-    const eRect = _boxDragging.getBoundingClientRect();
     let left = e.clientX - cRect.left - _boxDragOffset.x;
-    let top = e.clientY - cRect.top - _boxDragOffset.y;
-    left = Math.max(0, Math.min(left, cRect.width - eRect.width));
-    top = Math.max(0, Math.min(top, cRect.height - eRect.height));
+    let top  = e.clientY - cRect.top  - _boxDragOffset.y;
     _boxDragging.style.left = left + 'px';
     _boxDragging.style.top = top + 'px';
     _boxDragging.style.bottom = 'auto';
     _boxDragging.style.right = 'auto';
+    clampBox(_boxDragging);
 });
 
 // Click outside the dragged box → drop it

@@ -646,6 +646,9 @@ input[type="checkbox"]:checked::after {
 #beacon-rows-popup button:active { background: #555 !important; }
 
 .wx-entry {
+    /* CRC ERAM Fig. 17 layout: yellow box adornment on the left, then
+       STA + obs time + METAR on the first line with continuation lines
+       hanging-indented under the METAR's first character. */
     padding: 2px 4px;
     border-bottom: 1px solid #333;
     font-size: 11px;
@@ -655,53 +658,37 @@ input[type="checkbox"]:checked::after {
     min-width: 250px;
     color: #BBBBBB;
     display: flex;
-    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
 }
 .wx-entry:last-child { border-bottom: none; }
 .wx-entry:hover { background: #1a1a1a; }
-.wx-entry-selected {
-    background: #333344;
-}
+.wx-entry-selected { background: #333344; }
 .wx-box {
     display: inline-block;
     width: 12px; height: 12px;
     background: #9FA309;
-    margin-right: 6px;
     flex-shrink: 0;
+    margin-top: 1px;        /* nudge to baseline-align with text */
 }
-.wx-station-row {
-    display: flex; align-items: center; padding-bottom: 2px;
-}
-.wx-station {
-    color: #CCCC44;
-    font-weight: bold;
-    min-width: 40px;
-    margin-right: 4px;
-}
-.wx-time {
-    color: #BBBBBB;
-    font-size: 10px;
-    min-width: 50px;
-    text-align: right;
-    margin-right: 4px;
-}
-.wx-time.stale {
-    text-decoration: underline;
-}
-.wx-metar {
-    color: #BBBBBB;
-    font-size: 11px;
+.wx-content {
+    flex: 1;
+    /* Monospace + pre-wrap so the 4-char STA + space + 4-char TIME + space
+       prefix consumes exactly 10 chars on line 1; continuation lines indent
+       to that boundary via the negative text-indent / padding-left pair. */
+    font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     line-height: 14px;
-    word-break: break-word;
     white-space: pre-wrap;
-    padding: 2px 0;
+    word-break: break-all;
+    padding-left: 10ch;
+    text-indent: -10ch;
 }
-.wx-metar.missing {
-    color: #888888;
-}
-.wx-entry-selected .wx-metar {
-    visibility: hidden;
-}
+.wx-station { color: #BBBBBB; }            /* per CRC: plain, not bold */
+.wx-time    { color: #BBBBBB; }
+.wx-time.stale { text-decoration: underline; }
+.wx-metar   { color: #BBBBBB; }
+.wx-metar.missing { color: #888888; }
+.wx-entry-selected .wx-metar { visibility: hidden; }
 .wx-delete-btn {
     position: absolute;
     right: 22px;

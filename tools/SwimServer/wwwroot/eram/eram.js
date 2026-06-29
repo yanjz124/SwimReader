@@ -490,6 +490,9 @@ function cleanMetarText(metar) {
     let text = metar.replace(/^METAR\s+/, '');
     // Remove station ID at the beginning (4 characters followed by space)
     text = text.replace(/^[A-Z]{4}\s+/, '');
+    // Remove the observation time (DDHHMMZ) — it's already shown in its
+    // own column per CRC ERAM Fig. 17, so keeping it inline duplicates.
+    text = text.replace(/^\d{6}Z\s+/, '');
     return text.trim();
 }
 
@@ -504,53 +507,33 @@ function updateWeatherMenuBody() {
     }
     body.style.display = 'block';
     let html = '';
+    const escHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     for (const [station, data] of weatherStations) {
-        const timeStr = (data.time || '????') + 'Z';
+        const timeStr = data.time || '????';
         const ageMin = getWeatherObsAgeMinutes(data.updatedAt);
-
-        // Determine METAR display and styling
-        let metarHtml;
-        if (ageMin !== null && ageMin > 120) {
-            // Too old — show -M-
-            metarHtml = '<span class="wx-metar missing">-M-</span>';
-        } else if (!data.metar || data.metar === 'N/A') {
-            // Missing report
-            metarHtml = '<span class="wx-metar missing">-M-</span>';
-        } else {
-            // Format METAR text with word wrap at ~35 chars per line (for 250px display)
-            const metar = cleanMetarText(data.metar);
-            const maxCharsPerLine = 35;
-            let lines = [];
-            let currentLine = '';
-            const words = metar.split(' ');
-            for (const word of words) {
-                if ((currentLine + ' ' + word).length > maxCharsPerLine) {
-                    if (currentLine) lines.push(currentLine);
-                    currentLine = word;
-                } else {
-                    currentLine = currentLine ? currentLine + ' ' + word : word;
-                }
-            }
-            if (currentLine) lines.push(currentLine);
-
-            const displayLines = lines.slice(0, 2);  // Show max 2 lines in menu
-            const hasMore = lines.length > 2;
-            const metarText = displayLines.join('\n') + (hasMore ? ' >' : '');
-            metarHtml = `<span class="wx-metar">${metarText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>`;
-        }
-
-        // Underline observation time if stale (>65 min)
         const staleClass = ageMin !== null && ageMin > 65 ? 'stale' : '';
+
+        // METAR body — per CRC ERAM Fig. 17, the station ID + observation
+        // time start the first line and the METAR text continues inline,
+        // wrapping to indented continuation lines (hanging indent in CSS).
+        // Too-old (>120min) or missing reports show -M-.
+        let metarText;
+        let metarClass = 'wx-metar';
+        if ((ageMin !== null && ageMin > 120) || !data.metar || data.metar === 'N/A') {
+            metarText = '-M-';
+            metarClass += ' missing';
+        } else {
+            metarText = cleanMetarText(data.metar);
+        }
 
         const isSelected = weatherSelectedStation === station;
         const selectedClass = isSelected ? 'wx-entry-selected' : '';
+        // Single inline run: STA + 2 spaces + TIME + 2 spaces + METAR.
+        // Monospace font + text-indent CSS gives the hanging indent so
+        // continuation lines align under the METAR's first char.
         html += `<div class="wx-entry ${selectedClass}" data-station="${station}" onclick="selectWeatherStation('${station}', event)">
-            <div class="wx-station-row">
-                <span class="wx-box" style="${isSelected ? 'background:#ff8844;' : ''}"></span>
-                <span class="wx-station">${station.padEnd(4)}</span>
-                <span class="wx-time ${staleClass}">${timeStr}</span>
-            </div>
-            ${metarHtml}
+            <span class="wx-box" style="${isSelected ? 'background:#ff8844;' : ''}"></span>
+            <span class="wx-content"><span class="wx-station">${station.padEnd(4)}</span> <span class="wx-time ${staleClass}">${timeStr}</span> <span class="${metarClass}">${escHtml(metarText)}</span></span>
             ${isSelected ? '<span class="wx-delete-btn" onclick="deleteSelectedWeatherStation(event)">DEL</span>' : ''}
         </div>`;
     }

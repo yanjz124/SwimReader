@@ -36,11 +36,19 @@ static class StaticRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "home", "index.html"));
         });
 
-        // ERAM clean URL
+        // ERAM clean URLs: /eram is the facility+sector picker landing page;
+        // /eram/scope is the actual radar scope. Landing writes the picked
+        // facility + sectors to localStorage "eram-settings" before
+        // navigating, so the scope picks them up via its existing load path.
         app.MapGet("/eram", async (HttpContext c) =>
         {
             c.Response.ContentType = "text/html";
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "eram", "index.html"));
+        });
+        app.MapGet("/eram/scope", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "eram", "scope.html"));
         });
 
         // Flight table & TFM clean URLs (non-parameterized — safe to register here)

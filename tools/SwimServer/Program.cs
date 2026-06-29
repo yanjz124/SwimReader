@@ -996,10 +996,20 @@ var healthTimer = new Timer(_ =>
     if (silence > 60)
         Console.WriteLine($"[HEALTH] Warning: no messages for {silence:F0}s");
 
-    // Only escalate once the feed has actually delivered at least once (avoids restart loops when
-    // SFDPS never connects, e.g. bad credentials) and at most once per process.
-    if (silence > SfdpsRestartSilenceSec
-        && Interlocked.CompareExchange(ref sfdpsEverDelivered, 1, 1) == 1
+    // Originally only escalated after the feed delivered ≥1 message to avoid
+    // restart loops on bad credentials. Observed failure (2026-06-29): on a
+    // host start the Solace SDK's Connect() call returned cleanly but no
+    // messages ever arrived — the receive callback wired correctly, the feed
+    // just stayed silent. ~17h of "no messages" warnings, no restart.
+    // Now: escalate after long silence even with no prior delivery, capped
+    // at one trip per process so systemd's Restart=always brings it back
+    // clean. Restart loops on bad creds are bounded by systemd's
+    // RestartSec/StartLimitInterval.
+    const double SfdpsRestartSilenceSecNeverConnected = 600; // 10 min — much longer than any real reconnect
+    bool everDelivered = Interlocked.CompareExchange(ref sfdpsEverDelivered, 1, 1) == 1;
+    bool shouldEscalate = silence > SfdpsRestartSilenceSec
+        || (silence > SfdpsRestartSilenceSecNeverConnected && !everDelivered);
+    if (shouldEscalate
         && Interlocked.Exchange(ref sfdpsWatchdogTripped, 1) == 0)
     {
         Console.Error.WriteLine($"[HEALTH] SFDPS feed dead for {silence:F0}s — in-thread reconnect failed; restarting process for systemd restart.");

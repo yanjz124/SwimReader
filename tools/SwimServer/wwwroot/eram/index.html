@@ -94,6 +94,67 @@
   .btn.primary:hover { background: #5a5a14; }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn.primary:disabled:hover { background: #3a3a0a; color: #fff; }
+
+  /* ── Command Reference modal ─────────────────────────────────────────── */
+  .modal-back {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.92);
+    z-index: 100;
+    display: none;
+    flex-direction: column;
+    padding: 24px 32px;
+    overflow: hidden;
+  }
+  .modal-back.open { display: flex; }
+  .modal-head {
+    display: flex; align-items: center; gap: 16px;
+    padding-bottom: 10px; border-bottom: 1px solid #3a3a14;
+    margin-bottom: 12px;
+  }
+  .modal-head h2 { margin: 0; color: #cccc44; font-size: 16px; letter-spacing: 2px; }
+  .modal-head .source { color: #888835; font-size: 11px; }
+  .modal-head .filter {
+    margin-left: auto; display: flex; gap: 8px; align-items: center;
+  }
+  .modal-head input[type="text"] {
+    background: #1a1a05; color: #cccc44; border: 1px solid #3a3a14;
+    padding: 4px 8px; font-family: inherit; font-size: 12px; width: 200px;
+  }
+  .modal-head .legend { font-size: 11px; color: #888835; }
+  .modal-head .legend b.ok { color: #5ed05e; }
+  .modal-head .legend b.partial { color: #d0a040; }
+  .modal-head .legend b.no { color: #b85050; }
+  .modal-body { flex: 1; overflow-y: auto; }
+  .modal-body table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .modal-body th, .modal-body td {
+    text-align: left; padding: 5px 10px;
+    border-bottom: 1px solid #1a1a08;
+    vertical-align: top;
+  }
+  .modal-body th {
+    color: #b8b884; font-weight: normal; letter-spacing: 1px;
+    background: #050505; position: sticky; top: 0;
+    border-bottom: 1px solid #3a3a14;
+  }
+  .modal-body td.cmd { font-family: ui-monospace, monospace; color: #cccc44; white-space: nowrap; }
+  .modal-body td.desc { color: #b8b884; }
+  .modal-body td.status { white-space: nowrap; }
+  .modal-body td.status.ok { color: #5ed05e; }
+  .modal-body td.status.partial { color: #d0a040; }
+  .modal-body td.status.no { color: #b85050; }
+  .modal-body td.note { color: #888835; font-style: italic; font-size: 11px; }
+  .modal-body h3 {
+    margin: 18px 0 6px; padding-bottom: 4px;
+    color: #cccc44; font-size: 12px; letter-spacing: 2px;
+    border-bottom: 1px solid #3a3a14;
+  }
+  .modal-body tr.hide { display: none; }
+  .modal-close {
+    background: #1a1a05; color: #cccc44; border: 1px solid #3a3a14;
+    padding: 6px 14px; font-family: inherit; font-size: 12px; cursor: pointer;
+    letter-spacing: 1px;
+  }
+  .modal-close:hover { background: #3a3a0a; color: #fff; }
 </style>
 <link rel="stylesheet" href="/shared/common.css">
 <link rel="stylesheet" href="/shared/frame.css?v=3">
@@ -128,8 +189,23 @@
 
 <div class="launch-bar">
   <span class="summary" id="summary">No selection</span>
+  <button class="btn" id="btn-cmdref" title="MCA command reference + implementation status vs CRC ERAM docs">COMMAND REF</button>
   <button class="btn" id="btn-resume" title="Open ERAM with whatever facility + sectors you had selected last time">RESUME LAST SESSION</button>
   <button class="btn primary" id="btn-launch" disabled>LAUNCH ▸</button>
+</div>
+
+<!-- ── Command Reference overlay ────────────────────────────────────────── -->
+<div class="modal-back" id="cmd-modal">
+  <div class="modal-head">
+    <h2>MCA COMMAND REFERENCE</h2>
+    <span class="source">vs <a href="/docs/crc-eram-reference-2026-06-29.md" style="color:#cccc44;">CRC ERAM 2026-06-29</a></span>
+    <div class="filter">
+      <input type="text" id="cmd-filter" placeholder="filter…" />
+      <span class="legend"><b class="ok">●</b> implemented &nbsp; <b class="partial">●</b> partial &nbsp; <b class="no">●</b> missing</span>
+      <button class="modal-close" id="cmd-close">CLOSE</button>
+    </div>
+  </div>
+  <div class="modal-body" id="cmd-body"></div>
 </div>
 
 <script>
@@ -296,6 +372,137 @@ if (saved && saved.facility) {
 
 loadFacilities();
 setInterval(loadFacilities, 5000);
+
+// ── Command Reference ──────────────────────────────────────────────────────
+// Each entry mirrors CRC ERAM Reference §"ERAM Commands" + §"Implied
+// Commands". The status field reflects what tools/SwimServer/wwwroot/eram/
+// eram.js currently handles when the verb is typed into the MCA. Update
+// when adding/removing commands.
+//   ok      = fully implemented per CRC spec
+//   partial = some forms work, see note
+//   no      = recognized but rejected, or not handled at all
+const CMD_GROUPS = [
+  { name: "Implied Commands (no QN/QZ preface required)", cmds: [
+    { c: "<FLID>",                 d: "Toggles an unowned data block FDB↔LDB; accepts/recalls a pending handoff", s: "ok" },
+    { c: "//<FLID>",               d: "Toggles a track's VCI",                                                   s: "ok" },
+    { c: "<1-9> <FLID>",           d: "Positions a data block (numpad layout)",                                  s: "ok" },
+    { c: "/<0-3> <FLID>",          d: "Sets data block leader length",                                            s: "ok" },
+    { c: "<1-9>/<0-3> <FLID>",     d: "Positions data block + sets leader length",                               s: "ok" },
+  ]},
+  { name: "Altitude + Speed", cmds: [
+    { c: "QZ <alt> <FLID>",                 d: "Sets assigned altitude",                       s: "ok" },
+    { c: "QZ VFR[/<alt>] | OTP <FLID>",     d: "Assigns VFR (with optional altitude) or OTP",  s: "ok" },
+    { c: "QQ <alt> <FLID>",                 d: "Sets interim altitude",                        s: "ok" },
+    { c: "QQ (R|P|L)<alt> <FLID>",          d: "CERA / procedure / local interim altitude",    s: "ok" },
+    { c: "QR <alt> <FLID>",                 d: "Sets controller-entered reported altitude",    s: "ok" },
+    { c: "QQ <FLID>",                       d: "Clears interim/procedure altitude",            s: "ok" },
+    { c: "QS <hdg>|/<spd>|`<txt>|* <FLID>", d: "Edits HSF fourth-line (heading/speed/free text)", s: "ok" },
+  ]},
+  { name: "Tracks + Handoffs", cmds: [
+    { c: "QT <location> <ACID>",   d: "Starts a track",                                          s: "no",
+      n: "no QT — autotrack handles association from SWIM" },
+    { c: "QX <FLID>",              d: "Drops a track",                                           s: "ok" },
+    { c: "QH F <location> <FLID>", d: "Freezes a track",                                         s: "no" },
+    { c: "QF <FLID>",              d: "Flight plan readout in Response Area",                    s: "ok" },
+    { c: "QP <sector> <FLID>",     d: "Initiates a point-out",                                   s: "ok" },
+    { c: "QP A <sector> <FLID>",   d: "Acknowledges a point-out",                                s: "ok" },
+    { c: "QP <FLID>",              d: "FDB→LDB after point-out",                                 s: "ok" },
+    { c: "QP J <FLID>",            d: "Toggles standard DRI",                                    s: "ok" },
+    { c: "QP T <FLID>",            d: "Toggles reduced-separation DRI",                          s: "ok" },
+    { c: "QL <sector>…",           d: "Quick Look sectors (force FDB)",                          s: "ok" },
+    { c: "RF <FLID> <facility>",   d: "Forces flight-plan transfer to facility",                 s: "no" },
+  ]},
+  { name: "Beacon Codes", cmds: [
+    { c: "QB <ACID>",                d: "Requests a beacon code",                                s: "no",
+      n: "code already comes via SWIM" },
+    { c: "QB <code> <ACID>",         d: "Assigns a beacon code",                                 s: "no" },
+    { c: "QB <code1> <code2> …",     d: "Toggles codes in Beacon Code View",                     s: "ok" },
+    { c: "QB <equipment> <FLID>",    d: "Assigns an equipment suffix",                           s: "partial",
+      n: "form recognized, persisted client-side only" },
+    { c: "QB [/v|/r|/t] <FLID>",     d: "Assigns a voice type",                                  s: "partial",
+      n: "client-side only" },
+  ]},
+  { name: "Route + Display", cmds: [
+    { c: "QU <minutes> <FLID>",   d: "Displays a route for N minutes",                           s: "ok" },
+    { c: "QU <FLID>",             d: "Clears displayed route",                                   s: "ok" },
+    { c: "QU <fix> <FLID>",       d: "Amends route direct to a fix",                             s: "no" },
+    { c: "QU /M <FLID>",          d: "Shows full filed route",                                   s: "ok" },
+    { c: "AM …",                  d: "Amends a flight plan",                                     s: "no" },
+    { c: "DM <ACID>",             d: "Activates a flight plan",                                  s: "no" },
+    { c: "VP <type> <route> <FLID>", d: "Creates a VFR flight plan",                             s: "no" },
+    { c: "MR",                    d: "Lists available GeoMaps in Response Area",                 s: "no" },
+    { c: "MR <GeoMap>",           d: "Switches to a GeoMap",                                     s: "no",
+      n: "single base map only" },
+  ]},
+  { name: "Tools (Range/Bearing/Speed/CRR)", cmds: [
+    { c: "LA <loc1> <loc2>",      d: "Range/bearing between two locations",                      s: "ok" },
+    { c: "LB <fix> <loc>",        d: "Range/bearing from fix to location",                       s: "ok" },
+    { c: "LC <fix>/<time> <FLID>",d: "Speed adjustment to hit fix at zulu time",                 s: "ok" },
+    { c: "LF <label> <FLID>",     d: "Adds/removes aircraft from a CRR group",                   s: "ok" },
+    { c: "QN | QZ",               d: "Implied-command preface (no-op verbs)",                    s: "ok",
+      n: "preface optional — implied commands work either way" },
+  ]},
+  { name: "Filters + Views", cmds: [
+    { c: "QD <lo>B<hi>",          d: "Sets altitude limits filter (hundreds of feet)",           s: "ok",
+      n: "new — see commit 26cc584" },
+    { c: "QD CLR | QD *",         d: "Clears altitude limits filter",                            s: "ok",
+      n: "extension beyond CRC, for convenience" },
+    { c: "QD <station>",          d: "Toggles altimeter setting (Altim Set view)",               s: "no",
+      n: "no ALT SET view yet" },
+    { c: "QD (bare)",             d: "Clear Response Area",                                      s: "ok",
+      n: "extension beyond CRC" },
+    { c: "AR <station>",          d: "Toggles display of an altimeter setting",                  s: "partial",
+      n: "verb recognized, view rendering not full ERAM-style" },
+    { c: "WR <station>",          d: "Toggles weather station report display",                   s: "partial",
+      n: "verb recognized, view rendering not full ERAM-style" },
+    { c: "WR R <station>",        d: "Shows most recent METAR in Response Area",                 s: "ok" },
+  ]},
+];
+
+const $cmdBody = document.getElementById('cmd-body');
+function renderCmdRef() {
+  const html = CMD_GROUPS.map(g => {
+    const rows = g.cmds.map(c => {
+      const label = c.s === 'ok' ? 'IMPL' : c.s === 'partial' ? 'PART' : 'MISS';
+      const note = c.n ? `<div class="note">${c.n}</div>` : '';
+      return `<tr data-search="${(c.c + ' ' + c.d + ' ' + (c.n || '')).toLowerCase()}">
+        <td class="cmd">${c.c}</td>
+        <td class="desc">${c.d}${note}</td>
+        <td class="status ${c.s}">● ${label}</td>
+      </tr>`;
+    }).join('');
+    return `<h3>${g.name}</h3>
+      <table><thead><tr><th style="width:30%">Command</th><th>Description</th><th style="width:90px">Status</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }).join('');
+  // Footer with rollup stats.
+  let ok = 0, partial = 0, no = 0;
+  for (const g of CMD_GROUPS) for (const c of g.cmds) {
+    if (c.s === 'ok') ok++; else if (c.s === 'partial') partial++; else no++;
+  }
+  const total = ok + partial + no;
+  const footer = `<div style="margin-top:18px; padding-top:10px; border-top:1px solid #3a3a14; color:#888835; font-size:11px;">
+    <b style="color:#5ed05e">${ok}</b> implemented · <b style="color:#d0a040">${partial}</b> partial · <b style="color:#b85050">${no}</b> missing · <b style="color:#cccc44">${total}</b> total.
+    Click a command in MCA via the scope to try it. Status updated 2026-06-29.
+  </div>`;
+  $cmdBody.innerHTML = html + footer;
+}
+renderCmdRef();
+
+const $cmdModal = document.getElementById('cmd-modal');
+document.getElementById('btn-cmdref').onclick = () => $cmdModal.classList.add('open');
+document.getElementById('cmd-close').onclick = () => $cmdModal.classList.remove('open');
+$cmdModal.addEventListener('click', (e) => { if (e.target === $cmdModal) $cmdModal.classList.remove('open'); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $cmdModal.classList.contains('open')) $cmdModal.classList.remove('open');
+});
+
+document.getElementById('cmd-filter').addEventListener('input', (e) => {
+  const q = e.target.value.toLowerCase().trim();
+  for (const tr of $cmdBody.querySelectorAll('tbody tr')) {
+    tr.classList.toggle('hide', q.length > 0 && !tr.dataset.search.includes(q));
+  }
+});
 </script>
 <script src="/shared/frame.js?v=2"></script>
 </body>

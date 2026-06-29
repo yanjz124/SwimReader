@@ -1047,10 +1047,14 @@ let handoffCodesConfig = { default: {} };
 
 async function loadHandoffCodes() {
     try {
-        const resp = await fetch('/handoff-codes.json');
+        // /api/handoff-codes always re-reads the on-disk file (no static
+        // caching). Static /handoff-codes.json is also fine but can be
+        // cached by the browser / CDN, so this avoids edits in the
+        // landing-page HO CODES editor going stale across reloads.
+        const resp = await fetch('/api/handoff-codes', { cache: 'no-store' });
         if (!resp.ok) return;
         handoffCodesConfig = await resp.json();
-        console.log('[HO-Codes] Loaded', Object.keys(handoffCodesConfig.default).length, 'default codes');
+        console.log('[HO-Codes] Loaded', Object.keys(handoffCodesConfig.default || {}).length, 'default codes');
     } catch (e) { console.warn('[HO-Codes]', e); }
 }
 loadHandoffCodes();

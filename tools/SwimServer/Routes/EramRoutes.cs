@@ -59,6 +59,69 @@ static class EramRoutes
             }
         });
 
+        // ── Handoff display-code map (shared across all scopes) ─────────
+        // GET returns the live JSON; PUT replaces it atomically. The eram.js
+        // landing-page Codes Editor reads/writes through these endpoints, so
+        // any user's edits become the single source of truth for every
+        // scope. File on disk drives the static /handoff-codes.json fetch
+        // that loadHandoffCodes() in eram.js calls on scope boot.
+        var handoffCodesPath = Path.Combine(ctx.WebRootPath, "handoff-codes.json");
+        var handoffWriteLock = new object();
+
+        app.MapGet("/api/handoff-codes", () =>
+        {
+            try
+            {
+                var json = File.Exists(handoffCodesPath)
+                    ? File.ReadAllText(handoffCodesPath)
+                    : "{\"default\":{}}";
+                return Results.Content(json, "application/json");
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem($"failed to read handoff-codes.json: {ex.Message}");
+            }
+        });
+
+        app.MapPut("/api/handoff-codes", async (HttpContext c) =>
+        {
+            // Accept the new mapping as a raw JSON body. Validate shape:
+            //   { default: { FAC: "code" }, FAC1: { OTHERFAC: "code" }, ... }
+            // Reject anything that isn't an object-of-objects-of-strings to
+            // keep accidental garbage from breaking the scope on next load.
+            using var reader = new StreamReader(c.Request.Body);
+            var body = await reader.ReadToEndAsync();
+            System.Text.Json.JsonDocument doc;
+            try { doc = System.Text.Json.JsonDocument.Parse(body); }
+            catch (System.Text.Json.JsonException ex) { return Results.BadRequest(new { error = "invalid JSON", message = ex.Message }); }
+
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return Results.BadRequest(new { error = "root must be an object" });
+
+            foreach (var section in doc.RootElement.EnumerateObject())
+            {
+                if (section.Name.StartsWith("_")) continue;   // tolerate _comment
+                if (section.Value.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    return Results.BadRequest(new { error = $"section '{section.Name}' must be an object" });
+                foreach (var entry in section.Value.EnumerateObject())
+                {
+                    if (entry.Value.ValueKind != System.Text.Json.JsonValueKind.String)
+                        return Results.BadRequest(new { error = $"'{section.Name}.{entry.Name}' must be a string" });
+                }
+            }
+
+            // Pretty-print with 2-space indent so the on-disk file stays
+            // hand-editable / diff-friendly when someone bypasses the UI.
+            var pretty = System.Text.Json.JsonSerializer.Serialize(doc.RootElement,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+            lock (handoffWriteLock)
+            {
+                File.WriteAllText(handoffCodesPath, pretty);
+            }
+            return Results.Json(new { ok = true, size = pretty.Length });
+        });
+
         // REST API for event raw XML (must be before catch-all route)
         app.MapGet("/api/event-xml/{eventIndex}/{*gufi}", (int eventIndex, string gufi) =>
         {

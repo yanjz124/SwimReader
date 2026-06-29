@@ -5557,10 +5557,57 @@ function processCommand(cmd) {
         return { feedback: [{ type: 'err', text: 'FLIGHT NOT FOUND' }] };
     }
 
-    // QD — clear Response Area
+    // ═══════════════════════════════════════════════════════════════════════
+    // QD — Altitude limits / altimeter / clear Response Area
+    //   QD <lo>B<hi>   set altitude limits (hundreds of feet, e.g. QD 100B230)
+    //   QD CLR | QD *  clear the altitude limits filter
+    //   QD             clear Response Area  (legacy convenience, not in CRC docs)
+    //   (QD <station>  altimeter toggle — not implemented; ALT LIM view absent)
+    // CRC ERAM Reference §"QD Command" + Command Reference table.
+    // ═══════════════════════════════════════════════════════════════════════
     if (verb === 'QD') {
-        document.getElementById('ra-content').textContent = '';
-        return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+        // Bare QD with no args → clear Response Area (legacy behavior kept
+        // so existing muscle memory still works).
+        if (parts.length === 1) {
+            document.getElementById('ra-content').textContent = '';
+            return { feedback: [{ type: 'ok', text: 'ACCEPT' }] };
+        }
+        const arg = parts.slice(1).join('').toUpperCase();
+        // Clear forms
+        if (arg === 'CLR' || arg === '*') {
+            altFilterLow = 0; altFilterHigh = 999;
+            const lo = document.getElementById('inp-alt-low');
+            const hi = document.getElementById('inp-alt-high');
+            if (lo) lo.value = 0;
+            if (hi) hi.value = 999;
+            saveSettingsToLocalStorage();
+            return { feedback: [{ type: 'ok', text: 'ACCEPT — ALT LIM CLEARED' }] };
+        }
+        // QD <lo>B<hi> — both bounds in hundreds of feet
+        const m = arg.match(/^(\d{1,3})B(\d{1,3})$/);
+        if (m) {
+            const lo = parseInt(m[1], 10);
+            const hi = parseInt(m[2], 10);
+            if (lo >= hi) {
+                return { feedback: [{ type: 'err', text: 'REJECT — LOWER MUST BE < UPPER' }] };
+            }
+            if (lo < 0 || hi > 999) {
+                return { feedback: [{ type: 'err', text: 'REJECT — LIMITS OUT OF RANGE 000-999' }] };
+            }
+            altFilterLow = lo; altFilterHigh = hi;
+            const loEl = document.getElementById('inp-alt-low');
+            const hiEl = document.getElementById('inp-alt-high');
+            if (loEl) loEl.value = lo;
+            if (hiEl) hiEl.value = hi;
+            saveSettingsToLocalStorage();
+            const fmt = (v) => String(v).padStart(3, '0');
+            return { feedback: [{ type: 'ok', text: `ACCEPT — ALT LIM ${fmt(lo)}B${fmt(hi)}` }] };
+        }
+        // QD <station>  altimeter list — not implemented (no ALT SET view yet).
+        if (/^[A-Z][A-Z0-9]{2,3}$/.test(arg)) {
+            return { feedback: [{ type: 'err', text: 'REJECT — ALTIM SET VIEW NOT SIMULATED' }] };
+        }
+        return { feedback: [{ type: 'err', text: 'REJECT — QD SYNTAX' }] };
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -8377,14 +8424,34 @@ const TB_MASTER = {
             menu('MAP', 'geomap'),
             incdec('ALT LIM', {
                 cls: 'tb-dark',
+                // ERAM "ALT LIM" displays the current limit, or XXXXXXX when
+                // Target and LDB filters disagree (CRC §Toolbars). We carry a
+                // single filter, so always render the combined LLLBUUU value.
                 getValue: () => {
-                    const lo = document.getElementById('inp-alt-low')?.value || '0';
-                    const hi = document.getElementById('inp-alt-high')?.value || '999';
-                    return lo.padStart(3, '0') + 'B' + hi.padStart(3, '0');
+                    const lo = (altFilterLow|0).toString().padStart(3, '0');
+                    const hi = (altFilterHigh|0).toString().padStart(3, '0');
+                    return lo + 'B' + hi;
                 },
                 formatValue: v => v,
-                onDec: () => {},
-                onInc: () => {},
+                // Middle/right-click clears the filter.
+                onDec: () => {
+                    altFilterLow = 0; altFilterHigh = 999;
+                    const lo = document.getElementById('inp-alt-low');
+                    const hi = document.getElementById('inp-alt-high');
+                    if (lo) lo.value = 0;
+                    if (hi) hi.value = 999;
+                    saveSettingsToLocalStorage();
+                },
+                // Left-click pre-fills the MCA with "QD " so the controller
+                // can finish typing limits (e.g. QD 100B230) and Enter.
+                onInc: () => {
+                    const mca = document.getElementById('mca-mobile-input');
+                    if (mca) {
+                        mca.value = 'QD ';
+                        mca.focus();
+                        mca.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                },
             }),
             menu('RADAR\nFILTER', 'radar-filter'),
             toggle('PREFSET', {

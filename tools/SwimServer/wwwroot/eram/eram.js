@@ -5603,9 +5603,21 @@ function processCommand(cmd) {
             const fmt = (v) => String(v).padStart(3, '0');
             return { feedback: [{ type: 'ok', text: `ACCEPT — ALT LIM ${fmt(lo)}B${fmt(hi)}` }] };
         }
-        // QD <station>  altimeter list — not implemented (no ALT SET view yet).
+        // QD <station> — toggle altimeter setting display.
+        // Per CRC ERAM Reference §Command Reference: this is the same action
+        // as `AR <station>`; share the existing add/remove path.
         if (/^[A-Z][A-Z0-9]{2,3}$/.test(arg)) {
-            return { feedback: [{ type: 'err', text: 'REJECT — ALTIM SET VIEW NOT SIMULATED' }] };
+            let stationInput = arg.startsWith('K') ? arg.substring(1) : arg;
+            if (altimeterStations.has(stationInput)) {
+                removeAltimeterStation(stationInput);
+                altimeterSelectedStation = null;
+                return { feedback: [
+                    { type: 'ok', text: 'ACCEPT' },
+                    { type: 'info', text: `ALTIMETER ${stationInput}` },
+                    { type: 'info', text: 'REMOVED' }
+                ]};
+            }
+            return addAltimeterStation(stationInput);
         }
         return { feedback: [{ type: 'err', text: 'REJECT — QD SYNTAX' }] };
     }

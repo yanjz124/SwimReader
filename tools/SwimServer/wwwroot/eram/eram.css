@@ -915,14 +915,18 @@ input[type="checkbox"]:checked::after {
 }
 #mca-preview {
     background: #000000; border: 1px solid #888; color: #ffffff;
-    padding: 3px 6px; min-width: 400px;
-    font-size: 14px; font-weight: normal; line-height: 18px; white-space: pre; min-height: 28px;
-    display: flex; align-items: center;
+    padding: 3px 6px; width: 400px; box-sizing: border-box;
+    font-size: 14px; font-weight: normal; line-height: 18px;
+    white-space: pre; overflow: hidden; text-overflow: ellipsis;
+    min-height: 28px; display: flex; align-items: center;
 }
 #mca-feedback {
     background: #000000; border: 1px solid #888; border-top: none; color: #ffffff;
-    padding: 3px 6px; min-width: 400px;
-    font-size: 14px; font-weight: normal; line-height: 18px; white-space: pre; min-height: 68px;
+    padding: 3px 6px; width: 400px; box-sizing: border-box;
+    font-size: 14px; font-weight: normal; line-height: 18px;
+    /* Long feedback lines wrap within the fixed-width box so MCA never
+       grows horizontally with message length. Vertical growth is OK. */
+    white-space: pre-wrap; word-break: break-word; min-height: 68px;
 }
 #mca-kb-btn {
     position: absolute; top: 0; right: -28px;

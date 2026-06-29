@@ -40,6 +40,10 @@ const quickLookDests = new Set();   // QL destinations — force FDB on flights 
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
 const wasOwnOrHo = new Set();  // tracks that were own/ho — keeps FDB sticky when they become other
 const manuallyHidden = new Set(); // GUFIs user explicitly hid via middle-click cycle or QX command
+// Position snapshot taken when a track was QX'd, so processFlightUpdate can
+// auto-revive it when SFDPS publishes a genuinely-new position (≠ a stale
+// resend with the same lat/lon). Cleared once the revive fires.
+const qxSnapshot = new Map();   // gufi → { lat, lon, posAge, at }
 const lastVisibleAt = new Map(); // gufi → performance.now() — grace period prevents flicker on facility field changes
 
 const knownFacilities = new Map();
@@ -2817,6 +2821,27 @@ function addHistoryPoint(gufi, lat, lon, sym) {
 function processFlightUpdate(f) {
     trackFacility(f);
 
+    // Auto-revive a QX'd track when SFDPS publishes a genuinely-new
+    // position — i.e. lat/lon has CHANGED since the QX moment, and the
+    // server marks the position fresh (posAge <= 30s). A stale resend at
+    // the same coords doesn't count, so QX'ing a coasting / dropped target
+    // keeps it hidden until it actually starts moving again.
+    if (manuallyHidden.has(f.gufi) && qxSnapshot.has(f.gufi) &&
+        f.latitude != null && f.longitude != null) {
+        const snap = qxSnapshot.get(f.gufi);
+        const moved = snap.lat == null || snap.lon == null
+                   || Math.abs(f.latitude  - snap.lat) > 1e-5
+                   || Math.abs(f.longitude - snap.lon) > 1e-5;
+        const fresh = (f.posAge != null && f.posAge <= 30) ||
+                      (f.flightStatus === 'ACTIVE' && f.posAge == null);
+        if (moved && fresh) {
+            manuallyHidden.delete(f.gufi);
+            qxSnapshot.delete(f.gufi);
+            const m = markers.get(f.gufi);
+            if (m) { const el = m.getElement(); if (el) el.style.display = ''; }
+        }
+    }
+
     const existing = flights.get(f.gufi);
     if (existing) {
         existing._clientLastUpdate = performance.now();
@@ -3044,6 +3069,7 @@ function connectWs() {
             fdbOverrides.delete(msg.data.gufi);
             wasOwnOrHo.delete(msg.data.gufi);
             manuallyHidden.delete(msg.data.gufi);
+            qxSnapshot.delete(msg.data.gufi);
             hoCompletedInfo.delete(msg.data.gufi);
             lastVisibleAt.delete(msg.data.gufi);
             driActive.delete(msg.data.gufi);
@@ -3680,6 +3706,7 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     quickLookDests.clear();
     wasOwnOrHo.clear();
     manuallyHidden.clear();
+    qxSnapshot.clear();
     pointoutBlocked.clear();
     closePointoutMenu();
     invalidateAllMarkers();
@@ -6601,6 +6628,13 @@ function processCommand(cmd) {
         const f = findFlight(flid);
         if (!f) return { feedback: [{ type: 'err', text: `${flid} NOT FOUND` }] };
         manuallyHidden.add(f.gufi);
+        // Snapshot the QX-time position so processFlightUpdate can auto-revive
+        // the track when SFDPS sends an actually-new position (≠ stale resend).
+        qxSnapshot.set(f.gufi, {
+            lat: f.latitude, lon: f.longitude,
+            posAge: f.posAge ?? null,
+            at: performance.now(),
+        });
         wasOwnOrHo.delete(f.gufi);
         fdbOverrides.delete(f.gufi);
         const m = markers.get(f.gufi);

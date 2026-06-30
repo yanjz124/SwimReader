@@ -1032,15 +1032,21 @@ function renderFlightPlan(d) {
             ['Registration', d.registration],
             ['Wake Category', d.wakeCategory],
             ['Mode S', d.modeSCode],
-            ['Equipment', d.equipmentQualifier],
             ['CID', fmtCids(d)],
             ['GUFI', d.gufi],
         ])}
         ${section('Flight Plan', [
             ['Origin', d.origin],
             ['Destination', d.destination],
+            ['Alternate', d.alternateAerodrome],
             ['Flight Rules', d.flightRules],
+            ['Flight Type', d.flightType],
             ['STAR', d.star],
+            ['Req. Altitude', d.requestedAltitude ? `FL${Math.round(d.requestedAltitude / 100)}` : null],
+            ['Req. Speed', d.requestedSpeed ? Math.round(d.requestedSpeed) + ' kt' : null],
+            ['EET (FIR)', d.estimatedElapsedTimes],
+            ['Operator', d.operator],
+            ['Originator', d.originator],
             ['Remarks', d.remarks, d.remarks ? 'warn' : ''],
         ])}
         ${routeHtml}
@@ -1073,12 +1079,15 @@ function renderFlightPlan(d) {
             ['Speed', d.clearanceSpeed],
             ['Text', d.clearanceText],
         ])}
-        ${section('Datalink', [
-            ['Data Link', d.dataLinkCode, d.dataLinkCode?.includes('J') ? 'accent' : ''],
-            ['Other DL', d.otherDataLink],
-            ['Other Comm', d.otherCommunicationCapabilities],
-            ['Comm Code', d.communicationCode],
+        ${section('Equipment / Capabilities', [
+            ['Equipment (10a)', d.equipmentQualifier],
+            ['PBN', d.pbnCode],
+            ['Navigation', [d.navigationCode, d.otherNavigationCapabilities].filter(Boolean).join('  ') || null],
+            ['Communication', [d.communicationCode, d.otherCommunicationCapabilities].filter(Boolean).join('  ') || null],
+            ['Data Link', [d.dataLinkCode, d.otherDataLink].filter(Boolean).join('  ') || null, d.dataLinkCode?.includes('J') ? 'accent' : ''],
+            ['Surveillance', [d.surveillanceCode, d.otherSurveillanceCapabilities].filter(Boolean).join('  ') || null],
             ['SELCAL', d.selcal],
+            ['Performance', d.aircraftPerformance],
         ])}
         ${section('Times', [
             ['Dep Time', d.actualDepartureTime ? fmtTime(d.actualDepartureTime) : null],
@@ -1086,11 +1095,8 @@ function renderFlightPlan(d) {
             ['Coord Time', d.coordinationTime ? fmtTime(d.coordinationTime) : null],
             ['Coord Fix', d.coordinationFix],
         ])}
-        ${section('TMI / Navigation', [
+        ${section('TMI', [
             ['TMI IDs', d.tmiIds],
-            ['Nav Code', d.navigationCode],
-            ['PBN Code', d.pbnCode],
-            ['Surveillance', d.surveillanceCode],
         ])}
     `;
 }

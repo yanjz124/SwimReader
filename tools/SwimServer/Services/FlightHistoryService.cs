@@ -41,9 +41,13 @@ static class FlightHistoryService
                 f.Route, f.OriginalRoute, f.STAR, f.Remarks,
                 f.AssignedAltitude, f.AssignedVfr, f.BlockFloor, f.BlockCeiling,
                 f.InterimAltitude, f.ReportedAltitude,
-                f.Latitude, f.Longitude, f.GroundSpeed, f.RequestedSpeed,
+                f.Latitude, f.Longitude, f.GroundSpeed, f.RequestedSpeed, f.RequestedAltitude,
                 f.ControllingFacility, f.ControllingSector, f.ReportingFacility,
-                f.DataLinkCode, f.CommunicationCode,
+                // Full ICAO Field 10/18 capabilities so the saved plan is complete in history
+                f.DataLinkCode, f.CommunicationCode, f.OtherDataLink, f.OtherCommunicationCapabilities,
+                f.NavigationCode, f.PBNCode, f.OtherNavigationCapabilities,
+                f.SurveillanceCode, f.OtherSurveillanceCapabilities, f.SELCAL,
+                f.EstimatedElapsedTimes,
                 // Time fields needed by ICAO FPL Field 13/16 and EDCT views
                 f.ActualDepartureTime,
                 ETA = f.ETA,

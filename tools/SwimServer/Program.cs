@@ -255,6 +255,17 @@ app.UseWebSockets();
 
 // Locate repo root for KML overlay files (declared early so route classes can capture)
 var repoRoot = FindRepoRoot(app.Environment.ContentRootPath);
+// Bundled/published builds have no .git, so FindRepoRoot falls back to the launch
+// CWD (SSG points that at a runtime persistence dir with no KMLs). The KMLs are
+// copied next to the exe on publish (see SwimServer.csproj), so if the resolved
+// root has none, use the app base dir where they were staged — otherwise the ERAM
+// video map silently 404s and never renders.
+if (!Directory.EnumerateFiles(repoRoot, "*.kml").Any()
+    && Directory.EnumerateFiles(AppContext.BaseDirectory, "*.kml").Any())
+{
+    repoRoot = AppContext.BaseDirectory;
+    Console.WriteLine($"[kml] no .git root; serving KML from app base dir {repoRoot}");
+}
 
 // NEXRAD tile proxy HTTP client (declared early so route classes can capture)
 var nexradHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };

@@ -21,4 +21,16 @@
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
   </ItemGroup>
 
+  <!-- The ERAM scope's KML video maps live at the repo root and are served from
+       RepoRoot. In a published/bundled build there is no .git to anchor RepoRoot,
+       so copy the KMLs next to the exe (flattened via Link) and resolve them from
+       the app base dir there (see Program.cs). Keeps the map working when SwimServer
+       is bundled into SSG. -->
+  <ItemGroup>
+    <Content Include="..\..\*.kml">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

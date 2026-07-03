@@ -2298,6 +2298,10 @@ function applyDwell(el, gufi) {
     const dbEl = el.querySelector('.ac-db');
     if (!dbEl) return;
     dbEl.classList.add('dwell');
+
+    // Hide portal fence while dwell is active (use class so it persists after HTML rebuilds)
+    el.classList.add('dwell-hide-fence');
+
     // FDB: add a real border element sized from actual DOM measurements
     if (dbEl.classList.contains('fdb') && !dbEl.querySelector('.dwell-border')) {
         const b = document.createElement('div');
@@ -2324,6 +2328,10 @@ function removeDwell(el, gufi) {
     dbEl.classList.remove('dwell');
     const b = dbEl.querySelector('.dwell-border');
     if (b) b.remove();
+
+    // Show portal fence again
+    el.classList.remove('dwell-hide-fence');
+
     const f = flights.get(gufi);
     if (f && !shouldShowFdb(gufi, classifyTrack(f))) dbEl.style.opacity = String(ldbBrightness / 100);
 }
@@ -2575,7 +2583,7 @@ function formatFdbHtml(f, cls) {
         // Use CSS ch/em units for sizing (matches actual font metrics) and SVG rendering for flicker-free strokes.
         // top: 0 when no line 0; top: calc(1.25em + 1px) skips line 0 (1 line-height + ac-db top padding).
         const topStyle = poInfo ? 'calc(1.25em + 3px)' : '2px';
-        html += `<svg style="position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:3ch;height:3.75em;overflow:visible;pointer-events:none;z-index:1;" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="100,0.5 0.5,0.5 0.5,100" fill="none" stroke="${fenceColor}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></svg>`;
+        html += `<svg class="ac-portal-fence" style="position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:3ch;height:3.75em;overflow:visible;pointer-events:none;z-index:1;" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="100,0.5 0.5,0.5 0.5,100" fill="none" stroke="${fenceColor}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></svg>`;
     }
     return html;
 }

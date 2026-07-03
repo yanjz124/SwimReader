@@ -523,7 +523,7 @@ input[type="checkbox"]:checked::after {
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     font-size: 12px; line-height: 16px; letter-spacing: 0.5px;
     user-select: none; background: #000; border: 1px solid #666;
-    width: 250px;
+    width: 312px;
 }
 #wx-menu,
 #wx-menu * {
@@ -657,7 +657,7 @@ input[type="checkbox"]:checked::after {
     cursor: pointer;
     user-select: none;
     position: relative;
-    min-width: 250px;
+    min-width: 312px;
     color: #BBBBBB;
     display: flex;
     align-items: flex-start;
@@ -681,9 +681,10 @@ input[type="checkbox"]:checked::after {
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     line-height: 14px;
     white-space: pre-wrap;
-    word-break: break-all;
+    word-break: normal;
     padding-left: 10ch;
     text-indent: -10ch;
+    padding-right: 20px;
 }
 .wx-station { color: #BBBBBB; }            /* per CRC: plain, not bold */
 .wx-time    { color: #BBBBBB; }
@@ -877,7 +878,7 @@ input[type="checkbox"]:checked::after {
 #flight-detail-section .fd-title { color: #cccc44; font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
 #flight-detail-section .fd-row { display: flex; gap: 8px; margin-bottom: 2px; font-size: 11px; }
 #flight-detail-section .fd-label { color: #666; min-width: 60px; flex-shrink: 0; }
-#flight-detail-section .fd-val { color: #cccc44; word-break: break-all; }
+#flight-detail-section .fd-val { color: #cccc44; word-break: normal; }
 #flight-detail-section .fd-close { cursor: pointer; color: #666; font-size: 14px; }
 #flight-detail-section .fd-close:hover { color: #ff4444; }
 
@@ -954,7 +955,7 @@ input[type="checkbox"]:checked::after {
     background: #000000; border: 1px solid #888; color: #ffffff;
     padding: 3px 6px; width: 500px; min-height: 100px;
     max-height: 60vh; overflow-y: auto;
-    font-size: 14px; line-height: 18px; white-space: pre-wrap; word-break: break-all;
+    font-size: 14px; line-height: 18px; white-space: pre-wrap; word-break: normal;
     font-weight: normal;
 }
 

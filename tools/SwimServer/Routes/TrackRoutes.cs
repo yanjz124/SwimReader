@@ -21,12 +21,16 @@ static class TrackRoutes
             // SFDPS — en-route flight(s). Multiple GUFIs possible (one per ARTCC).
             var sfdps = new List<object>();
             string? edct = null;
+            Func<string?, string?, string?> secFreq = (fac, sec) =>
+                (!string.IsNullOrEmpty(fac) && !string.IsNullOrEmpty(sec) && ctx.SectorFreqs.TryGetValue(fac + "/" + sec, out var fr)) ? fr : null;
             var hoEvents = new List<(string time, string source, string centre, string summary)>();
             foreach (var f in ctx.Flights.Values)
             {
                 if (!string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase)) continue;
                 if (f.FlightStatus == "CANCELLED") continue;
-                sfdps.Add(SfdpsProjection(f));
+                string? hoFreq = null;
+                if (!string.IsNullOrEmpty(f.HandoffReceiving)) { var hp = f.HandoffReceiving.Split('/'); if (hp.Length == 2) hoFreq = secFreq(hp[0], hp[1]); }
+                sfdps.Add(SfdpsProjection(f, secFreq(f.ControllingFacility, f.ControllingSector), hoFreq));
                 if (edct is null && !string.IsNullOrEmpty(f.EdctTime)) edct = f.EdctTime;
                 foreach (var e in f.GetAllEvents())
                     if (HandoffSources.Contains(e.Source))
@@ -75,9 +79,10 @@ static class TrackRoutes
     // Lean per-flight projection (no events/history) with the fields the track page needs:
     // full ICAO flight plan, ownership/handoff, position, clearance, times — enough to render
     // the flight-plan card and the mock ERAM/STARS data blocks.
-    private static object SfdpsProjection(FlightState f) => new
+    private static object SfdpsProjection(FlightState f, string? sectorFreq, string? handoffFreq) => new
     {
         gufi = f.Gufi, callsign = f.Callsign, cid = f.ComputerId, status = f.FlightStatus,
+        sectorFreq, handoffFreq,
         cids = f.ComputerIds.IsEmpty ? null : new Dictionary<string, string>(f.ComputerIds),
         // flight plan / identity
         origin = f.Origin, dest = f.Destination, alternate = f.AlternateAerodrome,
@@ -209,6 +214,8 @@ static class TrackRoutes
                 sb.Append("</b>");
                 var cid = (f.ControllingFacility != null && f.ComputerIds.TryGetValue(f.ControllingFacility, out var cc)) ? cc : f.ComputerId;
                 if (!string.IsNullOrEmpty(cid)) sb.Append(" CID ").Append(He(cid));
+                if (f.ControllingFacility != null && f.ControllingSector != null && ctx.SectorFreqs.TryGetValue(f.ControllingFacility + "/" + f.ControllingSector, out var freq))
+                    sb.Append(" &#183; <b>").Append(He(freq)).Append("</b>");
                 sb.Append("<br>");
                 if (!string.IsNullOrEmpty(f.HandoffEvent))
                     sb.Append("<span class=w>Handoff ").Append(He(HoStatus(f.HandoffEvent))).Append(": ").Append(He(f.HandoffTransferring ?? "?")).Append(" &#9656; ").Append(He(f.HandoffReceiving ?? "?")).Append("</span><br>");

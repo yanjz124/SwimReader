@@ -45,6 +45,9 @@
   .chip.on { color:#000; background:var(--yel); border-color:var(--yel); font-weight:bold; }
   .phase { display:inline-block; margin-top:10px; padding:4px 12px; border-radius:6px; font-weight:bold;
     letter-spacing:1px; font-size:13px; background:#1a2a1a; color:var(--ok); border:1px solid #2f5a2f; }
+  .freq { margin-top:9px; font-size:16px; color:var(--yel); }
+  .freq b { color:#fff; font-size:21px; }
+  .freq span { color:var(--dim); font-size:13px; margin-left:6px; }
 
   /* Cards */
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; margin:10px 12px; overflow:hidden; }
@@ -100,6 +103,6 @@
   <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Enter a callsign to follow a flight.</span></div>
   <div id="out"></div>
 </div>
-<script src="/track/track.js?v=6"></script>
+<script src="/track/track.js?v=7"></script>
 </body>
 </html>

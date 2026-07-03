@@ -799,7 +799,7 @@ input[type="checkbox"]:checked::after {
     font-family: 'ERAM', 'Consolas', 'Courier New', monospace;
     font-size: 18px; letter-spacing: 2px;
     color: #ffffff; background: rgba(0,0,0,0.6);
-    padding: 2px 8px; cursor: move; user-select: none;
+    padding: 0px 8px 4px 8px; cursor: move; user-select: none;
     border: 1px solid transparent; white-space: nowrap;
     top: 10px; right: 60px;
 }
@@ -807,7 +807,7 @@ input[type="checkbox"]:checked::after {
     cursor: var(--eram-cursor) !important;
 }
 #time-view.bordered { border-color: #555; }
-#time-view.box-dragging { outline: 2px solid #fff; }
+#time-view.box-dragging { outline: 2px solid #fff; cursor: var(--eram-cursor) !important; }
 
 /* ── Field menus (altitude, heading, speed, free text) ── */
 .field-menu {

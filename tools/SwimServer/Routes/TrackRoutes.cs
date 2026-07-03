@@ -18,13 +18,24 @@ static class TrackRoutes
             // SFDPS — en-route flight(s). Multiple GUFIs possible (one per ARTCC).
             var sfdps = new List<object>();
             string? edct = null;
+            var hoEvents = new List<(string time, string source, string centre, string summary)>();
             foreach (var f in ctx.Flights.Values)
             {
                 if (!string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase)) continue;
                 if (f.FlightStatus == "CANCELLED") continue;
                 sfdps.Add(SfdpsProjection(f));
                 if (edct is null && !string.IsNullOrEmpty(f.EdctTime)) edct = f.EdctTime;
+                foreach (var e in f.GetAllEvents())
+                    if (HandoffSources.Contains(e.Source))
+                        hoEvents.Add((e.Time, e.Source, e.Centre, e.Summary));
             }
+            // Handoff/point-out history across all GUFIs — deduped, newest first.
+            var handoffHistory = hoEvents
+                .GroupBy(x => x.time + "|" + x.source + "|" + x.summary).Select(g => g.First())
+                .OrderByDescending(x => x.time)
+                .Take(30)
+                .Select(x => new { time = x.time, source = x.source, centre = x.centre, summary = x.summary })
+                .ToList();
 
             var tdls  = ctx.Tdls.FindByCallsign(callsign);
             var tais  = ctx.Tais.FindByCallsign(callsign);
@@ -41,12 +52,17 @@ static class TrackRoutes
                 sfdps,
                 tfms,
                 edct,
+                handoffHistory,
                 tdls,
                 tais,
                 asdex,
             }, ctx.JsonOpts);
         });
     }
+
+    // SFDPS message sources that represent a handoff or point-out event (for the history timeline).
+    private static readonly HashSet<string> HandoffSources =
+        new(StringComparer.OrdinalIgnoreCase) { "OH", "HP", "AH", "HU", "HX", "HF", "HV", "RH", "DH", "PT", "HT" };
 
     // Lean per-flight projection (no events/history) with the fields the track page needs:
     // full ICAO flight plan, ownership/handoff, position, clearance, times — enough to render

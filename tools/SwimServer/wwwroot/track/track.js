@@ -3,14 +3,17 @@
   const $ = id => document.getElementById(id);
   const esc = s => (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const out = $('out'), statusText = $('statusText'), dot = $('dot');
-  let current = '', timer = null;
+  let current = '', timer = null, lastData = null, selFac = null;
 
   // ── format helpers ──
   const fl = a => (a == null ? null : String(Math.round(a / 100)).padStart(3, '0'));
   const lid = a => (a && a.length === 4 && a[0] === 'K') ? a.slice(1) : (a || '');
-  function agoStr(iso) { if (!iso) return ''; const s = Math.round((Date.now() - new Date(iso)) / 1000); if (s < 1) return 'now'; if (s < 60) return s + 's ago'; if (s < 3600) return Math.round(s / 60) + 'm ago'; return Math.round(s / 3600) + 'h ago'; }
-  function hhmm(iso) { if (!iso) return ''; const d = new Date(iso); if (isNaN(d)) return ''; return String(d.getUTCHours()).padStart(2, '0') + String(d.getUTCMinutes()).padStart(2, '0') + 'Z'; }
-  // grid() escapes values — pass RAW strings/numbers (▸ → etc. are fine, not HTML-special).
+  const stripRmk = s => (s == null ? '' : String(s).replace(/\|/g, ' ').replace(/\s+/g, ' ').trim());
+  const extractSec = s => { if (!s) return ''; const i = String(s).indexOf('/'); return i >= 0 ? s.slice(i + 1) : s; };
+  // iOS Safari is strict about ISO strings with >3 fractional-second digits — parse defensively.
+  function pd(iso) { if (!iso) return null; let d = new Date(iso); if (!isNaN(d.getTime())) return d; d = new Date(String(iso).replace(/(\.\d{3})\d+/, '$1').replace(' ', 'T')); return isNaN(d.getTime()) ? null : d; }
+  function agoStr(iso) { const d = pd(iso); if (!d) return ''; const s = Math.round((Date.now() - d.getTime()) / 1000); if (s < 1) return 'now'; if (s < 60) return s + 's ago'; if (s < 3600) return Math.round(s / 60) + 'm ago'; return Math.round(s / 3600) + 'h ago'; }
+  function hhmm(iso) { const d = pd(iso); if (!d) return ''; return String(d.getUTCHours()).padStart(2, '0') + String(d.getUTCMinutes()).padStart(2, '0') + 'Z'; }
   function grid(rows) {
     const r = rows.filter(x => x[1] != null && x[1] !== '');
     if (!r.length) return '';
@@ -19,7 +22,7 @@
 
   // ── routing / search ──
   function initialCallsign() { const m = location.pathname.match(/^\/track\/([A-Za-z0-9]+)/); return m ? m[1].toUpperCase() : ''; }
-  $('f').addEventListener('submit', e => {
+  $('f').addEventListener('submit', function (e) {
     e.preventDefault();
     const cs = $('cs').value.trim().toUpperCase();
     if (!cs) return;
@@ -27,56 +30,56 @@
     $('cs').blur();
     startTrack(cs);
   });
-  window.addEventListener('popstate', () => { const cs = initialCallsign(); if (cs) { $('cs').value = cs; startTrack(cs); } });
+  window.addEventListener('popstate', function () { const cs = initialCallsign(); if (cs) { $('cs').value = cs; startTrack(cs); } });
+  window.trackSelFac = function (fac) { selFac = fac; if (lastData) render(lastData); };
 
   function startTrack(cs) {
-    current = cs;
+    current = cs; selFac = null; lastData = null;
     if (timer) clearInterval(timer);
     out.innerHTML = '';
     statusText.textContent = 'Loading ' + cs + '…';
     poll();
     timer = setInterval(poll, 4000);
   }
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener('visibilitychange', function () {
     if (document.hidden) { if (timer) { clearInterval(timer); timer = null; } }
     else if (current && !timer) { poll(); timer = setInterval(poll, 4000); }
   });
 
-  async function poll() {
+  function poll() {
     if (!current) return;
-    try {
-      const r = await fetch('/api/track/' + encodeURIComponent(current));
-      if (!r.ok) { dot.className = 'dot'; statusText.textContent = 'Error ' + r.status; return; }
-      dot.className = 'dot live';
-      render(await r.json());
-    } catch (e) { dot.className = 'dot'; statusText.textContent = 'Offline — retrying…'; }
+    fetch('/api/track/' + encodeURIComponent(current)).then(function (r) {
+      if (!r.ok) { dot.className = 'dot'; statusText.textContent = 'Error ' + r.status; return null; }
+      dot.className = 'dot live'; return r.json();
+    }).then(function (d) { if (d) { try { render(d); } catch (e) { statusText.textContent = 'Render error: ' + e.message; } } })
+      .catch(function () { dot.className = 'dot'; statusText.textContent = 'Offline — retrying…'; });
   }
 
   // ── render ──
   function render(d) {
+    lastData = d;
     if (!d.found) {
       statusText.textContent = 'No live data for ' + d.callsign;
       out.innerHTML = `<div class="msg">Nothing is tracking <b>${esc(d.callsign)}</b> right now.<br>It may not be airborne or filed yet. Use the exact callsign (e.g. AAL123, not AA123).</div>`;
       return;
     }
     statusText.textContent = `Tracking ${d.callsign} · updated ${agoStr(d.ts) || 'now'}`;
-    const flights = (d.sfdps || []).slice().sort((a, b) => {
+    const flights = (d.sfdps || []).slice().sort(function (a, b) {
       const ap = a.lat != null ? 0 : 1, bp = b.lat != null ? 0 : 1;
-      return ap !== bp ? ap - bp : (a.posAgeSec ?? 9999) - (b.posAgeSec ?? 9999);
+      return ap !== bp ? ap - bp : (a.posAgeSec == null ? 9999 : a.posAgeSec) - (b.posAgeSec == null ? 9999 : b.posAgeSec);
     });
-    const f = flights[0] || null;
-    const tais = (d.tais || [])[0] || null;
+    const taisList = d.tais || [];
     const asd = (d.asdex || [])[0] || null;
 
     let h = '';
-    h += heroCard(d, f, tais, asd);
-    h += blocksCard(f, tais);
+    h += heroCard(d, flights[0] || null, taisList[0] || null, asd);
+    h += blocksCard(flights, taisList);
     h += ownershipCard(flights);
-    if (d.edct) h += `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(d.edct), 'hl'], ['Slot', d.edct.slice(0, 16).replace('T', ' ') + 'Z']])}</div>`;
-    if (f) h += flightPlanCard(f);
+    if (d.edct) h += `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(d.edct), 'hl'], ['Slot', String(d.edct).slice(0, 16).replace('T', ' ') + 'Z']])}</div>`;
+    if (flights[0]) h += flightPlanCard(flights[0]);
     if (d.tdls && d.tdls.length) h += tdlsCard(d.tdls);
     if (d.asdex && d.asdex.length) h += asdexCard(d.asdex);
-    if (d.tais && d.tais.length) h += taisCard(d.tais);
+    if (taisList.length) h += taisCard(taisList);
     if (d.tfms) h += tfmsCard(d.tfms);
     out.innerHTML = h;
   }
@@ -93,52 +96,87 @@
   }
 
   function heroCard(d, f, tais, asd) {
-    const type = f?.acType || tais?.acType || asd?.track.acType || (d.tfms && d.tfms.acType) || '';
-    const wake = f?.wake ? '/' + f.wake : '';
-    const org = f?.origin || tais?.origin || asd?.track.origin || (d.tfms && d.tfms.depArpt) || '';
-    const dst = f?.dest || tais?.dest || asd?.track.dest || (d.tfms && d.tfms.arrArpt) || '';
-    const [ph, phc] = phaseOf(d, f, tais, asd);
+    const type = (f && f.acType) || (tais && tais.acType) || (asd && asd.track.acType) || (d.tfms && d.tfms.acType) || '';
+    const wake = (f && f.wake) ? '/' + f.wake : '';
+    const org = (f && f.origin) || (tais && tais.origin) || (asd && asd.track.origin) || (d.tfms && d.tfms.depArpt) || '';
+    const dst = (f && f.dest) || (tais && tais.dest) || (asd && asd.track.dest) || (d.tfms && d.tfms.arrArpt) || '';
+    const ph = phaseOf(d, f, tais, asd);
     const chips = [['SFDPS', (d.sfdps || []).length > 0], ['TFMS', !!d.tfms], ['TDLS', (d.tdls || []).length > 0],
       ['STARS', (d.tais || []).length > 0], ['ASDE-X', (d.asdex || []).length > 0], ['EDCT', !!d.edct]]
-      .map(([n, on]) => `<span class="chip${on ? ' on' : ''}">${n}</span>`).join('');
-    const sub = [type + wake, f ? 'CID ' + (f.cid || '—') : '', f?.registration].filter(Boolean).join(' · ');
+      .map(function (x) { return `<span class="chip${x[1] ? ' on' : ''}">${x[0]}</span>`; }).join('');
+    const sub = [type + wake, (f && f.registration) || ''].filter(Boolean).join(' · ');
     return `<div class="hero">
       <div class="cs">${esc(d.callsign)}</div>
       <div class="od">${esc(org || '????')} <span class="arrow">▸</span> ${esc(dst || '????')}</div>
       <div class="sub">${esc(sub)}</div>
-      <div class="phase" style="background:#111;color:${phc};border-color:${phc}66">${ph}</div>
+      <div class="phase" style="background:#111;color:${ph[1]};border-color:${ph[1]}66">${ph[0]}</div>
       <div class="chips">${chips}</div>
     </div>`;
   }
 
   // ── mock data blocks ──
+  function altLine(f) {
+    const aFL = fl(f.assignedAlt), rFL = fl(f.reportedAlt), iFL = fl(f.interimAlt);
+    if (f.blockFloor != null && f.blockCeil != null) return `${fl(f.blockFloor)}B${fl(f.blockCeil)}`;
+    if (f.assignedVfr) return 'VFR' + (rFL ? '/' + rFL : '');
+    if (iFL) return `${iFL}T${rFL || '---'}`;
+    if (aFL) { if (rFL == null) return aFL; const dd = parseInt(rFL) - parseInt(aFL); return Math.abs(dd) <= 2 ? `${aFL}C` : `${aFL}${dd < 0 ? '↑' : '↓'}${rFL}`; }
+    return rFL || '---';
+  }
+  function eramFieldE(f) {
+    if (f.squawk === '7700') return 'EMRG'; if (f.squawk === '7600') return 'RDOF'; if (f.squawk === '7500') return 'HIJK';
+    if (f.handoffEvent && f.handoffReceiving) return (/ACCEPT|OK/i.test(f.handoffEvent) ? 'O' : 'H') + extractSec(f.handoffReceiving);
+    return f.gs != null ? String(Math.round(f.gs)) : '';
+  }
+  function eramLine4(f) {
+    if (f.clrText) return f.clrText;
+    const hs = []; if (f.clrHeading) hs.push('H' + f.clrHeading); if (f.clrSpeed) hs.push(f.clrSpeed);
+    if (hs.length) return hs.join(' ');
+    return lid(f.dest);
+  }
   function eramBlock(f) {
     if (!f) return null;
-    const aFL = fl(f.assignedAlt), rFL = fl(f.reportedAlt), iFL = fl(f.interimAlt);
-    let l2;
-    if (f.blockFloor != null && f.blockCeil != null) l2 = `${fl(f.blockFloor)}B${fl(f.blockCeil)}`;
-    else if (f.assignedVfr) l2 = 'VFR' + (rFL ? '/' + rFL : '');
-    else if (iFL) l2 = `${iFL}T${rFL || '---'}`;
-    else if (aFL) { if (rFL == null) l2 = aFL; else { const dd = parseInt(rFL) - parseInt(aFL); l2 = Math.abs(dd) <= 2 ? `${aFL}C` : `${aFL}${dd < 0 ? '↑' : '↓'}${rFL}`; } }
-    else l2 = rFL || '---';
-    const gs = f.gs != null ? Math.round(f.gs) : '';
-    return `◇ ${f.callsign || '???'}\n   ${l2}\n   ${(f.cid || '----')} ${gs}\n   ${lid(f.dest)}`;
+    const cid = (f.cids && f.controllingFacility && f.cids[f.controllingFacility]) || f.cid || '----';
+    const lines = [];
+    if (f.pointoutOrig || f.pointoutRecv) lines.push('  P');   // line 0: point-out
+    lines.push('◇ ' + (f.callsign || '???'));             // line 1: ◇ callsign
+    lines.push('   ' + altLine(f));                            // line 2: altitude
+    lines.push('   ' + cid + ' ' + eramFieldE(f));             // line 3: CID + Field E (handoff/GS)
+    const l4 = eramLine4(f); if (l4) lines.push('   ' + l4);   // line 4: HSF or destination
+    return lines.join('\n');
   }
-  function starsBlock(f, tais) {
-    const src = tais || (f ? { callsign: f.callsign, altFt: f.reportedAlt, gs: f.gs, sp1: lid(f.dest) } : null);
-    if (!src) return null;
-    const a = src.altFt != null ? String(Math.round(src.altFt / 100)).padStart(3, '0') : '---';
-    const gs = src.gs != null ? String(Math.round(src.gs / 10)).padStart(2, '0') : '';
-    const sp = src.sp1 || src.sp2 || lid(f && f.dest) || '';
-    return `${src.callsign || '???'}\n${a}\n${gs} ${sp}`.trimEnd();
+  function starsBlock(t) {
+    if (!t) return null;
+    const alt = t.altFt != null ? String(Math.round(t.altFt / 100)).padStart(3, '0') : '---';
+    const trend = t.vs > 200 ? '↑' : (t.vs < -200 ? '↓' : ' ');
+    const gs = t.gs != null ? String(Math.round(t.gs / 10)).padStart(2, '0') : '';
+    const lines = [t.callsign || '???', `${alt}${trend}  ${gs}`];
+    const sp = [t.sp1, t.sp2].filter(Boolean).join(' '); if (sp) lines.push(sp);
+    const own = [];
+    if (t.owner) own.push('OWN ' + t.owner);
+    if (t.handoff) own.push('→' + t.handoff);
+    if (t.exitFix) own.push('X:' + t.exitFix);
+    if (own.length) lines.push(own.join('  '));
+    return lines.join('\n');
   }
-  function blocksCard(f, tais) {
-    const e = eramBlock(f), s = starsBlock(f, tais);
+  function blocksCard(flights, taisList) {
+    let f = flights.find(function (x) { return (x.controllingFacility || x.reportingFacility) === selFac; }) || flights[0] || null;
+    const tais = taisList[0] || null;
+    const e = eramBlock(f);
+    const s = tais ? starsBlock(tais) : (f ? starsBlock({ callsign: f.callsign, altFt: f.reportedAlt, gs: f.gs, sp1: lid(f.dest), vs: 0, exitFix: f.star }) : null);
     if (!e && !s) return '';
+    let sel = '';
+    if (flights.length > 1) {
+      sel = '<div class="facsel">' + flights.map(function (x) {
+        const fc = x.controllingFacility || x.reportingFacility || '?';
+        const c = (x.cids && x.cids[fc]) ? ' · ' + x.cids[fc] : '';
+        return `<button class="facbtn${x === f ? ' on' : ''}" onclick="trackSelFac('${esc(fc)}')">${esc(fc)}${esc(c)}</button>`;
+      }).join('') + '</div>';
+    }
     let inner = '';
-    if (e) inner += `<div class="db eram"><div class="lbl">ERAM · EN ROUTE</div><pre>${esc(e)}</pre></div>`;
-    if (s) inner += `<div class="db stars"><div class="lbl">STARS · TERMINAL</div><pre>${esc(s)}</pre></div>`;
-    return `<div class="card"><h2>DATA BLOCK <span class="tag">how a controller sees it</span></h2><div class="blocks">${inner}</div></div>`;
+    if (e) inner += `<div class="db eram"><div class="lbl">ERAM · ${esc((f && (f.controllingFacility || f.reportingFacility)) || 'EN ROUTE')}</div><pre>${esc(e)}</pre></div>`;
+    if (s) inner += `<div class="db stars"><div class="lbl">STARS · ${esc((tais && tais.facility) || 'TERMINAL')}</div><pre>${esc(s)}</pre></div>`;
+    return `<div class="card"><h2>DATA BLOCK <span class="tag">as a controller sees it</span></h2>${sel}<div class="blocks">${inner}</div></div>`;
   }
 
   function altSummary(f) {
@@ -151,16 +189,23 @@
     return p.join(' · ') || null;
   }
   function hsf(f) { const p = []; if (f.clrHeading) p.push('H' + f.clrHeading); if (f.clrSpeed) p.push('S' + f.clrSpeed); if (f.clrText) p.push(f.clrText); return p.join(' ') || null; }
+  function cidsStr(f) { if (!f.cids) return null; return Object.keys(f.cids).map(function (k) { return k + ':' + f.cids[k]; }).join('   '); }
+  function handoffStr(f) {
+    if (!f.handoffEvent) return null;
+    const accepted = /ACCEPT|OK/i.test(f.handoffEvent);
+    return `${accepted ? 'ACCEPTED' : 'PROPOSED'}  ${f.handoffTransferring || '?'} ▸ ${f.handoffReceiving || '?'}`;
+  }
 
   function ownershipCard(flights) {
     if (!flights.length) return '';
     let rows = '';
-    flights.forEach((f, i) => {
+    flights.forEach(function (f, i) {
       if (i > 0) rows += `<div class="subhdr">ALSO TRACKED BY ${esc(f.reportingFacility || f.controllingFacility || '?')}</div>`;
       rows += grid([
         ['Controlling', f.controllingFacility ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '') : '—', 'hl'],
         ['Reporting', f.reportingFacility],
-        ['Handoff', f.handoffEvent ? `${f.handoffEvent}: ${f.handoffTransferring || '?'} ▸ ${f.handoffReceiving || '?'}` : null, 'warn'],
+        ['CIDs', cidsStr(f)],
+        ['Handoff', handoffStr(f), 'warn'],
         ['Point-out', f.pointoutOrig ? `${f.pointoutOrig} ▸ ${f.pointoutRecv || '?'}` : null],
         ['Altitude', altSummary(f), 'hl'],
         ['Ground Spd', f.gs != null ? Math.round(f.gs) + ' kt' : null],
@@ -182,7 +227,7 @@
       ['Rules', f.rules], ['Type', f.flightType], ['STAR', f.star],
       ['Req. Alt', f.reqAlt ? 'FL' + Math.round(f.reqAlt / 100) : null],
       ['Req. Speed', f.reqSpeed ? Math.round(f.reqSpeed) + ' kt' : null],
-      ['EET (FIR)', f.eet], ['Operator', f.oper], ['Originator', f.originator], ['Remarks', f.remarks],
+      ['EET (FIR)', f.eet], ['Operator', f.oper], ['Originator', f.originator], ['Remarks', stripRmk(f.remarks) || null],
     ]);
     const cap = grid([
       ['Equipment', f.equip], ['PBN', f.pbn],
@@ -198,10 +243,10 @@
 
   function tdlsCard(tdls) {
     let inner = '';
-    tdls.forEach(entry => {
+    tdls.forEach(function (entry) {
       const ac = entry.aircraft;
       inner += `<div class="subhdr">${esc(entry.airport)} · ${esc(ac.acType || '')}${ac.destination ? ' → ' + esc(ac.destination) : ''}</div>`;
-      (ac.messages || []).slice().reverse().forEach(m => {
+      (ac.messages || []).slice().reverse().forEach(function (m) {
         if (m.type === 'DEPART') {
           const parts = [];
           if (m.gate) parts.push('Gate ' + m.gate);
@@ -221,7 +266,7 @@
 
   function asdexCard(asdex) {
     let inner = '';
-    asdex.forEach(e => {
+    asdex.forEach(function (e) {
       const t = e.track;
       inner += `<div class="subhdr">${esc(e.airport)} · SURFACE</div>`;
       inner += grid([
@@ -239,15 +284,15 @@
 
   function taisCard(tais) {
     let inner = '';
-    tais.forEach(t => {
+    tais.forEach(function (t) {
       inner += `<div class="subhdr">${esc(t.facility)} · STARS</div>`;
       inner += grid([
         ['Track #', t.trackNum], ['Scratchpad', [t.sp1, t.sp2].filter(Boolean).join(' / ')],
-        ['Runway', t.runway], ['Owner', t.owner], ['Handoff', t.handoff],
+        ['Runway', t.runway], ['Owner', t.owner], ['Handoff', t.handoff, 'warn'],
+        ['Entry Fix', t.entryFix], ['Exit Fix', t.exitFix],
         ['Sqk (asgn)', t.assignedSqk], ['Sqk (rcvd)', t.reportedSqk],
         ['Altitude', t.altFt != null ? 'FL' + Math.round(t.altFt / 100) : null],
         ['Ground Spd', t.gs != null ? Math.round(t.gs) + ' kt' : null],
-        ['Entry/Exit', [t.entryFix, t.exitFix].filter(Boolean).join(' → ')],
       ]);
     });
     return `<div class="card"><h2>TERMINAL (STARS / TAIS)</h2>${inner}</div>`;
@@ -264,5 +309,5 @@
 
   // ── boot ──
   const initial = initialCallsign();
-  if (initial) { $('cs').value = initial; startTrack(initial); } else { $('cs').focus(); }
+  if (initial) { $('cs').value = initial; startTrack(initial); } else { try { $('cs').focus(); } catch (e) { } }
 })();

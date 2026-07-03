@@ -339,6 +339,18 @@ class TaisBridge
                     result.Add(t.ToJson());   // ToJson already includes the facility
         return result;
     }
+
+    /// <summary>(facility, owner-TCP) pairs for a callsign — used to resolve STARS position frequencies.</summary>
+    public List<(string facility, string owner)> OwnersByCallsign(string callsign)
+    {
+        var result = new List<(string, string)>();
+        foreach (var tracks in _state.Values)
+            foreach (var t in tracks.Values)
+                if (string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrEmpty(t.Facility) && !string.IsNullOrEmpty(t.Owner))
+                    result.Add((t.Facility, t.Owner!));
+        return result;
+    }
 }
 
 // ── Data model ──────────────────────────────────────────────────────────────

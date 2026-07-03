@@ -653,23 +653,51 @@ async Task FetchVnasFixRules()
 
 void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int totalAirports)
 {
-    // Scan controller positions for ERAM sector frequencies (ARTCC sectors → freq).
+    // Scan controller positions for sector frequencies (ARTCC ERAM sectors and
+    // TRACON STARS TCPs → freq), keyed "FAC/SECTOR". Wrapped so a malformed vNAS
+    // position can never abort the fix-rule scan below.
     var posFacId = facility.TryGetProperty("id", out var fidEl) ? fidEl.GetString() ?? "" : "";
-    if (facility.TryGetProperty("positions", out var positions) && positions.ValueKind == JsonValueKind.Array)
+    if (posFacId.Length > 0)
     {
-        foreach (var p in positions.EnumerateArray())
+        try
         {
-            if (!p.TryGetProperty("frequency", out var fq) || fq.ValueKind != JsonValueKind.Number) continue;
-            var hz = fq.GetInt64();
-            if (hz <= 0) continue;
-            if (p.TryGetProperty("eramConfiguration", out var eram)
-                && eram.TryGetProperty("sectorId", out var sid)
-                && sid.GetString() is { Length: > 0 } sector
-                && posFacId.Length > 0)
+            // STARS: resolve tcpId → sectorId from starsConfiguration.tcps (e.g. PCT tcp → "3").
+            var tcpToSector = new Dictionary<string, string>();
+            if (facility.TryGetProperty("starsConfiguration", out var starsCfg) && starsCfg.ValueKind == JsonValueKind.Object
+                && starsCfg.TryGetProperty("tcps", out var tcps) && tcps.ValueKind == JsonValueKind.Array)
             {
-                sectorFreqs[$"{posFacId}/{sector}"] = (hz / 1_000_000.0).ToString("0.000");
+                foreach (var tcp in tcps.EnumerateArray())
+                {
+                    if (tcp.TryGetProperty("id", out var tid) && tid.GetString() is { Length: > 0 } tidS
+                        && tcp.TryGetProperty("sectorId", out var tsec) && tsec.GetString() is { Length: > 0 } tsecS)
+                        tcpToSector[tidS] = tsecS;
+                }
+            }
+
+            if (facility.TryGetProperty("positions", out var positions) && positions.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var p in positions.EnumerateArray())
+                {
+                    if (!p.TryGetProperty("frequency", out var fq) || fq.ValueKind != JsonValueKind.Number) continue;
+                    var hz = fq.GetInt64();
+                    if (hz <= 0) continue;
+                    var mhz = (hz / 1_000_000.0).ToString("0.000");
+
+                    // ERAM (ARTCC) sector.
+                    if (p.TryGetProperty("eramConfiguration", out var eram) && eram.ValueKind == JsonValueKind.Object
+                        && eram.TryGetProperty("sectorId", out var sid) && sid.GetString() is { Length: > 0 } sector)
+                        sectorFreqs[$"{posFacId}/{sector}"] = mhz;
+
+                    // STARS (TRACON) TCP → sector. First position wins so a combined-up
+                    // position doesn't clobber the sector's own primary frequency.
+                    if (p.TryGetProperty("starsConfiguration", out var pstars) && pstars.ValueKind == JsonValueKind.Object
+                        && pstars.TryGetProperty("tcpId", out var ptcp) && ptcp.GetString() is { Length: > 0 } ptcpS
+                        && tcpToSector.TryGetValue(ptcpS, out var psec))
+                        sectorFreqs.TryAdd($"{posFacId}/{psec}", mhz);
+                }
             }
         }
+        catch { /* never let a frequency-scan hiccup break fix rules */ }
     }
 
     // Check this facility for asdexConfiguration.fixRules

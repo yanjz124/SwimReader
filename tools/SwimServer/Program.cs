@@ -163,6 +163,8 @@ var gateCodes = new ConcurrentDictionary<string, ConcurrentDictionary<string, st
 // vNAS fix rules: ICAO airport → ordered list of (pattern, code) (auto-fetched from data-api.vnas.vatsim.net)
 // Order matters — first match wins, so we preserve the API's rule ordering.
 var vnasFixRules = new ConcurrentDictionary<string, List<KeyValuePair<string, string>>>();
+// vNAS ARTCC ERAM sector → controller frequency (MHz string), keyed "FAC/SECTOR" (e.g. "ZDC/32" → "133.725")
+var sectorFreqs = new ConcurrentDictionary<string, string>();
 
 // Initialize Solace SDK (once, before any thread or connection is created)
 {
@@ -311,6 +313,7 @@ var serverCtx = new ServerContext
     RepoRoot = repoRoot,
     GateCodes = gateCodes,
     VnasFixRules = vnasFixRules,
+    SectorFreqs = sectorFreqs,
     GetNasr = () => nasrData,
     RouteCache = routeCache,
     SendSnapshot = c => SendSnapshot(c),
@@ -650,6 +653,25 @@ async Task FetchVnasFixRules()
 
 void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int totalAirports)
 {
+    // Scan controller positions for ERAM sector frequencies (ARTCC sectors → freq).
+    var posFacId = facility.TryGetProperty("id", out var fidEl) ? fidEl.GetString() ?? "" : "";
+    if (facility.TryGetProperty("positions", out var positions) && positions.ValueKind == JsonValueKind.Array)
+    {
+        foreach (var p in positions.EnumerateArray())
+        {
+            if (!p.TryGetProperty("frequency", out var fq) || fq.ValueKind != JsonValueKind.Number) continue;
+            var hz = fq.GetInt64();
+            if (hz <= 0) continue;
+            if (p.TryGetProperty("eramConfiguration", out var eram)
+                && eram.TryGetProperty("sectorId", out var sid)
+                && sid.GetString() is { Length: > 0 } sector
+                && posFacId.Length > 0)
+            {
+                sectorFreqs[$"{posFacId}/{sector}"] = (hz / 1_000_000.0).ToString("0.000");
+            }
+        }
+    }
+
     // Check this facility for asdexConfiguration.fixRules
     if (facility.TryGetProperty("asdexConfiguration", out var asdexConfig)
         && asdexConfig.TryGetProperty("fixRules", out var fixRulesArr)

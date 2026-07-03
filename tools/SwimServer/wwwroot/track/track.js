@@ -118,10 +118,13 @@
       ['STARS', (d.tais || []).length > 0], ['ASDE-X', (d.asdex || []).length > 0], ['EDCT', !!d.edct]]
       .map(function (x) { return `<span class="chip${x[1] ? ' on' : ''}">${x[0]}</span>`; }).join('');
     const sub = [type + wake, (f && f.registration) || ''].filter(Boolean).join(' · ');
+    const freq = f && f.sectorFreq;
+    const ctrl = f ? (f.controllingFacility || '') + (f.controllingSector ? '/' + f.controllingSector : '') : '';
     return `<div class="hero">
       <div class="cs">${esc(d.callsign)}</div>
       <div class="od">${esc(org || '????')} <span class="arrow">▸</span> ${esc(dst || '????')}</div>
       <div class="sub">${esc(sub)}</div>
+      ${freq ? `<div class="freq">&#9673; <b>${esc(freq)}</b> MHz <span>${esc(ctrl)}</span></div>` : ''}
       <div class="phase" style="background:#111;color:${ph[1]};border-color:${ph[1]}66">${ph[0]}</div>
       <div class="chips">${chips}</div>
     </div>`;
@@ -241,8 +244,9 @@
       const ho = handoffStr(f);
       rows += grid([
         ['Controlling', f.controllingFacility ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '') : '—', 'hl'],
+        ['Frequency', f.sectorFreq ? f.sectorFreq + ' MHz' : null, 'hl'],
         ['CIDs', cidsStr(f)],
-        ['Handoff', ho || 'none pending', ho ? 'warn' : ''],
+        ['Handoff', ho ? (ho + (f.handoffFreq ? '  ·  ' + f.handoffFreq + ' MHz' : '')) : 'none pending', ho ? 'warn' : ''],
         ['Point-out', f.pointoutOrig ? `${f.pointoutOrig} ▸ ${f.pointoutRecv || '?'}` : null],
         ['Altitude', altSummary(f), 'hl'],
         ['Line 4 (HSF)', hsf(f), 'warn'],

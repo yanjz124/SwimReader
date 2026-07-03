@@ -353,6 +353,8 @@ input[type="checkbox"]:checked::after {
 /* Portal fence is rendered as an inline SVG — no CSS border needed */
 .ac-db.ldb.dwell { outline: 1px solid #cccc44; outline-offset: 1px; }
 .ac-db.ldb.dwell.emrg { outline-color: #ff4444; }
+/* Hide portal fence when dwell is active (persists through HTML rebuilds) */
+.ac-group.dwell-hide-fence .ac-portal-fence { display: none !important; }
 /* .ac-db.ho — handoff flash now driven by JS */
 
 /* ── Range Data Block (RDB) — distance to CRR group ── */

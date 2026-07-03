@@ -123,12 +123,15 @@
   }
 
   function phaseOf(d, f, tais, asd) {
-    if (asd) return (asd.track.spdKts || 0) < 40 ? ['ON SURFACE', '#39ff62'] : ['DEPARTING', '#ff8c00'];
+    // SFDPS truth wins first — a midflight aircraft can briefly show up in ASDE-X
+    // surface data, and we must NOT mislabel an airborne flight as departing.
     if (f) {
       if (f.status === 'DROPPED') return ['DROPPED', '#ff4444'];
       if (f.lat != null && (f.gs || 0) > 40) return ['AIRBORNE', '#44cc44'];
       if (f.status === 'PROPOSED' || f.lat == null) return ['PRE-DEPARTURE', '#8a8a3a'];
     }
+    // ASDE-X only implies ON SURFACE for genuinely slow (taxiing) targets — no DEPARTING guess.
+    if (asd && (asd.track.spdKts || 0) < 40) return ['ON SURFACE', '#39ff62'];
     if (tais) return ['TERMINAL', '#39ff62'];
     return ['TRACKED', '#cccc44'];
   }

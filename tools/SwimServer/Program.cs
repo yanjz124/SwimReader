@@ -661,7 +661,9 @@ void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int tota
     {
         try
         {
-            // STARS: resolve tcpId → sectorId from starsConfiguration.tcps (e.g. PCT tcp → "3").
+            // STARS: resolve tcpId → TCP code from starsConfiguration.tcps. The TCP code
+            // is subset+sectorId (e.g. subset 1 + sectorId "J" = "1J"), which is exactly
+            // the "owner" code STARS/TAIS reports (e.g. PCT/1J).
             var tcpToSector = new Dictionary<string, string>();
             if (facility.TryGetProperty("starsConfiguration", out var starsCfg) && starsCfg.ValueKind == JsonValueKind.Object
                 && starsCfg.TryGetProperty("tcps", out var tcps) && tcps.ValueKind == JsonValueKind.Array)
@@ -670,7 +672,11 @@ void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int tota
                 {
                     if (tcp.TryGetProperty("id", out var tid) && tid.GetString() is { Length: > 0 } tidS
                         && tcp.TryGetProperty("sectorId", out var tsec) && tsec.GetString() is { Length: > 0 } tsecS)
-                        tcpToSector[tidS] = tsecS;
+                    {
+                        var sub = tcp.TryGetProperty("subset", out var tsub) && tsub.ValueKind == JsonValueKind.Number
+                            ? tsub.GetInt32().ToString() : "";
+                        tcpToSector[tidS] = sub + tsecS;
+                    }
                 }
             }
 
@@ -688,12 +694,12 @@ void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int tota
                         && eram.TryGetProperty("sectorId", out var sid) && sid.GetString() is { Length: > 0 } sector)
                         sectorFreqs[$"{posFacId}/{sector}"] = mhz;
 
-                    // STARS (TRACON) TCP → sector. First position wins so a combined-up
+                    // STARS (TRACON) TCP code → freq. First position wins so a combined-up
                     // position doesn't clobber the sector's own primary frequency.
                     if (p.TryGetProperty("starsConfiguration", out var pstars) && pstars.ValueKind == JsonValueKind.Object
                         && pstars.TryGetProperty("tcpId", out var ptcp) && ptcp.GetString() is { Length: > 0 } ptcpS
-                        && tcpToSector.TryGetValue(ptcpS, out var psec))
-                        sectorFreqs.TryAdd($"{posFacId}/{psec}", mhz);
+                        && tcpToSector.TryGetValue(ptcpS, out var pcode))
+                        sectorFreqs.TryAdd($"{posFacId}/{pcode}", mhz);
                 }
             }
         }

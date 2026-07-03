@@ -58,6 +58,18 @@ static class StaticRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "flight-table", "index.html"));
         });
 
+        // Track a single flight (mobile) — /track and /track/{callsign}
+        app.MapGet("/track", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "track", "index.html"));
+        });
+        app.MapGet("/track/{callsign}", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "track", "index.html"));
+        });
+
         // SFDPS sector activity page
         app.MapGet("/sectors", async (HttpContext c) =>
         {

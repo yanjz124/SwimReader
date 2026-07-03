@@ -347,6 +347,9 @@ StarsRoutes.Register(app, serverCtx);
 // ERAM: /ws snapshot/batch WebSocket + /api/event-xml + /api/flights + /api/stats
 EramRoutes.Register(app, serverCtx);
 
+// /api/track/{callsign} — aggregate one callsign across all sources (mobile track page)
+TrackRoutes.Register(app, serverCtx);
+
 // NASR data endpoints under /api/nasr/* and /api/route/{gufi}
 NasrRoutes.Register(app, serverCtx);
 

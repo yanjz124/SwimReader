@@ -328,6 +328,17 @@ class TaisBridge
                 .ToArray()
         };
     }
+
+    /// <summary>All TAIS (STARS) tracks matching a callsign across every facility.</summary>
+    public List<object> FindByCallsign(string callsign)
+    {
+        var result = new List<object>();
+        foreach (var tracks in _state.Values)
+            foreach (var t in tracks.Values)
+                if (string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
+                    result.Add(t.ToJson());   // ToJson already includes the facility
+        return result;
+    }
 }
 
 // ── Data model ──────────────────────────────────────────────────────────────

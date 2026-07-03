@@ -4523,6 +4523,8 @@ function toggleTrackSelect(gufi) {
         }
     }
 
+    // Force immediate canvas redraw so velocity vector updates instantly
+    lastRenderTime = 0;
     // Immediately rebuild the marker so the change is instant (don't wait for render cycle)
     const m = markers.get(gufi);
     if (m) {

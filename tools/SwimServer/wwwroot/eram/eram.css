@@ -1130,7 +1130,10 @@ body.tb-active #sidebar-wrapper { top: 70px; }
     white-space: nowrap;
     z-index: 2;
 }
-.tb-submenu::-webkit-scrollbar { height: 0px; }
+.tb-submenu {
+    scrollbar-width: none;
+}
+.tb-submenu::-webkit-scrollbar { height: 0px; display: none; }
 .tb-submenu::-webkit-scrollbar-thumb { background: #777; border-radius: 2px; }
 .tb-submenu::-webkit-scrollbar-track { background: #222; }
 

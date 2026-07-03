@@ -65,6 +65,8 @@ const activeTearoffs = new Map();  // btnKey → { floatingEl, buttonClone } —
 const activeFloatingMenus = new Map(); // btnKey → { floatingMenuEl, anchorEl } — floating menu state
 let tearoffDeleteMode = false;  // when true, left-click marks for deletion, middle-click deletes
 const selectedTearoffsForDeletion = new Set();  // btnKey → marked for deletion
+const incdecRepeatTimers = new Map();  // btnKey → { interval, button, direction } — active incdec hold timers
+const incdecHandledInMousedown = new Set();  // btnKey → was handled in mousedown, skip click
 
 // Controller-entered altitude overrides (QZ/QQ/QR commands)
 // Local wins when present; SWIM clears local override only when it sends a genuinely NEW different value
@@ -8952,18 +8954,18 @@ const TB_BRIGHT = {
             menu('MAP\nBRIGHT', 'map-bright', { cls: 'tb-blue' }),
             nosim('CPDLC', { cls: 'tb-blue' }),
             incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 1); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 1); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
-            incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); updateCursorBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); updateCursorBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); updatePrTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); updatePrTgtBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); updatePrHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); updatePrHistBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); updateUnpHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); updateUnpHistBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 1); updateCursorBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 1); updateCursorBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 1); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 1); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 1); updatePrTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 1); updatePrTgtBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 1); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 1); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 1); updatePrHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 1); updatePrHistBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 1); updateUnpHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 1); updateUnpHistBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('LDB', {
                 cls: 'tb-green',
                 getValue: () => tbState.bright.ldb,
                 formatValue: v => v,
-                onDec: () => { tbState.bright.ldb = Math.max(0, tbState.bright.ldb - 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
-                onInc: () => { tbState.bright.ldb = Math.min(100, tbState.bright.ldb + 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
+                onDec: () => { tbState.bright.ldb = Math.max(0, tbState.bright.ldb - 1); updateLdbBrightness(); saveSettingsToLocalStorage(); },
+                onInc: () => { tbState.bright.ldb = Math.min(100, tbState.bright.ldb + 1); updateLdbBrightness(); saveSettingsToLocalStorage(); },
             }),
             nosim('SLDB'),
             nosim('WX'),
@@ -8971,21 +8973,21 @@ const TB_BRIGHT = {
                 cls: 'tb-green',
                 getValue: () => getRangeVal('rng-nx'),
                 formatValue: v => v,
-                onDec: () => setRangeVal('rng-nx', Math.max(0, getRangeVal('rng-nx') - 10)),
-                onInc: () => setRangeVal('rng-nx', Math.min(100, getRangeVal('rng-nx') + 10)),
+                onDec: () => setRangeVal('rng-nx', Math.max(0, getRangeVal('rng-nx') - 1)),
+                onInc: () => setRangeVal('rng-nx', Math.min(100, getRangeVal('rng-nx') + 1)),
             }),
         ],
         [
-            incdec('BCKLGHT', { cls: 'tb-green', getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { scopeBcklght = Math.max(0, scopeBcklght - 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBcklght = Math.min(100, scopeBcklght + 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
-            incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); updateButtonBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); updateButtonBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); updateBorderBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); updateBorderBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); } }),
+            incdec('BCKLGHT', { cls: 'tb-green', getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { scopeBcklght = Math.max(0, scopeBcklght - 1); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBcklght = Math.min(100, scopeBcklght + 1); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
+            incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 1); updateButtonBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 1); updateButtonBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 1); updateBorderBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 1); updateBorderBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 1); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 1); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 1); updateToolbarBorderColor(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 1); updateToolbarBorderColor(); saveSettingsToLocalStorage(); } }),
             nosim('AB BRDR'),
-            incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); updateFdbBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); updateFdbBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 1); updateFdbBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 1); updateFdbBrightness(); saveSettingsToLocalStorage(); } }),
             nosim('PORTAL'),
             nosim('SATCOMM'),
-            incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); updateOnFreqBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); updateOnFreqBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 1); updateOnFreqBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 1); updateOnFreqBrightness(); saveSettingsToLocalStorage(); } }),
             nosim('LINE 4'),
             nosim('DWELL'),
             incdec('FENCE', { cls: 'tb-green', getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); invalidateAllMarkers(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); invalidateAllMarkers(); saveSettingsToLocalStorage(); } }),
@@ -9372,6 +9374,12 @@ function createFloatingTearoff(btnKey, spec) {
             buttonClone.addEventListener('click', (e) => {
                 if (!e.target.closest('.tb-tear')) {
                     e.stopPropagation();
+                    // Skip if this was already handled in mousedown (incdec buttons)
+                    if (incdecHandledInMousedown.has(btnKey)) {
+                        incdecHandledInMousedown.delete(btnKey);
+                        return;
+                    }
+
                     // Skip normal toggle for momentary buttons (they only respond to hold, not click)
                     if (!(spec.type === 'toggle' && spec.isMomentary)) {
                         // In delete mode, left-click marks tearoff for deletion
@@ -9391,7 +9399,7 @@ function createFloatingTearoff(btnKey, spec) {
                 }
             });
 
-            // Mousedown: handle momentary toggle and middle-click
+            // Mousedown: handle momentary toggle, middle-click, and incdec hold
             buttonClone.addEventListener('mousedown', (e) => {
                 const isTearoff = e.target.closest('.tb-tear');
 
@@ -9425,7 +9433,112 @@ function createFloatingTearoff(btnKey, spec) {
                     return;
                 }
 
-                // Middle click
+                // Incdec hold: start repeating inc/dec on left or middle click
+                if (!isTearoff && spec.type === 'incdec') {
+                    // Skip incdec if in delete mode (let deletion handler take over)
+                    if (tearoffDeleteMode) {
+                        // Let the middle-click delete handler run instead
+                        if (e.button === 1) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }
+                    } else {
+                        const direction = e.button === 0 ? 'dec' : (e.button === 1 ? 'inc' : null);
+                        if (direction) {
+                            // Mark that we handled this in mousedown so click event doesn't double-execute
+                            incdecHandledInMousedown.add(btnKey);
+
+                        // Clear any existing timer for this button
+                        if (incdecRepeatTimers.has(btnKey)) {
+                            clearInterval(incdecRepeatTimers.get(btnKey).interval);
+                            incdecRepeatTimers.delete(btnKey);
+                        }
+
+                        // Call the action immediately
+                        if (direction === 'dec' && spec.onDec) {
+                            spec.onDec();
+                        } else if (direction === 'inc' && spec.onInc) {
+                            spec.onInc();
+                        }
+
+                        // Update displays (both clone and master)
+                        const updateDisplays = () => {
+                            const valDiv = buttonClone.querySelector('.tb-value');
+                            if (valDiv && spec.getValue) {
+                                valDiv.textContent = spec.formatValue(spec.getValue());
+                            }
+                            updateFloatingMenuButton(buttonClone, spec);
+                            // Also sync to master button
+                            const masterEntry = tbElements.get(btnKey);
+                            if (masterEntry && masterEntry.el) {
+                                const masterValDiv = masterEntry.el.querySelector('.tb-value');
+                                if (masterValDiv && spec.getValue) {
+                                    masterValDiv.textContent = spec.formatValue(spec.getValue());
+                                }
+                            }
+                        };
+                        updateDisplays();
+
+                        // Track initial mouse position to detect drag
+                        const startX = e.clientX;
+                        const startY = e.clientY;
+                        let dragDetected = false;
+
+                        // Start repeat after 300ms delay
+                        const repeatTimer = setTimeout(() => {
+                            // Only start repeat if no drag detected yet
+                            if (!dragDetected) {
+                                const interval = setInterval(() => {
+                                    // Stop if drag was detected
+                                    if (dragDetected) {
+                                        clearInterval(interval);
+                                        return;
+                                    }
+                                    if (direction === 'dec' && spec.onDec) {
+                                        spec.onDec();
+                                    } else if (direction === 'inc' && spec.onInc) {
+                                        spec.onInc();
+                                    }
+                                    updateDisplays();
+                                }, 50);
+
+                                incdecRepeatTimers.set(btnKey, { interval, button: buttonClone, direction });
+                            }
+                        }, 300);
+
+                        // Store timeout ID so we can cancel if needed
+                        incdecRepeatTimers.set(btnKey, { interval: repeatTimer, button: buttonClone, direction, isTimeout: true });
+
+                        // Track mousemove to detect drag
+                        const dragDetectHandler = (moveE) => {
+                            const dx = Math.abs(moveE.clientX - startX);
+                            const dy = Math.abs(moveE.clientY - startY);
+                            if (dx > 10 || dy > 10) {
+                                dragDetected = true;
+                                // Cancel the repeat timer
+                                if (incdecRepeatTimers.has(btnKey)) {
+                                    const timer = incdecRepeatTimers.get(btnKey);
+                                    clearInterval(timer.interval);
+                                    incdecRepeatTimers.delete(btnKey);
+                                }
+                                window.removeEventListener('mousemove', dragDetectHandler);
+                            }
+                        };
+
+                        window.addEventListener('mousemove', dragDetectHandler, { once: false });
+
+                        // Cleanup the drag detect handler on mouseup
+                        const cleanupHandler = () => {
+                            window.removeEventListener('mousemove', dragDetectHandler);
+                        };
+                        window.addEventListener('mouseup', cleanupHandler, { once: true });
+
+                        return;
+                        }
+                    }
+                }
+
+                // Middle click (non-incdec)
                 if (e.button === 1 && !isTearoff) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -9454,7 +9567,7 @@ function createFloatingTearoff(btnKey, spec) {
                 }
             });
 
-            // Mouseup: revert momentary toggle to off state
+            // Mouseup: revert momentary toggle to off state, stop incdec repeating
             buttonClone.addEventListener('mouseup', (e) => {
                 if (spec.type === 'toggle' && spec.isMomentary) {
                     e.stopPropagation();
@@ -9469,9 +9582,16 @@ function createFloatingTearoff(btnKey, spec) {
                         invalidateAllMarkers();
                     }
                 }
+
+                // Stop incdec repeating
+                if (spec.type === 'incdec' && incdecRepeatTimers.has(btnKey)) {
+                    const timer = incdecRepeatTimers.get(btnKey);
+                    clearInterval(timer.interval);
+                    incdecRepeatTimers.delete(btnKey);
+                }
             });
 
-            // Mouseleave: revert momentary toggle if mouse leaves button while held
+            // Mouseleave: revert momentary toggle if mouse leaves button while held, stop incdec repeating
             buttonClone.addEventListener('mouseleave', (e) => {
                 if (spec.type === 'toggle' && spec.isMomentary) {
                     buttonClone.classList.remove('tb-toggle-on');
@@ -9484,6 +9604,13 @@ function createFloatingTearoff(btnKey, spec) {
                         speedButtonPressed = false;
                         invalidateAllMarkers();
                     }
+                }
+
+                // Stop incdec repeating
+                if (spec.type === 'incdec' && incdecRepeatTimers.has(btnKey)) {
+                    const timer = incdecRepeatTimers.get(btnKey);
+                    clearInterval(timer.interval);
+                    incdecRepeatTimers.delete(btnKey);
                 }
             });
 
@@ -9740,6 +9867,12 @@ function createButton(spec, panelId, rowIdx, colIdx) {
             e.stopPropagation();
             // Ignore clicks on the tearoff strip
             if (!e.target.closest('.tb-tear')) {
+                // Skip if this was already handled in mousedown (incdec buttons)
+                if (incdecHandledInMousedown.has(key)) {
+                    incdecHandledInMousedown.delete(key);
+                    return;
+                }
+
                 // Skip normal toggle for momentary buttons (they only respond to hold, not click)
                 if (!(spec.type === 'toggle' && spec.isMomentary)) {
                     // For menu buttons in floating menus, pass the button element as anchor
@@ -9759,12 +9892,14 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                         }
                         // Also update floating menu button if in a floating menu
                         updateFloatingMenuButton(el, spec);
+                        // Sync to tearoff
+                        refreshButton(key);
                     }
                 }
             }
         });
 
-        // Mousedown: handle momentary toggle and middle-click
+        // Mousedown: handle momentary toggle, middle-click, and incdec hold
         el.addEventListener('mousedown', (e) => {
             const isTearoff = e.target.closest('.tb-tear');
 
@@ -9798,7 +9933,66 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                 return;
             }
 
-            // Middle click
+            // Incdec hold: start repeating inc/dec on left or middle click
+            if (!isTearoff && spec.type === 'incdec') {
+                const direction = e.button === 0 ? 'dec' : (e.button === 1 ? 'inc' : null);
+                if (direction) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    // Mark that we handled this in mousedown so click event doesn't double-execute
+                    incdecHandledInMousedown.add(key);
+
+                    // Clear any existing timer for this button
+                    if (incdecRepeatTimers.has(key)) {
+                        clearInterval(incdecRepeatTimers.get(key).interval);
+                        incdecRepeatTimers.delete(key);
+                    }
+
+                    // Call the action immediately
+                    if (direction === 'dec' && spec.onDec) {
+                        spec.onDec();
+                    } else if (direction === 'inc' && spec.onInc) {
+                        spec.onInc();
+                    }
+
+                    // Start repeat after 300ms delay
+                    const repeatTimer = setTimeout(() => {
+                        const interval = setInterval(() => {
+                            if (direction === 'dec' && spec.onDec) {
+                                spec.onDec();
+                            } else if (direction === 'inc' && spec.onInc) {
+                                spec.onInc();
+                            }
+                            // Update display and sync to tearoff
+                            const valDiv = el.querySelector('.tb-value');
+                            if (valDiv && spec.getValue) {
+                                valDiv.textContent = spec.formatValue(spec.getValue());
+                            }
+                            updateFloatingMenuButton(el, spec);
+                            // Sync to tearoff
+                            refreshButton(key);
+                        }, 50);
+
+                        incdecRepeatTimers.set(key, { interval, button: el, direction });
+                    }, 300);
+
+                    // Store timeout ID so we can cancel if needed
+                    incdecRepeatTimers.set(key, { interval: repeatTimer, button: el, direction, isTimeout: true });
+
+                    // Update display and sync to tearoff
+                    const valDiv = el.querySelector('.tb-value');
+                    if (valDiv && spec.getValue) {
+                        valDiv.textContent = spec.formatValue(spec.getValue());
+                    }
+                    updateFloatingMenuButton(el, spec);
+                    // Sync to tearoff
+                    refreshButton(key);
+                    return;
+                }
+            }
+
+            // Middle click for non-incdec buttons
             if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -9813,12 +10007,14 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                         }
                         // Also update floating menu button if in a floating menu
                         updateFloatingMenuButton(el, spec);
+                        // Sync to tearoff
+                        refreshButton(key);
                     }
                 }
             }
         });
 
-        // Mouseup: revert momentary toggle to off state
+        // Mouseup: revert momentary toggle to off state, stop incdec repeating
         el.addEventListener('mouseup', (e) => {
             if (spec.type === 'toggle' && spec.isMomentary) {
                 e.stopPropagation();
@@ -9833,9 +10029,16 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                     invalidateAllMarkers();
                 }
             }
+
+            // Stop incdec repeating
+            if (spec.type === 'incdec' && incdecRepeatTimers.has(key)) {
+                const timer = incdecRepeatTimers.get(key);
+                clearInterval(timer.interval);
+                incdecRepeatTimers.delete(key);
+            }
         });
 
-        // Mouseleave: revert momentary toggle if mouse leaves button while held
+        // Mouseleave: revert momentary toggle if mouse leaves button while held, stop incdec repeating
         el.addEventListener('mouseleave', (e) => {
             if (spec.type === 'toggle' && spec.isMomentary) {
                 el.classList.remove('tb-toggle-on');
@@ -9848,6 +10051,13 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                     speedButtonPressed = false;
                     invalidateAllMarkers();
                 }
+            }
+
+            // Stop incdec repeating
+            if (spec.type === 'incdec' && incdecRepeatTimers.has(key)) {
+                const timer = incdecRepeatTimers.get(key);
+                clearInterval(timer.interval);
+                incdecRepeatTimers.delete(key);
             }
         });
 
@@ -9962,6 +10172,7 @@ function refreshAllButtons() {
     for (const key of tbElements.keys()) {
         refreshButton(key);
     }
+    updateTearoffColors();
 }
 
 // Refresh ONLY the buttons whose spec.label matches the given string. Goes

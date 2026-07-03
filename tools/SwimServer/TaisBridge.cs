@@ -139,7 +139,7 @@ class TaisBridge
                     track.ExitFix = ElVal(fp, "exitFix") ?? track.ExitFix;
                     track.AssignedSquawk = ElVal(fp, "assignedBeaconCode") ?? track.AssignedSquawk;
                     track.RequestedAltitude = ParseInt(ElVal(fp, "requestedAltitude")) ?? track.RequestedAltitude;
-                    track.Runway = NullIfEmpty(AsciiOnly(ElVal(fp, "runway"))) ?? track.Runway;
+                    track.Runway = CleanRunway(AsciiOnly(ElVal(fp, "runway"))) ?? track.Runway;
                     track.Scratchpad1 = NullIfEmpty(AsciiOnly(ElVal(fp, "scratchPad1"))) ?? track.Scratchpad1;
                     track.Scratchpad2 = NullIfEmpty(AsciiOnly(ElVal(fp, "scratchPad2"))) ?? track.Scratchpad2;
                     track.Owner = NullIfUnassigned(ElVal(fp, "cps")) ?? track.Owner;
@@ -196,6 +196,12 @@ class TaisBridge
         if (string.IsNullOrEmpty(v)) return v;
         foreach (var ch in v) if (ch < 0x20 || ch > 0x7E) return null;
         return v;
+    }
+    /// <summary>Runway text, or null for the TAIS "no runway assigned" sentinel (all-N, e.g. "NNNN").</summary>
+    private static string? CleanRunway(string? v)
+    {
+        v = NullIfEmpty(v);
+        return v is null || v.All(c => c is 'N' or 'n') ? null : v;
     }
     /// <summary>
     /// Returns a hex string of the bytes in <paramref name="v"/> ONLY if it

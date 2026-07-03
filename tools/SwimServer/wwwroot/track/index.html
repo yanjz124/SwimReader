@@ -69,6 +69,10 @@
   .db.eram .sym { color:var(--yel); }
   .db.stars pre { background:#000; color:#39ff62; border:1px solid #1f4a2a; }
   @font-face { font-family:"ERAM"; src:url("/ERAMv110.ttf"); font-display:swap; }
+  .facsel { display:flex; flex-wrap:wrap; gap:6px; padding:10px 14px 0; }
+  .facbtn { background:#111; color:var(--dim); border:1px solid var(--line); border-radius:6px;
+    padding:6px 11px; font:inherit; font-size:12px; cursor:pointer; }
+  .facbtn.on { background:var(--yel); color:#000; border-color:var(--yel); font-weight:bold; }
 
   /* TDLS messages */
   .tmsg { padding:10px 14px; border-top:1px solid #222; font-size:13px; }
@@ -88,6 +92,6 @@
   <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Enter a callsign to follow a flight.</span></div>
   <div id="out"></div>
 </div>
-<script src="/track/track.js?v=3"></script>
+<script src="/track/track.js?v=4"></script>
 </body>
 </html>

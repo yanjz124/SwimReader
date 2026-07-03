@@ -54,6 +54,7 @@ static class TrackRoutes
     private static object SfdpsProjection(FlightState f) => new
     {
         gufi = f.Gufi, callsign = f.Callsign, cid = f.ComputerId, status = f.FlightStatus,
+        cids = f.ComputerIds.IsEmpty ? null : new Dictionary<string, string>(f.ComputerIds),
         // flight plan / identity
         origin = f.Origin, dest = f.Destination, alternate = f.AlternateAerodrome,
         acType = f.AircraftType, wake = f.WakeCategory, equip = f.EquipmentQualifier,

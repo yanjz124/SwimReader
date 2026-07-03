@@ -353,7 +353,9 @@ async function loadFacilities() {
 $("btn-launch").onclick = () => {
   if (!selectedFacility) return;
   writeLaunchSettings(selectedFacility, selectedSectors);
-  location.href = "/eram/scope";
+  // center=1 tells the scope to zoom to the freshly-picked ARTCC (a fresh LAUNCH),
+  // overriding the last-session map view. RESUME omits it to keep your saved view.
+  location.href = "/eram/scope?center=1";
 };
 
 $("btn-resume").onclick = () => {

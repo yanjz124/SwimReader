@@ -148,6 +148,9 @@
     const sub = [type + wake, (f && f.registration) || ''].filter(Boolean).join(' · ');
     const freq = f && f.sectorFreq;
     const ctrl = f ? (f.controllingFacility || '') + (f.controllingSector ? '/' + f.controllingSector : '') : '';
+    // Terminal (STARS) frequency — the flight can be in a TRACON while ERAM still owns it.
+    const sOwner = tais && tais.owner ? (tais.facility + '/' + tais.owner) : '';
+    const sfreq = sOwner ? (FREQS[sOwner] || '') : '';
     // Prominent handoff banner: the sector the flight is moving to next + its frequency.
     // Works for en-route (SFDPS) handoffs and terminal (STARS/TAIS) handoffs.
     let hoBanner = '';
@@ -158,7 +161,14 @@
       const pending = /INITIAT|PROPOS/.test(he);
       const label = pending ? 'HANDOFF PENDING' : /ACCEPT/.test(he) ? 'HANDOFF ACCEPTED' : /EXECUT/.test(he) ? 'HANDING OFF' : 'HANDOFF';
       const recv = hoF.handoffReceiving;
-      const rf = freqOf(recv);
+      let rf = freqOf(recv);
+      // ERAM handoff code (e.g. BOA/1M) can differ from the STARS facility id (A90/1M);
+      // fall back to a TAIS track whose owner matches the receiving sector code.
+      if (!rf && recv && recv.indexOf('/') > 0) {
+        const recvSec = recv.split('/')[1];
+        const match = (d.tais || []).find(function (t) { return t.owner === recvSec && FREQS[t.facility + '/' + t.owner]; });
+        if (match) rf = freqOf(match.facility + '/' + match.owner);
+      }
       hoBanner = `<div class="hobar${pending ? ' pend' : ''}"><span class="hol">${label}</span> NEXT &rarr; <b>${esc(recv)}</b>${rf ? ` &middot; <b>${esc(rf)}</b>` : ''}</div>`;
     } else if (tHo) {
       const recv = tHo.facility + '/' + tHo.handoff;
@@ -170,7 +180,8 @@
       <div class="od">${esc(org || '????')} <span class="arrow">▸</span> ${esc(dst || '????')}</div>
       <div class="sub">${esc(sub)}</div>
       ${hoBanner}
-      ${freq ? `<div class="freq">&#9673; <b>${esc(freq)}</b> MHz <span>${esc(ctrl)}</span></div>` : ''}
+      ${freq ? `<div class="freq">&#9673; <b>${esc(freq)}</b> MHz <span>${esc(ctrl)} · center</span></div>` : ''}
+      ${sfreq ? `<div class="freq term">&#9673; <b>${esc(sfreq)}</b> MHz <span>${esc(sOwner)} · terminal</span></div>` : ''}
       <div class="phase" style="background:#111;color:${ph[1]};border-color:${ph[1]}66">${ph[0]}</div>
       <div class="chips">${chips}</div>
     </div>`;

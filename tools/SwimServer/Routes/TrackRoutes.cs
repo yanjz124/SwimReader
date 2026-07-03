@@ -141,21 +141,12 @@ static class TrackRoutes
         lastSeen = f.LastSeen.ToString("o"),
     };
 
-    // Frequency for a "FAC/SECTOR": exact match, else (STARS TCPs like "3B") retry
-    // with the trailing sub-position letter stripped → "FAC/3".
+    // Frequency for a "FAC/SECTOR" — ERAM sector (e.g. ZDC/32) or STARS TCP code
+    // (subset+sectorId, e.g. PCT/1J), both keyed exactly as vNAS/TAIS report them.
     private static string? FreqOf(ServerContext ctx, string? key)
     {
         if (string.IsNullOrEmpty(key)) return null;
-        key = key.Trim();
-        if (ctx.SectorFreqs.TryGetValue(key, out var v)) return v;
-        var i = key.IndexOf('/');
-        if (i > 0 && i < key.Length - 1)
-        {
-            var fac = key[..i]; var sec = key[(i + 1)..];
-            var m = System.Text.RegularExpressions.Regex.Match(sec, @"^\d+");
-            if (m.Success && m.Value != sec && ctx.SectorFreqs.TryGetValue(fac + "/" + m.Value, out var v2)) return v2;
-        }
-        return null;
+        return ctx.SectorFreqs.TryGetValue(key.Trim(), out var v) ? v : null;
     }
 
     // ── Text-only version (/t) ────────────────────────────────────────────────

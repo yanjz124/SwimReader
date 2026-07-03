@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0a0a0a">
 <title>Track a Flight</title>
+<noscript><meta http-equiv="refresh" content="0; url=/t"></noscript>
 <style>
   :root { --yel:#cccc44; --dim:#8a8a3a; --bg:#0a0a0a; --card:#141414; --line:#333; --accent:#4aa3ff; --ok:#44cc44; --warn:#ff8c00; --red:#ff4444; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -93,11 +94,12 @@
 <div class="wrap">
   <header>
     <a class="home" href="/">&larr;</a>
+    <a class="home" id="txtlink" href="/t" title="Light text-only version — for slow / inflight wifi">TEXT</a>
     <form id="f"><input id="cs" placeholder="Search callsign (e.g. AAL123)" autocomplete="off" autocapitalize="characters" spellcheck="false"><button type="submit">TRACK</button></form>
   </header>
   <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Enter a callsign to follow a flight.</span></div>
   <div id="out"></div>
 </div>
-<script src="/track/track.js?v=5"></script>
+<script src="/track/track.js?v=6"></script>
 </body>
 </html>

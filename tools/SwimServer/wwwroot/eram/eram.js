@@ -1525,6 +1525,14 @@ async function loadKml() {
             delete boundaryLayers[key];
         }
         if (myFacility) showBoundariesForFacility(myFacility);
+        // Fresh LAUNCH from the picker (?center=1) → center the scope on the chosen ARTCC now
+        // that its sector bounds are loaded, overriding the restored last-session view. This is
+        // a one-shot: strip the flag so a later refresh keeps whatever the user has panned to.
+        // (RESUME omits center=1, so it keeps the saved view.)
+        if (myFacility && new URLSearchParams(location.search).get('center') === '1') {
+            zoomToFacility(myFacility);
+            history.replaceState(null, '', location.pathname + location.hash);
+        }
     } catch (e) { console.warn('[KML]', e); }
 }
 

@@ -182,6 +182,7 @@
       ${hoBanner}
       ${freq ? `<div class="freq">&#9673; <b>${esc(freq)}</b> MHz <span>${esc(ctrl)} · center</span></div>` : ''}
       ${sfreq ? `<div class="freq term">&#9673; <b>${esc(sfreq)}</b> MHz <span>${esc(sOwner)} · terminal</span></div>` : ''}
+      ${starsStripHtml(tais)}
       <div class="phase" style="background:#111;color:${ph[1]};border-color:${ph[1]}66">${ph[0]}</div>
       <div class="chips">${chips}</div>
     </div>`;
@@ -403,25 +404,32 @@
     let inner = '';
     tais.forEach(function (t) {
       inner += `<div class="subhdr">${esc(t.facility)} · STARS</div>`;
-      // Prominent strip: the operationally important STARS data up front.
-      const sp = [t.sp1, t.sp2].filter(Boolean).join(' ');
-      const sfreq = FREQS[t.facility + '/' + t.owner] || '';
-      const ownParts = [t.owner ? 'OWNER ' + t.owner : '', sfreq ? sfreq + ' MHz' : '', t.runway ? 'RWY ' + t.runway : '']
-        .filter(Boolean).join('  ·  ');
-      inner += `<div class="stars-strip">
-        <div class="ss-route">${esc(t.entryFix || '—')} <span class="arw">&#9656;</span> ${esc(t.exitFix || '—')}</div>
-        ${sp ? `<span class="ss-sp">SP ${esc(sp)}</span>` : ''}
-        ${t.handoff ? `<span class="ss-ho">H/O ${esc(t.handoff)}${freqOf(t.facility + '/' + t.handoff) ? ' ' + esc(freqOf(t.facility + '/' + t.handoff)) : ''}</span>` : ''}
-        ${ownParts ? `<div class="ss-own">${esc(ownParts)}</div>` : ''}
-      </div>`;
       inner += grid([
-        ['Track #', t.trackNum],
+        ['Track #', t.trackNum], ['Scratchpad', [t.sp1, t.sp2].filter(Boolean).join(' / ')],
+        ['Runway', t.runway], ['Owner', t.owner, 'hl'],
+        ['Frequency', freqOf(t.facility + '/' + t.owner), 'hl'],
+        ['Handoff', t.handoff ? (t.handoff + (freqOf(t.facility + '/' + t.handoff) ? '  ·  ' + freqOf(t.facility + '/' + t.handoff) : '')) : null, 'warn'],
+        ['Entry Fix', t.entryFix], ['Exit Fix', t.exitFix],
         ['Sqk (asgn)', t.assignedSqk], ['Sqk (rcvd)', t.reportedSqk],
         ['Altitude', t.altFt != null ? 'FL' + Math.round(t.altFt / 100) : null],
         ['Ground Spd', t.gs != null ? Math.round(t.gs) + ' kt' : null],
       ]);
     });
     return `<div class="card"><h2>TERMINAL (STARS / TAIS)</h2>${inner}</div>`;
+  }
+
+  // Compact STARS summary shown in the hero when terminal (TAIS) data exists.
+  function starsStripHtml(t) {
+    if (!t) return '';
+    const sp = [t.sp1, t.sp2].filter(Boolean).join(' ');
+    const ownParts = [t.owner ? 'OWNER ' + t.owner : '', t.runway ? 'RWY ' + t.runway : ''].filter(Boolean).join('  ·  ');
+    return `<div class="stars-strip">
+      <div class="ss-hd">${esc(t.facility)} STARS</div>
+      <div class="ss-route">${esc(t.entryFix || '—')} <span class="arw">&#9656;</span> ${esc(t.exitFix || '—')}</div>
+      ${sp ? `<span class="ss-sp">SP ${esc(sp)}</span>` : ''}
+      ${t.handoff ? `<span class="ss-ho">H/O ${esc(t.handoff)}${freqOf(t.facility + '/' + t.handoff) ? ' ' + esc(freqOf(t.facility + '/' + t.handoff)) : ''}</span>` : ''}
+      ${ownParts ? `<div class="ss-own">${esc(ownParts)}</div>` : ''}
+    </div>`;
   }
 
   function tfmsCard(t) {

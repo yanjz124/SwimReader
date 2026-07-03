@@ -59,6 +59,16 @@
   .hobar.pend { animation:hopulse 1.1s steps(1,end) infinite; }
   @keyframes hopulse { 50% { background:#4a3410; border-color:var(--warn); box-shadow:0 0 10px #5a401088; } }
 
+  /* STARS terminal highlight strip — entry/exit fix, scratchpad, owner + freq up front */
+  .stars-strip { margin:10px 14px 6px; padding:11px 13px; border:1px solid #1f4a2a; border-radius:9px; background:#0c160f; }
+  .stars-strip .ss-route { font-size:21px; font-weight:bold; color:#39ff62; letter-spacing:1px; }
+  .stars-strip .ss-route .arw { color:#2a7a3f; margin:0 7px; }
+  .stars-strip .ss-sp { display:inline-block; margin:8px 6px 0 0; font-size:14px; font-weight:bold; color:#000;
+    background:#39ff62; padding:2px 9px; border-radius:5px; letter-spacing:1px; }
+  .stars-strip .ss-ho { display:inline-block; margin:8px 0 0; font-size:13px; font-weight:bold; color:#000;
+    background:var(--warn); padding:2px 9px; border-radius:5px; letter-spacing:.5px; }
+  .stars-strip .ss-own { margin-top:8px; font-size:14px; color:#9fd8ab; letter-spacing:.5px; }
+
   /* Cards */
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; margin:10px 12px; overflow:hidden; }
   .card > h2 { margin:0; padding:9px 14px; font-size:12px; letter-spacing:2px; color:var(--dim);
@@ -113,6 +123,6 @@
   <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Enter a callsign to follow a flight.</span></div>
   <div id="out"></div>
 </div>
-<script src="/track/track.js?v=11"></script>
+<script src="/track/track.js?v=12"></script>
 </body>
 </html>

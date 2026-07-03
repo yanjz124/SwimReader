@@ -403,12 +403,19 @@
     let inner = '';
     tais.forEach(function (t) {
       inner += `<div class="subhdr">${esc(t.facility)} · STARS</div>`;
+      // Prominent strip: the operationally important STARS data up front.
+      const sp = [t.sp1, t.sp2].filter(Boolean).join(' ');
+      const sfreq = FREQS[t.facility + '/' + t.owner] || '';
+      const ownParts = [t.owner ? 'OWNER ' + t.owner : '', sfreq ? sfreq + ' MHz' : '', t.runway ? 'RWY ' + t.runway : '']
+        .filter(Boolean).join('  ·  ');
+      inner += `<div class="stars-strip">
+        <div class="ss-route">${esc(t.entryFix || '—')} <span class="arw">&#9656;</span> ${esc(t.exitFix || '—')}</div>
+        ${sp ? `<span class="ss-sp">SP ${esc(sp)}</span>` : ''}
+        ${t.handoff ? `<span class="ss-ho">H/O ${esc(t.handoff)}${freqOf(t.facility + '/' + t.handoff) ? ' ' + esc(freqOf(t.facility + '/' + t.handoff)) : ''}</span>` : ''}
+        ${ownParts ? `<div class="ss-own">${esc(ownParts)}</div>` : ''}
+      </div>`;
       inner += grid([
-        ['Track #', t.trackNum], ['Scratchpad', [t.sp1, t.sp2].filter(Boolean).join(' / ')],
-        ['Runway', t.runway], ['Owner', t.owner, 'hl'],
-        ['Frequency', freqOf(t.facility + '/' + t.owner), 'hl'],
-        ['Handoff', t.handoff ? (t.handoff + (freqOf(t.facility + '/' + t.handoff) ? '  ·  ' + freqOf(t.facility + '/' + t.handoff) : '')) : null, 'warn'],
-        ['Entry Fix', t.entryFix], ['Exit Fix', t.exitFix],
+        ['Track #', t.trackNum],
         ['Sqk (asgn)', t.assignedSqk], ['Sqk (rcvd)', t.reportedSqk],
         ['Altitude', t.altFt != null ? 'FL' + Math.round(t.altFt / 100) : null],
         ['Ground Spd', t.gs != null ? Math.round(t.gs) + ' kt' : null],

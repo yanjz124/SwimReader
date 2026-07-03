@@ -319,6 +319,17 @@ class TdlsBridge
 
         return new { airport, aircraftId, messages = ac.MessagesToJson() };
     }
+
+    /// <summary>All TDLS aircraft matching a callsign across every airport (for the track page).</summary>
+    public List<object> FindByCallsign(string callsign)
+    {
+        var result = new List<object>();
+        foreach (var (airport, aircraftDict) in _state)
+            foreach (var ac in aircraftDict.Values)
+                if (string.Equals(ac.AircraftId, callsign, StringComparison.OrdinalIgnoreCase))
+                    result.Add(new { airport, aircraft = ac.ToJson() });
+        return result;
+    }
 }
 
 // ── Data models ──────────────────────────────────────────────────────────────

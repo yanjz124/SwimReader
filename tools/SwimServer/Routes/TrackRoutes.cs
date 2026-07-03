@@ -65,6 +65,10 @@ static class TrackRoutes
                 .Take(30)
                 .Select(x => new { time = x.time, source = x.source, centre = x.centre, summary = x.summary })
                 .ToList();
+            // Frequencies for every sector named in the history summaries too.
+            foreach (var h in handoffHistory)
+                foreach (System.Text.RegularExpressions.Match mm in System.Text.RegularExpressions.Regex.Matches(h.summary ?? "", @"[A-Z]{2,4}/[0-9A-Z]{1,3}"))
+                    AddFreqKey(mm.Value);
 
             var tdls  = ctx.Tdls.FindByCallsign(callsign);
             var tais  = ctx.Tais.FindByCallsign(callsign);
@@ -148,6 +152,12 @@ static class TrackRoutes
         if (string.IsNullOrEmpty(key)) return null;
         return ctx.SectorFreqs.TryGetValue(key.Trim(), out var v) ? v : null;
     }
+
+    // Annotate each "FAC/SECTOR" token in free text with its frequency, if known.
+    private static string AnnotateFreqs(ServerContext ctx, string? text) =>
+        string.IsNullOrEmpty(text) ? "" : System.Text.RegularExpressions.Regex.Replace(
+            text, @"[A-Z]{2,4}/[0-9A-Z]{1,3}",
+            m => { var f = FreqOf(ctx, m.Value); return f != null ? m.Value + " [" + f + "]" : m.Value; });
 
     // ── Text-only version (/t) ────────────────────────────────────────────────
     private static List<FlightState> Matching(ServerContext ctx, string cs) =>
@@ -284,7 +294,7 @@ static class TrackRoutes
         {
             sb.Append("<h2>HANDOFF HISTORY</h2>");
             foreach (var e in ho.GroupBy(x => x.Time + x.Summary).Select(g => g.First()).OrderByDescending(x => x.Time).Take(12))
-                sb.Append(He(Hm(e.Time))).Append(" <span class=g>").Append(He(e.Source)).Append("</span> ").Append(He(e.Summary)).Append("<br>");
+                sb.Append(He(Hm(e.Time))).Append(" <span class=g>").Append(He(e.Source)).Append("</span> ").Append(He(AnnotateFreqs(ctx, e.Summary))).Append("<br>");
         }
 
         if (!string.IsNullOrEmpty(edct)) sb.Append("<h2>EDCT</h2>Controlled departure <b>").Append(He(Hm(edct))).Append("</b>");

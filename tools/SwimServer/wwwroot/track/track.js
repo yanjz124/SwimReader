@@ -81,6 +81,14 @@
     var f = freqOf(facSlashSec);
     return f ? facSlashSec + '  ·  ' + f : facSlashSec;
   }
+  // Annotate every "FAC/SECTOR" token found in free text with its frequency, if known.
+  function annotateFreqs(text) {
+    if (!text) return text;
+    return text.replace(/[A-Z]{2,4}\/[0-9A-Z]{1,3}/g, function (m) {
+      var v = FREQS[m];
+      return v ? m + ' [' + v + ']' : m;
+    });
+  }
 
   function render(d) {
     lastData = d;
@@ -137,10 +145,28 @@
     const sub = [type + wake, (f && f.registration) || ''].filter(Boolean).join(' · ');
     const freq = f && f.sectorFreq;
     const ctrl = f ? (f.controllingFacility || '') + (f.controllingSector ? '/' + f.controllingSector : '') : '';
+    // Prominent handoff banner: the sector the flight is moving to next + its frequency.
+    // Works for en-route (SFDPS) handoffs and terminal (STARS/TAIS) handoffs.
+    let hoBanner = '';
+    const hoF = (d.sfdps || []).find(function (x) { return x.handoffEvent && x.handoffReceiving; });
+    const tHo = (d.tais || []).find(function (t) { return t.handoff; });
+    if (hoF) {
+      const he = (hoF.handoffEvent || '').toUpperCase();
+      const pending = /INITIAT|PROPOS/.test(he);
+      const label = pending ? 'HANDOFF PENDING' : /ACCEPT/.test(he) ? 'HANDOFF ACCEPTED' : /EXECUT/.test(he) ? 'HANDING OFF' : 'HANDOFF';
+      const recv = hoF.handoffReceiving;
+      const rf = freqOf(recv);
+      hoBanner = `<div class="hobar${pending ? ' pend' : ''}"><span class="hol">${label}</span> NEXT &rarr; <b>${esc(recv)}</b>${rf ? ` &middot; <b>${esc(rf)}</b>` : ''}</div>`;
+    } else if (tHo) {
+      const recv = tHo.facility + '/' + tHo.handoff;
+      const rf = freqOf(recv);
+      hoBanner = `<div class="hobar pend"><span class="hol">STARS HANDOFF</span> NEXT &rarr; <b>${esc(recv)}</b>${rf ? ` &middot; <b>${esc(rf)}</b>` : ''}</div>`;
+    }
     return `<div class="hero">
       <div class="cs">${esc(d.callsign)}</div>
       <div class="od">${esc(org || '????')} <span class="arrow">▸</span> ${esc(dst || '????')}</div>
       <div class="sub">${esc(sub)}</div>
+      ${hoBanner}
       ${freq ? `<div class="freq">&#9673; <b>${esc(freq)}</b> MHz <span>${esc(ctrl)}</span></div>` : ''}
       <div class="phase" style="background:#111;color:${ph[1]};border-color:${ph[1]}66">${ph[0]}</div>
       <div class="chips">${chips}</div>
@@ -293,7 +319,7 @@
   function handoffHistoryCard(hist) {
     if (!hist || !hist.length) return '';
     const rows = hist.map(function (h) {
-      return `<div class="tmsg"><div class="th"><span class="badge">${esc(h.source)}${h.centre ? ' · ' + esc(h.centre) : ''}</span><span>${esc(hhmm(h.time) || h.time)}</span></div><div class="body">${esc(h.summary || '')}</div></div>`;
+      return `<div class="tmsg"><div class="th"><span class="badge">${esc(h.source)}${h.centre ? ' · ' + esc(h.centre) : ''}</span><span>${esc(hhmm(h.time) || h.time)}</span></div><div class="body">${esc(annotateFreqs(h.summary || ''))}</div></div>`;
     }).join('');
     return `<div class="card"><h2>HANDOFF / POINT-OUT HISTORY</h2>${rows}</div>`;
   }

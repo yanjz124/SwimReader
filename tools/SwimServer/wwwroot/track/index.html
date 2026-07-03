@@ -63,11 +63,17 @@
   .blocks { display:flex; gap:12px; flex-wrap:wrap; padding:12px 14px; }
   .db { flex:1; min-width:150px; }
   .db .lbl { font-size:10px; letter-spacing:2px; color:var(--dim); margin-bottom:6px; }
-  .db pre { margin:0; padding:12px 14px; border-radius:8px; font-size:16px; line-height:1.35; white-space:pre;
-    font-family:"ERAM",ui-monospace,monospace; }
-  .db.eram pre { background:#000; color:var(--yel); border:1px solid #333; }
-  .db.eram .sym { color:var(--yel); }
-  .db.stars pre { background:#000; color:#39ff62; border:1px solid #1f4a2a; }
+  .eram-db, .stars-db { padding:12px 14px; border-radius:8px; font-size:16px; line-height:1.45; white-space:pre;
+    font-family:"ERAM",ui-monospace,monospace; background:#000; }
+  .eram-db { color:var(--yel); border:1px solid #333; }
+  .stars-db { color:#39ff62; border:1px solid #1f4a2a; }
+  .eram-db .po { color:#ffff66; }
+  .eram-db .emrg, .stars-db .emrg { color:#ff4444; font-weight:bold; }
+  /* handoff / point-out flash — body.fp is toggled every 500ms */
+  .feflash .fb { display:none; }
+  body.fp .feflash .fa { display:none; }
+  body.fp .feflash .fb { display:inline; }
+  body.fp .blink, body.fp .eram-db .po { opacity:.12; }
   @font-face { font-family:"ERAM"; src:url("/ERAMv110.ttf"); font-display:swap; }
   .facsel { display:flex; flex-wrap:wrap; gap:6px; padding:10px 14px 0; }
   .facbtn { background:#111; color:var(--dim); border:1px solid var(--line); border-radius:6px;
@@ -92,6 +98,6 @@
   <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Enter a callsign to follow a flight.</span></div>
   <div id="out"></div>
 </div>
-<script src="/track/track.js?v=4"></script>
+<script src="/track/track.js?v=5"></script>
 </body>
 </html>

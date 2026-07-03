@@ -75,6 +75,7 @@
     h += heroCard(d, flights[0] || null, taisList[0] || null, asd);
     h += blocksCard(flights, taisList);
     h += ownershipCard(flights);
+    h += handoffHistoryCard(d.handoffHistory);
     if (d.edct) h += `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(d.edct), 'hl'], ['Slot', String(d.edct).slice(0, 16).replace('T', ' ') + 'Z']])}</div>`;
     if (flights[0]) h += flightPlanCard(flights[0]);
     if (d.tdls && d.tdls.length) h += tdlsCard(d.tdls);
@@ -123,10 +124,20 @@
     if (aFL) { if (rFL == null) return aFL; const dd = parseInt(rFL) - parseInt(aFL); return Math.abs(dd) <= 2 ? `${aFL}C` : `${aFL}${dd < 0 ? '↑' : '↓'}${rFL}`; }
     return rFL || '---';
   }
-  function eramFieldE(f) {
-    if (f.squawk === '7700') return 'EMRG'; if (f.squawk === '7600') return 'RDOF'; if (f.squawk === '7500') return 'HIJK';
-    if (f.handoffEvent && f.handoffReceiving) return (/ACCEPT|OK/i.test(f.handoffEvent) ? 'O' : 'H') + extractSec(f.handoffReceiving);
-    return f.gs != null ? String(Math.round(f.gs)) : '';
+  const pad = (s, w) => { s = String(s); return s + ' '.repeat(Math.max(0, w - s.length)); };
+  // Field E as HTML: emergency, or a FLASHING handoff indicator (H|O + sector) alternating with
+  // groundspeed (like a real ERAM block), or just groundspeed. Flash is driven by body.fp toggle.
+  function eramFieldEHtml(f) {
+    const gs = f.gs != null ? String(Math.round(f.gs)) : '';
+    if (f.squawk === '7700') return '<span class="emrg">EMRG</span>';
+    if (f.squawk === '7600') return '<span class="emrg">RDOF</span>';
+    if (f.squawk === '7500') return '<span class="emrg">HIJK</span>';
+    if (f.handoffEvent && f.handoffReceiving) {
+      const ind = (/ACCEPT|OK/i.test(f.handoffEvent) ? 'O' : 'H') + extractSec(f.handoffReceiving);
+      const w = Math.max(ind.length, gs.length);
+      return `<span class="feflash"><span class="fa">${esc(pad(ind, w))}</span><span class="fb">${esc(pad(gs, w))}</span></span>`;
+    }
+    return esc(gs);
   }
   function eramLine4(f) {
     if (f.clrText) return f.clrText;
@@ -134,36 +145,36 @@
     if (hs.length) return hs.join(' ');
     return lid(f.dest);
   }
-  function eramBlock(f) {
+  function eramBlockHtml(f) {
     if (!f) return null;
     const cid = (f.cids && f.controllingFacility && f.cids[f.controllingFacility]) || f.cid || '----';
-    const lines = [];
-    if (f.pointoutOrig || f.pointoutRecv) lines.push('  P');   // line 0: point-out
-    lines.push('◇ ' + (f.callsign || '???'));             // line 1: ◇ callsign
-    lines.push('   ' + altLine(f));                            // line 2: altitude
-    lines.push('   ' + cid + ' ' + eramFieldE(f));             // line 3: CID + Field E (handoff/GS)
-    const l4 = eramLine4(f); if (l4) lines.push('   ' + l4);   // line 4: HSF or destination
-    return lines.join('\n');
+    const L = [];
+    if (f.pointoutOrig || f.pointoutRecv) L.push('  <span class="po">P</span>');  // line 0: point-out (flashes via .po)
+    L.push('◇ ' + esc(f.callsign || '???'));           // line 1
+    L.push('   ' + esc(altLine(f)));                        // line 2
+    L.push('   ' + esc(cid) + ' ' + eramFieldEHtml(f));     // line 3: CID + Field E
+    const l4 = eramLine4(f); if (l4) L.push('   ' + esc(l4));  // line 4: HSF or destination
+    return L.join('\n');
   }
-  function starsBlock(t) {
+  function starsBlockHtml(t) {
     if (!t) return null;
     const alt = t.altFt != null ? String(Math.round(t.altFt / 100)).padStart(3, '0') : '---';
     const trend = t.vs > 200 ? '↑' : (t.vs < -200 ? '↓' : ' ');
     const gs = t.gs != null ? String(Math.round(t.gs / 10)).padStart(2, '0') : '';
-    const lines = [t.callsign || '???', `${alt}${trend}  ${gs}`];
-    const sp = [t.sp1, t.sp2].filter(Boolean).join(' '); if (sp) lines.push(sp);
+    const L = [esc(t.callsign || '???'), esc(`${alt}${trend}  ${gs}`)];
+    const sp = [t.sp1, t.sp2].filter(Boolean).join(' '); if (sp) L.push(esc(sp));
     const own = [];
-    if (t.owner) own.push('OWN ' + t.owner);
-    if (t.handoff) own.push('→' + t.handoff);
-    if (t.exitFix) own.push('X:' + t.exitFix);
-    if (own.length) lines.push(own.join('  '));
-    return lines.join('\n');
+    if (t.owner) own.push(esc('OWN ' + t.owner));
+    if (t.handoff) own.push('<span class="blink">' + esc('→' + t.handoff) + '</span>');  // handoff flashes
+    if (t.exitFix) own.push(esc('X:' + t.exitFix));
+    if (own.length) L.push(own.join('  '));
+    return L.join('\n');
   }
   function blocksCard(flights, taisList) {
     let f = flights.find(function (x) { return (x.controllingFacility || x.reportingFacility) === selFac; }) || flights[0] || null;
     const tais = taisList[0] || null;
-    const e = eramBlock(f);
-    const s = tais ? starsBlock(tais) : (f ? starsBlock({ callsign: f.callsign, altFt: f.reportedAlt, gs: f.gs, sp1: lid(f.dest), vs: 0, exitFix: f.star }) : null);
+    const e = eramBlockHtml(f);
+    const s = tais ? starsBlockHtml(tais) : (f ? starsBlockHtml({ callsign: f.callsign, altFt: f.reportedAlt, gs: f.gs, sp1: lid(f.dest), vs: 0, exitFix: f.star, handoff: f.handoffReceiving ? extractSec(f.handoffReceiving) : null }) : null);
     if (!e && !s) return '';
     let sel = '';
     if (flights.length > 1) {
@@ -174,9 +185,9 @@
       }).join('') + '</div>';
     }
     let inner = '';
-    if (e) inner += `<div class="db eram"><div class="lbl">ERAM · ${esc((f && (f.controllingFacility || f.reportingFacility)) || 'EN ROUTE')}</div><pre>${esc(e)}</pre></div>`;
-    if (s) inner += `<div class="db stars"><div class="lbl">STARS · ${esc((tais && tais.facility) || 'TERMINAL')}</div><pre>${esc(s)}</pre></div>`;
-    return `<div class="card"><h2>DATA BLOCK <span class="tag">as a controller sees it</span></h2>${sel}<div class="blocks">${inner}</div></div>`;
+    if (e) inner += `<div class="db"><div class="lbl">ERAM · ${esc((f && (f.controllingFacility || f.reportingFacility)) || 'EN ROUTE')}</div><div class="eram-db">${e}</div></div>`;
+    if (s) inner += `<div class="db"><div class="lbl">STARS · ${esc((tais && tais.facility) || 'TERMINAL')}</div><div class="stars-db">${s}</div></div>`;
+    return `<div class="card"><h2>DATA BLOCK <span class="tag">live — handoff flashes</span></h2>${sel}<div class="blocks">${inner}</div></div>`;
   }
 
   function altSummary(f) {
@@ -192,26 +203,39 @@
   function cidsStr(f) { if (!f.cids) return null; return Object.keys(f.cids).map(function (k) { return k + ':' + f.cids[k]; }).join('   '); }
   function handoffStr(f) {
     if (!f.handoffEvent) return null;
-    const accepted = /ACCEPT|OK/i.test(f.handoffEvent);
-    return `${accepted ? 'ACCEPTED' : 'PROPOSED'}  ${f.handoffTransferring || '?'} ▸ ${f.handoffReceiving || '?'}`;
+    const e = f.handoffEvent.toUpperCase();
+    let st = e;
+    if (/ACCEPT/.test(e)) st = 'ACCEPTED — control transferring';
+    else if (/INITIAT|PROPOS/.test(e)) st = 'PENDING — proposed';
+    else if (/EXECUT/.test(e)) st = 'EXECUTING';
+    else if (/RETRACT/.test(e)) st = 'RETRACTED';
+    else if (/FAIL/.test(e)) st = 'FAILED';
+    return `${st}  ·  ${f.handoffTransferring || '?'} ▸ ${f.handoffReceiving || '?'}`;
+  }
+  // All ARTCCs that touch this callsign (controlling + reporting + every facility with a CID) —
+  // shown as a stable set instead of a single reportingFacility that flip-flops between centres.
+  function reportingArtccs(flights) {
+    const s = [];
+    const add = x => { if (x && s.indexOf(x) < 0) s.push(x); };
+    flights.forEach(function (f) { add(f.controllingFacility); add(f.reportingFacility); if (f.cids) Object.keys(f.cids).forEach(add); });
+    return s.length ? s.join('  ') : null;
   }
 
   function ownershipCard(flights) {
     if (!flights.length) return '';
-    let rows = '';
+    let rows = grid([['Tracked by', reportingArtccs(flights), 'hl']]);
     flights.forEach(function (f, i) {
-      if (i > 0) rows += `<div class="subhdr">ALSO TRACKED BY ${esc(f.reportingFacility || f.controllingFacility || '?')}</div>`;
+      rows += `<div class="subhdr">${esc(f.controllingFacility || f.reportingFacility || '?')}${i > 0 ? ' (also tracking)' : ''}</div>`;
+      const ho = handoffStr(f);
       rows += grid([
         ['Controlling', f.controllingFacility ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '') : '—', 'hl'],
-        ['Reporting', f.reportingFacility],
         ['CIDs', cidsStr(f)],
-        ['Handoff', handoffStr(f), 'warn'],
+        ['Handoff', ho || 'none pending', ho ? 'warn' : ''],
         ['Point-out', f.pointoutOrig ? `${f.pointoutOrig} ▸ ${f.pointoutRecv || '?'}` : null],
         ['Altitude', altSummary(f), 'hl'],
+        ['Line 4 (HSF)', hsf(f), 'warn'],
         ['Ground Spd', f.gs != null ? Math.round(f.gs) + ' kt' : null],
-        ['Squawk', f.squawk],
-        ['Assigned Sqk', f.assignedSquawk],
-        ['Clearance', hsf(f), 'warn'],
+        ['Squawk', f.squawk], ['Assigned Sqk', f.assignedSquawk],
         ['Position', f.lat != null ? `${f.lat.toFixed(3)}, ${f.lon.toFixed(3)}` : null],
         ['Pos age', f.posAgeSec != null ? f.posAgeSec + 's' : null],
         ['Coast', f.coast ? 'YES' : null, 'warn'],
@@ -219,6 +243,14 @@
       ]);
     });
     return `<div class="card"><h2>POSITION / OWNERSHIP</h2>${rows}</div>`;
+  }
+
+  function handoffHistoryCard(hist) {
+    if (!hist || !hist.length) return '';
+    const rows = hist.map(function (h) {
+      return `<div class="tmsg"><div class="th"><span class="badge">${esc(h.source)}${h.centre ? ' · ' + esc(h.centre) : ''}</span><span>${esc(hhmm(h.time) || h.time)}</span></div><div class="body">${esc(h.summary || '')}</div></div>`;
+    }).join('');
+    return `<div class="card"><h2>HANDOFF / POINT-OUT HISTORY</h2>${rows}</div>`;
   }
 
   function flightPlanCard(f) {
@@ -308,6 +340,7 @@
   }
 
   // ── boot ──
+  setInterval(function () { document.body.classList.toggle('fp'); }, 500);  // drives handoff/point-out flash
   const initial = initialCallsign();
   if (initial) { $('cs').value = initial; startTrack(initial); } else { try { $('cs').focus(); } catch (e) { } }
 })();

@@ -68,8 +68,23 @@
   }
 
   // ── render ──
+  // FAC/SECTOR → controller frequency (from vNAS), populated per render.
+  var FREQS = {};
+  function freqOf(facSlashSec) {
+    if (!facSlashSec) return '';
+    var v = FREQS[facSlashSec];
+    return v ? v + ' MHz' : '';
+  }
+  // Append " · 128.3 MHz" to a "FAC/SECTOR" label when a frequency is known.
+  function withFreq(facSlashSec) {
+    if (!facSlashSec) return facSlashSec;
+    var f = freqOf(facSlashSec);
+    return f ? facSlashSec + '  ·  ' + f : facSlashSec;
+  }
+
   function render(d) {
     lastData = d;
+    FREQS = d.freqs || {};
     if (!d.found) {
       statusText.textContent = 'No live data for ' + d.callsign;
       out.innerHTML = `<div class="msg">Nothing is tracking <b>${esc(d.callsign)}</b> right now.<br>It may not be airborne or filed yet. Use the exact callsign (e.g. AAL123, not AA123).</div>`;
@@ -85,7 +100,9 @@
 
     let h = '';
     h += heroCard(d, flights[0] || null, taisList[0] || null, asd);
-    h += blocksCard(flights, taisList);
+    // Data-block mock disabled — the simplified render didn't faithfully replicate ERAM/STARS.
+    // All of its data (4th line/HSF, handoff, STARS entry/exit/scratchpad) lives in the cards below.
+    // h += blocksCard(flights, taisList);
     h += ownershipCard(flights);
     h += handoffHistoryCard(d.handoffHistory);
     if (d.edct) h += `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(d.edct), 'hl'], ['Slot', String(d.edct).slice(0, 16).replace('T', ' ') + 'Z']])}</div>`;
@@ -227,6 +244,18 @@
     else if (/FAIL/.test(e)) st = 'FAILED';
     return `${st}  ·  ${f.handoffTransferring || '?'} ▸ ${f.handoffReceiving || '?'}`;
   }
+  // Same as handoffStr but appends the controller frequency to each sector when known.
+  function handoffStrFreq(f) {
+    if (!f.handoffEvent) return null;
+    const e = f.handoffEvent.toUpperCase();
+    let st = e;
+    if (/ACCEPT/.test(e)) st = 'ACCEPTED — control transferring';
+    else if (/INITIAT|PROPOS/.test(e)) st = 'PENDING — proposed';
+    else if (/EXECUT/.test(e)) st = 'EXECUTING';
+    else if (/RETRACT/.test(e)) st = 'RETRACTED';
+    else if (/FAIL/.test(e)) st = 'FAILED';
+    return `${st}  ·  ${f.handoffTransferring ? withFreq(f.handoffTransferring) : '?'} ▸ ${f.handoffReceiving ? withFreq(f.handoffReceiving) : '?'}`;
+  }
   // All ARTCCs that touch this callsign (controlling + reporting + every facility with a CID) —
   // shown as a stable set instead of a single reportingFacility that flip-flops between centres.
   function reportingArtccs(flights) {
@@ -246,8 +275,8 @@
         ['Controlling', f.controllingFacility ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '') : '—', 'hl'],
         ['Frequency', f.sectorFreq ? f.sectorFreq + ' MHz' : null, 'hl'],
         ['CIDs', cidsStr(f)],
-        ['Handoff', ho ? (ho + (f.handoffFreq ? '  ·  ' + f.handoffFreq + ' MHz' : '')) : 'none pending', ho ? 'warn' : ''],
-        ['Point-out', f.pointoutOrig ? `${f.pointoutOrig} ▸ ${f.pointoutRecv || '?'}` : null],
+        ['Handoff', ho ? handoffStrFreq(f) : 'none pending', ho ? 'warn' : ''],
+        ['Point-out', f.pointoutOrig ? `${withFreq(f.pointoutOrig)} ▸ ${f.pointoutRecv ? withFreq(f.pointoutRecv) : '?'}` : null],
         ['Altitude', altSummary(f), 'hl'],
         ['Line 4 (HSF)', hsf(f), 'warn'],
         ['Ground Spd', f.gs != null ? Math.round(f.gs) + ' kt' : null],
@@ -336,7 +365,9 @@
       inner += `<div class="subhdr">${esc(t.facility)} · STARS</div>`;
       inner += grid([
         ['Track #', t.trackNum], ['Scratchpad', [t.sp1, t.sp2].filter(Boolean).join(' / ')],
-        ['Runway', t.runway], ['Owner', t.owner], ['Handoff', t.handoff, 'warn'],
+        ['Runway', t.runway], ['Owner', t.owner, 'hl'],
+        ['Frequency', freqOf(t.facility + '/' + t.owner), 'hl'],
+        ['Handoff', t.handoff ? (t.handoff + (freqOf(t.facility + '/' + t.handoff) ? '  ·  ' + freqOf(t.facility + '/' + t.handoff) : '')) : null, 'warn'],
         ['Entry Fix', t.entryFix], ['Exit Fix', t.exitFix],
         ['Sqk (asgn)', t.assignedSqk], ['Sqk (rcvd)', t.reportedSqk],
         ['Altitude', t.altFt != null ? 'FL' + Math.round(t.altFt / 100) : null],

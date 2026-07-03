@@ -18,11 +18,28 @@ static class TrackRoutes
             callsign = (callsign ?? "").Trim().ToUpperInvariant();
             if (callsign.Length == 0) return Results.BadRequest(new { error = "empty callsign" });
 
+            // Frequency lookup for any "FAC/SECTOR": exact match, else (STARS TCPs like
+            // "3B") retry with the trailing sub-position letter stripped → "FAC/3".
+            Func<string, string?> lookupFreq = key =>
+            {
+                return FreqOf(ctx, key);
+            };
+            Func<string?, string?, string?> secFreq = (fac, sec) =>
+                (!string.IsNullOrEmpty(fac) && !string.IsNullOrEmpty(sec)) ? lookupFreq(fac + "/" + sec) : null;
+
+            // freqs: every sector referenced anywhere (controlling, handoff, point-out,
+            // STARS owner) → freq. The page appends it wherever a "FAC/SECTOR" is shown.
+            var freqs = new Dictionary<string, string>();
+            void AddFreqKey(string? key)
+            {
+                if (string.IsNullOrEmpty(key) || freqs.ContainsKey(key)) return;
+                var v = lookupFreq(key.Trim());
+                if (v != null) freqs[key.Trim()] = v;
+            }
+
             // SFDPS — en-route flight(s). Multiple GUFIs possible (one per ARTCC).
             var sfdps = new List<object>();
             string? edct = null;
-            Func<string?, string?, string?> secFreq = (fac, sec) =>
-                (!string.IsNullOrEmpty(fac) && !string.IsNullOrEmpty(sec) && ctx.SectorFreqs.TryGetValue(fac + "/" + sec, out var fr)) ? fr : null;
             var hoEvents = new List<(string time, string source, string centre, string summary)>();
             foreach (var f in ctx.Flights.Values)
             {
@@ -31,11 +48,16 @@ static class TrackRoutes
                 string? hoFreq = null;
                 if (!string.IsNullOrEmpty(f.HandoffReceiving)) { var hp = f.HandoffReceiving.Split('/'); if (hp.Length == 2) hoFreq = secFreq(hp[0], hp[1]); }
                 sfdps.Add(SfdpsProjection(f, secFreq(f.ControllingFacility, f.ControllingSector), hoFreq));
+                if (!string.IsNullOrEmpty(f.ControllingFacility) && !string.IsNullOrEmpty(f.ControllingSector)) AddFreqKey(f.ControllingFacility + "/" + f.ControllingSector);
+                foreach (var u in new[] { f.HandoffReceiving, f.HandoffTransferring, f.PointoutOriginatingUnit, f.PointoutReceivingUnit })
+                    if (!string.IsNullOrEmpty(u)) foreach (var part in u.Split(',')) AddFreqKey(part);
                 if (edct is null && !string.IsNullOrEmpty(f.EdctTime)) edct = f.EdctTime;
                 foreach (var e in f.GetAllEvents())
                     if (HandoffSources.Contains(e.Source))
                         hoEvents.Add((e.Time, e.Source, e.Centre, e.Summary));
             }
+            // STARS terminal ownership (TAIS owner-TCP) → position frequency, best-effort.
+            foreach (var (fac, owner) in ctx.Tais.OwnersByCallsign(callsign)) AddFreqKey(fac + "/" + owner);
             // Handoff/point-out history across all GUFIs — deduped, newest first.
             var handoffHistory = hoEvents
                 .GroupBy(x => x.time + "|" + x.source + "|" + x.summary).Select(g => g.First())
@@ -57,6 +79,7 @@ static class TrackRoutes
                 found,
                 ts = DateTime.UtcNow.ToString("o"),
                 sfdps,
+                freqs,
                 tfms,
                 edct,
                 handoffHistory,
@@ -117,6 +140,23 @@ static class TrackRoutes
         posAgeSec = f.LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - f.LastPositionTime).TotalSeconds,
         lastSeen = f.LastSeen.ToString("o"),
     };
+
+    // Frequency for a "FAC/SECTOR": exact match, else (STARS TCPs like "3B") retry
+    // with the trailing sub-position letter stripped → "FAC/3".
+    private static string? FreqOf(ServerContext ctx, string? key)
+    {
+        if (string.IsNullOrEmpty(key)) return null;
+        key = key.Trim();
+        if (ctx.SectorFreqs.TryGetValue(key, out var v)) return v;
+        var i = key.IndexOf('/');
+        if (i > 0 && i < key.Length - 1)
+        {
+            var fac = key[..i]; var sec = key[(i + 1)..];
+            var m = System.Text.RegularExpressions.Regex.Match(sec, @"^\d+");
+            if (m.Success && m.Value != sec && ctx.SectorFreqs.TryGetValue(fac + "/" + m.Value, out var v2)) return v2;
+        }
+        return null;
+    }
 
     // ── Text-only version (/t) ────────────────────────────────────────────────
     private static List<FlightState> Matching(ServerContext ctx, string cs) =>
@@ -214,11 +254,16 @@ static class TrackRoutes
                 sb.Append("</b>");
                 var cid = (f.ControllingFacility != null && f.ComputerIds.TryGetValue(f.ControllingFacility, out var cc)) ? cc : f.ComputerId;
                 if (!string.IsNullOrEmpty(cid)) sb.Append(" CID ").Append(He(cid));
-                if (f.ControllingFacility != null && f.ControllingSector != null && ctx.SectorFreqs.TryGetValue(f.ControllingFacility + "/" + f.ControllingSector, out var freq))
-                    sb.Append(" &#183; <b>").Append(He(freq)).Append("</b>");
+                var freq = FreqOf(ctx, (f.ControllingFacility ?? "") + "/" + (f.ControllingSector ?? ""));
+                if (freq != null) sb.Append(" &#183; <b>").Append(He(freq)).Append("</b>");
                 sb.Append("<br>");
                 if (!string.IsNullOrEmpty(f.HandoffEvent))
-                    sb.Append("<span class=w>Handoff ").Append(He(HoStatus(f.HandoffEvent))).Append(": ").Append(He(f.HandoffTransferring ?? "?")).Append(" &#9656; ").Append(He(f.HandoffReceiving ?? "?")).Append("</span><br>");
+                {
+                    var hrFreq = FreqOf(ctx, f.HandoffReceiving);
+                    sb.Append("<span class=w>Handoff ").Append(He(HoStatus(f.HandoffEvent))).Append(": ").Append(He(f.HandoffTransferring ?? "?")).Append(" &#9656; ").Append(He(f.HandoffReceiving ?? "?"));
+                    if (hrFreq != null) sb.Append(" (").Append(He(hrFreq)).Append(")");
+                    sb.Append("</span><br>");
+                }
                 sb.Append(He(AltText(f)));
                 if (f.GroundSpeed != null) sb.Append(" · ").Append((int)Math.Round(f.GroundSpeed.Value)).Append(" kt");
                 if (!string.IsNullOrEmpty(f.Squawk)) sb.Append(" · sqk ").Append(He(f.Squawk));
@@ -230,6 +275,19 @@ static class TrackRoutes
         }
 
         if (best != null) sb.Append("<h2>ERAM DATA BLOCK</h2><pre>").Append(He(EramText(best))).Append("</pre>");
+
+        var taisOwners = ctx.Tais.OwnersByCallsign(cs).GroupBy(x => x.facility + "/" + x.owner).Select(g => g.First()).ToList();
+        if (taisOwners.Count > 0)
+        {
+            sb.Append("<h2>STARS (TERMINAL)</h2>");
+            foreach (var (fac, owner) in taisOwners)
+            {
+                sb.Append("<b>").Append(He(fac)).Append("/").Append(He(owner)).Append("</b>");
+                var tf = FreqOf(ctx, fac + "/" + owner);
+                if (tf != null) sb.Append(" &#183; <b>").Append(He(tf)).Append("</b>");
+                sb.Append("<br>");
+            }
+        }
 
         if (ho.Count > 0)
         {

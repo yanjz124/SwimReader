@@ -64,7 +64,9 @@ static class StaticRoutes
             c.Response.ContentType = "text/html";
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "track", "index.html"));
         });
-        app.MapGet("/track/{callsign}", async (HttpContext c) =>
+        // Constrain to alphanumeric so static assets like /track/track.js (has a dot) are NOT
+        // swallowed by this deep-link route and are served as files instead.
+        app.MapGet("/track/{callsign:regex(^[A-Za-z0-9]+$)}", async (HttpContext c) =>
         {
             c.Response.ContentType = "text/html";
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "track", "index.html"));

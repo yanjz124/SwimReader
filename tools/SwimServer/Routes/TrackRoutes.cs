@@ -150,7 +150,21 @@ static class TrackRoutes
     private static string? FreqOf(ServerContext ctx, string? key)
     {
         if (string.IsNullOrEmpty(key)) return null;
-        return ctx.SectorFreqs.TryGetValue(key.Trim(), out var v) ? v : null;
+        key = key.Trim();
+        if (ctx.SectorFreqs.TryGetValue(key, out var v)) return v;
+        // Numeric sectors may differ only by a leading zero (SFDPS "ZOB/01" vs vNAS "ZOB/1").
+        var i = key.IndexOf('/');
+        if (i > 0 && i < key.Length - 1)
+        {
+            var fac = key[..i]; var sec = key[(i + 1)..];
+            if (sec.Length > 0 && sec.All(char.IsDigit))
+            {
+                var stripped = sec.TrimStart('0'); if (stripped.Length == 0) stripped = "0";
+                foreach (var alt in new[] { stripped, stripped.PadLeft(2, '0') })
+                    if (alt != sec && ctx.SectorFreqs.TryGetValue(fac + "/" + alt, out var v2)) return v2;
+            }
+        }
+        return null;
     }
 
     // Annotate each "FAC/SECTOR" token in free text with its frequency, if known.

@@ -33,6 +33,7 @@ let scopeBcklght = 70;      // 0-100, scope backlight brightness (BCKLGHT DCB sl
 let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
+let boundaryStyle = 'dashed'; // 'solid' or 'dashed' — boundary line style
 let replayActive = false;   // replay mode active (set by replay system IIFE)
 let replayCurrentTime = null; // ISO string of current replay position
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
@@ -1456,6 +1457,13 @@ function bndColor(brightness) {
     return `rgb(${v},${v},${v})`;
 }
 
+function getBoundaryDashArray(category) {
+    if (boundaryStyle === 'dashed') {
+        return category === 'Approach Control' ? '8 4' : '16 8';
+    }
+    return undefined;  // solid line (no dashArray)
+}
+
 async function loadKml() {
     try {
         const resp = await fetch('/api/kml/AllSectors.kml');
@@ -1539,6 +1547,16 @@ async function loadKml() {
     } catch (e) { console.warn('[KML]', e); }
 }
 
+function rebuildAllBoundaryLayers() {
+    // Clear all cached boundary layers when style changes
+    for (const key in boundaryLayers) {
+        if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
+        delete boundaryLayers[key];
+    }
+    // Redraw current facility
+    if (activeBoundaryArtcc) showBoundariesForFacility(activeBoundaryArtcc);
+}
+
 function showBoundariesForFacility(artcc) {
     // Remove all layers for the previous ARTCC
     if (activeBoundaryArtcc) {
@@ -1556,9 +1574,11 @@ function showBoundariesForFacility(artcc) {
         const key = `${artcc}:${cat}`;
         if (!boundaryLayers[key]) {
             const group = L.layerGroup();
-            const dash = cat === 'Approach Control' ? '8 4' : '16 8';
+            const dashArray = getBoundaryDashArray(cat);
+            const polylineOptions = { color: bndColor(br), weight: 1, opacity: 1, interactive: false, className: 'bnd-path' };
+            if (dashArray) polylineOptions.dashArray = dashArray;
             for (const sec of kmlSectors.filter(s => s.artcc === artcc && s.category === cat)) {
-                L.polyline(sec.coords, { color: bndColor(br), weight: 1, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
+                L.polyline(sec.coords, polylineOptions).addTo(group);
             }
             boundaryLayers[key] = group;
         }
@@ -1577,15 +1597,21 @@ function setBoundaryBrightness(cat, brightness) {
     const col = bndColor(brightness);
     if (!boundaryLayers[key]) {
         const group = L.layerGroup();
-        const dash = cat === 'Approach Control' ? '8 4' : '16 8';
+        const dashArray = getBoundaryDashArray(cat);
+        const polylineOptions = { color: col, weight: 1, opacity: 1, interactive: false, className: 'bnd-path' };
+        if (dashArray) polylineOptions.dashArray = dashArray;
         for (const sec of kmlSectors.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat)) {
-            L.polyline(sec.coords, { color: col, weight: 1, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
+            L.polyline(sec.coords, polylineOptions).addTo(group);
         }
         boundaryLayers[key] = group;
         boundaryLayers[key].addTo(map);
     } else {
         // Update color on existing polylines
-        boundaryLayers[key].eachLayer(l => l.setStyle({ color: col }));
+        const dashArray = getBoundaryDashArray(cat);
+        const styleUpdate = { color: col };
+        if (dashArray) styleUpdate.dashArray = dashArray;
+        else delete styleUpdate.dashArray;
+        boundaryLayers[key].eachLayer(l => l.setStyle(styleUpdate));
         if (!map.hasLayer(boundaryLayers[key])) boundaryLayers[key].addTo(map);
     }
 }
@@ -3868,6 +3894,12 @@ document.getElementById('sel-fontsize').addEventListener('change', function () {
     saveSettingsToLocalStorage();
 });
 
+document.getElementById('sel-boundary-style').addEventListener('change', function () {
+    boundaryStyle = this.value;
+    rebuildAllBoundaryLayers();
+    saveSettingsToLocalStorage();
+});
+
 document.getElementById('inp-alt-low').addEventListener('change', function () {
     altFilterLow = parseInt(this.value) || 0;
     saveSettingsToLocalStorage();
@@ -4996,6 +5028,7 @@ function loadSettingsFromLocalStorage() {
         if (settings.MAX_HISTORY !== undefined) MAX_HISTORY = settings.MAX_HISTORY;
         if (settings.vectorMinutes !== undefined) vectorMinutes = settings.vectorMinutes;
         if (settings.boundaryBrightness) Object.assign(boundaryBrightness, settings.boundaryBrightness);
+        if (settings.boundaryStyle !== undefined) boundaryStyle = settings.boundaryStyle;
         if (settings.line4Mode) line4Mode = settings.line4Mode;
         if (settings.showMapBg !== undefined) showMapBg = settings.showMapBg;
         if (settings.fontSize !== undefined) fontSize = settings.fontSize;
@@ -5039,6 +5072,7 @@ function loadSettingsFromLocalStorage() {
     document.getElementById('chk-facility-only').checked = facilityOnly;
     document.getElementById('chk-mapbg').checked = showMapBg;
     document.getElementById('sel-line4').value = line4Mode;
+    document.getElementById('sel-boundary-style').value = boundaryStyle;
     document.getElementById('sel-fontsize').value = fontSize;
     document.getElementById('inp-alt-low').value = altFilterLow;
     document.getElementById('inp-alt-high').value = altFilterHigh;
@@ -5086,6 +5120,7 @@ function saveSettingsToLocalStorage() {
         MAX_HISTORY,
         vectorMinutes,
         boundaryBrightness,
+        boundaryStyle,
         line4Mode,
         showMapBg,
         fontSize,

@@ -15,6 +15,7 @@ L.control.zoom({ position: 'topright' }).addTo(map);
 let routeLine = null;
 let fixMarkers = [];
 let posMarker = null;
+let sectorLines = [];
 let currentFlight = null;
 
 // ── URL params ───────────────────────────────────────────────
@@ -54,23 +55,52 @@ async function loadFlight(key) {
     }
 }
 
+// ── Smoothing function ──────────────────────────────────────
+function smoothWaypoints(waypoints, pointsPerSegment = 3) {
+    if (waypoints.length < 2) return waypoints;
+    const smooth = [];
+    for (let i = 0; i < waypoints.length - 1; i++) {
+        const p0 = waypoints[Math.max(0, i - 1)];
+        const p1 = waypoints[i];
+        const p2 = waypoints[i + 1];
+        const p3 = waypoints[Math.min(waypoints.length - 1, i + 2)];
+        smooth.push(p1);
+        for (let t = 1; t < pointsPerSegment; t++) {
+            const s = t / pointsPerSegment;
+            const s2 = s * s;
+            const s3 = s2 * s;
+            const lat = 0.5 * (
+                2 * p1[0] +
+                (-p0[0] + p2[0]) * s +
+                (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * s2 +
+                (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * s3
+            );
+            const lon = 0.5 * (
+                2 * p1[1] +
+                (-p0[1] + p2[1]) * s +
+                (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * s2 +
+                (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * s3
+            );
+            smooth.push([lat, lon]);
+        }
+    }
+    smooth.push(waypoints[waypoints.length - 1]);
+    return smooth;
+}
+
 // ── Render route on map ──────────────────────────────────────
 function renderRoute(f) {
     // Clear previous
     if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
     fixMarkers.forEach(m => map.removeLayer(m));
     fixMarkers = [];
+    sectorLines.forEach(m => map.removeLayer(m));
+    sectorLines = [];
     if (posMarker) { map.removeLayer(posMarker); posMarker = null; }
 
-    // Draw waypoint polyline
+    // Fit bounds to route (will be set by sector lines below)
     if (f.waypoints && f.waypoints.length > 1) {
-        const latlngs = f.waypoints.map(w => [w.lat, w.lon]);
-        routeLine = L.polyline(latlngs, {
-            color: '#44aa44',
-            weight: 2,
-            opacity: 0.8
-        }).addTo(map);
-        map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+        // Bounds will be set from sector lines or fix markers
     }
 
     // Draw fix markers
@@ -128,11 +158,14 @@ function renderRoute(f) {
                 if (prev.length > 0) segWps.unshift(prev[prev.length - 1]);
             }
             if (segWps.length > 1) {
-                L.polyline(segWps.map(w => [w.lat, w.lon]), {
+                const segCoords = segWps.map(w => [w.lat, w.lon]);
+                const smoothedSeg = segWps.length > 2 ? smoothWaypoints(segCoords, 5) : segCoords;
+                const line = L.polyline(smoothedSeg, {
                     color: colors[i % colors.length],
                     weight: 3,
                     opacity: 0.6
                 }).addTo(map);
+                sectorLines.push(line);
                 // Label at midpoint
                 const mid = segWps[Math.floor(segWps.length / 2)];
                 const label = L.divIcon({
@@ -140,9 +173,15 @@ function renderRoute(f) {
                     className: '',
                     iconAnchor: [0, -8]
                 });
-                L.marker([mid.lat, mid.lon], { icon: label }).addTo(map);
-                fixMarkers.push(L.marker([mid.lat, mid.lon], { icon: label }));
+                const marker = L.marker([mid.lat, mid.lon], { icon: label }).addTo(map);
+                fixMarkers.push(marker);
             }
+        }
+        // Fit bounds to sector lines
+        if (sectorLines.length > 0) {
+            const bounds = L.latLngBounds([]);
+            sectorLines.forEach(line => bounds.extend(line.getBounds()));
+            map.fitBounds(bounds, { padding: [50, 50] });
         }
     }
 }

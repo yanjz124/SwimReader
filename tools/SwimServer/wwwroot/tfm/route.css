@@ -11,7 +11,7 @@ body {
 header {
     background: #0a0a0a;
     border-bottom: 1px solid #333;
-    padding: 8px 16px;
+    padding: 8px 16px !important;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -19,6 +19,14 @@ header {
 }
 header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
 header .sub { font-size: 11px; color: #555; }
+
+.nav-home {
+    transform: translateY(1px) !important;
+}
+
+.nav-up {
+    transform: translateY(1px) !important;
+}
 
 .search-row {
     display: flex;
@@ -64,10 +72,10 @@ header .sub { font-size: 11px; color: #555; }
     width: 340px;
     min-width: 340px;
     border-left: 1px solid #222;
-    overflow-y: auto;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 .sidebar .section-title {
     padding: 8px 12px;
@@ -76,6 +84,7 @@ header .sub { font-size: 11px; color: #555; }
     letter-spacing: 1px;
     border-bottom: 1px solid #1a1a1a;
     background: #050505;
+    flex-shrink: 0;
 }
 .flight-info {
     padding: 10px 12px;
@@ -96,11 +105,16 @@ header .sub { font-size: 11px; color: #555; }
     border-bottom: 1px solid #0a0a0a;
 }
 .fix-item:hover { background: #0a0a0a; }
-.fix-item .fix-name { color: #39d2c0; width: 80px; flex-shrink: 0; }
-.fix-item .fix-time { color: #666; width: 60px; flex-shrink: 0; text-align: right; }
+.fix-item .fix-name { color: #39d2c0; flex-shrink: 0; }
+.fix-item .fix-time { color: #666; flex: 1; text-align: right; }
+
+.section-title + .fix-list,
+.section-title + .sector-list {
+    flex: 1;
+}
 
 .sector-list {
-    max-height: 200px;
+    flex: 1;
     overflow-y: auto;
 }
 .sector-item {

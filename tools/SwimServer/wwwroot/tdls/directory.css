@@ -1,28 +1,7 @@
-html, body {
-    background: #000;
-    color: #fff;
-    scrollbar-width: thin;
-    scrollbar-color: #333 #1a1a1a;
-}
-
-html::-webkit-scrollbar, body::-webkit-scrollbar {
-    width: 6px;
-}
-
-html::-webkit-scrollbar-track, body::-webkit-scrollbar-track {
-    background: #1a1a1a;
-}
-
-html::-webkit-scrollbar-thumb, body::-webkit-scrollbar-thumb {
-    background: #333;
-    border-radius: 3px;
-}
-
-html::-webkit-scrollbar-thumb:hover, body::-webkit-scrollbar-thumb:hover {
-    background: #444;
-}
-
 body {
+    background: #111;
+    color: #cccc44;
+    font-family: 'Consolas', 'Courier New', monospace;
     min-height: 100vh;
 }
 header {
@@ -33,7 +12,7 @@ header {
     align-items: center;
     justify-content: space-between;
 }
-header h1 { font-size: 15px; letter-spacing: 2px; color: #fff; font-weight: normal; }
+header h1 { font-size: 15px; letter-spacing: 2px; color: #cccc44; font-weight: normal; }
 #status { font-size: 11px; color: #666; }
 #status.ok { color: #44aa44; }
 #count-bar { font-size: 11px; color: #888; padding: 8px 20px 4px; }
@@ -44,7 +23,7 @@ header h1 { font-size: 15px; letter-spacing: 2px; color: #fff; font-weight: norm
     padding: 12px 20px 20px;
 }
 .card {
-    background: #111;
+    background: #1a1a1a;
     border: 1px solid #333;
     border-radius: 2px;
     padding: 14px 12px 12px;
@@ -55,13 +34,13 @@ header h1 { font-size: 15px; letter-spacing: 2px; color: #fff; font-weight: norm
     display: block;
 }
 .card:hover {
-    border-color: #fff;
-    background: #1a1a1a;
+    border-color: #cccc44;
+    background: #222;
 }
 .card-icao {
     font-size: 22px;
     letter-spacing: 2px;
-    color: #fff;
+    color: #cccc44;
     line-height: 1;
 }
 .card-name {
@@ -80,7 +59,7 @@ header h1 { font-size: 15px; letter-spacing: 2px; color: #fff; font-weight: norm
 }
 .card-counts .num {
     font-size: 20px;
-    color: #fff;
+    color: #cccc44;
     display: block;
     line-height: 1.1;
 }

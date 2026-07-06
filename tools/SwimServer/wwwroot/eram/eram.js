@@ -1429,6 +1429,7 @@ let _overlayRafPending = false;
 map.on('move zoom viewreset resize', () => {
     closePointoutMenu();
     closeFieldMenu();
+    lastRenderTime = 0;  // Force immediate marker update so data blocks appear with history symbols
     if (!_overlayRafPending) {
         _overlayRafPending = true;
         requestAnimationFrame(() => {
@@ -3304,6 +3305,14 @@ function doRender() {
     if (beaconMenuOpen) updateBeaconMenuBody();
 
     const mapBounds = map.getBounds();
+    // Expand bounds by ~20% to account for data blocks that extend beyond target position
+    const padFactor = 0.2;
+    const padLat = (mapBounds.getNorth() - mapBounds.getSouth()) * padFactor;
+    const padLon = (mapBounds.getEast() - mapBounds.getWest()) * padFactor;
+    const paddedBounds = L.latLngBounds(
+        [mapBounds.getSouth() - padLat, mapBounds.getWest() - padLon],
+        [mapBounds.getNorth() + padLat, mapBounds.getEast() + padLon]
+    );
     const onScreenGufis = new Set();
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
 
@@ -3381,8 +3390,9 @@ function doRender() {
         }
 
         // Viewport culling — count all visible flights but only render on-screen ones
+        // Use paddedBounds to keep data blocks visible even when target position goes off-screen
         const ll = displayPosition(f);
-        if (!mapBounds.contains(ll)) continue;
+        if (!paddedBounds.contains(ll)) continue;
 
         onScreenGufis.add(gufi);
         const hash = flightHash(f, cls);

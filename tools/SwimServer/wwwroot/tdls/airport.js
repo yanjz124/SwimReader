@@ -1,6 +1,6 @@
 const AIRPORT = location.pathname.split('/').pop().toUpperCase();
 document.getElementById('airport-title').textContent = AIRPORT;
-document.title = `TDLS ${AIRPORT} | swim.vncrcc.org`;
+document.title = `TDLS ${AIRPORT}`;
 
 let state = {}; // aircraftId → { aircraftId, acType, destination, beaconCode, messageCount, lastSeen, messages:[] }
 let selectedAc = null;

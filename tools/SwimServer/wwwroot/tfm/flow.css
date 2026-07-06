@@ -19,6 +19,11 @@ header {
 }
 header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
 header .sub { font-size: 11px; color: #555; }
+
+.nav-up {
+    transform: translateY(1px) !important;
+}
+
 .status-bar { margin-left: auto; font-size: 11px; color: #666; }
 
 .main {
@@ -29,6 +34,19 @@ header .sub { font-size: 11px; color: #555; }
 
 #map { flex: 1; }
 .leaflet-container { background: #0a0a0a; }
+
+/* Dark theme zoom buttons */
+.leaflet-control-zoom a {
+    background: #1a1a1a !important;
+    color: #cccc44 !important;
+    border: 1px solid #333 !important;
+    font-weight: bold;
+}
+
+.leaflet-control-zoom a:hover {
+    background: #222 !important;
+    border-color: #cccc44 !important;
+}
 
 /* ── Right panel: FCA list ─────────────────────────────────── */
 .sidebar {
@@ -63,6 +81,7 @@ header .sub { font-size: 11px; color: #555; }
     font-family: inherit;
     font-size: 12px;
     outline: none;
+    text-transform: uppercase;
 }
 .search-bar input:focus { border-color: #cccc44; }
 
@@ -91,6 +110,20 @@ header .sub { font-size: 11px; color: #555; }
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* ── Flight tooltip (radar style) ─────────────────────────────── */
+.flight-tooltip {
+    background: rgba(10, 10, 10, 0.95) !important;
+    border: 1px solid #cccc44 !important;
+    color: #cccc44 !important;
+    padding: 6px 10px !important;
+    border-radius: 2px !important;
+    font-family: ERAM, Consolas, monospace !important;
+    font-size: 11px !important;
+    box-shadow: 0 0 8px rgba(204, 204, 68, 0.4) !important;
+    letter-spacing: 0.5px !important;
+    white-space: nowrap !important;
 }
 
 /* ── Flight popup ─────────────────────────────────────────── */
@@ -133,6 +166,7 @@ header .sub { font-size: 11px; color: #555; }
     width: 100%;
     border-collapse: collapse;
     font-size: 11px;
+    margin: 0;
 }
 .flight-table th {
     text-align: left;
@@ -141,7 +175,7 @@ header .sub { font-size: 11px; color: #555; }
     border-bottom: 1px solid #1a1a1a;
     font-weight: normal;
     position: sticky;
-    top: 37px;
+    top: 32px;
     background: #0a0a0a;
 }
 .flight-table td { padding: 4px 10px; border-bottom: 1px solid #0a0a0a; color: #aaa; }

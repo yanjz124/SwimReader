@@ -138,19 +138,7 @@ sealed class AirspaceBridge
                 if (kv.Key is null) break;
                 var field = kv.Value;
                 if (field is null) continue;
-                try
-                {
-                    result[kv.Key] = field.Type switch
-                    {
-                        SDTFieldType.STRING => field.GetValue<string>() ?? "",
-                        SDTFieldType.UTF8STRING => field.GetValue<string>() ?? "",
-                        _ => field.ToString() ?? "",
-                    };
-                }
-                catch
-                {
-                    result[kv.Key] = field.ToString() ?? "";
-                }
+                result[kv.Key] = field.ToString() ?? "";
             }
         }
         catch { /* best-effort */ }

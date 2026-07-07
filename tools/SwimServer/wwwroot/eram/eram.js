@@ -33,6 +33,7 @@ let scopeBcklght = 70;      // 0-100, scope backlight brightness (BCKLGHT DCB sl
 let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
+let boundaryStyle = 'dashed'; // 'solid' or 'dashed' — boundary line style
 let replayActive = false;   // replay mode active (set by replay system IIFE)
 let replayCurrentTime = null; // ISO string of current replay position
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
@@ -65,6 +66,8 @@ const activeTearoffs = new Map();  // btnKey → { floatingEl, buttonClone } —
 const activeFloatingMenus = new Map(); // btnKey → { floatingMenuEl, anchorEl } — floating menu state
 let tearoffDeleteMode = false;  // when true, left-click marks for deletion, middle-click deletes
 const selectedTearoffsForDeletion = new Set();  // btnKey → marked for deletion
+const incdecRepeatTimers = new Map();  // btnKey → { interval, button, direction } — active incdec hold timers
+const incdecHandledInMousedown = new Set();  // btnKey → was handled in mousedown, skip click
 
 // Controller-entered altitude overrides (QZ/QQ/QR commands)
 // Local wins when present; SWIM clears local override only when it sends a genuinely NEW different value
@@ -1427,6 +1430,7 @@ let _overlayRafPending = false;
 map.on('move zoom viewreset resize', () => {
     closePointoutMenu();
     closeFieldMenu();
+    lastRenderTime = 0;  // Force immediate marker update so data blocks appear with history symbols
     if (!_overlayRafPending) {
         _overlayRafPending = true;
         requestAnimationFrame(() => {
@@ -1527,6 +1531,13 @@ function bndColor(brightness) {
     return `rgb(${v},${v},${v})`;
 }
 
+function getBoundaryDashArray(category) {
+    if (boundaryStyle === 'dashed') {
+        return category === 'Approach Control' ? '8 4' : '16 8';
+    }
+    return undefined;  // solid line (no dashArray)
+}
+
 async function loadKml() {
     try {
         const resp = await fetch('/api/kml/AllSectors.kml');
@@ -1599,7 +1610,25 @@ async function loadKml() {
             delete boundaryLayers[key];
         }
         if (myFacility) showBoundariesForFacility(myFacility);
+        // Fresh LAUNCH from the picker (?center=1) → center the scope on the chosen ARTCC now
+        // that its sector bounds are loaded, overriding the restored last-session view. This is
+        // a one-shot: strip the flag so a later refresh keeps whatever the user has panned to.
+        // (RESUME omits center=1, so it keeps the saved view.)
+        if (myFacility && new URLSearchParams(location.search).get('center') === '1') {
+            zoomToFacility(myFacility);
+            history.replaceState(null, '', location.pathname + location.hash);
+        }
     } catch (e) { console.warn('[KML]', e); }
+}
+
+function rebuildAllBoundaryLayers() {
+    // Clear all cached boundary layers when style changes
+    for (const key in boundaryLayers) {
+        if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
+        delete boundaryLayers[key];
+    }
+    // Redraw current facility
+    if (activeBoundaryArtcc) showBoundariesForFacility(activeBoundaryArtcc);
 }
 
 function showBoundariesForFacility(artcc) {
@@ -1619,11 +1648,14 @@ function showBoundariesForFacility(artcc) {
         const key = `${artcc}:${cat}`;
         if (!boundaryLayers[key]) {
             const group = L.layerGroup();
-            const dash = cat === 'Approach Control' ? '8 4' : '16 8';
+            const dashArray = getBoundaryDashArray(cat);
+            const polylineOptions = { color: bndColor(br), weight: 1, opacity: 1, interactive: false, className: 'bnd-path' };
+            if (dashArray) polylineOptions.dashArray = dashArray;
             for (const sec of kmlSectors.filter(s => s.artcc === artcc && s.category === cat)) {
                 const col = boundaryColorForSector(sec.sectorId, br);
                 const wt = boundaryWeightForSector(sec.sectorId);
-                L.polyline(sec.coords, { color: col, weight: wt, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
+                const opts = { ...polylineOptions, color: col, weight: wt };
+                L.polyline(sec.coords, opts).addTo(group);
             }
             boundaryLayers[key] = group;
         }
@@ -1642,24 +1674,31 @@ function setBoundaryBrightness(cat, brightness) {
     const col = bndColor(brightness);
     if (!boundaryLayers[key]) {
         const group = L.layerGroup();
-        const dash = cat === 'Approach Control' ? '8 4' : '16 8';
+        const dashArray = getBoundaryDashArray(cat);
+        const polylineOptions = { color: col, weight: 1, opacity: 1, interactive: false, className: 'bnd-path' };
+        if (dashArray) polylineOptions.dashArray = dashArray;
         for (const sec of kmlSectors.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat)) {
             const c = splitMapsEnabled ? boundaryColorForSector(sec.sectorId, brightness) : col;
             const wt = boundaryWeightForSector(sec.sectorId);
-            L.polyline(sec.coords, { color: c, weight: wt, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
+            const opts = { ...polylineOptions, color: c, weight: wt };
+            L.polyline(sec.coords, opts).addTo(group);
         }
         boundaryLayers[key] = group;
         boundaryLayers[key].addTo(map);
     } else {
         // Update color on existing polylines
         if (splitMapsEnabled) {
-            // Rebuild layer when split coloring is active (per-sector colors).
+            // Rebuild layer when split coloring is active (per-sector colors/weights).
             map.removeLayer(boundaryLayers[key]);
             delete boundaryLayers[key];
             setBoundaryBrightness(cat, brightness);
             return;
         }
-        boundaryLayers[key].eachLayer(l => l.setStyle({ color: col }));
+        const dashArray = getBoundaryDashArray(cat);
+        const styleUpdate = { color: col };
+        if (dashArray) styleUpdate.dashArray = dashArray;
+        else delete styleUpdate.dashArray;
+        boundaryLayers[key].eachLayer(l => l.setStyle(styleUpdate));
         if (!map.hasLayer(boundaryLayers[key])) boundaryLayers[key].addTo(map);
     }
 }
@@ -2373,6 +2412,10 @@ function applyDwell(el, gufi) {
     const dbEl = el.querySelector('.ac-db');
     if (!dbEl) return;
     dbEl.classList.add('dwell');
+
+    // Hide portal fence while dwell is active (use class so it persists after HTML rebuilds)
+    el.classList.add('dwell-hide-fence');
+
     // FDB: add a real border element sized from actual DOM measurements
     if (dbEl.classList.contains('fdb') && !dbEl.querySelector('.dwell-border')) {
         const b = document.createElement('div');
@@ -2399,6 +2442,10 @@ function removeDwell(el, gufi) {
     dbEl.classList.remove('dwell');
     const b = dbEl.querySelector('.dwell-border');
     if (b) b.remove();
+
+    // Show portal fence again
+    el.classList.remove('dwell-hide-fence');
+
     const f = flights.get(gufi);
     if (f && !shouldShowFdb(gufi, classifyTrack(f))) dbEl.style.opacity = String(ldbBrightness / 100);
 }
@@ -2650,7 +2697,7 @@ function formatFdbHtml(f, cls) {
         // Use CSS ch/em units for sizing (matches actual font metrics) and SVG rendering for flicker-free strokes.
         // top: 0 when no line 0; top: calc(1.25em + 1px) skips line 0 (1 line-height + ac-db top padding).
         const topStyle = poInfo ? 'calc(1.25em + 3px)' : '2px';
-        html += `<svg style="position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:3ch;height:3.75em;overflow:visible;pointer-events:none;z-index:1;" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="100,0.5 0.5,0.5 0.5,100" fill="none" stroke="${fenceColor}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></svg>`;
+        html += `<svg class="ac-portal-fence" style="position:absolute;top:${topStyle};left:calc(1.5ch + 1px);width:3ch;height:3.75em;overflow:visible;pointer-events:none;z-index:1;" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="100,0.5 0.5,0.5 0.5,100" fill="none" stroke="${fenceColor}" stroke-width="1" vector-effect="non-scaling-stroke" stroke-linejoin="miter"/></svg>`;
     }
     return html;
 }
@@ -3371,6 +3418,14 @@ function doRender() {
     if (beaconMenuOpen) updateBeaconMenuBody();
 
     const mapBounds = map.getBounds();
+    // Expand bounds by ~20% to account for data blocks that extend beyond target position
+    const padFactor = 0.2;
+    const padLat = (mapBounds.getNorth() - mapBounds.getSouth()) * padFactor;
+    const padLon = (mapBounds.getEast() - mapBounds.getWest()) * padFactor;
+    const paddedBounds = L.latLngBounds(
+        [mapBounds.getSouth() - padLat, mapBounds.getWest() - padLon],
+        [mapBounds.getNorth() + padLat, mapBounds.getEast() + padLon]
+    );
     const onScreenGufis = new Set();
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
 
@@ -3448,8 +3503,9 @@ function doRender() {
         }
 
         // Viewport culling — count all visible flights but only render on-screen ones
+        // Use paddedBounds to keep data blocks visible even when target position goes off-screen
         const ll = displayPosition(f);
-        if (!mapBounds.contains(ll)) continue;
+        if (!paddedBounds.contains(ll)) continue;
 
         onScreenGufis.add(gufi);
         const hash = flightHash(f, cls);
@@ -3937,6 +3993,12 @@ document.getElementById('btn-fullscreen').addEventListener('click', function () 
 document.getElementById('sel-fontsize').addEventListener('change', function () {
     fontSize = parseInt(this.value);
     updateFontSize();
+    saveSettingsToLocalStorage();
+});
+
+document.getElementById('sel-boundary-style').addEventListener('change', function () {
+    boundaryStyle = this.value;
+    rebuildAllBoundaryLayers();
     saveSettingsToLocalStorage();
 });
 
@@ -4605,6 +4667,8 @@ function toggleTrackSelect(gufi) {
         }
     }
 
+    // Force immediate canvas redraw so velocity vector updates instantly
+    lastRenderTime = 0;
     // Immediately rebuild the marker so the change is instant (don't wait for render cycle)
     const m = markers.get(gufi);
     if (m) {
@@ -5066,6 +5130,7 @@ function loadSettingsFromLocalStorage() {
         if (settings.MAX_HISTORY !== undefined) MAX_HISTORY = settings.MAX_HISTORY;
         if (settings.vectorMinutes !== undefined) vectorMinutes = settings.vectorMinutes;
         if (settings.boundaryBrightness) Object.assign(boundaryBrightness, settings.boundaryBrightness);
+        if (settings.boundaryStyle !== undefined) boundaryStyle = settings.boundaryStyle;
         if (settings.line4Mode) line4Mode = settings.line4Mode;
         if (settings.showMapBg !== undefined) showMapBg = settings.showMapBg;
         if (settings.fontSize !== undefined) fontSize = settings.fontSize;
@@ -5112,6 +5177,7 @@ function loadSettingsFromLocalStorage() {
     if (splitChk) splitChk.checked = splitMapsEnabled;
     document.getElementById('chk-mapbg').checked = showMapBg;
     document.getElementById('sel-line4').value = line4Mode;
+    document.getElementById('sel-boundary-style').value = boundaryStyle;
     document.getElementById('sel-fontsize').value = fontSize;
     document.getElementById('inp-alt-low').value = altFilterLow;
     document.getElementById('inp-alt-high').value = altFilterHigh;
@@ -5159,6 +5225,7 @@ function saveSettingsToLocalStorage() {
         MAX_HISTORY,
         vectorMinutes,
         boundaryBrightness,
+        boundaryStyle,
         line4Mode,
         showMapBg,
         fontSize,
@@ -9050,18 +9117,18 @@ const TB_BRIGHT = {
             menu('MAP\nBRIGHT', 'map-bright', { cls: 'tb-blue' }),
             nosim('CPDLC', { cls: 'tb-blue' }),
             incdec('BCKGRD', { cls: 'tb-green', getValue: () => tbState.bright.bckgrd, formatValue: v => v, onDec: () => { scopeBckgrd = Math.max(0, scopeBckgrd - 1); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBckgrd = Math.min(100, scopeBckgrd + 1); tbState.bright.bckgrd = scopeBckgrd; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
-            incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 10); updateCursorBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 10); updateCursorBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 10); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 10); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 10); updatePrTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 10); updatePrTgtBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 10); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 10); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 10); updatePrHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 10); updatePrHistBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 10); updateUnpHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 10); updateUnpHistBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('CURSOR', { cls: 'tb-green', getValue: () => tbState.bright.cursor, formatValue: v => v, onDec: () => { tbState.bright.cursor = Math.max(0, tbState.bright.cursor - 1); updateCursorBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.cursor = Math.min(100, tbState.bright.cursor + 1); updateCursorBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TEXT', { cls: 'tb-green', getValue: () => tbState.bright.text, formatValue: v => v, onDec: () => { tbState.bright.text = Math.max(0, tbState.bright.text - 1); updateTextBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.text = Math.min(100, tbState.bright.text + 1); updateTextBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('PR TGT', { cls: 'tb-green', getValue: () => tbState.bright.prTgtr, formatValue: v => v, onDec: () => { tbState.bright.prTgtr = Math.max(0, tbState.bright.prTgtr - 1); updatePrTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prTgtr = Math.min(100, tbState.bright.prTgtr + 1); updatePrTgtBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('UNP TGT', { cls: 'tb-green', getValue: () => tbState.bright.unpTgt, formatValue: v => v, onDec: () => { tbState.bright.unpTgt = Math.max(0, tbState.bright.unpTgt - 1); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpTgt = Math.min(100, tbState.bright.unpTgt + 1); updateUnpTgtBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('PR HST', { cls: 'tb-green', getValue: () => tbState.bright.prHist, formatValue: v => v, onDec: () => { tbState.bright.prHist = Math.max(0, tbState.bright.prHist - 1); updatePrHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.prHist = Math.min(100, tbState.bright.prHist + 1); updatePrHistBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('UNP HST', { cls: 'tb-green', getValue: () => tbState.bright.unpHist, formatValue: v => v, onDec: () => { tbState.bright.unpHist = Math.max(0, tbState.bright.unpHist - 1); updateUnpHistBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.unpHist = Math.min(100, tbState.bright.unpHist + 1); updateUnpHistBrightness(); saveSettingsToLocalStorage(); } }),
             incdec('LDB', {
                 cls: 'tb-green',
                 getValue: () => tbState.bright.ldb,
                 formatValue: v => v,
-                onDec: () => { tbState.bright.ldb = Math.max(0, tbState.bright.ldb - 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
-                onInc: () => { tbState.bright.ldb = Math.min(100, tbState.bright.ldb + 10); updateLdbBrightness(); saveSettingsToLocalStorage(); },
+                onDec: () => { tbState.bright.ldb = Math.max(0, tbState.bright.ldb - 1); updateLdbBrightness(); saveSettingsToLocalStorage(); },
+                onInc: () => { tbState.bright.ldb = Math.min(100, tbState.bright.ldb + 1); updateLdbBrightness(); saveSettingsToLocalStorage(); },
             }),
             nosim('SLDB'),
             nosim('WX'),
@@ -9069,21 +9136,21 @@ const TB_BRIGHT = {
                 cls: 'tb-green',
                 getValue: () => getRangeVal('rng-nx'),
                 formatValue: v => v,
-                onDec: () => setRangeVal('rng-nx', Math.max(0, getRangeVal('rng-nx') - 10)),
-                onInc: () => setRangeVal('rng-nx', Math.min(100, getRangeVal('rng-nx') + 10)),
+                onDec: () => setRangeVal('rng-nx', Math.max(0, getRangeVal('rng-nx') - 1)),
+                onInc: () => setRangeVal('rng-nx', Math.min(100, getRangeVal('rng-nx') + 1)),
             }),
         ],
         [
-            incdec('BCKLGHT', { cls: 'tb-green', getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { scopeBcklght = Math.max(0, scopeBcklght - 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBcklght = Math.min(100, scopeBcklght + 10); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
-            incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 10); updateButtonBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 10); updateButtonBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 10); updateBorderBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 10); updateBorderBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 10); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); } }),
-            incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 10); updateToolbarBorderColor(); saveSettingsToLocalStorage(); } }),
+            incdec('BCKLGHT', { cls: 'tb-green', getValue: () => tbState.bright.bcklght, formatValue: v => v, onDec: () => { scopeBcklght = Math.max(0, scopeBcklght - 1); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); }, onInc: () => { scopeBcklght = Math.min(100, scopeBcklght + 1); tbState.bright.bcklght = scopeBcklght; updateScopeBackground(); saveSettingsToLocalStorage(); } }),
+            incdec('BUTTON', { cls: 'tb-green', getValue: () => tbState.bright.button, formatValue: v => v, onDec: () => { tbState.bright.button = Math.max(0, tbState.bright.button - 1); updateButtonBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.button = Math.min(100, tbState.bright.button + 1); updateButtonBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('BORDER', { cls: 'tb-green', getValue: () => tbState.bright.border, formatValue: v => v, onDec: () => { tbState.bright.border = Math.max(0, tbState.bright.border - 1); updateBorderBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.border = Math.min(100, tbState.bright.border + 1); updateBorderBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TOOLBAR', { cls: 'tb-green', getValue: () => tbState.bright.toolbar, formatValue: v => v, onDec: () => { tbState.bright.toolbar = Math.max(0, tbState.bright.toolbar - 1); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.toolbar = Math.min(100, tbState.bright.toolbar + 1); updateToolbarBackgroundBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('TB BRDR', { cls: 'tb-green', getValue: () => tbState.bright.tbBrdr, formatValue: v => v, onDec: () => { tbState.bright.tbBrdr = Math.max(0, tbState.bright.tbBrdr - 1); updateToolbarBorderColor(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.tbBrdr = Math.min(100, tbState.bright.tbBrdr + 1); updateToolbarBorderColor(); saveSettingsToLocalStorage(); } }),
             nosim('AB BRDR'),
-            incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 10); updateFdbBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 10); updateFdbBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('FDB', { cls: 'tb-green', getValue: () => tbState.bright.fdb, formatValue: v => v, onDec: () => { tbState.bright.fdb = Math.max(0, tbState.bright.fdb - 1); updateFdbBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fdb = Math.min(100, tbState.bright.fdb + 1); updateFdbBrightness(); saveSettingsToLocalStorage(); } }),
             nosim('PORTAL'),
             nosim('SATCOMM'),
-            incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 10); updateOnFreqBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 10); updateOnFreqBrightness(); saveSettingsToLocalStorage(); } }),
+            incdec('ON-FREQ', { cls: 'tb-green', getValue: () => tbState.bright.onFreq, formatValue: v => v, onDec: () => { tbState.bright.onFreq = Math.max(0, tbState.bright.onFreq - 1); updateOnFreqBrightness(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.onFreq = Math.min(100, tbState.bright.onFreq + 1); updateOnFreqBrightness(); saveSettingsToLocalStorage(); } }),
             nosim('LINE 4'),
             nosim('DWELL'),
             incdec('FENCE', { cls: 'tb-green', getValue: () => tbState.bright.fence, formatValue: v => v, onDec: () => { tbState.bright.fence = Math.max(0, tbState.bright.fence - 10); invalidateAllMarkers(); saveSettingsToLocalStorage(); }, onInc: () => { tbState.bright.fence = Math.min(100, tbState.bright.fence + 10); invalidateAllMarkers(); saveSettingsToLocalStorage(); } }),
@@ -9470,6 +9537,12 @@ function createFloatingTearoff(btnKey, spec) {
             buttonClone.addEventListener('click', (e) => {
                 if (!e.target.closest('.tb-tear')) {
                     e.stopPropagation();
+                    // Skip if this was already handled in mousedown (incdec buttons)
+                    if (incdecHandledInMousedown.has(btnKey)) {
+                        incdecHandledInMousedown.delete(btnKey);
+                        return;
+                    }
+
                     // Skip normal toggle for momentary buttons (they only respond to hold, not click)
                     if (!(spec.type === 'toggle' && spec.isMomentary)) {
                         // In delete mode, left-click marks tearoff for deletion
@@ -9489,7 +9562,7 @@ function createFloatingTearoff(btnKey, spec) {
                 }
             });
 
-            // Mousedown: handle momentary toggle and middle-click
+            // Mousedown: handle momentary toggle, middle-click, and incdec hold
             buttonClone.addEventListener('mousedown', (e) => {
                 const isTearoff = e.target.closest('.tb-tear');
 
@@ -9523,7 +9596,112 @@ function createFloatingTearoff(btnKey, spec) {
                     return;
                 }
 
-                // Middle click
+                // Incdec hold: start repeating inc/dec on left or middle click
+                if (!isTearoff && spec.type === 'incdec') {
+                    // Skip incdec if in delete mode (let deletion handler take over)
+                    if (tearoffDeleteMode) {
+                        // Let the middle-click delete handler run instead
+                        if (e.button === 1) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }
+                    } else {
+                        const direction = e.button === 0 ? 'dec' : (e.button === 1 ? 'inc' : null);
+                        if (direction) {
+                            // Mark that we handled this in mousedown so click event doesn't double-execute
+                            incdecHandledInMousedown.add(btnKey);
+
+                        // Clear any existing timer for this button
+                        if (incdecRepeatTimers.has(btnKey)) {
+                            clearInterval(incdecRepeatTimers.get(btnKey).interval);
+                            incdecRepeatTimers.delete(btnKey);
+                        }
+
+                        // Call the action immediately
+                        if (direction === 'dec' && spec.onDec) {
+                            spec.onDec();
+                        } else if (direction === 'inc' && spec.onInc) {
+                            spec.onInc();
+                        }
+
+                        // Update displays (both clone and master)
+                        const updateDisplays = () => {
+                            const valDiv = buttonClone.querySelector('.tb-value');
+                            if (valDiv && spec.getValue) {
+                                valDiv.textContent = spec.formatValue(spec.getValue());
+                            }
+                            updateFloatingMenuButton(buttonClone, spec);
+                            // Also sync to master button
+                            const masterEntry = tbElements.get(btnKey);
+                            if (masterEntry && masterEntry.el) {
+                                const masterValDiv = masterEntry.el.querySelector('.tb-value');
+                                if (masterValDiv && spec.getValue) {
+                                    masterValDiv.textContent = spec.formatValue(spec.getValue());
+                                }
+                            }
+                        };
+                        updateDisplays();
+
+                        // Track initial mouse position to detect drag
+                        const startX = e.clientX;
+                        const startY = e.clientY;
+                        let dragDetected = false;
+
+                        // Start repeat after 300ms delay
+                        const repeatTimer = setTimeout(() => {
+                            // Only start repeat if no drag detected yet
+                            if (!dragDetected) {
+                                const interval = setInterval(() => {
+                                    // Stop if drag was detected
+                                    if (dragDetected) {
+                                        clearInterval(interval);
+                                        return;
+                                    }
+                                    if (direction === 'dec' && spec.onDec) {
+                                        spec.onDec();
+                                    } else if (direction === 'inc' && spec.onInc) {
+                                        spec.onInc();
+                                    }
+                                    updateDisplays();
+                                }, 50);
+
+                                incdecRepeatTimers.set(btnKey, { interval, button: buttonClone, direction });
+                            }
+                        }, 300);
+
+                        // Store timeout ID so we can cancel if needed
+                        incdecRepeatTimers.set(btnKey, { interval: repeatTimer, button: buttonClone, direction, isTimeout: true });
+
+                        // Track mousemove to detect drag
+                        const dragDetectHandler = (moveE) => {
+                            const dx = Math.abs(moveE.clientX - startX);
+                            const dy = Math.abs(moveE.clientY - startY);
+                            if (dx > 10 || dy > 10) {
+                                dragDetected = true;
+                                // Cancel the repeat timer
+                                if (incdecRepeatTimers.has(btnKey)) {
+                                    const timer = incdecRepeatTimers.get(btnKey);
+                                    clearInterval(timer.interval);
+                                    incdecRepeatTimers.delete(btnKey);
+                                }
+                                window.removeEventListener('mousemove', dragDetectHandler);
+                            }
+                        };
+
+                        window.addEventListener('mousemove', dragDetectHandler, { once: false });
+
+                        // Cleanup the drag detect handler on mouseup
+                        const cleanupHandler = () => {
+                            window.removeEventListener('mousemove', dragDetectHandler);
+                        };
+                        window.addEventListener('mouseup', cleanupHandler, { once: true });
+
+                        return;
+                        }
+                    }
+                }
+
+                // Middle click (non-incdec)
                 if (e.button === 1 && !isTearoff) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -9552,7 +9730,7 @@ function createFloatingTearoff(btnKey, spec) {
                 }
             });
 
-            // Mouseup: revert momentary toggle to off state
+            // Mouseup: revert momentary toggle to off state, stop incdec repeating
             buttonClone.addEventListener('mouseup', (e) => {
                 if (spec.type === 'toggle' && spec.isMomentary) {
                     e.stopPropagation();
@@ -9567,9 +9745,16 @@ function createFloatingTearoff(btnKey, spec) {
                         invalidateAllMarkers();
                     }
                 }
+
+                // Stop incdec repeating
+                if (spec.type === 'incdec' && incdecRepeatTimers.has(btnKey)) {
+                    const timer = incdecRepeatTimers.get(btnKey);
+                    clearInterval(timer.interval);
+                    incdecRepeatTimers.delete(btnKey);
+                }
             });
 
-            // Mouseleave: revert momentary toggle if mouse leaves button while held
+            // Mouseleave: revert momentary toggle if mouse leaves button while held, stop incdec repeating
             buttonClone.addEventListener('mouseleave', (e) => {
                 if (spec.type === 'toggle' && spec.isMomentary) {
                     buttonClone.classList.remove('tb-toggle-on');
@@ -9582,6 +9767,13 @@ function createFloatingTearoff(btnKey, spec) {
                         speedButtonPressed = false;
                         invalidateAllMarkers();
                     }
+                }
+
+                // Stop incdec repeating
+                if (spec.type === 'incdec' && incdecRepeatTimers.has(btnKey)) {
+                    const timer = incdecRepeatTimers.get(btnKey);
+                    clearInterval(timer.interval);
+                    incdecRepeatTimers.delete(btnKey);
                 }
             });
 
@@ -9838,6 +10030,12 @@ function createButton(spec, panelId, rowIdx, colIdx) {
             e.stopPropagation();
             // Ignore clicks on the tearoff strip
             if (!e.target.closest('.tb-tear')) {
+                // Skip if this was already handled in mousedown (incdec buttons)
+                if (incdecHandledInMousedown.has(key)) {
+                    incdecHandledInMousedown.delete(key);
+                    return;
+                }
+
                 // Skip normal toggle for momentary buttons (they only respond to hold, not click)
                 if (!(spec.type === 'toggle' && spec.isMomentary)) {
                     // For menu buttons in floating menus, pass the button element as anchor
@@ -9857,12 +10055,14 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                         }
                         // Also update floating menu button if in a floating menu
                         updateFloatingMenuButton(el, spec);
+                        // Sync to tearoff
+                        refreshButton(key);
                     }
                 }
             }
         });
 
-        // Mousedown: handle momentary toggle and middle-click
+        // Mousedown: handle momentary toggle, middle-click, and incdec hold
         el.addEventListener('mousedown', (e) => {
             const isTearoff = e.target.closest('.tb-tear');
 
@@ -9896,7 +10096,66 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                 return;
             }
 
-            // Middle click
+            // Incdec hold: start repeating inc/dec on left or middle click
+            if (!isTearoff && spec.type === 'incdec') {
+                const direction = e.button === 0 ? 'dec' : (e.button === 1 ? 'inc' : null);
+                if (direction) {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    // Mark that we handled this in mousedown so click event doesn't double-execute
+                    incdecHandledInMousedown.add(key);
+
+                    // Clear any existing timer for this button
+                    if (incdecRepeatTimers.has(key)) {
+                        clearInterval(incdecRepeatTimers.get(key).interval);
+                        incdecRepeatTimers.delete(key);
+                    }
+
+                    // Call the action immediately
+                    if (direction === 'dec' && spec.onDec) {
+                        spec.onDec();
+                    } else if (direction === 'inc' && spec.onInc) {
+                        spec.onInc();
+                    }
+
+                    // Start repeat after 300ms delay
+                    const repeatTimer = setTimeout(() => {
+                        const interval = setInterval(() => {
+                            if (direction === 'dec' && spec.onDec) {
+                                spec.onDec();
+                            } else if (direction === 'inc' && spec.onInc) {
+                                spec.onInc();
+                            }
+                            // Update display and sync to tearoff
+                            const valDiv = el.querySelector('.tb-value');
+                            if (valDiv && spec.getValue) {
+                                valDiv.textContent = spec.formatValue(spec.getValue());
+                            }
+                            updateFloatingMenuButton(el, spec);
+                            // Sync to tearoff
+                            refreshButton(key);
+                        }, 50);
+
+                        incdecRepeatTimers.set(key, { interval, button: el, direction });
+                    }, 300);
+
+                    // Store timeout ID so we can cancel if needed
+                    incdecRepeatTimers.set(key, { interval: repeatTimer, button: el, direction, isTimeout: true });
+
+                    // Update display and sync to tearoff
+                    const valDiv = el.querySelector('.tb-value');
+                    if (valDiv && spec.getValue) {
+                        valDiv.textContent = spec.formatValue(spec.getValue());
+                    }
+                    updateFloatingMenuButton(el, spec);
+                    // Sync to tearoff
+                    refreshButton(key);
+                    return;
+                }
+            }
+
+            // Middle click for non-incdec buttons
             if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -9911,12 +10170,14 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                         }
                         // Also update floating menu button if in a floating menu
                         updateFloatingMenuButton(el, spec);
+                        // Sync to tearoff
+                        refreshButton(key);
                     }
                 }
             }
         });
 
-        // Mouseup: revert momentary toggle to off state
+        // Mouseup: revert momentary toggle to off state, stop incdec repeating
         el.addEventListener('mouseup', (e) => {
             if (spec.type === 'toggle' && spec.isMomentary) {
                 e.stopPropagation();
@@ -9931,9 +10192,16 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                     invalidateAllMarkers();
                 }
             }
+
+            // Stop incdec repeating
+            if (spec.type === 'incdec' && incdecRepeatTimers.has(key)) {
+                const timer = incdecRepeatTimers.get(key);
+                clearInterval(timer.interval);
+                incdecRepeatTimers.delete(key);
+            }
         });
 
-        // Mouseleave: revert momentary toggle if mouse leaves button while held
+        // Mouseleave: revert momentary toggle if mouse leaves button while held, stop incdec repeating
         el.addEventListener('mouseleave', (e) => {
             if (spec.type === 'toggle' && spec.isMomentary) {
                 el.classList.remove('tb-toggle-on');
@@ -9946,6 +10214,13 @@ function createButton(spec, panelId, rowIdx, colIdx) {
                     speedButtonPressed = false;
                     invalidateAllMarkers();
                 }
+            }
+
+            // Stop incdec repeating
+            if (spec.type === 'incdec' && incdecRepeatTimers.has(key)) {
+                const timer = incdecRepeatTimers.get(key);
+                clearInterval(timer.interval);
+                incdecRepeatTimers.delete(key);
             }
         });
 
@@ -10060,6 +10335,7 @@ function refreshAllButtons() {
     for (const key of tbElements.keys()) {
         refreshButton(key);
     }
+    updateTearoffColors();
 }
 
 // Refresh ONLY the buttons whose spec.label matches the given string. Goes

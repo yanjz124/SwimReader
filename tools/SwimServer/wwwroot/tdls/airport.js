@@ -1,10 +1,11 @@
 const AIRPORT = location.pathname.split('/').pop().toUpperCase();
 document.getElementById('airport-title').textContent = AIRPORT;
-document.title = `TDLS ${AIRPORT} | swim.vncrcc.org`;
+document.title = `TDLS ${AIRPORT}`;
 
 let state = {}; // aircraftId → { aircraftId, acType, destination, beaconCode, messageCount, lastSeen, messages:[] }
 let selectedAc = null;
 let searchQuery = '';
+let seenMessages = new Set(); // Track message hashes to prevent duplicates
 
 const acListEl = document.getElementById('ac-list');
 const detailEl = document.getElementById('detail');
@@ -12,6 +13,11 @@ const statsEl  = document.getElementById('stats');
 const statusEl = document.getElementById('status');
 const searchEl = document.getElementById('ac-search');
 const clearEl = document.getElementById('ac-search-clear');
+
+// Generate unique hash for a message to deduplicate
+function messageHash(msg) {
+    return `${msg.aircraftId}|${msg.time}|${msg.type}|${msg.dataBody || ''}|${msg.gate || ''}|${msg.runway || ''}`;
+}
 
 // ── WebSocket ──────────────────────────────────────────────────
 let ws = null;
@@ -44,9 +50,16 @@ function connect() {
 
 function handleSnapshot(data) {
     state = {};
+    seenMessages.clear();
     if (data.aircraft) {
         for (const ac of data.aircraft) {
             state[ac.aircraftId] = ac;
+            // Track all messages in snapshot as already seen
+            if (ac.messages) {
+                for (const msg of ac.messages) {
+                    seenMessages.add(messageHash(msg));
+                }
+            }
         }
     }
     renderAcList();
@@ -57,6 +70,11 @@ function handleSnapshot(data) {
 function handleNewMessages(messages) {
     const flashIds = new Set();
     for (const msg of messages) {
+        const hash = messageHash(msg);
+        // Skip if we've already seen this message
+        if (seenMessages.has(hash)) continue;
+        seenMessages.add(hash);
+
         const id = msg.aircraftId;
         if (!state[id]) {
             state[id] = {

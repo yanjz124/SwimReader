@@ -643,6 +643,20 @@ class AsdexBridge
         return new { airport, tracks };
     }
 
+    /// <summary>All ASDE-X surface tracks matching a callsign across every airport (for the track page).</summary>
+    public List<object> FindByCallsign(string callsign)
+    {
+        var result = new List<object>();
+        foreach (var (airport, tracks) in _state)
+            foreach (var t in tracks.Values)
+                if (string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (OnEnrich is not null) OnEnrich(t);
+                    result.Add(new { airport, track = t.ToJson() });
+                }
+        return result;
+    }
+
     /// <summary>
     /// Deduplicate tracks by callsign — when multiple tracks share the same callsign,
     /// keep only the one with the most recent LastSeen. Tracks without callsigns are always kept.

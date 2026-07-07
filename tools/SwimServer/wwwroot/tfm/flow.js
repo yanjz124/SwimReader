@@ -54,7 +54,7 @@ function renderFcaList() {
         el.addEventListener('click', () => {
             selectedFca = el.dataset.id;
             renderFcaList();
-            loadFcaDetail(el.dataset.id);
+            loadFcaDetail(el.dataset.id, true);
         });
     });
 }
@@ -62,17 +62,17 @@ function renderFcaList() {
 document.getElementById('fcaSearch').addEventListener('input', renderFcaList);
 
 // ── Load FCA detail and show on map ──────────────────────────
-async function loadFcaDetail(fcaId) {
+async function loadFcaDetail(fcaId, fitBoundsOnInit = false) {
     try {
         const r = await fetch(`/api/tfms/tmis/${encodeURIComponent(fcaId)}`);
         if (!r.ok) return;
         const t = await r.json();
-        showFlightsOnMap(t);
+        showFlightsOnMap(t, fitBoundsOnInit);
         showFlightPopup(t);
     } catch {}
 }
 
-function showFlightsOnMap(t) {
+function showFlightsOnMap(t, fitBoundsOnInit = false) {
     // Clear old markers
     entryMarkers.forEach(m => map.removeLayer(m));
     entryMarkers = [];
@@ -91,14 +91,14 @@ function showFlightsOnMap(t) {
             }).addTo(map);
             marker.bindTooltip(`${f.callsign || '?'} ${f.depArpt||'?'}-${f.arrArpt||'?'}`, {
                 direction: 'top',
-                className: ''
+                className: 'flight-tooltip'
             });
             entryMarkers.push(marker);
             bounds.push([f.entryLat, f.entryLon]);
         }
     });
 
-    if (bounds.length > 0) {
+    if (fitBoundsOnInit && bounds.length > 0) {
         map.fitBounds(bounds, { padding: [60, 60], maxZoom: 8 });
     }
 }
@@ -122,6 +122,10 @@ function showFlightPopup(t) {
 }
 
 document.getElementById('popupClose').addEventListener('click', () => {
+    selectedFca = null;
+    entryMarkers.forEach(m => map.removeLayer(m));
+    entryMarkers = [];
+    renderFcaList();
     document.getElementById('flightPopup').style.display = 'none';
 });
 

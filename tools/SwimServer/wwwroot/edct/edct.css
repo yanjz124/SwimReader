@@ -2,7 +2,7 @@ html, body {
     background: #000; color: #ccc; font-family: 'Consolas', 'Courier New', monospace;
     font-size: 12px; height: 100%; overflow: hidden; display: flex; flex-direction: column;
 }
-body { overflow: auto; }
+body { overflow: auto; position: relative; }
 
 header {
     background: #0a0a0a; border-bottom: 1px solid #333;
@@ -10,6 +10,11 @@ header {
 }
 header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
 header .sub { font-size: 11px; color: #555; }
+
+.nav-up {
+    transform: translateY(0px) !important;
+}
+
 .status-bar { margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 8px; }
 .status-bar .dot { color: #444; }
 .status-bar #count { color: #cccc44; }
@@ -24,6 +29,7 @@ header .sub { font-size: 11px; color: #555; }
 .filter-row input {
     background: #111; border: 1px solid #333; color: #ccc;
     padding: 5px 10px; font-family: inherit; font-size: 12px; width: 280px; outline: none;
+    text-transform: uppercase;
 }
 .filter-row input:focus { border-color: #cccc44; }
 .filter-row label { font-size: 11px; color: #666; }

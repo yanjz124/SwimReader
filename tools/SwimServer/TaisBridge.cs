@@ -139,9 +139,9 @@ class TaisBridge
                     track.ExitFix = ElVal(fp, "exitFix") ?? track.ExitFix;
                     track.AssignedSquawk = ElVal(fp, "assignedBeaconCode") ?? track.AssignedSquawk;
                     track.RequestedAltitude = ParseInt(ElVal(fp, "requestedAltitude")) ?? track.RequestedAltitude;
-                    track.Runway = NullIfEmpty(ElVal(fp, "runway")) ?? track.Runway;
-                    track.Scratchpad1 = NullIfEmpty(ElVal(fp, "scratchPad1")) ?? track.Scratchpad1;
-                    track.Scratchpad2 = NullIfEmpty(ElVal(fp, "scratchPad2")) ?? track.Scratchpad2;
+                    track.Runway = CleanRunway(AsciiOnly(ElVal(fp, "runway"))) ?? track.Runway;
+                    track.Scratchpad1 = NullIfEmpty(AsciiOnly(ElVal(fp, "scratchPad1"))) ?? track.Scratchpad1;
+                    track.Scratchpad2 = NullIfEmpty(AsciiOnly(ElVal(fp, "scratchPad2"))) ?? track.Scratchpad2;
                     track.Owner = NullIfUnassigned(ElVal(fp, "cps")) ?? track.Owner;
                     track.WakeCategory = NullIfEmpty(ElVal(fp, "category")) ?? track.WakeCategory;
                     track.EquipmentSuffix = NullIfUnavailable(ElVal(fp, "eqptSuffix")) ?? track.EquipmentSuffix;
@@ -184,6 +184,25 @@ class TaisBridge
     private static string? NullIfEmpty(string? v) => string.IsNullOrWhiteSpace(v) ? null : v;
     private static string? NullIfUnavailable(string? v) => v is null or "unavailable" ? null : v;
     private static string? NullIfUnassigned(string? v) => v is null or "unassigned" ? null : v;
+    /// <summary>
+    /// Returns the value only if it is entirely printable ASCII; otherwise null.
+    /// TAIS encodes handoff-TCP bytes into &lt;runway&gt;/&lt;scratchPad2&gt; on
+    /// inter-facility handoffs, which decode to non-ASCII garbage (shows as "�").
+    /// Those aren't real runway/scratchpad text, so drop them here — the raw bytes
+    /// are still preserved via HexIfNonAscii for anyone who wants to decode the TCP.
+    /// </summary>
+    private static string? AsciiOnly(string? v)
+    {
+        if (string.IsNullOrEmpty(v)) return v;
+        foreach (var ch in v) if (ch < 0x20 || ch > 0x7E) return null;
+        return v;
+    }
+    /// <summary>Runway text, or null for the TAIS "no runway assigned" sentinel (all-N, e.g. "NNNN").</summary>
+    private static string? CleanRunway(string? v)
+    {
+        v = NullIfEmpty(v);
+        return v is null || v.All(c => c is 'N' or 'n') ? null : v;
+    }
     /// <summary>
     /// Returns a hex string of the bytes in <paramref name="v"/> ONLY if it
     /// contains non-ASCII chars (i.e. raw 0x80-0xFF bytes from ISO-8859-1
@@ -327,6 +346,29 @@ class TaisBridge
                 .Select(t => t.ToJson())
                 .ToArray()
         };
+    }
+
+    /// <summary>All TAIS (STARS) tracks matching a callsign across every facility.</summary>
+    public List<object> FindByCallsign(string callsign)
+    {
+        var result = new List<object>();
+        foreach (var tracks in _state.Values)
+            foreach (var t in tracks.Values)
+                if (string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
+                    result.Add(t.ToJson());   // ToJson already includes the facility
+        return result;
+    }
+
+    /// <summary>(facility, owner-TCP) pairs for a callsign — used to resolve STARS position frequencies.</summary>
+    public List<(string facility, string owner)> OwnersByCallsign(string callsign)
+    {
+        var result = new List<(string, string)>();
+        foreach (var tracks in _state.Values)
+            foreach (var t in tracks.Values)
+                if (string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrEmpty(t.Facility) && !string.IsNullOrEmpty(t.Owner))
+                    result.Add((t.Facility, t.Owner!));
+        return result;
     }
 }
 

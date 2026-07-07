@@ -142,6 +142,27 @@ header .sub {
 .server-detail .lbl { color: #555; white-space: nowrap; }
 .server-detail .val { color: #aaa; }
 
+/* ── About / contribute ───────────────────────────────────── */
+.about { text-align: center; margin-top: 4px; }
+.about-line {
+    font-size: 11px;
+    color: #666;
+    letter-spacing: 0.3px;
+    line-height: 1.6;
+}
+.repo-link {
+    color: #cccc44;
+    text-decoration: none;
+    border-bottom: 1px solid #333;
+    white-space: nowrap;
+}
+.repo-link:hover,
+.repo-link:focus-visible {
+    color: #fff;
+    border-bottom-color: #44aa44;
+    outline: none;
+}
+
 /* ── Mobile ───────────────────────────────────────────────── */
 @media (max-width: 560px) {
     header { padding: 9px 12px; }

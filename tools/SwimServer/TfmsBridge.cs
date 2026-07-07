@@ -938,6 +938,15 @@ class TfmsBridge
 
     public void RemoveFlightClient(string id) => _flightClients.TryRemove(id, out _);
 
+    /// <summary>TFMS flight for a callsign (O(1) via the callsign index), or null.</summary>
+    public object? GetFlightByCallsign(string callsign)
+    {
+        if (_callsignIndex.TryGetValue(callsign, out var key) &&
+            _flights.TryGetValue(key, out var f))
+            return f.ToJson();
+        return null;
+    }
+
     public string AddTmiClient(WsClient client)
     {
         var id = Guid.NewGuid().ToString("N");

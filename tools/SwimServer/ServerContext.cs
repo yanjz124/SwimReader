@@ -54,6 +54,8 @@ class ServerContext
     // ── ASDE-X scratchpad / vNAS rules ──────────────────────────────────────
     public required ConcurrentDictionary<string, ConcurrentDictionary<string, string>> GateCodes { get; init; }
     public required ConcurrentDictionary<string, List<KeyValuePair<string, string>>> VnasFixRules { get; init; }
+    // ARTCC ERAM sector → controller frequency (MHz string, e.g. "133.725"), keyed "FAC/SECTOR" (from vNAS).
+    public required ConcurrentDictionary<string, string> SectorFreqs { get; init; }
 
     // ── NASR (mutable: assigned after async load) ───────────────────────────
     public required Func<NasrData?> GetNasr { get; init; }

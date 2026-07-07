@@ -11,7 +11,7 @@ body {
 header {
     background: #0a0a0a;
     border-bottom: 1px solid #333;
-    padding: 8px 16px;
+    padding: 8px 16px !important;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -19,6 +19,14 @@ header {
 }
 header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
 header .sub { font-size: 11px; color: #555; }
+
+.nav-home {
+    transform: translateY(1px) !important;
+}
+
+.nav-up {
+    transform: translateY(1px) !important;
+}
 
 .search-row {
     display: flex;
@@ -35,6 +43,7 @@ header .sub { font-size: 11px; color: #555; }
     font-size: 12px;
     width: 200px;
     outline: none;
+    text-transform: uppercase;
 }
 .search-row input:focus { border-color: #cccc44; }
 .search-row button {
@@ -59,15 +68,28 @@ header .sub { font-size: 11px; color: #555; }
 }
 .leaflet-container { background: #0a0a0a; }
 
+/* Dark theme zoom buttons */
+.leaflet-control-zoom a {
+    background: #1a1a1a !important;
+    color: #cccc44 !important;
+    border: 1px solid #333 !important;
+    font-weight: bold;
+}
+
+.leaflet-control-zoom a:hover {
+    background: #222 !important;
+    border-color: #cccc44 !important;
+}
+
 /* ── Sidebar ──────────────────────────────────────────────── */
 .sidebar {
     width: 340px;
     min-width: 340px;
     border-left: 1px solid #222;
-    overflow-y: auto;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 .sidebar .section-title {
     padding: 8px 12px;
@@ -76,6 +98,7 @@ header .sub { font-size: 11px; color: #555; }
     letter-spacing: 1px;
     border-bottom: 1px solid #1a1a1a;
     background: #050505;
+    flex-shrink: 0;
 }
 .flight-info {
     padding: 10px 12px;
@@ -96,11 +119,28 @@ header .sub { font-size: 11px; color: #555; }
     border-bottom: 1px solid #0a0a0a;
 }
 .fix-item:hover { background: #0a0a0a; }
-.fix-item .fix-name { color: #39d2c0; width: 80px; flex-shrink: 0; }
-.fix-item .fix-time { color: #666; width: 60px; flex-shrink: 0; text-align: right; }
+.fix-item .fix-name { color: #39d2c0; flex-shrink: 0; }
+.fix-item .fix-time { color: #666; flex: 1; text-align: right; }
+
+/* Current time indicator */
+.time-indicator {
+    height: 1px;
+    background: #666;
+    margin: 1px 0;
+    opacity: 0.5;
+    position: relative;
+    margin-left: auto;
+    margin-right: 12px;
+    width: 80px;
+}
+
+.section-title + .fix-list,
+.section-title + .sector-list {
+    flex: 1;
+}
 
 .sector-list {
-    max-height: 200px;
+    flex: 1;
     overflow-y: auto;
 }
 .sector-item {
@@ -111,6 +151,8 @@ header .sub { font-size: 11px; color: #555; }
 }
 .sector-item .sec-name { color: #aaa; width: 100px; flex-shrink: 0; }
 .sector-item .sec-time { color: #666; flex: 1; text-align: right; }
+
+.sector-item:hover { background: #0a0a0a; }
 
 .empty-sidebar {
     display: flex;
@@ -123,4 +165,182 @@ header .sub { font-size: 11px; color: #555; }
     gap: 6px;
     text-align: center;
     padding: 20px;
+}
+
+/* ── ARTCC Labels ────────────────────────────────────── */
+.artcc-label {
+    background: transparent;
+    border: none;
+    padding: 2px 4px;
+    font-size: 10px;
+    font-family: ERAM, Consolas, monospace;
+    font-weight: normal;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    pointer-events: none;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+}
+
+/* ── Aircraft Position Marker ──────────────────────── */
+.aircraft-marker {
+    pointer-events: auto;
+}
+
+.ac-container {
+    position: relative;
+    width: 30px;
+    height: 30px;
+}
+
+.aircraft-symbol {
+    filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+
+.ac-fixed-data-block {
+    position: fixed;
+    pointer-events: none;
+    z-index: 1000;
+}
+
+.ac-fixed-leader {
+    position: absolute;
+    background: linear-gradient(135deg, transparent 48%, #cccc44 48%, #cccc44 52%, transparent 52%);
+    opacity: 0.6;
+}
+
+.ac-data-block {
+    position: absolute;
+    background: rgba(10, 10, 10, 0.85);
+    border: 1px solid #cccc44;
+    padding: 2px 4px;
+    font-family: ERAM, Consolas, monospace;
+    font-size: 9px;
+    color: #cccc44;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+}
+
+.ac-line1 {
+    letter-spacing: 0.5px;
+}
+
+.ac-line2 {
+    font-size: 8px;
+    color: #aaa;
+    letter-spacing: 0.5px;
+}
+
+/* ── Fix/Waypoint Data Block (ERAM style) ───────────── */
+.fix-marker {
+    pointer-events: none;
+}
+
+.fix-container {
+    position: relative;
+    width: 6px;
+    height: 6px;
+}
+
+.fix-dot {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    background: #39d2c0;
+    border: 1px solid #39d2c0;
+    border-radius: 50%;
+    pointer-events: auto;
+    cursor: pointer;
+    left: 0;
+    top: 0;
+}
+
+.fix-block {
+    position: absolute;
+    width: 80px;
+    height: 50px;
+    left: -40px;
+    top: 20px;
+    pointer-events: none;
+}
+
+.fix-leader {
+    position: absolute;
+    width: 2px;
+    height: 20px;
+    left: 42px;
+    top: 0;
+    background: #39d2c0;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.fix-text {
+    position: absolute;
+    left: calc(50% + 3px);
+    transform: translateX(-50%);
+    top: 22px;
+    color: #39d2c0;
+    font-size: 10px;
+    font-family: ERAM, Consolas, monospace;
+    font-weight: normal;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    background: rgba(10, 10, 10, 0.7);
+    padding: 2px 4px;
+    border: 1px solid #39d2c0;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.fix-dot:hover ~ .fix-block .fix-text,
+.fix-dot:hover ~ .fix-block .fix-leader {
+    opacity: 1;
+}
+
+/* ── Endpoint Fix Markers (First/Last) ───────────── */
+.endpoint-icon {
+    pointer-events: auto;
+}
+
+.endpoint-marker {
+    position: relative;
+    width: 12px;
+    height: 12px;
+}
+
+.endpoint-dot {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #cccc44;
+    border: 2px solid #cccc44;
+    border-radius: 50%;
+    left: 0;
+    top: 0;
+    animation: endpoint-flash 3s infinite;
+}
+
+.endpoint-label {
+    position: absolute;
+    left: 18px;
+    top: -6px;
+    color: #cccc44;
+    font-size: 11px;
+    font-family: ERAM, Consolas, monospace;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    background: rgba(10, 10, 10, 0.85);
+    padding: 2px 6px;
+    border: 1px solid #cccc44;
+    animation: endpoint-flash 3s infinite;
+}
+
+@keyframes endpoint-flash {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
 }

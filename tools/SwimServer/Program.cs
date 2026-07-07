@@ -140,6 +140,7 @@ PersistenceBudget.Watch("replay", replayDir, "*.jsonl.gz");
 var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), long.MaxValue, replayDir);
 var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
 var sectorTracker = new SwimServer.SectorTracker();
+var airspaceBridge = new SwimServer.AirspaceBridge();
 var nexradStations = new SwimServer.NexradStations();
 // Lazy: first /api/stars/nexrad/* request triggers a fetch. Refresh once a
 // day in the background so the table stays current with NOAA without
@@ -304,6 +305,7 @@ var serverCtx = new ServerContext
     EramRecorder = eramRecorder,
     ReplayServer = replayServer,
     SectorTracker = sectorTracker,
+    Airspace = airspaceBridge,
     NexradStations = nexradStations,
     WebRootPath = builder.Environment.WebRootPath,
     HistoryDir = historyDir,
@@ -346,6 +348,7 @@ StarsRoutes.Register(app, serverCtx);
 
 // ERAM: /ws snapshot/batch WebSocket + /api/event-xml + /api/flights + /api/stats
 EramRoutes.Register(app, serverCtx);
+AirspaceRoutes.Register(app, serverCtx);
 
 // NASR data endpoints under /api/nasr/* and /api/route/{gufi}
 NasrRoutes.Register(app, serverCtx);
@@ -472,6 +475,8 @@ var cacheJsonOpts = new JsonSerializerOptions
 
 FlightCacheService.Load(flights, cacheDir, cacheJsonOpts);
 sectorTracker.Load(cacheDir);
+airspaceBridge.SetCacheDir(cacheDir);
+airspaceBridge.Load(cacheDir);
 
 // ── Flight history persistence (save purged flights to daily JSONL files) ─────
 // History budget: keep total disk usage under 85%. Calculated dynamically each cleanup cycle.
@@ -493,6 +498,7 @@ lifetime.ApplicationStopping.Register(() =>
     Console.WriteLine("[Cache] Shutdown — saving flight state...");
     FlightCacheService.Save(flights, cacheDir, cacheJsonOpts);
     sectorTracker.Save(cacheDir);
+    airspaceBridge.Save(cacheDir);
 
     // Investigation: flush remaining log entries (uncomment with investigation logger)
     // var remaining = new List<string>();
@@ -1075,6 +1081,7 @@ var sectorTrackerTimer = new Timer(_ =>
     {
         sectorTracker.Snapshot(flights);
         sectorTracker.Save(cacheDir);
+    airspaceBridge.Save(cacheDir);
     }
     catch (Exception ex) { Console.Error.WriteLine($"[SectorTracker] {ex.GetType().Name}: {ex.Message}"); }
 }, null, TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(1));
@@ -1197,6 +1204,14 @@ void ProcessMessage(IMessage message)
     stats.IncrementTotal();
     Interlocked.Exchange(ref lastMessageTicks, DateTime.UtcNow.Ticks);
     Interlocked.Exchange(ref sfdpsEverDelivered, 1);
+
+    // AIRSPACE AIXM sector-assignment snapshots (facility from Solace headers, not XML).
+    if (airspaceBridge.LooksLikeAixm(body))
+    {
+        airspaceBridge.TryProcess(message, body);
+        if (!body.Contains("<flight", StringComparison.OrdinalIgnoreCase))
+            return;
+    }
 
     try
     {

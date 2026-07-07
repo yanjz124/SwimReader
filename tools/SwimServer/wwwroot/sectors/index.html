@@ -155,6 +155,39 @@
     white-space: nowrap;
   }
   .split-no-data { color: var(--dim); font-size: 11px; padding: 8px 0; }
+  .leaflet-control-category {
+    background: #1a1a1a; border: 1px solid #333; border-radius: 4px;
+    padding: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  }
+  .leaflet-control-category select {
+    background: #1a1a1a; color: var(--text); border: 1px solid #333;
+    padding: 4px 8px; font-family: inherit; font-size: 12px; cursor: pointer;
+    border-radius: 2px;
+  }
+  .leaflet-control-category select:focus { outline: 1px solid var(--accent); }
+  .leaflet-control-zoom { background: #1a1a1a !important; border: 1px solid #333 !important; border-radius: 4px !important; }
+  .leaflet-control-zoom a { background: #1a1a1a !important; color: var(--text) !important; border: 1px solid #333 !important; }
+  .leaflet-control-zoom a:hover { background: #2a2a2a !important; }
+  .leaflet-control-zoom a.leaflet-disabled { color: #666 !important; }
+  .sector-popup { background: transparent !important; border: none !important; }
+  .sector-popup .leaflet-popup-content-wrapper { background: #0a0a0a !important; border: 2px solid #00FF00 !important; border-radius: 2px !important; box-shadow: 0 0 8px rgba(0, 255, 0, 0.4) !important; }
+  .sector-popup .leaflet-popup-content { color: #00FF00 !important; font-family: 'Courier New', monospace !important; font-size: 11px !important; margin: 0 !important; padding: 8px !important; text-shadow: 0 0 4px rgba(0, 255, 0, 0.5) !important; }
+  .sector-popup strong { color: #FFFF00 !important; }
+  .sector-popup .leaflet-popup-tip { border-top-color: #00FF00 !important; }
+  #splitLegend {
+    max-height: 200px; overflow-y: auto; background: #0a0a0a; border: 1px solid #333;
+    border-radius: 3px; padding: 8px; font-size: 11px;
+  }
+  .legend-table { width: 100%; border-collapse: collapse; }
+  .legend-row { display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px solid #1a1a1a; align-items: center; }
+  .legend-row:last-child { border-bottom: none; }
+  .legend-primary { min-width: 35px; font-weight: bold; color: var(--text); padding: 4px 8px; border-radius: 2px; text-align: center; }
+  .legend-swatch { width: 16px; height: 16px; border-radius: 2px; flex-shrink: 0; border: 1px solid rgba(0,0,0,0.5); }
+  .legend-sectors { flex: 1; color: #999; font-size: 10px; font-family: 'Courier New', monospace; }
+  #splitLegend::-webkit-scrollbar { width: 6px; }
+  #splitLegend::-webkit-scrollbar-track { background: #0a0a0a; }
+  #splitLegend::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+  #splitLegend::-webkit-scrollbar-thumb:hover { background: #444; }
 
   @media (max-width:900px) {
     main { grid-template-columns:1fr; }
@@ -166,7 +199,7 @@
 <header>
     <a class="home" href="/">← HOME</a>
     <h1>SECTORS</h1>
-    <span class="sub">Active sectors & tracks per facility — live SFDPS</span>
+    <span class="sub">Active controllers & tracks per facility — live SFDPS</span>
     <div class="right">
         <span class="stat">Facilities <b id="totFac">—</b></span>
         <span class="stat">Sectors <b id="totSec">—</b></span>
@@ -247,19 +280,34 @@ function renderList() {
             if (newFac !== selected) {
                 selectedSector = null;
                 transitionsCache = null;
+                // Reset map for facility change
+                splitMap = null;
+                catControl = null;
+                lastRenderedFacility = null;
+                primaryColorMap = {};  // reset colors for new facility
             }
             selected = newFac;
             const url = new URL(location.href);
             url.searchParams.set("facility", selected);
             url.searchParams.delete("sector");
             history.replaceState(null, "", url);
-            renderList(); renderDetail();
+            renderList();
+            renderDetail();
+            // Render map after detail is rendered
+            setTimeout(() => {
+                lastRenderedFacility = selected;
+                ensureSplitMap();
+                renderSplitMap(selected);
+            }, 0);
         });
     });
 }
 
 let selectedSector = null;     // sector ID within the current facility
 let transitionsCache = null;   // last fetched { into, outOf }
+let lastRenderedFacility = null;  // track facility change to avoid re-rendering map on every refresh
+let lastMapDataHash = null;  // track if sector data changed
+let lastMapCategory = null;  // track if category changed
 const initSec = (new URLSearchParams(location.search)).get("sector");
 if (initSec) selectedSector = initSec.toUpperCase();
 
@@ -285,41 +333,78 @@ function renderDetail() {
     if (!selected) { detail.innerHTML = `<div class="empty">Select a facility on the left</div>`; return; }
     const d = data.find(x => x.facility === selected);
     if (!d) { detail.innerHTML = `<div class="empty">${selected} has no current tracks</div>`; return; }
-    const rangeLabel = rangeMin >= 60
-        ? `${rangeMin / 60} h`
-        : `${rangeMin} min`;
-    detail.innerHTML = `
-        <h2>${d.facility} <small>${d.sectorCount} active sectors / ${d.sectors.length} known &middot; sparkline ${rangeLabel} (oldest → now)</small></h2>
-        <div class="summary">
-            <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
-            <div class="stat accent"><b>${d.sectorCount}</b>Active sectors</div>
-            <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsIn,0)}</b>Handoffs in</div>
-            <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsOut,0)}</b>Handoffs out</div>
-        </div>
-        <div class="split-section" id="splitSection">
-            <h3>SECTOR SPLIT MAP <small id="splitMapMeta">loading assignment data…</small></h3>
-            <div id="splitMap"></div>
-            <div id="splitLegend"></div>
-        </div>
-        <div class="sec-grid" id="secGrid">
-        ${d.sectors.map(s => {
-            const zero = s.tracks === 0 ? ' zero' : '';
-            const sel  = s.id === selectedSector ? ' selected' : '';
-            const hin  = s.handoffsIn  ? `<span class="h-in">↘${s.handoffsIn}</span>` : '';
-            const hout = s.handoffsOut ? `<span class="h-out">↗${s.handoffsOut}</span>` : '';
-            const meta = (hin || hout) ? `<div class="meta">${hin}${hout}</div>` : '';
-            return `<div class="sec-cell${zero}${sel}" data-sec="${s.id}" title="Sector ${s.id}">
-                <div class="top">
-                    <span class="id">${s.id}</span>
-                    <span class="tracks">${s.tracks} trk</span>
-                </div>
-                ${sparkSvg(s.history)}
-                ${meta}
+
+    // Check if we're updating the same facility (preserve map)
+    const sameF = selected === lastRenderedFacility;
+
+    if (sameF) {
+        // Same facility: only update summary and sector grid, preserve map
+        const h2 = detail.querySelector('h2');
+        const summary = detail.querySelector('.summary');
+        const grid = detail.querySelector('#secGrid');
+        const trans = detail.querySelector('#transPanel');
+
+        if (h2 && summary && grid) {
+            const rangeLabel = rangeMin >= 60 ? `${rangeMin / 60} h` : `${rangeMin} min`;
+            h2.innerHTML = `${d.facility} <small>${d.sectorCount} active controllers / ${d.sectors.length} known &middot; sparkline ${rangeLabel} (oldest → now)</small>`;
+            summary.innerHTML = `
+                <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
+                <div class="stat accent"><b>${d.sectorCount}</b>Active controllers</div>
+                <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsIn,0)}</b>Handoffs in</div>
+                <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsOut,0)}</b>Handoffs out</div>`;
+            grid.innerHTML = d.sectors.map(s => {
+                const zero = s.tracks === 0 ? ' zero' : '';
+                const sel = s.id === selectedSector ? ' selected' : '';
+                const hin = s.handoffsIn ? `<span class="h-in">↘${s.handoffsIn}</span>` : '';
+                const hout = s.handoffsOut ? `<span class="h-out">↗${s.handoffsOut}</span>` : '';
+                const meta = (hin || hout) ? `<div class="meta">${hin}${hout}</div>` : '';
+                return `<div class="sec-cell${zero}${sel}" data-sec="${s.id}" title="Sector ${s.id}">
+                    <div class="top">
+                        <span class="id">${s.id}</span>
+                        <span class="tracks">${s.tracks} trk</span>
+                    </div>
+                    ${sparkSvg(s.history)}
+                    ${meta}
+                </div>`;
+            }).join('');
+            if (trans) trans.style.display = selectedSector ? '' : 'none';
+        }
+    } else {
+        // New facility: full rebuild with new map section
+        const rangeLabel = rangeMin >= 60 ? `${rangeMin / 60} h` : `${rangeMin} min`;
+        detail.innerHTML = `
+            <h2>${d.facility} <small>${d.sectorCount} active controllers / ${d.sectors.length} known &middot; sparkline ${rangeLabel} (oldest → now)</small></h2>
+            <div class="summary">
+                <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
+                <div class="stat accent"><b>${d.sectorCount}</b>Active controllers</div>
+                <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsIn,0)}</b>Handoffs in</div>
+                <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsOut,0)}</b>Handoffs out</div>
+            </div>
+            <div class="split-section" id="splitSection">
+                <h3>SECTOR SPLIT MAP <small id="splitMapMeta">loading assignment data…</small></h3>
+                <div id="splitMap"></div>
+                <div id="splitLegend"></div>
+            </div>
+            <div class="sec-grid" id="secGrid">
+            ${d.sectors.map(s => {
+                const zero = s.tracks === 0 ? ' zero' : '';
+                const sel = s.id === selectedSector ? ' selected' : '';
+                const hin = s.handoffsIn ? `<span class="h-in">↘${s.handoffsIn}</span>` : '';
+                const hout = s.handoffsOut ? `<span class="h-out">↗${s.handoffsOut}</span>` : '';
+                const meta = (hin || hout) ? `<div class="meta">${hin}${hout}</div>` : '';
+                return `<div class="sec-cell${zero}${sel}" data-sec="${s.id}" title="Sector ${s.id}">
+                    <div class="top">
+                        <span class="id">${s.id}</span>
+                        <span class="tracks">${s.tracks} trk</span>
+                    </div>
+                    ${sparkSvg(s.history)}
+                    ${meta}
+                </div>`;
+            }).join('')}
+            </div>
+            <div class="trans-panel" id="transPanel" ${selectedSector ? '' : 'style="display:none;"'}>
             </div>`;
-        }).join("")}
-        </div>
-        <div class="trans-panel" id="transPanel" ${selectedSector ? '' : 'style="display:none;"'}>
-        </div>`;
+    }
 
     detail.querySelectorAll(".sec-cell").forEach(el => {
         el.addEventListener("click", () => {
@@ -334,23 +419,33 @@ function renderDetail() {
         });
     });
     if (selectedSector) renderTransitionPanel();
-    renderSplitMap(d.facility);
 }
 
 // ── Sector split map (Leaflet + KML + AIXM assignments) ───────────────────
-const SPLIT_MAP_CATS = ['Ultra High', 'High Altitude'];
-const GROUP_COLORS = ['#3366cc', '#33aa66', '#cc8833', '#aa44aa', '#33aaaa', '#cccc44', '#cc5555', '#6666cc', '#88aa33', '#cc6699'];
+const ALL_CATS = ['Ultra High', 'High Altitude', 'Low Altitude'];
+let selectedCat = 'Ultra High';  // default to Ultra High
+const GROUP_COLORS = [
+    '#FF3333', '#FF8C00', '#FFD700', '#00CC00', '#00CCCC', '#0033FF', '#9933FF', '#228B22', '#556B2F', '#00FF99',
+    '#4B0082', '#00CED1', '#32CD32', '#FF4500', '#4169E1', '#DC143C', '#00FA9A', '#2F4F4F', '#87CEEB', '#FF7F50',
+    '#ADFF2F', '#8B4513', '#00BFFF', '#FF6347', '#20B2AA', '#191970', '#F0E68C', '#7FFFD4', '#FF8C69', '#48D1CC'
+];
 
 let splitMap = null;
 let splitMapLayer = null;
 let kmlSectorsCache = null;
 let airspaceCache = {};
+let catControl = null;
+let renderingMap = false;  // prevent concurrent renders
+let primaryColorMap = {};  // track unique color per primary sector
+let highlightedPoly = null;  // track currently highlighted polygon
 
 function colorForPrimary(primary) {
-    let h = 0;
-    const s = String(primary);
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return GROUP_COLORS[h % GROUP_COLORS.length];
+    if (!primaryColorMap[primary]) {
+        // Assign next available color
+        const usedCount = Object.keys(primaryColorMap).length;
+        primaryColorMap[primary] = GROUP_COLORS[usedCount % GROUP_COLORS.length];
+    }
+    return primaryColorMap[primary];
 }
 
 function closeRing(coords) {
@@ -365,6 +460,102 @@ function ringCentroid(coords) {
     let lat = 0, lon = 0;
     for (const [la, lo] of coords) { lat += la; lon += lo; }
     return [lat / coords.length, lon / coords.length];
+}
+
+function boundingBoxCenter(coords) {
+    if (!coords || coords.length === 0) return [0, 0];
+    let minLat = coords[0][0], maxLat = coords[0][0];
+    let minLon = coords[0][1], maxLon = coords[0][1];
+    for (const [la, lo] of coords) {
+        if (la < minLat) minLat = la;
+        if (la > maxLat) maxLat = la;
+        if (lo < minLon) minLon = lo;
+        if (lo > maxLon) maxLon = lo;
+    }
+    return [(minLat + maxLat) / 2, (minLon + maxLon) / 2];
+}
+
+function pointToSegmentDistance(p, a, b) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    if (dx === 0 && dy === 0) return Math.sqrt((p[0]-a[0])**2 + (p[1]-a[1])**2);
+    let t = ((p[0]-a[0])*dx + (p[1]-a[1])*dy) / (dx*dx + dy*dy);
+    t = Math.max(0, Math.min(1, t));
+    const closest = [a[0] + t*dx, a[1] + t*dy];
+    return Math.sqrt((p[0]-closest[0])**2 + (p[1]-closest[1])**2);
+}
+
+function weightedCentroid(coords) {
+    if (!coords || coords.length === 0) return [0, 0];
+
+    // Calculate weight for each point (distance to nearest edge)
+    const weights = coords.map(pt => {
+        let minDist = Infinity;
+        for (let i = 0; i < coords.length; i++) {
+            const d = pointToSegmentDistance(pt, coords[i], coords[(i+1) % coords.length]);
+            minDist = Math.min(minDist, d);
+        }
+        return Math.max(0.1, minDist); // minimum 0.1 to avoid zero weights
+    });
+
+    // Calculate weighted average
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    if (totalWeight === 0) return boundingBoxCenter(coords);
+
+    let weightedLat = 0, weightedLon = 0;
+    for (let i = 0; i < coords.length; i++) {
+        weightedLat += coords[i][0] * weights[i];
+        weightedLon += coords[i][1] * weights[i];
+    }
+
+    return [weightedLat / totalWeight, weightedLon / totalWeight];
+}
+
+function pointToSegmentDistance(p, a, b) {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    if (dx === 0 && dy === 0) return Math.sqrt((p[0]-a[0])**2 + (p[1]-a[1])**2);
+    let t = ((p[0]-a[0])*dx + (p[1]-a[1])*dy) / (dx*dx + dy*dy);
+    t = Math.max(0, Math.min(1, t));
+    const closest = [a[0] + t*dx, a[1] + t*dy];
+    return Math.sqrt((p[0]-closest[0])**2 + (p[1]-closest[1])**2);
+}
+
+function poleOfInaccessibility(coords) {
+    if (!coords || coords.length === 0) return [0, 0];
+    let minLat = coords[0][0], maxLat = coords[0][0];
+    let minLon = coords[0][1], maxLon = coords[0][1];
+    for (const [la, lo] of coords) {
+        if (la < minLat) minLat = la;
+        if (la > maxLat) maxLat = la;
+        if (lo < minLon) minLon = lo;
+        if (lo > maxLon) maxLon = lo;
+    }
+    const width = maxLon - minLon, height = maxLat - minLat;
+    const cellSize = Math.min(width, height) / 4;
+    let bestCell = null, bestDistance = 0;
+
+    // Grid-based search
+    for (let lat = minLat; lat < maxLat; lat += cellSize) {
+        for (let lon = minLon; lon < maxLon; lon += cellSize) {
+            const pt = [lat, lon];
+            let minDist = Infinity;
+            for (let i = 0; i < coords.length; i++) {
+                const d = pointToSegmentDistance(pt, coords[i], coords[(i+1) % coords.length]);
+                minDist = Math.min(minDist, d);
+            }
+            if (minDist > bestDistance) {
+                bestDistance = minDist;
+                bestCell = pt;
+            }
+        }
+    }
+    return bestCell || [(minLat + maxLat) / 2, (minLon + maxLon) / 2];
+}
+
+function hashSectorData(facility) {
+    const d = data.find(x => x.facility === facility);
+    if (!d) return null;
+    // Hash the sector data: IDs + track counts (things that affect map rendering)
+    return JSON.stringify(d.sectors.map(s => ({ id: s.id, tracks: s.tracks, h: s.handoffsIn + s.handoffsOut })));
 }
 
 async function loadKmlSectors() {
@@ -436,93 +627,203 @@ async function fetchAirspace(facility) {
 }
 
 function ensureSplitMap() {
+    const mapEl = document.getElementById('splitMap');
+    if (!mapEl) return;
+
+    // Check if map needs to be recreated (element was replaced)
+    if (splitMap && splitMap.getContainer() !== mapEl) {
+        splitMap.remove();
+        splitMap = null;
+        catControl = null;
+    }
+
     if (splitMap) return;
+
     splitMap = L.map('splitMap', { zoomControl: true, attributionControl: false })
         .setView([39, -98], 5);
+
+    // Add dark basemap for geographic context
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+        attribution: '',
+        opacity: 0.45,
+        zIndex: 1
+    }).addTo(splitMap);
+
     splitMapLayer = L.layerGroup().addTo(splitMap);
+
+    // Create altitude category control
+    const CatControl = L.Control.extend({
+        options: { position: 'topright' },
+        onAdd: (map) => {
+            const div = L.DomUtil.create('div', 'leaflet-control-category');
+            div.innerHTML = `<select id="catSel">
+                <option value="Ultra High" ${selectedCat === 'Ultra High' ? 'selected' : ''}>Ultra High</option>
+                <option value="High Altitude" ${selectedCat === 'High Altitude' ? 'selected' : ''}>High Altitude</option>
+                <option value="Low Altitude" ${selectedCat === 'Low Altitude' ? 'selected' : ''}>Low Altitude</option>
+            </select>`;
+            L.DomEvent.disableClickPropagation(div);
+            const sel = div.querySelector('#catSel');
+            sel.addEventListener('change', () => {
+                selectedCat = sel.value;
+                if (selected) renderSplitMap(selected);
+            });
+            return div;
+        }
+    });
+
+    catControl = new CatControl();
+    catControl.addTo(splitMap);
 }
 
+
 async function renderSplitMap(facility) {
-    const meta = document.getElementById('splitMapMeta');
-    const legend = document.getElementById('splitLegend');
-    if (!facility || !meta || !legend) return;
+    if (renderingMap) return;  // prevent concurrent renders
+    renderingMap = true;
 
-    ensureSplitMap();
-    splitMapLayer.clearLayers();
+    try {
+        const meta = document.getElementById('splitMapMeta');
+        const legend = document.getElementById('splitLegend');
+        if (!facility || !meta || !legend) {
+            renderingMap = false;
+            return;
+        }
 
-    const [kmlAll, airspace] = await Promise.all([
-        loadKmlSectors(),
-        fetchAirspace(facility),
-    ]);
+        ensureSplitMap();
+        splitMapLayer.clearLayers();
+        legend.textContent = '';  // use textContent to clear all content
 
-    const sectors = kmlAll.filter(s =>
-        s.artcc === facility && SPLIT_MAP_CATS.includes(s.category));
-    if (!sectors.length) {
-        meta.textContent = 'no KML boundaries for this facility';
-        legend.innerHTML = '<span class="split-no-data">No sector geometry loaded (AllSectors.kml)</span>';
-        return;
+        const [kmlAll, airspace] = await Promise.all([
+            loadKmlSectors(),
+            fetchAirspace(facility),
+        ]);
+
+        const sectors = kmlAll.filter(s =>
+            s.artcc === facility && s.category === selectedCat);
+        if (!sectors.length) {
+            meta.textContent = 'no KML boundaries for this facility';
+            legend.textContent = '';
+            legend.appendChild(document.createElement('span')).textContent = 'No sector geometry loaded (AllSectors.kml)';
+            renderingMap = false;
+            return;
+        }
+
+        const groupMap = airspace?.sectorToGroup || {};
+        const positions = airspace?.positions || [];
+        const hasSplits = Object.keys(groupMap).length > 0;
+
+        if (!hasSplits) {
+            meta.textContent = 'no AIXM assignment data yet';
+            for (const sec of sectors) {
+                L.polygon(closeRing(sec.coords), {
+                    color: '#555', weight: 1, fillColor: '#222', fillOpacity: 0.4,
+                }).bindTooltip(sec.sectorId).addTo(splitMapLayer);
+            }
+            legend.textContent = '';
+            legend.appendChild(document.createElement('span')).textContent = 'Showing sector outlines only — split assignments appear when AIXM data is received.';
+        } else {
+            const ageMin = airspace.updatedAt
+                ? Math.round((Date.now() - new Date(airspace.updatedAt).getTime()) / 60000)
+                : null;
+            meta.textContent = `${positions.length} controller position(s)` +
+                (ageMin != null ? ` · updated ${ageMin < 120 ? ageMin + 'm' : Math.round(ageMin / 60) + 'h'} ago` : '');
+
+            for (const sec of sectors) {
+                const primary = groupMap[sec.sectorId];
+                const fill = primary ? colorForPrimary(primary) : '#333333';
+                const fillOpacity = primary ? 0.62 : 0.15;
+                const poly = L.polygon(closeRing(sec.coords), {
+                    color: primary ? fill : '#666',
+                    weight: primary ? 1.5 : 1,
+                    fillColor: fill,
+                    fillOpacity,
+                }).addTo(splitMapLayer);
+
+                // Add popup on click with radar styling
+                poly.bindPopup(primary ? `<strong>${sec.sectorId}</strong><br/>Primary: ${primary}` : `<strong>${sec.sectorId}</strong>`, {
+                    className: 'sector-popup'
+                });
+
+                // Store original style for restoration
+                poly._originalWeight = primary ? 1.5 : 1;
+                poly._originalColor = primary ? fill : '#666';
+
+                // Highlight outline on hover - bring to front to ensure border appears on top
+                poly.on('mouseover', function() {
+                    // Reset previously highlighted polygon
+                    if (highlightedPoly && highlightedPoly !== this) {
+                        highlightedPoly.setStyle({
+                            weight: highlightedPoly._originalWeight,
+                            color: highlightedPoly._originalColor
+                        });
+                    }
+                    // Highlight current polygon
+                    this.bringToFront();
+                    this.setStyle({ weight: 4, color: '#FFFF00' });
+                    highlightedPoly = this;
+                });
+                poly.on('mouseout', function() {
+                    this.setStyle({ weight: this._originalWeight, color: this._originalColor });
+                    highlightedPoly = null;
+                });
+            }
+
+            // Deduplicate positions by primarySector
+            const uniquePositions = [];
+            const seenPrimaries = new Set();
+            for (const pos of positions) {
+                if (!seenPrimaries.has(pos.primarySector)) {
+                    uniquePositions.push(pos);
+                    seenPrimaries.add(pos.primarySector);
+                }
+            }
+
+            // Primary-sector labels at weighted centroid (center points weighted by distance from edges)
+            for (const pos of uniquePositions) {
+                const polys = pos.controlledSectors
+                    .map(id => sectors.find(s => s.sectorId === id))
+                    .filter(Boolean);
+                if (!polys.length) continue;
+                const allPts = polys.flatMap(p => p.coords);
+                const c = weightedCentroid(allPts);
+                L.marker(c, {
+                    icon: L.divIcon({ className: 'split-label', html: pos.primarySector, iconSize: [0, 0] }),
+                    interactive: false,
+                }).addTo(splitMapLayer);
+            }
+
+            legend.textContent = '';
+            const table = document.createElement('div');
+            table.className = 'legend-table';
+
+            // Only show primaries that have visible sectors on the map
+            const visiblePrimaries = new Set();
+            for (const sec of sectors) {
+                const primary = groupMap[sec.sectorId];
+                if (primary) visiblePrimaries.add(primary);
+            }
+
+            for (const pos of uniquePositions) {
+                if (!visiblePrimaries.has(pos.primarySector)) continue; // skip if not visible
+
+                const col = colorForPrimary(pos.primarySector);
+                const secs = pos.controlledSectors.join(', ');
+                const row = document.createElement('div');
+                row.className = 'legend-row';
+                row.innerHTML = `
+                    <div class="legend-swatch" style="background:${col}"></div>
+                    <div class="legend-primary" style="background:${col}20;">${pos.primarySector}</div>
+                    <div class="legend-sectors">${secs}</div>`;
+                table.appendChild(row);
+            }
+            legend.appendChild(table);
+        }
+
+        const bounds = L.latLngBounds(sectors.flatMap(s => s.coords));
+        if (bounds.isValid()) splitMap.fitBounds(bounds, { padding: [16, 16] });
+        setTimeout(() => splitMap.invalidateSize(), 50);
+    } finally {
+        renderingMap = false;
     }
-
-    const groupMap = airspace?.sectorToGroup || {};
-    const positions = airspace?.positions || [];
-    const hasSplits = Object.keys(groupMap).length > 0;
-
-    if (!hasSplits) {
-        meta.textContent = 'no AIXM assignment data yet';
-        for (const sec of sectors) {
-            L.polygon(closeRing(sec.coords), {
-                color: '#555', weight: 1, fillColor: '#222', fillOpacity: 0.4,
-            }).bindTooltip(sec.sectorId).addTo(splitMapLayer);
-        }
-        legend.innerHTML = '<span class="split-no-data">Showing sector outlines only — split assignments appear when AIXM data is received.</span>';
-    } else {
-        const ageMin = airspace.updatedAt
-            ? Math.round((Date.now() - new Date(airspace.updatedAt).getTime()) / 60000)
-            : null;
-        meta.textContent = `${positions.length} controller position(s)` +
-            (ageMin != null ? ` · updated ${ageMin < 120 ? ageMin + 'm' : Math.round(ageMin / 60) + 'h'} ago` : '');
-
-        for (const sec of sectors) {
-            const primary = groupMap[sec.sectorId];
-            const fill = primary ? colorForPrimary(primary) : '#333333';
-            const fillOpacity = primary ? 0.62 : 0.15;
-            L.polygon(closeRing(sec.coords), {
-                color: primary ? fill : '#666',
-                weight: primary ? 1.5 : 1,
-                fillColor: fill,
-                fillOpacity,
-            }).bindTooltip(primary ? `${sec.sectorId} → ${primary}` : sec.sectorId)
-              .addTo(splitMapLayer);
-        }
-
-        // Primary-sector labels at group centroids
-        for (const pos of positions) {
-            const polys = pos.controlledSectors
-                .map(id => sectors.find(s => s.sectorId === id))
-                .filter(Boolean);
-            if (!polys.length) continue;
-            const allPts = polys.flatMap(p => p.coords);
-            const c = ringCentroid(allPts);
-            L.marker(c, {
-                icon: L.divIcon({ className: 'split-label', html: pos.primarySector, iconSize: [0, 0] }),
-                interactive: false,
-            }).addTo(splitMapLayer);
-        }
-
-        legend.innerHTML = positions.map(pos => {
-            const col = colorForPrimary(pos.primarySector);
-            const secs = pos.controlledSectors.join(', ');
-            return `<div class="leg-item">
-                <span class="swatch" style="background:${col}"></span>
-                <span class="leg-primary">${pos.primarySector}</span>
-                <span class="leg-secs">${secs}</span>
-            </div>`;
-        }).join('');
-    }
-
-    const bounds = L.latLngBounds(sectors.flatMap(s => s.coords));
-    if (bounds.isValid()) splitMap.fitBounds(bounds, { padding: [16, 16] });
-    setTimeout(() => splitMap.invalidateSize(), 50);
 }
 
 async function loadTransitions() {
@@ -571,10 +872,21 @@ if (rangeSel) rangeSel.addEventListener("change", () => {
     history.replaceState(null, "", url);
     refresh();
 });
-refresh();
-if (selected && selectedSector) loadTransitions();
+refresh().then(() => {
+    // Render map after initial data load
+    if (selected) {
+        lastRenderedFacility = selected;
+        renderSplitMap(selected);
+    }
+    if (selected && selectedSector) loadTransitions();
+});
 setInterval(refresh, 5000);
-setInterval(() => { if (selected) renderSplitMap(selected); }, 60000);
+setInterval(() => {
+    // Refresh map data periodically (AIXM assignments, etc.)
+    if (selected && selected === lastRenderedFacility) {
+        renderSplitMap(selected);
+    }
+}, 60000);
 // Refresh transitions slower since counts only change on handoffs.
 setInterval(() => { if (selected && selectedSector) loadTransitions(); }, 30000);
 </script>

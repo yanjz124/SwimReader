@@ -42,6 +42,7 @@ class ServerContext
     public required ReplayRecorder EramRecorder { get; init; }
     public required ReplayServer ReplayServer { get; init; }
     public required SectorTracker SectorTracker { get; init; }
+    public required AirspaceBridge Airspace { get; init; }
     public required NexradStations NexradStations { get; init; }
 
     // ── Filesystem paths ────────────────────────────────────────────────────

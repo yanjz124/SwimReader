@@ -1606,7 +1606,6 @@ function setBoundaryBrightness(cat, brightness) {
         boundaryLayers[key] = group;
         boundaryLayers[key].addTo(map);
     } else {
-        // Update color on existing polylines
         const dashArray = getBoundaryDashArray(cat);
         const styleUpdate = { color: col };
         if (dashArray) styleUpdate.dashArray = dashArray;

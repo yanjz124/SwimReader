@@ -192,15 +192,17 @@ sealed class AirspaceBridge
 
                 if (favs.Count == 0) continue;
 
+                // KML sector names use the full FAV padded with a leading zero
+                // (e.g. FAV 2101 → KML id 02101), not a 2-digit sector prefix.
                 var controlled = favs
-                    .Select(f => NormalizeSectorId(f[..2]))
+                    .Select(FavToKmlSectorId)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(s => s, SectorIdComparer.Instance)
                     .ToArray();
 
                 list.Add(new SplitPosition
                 {
-                    PrimarySector = NormalizeSectorId(designator),
+                    PrimarySector = designator.Trim(),
                     ControlledSectors = controlled,
                     FavNumbers = favs.ToArray(),
                 });
@@ -226,12 +228,12 @@ sealed class AirspaceBridge
         return map;
     }
 
-    internal static string NormalizeSectorId(string id)
+    /// <summary>Map a SWIM FAV number to the KML sector id (e.g. 2101 → 02101).</summary>
+    internal static string FavToKmlSectorId(string fav)
     {
-        id = id.Trim().ToUpperInvariant();
-        // Strip leading zeros for numeric sectors (032 → 32) but keep suffixes (30R).
-        var m = Regex.Match(id, @"^0+(\d+)(.*)$");
-        return m.Success ? m.Groups[1].Value + m.Groups[2].Value : id;
+        var digits = new string(fav.Trim().Where(char.IsDigit).ToArray());
+        if (digits.Length == 0) return fav.Trim();
+        return digits.Length >= 5 ? digits : digits.PadLeft(5, '0');
     }
 
     // ── Persistence ─────────────────────────────────────────────────────────

@@ -1447,6 +1447,80 @@ const BOUNDARY_CAT_LABELS = { 'Ultra High': 'UHI', 'High Altitude': 'HI', 'Low A
 const BOUNDARY_CAT_SLIDER = { 'Ultra High': 'rng-bnd-uhi', 'High Altitude': 'rng-bnd-hi', 'Low Altitude': 'rng-bnd-lo', 'Approach Control': 'rng-bnd-app' };
 const BOUNDARY_CAT_LABEL = { 'Ultra High': 'lbl-bnd-uhi', 'High Altitude': 'lbl-bnd-hi', 'Low Altitude': 'lbl-bnd-lo', 'Approach Control': 'lbl-bnd-app' };
 let boundaryBrightness = { 'Ultra High': 60, 'High Altitude': 60, 'Low Altitude': 0, 'Approach Control': 30 };
+let splitMapsEnabled = false;
+let airspaceSplits = null;   // latest /api/airspace/{fac} payload
+let _airspacePollTimer = null;
+
+const SPLIT_HUES = [48, 85, 160, 200, 280, 330, 15, 120];
+
+function normSectorId(id) {
+    const s = String(id || '').trim().toUpperCase();
+    const m = s.match(/^0+(\d+)(.*)$/);
+    return m ? m[1] + m[2] : s;
+}
+
+function splitGroupColor(primarySector, isPrimary) {
+    let h = 0;
+    const s = String(primarySector);
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    const hue = SPLIT_HUES[h % SPLIT_HUES.length];
+    return `hsl(${hue}, 72%, ${isPrimary ? 58 : 42}%)`;
+}
+
+function getSectorSplitGroup(sectorId) {
+    if (!airspaceSplits?.sectorToGroup) return null;
+    const norm = normSectorId(sectorId);
+    return airspaceSplits.sectorToGroup[norm] || airspaceSplits.sectorToGroup[sectorId] || null;
+}
+
+function boundaryColorForSector(sectorId, catBrightness) {
+    if (!splitMapsEnabled || !airspaceSplits?.sectorToGroup)
+        return bndColor(catBrightness);
+    const group = getSectorSplitGroup(sectorId);
+    if (!group) return bndColor(Math.max(12, Math.round(catBrightness * 0.35)));
+    const isPrimary = normSectorId(sectorId) === normSectorId(group);
+    return splitGroupColor(group, isPrimary);
+}
+
+function boundaryWeightForSector(sectorId) {
+    if (!splitMapsEnabled || !airspaceSplits?.sectorToGroup) return 1;
+    const group = getSectorSplitGroup(sectorId);
+    if (!group) return 1;
+    return normSectorId(sectorId) === normSectorId(group) ? 2 : 1;
+}
+
+function updateSplitMapsAgeLabel() {
+    const el = document.getElementById('lbl-split-maps-age');
+    if (!el) return;
+    if (!airspaceSplits?.updatedAt) { el.textContent = ''; return; }
+    const ageMin = Math.round((Date.now() - new Date(airspaceSplits.updatedAt).getTime()) / 60000);
+    el.textContent = ageMin < 120 ? `${ageMin}m ago` : `${Math.round(ageMin / 60)}h ago`;
+}
+
+async function loadAirspaceSplits(facility) {
+    if (!facility) {
+        airspaceSplits = null;
+        updateSplitMapsAgeLabel();
+        return;
+    }
+    try {
+        const resp = await fetch(`/api/airspace/${encodeURIComponent(facility)}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.positions?.length > 0 || Object.keys(data.sectorToGroup || {}).length > 0) {
+            airspaceSplits = data;
+            updateSplitMapsAgeLabel();
+            if (splitMapsEnabled && myFacility) showBoundariesForFacility(myFacility);
+        }
+    } catch (e) { console.warn('[AIRSPACE]', e); }
+}
+
+function startAirspacePolling() {
+    if (_airspacePollTimer) clearInterval(_airspacePollTimer);
+    _airspacePollTimer = setInterval(() => {
+        if (myFacility) loadAirspaceSplits(myFacility);
+    }, 60000);
+}
 
 function bndColor(brightness) {
     const v = Math.round(brightness * 2.55);
@@ -1547,7 +1621,9 @@ function showBoundariesForFacility(artcc) {
             const group = L.layerGroup();
             const dash = cat === 'Approach Control' ? '8 4' : '16 8';
             for (const sec of kmlSectors.filter(s => s.artcc === artcc && s.category === cat)) {
-                L.polyline(sec.coords, { color: bndColor(br), weight: 1, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
+                const col = boundaryColorForSector(sec.sectorId, br);
+                const wt = boundaryWeightForSector(sec.sectorId);
+                L.polyline(sec.coords, { color: col, weight: wt, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
             }
             boundaryLayers[key] = group;
         }
@@ -1568,12 +1644,21 @@ function setBoundaryBrightness(cat, brightness) {
         const group = L.layerGroup();
         const dash = cat === 'Approach Control' ? '8 4' : '16 8';
         for (const sec of kmlSectors.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat)) {
-            L.polyline(sec.coords, { color: col, weight: 1, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
+            const c = splitMapsEnabled ? boundaryColorForSector(sec.sectorId, brightness) : col;
+            const wt = boundaryWeightForSector(sec.sectorId);
+            L.polyline(sec.coords, { color: c, weight: wt, opacity: 1, dashArray: dash, interactive: false, className: 'bnd-path' }).addTo(group);
         }
         boundaryLayers[key] = group;
         boundaryLayers[key].addTo(map);
     } else {
         // Update color on existing polylines
+        if (splitMapsEnabled) {
+            // Rebuild layer when split coloring is active (per-sector colors).
+            map.removeLayer(boundaryLayers[key]);
+            delete boundaryLayers[key];
+            setBoundaryBrightness(cat, brightness);
+            return;
+        }
         boundaryLayers[key].eachLayer(l => l.setStyle({ color: col }));
         if (!map.hasLayer(boundaryLayers[key])) boundaryLayers[key].addTo(map);
     }
@@ -3734,6 +3819,21 @@ document.getElementById('sel-facility').addEventListener('change', function () {
     rebuildSectorCheckboxes();
     showBoundariesForFacility(myFacility);
     zoomToFacility(myFacility);
+    loadAirspaceSplits(myFacility);
+    saveSettingsToLocalStorage();
+});
+
+document.getElementById('chk-split-maps')?.addEventListener('change', function () {
+    splitMapsEnabled = this.checked;
+    // Force boundary rebuild for per-sector colors.
+    for (const cat of BOUNDARY_CATS) {
+        const key = `${activeBoundaryArtcc}:${cat}`;
+        if (boundaryLayers[key]) {
+            map.removeLayer(boundaryLayers[key]);
+            delete boundaryLayers[key];
+        }
+    }
+    showBoundariesForFacility(myFacility);
     saveSettingsToLocalStorage();
 });
 
@@ -4973,6 +5073,7 @@ function loadSettingsFromLocalStorage() {
         if (settings.altFilterHigh !== undefined) altFilterHigh = settings.altFilterHigh;
         if (settings.ldbBrightness !== undefined) ldbBrightness = settings.ldbBrightness;
         if (settings.facilityOnly !== undefined) facilityOnly = settings.facilityOnly;
+        if (settings.splitMapsEnabled !== undefined) splitMapsEnabled = settings.splitMapsEnabled;
         if (settings.mcaKb !== undefined) document.getElementById('chk-mca-kb').checked = settings.mcaKb;
         if (settings.numinv !== undefined) document.getElementById('numpad-inverted').checked = !settings.numinv;
         if (settings.nasrBrightness) Object.assign(nasrBrightness, settings.nasrBrightness);
@@ -5007,6 +5108,8 @@ function loadSettingsFromLocalStorage() {
         document.getElementById(BOUNDARY_CAT_LABEL[cat]).textContent = boundaryBrightness[cat];
     }
     document.getElementById('chk-facility-only').checked = facilityOnly;
+    const splitChk = document.getElementById('chk-split-maps');
+    if (splitChk) splitChk.checked = splitMapsEnabled;
     document.getElementById('chk-mapbg').checked = showMapBg;
     document.getElementById('sel-line4').value = line4Mode;
     document.getElementById('sel-fontsize').value = fontSize;
@@ -5063,6 +5166,7 @@ function saveSettingsToLocalStorage() {
         altFilterHigh,
         ldbBrightness,
         facilityOnly,
+        splitMapsEnabled,
         mcaKb: document.getElementById('chk-mca-kb')?.checked || false,
         mcaVisible: document.getElementById('chk-mca')?.checked !== false,
         raVisible: document.getElementById('chk-ra')?.checked !== false,
@@ -8447,6 +8551,8 @@ try {
 loadSettingsFromLocalStorage();
 rebuildFacilityDropdown();
 rebuildSectorCheckboxes();
+if (myFacility) loadAirspaceSplits(myFacility);
+startAirspacePolling();
 
 // Save map position/zoom on pan/zoom (debounced)
 let _mapSaveTimer = null;

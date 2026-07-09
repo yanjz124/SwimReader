@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 5631 / 6962** (+ SaveSettings [XmlSerializer + file-write adaptation], DrawRangeRings, DrawCircle [double + GeoPoint overloads merged], DrawTPA [ATPA caution/alert/monitor cone selection], DrawJRing [J-ring circle + leader-positioned label], DrawPCone [Aircraft/TPACone overloads merged; TPACone body → #DrawPConeCore stub, next chunk], DrawATPACone, static RoundUpToNearest [identity, C# @6927]; + ShowRangeRings/RangeRingColor fields). Imports: ATPAStatus, PrimitiveType.
+**RadarWindow.cs port progress: lines 5812 / 6962** (+ #DrawPConeCore [TPACone cone geometry — fills prior stub], DrawVideoMapLines [A/B category maps w/ Max-blend], DrawLines, DrawLine [3 overloads: PointF/PointF, Line, and core double×4+width — merged], DrawPolygon [+ stipple], DrawNexrad; + dataBlocks/posIndicators List fields). New shim: `Collections.List` (Array + Add/Remove/RemoveAt/Clear/Contains/Count) — backs the List<TransparentLabel> fields DeletePlane already used via .Remove.
+
+Prior: **lines 5631** (+ SaveSettings, DrawRangeRings, DrawCircle, DrawTPA, DrawJRing, DrawPCone, DrawATPACone, RoundUpToNearest).
 
 Prior: **lines 5423** (+ DrawCASuppressionVolumes, DrawMinSeps, DrawRBLs, DrawStatic, GetActiveSpcCodes, RenderSSAAlertCodes, Window_Load, Window_Closing).
 

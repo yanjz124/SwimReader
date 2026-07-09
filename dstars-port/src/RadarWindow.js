@@ -36,7 +36,7 @@ import { Matrix4 } from "./_shims/OpenTK.js";
 import { MathHelper } from "./_shims/MathHelper.js";
 import { Timer, TimerCallback } from "./_shims/Threading.js";
 import { MD5 } from "./_shims/Crypto.js";
-import { ObservableCollection, NotifyCollectionChangedAction } from "./_shims/Collections.js";
+import { ObservableCollection, NotifyCollectionChangedAction, List } from "./_shims/Collections.js";
 import { TCP } from "./STARS/TCP.js";
 import { MapCategory } from "./VideoMap.js";
 import { tryParseInt } from "./_shims/Primitives.js";
@@ -4064,7 +4064,57 @@ export class RadarWindow {
         // DrawPCone(TPACone cone) — ported in the next chunk
         this.#DrawPConeCore(planeOrCone);
     }
-    #DrawPConeCore(cone) { /* DrawPCone(TPACone) body — ported in the next chunk */ }
+    #DrawPConeCore(cone) { // private void DrawPCone(TPACone cone)
+        if (cone == null || cone.ParentAircraft == null) {
+            return;
+        }
+        let plane = cone.ParentAircraft; // Aircraft
+        let track = 0;
+        if (cone.Track == null)
+            track = plane.SweptTrack(this.#radar);
+        else
+            track = cone.Track; // (double)cone.Track
+        let planelocation = plane.SweptLocation(this.#radar); // GeoPoint
+        let location = this.GeoToScreenPoint(planelocation); // PointF
+        let textline = new Line(planelocation, planelocation.FromPoint(cone.Miles, track));
+
+        if (cone.Miles < 10) {
+            cone.Label.Text = String(cone.Miles); // cone.Miles.ToString()
+        }
+        else {
+            cone.Label.Text = String(Math.trunc(cone.Miles)); // ((int)cone.Miles).ToString()
+        }
+
+        let endwidth = this.#pixelScale * this.TPAConeWidth;
+        let y = cone.Miles / this.#scale; // (float)cone.Miles / scale
+        //var endwidth = y * (2d / 30);
+        let x1 = endwidth / 2;
+        let x2 = -x1;
+        let clearanceWidth = cone.ShowSize ? (Math.sqrt(Math.pow(cone.Label.Height, 2) + Math.pow(cone.Label.Width, 2)) * this.#pixelScale) : 0;
+        if (y > clearanceWidth) {
+            GL.Translate(location.X, location.Y, 0.0);
+            GL.PushMatrix();
+            GL.Rotate(-track + this.ScreenRotation, 0, 0, 1);
+            let y1 = y / 2 - clearanceWidth / 2;
+            let y2 = y1 + clearanceWidth;
+            let x3 = x1 * (y1 / y);
+            let x4 = -x3;
+            let x5 = (y2 / y1) * x3;
+            let x6 = -x5;
+            let color = RadarWindow.AdjustedColor(cone.Color, this.CurrentPrefSet.Brightness.Tools);
+            this.DrawLine(0, 0, x3, y1, color);
+            this.DrawLine(0, 0, x4, y1, color);
+            this.DrawLine(x5, y2, x1, y, color);
+            this.DrawLine(x6, y2, x2, y, color);
+            this.DrawLine(x1, y, x2, y, color);
+            GL.PopMatrix();
+            GL.Translate(-location.X, -location.Y, 0.0);
+            cone.Label.ForeColor = cone.Color;
+            cone.Label.CenterOnPoint(this.GeoToScreenPoint(textline.MidPoint));
+            if (cone.ShowSize)
+                this.DrawLabel(cone.Label);
+        }
+    }
     DrawATPACone(plane) { // (Aircraft plane)
         this.DrawPCone(plane.ATPACone);
     }
@@ -4074,5 +4124,112 @@ export class RadarWindow {
         return passednumber;
     }
 
-    // ===== PORTED THROUGH LINE 5631 / 6962 — next chunk continues here (DrawPCone(TPACone) body @5632 → #DrawPConeCore) =====
+    DrawVideoMapLines() {
+        let lines = new List(); // List<Line>
+        if (this.VideoMaps.length > 0) {
+            this.CurrentPrefSet.DisplayedMaps = this.VideoMaps.filter(x => x.Visible).map(x => x.Number); // .Select(...).ToArray()
+        }
+        // Use Max blending so overlapping lines always show the brighter color
+        GL.BlendEquation(BlendEquationMode.Max);
+        for (const map of this.VideoMaps.filter(map => map.Category === MapCategory.A)) {
+            if (this.CurrentPrefSet.DisplayedMaps.includes(map.Number)) {
+                lines.AddRange(map.Lines);
+            }
+        }
+        let colora = RadarWindow.AdjustedColor(this.VideoMapLineColor, this.CurrentPrefSet.Brightness.MapA);
+        this.DrawLines(lines, colora);
+        lines.Clear();
+        for (const map of this.VideoMaps.filter(map => map.Category === MapCategory.B)) {
+            if (this.CurrentPrefSet.DisplayedMaps.includes(map.Number)) {
+                lines.AddRange(map.Lines);
+            }
+        }
+        let colorb = RadarWindow.AdjustedColor(this.VideoMapBLineColor, this.CurrentPrefSet.Brightness.MapB);
+        this.DrawLines(lines, colorb);
+        // Restore standard alpha blending for subsequent rendering
+        GL.BlendEquation(BlendEquationMode.FuncAdd);
+    }
+
+    DrawLines(lines, color) { // (List<Line> lines, Color color)
+        GL.PushMatrix();
+        GL.MultMatrix(this.geoToScreen); // MultMatrix(ref geoToScreen)
+        for (const line of lines) {
+            this.DrawLine(line.End1.Longitude, line.End1.Latitude, line.End2.Longitude, line.End2.Latitude, color);
+        }
+        GL.PopMatrix();
+    }
+
+    // C# overloads DrawLine(PointF,PointF,Color), DrawLine(Line,Color), DrawLine(double,double,double,double,Color,width=1)
+    // merged; dispatched on the first argument's type.
+    DrawLine(a, b, c, d, e, f) {
+        if (a instanceof Line) { // DrawLine(Line line, Color color) → b = color
+            /* dead code kept out (GeoToScreenPoint end1/end2) */
+            GL.PushMatrix();
+            GL.MultMatrix(this.geoToScreen); // MultMatrix(ref geoToScreen)
+            this.DrawLine(a.End1.Longitude, a.End1.Latitude, a.End2.Longitude, a.End2.Latitude, b);
+            GL.PopMatrix();
+            return;
+        }
+        if (a instanceof PointF) { // DrawLine(PointF Point1, PointF Point2, Color color) → b=Point2, c=color
+            this.DrawLine(a.X, a.Y, b.X, b.Y, c);
+            return;
+        }
+        // DrawLine(double x1, double y1, double x2, double y2, Color color, float width = 1)
+        let x1 = a, y1 = b, x2 = c, y2 = d, color = e, width = (f === undefined ? 1 : f);
+        //x1 = RoundUpToNearest(x1, pixelScale); … (commented in source)
+        GL.Begin(PrimitiveType.Lines);
+        GL.LineWidth(width);
+        GL.Color4(color);
+        GL.Vertex2(x1, y1);
+        GL.Vertex2(x2, y2);
+        GL.End();
+    }
+
+    DrawPolygon(polygon) { // (Polygon polygon)
+        //GL.Scale(aspect_ratio, 1.0f, 1.0f);
+        GL.Begin(PrimitiveType.Polygon);
+        let color = RadarWindow.AdjustedColor(polygon.Color, this.CurrentPrefSet.Brightness.Weather);
+        GL.Color4(color);
+        for (let i = 0; i < polygon.vertices.length; i++) {
+            GL.Vertex2(polygon.vertices[i].X, polygon.vertices[i].Y);
+        }
+        GL.End();
+        if (polygon.StippleColor != null && polygon.StipplePattern.length === 128) {
+            GL.Enable(EnableCap.PolygonStipple);
+            GL.PolygonStipple(polygon.StipplePattern);
+            GL.Begin(PrimitiveType.Polygon);
+            let scolor = RadarWindow.AdjustedColor(polygon.StippleColor, this.CurrentPrefSet.Brightness.Weather);
+            GL.Color4(scolor);
+            for (let i = 0; i < polygon.vertices.length; i++) {
+                GL.Vertex2(polygon.vertices[i].X, polygon.vertices[i].Y);
+            }
+            GL.End();
+            GL.Disable(EnableCap.PolygonStipple);
+        }
+    }
+
+    DrawNexrad() {
+        //convert old nexrads list to new nexrad object
+        if (this.Nexrads != null && this.Nexrads.length > 0) {
+            this.Nexrad = this.Nexrads[0];
+            this.Nexrad.ColorTable = new List(); // new List<WXColor>()
+            this.Nexrads = null;
+        }
+
+        let polygons = this.Nexrad.Polygons();
+        GL.PushMatrix();
+        GL.MultMatrix(this.geoToScreen); // MultMatrix(ref geoToScreen)
+
+        for (let i = 0; i < polygons.length; i++) {
+            if (polygons[i].Color.A > 0)
+                this.DrawPolygon(polygons[i]);
+        }
+
+        GL.PopMatrix();
+    }
+
+    dataBlocks = new List();    // List<TransparentLabel> (referenced by DeletePlane/GenerateDataBlock)
+    posIndicators = new List(); // List<TransparentLabel>
+
+    // ===== PORTED THROUGH LINE 5812 / 6962 — next chunk continues here (GenerateDataBlock @5815) =====
 }

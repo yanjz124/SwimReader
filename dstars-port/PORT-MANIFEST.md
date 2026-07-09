@@ -78,4 +78,5 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 882 / 6962** (+ nav/altitude/radar config, TargetExtentSymbols init, Font/DCBFont props, NTP props, prefset, 5 TransparentLabels, constructors + stub Initialize).
+**RadarWindow.cs port progress: lines 1110 / 6962** (+ AdjustedColor, LoadVideoMapFile [async adaptation], real Initialize — window-event wiring, GC/wx timers, MD5 settings-hash, ObservableCollection Aircraft).
+New shims this chunk: `_shims/Collections.js` (ObservableCollection + NotifyCollectionChanged*), `_shims/Threading.js` (Timer/TimerCallback), `_shims/Crypto.js` (sync MD5, RFC-1321, test-verified). GameWindow shim gained OpenTK window events + Title.

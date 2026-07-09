@@ -30,10 +30,17 @@ import { WeatherService } from "./WeatherService.js";
 import { XmlSerializer } from "./XmlSerializer.js";
 import { MSAWImporter } from "./MSAWImporter.js";
 import { TargetExtentSymbols, SearchTargetParams, AzimuthExtentValues, FusedTrackTargetSymbolParams, BeaconTargetParams, FMATargetSymbolParams } from "./STARS/TargetExtentSymbols.js";
+import { GL } from "./_shims/GL.js";
+import { Timer, TimerCallback } from "./_shims/Threading.js";
+import { MD5 } from "./_shims/Crypto.js";
+import { ObservableCollection, NotifyCollectionChangedAction } from "./_shims/Collections.js";
+import { TCP } from "./STARS/TCP.js";
+import { MapCategory } from "./VideoMap.js";
+import { tryParseInt } from "./_shims/Primitives.js";
 
 export class RadarWindow {
     // ── static members used across the module graph (keep live during the chunked port) ──
-    static Aircraft = [];  // ObservableCollection<Aircraft>  (real init reached in a later chunk)
+    static Aircraft = new ObservableCollection();  // ObservableCollection<Aircraft>
 
     static ParseLDR(direction) { // static LeaderDirection
         if (direction == null)
@@ -435,8 +442,172 @@ export class RadarWindow {
     Airports = new Airports().Airport;    // List<Airport>
     #wx = new WeatherService();           // WeatherService
 
-    // Stub — real Initialize()/OrderWaypoints()/PositionChange()/cbWxUpdateTimer() ported in later chunks.
-    Initialize() { /* GL/timer/event setup — ported in a later chunk */ }
+    #aircraftGCTimer; // Timer
+    #settingshash;    // byte[]
 
-    // ===== PORTED THROUGH LINE 882 / 6962 — next chunk continues here (AdjustedColor @883 already ported) =====
+    // ADAPTATION: VideoMapList.DeserializeFromJsonFile is async (fetch) in the browser, so this
+    // method — synchronous void in C# — becomes async. Callers are fire-and-forget or awaited.
+    async LoadVideoMapFile() {
+        try {
+            this.VideoMaps.Clear(); // Start fresh
+
+            // NEW MULTI-FILE SYSTEM: Check if VideoMapFiles has entries
+            if (this.VideoMapFiles != null && this.VideoMapFiles.length > 0) {
+                // Warn about duplicate map numbers
+                let counts = new Map();
+                for (const vmf of this.VideoMapFiles) counts.set(vmf.MapNumber, (counts.get(vmf.MapNumber) || 0) + 1);
+                let duplicateMapNumbers = [...counts.entries()].filter(([, c]) => c > 1).map(([k]) => k);
+
+                if (duplicateMapNumbers.length > 0) { // Any()
+                    console.log( // MessageBox.Show
+                        `Warning: Duplicate MapNumber(s) detected in VideoMapFiles: ${duplicateMapNumbers.join(", ")}\n` +
+                        "Maps will be auto-renumbered to avoid conflicts.");
+                }
+
+                // Clear DCBMapList to prevent old button assignments from persisting
+                for (let i = 0; i < TCP.DCBMapList.length; i++) {
+                    TCP.DCBMapList[i] = -1; // -1 means unassigned (no map will match)
+                }
+
+                // Load from multiple configured files
+                let nextAutoMapNumber = 1; // For auto-assigning map numbers when not specified
+
+                for (const mapFile of this.VideoMapFiles) {
+                    if (mapFile.Filepath == null || mapFile.Filepath === "") { // IsNullOrEmpty
+                        console.log("VideoMapFile entry has empty Filepath. Skipping.");
+                        continue;
+                    }
+
+                    // ADAPTATION: System.IO.File.Exists cannot be checked synchronously in the browser;
+                    // a missing file surfaces as a fetch failure caught by the try/catch below.
+                    // if (!System.IO.File.Exists(mapFile.Filepath)) { … continue; }
+
+                    // Load maps from this file
+                    let loadedMaps = null; // VideoMapList
+                    try {
+                        loadedMaps = await VideoMapList.DeserializeFromJsonFile(mapFile.Filepath);
+                    }
+                    catch (loadEx) {
+                        console.log( // MessageBox.Show
+                            `Failed to parse GeoJSON file: ${mapFile.Filepath}\n\n` +
+                            `Error: ${loadEx.message}\n\n` +
+                            `Ensure the file is valid GeoJSON with LineString or GeometryCollection features.`);
+                        continue;
+                    }
+
+                    if (loadedMaps == null || loadedMaps.length === 0) {
+                        console.log( // MessageBox.Show
+                            `No maps found in file: ${mapFile.Filepath}\n\n` +
+                            `The file was loaded but contains no displayable map data.`);
+                        continue;
+                    }
+
+                    // Apply metadata from XML configuration to loaded maps
+                    let assignedMapNumber = mapFile.MapNumber; // Track actual assigned number for DCB mapping
+
+                    for (const map of loadedMaps) {
+                        // Fallback to filename (without extension) if names not specified
+                        let fallbackName = this.#getFileNameWithoutExtension(mapFile.Filepath); // Path.GetFileNameWithoutExtension
+
+                        // Auto-assign map number if not specified (0 or negative)
+                        if (mapFile.MapNumber <= 0) {
+                            map.Number = nextAutoMapNumber++;
+                            assignedMapNumber = map.Number; // Remember the auto-assigned number
+                        }
+                        else {
+                            map.Number = mapFile.MapNumber;
+                        }
+
+                        if (!(mapFile.ShortName == null || mapFile.ShortName === "")) // !IsNullOrEmpty
+                            map.Mnemonic = mapFile.ShortName;
+                        else
+                            map.Mnemonic = fallbackName;
+
+                        if (!(mapFile.FullName == null || mapFile.FullName === "")) // !IsNullOrEmpty
+                            map.Name = mapFile.FullName;
+                        else
+                            map.Name = fallbackName;
+
+                        // BrightnessGroup defaults to A if not specified
+                        map.Category = mapFile.BrightnessGroup;
+
+                        // Add to master collection (handles number conflicts automatically)
+                        this.VideoMaps.Add(map);
+                    }
+
+                    // Update DCBMapList if DCBButton is specified (single "3" or comma-separated "3,11")
+                    if (!(mapFile.DCBButton == null || mapFile.DCBButton.trim() === "")) { // !IsNullOrWhiteSpace
+                        let buttonStrings = mapFile.DCBButton.split(/[,;]/).filter(s => s.length > 0); // Split(RemoveEmptyEntries)
+                        for (const buttonStr of buttonStrings) {
+                            let buttonNumber = { value: 0 };
+                            if (tryParseInt(buttonStr.trim(), buttonNumber)) {
+                                if (buttonNumber.value >= 1 && buttonNumber.value <= TCP.DCBMapList.length) {
+                                    TCP.DCBMapList[buttonNumber.value - 1] = assignedMapNumber;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // BACKWARD COMPATIBILITY: Fall back to old single-file system
+            else if (!(this.#videoMapFilename == null || this.#videoMapFilename === "")) { // !IsNullOrEmpty(videoMapFilename)
+                this.VideoMaps = await VideoMapList.DeserializeFromJsonFile(this.#videoMapFilename);
+            }
+
+            // Apply visibility state from preferences
+            if (this.VideoMaps != null && this.CurrentPrefSet != null && this.CurrentPrefSet.DisplayedMaps != null) {
+                this.VideoMaps.forEach(x => x.Visible = this.CurrentPrefSet.DisplayedMaps.includes(x.Number)); // Contains
+            }
+        }
+        catch (ex) {
+            console.log(`Error loading video maps: ${ex.message}\n\nStack trace:\n${ex.stack}`); // MessageBox.Show
+        }
+    }
+
+    // Path.GetFileNameWithoutExtension helper (no System.IO in the browser).
+    #getFileNameWithoutExtension(path) {
+        let base = path.split(/[\\/]/).pop();
+        let dot = base.lastIndexOf(".");
+        return dot > 0 ? base.substring(0, dot) : base;
+    }
+
+    Initialize() {
+        this.#window.Title = "DGScope";
+        this.#window.Load.add(this.Window_Load.bind(this));                       // window.Load += Window_Load
+        this.#window.Closing.add(this.Window_Closing.bind(this));
+        this.#window.RenderFrame.add(this.Window_RenderFrame.bind(this));
+        this.#window.UpdateFrame.add(this.Window_UpdateFrame.bind(this));
+        this.#window.Resize.add(this.Window_Resize.bind(this));
+        this.#window.WindowStateChanged.add(this.Window_WindowStateChanged.bind(this));
+        this.#window.KeyDown.add(this.Window_KeyDown.bind(this));
+        this.#window.KeyPress.add(this.Window_KeyPress.bind(this));
+        this.#window.KeyUp.add(this.Window_KeyUp.bind(this));
+        this.#window.MouseWheel.add(this.Window_MouseWheel.bind(this));
+        this.#window.MouseMove.add(this.Window_MouseMove.bind(this));
+        this.#window.MouseDown.add(this.Window_MouseDown.bind(this));
+        this.#window.MouseUp.add(this.Window_MouseUp.bind(this));
+        if (this.RadarSites.length > 0)
+            this.#radar = this.RadarSites[0];
+        else
+            this.#radar = new Radar();
+        this.#aircraftGCTimer = new Timer(new TimerCallback(this.cbAircraftGarbageCollectorTimer.bind(this)), null, this.AircraftGCInterval * 1000, this.AircraftGCInterval * 1000);
+        this.#wxUpdateTimer = new Timer(new TimerCallback(this.cbWxUpdateTimer.bind(this)), null, 0, 180000);
+        GL.ClearColor(RadarWindow.AdjustedColor(this.BackColor, this.CurrentPrefSet.Brightness.Background));
+        let settingsstring = XmlSerializer.Serialize(this); // XmlSerializer<RadarWindow>.Serialize(this)
+        if (settingsstring != null) {
+            {
+                let md5 = MD5.Create();
+                md5.Initialize();
+                md5.ComputeHash(new TextEncoder().encode(settingsstring)); // Encoding.UTF8.GetBytes
+                this.#settingshash = md5.Hash;
+            }
+        }
+        else {
+            this.#settingshash = new Uint8Array(0); // new byte[0]
+        }
+        this.OrderWaypoints();
+        RadarWindow.Aircraft.CollectionChanged.add(this.Aircraft_CollectionChanged.bind(this)); // Aircraft.CollectionChanged += …
+    }
+
+    // ===== PORTED THROUGH LINE 1110 / 6962 — next chunk continues here (Window_MouseUp @1111) =====
 }

@@ -1,0 +1,10 @@
+{
+  "name": "dstars-port",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "1:1 transliteration of DGScope (WinForms/OpenTK C#) to browser JS. See README.md.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

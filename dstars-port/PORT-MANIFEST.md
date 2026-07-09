@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 5423 / 6962** (+ DrawCASuppressionVolumes, DrawMinSeps [w/ DrawCircle], DrawRBLs [range/bearing line labels w/ traversal time], DrawStatic, GetActiveSpcCodes [out→holder {value}], RenderSSAAlertCodes [red/yellow SPC line under clock], Window_Load [screensaver/StartReceivers/SetupDCB/LoadVideoMapFile], Window_Closing). All fields pre-declared.
+**RadarWindow.cs port progress: lines 5631 / 6962** (+ SaveSettings [XmlSerializer + file-write adaptation], DrawRangeRings, DrawCircle [double + GeoPoint overloads merged], DrawTPA [ATPA caution/alert/monitor cone selection], DrawJRing [J-ring circle + leader-positioned label], DrawPCone [Aircraft/TPACone overloads merged; TPACone body → #DrawPConeCore stub, next chunk], DrawATPACone, static RoundUpToNearest [identity, C# @6927]; + ShowRangeRings/RangeRingColor fields). Imports: ATPAStatus, PrimitiveType.
+
+Prior: **lines 5423** (+ DrawCASuppressionVolumes, DrawMinSeps, DrawRBLs, DrawStatic, GetActiveSpcCodes, RenderSSAAlertCodes, Window_Load, Window_Closing).
 
 Prior: **lines 5212** (+ GeoToScreenPoint/GeoToPixel/ScreenToGeoPoint [overloads merged], DrawCompass, DrawATPAVolumes, DrawMSAWVolumes, DrawMSAWVolumeOutline). Shims: Matrix4.Column0-3, Vector4.Length, Color.Aqua.
 

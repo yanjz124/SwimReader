@@ -30,7 +30,8 @@ import { WeatherService } from "./WeatherService.js";
 import { XmlSerializer } from "./XmlSerializer.js";
 import { MSAWImporter } from "./MSAWImporter.js";
 import { TargetExtentSymbols, SearchTargetParams, AzimuthExtentValues, FusedTrackTargetSymbolParams, BeaconTargetParams, FMATargetSymbolParams } from "./STARS/TargetExtentSymbols.js";
-import { GL, EnableCap, BlendingFactor, BlendEquationMode, ClearBufferMask } from "./_shims/GL.js";
+import { GL, EnableCap, BlendingFactor, BlendEquationMode, ClearBufferMask, PrimitiveType } from "./_shims/GL.js";
+import { ATPAStatus } from "./ATPA.js";
 import { Matrix4 } from "./_shims/OpenTK.js";
 import { MathHelper } from "./_shims/MathHelper.js";
 import { Timer, TimerCallback } from "./_shims/Threading.js";
@@ -3865,5 +3866,213 @@ export class RadarWindow {
         this.StopReceivers();
     }
 
-    // ===== PORTED THROUGH LINE 5423 / 6962 — next chunk continues here (SaveSettings @5424) =====
+    ShowRangeRings = true;                          // public bool (C# @248)
+    RangeRingColor = Color.FromArgb(140, 140, 140); // public Color (C# @63)
+    SaveSettings(path) { // public void SaveSettings(string path)
+        let settingsxml = "";
+        try {
+            settingsxml = XmlSerializer.Serialize(this); // XmlSerializer<RadarWindow>.Serialize(this)
+            if (settingsxml == null || settingsxml.length === 0) {
+                console.log("There was a problem serializing the settings"); // MessageBox.Show
+                return;
+            }
+            // ADAPTATION: StreamWriter(path).Write(...) has no browser equivalent (no arbitrary path write).
+            // XmlSerializer.WriteToFile (if provided by the host) triggers a download; else log.
+            if (typeof XmlSerializer.WriteToFile === "function") XmlSerializer.WriteToFile(path, settingsxml);
+            else console.log(`[SaveSettings] ${path} (${settingsxml.length} bytes)`);
+        }
+        catch (ex) {
+            console.log(ex.message); // MessageBox.Show(ex.Message, …)
+        }
+    }
+
+    DrawRangeRings() {
+        if (!this.ShowRangeRings)
+            return;
+        /* … dead code kept out (bearing/x/y calc) … */
+        let distance = this.#ScreenCenterPoint.DistanceTo(this.#RangeRingCenter);
+        let rrr = (this.#aspect_ratio > 1 ? this.CurrentPrefSet.Range * 1.414 * this.#aspect_ratio : this.CurrentPrefSet.Range * 1.414 / this.#aspect_ratio) + distance;
+        let x = this.#RangeRingCenter.Longitude;
+        let y = this.#RangeRingCenter.Latitude;
+        let latfactor = Math.cos(MathHelper.DegreesToRadians(this.#ScreenCenterPoint.Latitude));
+        GL.PushMatrix();
+        GL.MultMatrix(this.geoToScreen); // MultMatrix(ref geoToScreen)
+
+        for (let i = this.CurrentPrefSet.RangeRingSpacing; i <= rrr && this.CurrentPrefSet.RangeRingSpacing > 0; i += this.CurrentPrefSet.RangeRingSpacing) {
+            this.DrawCircle(x, y, (i / 60) / latfactor, latfactor, 1000, RadarWindow.AdjustedColor(this.RangeRingColor, this.CurrentPrefSet.Brightness.RangeRings));
+        }
+        GL.PopMatrix();
+    }
+
+    // C# overloads DrawCircle(double cx,cy,r,aspect,segs,color,fill) and DrawCircle(GeoPoint,radius,color,fill)
+    // merged; dispatched on whether the first arg is a GeoPoint.
+    DrawCircle(a, b, c, d, e, f, g) {
+        if (a instanceof GeoPoint) { // DrawCircle(GeoPoint Location, float radius, Color color, bool fill=false)
+            let Location = a, radius = b, color = c, fill = (d === undefined ? false : d);
+            let LocationF = this.GeoToScreenPoint(Location);
+            let x = LocationF.X;
+            let y = LocationF.Y;
+            let r = radius / this.#scale;
+            this.DrawCircle(x, y, r, 1, 100, color, fill);
+            return;
+        }
+        // DrawCircle(double cx, double cy, double r, double aspect_ratio, int num_segments, Color color, bool fill=false)
+        let cx = a, cy = b, r = c, aspect_ratio = d, num_segments = e, color = f, fill = (g === undefined ? false : g);
+        GL.Begin(fill ? PrimitiveType.Polygon : PrimitiveType.LineLoop);
+        GL.Color4(color);
+        for (let ii = 0; ii < num_segments; ii++) {
+            let theta = 2.0 * Math.PI * ii / num_segments;
+            let x = r * Math.cos(theta);
+            let y = r * Math.sin(theta) * aspect_ratio;
+
+            GL.Vertex2(x + cx, y + cy);
+        }
+        GL.End();
+    }
+    DrawTPA(plane) { // (Aircraft plane)
+        if (plane.Location == null)
+            return;
+        if (plane.ATPAStatus === ATPAStatus.Caution || plane.ATPAStatus === ATPAStatus.Alert) {
+            switch (plane.ATPAStatus) {
+                case ATPAStatus.Caution:
+                    if (plane.PositionInd === this.ThisPositionIndicator || plane.ATPAVolume.TcpDisplay.some(x => x.TCP === this.ThisPositionIndicator)) { // when guard
+                        if (plane.ATPACone == null)
+                            plane.ATPACone = new TPACone(plane, plane.ATPARequiredMileage, this.ATPACautionColor, this.Font, true, plane.ATPATrackToLeader);
+                        else {
+                            plane.ATPACone.Miles = plane.ATPARequiredMileage;
+                            plane.ATPACone.Color = this.ATPACautionColor;
+                            plane.ATPACone.Track = plane.ATPATrackToLeader;
+                        }
+                    }
+                    break;
+                case ATPAStatus.Alert:
+                    if (plane.PositionInd === this.ThisPositionIndicator || plane.ATPAVolume.TcpDisplay.some(x => x.TCP === this.ThisPositionIndicator)) { // when guard
+                        if (plane.ATPACone == null)
+                            plane.ATPACone = new TPACone(plane, plane.ATPARequiredMileage, this.ATPAAlertColor, this.Font, true, plane.ATPATrackToLeader);
+                        else {
+                            plane.ATPACone.Miles = plane.ATPARequiredMileage;
+                            plane.ATPACone.Color = this.ATPAAlertColor;
+                            plane.ATPACone.Track = plane.ATPATrackToLeader;
+                        }
+                    }
+                    break;
+            }
+            this.DrawATPACone(plane);
+        }
+        if (plane.TPA == null) {
+            if (((plane.PositionInd === this.ThisPositionIndicator && this.DrawATPAMonitorCones) ||
+                plane.ATPAVolume.TcpDisplay.some(x => x.TCP === this.ThisPositionIndicator && x.ConeType === ATPAStatus.Monitor))
+                && plane.ATPAStatus === ATPAStatus.Monitor && plane.ATPATrackToLeader != null && plane.ATPARequiredMileage != null) {
+                if (plane.ATPACone == null)
+                    plane.ATPACone = new TPACone(plane, plane.ATPARequiredMileage, this.TPAColor, this.Font, true, plane.ATPATrackToLeader);
+                else {
+                    plane.ATPACone.Miles = plane.ATPARequiredMileage;
+                    plane.ATPACone.Color = this.TPAColor;
+                    plane.ATPACone.Track = plane.ATPATrackToLeader;
+                }
+                this.DrawATPACone(plane);
+            }
+
+            return;
+        }
+        else if (plane.TPA.Type === TPAType.JRing) {
+            //DrawCircle(plane.SweptLocation, (float)plane.TPA.Miles, plane.TPA.Color, false);
+            this.DrawJRing(plane);
+        }
+        else if (plane.TPA.Type === TPAType.PCone) {
+            this.DrawPCone(plane);
+        }
+        return;
+    }
+
+    DrawJRing(plane) { // (Aircraft plane)
+        let location = this.GeoToScreenPoint(plane.SweptLocation(this.#radar));
+        let x = RadarWindow.RoundUpToNearest(location.X, this.#pixelScale);
+        let y = RadarWindow.RoundUpToNearest(location.Y, this.#pixelScale);
+
+        if (plane.TPA.Miles < 10) {
+            plane.TPA.Label.Text = String(plane.TPA.Miles); // Miles.ToString()
+        }
+        else {
+            plane.TPA.Label.Text = String(Math.trunc(plane.TPA.Miles)); // ((int)Miles).ToString()
+        }
+        let labellocation; // PointF
+        let circlesize = plane.TPA.Miles / this.#scale;
+        let angle;
+        let ldr; // LeaderDirection
+        if (plane.LDRDirection != null)
+            ldr = plane.LDRDirection; // LDRDirection.Value
+        else if (plane.PositionInd === this.ThisPositionIndicator) // owned LDR direction
+            ldr = this.CurrentPrefSet.OwnedDataBlockPosition;
+        else if (!plane.Associated) // Unassociated LDR direction
+            ldr = this.CurrentPrefSet.UnassociatedDataBlockPosition;
+        else
+            ldr = this.CurrentPrefSet.UnownedDataBlockPosition;
+
+        switch (ldr) {
+            case LeaderDirection.N:
+                angle = Math.PI;
+                break;
+            case LeaderDirection.NW:
+                angle = Math.PI * .75;
+                break;
+            case LeaderDirection.W:
+                angle = Math.PI * .5;
+                break;
+            case LeaderDirection.SW:
+                angle = Math.PI * .25;
+                break;
+            case LeaderDirection.S:
+                angle = 0;
+                break;
+            case LeaderDirection.SE:
+                angle = Math.PI * 1.75;
+                break;
+            case LeaderDirection.E:
+                angle = Math.PI * 1.5;
+                break;
+            case LeaderDirection.NE:
+                angle = Math.PI * 1.25;
+                break;
+            default:
+                angle = 0;
+                break;
+        }
+
+
+        let labelsize = Math.sqrt(Math.pow(plane.TPA.Label.Width, 2) + Math.pow(plane.TPA.Label.Height, 2));
+        labelsize *= this.#pixelScale;
+        labelsize /= 2;
+        labellocation = new PointF((Math.sin(angle)) * (circlesize - labelsize), (Math.cos(angle) * (circlesize - labelsize)));
+        plane.TPA.Label.CenterOnPoint(labellocation);
+        GL.Translate(x, y, 0.0);
+        GL.PushMatrix();
+        //GL.Rotate(-ScreenRotation, 0, 0, 1);
+        this.DrawCircle(0, 0, circlesize, 1, 500, plane.TPA.Color, false);
+        plane.TPA.Label.ForeColor = plane.TPA.Color;
+        if (plane.TPA.ShowSize)
+            this.DrawLabel(plane.TPA.Label);
+        GL.PopMatrix();
+        GL.Translate(-x, -y, 0.0);
+    }
+
+    DrawPCone(planeOrCone) { // C# overloads DrawPCone(Aircraft) and DrawPCone(TPACone) — dispatched by type
+        if (planeOrCone instanceof Aircraft) { // DrawPCone(Aircraft plane)
+            this.DrawPCone(planeOrCone.TPA); // plane.TPA as TPACone
+            return;
+        }
+        // DrawPCone(TPACone cone) — ported in the next chunk
+        this.#DrawPConeCore(planeOrCone);
+    }
+    #DrawPConeCore(cone) { /* DrawPCone(TPACone) body — ported in the next chunk */ }
+    DrawATPACone(plane) { // (Aircraft plane)
+        this.DrawPCone(plane.ATPACone);
+    }
+
+    // C# static float RoundUpToNearest(float, float) — body is `return passednumber;` (rounding disabled).
+    static RoundUpToNearest(passednumber, roundto) {
+        return passednumber;
+    }
+
+    // ===== PORTED THROUGH LINE 5631 / 6962 — next chunk continues here (DrawPCone(TPACone) body @5632 → #DrawPConeCore) =====
 }

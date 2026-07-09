@@ -41,7 +41,9 @@ import { Task } from "./_shims/Threading.js";
 import { Altitude } from "./Altitude.js";
 import { ADSBBeaconReaderService } from "./ADSBBeaconReader/ADSBBeaconReaderService.js";
 import { Aircraft } from "./Aircraft.js";
-import { DCBSubmenuButton, DCBAdjustmentButton } from "./DCBButton.js";
+import { DCBSubmenuButton, DCBAdjustmentButton, DCBButton, DCBToggleButton, DCBActionButton } from "./DCBButton.js";
+import { DCBMenu } from "./DCBMenu.js";
+import { DCB } from "./DCB.js";
 import { Keyboard, Key, Mouse, ButtonState, Vector4, KeyToChar } from "./_shims/OpenTK.js";
 import { Value } from "./_shims/MetarDecoder.js";
 import { Clipboard, SaveFileDialog } from "./_shims/WinForms.js";
@@ -2576,5 +2578,197 @@ export class RadarWindow {
     Window_UpdateFrame(sender, e) { // (object sender, FrameEventArgs e)
     }
 
-    // ===== PORTED THROUGH LINE 3740 / 6962 — next chunk continues here (fps @3741 [already declared], DCB fields @3742) =====
+    // ── DCB (Display Control Bar) buttons/menus — object-initializers → Object.assign ──
+    #dcb = new DCB();
+    #dcbMainMenu = new DCBMenu();
+    activeDcbButton;                         // DCBButton (referenced by Window_MouseDown/Wheel)
+    #dcbRangeButton = Object.assign(new DCBAdjustmentButton(), { Height: 80, Width: 80 });
+    #dcbPlaceCntrButton = Object.assign(new DCBAdjustmentButton(), { Height: 40, Width: 80, Text: "PLACE\r\nCNTR" });
+    #dcbOffCntrButton = Object.assign(new DCBToggleButton(), { Height: 40, Width: 80, Text: "OFF\r\nCNTR" });
+    #dcbRRButton = Object.assign(new DCBAdjustmentButton(), { Height: 80, Width: 80 });
+    dcbPlaceRRButton = Object.assign(new DCBActionButton(), { Height: 40, Width: 80, Text: "PLACE\r\nRR" }); // read by Window_MouseDown
+    #dcbRRCntrButton = Object.assign(new DCBButton(), { Height: 40, Width: 80, Text: "RR\r\nCNTR" });
+    #dcbMapsButton = Object.assign(new DCBSubmenuButton(), { Height: 80, Width: 80, Text: "MAPS" });
+    #dcbMapsMenu = new DCBMenu();
+    #dcbMapsSubmenuDoneButton = Object.assign(new DCBButton(), { Height: 40, Width: 80, Text: "DONE" });
+    #dcbClearAllMapsButton = Object.assign(new DCBButton(), { Height: 40, Width: 80, Text: "CLR ALL" });
+    #dcbMapButton = new Array(32);           // DCBToggleButton[32]
+    #dcbWxButton = new Array(6);             // DCBToggleButton[6]
+    #dcbBriteButton = Object.assign(new DCBSubmenuButton(), { Height: 80, Width: 80, Text: "BRITE" });
+    #dcbLdrDirButton = Object.assign(new DCBAdjustmentButton(), { Height: 40, Width: 80 });
+    #dcbLdrLenButton = Object.assign(new DCBAdjustmentButton(), { Height: 40, Width: 80 });
+    #dcbCharSizeButton = Object.assign(new DCBSubmenuButton(), { Height: 80, Width: 80, Text: "CHAR\r\nSIZE", Disabled: true });
+    #dcbModeButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "MODE\r\nFSL", Disabled: true });
+    #dcbSiteButton = Object.assign(new DCBSubmenuButton(), { Height: 80, Width: 80 });
+
+    #dcbShiftButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "SHIFT" });
+    #dcbShiftButton2 = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "SHIFT" });
+
+    #dcbShiftMenu = new DCBMenu();
+    #dcbVolumeButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "VOL\r\nN/A", Disabled: true });
+    #dcbHistoryNumButton = Object.assign(new DCBAdjustmentButton(), { Height: 40, Width: 80 });
+    #dcbHistoryRateButton = Object.assign(new DCBAdjustmentButton(), { Height: 40, Width: 80 });
+    #dcbCursorHomeButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "CURSOR\r\nHOME", Disabled: true });
+    #dcbCursorSpeedButton = Object.assign(new DCBAdjustmentButton(), { Height: 80, Width: 80, Text: "CSR SPD\r\nN/A", Disabled: true });
+    #dcbMapUncorButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "MAP\r\nUNCOR", Disabled: true });
+    #dcbUncorButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "UNCOR", Disabled: true });
+    #dcbBeaconModeButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "BEACON\r\nMODE-2", Disabled: true });
+    #dcbRtqcButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "RTQC", Disabled: true });
+    #dcbMcpButton = Object.assign(new DCBButton(), { Height: 80, Width: 80, Text: "MCP", Disabled: true });
+    #dcbDcbTopButton = Object.assign(new DCBButton(), { Height: 40, Width: 80, Text: "DCB\r\nTOP" });
+    #dcbDcbLeftButton = Object.assign(new DCBButton(), { Height: 40, Width: 80, Text: "DCB\r\nLEFT" });
+    #dcbDcbRightButton = Object.assign(new DCBButton(), { Height: 40, Width: 80, Text: "DCB\r\nRIGHT" });
+    #dcbDcbBottomButton = Object.assign(new DCBButton(), { Height: 40, Width: 80, Text: "DCB\r\nBOTTOM" });
+    #dcbPtlLengthButton = Object.assign(new DCBAdjustmentButton(), { Height: 80, Width: 80 });
+    #dcbPtlOwnButton = Object.assign(new DCBToggleButton(), { Height: 40, Width: 80, Text: "PTL OWN" });
+    #dcbPtlAllButton = Object.assign(new DCBToggleButton(), { Height: 40, Width: 80, Text: "PTL ALL" });
+
+    #briteMenu = new DCBMenu();
+    #briteDCBbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteBKCbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteMPAbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteMPBbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteFDBbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteLSTbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #britePOSbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteLDBbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteOTHbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteTLSbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteRRbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteCMPbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteBCNbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #britePRIbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteHSTbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteWXbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteWXCbutton = Object.assign(new DCBAdjustmentButton(), { Width: 80, Height: 40 });
+    #briteDoneButton = Object.assign(new DCBButton(), { Width: 80, Height: 80, Text: "DONE" });
+
+    #siteMenu = new DCBMenu();
+
+    TCP = new TCP(); // public TCP TCP { get; set; } = new TCP()
+
+    SetupDCB() {
+        this.#dcbMainMenu.AddButton(this.#dcbRangeButton);
+        this.#dcbRangeButton.Click.add(this.DcbButtonClick.bind(this)); // += DcbButtonClick
+        this.#dcbMainMenu.AddButton(this.#dcbPlaceCntrButton);
+        this.#dcbPlaceCntrButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbMainMenu.AddButton(this.#dcbOffCntrButton);
+        this.#dcbOffCntrButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbMainMenu.AddButton(this.#dcbRRButton);
+        this.#dcbRRButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbMainMenu.AddButton(this.dcbPlaceRRButton);
+        this.dcbPlaceRRButton.Click.add(this.DcbScopeActionButtonClick.bind(this));
+        this.#dcbMainMenu.AddButton(this.#dcbRRCntrButton);
+        this.#dcbRRCntrButton.Click.add(this.DcbButtonClick.bind(this));
+
+        this.#dcbMainMenu.AddButton(this.#dcbMapsButton);
+        this.#dcbMapsButton.Submenu = this.#dcbMapsMenu;
+        this.#dcbMapsButton.Click.add(this.DcbSubmenuButtonClick.bind(this));
+        for (let i = 0; i < 6; i++) {
+            this.#dcbMapButton[i] = Object.assign(new DCBToggleButton(), { Height: 40, Width: 80, Text: "MAP\r\n" + (i + 1) });
+            this.#dcbMainMenu.AddButton(this.#dcbMapButton[i]);
+            this.#dcbMapButton[i].Click.add(this.DcbMapButtonClick.bind(this));
+        }
+        this.#dcbMapsMenu.AddButton(this.#dcbMapsSubmenuDoneButton);
+        this.#dcbMapsMenu.AddButton(this.#dcbClearAllMapsButton);
+        this.#dcbMapsSubmenuDoneButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbClearAllMapsButton.Click.add(this.DcbClearAllMapsButton_Click.bind(this));
+        for (let i = 6; i < this.#dcbMapButton.length; i++) {
+            this.#dcbMapButton[i] = Object.assign(new DCBToggleButton(), { Height: 40, Width: 80, Text: "MAP\r\n" + (i + 1) });
+            this.#dcbMapsMenu.AddButton(this.#dcbMapButton[i]);
+            this.#dcbMapButton[i].Click.add(this.DcbMapButtonClick.bind(this));
+        }
+        for (let i = 0; i < this.#dcbWxButton.length; i++) {
+            this.#dcbWxButton[i] = Object.assign(new DCBToggleButton(), { Height: 80, Width: 40, RotateIfVertical: true, Text: "WX" + (i + 1) });
+            this.#dcbMainMenu.AddButton(this.#dcbWxButton[i]);
+            this.#dcbWxButton[i].Click.add(this.DcbWxButtonClick.bind(this));
+        }
+        this.#dcbMainMenu.AddButton(this.#dcbBriteButton);
+        this.#dcbBriteButton.Click.add(this.DcbSubmenuButtonClick.bind(this));
+        this.#dcbBriteButton.Submenu = this.#briteMenu;
+        this.#dcbMainMenu.AddButton(this.#dcbLdrDirButton);
+        this.#dcbLdrDirButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbLdrDirButton.Up.add(this.DcbLdrDirButton_Up.bind(this));
+        this.#dcbLdrDirButton.Down.add(this.DcbLdrDirButton_Down.bind(this));
+        this.#dcbMainMenu.AddButton(this.#dcbLdrLenButton);
+        this.#dcbLdrLenButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbMainMenu.AddButton(this.#dcbCharSizeButton);
+        this.#dcbMainMenu.AddButton(this.#dcbModeButton);
+        this.#dcbMainMenu.AddButton(this.#dcbSiteButton);
+        this.#dcbSiteButton.Submenu = this.#siteMenu;
+        this.#dcbSiteButton.Click.add(this.DcbSubmenuButtonClick.bind(this));
+        this.#dcbMainMenu.AddButton(this.#dcbShiftButton);
+        this.#dcbShiftButton.Click.add(this.DcbButtonClick.bind(this));
+
+        //Auxiliary DCB Menu
+        this.#dcbShiftMenu.AddButton(this.#dcbVolumeButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbHistoryNumButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbHistoryRateButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbCursorHomeButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbCursorSpeedButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbMapUncorButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbUncorButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbBeaconModeButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbRtqcButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbMcpButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbDcbTopButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbDcbLeftButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbDcbRightButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbDcbBottomButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbPtlLengthButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbPtlOwnButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbPtlAllButton);
+        this.#dcbShiftMenu.AddButton(this.#dcbShiftButton2);
+        this.#dcbHistoryNumButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbHistoryRateButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbDcbTopButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbDcbLeftButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbDcbRightButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbDcbBottomButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbPtlOwnButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbPtlAllButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbPtlLengthButton.Click.add(this.DcbButtonClick.bind(this));
+        this.#dcbShiftButton2.Click.add(this.DcbButtonClick.bind(this));
+
+        this.#briteMenu.AddButton(this.#briteDCBbutton);
+        this.#briteMenu.AddButton(this.#briteBKCbutton);
+        this.#briteMenu.AddButton(this.#briteMPAbutton);
+        this.#briteMenu.AddButton(this.#briteMPBbutton);
+        this.#briteMenu.AddButton(this.#briteFDBbutton);
+        this.#briteMenu.AddButton(this.#briteLSTbutton);
+        this.#briteMenu.AddButton(this.#britePOSbutton);
+        this.#briteMenu.AddButton(this.#briteLDBbutton);
+        this.#briteMenu.AddButton(this.#briteOTHbutton);
+        this.#briteMenu.AddButton(this.#briteTLSbutton);
+        this.#briteMenu.AddButton(this.#briteRRbutton);
+        this.#briteMenu.AddButton(this.#briteCMPbutton);
+        this.#briteMenu.AddButton(this.#briteBCNbutton);
+        this.#briteMenu.AddButton(this.#britePRIbutton);
+        this.#briteMenu.AddButton(this.#briteHSTbutton);
+        this.#briteMenu.AddButton(this.#briteWXbutton);
+        this.#briteMenu.AddButton(this.#briteWXCbutton);
+        this.#briteMenu.AddButton(this.#briteDoneButton);
+        this.#briteDCBbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteBKCbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteMPAbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteMPBbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteFDBbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteLSTbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#britePOSbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteLDBbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteOTHbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteTLSbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteRRbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteCMPbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteBCNbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#britePRIbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteHSTbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteWXbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteWXCbutton.Click.add(this.DcbButtonClick.bind(this));
+        this.#briteDoneButton.Click.add(this.DcbButtonClick.bind(this));
+
+        this.#dcb.ActiveMenu = this.#dcbMainMenu;
+    }
+
+    // ===== PORTED THROUGH LINE 3939 / 6962 — next chunk continues here (DcbLdrDirButton_Down @3940) =====
 }

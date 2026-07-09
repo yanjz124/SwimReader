@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 4985 / 6962** (+ ProcessMouse [DCB adjustment-button drag: pan-center via matrix math, history num/rate, leader len, PTL len, range, all 17 brightness sliders, range-ring spacing switch, OnAdjustUp/Down, cursor clip] — spliced via .wip; + CenterMouse). Shim: GameWindow.Bounds.
+**RadarWindow.cs port progress: lines 5212 / 6962** (+ GeoToScreenPoint, GeoToPixel, ScreenToGeoPoint [PointF+Point overloads merged via Point/PointF dispatch; dead code kept 1:1], DrawCompass [bezel + tick marks + 36 bearing labels], DrawATPAVolumes, DrawMSAWVolumes, DrawMSAWVolumeOutline; + #cmp_labels/#cmp_ar). Shims: Matrix4.Column0-3, Vector4.Length, Color.Aqua; import Line.
+
+Prior: **lines 4985** (+ ProcessMouse [.wip splice], CenterMouse). Shim: GameWindow.Bounds.
 
 Prior: **lines 4371** (+ Window_RenderFrame — main render loop). Shims: Mouse.GetState, Vector4 Sub/Add/scaleEq/addEq, Matrix4.Inverted (test-verified), SwapBuffers, MathHelper, Font.Height.
 

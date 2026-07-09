@@ -59,6 +59,7 @@ import { tryParseDouble } from "./_shims/Primitives.js";
 import { RangeBearingLine } from "./RangeBearingLine.js";
 import { TPARing, TPACone, TPAType } from "./TPARing.js";
 import { MinSep } from "./MinSep.js";
+import { Line } from "./Line.js";
 
 export class RadarWindow {
     // ── static members used across the module graph (keep live during the chunked port) ──
@@ -3486,5 +3487,203 @@ export class RadarWindow {
         this.#centeredmouse = true;
     }
 
-    // ===== PORTED THROUGH LINE 4985 / 6962 — next chunk continues here (GeoToScreenPoint @4986) =====
+    GeoToScreenPoint(geoPoint) { // PointF GeoToScreenPoint(GeoPoint geoPoint)
+        let vec = new Vector4(geoPoint.Longitude, geoPoint.Latitude, 0.0, 1.0);
+
+        vec.mulEq(this.geoToScreen); // vec *= geoToScreen
+        return new PointF(vec.X, vec.Y);
+    }
+
+    GeoToPixel(geoPoint) { // Point GeoToPixel(GeoPoint geoPoint)
+        let vec = new Vector4(geoPoint.Longitude, geoPoint.Latitude, 0, 1);
+        vec.mulEq(this.geoToScreen);
+        vec.mulEq(this.pixeltransform.Inverted());
+        return new Point(Math.trunc(vec.X), Math.trunc(vec.Y)); // (int)vec.X, (int)vec.Y
+    }
+
+    // C# overloads ScreenToGeoPoint(PointF) [NDC coords] and ScreenToGeoPoint(Point) [pixel coords];
+    // merged and dispatched on the argument's runtime type (Point vs PointF are distinct shim classes).
+    ScreenToGeoPoint(Point_) {
+        if (Point_ instanceof Point) { // private GeoPoint ScreenToGeoPoint(Point Point)
+            let vec = new Vector4(Point_.X, Point_.Y, 0.0, 1.0);
+            vec.mulEq(this.pixeltransform);
+            vec.mulEq(this.geoToScreen.Inverted());
+            return new GeoPoint(vec.Y, vec.X);
+            return this.ScreenToGeoPoint(this.LocationFromScreenPoint(Point_)); // (dead code, kept 1:1)
+        }
+        else { // private GeoPoint ScreenToGeoPoint(PointF Point)
+            let vec = new Vector4(Point_.X, Point_.Y, 0.0, 1.0);
+            vec.mulEq(this.geoToScreen.Inverted());
+            return new GeoPoint(vec.Y, vec.X);
+            // (dead code below, kept 1:1)
+            let r = Math.sqrt(Math.pow(Point_.X, 2) + Math.pow(Point_.Y, 2));
+            let angle = Math.atan(Point_.Y / Point_.X);
+            if (Point_.X < 0)
+                angle += Math.PI;
+            let bearing = 90 - (angle * 180 / Math.PI) + this.ScreenRotation;
+            let distance = r * this.#scale;
+            return this.#ScreenCenterPoint.FromPoint(distance, bearing);
+        }
+    }
+
+    #cmp_labels = new Array(36); // TransparentLabel[36]
+    #cmp_ar = 0; // float
+    DrawCompass() {
+        if (this.CurrentPrefSet.Brightness.Compass === 0)
+            return;
+        let color = RadarWindow.AdjustedColor(Color.FromArgb(140, 140, 140), this.CurrentPrefSet.Brightness.Compass);
+        let linelength = 15 * this.#pixelScale;
+        let w = this.arscale.Column1.Length - this.#pixelScale;
+        let h = this.arscale.Column0.Length - this.#pixelScale;
+        GL.PushMatrix();
+        if (!this.#dcb.Visible) {
+
+        }
+        else if (this.#dcb.Location === DCBLocation.Left || this.#dcb.Location === DCBLocation.Right) {
+            w -= this.#dcb.Size * this.#pixelScale / 2;
+            if (this.#dcb.Location === DCBLocation.Left) {
+                GL.Translate(this.#dcb.Size / 2 * this.#pixelScale, 0, 0);
+            }
+            else {
+                GL.Translate(-this.#dcb.Size / 2 * this.#pixelScale, 0, 0);
+            }
+        }
+        else {
+            h -= this.#dcb.Size * this.#pixelScale / 2;
+            if (this.#dcb.Location === DCBLocation.Top) {
+                GL.Translate(0, -this.#dcb.Size / 2 * this.#pixelScale, 0);
+            }
+            else {
+                GL.Translate(0, this.#dcb.Size / 2 * this.#pixelScale, 0);
+            }
+        }
+        let aspect_ratio = w / h;
+        this.DrawLine(new PointF(w, -h), new PointF(-w, -h), color);
+        this.DrawLine(new PointF(-w, -h), new PointF(-w, h), color);
+        this.DrawLine(new PointF(-w, h), new PointF(w, h), color);
+        this.DrawLine(new PointF(w, h), new PointF(w, -h), color);
+        let atan = MathHelper.RadiansToDegrees(Math.atan(aspect_ratio));
+        let i;
+        let h1 = h - linelength;
+        let w1 = w - linelength;
+        let hr = (h1 / h);
+        let wr = (w1 / w);
+        for (i = 0; i < atan; i += 5) {
+            let x = Math.tan(MathHelper.DegreesToRadians(i)) * h;
+            let x1 = x * hr;
+            this.DrawLine(new PointF(x, h), new PointF(x1, h1), color);
+            this.DrawLine(new PointF(-x, h), new PointF(-x1, h1), color);
+            this.DrawLine(new PointF(x, -h), new PointF(x1, -h1), color);
+            this.DrawLine(new PointF(-x, -h), new PointF(-x1, -h1), color);
+            let line = Math.trunc(i / 10); // (i / 10) integer division
+            if (i / 10 === line) {
+                if (this.#cmp_labels[line] == null) {
+                    this.#cmp_labels[line] = Object.assign(new TransparentLabel(), { Font: this.Font, Text: i.toString(), ForeColor: color });
+                    this.#cmp_labels[line + 18] = Object.assign(new TransparentLabel(), { Font: this.Font, Text: (i + 180).toString(), ForeColor: color });
+                    if (line > 0) {
+                        this.#cmp_labels[36 - line] = Object.assign(new TransparentLabel(), { Font: this.Font, Text: (360 - i).toString(), ForeColor: color });
+                        this.#cmp_labels[18 - line] = Object.assign(new TransparentLabel(), { Font: this.Font, Text: (180 - i).toString(), ForeColor: color });
+                    }
+                    else {
+                        this.#cmp_labels[line].Text = "360";
+                    }
+                }
+                this.#cmp_labels[line].ForeColor = color;
+                this.#cmp_labels[line + 18].ForeColor = color;
+                this.DrawLabel(this.#cmp_labels[line]);
+                this.DrawLabel(this.#cmp_labels[line + 18]);
+                this.#cmp_labels[line].CenterOnPoint(new PointF(x1, h1 - this.#cmp_labels[line].SizeF.Height));
+                this.#cmp_labels[line + 18].CenterOnPoint(new PointF(-x1, -h1 + this.#cmp_labels[line].SizeF.Height));
+                if (line > 0) {
+                    this.#cmp_labels[18 - line].ForeColor = color;
+                    this.#cmp_labels[36 - line].ForeColor = color;
+                    this.DrawLabel(this.#cmp_labels[18 - line]);
+                    this.DrawLabel(this.#cmp_labels[36 - line]);
+                    this.#cmp_labels[18 - line].CenterOnPoint(new PointF(x1, this.#cmp_labels[line].SizeF.Height - h1));
+                    this.#cmp_labels[36 - line].CenterOnPoint(new PointF(-x1, h1 - this.#cmp_labels[line].SizeF.Height));
+                }
+            }
+        }
+        for (; i <= 90; i += 5) {
+            let y = Math.tan(MathHelper.DegreesToRadians(90 - i)) * w;
+            let y1 = y * wr;
+            this.DrawLine(new PointF(w, y), new PointF(w1, y1), color);
+            this.DrawLine(new PointF(-w, y), new PointF(-w1, y1), color);
+            this.DrawLine(new PointF(w, -y), new PointF(w1, -y1), color);
+            this.DrawLine(new PointF(-w, -y), new PointF(-w1, -y1), color);
+            let line = Math.trunc(i / 10);
+            if (i / 10 === line) {
+                if (this.#cmp_labels[line] == null) {
+                    this.#cmp_labels[line] = Object.assign(new TransparentLabel(), { Font: this.Font, Text: i.toString(), ForeColor: color });
+                    this.#cmp_labels[line + 18] = Object.assign(new TransparentLabel(), { Font: this.Font, Text: (i + 180).toString(), ForeColor: color });
+                    this.#cmp_labels[36 - line] = Object.assign(new TransparentLabel(), { Font: this.Font, Text: (360 - i).toString(), ForeColor: color });
+                    this.#cmp_labels[18 - line] = Object.assign(new TransparentLabel(), { Font: this.Font, Text: (180 - i).toString(), ForeColor: color });
+                }
+                this.#cmp_labels[line].ForeColor = color;
+                this.#cmp_labels[line + 18].ForeColor = color;
+                this.DrawLabel(this.#cmp_labels[line]);
+                this.DrawLabel(this.#cmp_labels[line + 18]);
+                this.#cmp_labels[line].CenterOnPoint(new PointF(w1 - this.#cmp_labels[line].SizeF.Width, y1));
+                this.#cmp_labels[line + 18].CenterOnPoint(new PointF(this.#cmp_labels[line].SizeF.Width - w1, -y1));
+                if (line > 0) {
+                    this.#cmp_labels[18 - line].ForeColor = color;
+                    this.#cmp_labels[36 - line].ForeColor = color;
+                    this.DrawLabel(this.#cmp_labels[18 - line]);
+                    this.DrawLabel(this.#cmp_labels[36 - line]);
+                    this.#cmp_labels[36 - line].CenterOnPoint(new PointF(this.#cmp_labels[line].SizeF.Width - w1, y1));
+                    this.#cmp_labels[18 - line].CenterOnPoint(new PointF(w1 - this.#cmp_labels[line].SizeF.Width, -y1));
+                }
+            }
+        }
+        GL.PopMatrix();
+        if (this.#cmp_ar !== aspect_ratio) {
+            this.#cmp_ar = aspect_ratio;
+            for (const label of this.#cmp_labels) {
+                label.ForceRedraw();
+            }
+        }
+        //for (int l = 0; l < 36; l++) { … } (commented in source)
+    }
+    DrawATPAVolumes() {
+        for (const volume of this.ATPA.Volumes.filter(v => v.Draw)) {
+            let one, two, three, four; // GeoPoint
+            one = volume.RunwayThreshold.FromPoint(volume.WidthLeft / 6076, volume.TrueHeading - 90);
+            two = one.FromPoint(volume.Length, volume.TrueHeading + 180);
+            three = two.FromPoint((volume.WidthLeft / 6076) + (volume.WidthRight / 6076), volume.TrueHeading + 90);
+            four = volume.RunwayThreshold.FromPoint(volume.WidthRight / 6076, volume.TrueHeading + 90);
+            let l1, l2, l3, l4; // Line
+            l1 = new Line(one, two);
+            l2 = new Line(two, three);
+            l3 = new Line(three, four);
+            l4 = new Line(four, one);
+            this.DrawLine(l1, Color.Aqua);
+            this.DrawLine(l2, Color.Aqua);
+            this.DrawLine(l3, Color.Aqua);
+            this.DrawLine(l4, Color.Aqua);
+        }
+    }
+    DrawMSAWVolumes() {
+        let volumes; // List<MSAWVolume>
+        // lock (MSAW.Volumes)
+        volumes = this.MSAW.Volumes.filter(v => v.Draw || this.DrawAllMSAWVolumes);
+        for (const volume of volumes)
+            this.DrawMSAWVolumeOutline(volume, Color.Red);
+        let suppression; // List<MSAWVolume>
+        // lock (MSAW.SuppressionVolumes)
+        suppression = this.MSAW.SuppressionVolumes.filter(v => v.Draw || this.DrawAllMSAWVolumes);
+        for (const volume of suppression)
+            this.DrawMSAWVolumeOutline(volume, Color.Lime);
+    }
+    DrawMSAWVolumeOutline(volume, color) { // (MSAWVolume volume, Color color)
+        let pts = volume.Points;
+        if (pts == null || pts.length < 2)
+            return;
+        for (let i = 0; i < pts.length; i++) {
+            let a = pts[i];
+            let b = pts[(i + 1) % pts.length];
+            this.DrawLine(new Line(a, b), color);
+        }
+    }
+
+    // ===== PORTED THROUGH LINE 5212 / 6962 — next chunk continues here (DrawCASuppressionVolumes @5213) =====
 }

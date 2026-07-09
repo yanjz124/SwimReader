@@ -54,6 +54,11 @@ export class Matrix4 {
     // a * b  (OpenTK operator*)
     mul(b) { return Matrix4.Mult(this, b); }
     clone() { return Object.assign(new Matrix4(), this); }
+    // OpenTK Matrix4 column accessors (row-major storage → column = one element per row).
+    get Column0() { return new Vector4(this.M11, this.M21, this.M31, this.M41); }
+    get Column1() { return new Vector4(this.M12, this.M22, this.M32, this.M42); }
+    get Column2() { return new Vector4(this.M13, this.M23, this.M33, this.M43); }
+    get Column3() { return new Vector4(this.M14, this.M24, this.M34, this.M44); }
 
     // OpenTK Matrix4.Inverted() — general 4×4 inverse (cofactor/adjugate over the row-major M11..M44).
     Inverted() {
@@ -227,6 +232,7 @@ export class Vector4 {
     X = 0; Y = 0; Z = 0; W = 0;
     constructor(x = 0, y = 0, z = 0, w = 0) { this.X = x; this.Y = y; this.Z = z; this.W = w; }
     static get Zero() { return new Vector4(0, 0, 0, 0); }
+    get Length() { return Math.sqrt(this.X * this.X + this.Y * this.Y + this.Z * this.Z + this.W * this.W); } // OpenTK Vector4.Length
 
     // row-vector * matrix: result.X = X*M11 + Y*M21 + Z*M31 + W*M41, etc.
     static Transform(v, m) {

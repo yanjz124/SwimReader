@@ -96,6 +96,8 @@ export class GameWindow {
     // loop via requestAnimationFrame and raises Load/RenderFrame/UpdateFrame itself, so this is a
     // no-op entry point (the host calls Load.Invoke then schedules RenderFrame).
     Run() { this.Load.Invoke(this, {}); }
+    get Width() { return this.ClientSize.Width; }   // GameWindow.Width (drawable area)
+    get Height() { return this.ClientSize.Height; } // GameWindow.Height
 }
 
 // System.Numerics.Vector2 (used by NexradDisplay's ScopeServerWxRadarReport).
@@ -118,28 +120,30 @@ export const ButtonState = Object.freeze({ Released: 0, Pressed: 1 });
 // `typeof x === "string"`, and `switch(item){ case Key.F3: … }` matches by Symbol identity.
 // Modifier keys (Control/Shift/Alt) are kept as strings matching DOM event.code, since they only
 // flow through Keyboard.GetState().IsKeyDown(...) (Set membership), never into the KeyList.
+// OpenTK 3.x Key enum's actual INTEGER values (contiguous where the C# relies on ordering:
+// A..Z, Number0..9, Keypad0..9, F1..F12). RadarWindow's KeyCode command enum deliberately shares
+// this numeric space with the F-keys (F3=InitCntl=12, …), exactly as in DGScope, so KeyToChar /
+// #previewMap conflate them the same way the C# `(int)` cast does.
 export const Key = Object.freeze({
-    ControlLeft: "ControlLeft", ControlRight: "ControlRight",
-    ShiftLeft: "ShiftLeft", ShiftRight: "ShiftRight",
-    AltLeft: "AltLeft", AltRight: "AltRight",
-    Enter: Symbol("Key.Enter"), Escape: Symbol("Key.Escape"), BackSpace: Symbol("Key.BackSpace"), Space: Symbol("Key.Space"),
-    F1: Symbol("Key.F1"), F2: Symbol("Key.F2"), F3: Symbol("Key.F3"), F4: Symbol("Key.F4"),
-    F5: Symbol("Key.F5"), F6: Symbol("Key.F6"), F7: Symbol("Key.F7"), F8: Symbol("Key.F8"),
-    F9: Symbol("Key.F9"), F10: Symbol("Key.F10"), F11: Symbol("Key.F11"), F12: Symbol("Key.F12"),
-    End: Symbol("Key.End"), KeypadMultiply: Symbol("Key.KeypadMultiply"),
-    // Letters/digits/period/plus that KeysToString maps back to characters (input may arrive as a
-    // Key enum rather than a char). Each is a Symbol; KeyToChar (below) is the (int)Key→string switch.
-    A: Symbol("Key.A"), B: Symbol("Key.B"), C: Symbol("Key.C"), D: Symbol("Key.D"), E: Symbol("Key.E"),
-    F: Symbol("Key.F"), G: Symbol("Key.G"), H: Symbol("Key.H"), I: Symbol("Key.I"), J: Symbol("Key.J"),
-    K: Symbol("Key.K"), L: Symbol("Key.L"), M: Symbol("Key.M"), N: Symbol("Key.N"), O: Symbol("Key.O"),
-    P: Symbol("Key.P"), Q: Symbol("Key.Q"), R: Symbol("Key.R"), S: Symbol("Key.S"), T: Symbol("Key.T"),
-    U: Symbol("Key.U"), V: Symbol("Key.V"), W: Symbol("Key.W"), X: Symbol("Key.X"), Y: Symbol("Key.Y"), Z: Symbol("Key.Z"),
-    Number0: Symbol("Key.Number0"), Number1: Symbol("Key.Number1"), Number2: Symbol("Key.Number2"), Number3: Symbol("Key.Number3"), Number4: Symbol("Key.Number4"),
-    Number5: Symbol("Key.Number5"), Number6: Symbol("Key.Number6"), Number7: Symbol("Key.Number7"), Number8: Symbol("Key.Number8"), Number9: Symbol("Key.Number9"),
-    Keypad0: Symbol("Key.Keypad0"), Keypad1: Symbol("Key.Keypad1"), Keypad2: Symbol("Key.Keypad2"), Keypad3: Symbol("Key.Keypad3"), Keypad4: Symbol("Key.Keypad4"),
-    Keypad5: Symbol("Key.Keypad5"), Keypad6: Symbol("Key.Keypad6"), Keypad7: Symbol("Key.Keypad7"), Keypad8: Symbol("Key.Keypad8"), Keypad9: Symbol("Key.Keypad9"),
-    Period: Symbol("Key.Period"), KeypadPeriod: Symbol("Key.KeypadPeriod"), Plus: Symbol("Key.Plus"), KeypadPlus: Symbol("Key.KeypadPlus"),
-    Slash: Symbol("Key.Slash"), KeypadDivide: Symbol("Key.KeypadDivide"),
+    Unknown: 0,
+    ShiftLeft: 1, LShift: 1, ShiftRight: 2, RShift: 2,
+    ControlLeft: 3, LControl: 3, ControlRight: 4, RControl: 4,
+    AltLeft: 5, LAlt: 5, AltRight: 6, RAlt: 6,
+    WinLeft: 7, LWin: 7, WinRight: 8, RWin: 8, Menu: 9,
+    F1: 10, F2: 11, F3: 12, F4: 13, F5: 14, F6: 15, F7: 16, F8: 17, F9: 18, F10: 19, F11: 20, F12: 21,
+    F13: 22, F14: 23, F15: 24, F16: 25, F17: 26, F18: 27, F19: 28, F20: 29, F21: 30, F22: 31, F23: 32, F24: 33, F25: 34,
+    Up: 45, Down: 46, Left: 47, Right: 48,
+    Enter: 49, Escape: 50, Space: 51, Tab: 52, BackSpace: 53, Back: 53, Insert: 54, Delete: 55,
+    PageUp: 56, PageDown: 57, Home: 58, End: 59,
+    CapsLock: 60, ScrollLock: 61, PrintScreen: 62, Pause: 63, NumLock: 64, Clear: 65, Sleep: 66,
+    Keypad0: 67, Keypad1: 68, Keypad2: 69, Keypad3: 70, Keypad4: 71, Keypad5: 72, Keypad6: 73, Keypad7: 74, Keypad8: 75, Keypad9: 76,
+    KeypadDivide: 77, KeypadMultiply: 78, KeypadSubtract: 79, KeypadMinus: 79, KeypadAdd: 80, KeypadPlus: 80,
+    KeypadDecimal: 81, KeypadPeriod: 81, KeypadEnter: 82,
+    A: 83, B: 84, C: 85, D: 86, E: 87, F: 88, G: 89, H: 90, I: 91, J: 92, K: 93, L: 94, M: 95, N: 96,
+    O: 97, P: 98, Q: 99, R: 100, S: 101, T: 102, U: 103, V: 104, W: 105, X: 106, Y: 107, Z: 108,
+    Number0: 109, Number1: 110, Number2: 111, Number3: 112, Number4: 113, Number5: 114, Number6: 115, Number7: 116, Number8: 117, Number9: 118,
+    Tilde: 119, Grave: 119, Minus: 120, Plus: 121, BracketLeft: 122, LBracket: 122, BracketRight: 123, RBracket: 123,
+    Semicolon: 124, Quote: 125, Comma: 126, Period: 127, Slash: 128, BackSlash: 129, NonUSBackSlash: 130,
 });
 
 // Map of Key symbol → output character (RadarWindow.KeysToString's (int)Key switch, 1:1).

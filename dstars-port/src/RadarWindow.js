@@ -44,7 +44,10 @@ import { Aircraft } from "./Aircraft.js";
 import { DCBSubmenuButton, DCBAdjustmentButton } from "./DCBButton.js";
 import { Keyboard, Key, Mouse, ButtonState, Vector4, KeyToChar } from "./_shims/OpenTK.js";
 import { Value } from "./_shims/MetarDecoder.js";
-import { Clipboard } from "./_shims/WinForms.js";
+import { Clipboard, SaveFileDialog } from "./_shims/WinForms.js";
+import { PropertyForm } from "./PropertyForm.js";
+import { VideoMapSelector } from "./VideoMapSelector.js";
+import { ADSBBeaconReaderForm } from "./ADSBBeaconReader/ADSBBeaconReaderForm.js";
 import { Environment } from "./_shims/System.js";
 import { tryParseDouble } from "./_shims/Primitives.js";
 import { RangeBearingLine } from "./RangeBearingLine.js";
@@ -2392,5 +2395,186 @@ export class RadarWindow {
         return output;
     }
 
-    // ===== PORTED THROUGH LINE 3540 / 6962 — next chunk continues here (Window_KeyPress @3541) =====
+    Window_KeyPress(sender, e) { // (object sender, KeyPressEventArgs e)
+        let key = e.KeyChar.toUpperCase(); // char.ToUpper(e.KeyChar)
+        this.Preview.push(key); // Preview.Add(key)
+    }
+
+    #showAllCallsigns = false; // private bool
+    Window_KeyDown(sender, e) { // (object sender, KeyboardKeyEventArgs e)
+        let oldscale = this.#scale;
+        if (e.Control) {
+            switch (e.Key) {
+                case Key.C:
+                    this.Preview.length = 0; // Preview.Clear()
+                    this.StopReceivers();
+                    Environment.Exit(0);
+                    break;
+                case Key.S:
+                    if (e.Shift) {
+                        // using (SaveFileDialog dialog = new SaveFileDialog())
+                        {
+                            let dialog = new SaveFileDialog();
+                            dialog.RestoreDirectory = true;
+                            dialog.Filter = "xml files (*.xml)|*.xml|All files (*.*)|*.*";
+                            dialog.FilterIndex = 1;
+                            if (dialog.ShowDialog() === DialogResult.OK) {
+                                this.#settingsPath = dialog.FileName;
+                            }
+                            else {
+                                dialog.Dispose();
+                                break;
+                            }
+                            dialog.Dispose();
+                        }
+                    }
+                    this.Preview.length = 0;
+                    this.SaveSettings(this.#settingsPath);
+                    break;
+                case Key.P: {
+                    let properties = new PropertyForm(this);
+                    properties.Show();
+                    break;
+                }
+                case Key.Q:
+                    this.QuickLook = !this.QuickLook;
+                    break;
+                case Key.F1:
+                    if (!e.Shift) {
+                        if (this.CurrentPrefSet.ScopeCentered) {
+                            this.CurrentPrefSet.ScopeCentered = false;
+                        }
+                        else {
+                            this.CurrentPrefSet.ScopeCentered = true;
+                        }
+                    }
+                    else {
+                        this.Preview.push(RadarWindow.KeyCode.RecenterEverything);
+                        this.Preview.push(" ");
+                    }
+                    break;
+                case Key.F2: {
+                    let selector = new VideoMapSelector(this.VideoMaps);
+                    selector.Show();
+                    selector.BringToFront();
+                    selector.Focus();
+                    break;
+                }
+                case Key.F8:
+                    this.CurrentPrefSet.DCBVisible = !this.CurrentPrefSet.DCBVisible;
+                    break;
+                case Key.F9:
+                    this.Preview.length = 0;
+                    this.Preview.push(RadarWindow.KeyCode.RngRing);
+                    break;
+                case Key.B: {
+                    this.ADSBSettings.EnsureBuiltInSources();
+                    let adsbForm = new ADSBBeaconReaderForm(this.ADSBSettings, this.#adsbService);
+                    adsbForm.Show();
+                    adsbForm.BringToFront();
+                    adsbForm.Focus();
+                    adsbForm.FormClosed.add((s, args) => this.RestartADSBService());
+                    break;
+                }
+            }
+        }
+        else if (e.Alt) {
+            switch (e.Key) {
+                case Key.Enter:
+                case Key.KeypadEnter:
+                    if (this.#isScreenSaver) {
+                        this.StopReceivers();
+                        Environment.Exit(0);
+                    }
+                    else
+                        this.#window.WindowState = this.#window.WindowState === WindowState.Fullscreen ? WindowState.Normal : WindowState.Fullscreen;
+                    break;
+                case Key.F4:
+                    this.Preview.length = 0;
+                    this.StopReceivers();
+                    this.SaveSettings(this.#settingsPath);
+                    Environment.Exit(0);
+                    break;
+            }
+        }
+        else {
+            switch (e.Key) {
+                case Key.F13:
+                case Key.F14:
+                case Key.F15:
+                case Key.F16:
+                case Key.F17:
+                    this.Preview.length = 0;
+                    this.Preview.push(RadarWindow.KeyCode.WX);
+                    break;
+                case Key.F18:
+                case Key.F19:
+                case Key.F20:
+                case Key.F21:
+                case Key.F22:
+                case Key.F23:
+                case Key.F24:
+                case Key.LShift:
+                case Key.RShift:
+                    break;
+                case Key.Escape:
+                    this.Preview.length = 0;
+                    this.#previewmessage = null;
+                    this.ReleaseDCBButton();
+                    this.#centeredmouse = true;
+                    this.#window.CursorVisible = true;
+                    if (this.#tempLine != null) {
+                        // lock (rangeBearingLines)
+                        { let idx = this.#rangeBearingLines.indexOf(this.#tempLine); if (idx >= 0) this.#rangeBearingLines.splice(idx, 1); } // Remove(tempLine)
+                        this.#tempLine = null;
+                    }
+                    if (this.#tempMinSep != null)
+                        this.#tempMinSep = null;
+                    break;
+                case Key.Enter:
+                case Key.KeypadEnter:
+                case Key.PageDown:
+                    this.ProcessCommand(this.Preview);
+                    break;
+                case Key.BackSpace:
+                    if (this.Preview.length > 0)
+                        this.Preview.splice(this.Preview.length - 1, 1); // RemoveAt(Count - 1)
+                    break;
+                case Key.F1:
+                    if (!this.#showAllCallsigns) {
+                        this.#showAllCallsigns = true;
+                    }
+                    break;
+                default: {
+                    if ((e.Key > 9 && e.Key < 22) || e.Key === Key.End)
+                        this.Preview.length = 0;
+                    let isText = (e.Key >= Key.A && e.Key <= Key.Z) || (e.Key >= Key.Number0 && e.Key <= Key.Number9) || (e.Key >= Key.Keypad0 && e.Key <= Key.Keypad9) || e.Key === Key.Period || e.Key === Key.KeypadPeriod
+                        || e.Key === Key.Slash || e.Key === Key.Quote || e.Key === Key.Plus || e.Key === Key.BracketLeft || e.Key === Key.BracketRight || e.Key === Key.Minus || e.Key === Key.KeypadMultiply || e.Key === Key.KeypadPlus || e.Key === Key.Space || e.Key === Key.Grave;
+                    if (!isText)
+                        this.Preview.push(e.Key); // Preview.Add(e.Key)
+                    break;
+                }
+            }
+        }
+    }
+    #centeredmouse = false; // bool centeredmouse (C# declares @4368; pulled early — Escape handler sets it)
+    Window_KeyUp(sender, e) { // (object sender, KeyboardKeyEventArgs e)
+        switch (e.Key) {
+            case Key.F1:
+                if (this.#showAllCallsigns) {
+                    this.#showAllCallsigns = false;
+                }
+                break;
+        }
+    }
+
+    Window_Resize(sender, e) { // (object sender, EventArgs e)
+        let oldscale = this.#scale;
+        GL.Viewport(0, 0, this.#window.Width, this.#window.Height);
+    }
+
+    Window_UpdateFrame(sender, e) { // (object sender, FrameEventArgs e)
+    }
+
+    // ===== PORTED THROUGH LINE 3740 / 6962 — next chunk continues here (fps @3741 [already declared], DCB fields @3742) =====
 }

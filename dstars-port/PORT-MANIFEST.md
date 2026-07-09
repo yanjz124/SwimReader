@@ -78,7 +78,10 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 3540 / 6962** (+ DisplayPreviewMessage, RenderStatus [clock/altimeter/ATIS/beacon/filter/ATPA/METAR/FPS/QL status lines], LACAMCIId, RenderLACAMCIList, ToFilterAltitudeString, GeneratePreviewString [preview key→string map incl. KeyCode + special chars, +2 tests]). Added #fps (early; C# @3741), #fmtClock/#toFixedPad/#padNum format helpers. Key shim gained Slash/KeypadDivide symbols.
+**RadarWindow.cs port progress: lines 3740 / 6962** (+ Window_KeyPress/KeyDown/KeyUp [Ctrl/Alt/plain command routing → Preview], Window_Resize [GL.Viewport], Window_UpdateFrame). #showAllCallsigns + #centeredmouse (early; C# @4368) fields. Shims: WinForms.SaveFileDialog (ShowDialog→Cancel; no browser save-path picker), GameWindow.Width/Height getters.
+**IMPORTANT Key-shim correction:** `Key` is now the OpenTK 3.x **integer** enum (not Symbols) because Window_KeyDown does ordered comparisons (`e.Key >= Key.A && e.Key <= Key.Z`, `(int)e.Key > 9`). Chars stay 1-char strings, so `GetType()==typeof(char)` → `typeof x==="string"` still holds; KeyToChar/#previewMap are now number-keyed and (faithfully) conflate KeyCode with the F-keys via shared integers, matching C#'s `(int)` cast.
+
+Prior: **lines 3540** (+ DisplayPreviewMessage, RenderStatus, LACAMCIId, RenderLACAMCIList, ToFilterAltitudeString, GeneratePreviewString [+2 tests]).
 
 Prior: **lines 3160** (+ ProcessImpliedCommand, KeysToString [+4 tests], RenderPreview). Key shim: letter/number/period/plus Symbols + KeyToChar map.
 

@@ -20,3 +20,14 @@ export const DialogResult = Object.freeze({ None: 0, OK: 1, Cancel: 2, Abort: 3,
 export const Clipboard = {
     SetText(text) { try { globalThis.navigator?.clipboard?.writeText(String(text)); } catch { /* clipboard unavailable */ } },
 };
+
+// System.Windows.Forms.SaveFileDialog — the browser has no synchronous native "save as" path picker,
+// so ShowDialog() returns Cancel (the caller's else-branch runs). A real host can override showDialog.
+export class SaveFileDialog {
+    RestoreDirectory = false;
+    Filter = "";
+    FilterIndex = 0;
+    FileName = "";
+    ShowDialog() { return DialogResult.Cancel; } // no OS save dialog in the browser
+    Dispose() { }
+}

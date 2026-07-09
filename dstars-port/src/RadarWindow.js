@@ -43,6 +43,7 @@ import { ADSBBeaconReaderService } from "./ADSBBeaconReader/ADSBBeaconReaderServ
 import { Aircraft } from "./Aircraft.js";
 import { DCBSubmenuButton, DCBAdjustmentButton } from "./DCBButton.js";
 import { Keyboard, Key, Mouse, ButtonState, Vector4, KeyToChar } from "./_shims/OpenTK.js";
+import { Value } from "./_shims/MetarDecoder.js";
 import { Clipboard } from "./_shims/WinForms.js";
 import { Environment } from "./_shims/System.js";
 import { tryParseDouble } from "./_shims/Primitives.js";
@@ -2178,5 +2179,218 @@ export class RadarWindow {
     #previewmessage = null;    // string
     #previewmessageexpiry;     // DateTime
 
-    // ===== PORTED THROUGH LINE 3160 / 6962 — next chunk continues here (DisplayPreviewMessage @3161) =====
+    DisplayPreviewMessage(message, seconds = 5) {
+        this.Preview.length = 0; // Preview.Clear()
+        this.#previewmessage = message;
+        this.#previewmessageexpiry = this.#addSeconds(RadarWindow.CurrentTime, seconds); // CurrentTime.AddSeconds(seconds)
+    }
+    #fps = 0; // private int fps = 0 (C# declares at ~3741; pulled early — RenderStatus reads it)
+    // C# numeric/date format helpers: ToString("HHmm/ss"), ToString("00.00"), ToString("0.0").
+    #fmtClock(t) {
+        let hh = String(t.getUTCHours()).padStart(2, "0");
+        let mm = String(t.getUTCMinutes()).padStart(2, "0");
+        let ss = String(t.getUTCSeconds()).padStart(2, "0");
+        return `${hh}${mm}/${ss}`;
+    }
+    #toFixedPad(v, intMin, dec) { // ToString("00.00") = (intMin=2,dec=2); "0.0" = (1,1)
+        let neg = v < 0;
+        let s = Math.abs(v).toFixed(dec);
+        let dot = s.indexOf(".");
+        let intPart = dot >= 0 ? s.slice(0, dot) : s;
+        let fracPart = dot >= 0 ? s.slice(dot) : "";
+        intPart = intPart.padStart(intMin, "0");
+        return (neg ? "-" : "") + intPart + fracPart;
+    }
+    RenderStatus() {
+        this.#StatusArea.ForeColor = RadarWindow.AdjustedColor(this.DataBlockColor, this.CurrentPrefSet.Brightness.Lists);
+        this.#StatusArea.Font = this.Font;
+        let oldtext = this.#StatusArea.Text;
+        let timesyncind = RadarWindow.#timesync.Synchronized ? " " : "*";
+        this.#StatusArea.Text = this.#fmtClock(RadarWindow.CurrentTime) + timesyncind + this.#toFixedPad(this.#wx.Altimeter.Value, 2, 2) + "\r\n";
+        // Reserve a blank line below the clock for the SPC code line (drawn as
+        // separate red/yellow labels in RenderSSAAlertCodes) so it doesn't overlap.
+        let ssaSpcRed = { value: "" }, ssaSpcYellow = { value: "" }; // out var
+        this.GetActiveSpcCodes(ssaSpcRed, ssaSpcYellow);
+        if (ssaSpcRed.value.length > 0 || ssaSpcYellow.value.length > 0)
+            this.#StatusArea.Text += "\r\n";
+        for (let i = 0; i < 10; i++) {
+            if (this.#atises[i] != null) {
+                this.#StatusArea.Text += this.#atises[i] + " ";
+                if (this.#gentexts[i] != null)
+                    this.#StatusArea.Text += this.#gentexts[i];
+                this.#StatusArea.Text += "\r\n";
+            }
+        }
+        if (this.SelectedBeaconCodes.length > 0) {
+
+            for (const squawk of this.SelectedBeaconCodes) {
+                this.#StatusArea.Text += squawk + " ";
+            }
+            this.#StatusArea.Text += "\r\n";
+        }
+        this.#StatusArea.Text += Math.trunc(this.CurrentPrefSet.Range) + "NM" + " PTL: " + this.#toFixedPad(this.CurrentPrefSet.PTLLength, 1, 1) + "\r\n";
+        this.#StatusArea.Text += this.ToFilterAltitudeString(this.MinAltitude) + " " + this.ToFilterAltitudeString(this.MaxAltitude) + " U "
+            + this.ToFilterAltitudeString(this.MinAltitudeAssociated) + " " + this.ToFilterAltitudeString(this.MaxAltitudeAssociated) + " A\r\n";
+        if (this.ATPA.Active) {
+            this.#StatusArea.Text += "INTRAIL ON: ";
+            this.ATPA.Volumes.forEach(x => {
+                if (x.Active) {
+                    this.#StatusArea.Text += x.VolumeId + " ";
+                }
+            });
+            this.#StatusArea.Text += "\r\n";
+            let tpfv = this.ATPA.Volumes.filter(v => v.TwoPointFiveEnabled && v.TwoPointFiveActive && v.Active);
+            if (tpfv.length > 0) {
+                this.#StatusArea.Text += "INTRAIL 2.5 ON: ";
+                tpfv.forEach(v => this.#StatusArea.Text += v.VolumeId + " ");
+                this.#StatusArea.Text += "\r\n";
+            }
+        }
+        let metarnum = 0;
+        let crlast = false;
+        for (const metar of [...this.#wx.Metars].sort((a, b) => (a.ICAO < b.ICAO ? -1 : a.ICAO > b.ICAO ? 1 : 0))) { // OrderBy(x => x.ICAO)
+            metarnum++;
+            if (metar.IsValid) {
+                try {
+                    let station = metar.ICAO;
+                    if (station.length === 4 && station[0] === "K") //not really correct, but whatever
+                        station = station.substring(1);
+                    if (metar.Pressure != null) {
+                        this.#StatusArea.Text += station;
+                        this.#StatusArea.Text += " ";
+                        this.#StatusArea.Text += this.#toFixedPad(metar.Pressure.GetConvertedValue(Value.Unit.MercuryInch), 2, 2);
+
+                    }
+                    else {
+                        this.#StatusArea.Text += station + " 00.00";
+                    }
+                    //if (WindInStatusArea)
+                    //    StatusArea.Text += " " + metar.Wind.Raw;
+                }
+                catch {
+                    this.#StatusArea.Text += metar.ICAO + " METAR ERR";
+                }
+                if (this.WindInStatusArea || metarnum % 3 === 0) {
+                    this.#StatusArea.Text += "\r\n";
+                    crlast = true;
+                }
+                else {
+                    this.#StatusArea.Text += " ";
+                    crlast = false;
+                }
+            }
+        }
+        if (!crlast) {
+            this.#StatusArea.Text += "\r\n";
+        }
+        if (this.FPSInStatusArea) {
+            this.#StatusArea.Text += `FPS: ${this.#fps} AC: ${RadarWindow.Aircraft.length}`; // Aircraft.Count
+            this.#StatusArea.Text += "\r\n";
+        }
+        if (this.QuickLookList.length > 0) {
+            this.#StatusArea.Text += "QL: ";
+            for (const quicklook of this.QuickLookList) {
+                this.#StatusArea.Text += `${quicklook} `;
+            }
+            this.#StatusArea.Text += "\r\n";
+        }
+        this.#StatusArea.LocationF = new PointF(this.StatusLocation.X, this.StatusLocation.Y - this.#StatusArea.SizeF.Height);
+        this.DrawLabel(this.#StatusArea);
+    }
+
+    static LACAMCIId(ac) { // private static string LACAMCIId(Aircraft ac)
+        if (!(ac.FlightPlanCallsign == null || ac.FlightPlanCallsign === ""))
+            return ac.FlightPlanCallsign;
+        return !(ac.Squawk == null || ac.Squawk === "") ? ac.Squawk : "----";
+    }
+    RenderLACAMCIList() {
+        if (!this.ShowLACAMCIList)
+            return;
+        let tracks; // List<Aircraft>
+        // lock (Aircraft)
+        tracks = RadarWindow.Aircraft.filter(x => !x.Deleted && (x.LowAltitude || x.ConflictAlert));
+        if (tracks.length === 0)
+            return;
+        // Per vSTARS, an unassociated alert track shows its reported beacon code
+        // in place of the callsign (an MCI rather than a CA when one of a pair).
+        let text = "LA/CA/MCI\r\n";
+        for (const ac of tracks.filter(x => x.LowAltitude)) {
+            let hundreds = Math.trunc(ac.TrueAltitude / 100);
+            text += `LA ${RadarWindow.LACAMCIId(ac)} ${this.#padNum(hundreds, 3)}\r\n`; // {hundreds:000}
+        }
+        let shownPairs = new Set(); // HashSet<string>
+        for (const ac of tracks.filter(x => x.ConflictAlert)) {
+            for (const partner of [...ac.ConflictingTracks]) { // ConflictingTracks.ToList()
+                let ids = [String(ac.TrackGuid), String(partner.TrackGuid)];
+                ids.sort(); // Array.Sort(ids)
+                let key = ids.join("|"); // string.Join("|", ids)
+                if (shownPairs.has(key)) // !shownPairs.Add(key) -> continue
+                    continue;
+                shownPairs.add(key);
+                // CA when both associated; MCI if either is unassociated.
+                let label = ((ac.FlightPlanCallsign == null || ac.FlightPlanCallsign === "") || (partner.FlightPlanCallsign == null || partner.FlightPlanCallsign === "")) ? "MCI" : "CA";
+                text += `${label} ${RadarWindow.LACAMCIId(ac)} ${RadarWindow.LACAMCIId(partner)}\r\n`;
+            }
+        }
+        this.#LACAMCIListArea.ForeColor = RadarWindow.AdjustedColor(this.DataBlockColor, this.CurrentPrefSet.Brightness.Lists);
+        this.#LACAMCIListArea.Font = this.Font;
+        this.#LACAMCIListArea.Text = text;
+        this.#LACAMCIListArea.ForceRedraw();
+        this.#LACAMCIListArea.LocationF = new PointF(this.LACAMCIListLocation.X, this.LACAMCIListLocation.Y);
+        this.DrawLabel(this.#LACAMCIListArea);
+    }
+    // C# ToString("000") on a possibly-negative integer.
+    #padNum(n, width) { return (n < 0 ? "-" : "") + String(Math.abs(n)).padStart(width, "0"); }
+
+    ToFilterAltitudeString(altitude) { // string ToFilterAltitudeString(int altitude)
+        let hundreds = Math.abs(Math.trunc(altitude / 100));
+        let altString = String(hundreds).padStart(3, "0"); // ToString("000")
+        if (altitude < 0)
+            altString = "N99";
+        return altString;
+    }
+    // GeneratePreviewString's (int)Key / (int)KeyCode switch, built once as a lookup map.
+    static #previewMap = new Map([
+        ...KeyToChar, // A-Z, 0-9, period, plus
+        [Key.KeypadMultiply, "*"],
+        [Key.Slash, "/"], [Key.KeypadDivide, "/"],
+        [Key.Space, "\r\n"],
+        [RadarWindow.KeyCode.FltData, "FD\r\n"],
+        [RadarWindow.KeyCode.HndOff, "HO\r\n"],
+        [RadarWindow.KeyCode.InitCntl, "IC\r\n"],
+        [RadarWindow.KeyCode.Min, "MIN\r\n"],
+        [RadarWindow.KeyCode.MultiFunc, "F\r\n"],
+        [RadarWindow.KeyCode.TermCntl, "TC\r\n"],
+        [RadarWindow.KeyCode.SignOn, "SIGN ON\r\n"],
+        [RadarWindow.KeyCode.VP, "VP\r\n"],
+        [RadarWindow.KeyCode.RngRing, "RR"],
+        [RadarWindow.KeyCode.WX, "WX"],
+        [RadarWindow.KeyCode.RecenterEverything, "RECENTER"],
+    ]);
+    GeneratePreviewString(keys) { // string GeneratePreviewString(List<object> keys)
+        let output = "";
+        for (const key of keys) {
+            if (typeof key === "string") { // type == typeof(char)
+                switch (key) {
+                    case " ":
+                        output += "\r\n";
+                        break;
+                    case "`":
+                        output += "▲";
+                        break;
+                    default:
+                        output += key;
+                        break;
+                }
+            }
+            else if (RadarWindow.#previewMap.has(key)) { // type == typeof(KeyCode) || type == typeof(Key)
+                output += RadarWindow.#previewMap.get(key);
+            }
+            // else: unmapped enum value -> default break (nothing)
+        }
+        output += " ";
+        return output;
+    }
+
+    // ===== PORTED THROUGH LINE 3540 / 6962 — next chunk continues here (Window_KeyPress @3541) =====
 }

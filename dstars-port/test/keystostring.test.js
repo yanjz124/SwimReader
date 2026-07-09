@@ -26,3 +26,19 @@ test("start index skips leading keys", () => {
 test("unmapped keys (e.g. F7, End) contribute nothing", () => {
     assert.equal(call([Key.F7, "A", Key.End, "B"]), "AB");
 });
+
+// GeneratePreviewString maps enum keys (incl. KeyCode) + special chars, and appends a trailing space.
+const GPS = RadarWindow.prototype.GeneratePreviewString;
+const gps = (keys) => GPS.call({}, keys);
+
+test("preview string maps chars, backtick, and space", () => {
+    assert.equal(gps(["A", "B"]), "AB ");           // trailing space always appended
+    assert.equal(gps(["`"]), "▲ ");                  // backtick -> up-triangle
+    assert.equal(gps(["A", " ", "B"]), "A\r\nB ");   // space -> CRLF
+});
+
+test("preview string maps KeyCode/named keys", () => {
+    assert.equal(gps([RadarWindow.KeyCode.RngRing]), "RR ");
+    assert.equal(gps([RadarWindow.KeyCode.RecenterEverything]), "RECENTER ");
+    assert.equal(gps([Key.KeypadMultiply, Key.Slash]), "*/ ");
+});

@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 3160 / 6962** (+ ProcessImpliedCommand [slew: ack alerts / accept-recall handoff / pointout / quicklook / beacon readout], KeysToString [Key-symbol→char via KeyToChar map, +4 tests], RenderPreview + previewmessage fields). Key shim gained letter/number/period/plus Symbols + KeyToChar map.
+**RadarWindow.cs port progress: lines 3540 / 6962** (+ DisplayPreviewMessage, RenderStatus [clock/altimeter/ATIS/beacon/filter/ATPA/METAR/FPS/QL status lines], LACAMCIId, RenderLACAMCIList, ToFilterAltitudeString, GeneratePreviewString [preview key→string map incl. KeyCode + special chars, +2 tests]). Added #fps (early; C# @3741), #fmtClock/#toFixedPad/#padNum format helpers. Key shim gained Slash/KeypadDivide symbols.
+
+Prior: **lines 3160** (+ ProcessImpliedCommand, KeysToString [+4 tests], RenderPreview). Key shim: letter/number/period/plus Symbols + KeyToChar map.
 
 Prior: **lines 2879** — `ProcessCommand` (source 1548-2879, the full ~1332-line command switch) spliced into the class whole. Covers leader-direction slews, SPC/alert tags, `*` splat (RBL/TPA), `.`/`+` scratchpads, `F7` multifunction (ATPA/2.5, beacons, filters, leader lines, MSAW, quicklook, ATIS text, scratchpads), range rings, WX levels, recenter, min-sep, and default scratchpad/type/handoff entry. Key shim gained function-key + End/KeypadMultiply Symbols (char=string vs named-key=Symbol contract → `GetType()==typeof(char)` becomes `typeof x==="string"`).
 Shims added this chunk: OpenTK input (`Keyboard`/`Key`/`Mouse`/`ButtonState` + `CursorVisible`), `WinForms.Clipboard` (navigator.clipboard, async→fire-and-forget), `_shims/System.js` (`Environment.Exit`). Cursor-warp `Mouse.SetPosition` is a no-op (browser can't warp the OS cursor); GetType()==typeof(X) → constructor === X (exact-type, matches C#).

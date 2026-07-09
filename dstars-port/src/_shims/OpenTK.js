@@ -139,6 +139,7 @@ export const Key = Object.freeze({
     Keypad0: Symbol("Key.Keypad0"), Keypad1: Symbol("Key.Keypad1"), Keypad2: Symbol("Key.Keypad2"), Keypad3: Symbol("Key.Keypad3"), Keypad4: Symbol("Key.Keypad4"),
     Keypad5: Symbol("Key.Keypad5"), Keypad6: Symbol("Key.Keypad6"), Keypad7: Symbol("Key.Keypad7"), Keypad8: Symbol("Key.Keypad8"), Keypad9: Symbol("Key.Keypad9"),
     Period: Symbol("Key.Period"), KeypadPeriod: Symbol("Key.KeypadPeriod"), Plus: Symbol("Key.Plus"), KeypadPlus: Symbol("Key.KeypadPlus"),
+    Slash: Symbol("Key.Slash"), KeypadDivide: Symbol("Key.KeypadDivide"),
 });
 
 // Map of Key symbol → output character (RadarWindow.KeysToString's (int)Key switch, 1:1).

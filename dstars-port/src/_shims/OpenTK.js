@@ -126,6 +126,7 @@ export const Key = Object.freeze({
     F1: Symbol("Key.F1"), F2: Symbol("Key.F2"), F3: Symbol("Key.F3"), F4: Symbol("Key.F4"),
     F5: Symbol("Key.F5"), F6: Symbol("Key.F6"), F7: Symbol("Key.F7"), F8: Symbol("Key.F8"),
     F9: Symbol("Key.F9"), F10: Symbol("Key.F10"), F11: Symbol("Key.F11"), F12: Symbol("Key.F12"),
+    End: Symbol("Key.End"), KeypadMultiply: Symbol("Key.KeypadMultiply"),
 });
 
 // Live keyboard state — the host sets/clears entries from DOM keydown/keyup.

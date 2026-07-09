@@ -6,6 +6,15 @@
 // System.Threading.TimerCallback — a delegate; modeled as identity (the wrapped function IS the callback).
 export function TimerCallback(fn) { return fn; }
 
+// System.Threading.Tasks.Task — only Task.Run(Action) / Task.WhenAll are used.
+// Task.Run schedules the delegate off the current tick (fire-and-forget microtask), matching
+// C#'s "run on a thread-pool thread" for the side-effecting delegates DGScope passes.
+export const Task = {
+    Run(fn) { return Promise.resolve().then(fn); },
+    WhenAll(tasks) { return Promise.all(tasks); },
+    Delay(ms) { return new Promise(res => { const t = setTimeout(res, ms); if (t && t.unref) t.unref(); }); },
+};
+
 export class Timer {
     #callback; #state; #timeout = null; #handle = null;
     // new Timer(TimerCallback callback, object state, int dueTime, int period)  [ms]

@@ -91,6 +91,10 @@ export class GameWindow {
         this.ClientSize = { Width: width, Height: height };
         this.Size = { Width: width, Height: height };
     }
+    // OpenTK GameWindow.Run() enters a blocking render loop. In the browser the host drives the
+    // loop via requestAnimationFrame and raises Load/RenderFrame/UpdateFrame itself, so this is a
+    // no-op entry point (the host calls Load.Invoke then schedules RenderFrame).
+    Run() { this.Load.Invoke(this, {}); }
 }
 
 // System.Numerics.Vector2 (used by NexradDisplay's ScopeServerWxRadarReport).

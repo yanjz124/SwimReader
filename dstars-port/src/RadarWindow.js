@@ -37,6 +37,9 @@ import { ObservableCollection, NotifyCollectionChangedAction } from "./_shims/Co
 import { TCP } from "./STARS/TCP.js";
 import { MapCategory } from "./VideoMap.js";
 import { tryParseInt } from "./_shims/Primitives.js";
+import { Task } from "./_shims/Threading.js";
+import { Altitude } from "./Altitude.js";
+import { ADSBBeaconReaderService } from "./ADSBBeaconReader/ADSBBeaconReaderService.js";
 
 export class RadarWindow {
     // ── static members used across the module graph (keep live during the chunked port) ──
@@ -609,5 +612,221 @@ export class RadarWindow {
         RadarWindow.Aircraft.CollectionChanged.add(this.Aircraft_CollectionChanged.bind(this)); // Aircraft.CollectionChanged += …
     }
 
-    // ===== PORTED THROUGH LINE 1110 / 6962 — next chunk continues here (Window_MouseUp @1111) =====
+    Window_MouseUp(sender, e) { // (object sender, MouseButtonEventArgs e)
+        if (this.CurrentPrefSet.DCBVisible)
+            this.dcb.ActiveMenu.MouseUp();
+    }
+
+    Aircraft_CollectionChanged(sender, e) { // (object sender, NotifyCollectionChangedEventArgs e)
+        switch (e.Action) {
+            case NotifyCollectionChangedAction.Add:
+                for (const item of e.NewItems) { // foreach (Aircraft item in e.NewItems)
+                    item.HandedOff.add(this.Aircraft_HandedOff);           // += (stable arrow-field ref, see below)
+                    item.HandoffInitiated.add(this.Aircraft_HandoffInitiated);
+                    item.Transferred.add(this.Aircraft_Transferred);
+                    item.OwnershipChange.add(this.Aircraft_OwnershipChange);
+                    if (item.Altitude == null)
+                        item.Altitude = new Altitude();
+                    item.Altitude.SetAltitudeProperties(18000, this.#wx.Altimeter);
+                    item.SetSelectedSquawkList(this.SelectedBeaconCodes, this.SelectedBeaconCodeChar);
+                }
+                break;
+            case NotifyCollectionChangedAction.Remove:
+                for (const item of e.OldItems) { // foreach (Aircraft item in e.OldItems)
+                    item.HandedOff.remove(this.Aircraft_HandedOff);        // -=
+                    item.OwnershipChange.remove(this.Aircraft_OwnershipChange);
+                    item.HandoffInitiated.remove(this.Aircraft_HandoffInitiated);
+                    item.Transferred.remove(this.Aircraft_Transferred);
+
+                    this.DeletePlane(item, false);
+                }
+                break;
+        }
+    }
+
+    DeletePlane(plane, leaveHistory = true) {
+        // lock (plane) / lock (dataBlocks) / lock (posIndicators) / … — no-ops (single-threaded JS)
+        {
+            {
+                this.dataBlocks.Remove(plane.DataBlock);
+                this.dataBlocks.Remove(plane.DataBlock2);
+                this.dataBlocks.Remove(plane.DataBlock3);
+            }
+            {
+                this.posIndicators.Remove(plane.PositionIndicator);
+            }
+            // rangeBearingLines.RemoveAll(line => line.EndPlane == plane || line.StartPlane == plane)
+            for (let i = this.#rangeBearingLines.length - 1; i >= 0; i--)
+                if (this.#rangeBearingLines[i].EndPlane === plane || this.#rangeBearingLines[i].StartPlane === plane)
+                    this.#rangeBearingLines.splice(i, 1);
+            // minSeps.RemoveAll(minsep => minsep.Plane1 == plane || minsep.Plane2 == plane)
+            for (let i = this.#minSeps.length - 1; i >= 0; i--)
+                if (this.#minSeps[i].Plane1 === plane || this.#minSeps[i].Plane2 === plane)
+                    this.#minSeps.splice(i, 1);
+            plane.Deleted = true;
+            this.#deletedPlanes.push(plane); // deletedPlanes.Add(plane)
+        }
+    }
+
+    // ── The 4 per-aircraft event handlers are arrow-field properties, NOT methods. ──
+    // ADAPTATION: C# subscribes/unsubscribes with method groups (`x.HandedOff += Aircraft_HandedOff`
+    // then `-= Aircraft_HandedOff`), which are stable references. `this.method.bind(this)` would mint
+    // a fresh function each time, so `-=` could never find it. Arrow class fields give one stable
+    // per-instance reference, preserving the +=/-= symmetry exactly.
+    Aircraft_HandoffInitiated = (sender, e) => { // (object sender, HandoffEventArgs e)
+        if (e.PositionTo === this.ThisPositionIndicator) {
+            if (e.Aircraft.Owned && e.Aircraft.DataBlock.Flashing)
+                return;
+            e.Aircraft.Owned = true;
+            e.Aircraft.DataBlock.Flashing = true;
+            e.Aircraft.DataBlock2.Flashing = true;
+            e.Aircraft.DataBlock3.Flashing = true;
+        }
+        /*if (e.Aircraft.LastPositionTime > CurrentTime.AddSeconds(-LostTargetSeconds))
+            GenerateDataBlock(e.Aircraft);*/
+    };
+
+    Aircraft_OwnershipChange = (sender, e) => { // (object sender, AircraftEventArgs e)
+        /*e.Aircraft.RedrawDataBlock();*/
+    };
+
+    PositionChange() {
+        // lock (Aircraft)
+        {
+            let aclist = [...RadarWindow.Aircraft]; // Aircraft.ToList()
+            aclist.forEach(x => x.Owned = x.PositionInd === this.ThisPositionIndicator || x.PendingHandoff === this.ThisPositionIndicator);
+            aclist.forEach(x => x.DataBlock.Flashing = x.PendingHandoff === this.ThisPositionIndicator);
+            aclist.forEach(x => x.DataBlock2.Flashing = x.PendingHandoff === this.ThisPositionIndicator);
+            aclist.forEach(x => x.DataBlock3.Flashing = x.PendingHandoff === this.ThisPositionIndicator);
+            aclist.forEach(x => x.FDB = false);
+        }
+        // QuickLookList.Remove(item) — List<string>.Remove removes first matching element
+        { let i = this.QuickLookList.indexOf(this.ThisPositionIndicator); if (i >= 0) this.QuickLookList.splice(i, 1); }
+        { let i = this.QuickLookList.indexOf(this.ThisPositionIndicator + "+"); if (i >= 0) this.QuickLookList.splice(i, 1); }
+    }
+
+    Aircraft_HandedOff = (sender, e) => { // (object sender, HandoffEventArgs e)
+        /*e.Aircraft.RedrawDataBlock(false);*/
+    };
+
+    // CRC STARS spec: when the receiving controller accepts your outbound handoff, the data block
+    // blinks white for 5 seconds, then stays white until you click. Stamp JustTransferredAt and turn
+    // on Flashing; the render loop's Flashing-clear branch is guarded to skip clearing during the 5s.
+    Aircraft_Transferred = (sender, e) => { // (object sender, HandoffEventArgs e)
+        if (e.PositionFrom === this.ThisPositionIndicator) {
+            e.Aircraft.JustTransferredAt = new Date(); // DateTime.UtcNow
+            e.Aircraft.DataBlock.Flashing = true;
+            e.Aircraft.DataBlock2.Flashing = true;
+            e.Aircraft.DataBlock3.Flashing = true;
+        }
+    };
+
+    // #settingshash declared in the previous chunk (byte[] settingshash)
+    #settingsPath; // string settingsPath
+    Run(isScreenSaver, settingsPath) {
+        this.#settingsPath = settingsPath;
+        this.#isScreenSaver = isScreenSaver;
+        this.#window.Run();
+    }
+
+    cbWxUpdateTimer(state) {
+        Task.Run(() => this.#wx.GetWeather(true));
+    }
+
+    cbAircraftGarbageCollectorTimer(state) {
+        let delplane; // List<Aircraft>
+        // lock (Aircraft)
+        delplane = RadarWindow.Aircraft.filter(x => x.LastMessageTime < this.#addSeconds(RadarWindow.CurrentTime, -this.AircraftGCInterval)); // .Where(...).ToList()
+        for (const plane of delplane) {
+            // lock (Aircraft)
+            RadarWindow.Aircraft.Remove(plane);
+            this.DeletePlane(plane, false);
+        }
+    }
+    // CurrentTime.AddSeconds(n) helper (DateTime.AddSeconds -> new Date shifted by n seconds).
+    #addSeconds(date, n) { return new Date(date.getTime() + n * 1000); }
+
+    #deletedPlanes = []; // private List<Aircraft> deletedPlanes = new List<Aircraft>()
+    DeleteTextures() {
+        // lock (deletedPlanes)
+        {
+            [...this.#deletedPlanes].forEach(plane => { // deletedPlanes.ToList().ForEach(...)
+                if (plane.DataBlock.TextureID !== 0) {
+                    GL.DeleteTexture(plane.DataBlock.TextureID);
+                    GL.DeleteTexture(plane.DataBlock2.TextureID);
+                    GL.DeleteTexture(plane.DataBlock3.TextureID);
+                    GL.DeleteTexture(plane.PositionIndicator.TextureID);
+                    plane.DataBlock.TextureID = 0;
+                    plane.DataBlock2.TextureID = 0;
+                    plane.DataBlock3.TextureID = 0;
+                    plane.PositionIndicator.TextureID = 0;
+                    plane.DataBlock.Dispose();
+                    plane.DataBlock2.Dispose();
+                    plane.DataBlock3.Dispose();
+                    plane.PositionIndicator.Dispose();
+                }
+                // lock (plane.History)
+                {
+                    for (let i = 0; i < plane.History.length; i++) {
+                        if (plane.History[i] != null) {
+                            plane.History[i].Dispose();
+                        }
+                    }
+                }
+                plane.TargetReturn.Dispose();
+                { let idx = this.#deletedPlanes.indexOf(plane); if (idx >= 0) this.#deletedPlanes.splice(idx, 1); } // deletedPlanes.Remove(plane)
+            });
+        }
+    }
+    StartReceivers() {
+        for (const receiver of this.Receivers) { // foreach (Receiver receiver in Receivers)
+            receiver.SetAircraftList(RadarWindow.Aircraft);
+            receiver.SetWeatherRadarDisplay(this.Nexrad);
+            if (receiver.Enabled)
+                try {
+                    receiver.Start();
+                }
+                catch (ex) {
+                    console.log(`An error occured starting receiver ${receiver.Name}.\r\n${ex.message}`); // MessageBox.Show
+                }
+        }
+        this.StartADSBService();
+    }
+
+    StopReceivers() {
+        for (const receiver of this.Receivers)
+            receiver.Stop();
+        this.StopADSBService();
+    }
+
+    StartADSBService() {
+        this.ADSBSettings.EnsureBuiltInSources();
+        if (this.ADSBSettings.AnyEnabled) {
+            this.#adsbService = new ADSBBeaconReaderService(
+                RadarWindow.Aircraft,
+                () => this.HomeLocation,
+                () => this.CurrentPrefSet.Range,
+                this.ADSBSettings);
+            this.#adsbService.Start();
+        }
+    }
+
+    StopADSBService() {
+        if (this.#adsbService != null) this.#adsbService.Stop(); // adsbService?.Stop()
+        this.#adsbService = null;
+    }
+
+    RestartADSBService() {
+        this.StopADSBService();
+        this.StartADSBService();
+    }
+    OrderWaypoints() {
+        // Waypoints.ToList().OrderBy(x => x.Location.DistanceTo(HomeLocation)).ToList()
+        this.Waypoints = [...this.Waypoints].sort((a, b) => a.Location.DistanceTo(this.HomeLocation) - b.Location.DistanceTo(this.HomeLocation));
+    }
+    Window_WindowStateChanged(sender, e) { // (object sender, EventArgs e)
+        //window.CursorVisible = window.WindowState != WindowState.Fullscreen;
+    }
+
+    // ===== PORTED THROUGH LINE 1355 / 6962 — next chunk continues here (Window_MouseMove @1358) =====
 }

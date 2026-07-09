@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 5812 / 6962** (+ #DrawPConeCore [TPACone cone geometry — fills prior stub], DrawVideoMapLines [A/B category maps w/ Max-blend], DrawLines, DrawLine [3 overloads: PointF/PointF, Line, and core double×4+width — merged], DrawPolygon [+ stipple], DrawNexrad; + dataBlocks/posIndicators List fields). New shim: `Collections.List` (Array + Add/Remove/RemoveAt/Clear/Contains/Count) — backs the List<TransparentLabel> fields DeletePlane already used via .Remove.
+**RadarWindow.cs port progress: lines 6134 / 6962** (+ GenerateDataBlock [async: tag colors by ownership/mark/pointout, alert-code labels], GenerateTargetAsync [async: history-return roll, PTL, data-block/pos-indicator placement, min-sep recalc], ADSBtoFlightPlanCallsigns/ADSBtoFlightPlanCallsign [LADD callsign backfill], GenerateTarget, GenerateTargets [per-aircraft quicklook + fire target gen]; + #generating). async Task→async; Dictionary indexers→Map .get/.set/.has; import PrimaryReturn.
+
+Prior: **lines 5812** (+ #DrawPConeCore, DrawVideoMapLines, DrawLines, DrawLine, DrawPolygon, DrawNexrad; Collections.List shim).
 
 Prior: **lines 5631** (+ SaveSettings, DrawRangeRings, DrawCircle, DrawTPA, DrawJRing, DrawPCone, DrawATPACone, RoundUpToNearest).
 

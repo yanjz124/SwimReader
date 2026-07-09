@@ -32,6 +32,7 @@ import { MSAWImporter } from "./MSAWImporter.js";
 import { TargetExtentSymbols, SearchTargetParams, AzimuthExtentValues, FusedTrackTargetSymbolParams, BeaconTargetParams, FMATargetSymbolParams } from "./STARS/TargetExtentSymbols.js";
 import { GL, EnableCap, BlendingFactor, BlendEquationMode, ClearBufferMask, PrimitiveType } from "./_shims/GL.js";
 import { ATPAStatus } from "./ATPA.js";
+import { PrimaryReturn } from "./PrimaryReturn.js";
 import { Matrix4 } from "./_shims/OpenTK.js";
 import { MathHelper } from "./_shims/MathHelper.js";
 import { Timer, TimerCallback } from "./_shims/Threading.js";
@@ -4231,5 +4232,266 @@ export class RadarWindow {
     dataBlocks = new List();    // List<TransparentLabel> (referenced by DeletePlane/GenerateDataBlock)
     posIndicators = new List(); // List<TransparentLabel>
 
-    // ===== PORTED THROUGH LINE 5812 / 6962 — next chunk continues here (GenerateDataBlock @5815) =====
+    async GenerateDataBlock(aircraft) { // private async Task GenerateDataBlock(Aircraft aircraft)
+        // lock (aircraft)
+        {
+            if (aircraft.Deleted)
+                return;
+            let oldcolor = aircraft.DataBlock.ForeColor;
+            // Alerts/SPCs no longer recolor the tag; they show on a separate red/yellow line above.
+            if (aircraft.Marked) {
+                aircraft.DataBlock.ForeColor = this.SelectedColor;
+                aircraft.DataBlock2.ForeColor = this.SelectedColor;
+                aircraft.DataBlock3.ForeColor = this.SelectedColor;
+            }
+            else if (aircraft.ForceQuickLook) {
+                aircraft.DataBlock.ForeColor = this.PointoutColor;
+                aircraft.DataBlock2.ForeColor = this.PointoutColor;
+                aircraft.DataBlock3.ForeColor = this.PointoutColor;
+            }
+            else if (aircraft.Owned || aircraft.QuickLookPlus) {
+                aircraft.DataBlock.ForeColor = this.OwnedColor;
+                aircraft.DataBlock2.ForeColor = this.OwnedColor;
+            }
+            else if (aircraft.FDB) {
+                aircraft.DataBlock.ForeColor = this.DataBlockColor;
+                aircraft.DataBlock2.ForeColor = this.DataBlockColor;
+            }
+            else {
+                aircraft.DataBlock.ForeColor = this.LDBColor;
+                aircraft.DataBlock2.ForeColor = this.LDBColor;
+            }
+            aircraft.PositionIndicator.ForeColor = aircraft.DataBlock.ForeColor;
+            aircraft.DataBlock3.ForeColor = aircraft.DataBlock.ForeColor;
+            aircraft.LdbBeaconCodesInhibited = this.CurrentPrefSet.LdbBeaconCodesInhibited;
+            aircraft.RedrawDataBlock(this.#radar);
+            let realWidth = aircraft.DataBlock.Width * this.#pixelScale;
+            let realHeight = aircraft.DataBlock.Height * this.#pixelScale;
+
+            aircraft.DataBlock.SizeF = new SizeF(realWidth, realHeight);
+            aircraft.DataBlock.ParentAircraft = aircraft;
+            aircraft.DataBlock2.ParentAircraft = aircraft;
+            aircraft.DataBlock3.ParentAircraft = aircraft;
+            aircraft.DataBlock.LocationF = this.OffsetDatablockLocation(aircraft);
+            aircraft.DataBlock2.LocationF = aircraft.DataBlock.LocationF;
+            aircraft.DataBlock3.LocationF = aircraft.DataBlock.LocationF;
+            // Alert/SPC line above the data block (red + yellow). Positioned/blinked in the draw loop.
+            aircraft.UpdateAlertCodes();
+            let redText = aircraft.ActiveRedCodes.join("/"); // string.Join("/", …)
+            let yellowText = aircraft.ActiveYellowCodes.join("/");
+            if (!(redText == null || redText === "") && !(yellowText == null || yellowText === ""))
+                redText += "/"; // connect the two colored segments
+            aircraft.AlertLabelRed.Font = this.Font;
+            aircraft.AlertLabelYellow.Font = this.Font;
+            aircraft.AlertLabelRed.Text = redText;
+            aircraft.AlertLabelYellow.Text = yellowText;
+            aircraft.AlertLabelRed.ForeColor = this.DataBlockEmergencyColor;
+            aircraft.AlertLabelYellow.ForeColor = Color.Yellow;
+            aircraft.AlertLabelRed.ParentAircraft = aircraft;
+            aircraft.AlertLabelYellow.ParentAircraft = aircraft;
+            // Size now (same frame the text changes) so right-alignment doesn't lag a frame.
+            aircraft.AlertLabelRed.Measure(this.#pixelScale);
+            aircraft.AlertLabelYellow.Measure(this.#pixelScale);
+            if (!this.dataBlocks.Contains(aircraft.DataBlock)) {
+                // lock (dataBlocks)
+                this.dataBlocks.Add(aircraft.DataBlock);
+            }
+        }
+    }
+
+    async GenerateTargetAsync(aircraft) { // private async Task GenerateTargetAsync(Aircraft aircraft)
+        if (aircraft === this.#debugPlane)
+            void 0; // Console.Write("")
+        let extrapolatedpos = aircraft.SweptLocation(this.#radar);
+        /* … dead code kept out (bearing/distance/x/y) … */
+        if (extrapolatedpos == null)
+            return;
+        if (aircraft.LastHistoryTimes.has(this.#radar) &&
+            (this.#radar.SweptTimes.get(aircraft).getTime() - aircraft.LastHistoryTimes.get(this.#radar).getTime()) / 1000 >= this.CurrentPrefSet.HistoryRate) { // TotalSeconds
+            aircraft.TargetReturn.ForeColor = this.HistoryColors[0];
+            if (!this.HistoryFade) {
+                aircraft.TargetReturn.Fading = false;
+                aircraft.TargetReturn.Intensity = 1;
+                let lastHistory = aircraft.History.length - 1;
+                // lock (aircraft.History)
+                {
+                    if (aircraft.History[lastHistory] != null)
+                        aircraft.History[lastHistory].Dispose();
+                    for (let i = lastHistory; i > 0; i--) {
+                        aircraft.History[i] = aircraft.History[i - 1];
+                        if (aircraft.History[i] == null)
+                            continue;
+                        if (i >= this.HistoryColors.length)
+                            aircraft.History[i].ForeColor = this.HistoryColors[this.HistoryColors.length - 1];
+                        else
+                            aircraft.History[i].ForeColor = this.HistoryColors[i];
+                    }
+                }
+            }
+            else {
+                aircraft.TargetReturn.Fading = true;
+            }
+            let newreturn = new PrimaryReturn();
+            aircraft.History[0] = aircraft.TargetReturn;
+            aircraft.TargetReturn = newreturn;
+            newreturn.ParentAircraft = aircraft;
+            newreturn.Fading = this.PrimaryFade;
+            newreturn.FadeTime = this.FadeTime;
+            newreturn.GeoLocation = extrapolatedpos;
+            newreturn.Intensity = 1;
+            newreturn.ForeColor = this.ReturnColor;
+            aircraft.LastHistoryTimes.set(this.#radar, RadarWindow.CurrentTime);
+        }
+
+        if (aircraft.LastMessageTime > this.#addSeconds(RadarWindow.CurrentTime, -this.LostTargetSeconds)) {
+            // lock (aircraft)
+            aircraft.RedrawTarget(extrapolatedpos, this.#radar);
+            aircraft.PTL.End1 = aircraft.SweptLocation(this.#radar);
+            let ptldistance = (aircraft.SweptSpeed(this.#radar) / 60) * this.CurrentPrefSet.PTLLength;
+            aircraft.PTL.End2 = extrapolatedpos.FromPoint(ptldistance, aircraft.SweptTrack(this.#radar));
+
+            if (this.InFilter(aircraft) ||
+                aircraft.Owned || aircraft.QuickLook || aircraft.PendingHandoff === this.ThisPositionIndicator || aircraft.ShowCallsignWithNoSquawk || aircraft.FDB)
+                this.GenerateDataBlock(aircraft);
+            else if (!aircraft.Owned && !aircraft.FDB)
+                // lock (dataBlocks)
+                this.dataBlocks.Remove(aircraft.DataBlock);
+
+
+            let realWidth = aircraft.PositionIndicator.Width * this.#pixelScale;
+            let realHeight = aircraft.PositionIndicator.Height * this.#pixelScale;
+            aircraft.PositionIndicator.SizeF = new SizeF(realWidth, realHeight);
+            let posindlocation = this.GeoToScreenPoint(TargetExtentSymbols.PositionSymbolLocation(aircraft, this.#radar));
+            aircraft.PositionIndicator.CenterOnPoint(posindlocation);
+            if (!(aircraft.PositionInd == null || aircraft.PositionInd === ""))
+                aircraft.PositionIndicator.Text = aircraft.PositionInd[aircraft.PositionInd.length - 1]; // PositionInd.Last().ToString()
+            if (aircraft.Marked)
+                aircraft.PositionIndicator.ForeColor = this.SelectedColor;
+            else if (aircraft.Owned)
+                aircraft.PositionIndicator.ForeColor = this.OwnedColor;
+            else
+                aircraft.PositionIndicator.ForeColor = this.DataBlockColor;
+
+            if (!this.posIndicators.Contains(aircraft.PositionIndicator)) {
+                // lock (aircraft)
+                {
+                    if (aircraft.Deleted)
+                        return;
+                    aircraft.PositionIndicator.ParentAircraft = aircraft;
+                    // lock (posIndicators)
+                    this.posIndicators.Add(aircraft.PositionIndicator);
+                }
+            }
+            // lock (minSeps)
+            {
+                for (let mi = 0; mi < this.#minSeps.length; mi++) {
+                    let ms = this.#minSeps[mi];
+                    if (ms.Plane1 === aircraft || ms.Plane2 === aircraft)
+                        ms.CalculateMinSep(this.#radar);
+                }
+            }
+            aircraft.Drawn = true;
+        }
+        else {
+            // lock (dataBlocks)
+            this.dataBlocks.Remove(aircraft.DataBlock);
+            // lock (posIndicators)
+            this.posIndicators.Remove(aircraft.PositionIndicator);
+        }
+    }
+    async ADSBtoFlightPlanCallsigns(aircraft) { // (List<Aircraft> aircraft)
+        aircraft.forEach(x => this.ADSBtoFlightPlanCallsign(x));
+    }
+    async ADSBtoFlightPlanCallsign(aircraft) { // (Aircraft aircraft)
+        // LADD backfill: SWIM sets Callsign=Squawk for LADD correlated tracks.
+        // Re-apply cached ADSB callsign every frame since SWIM continuously overwrites.
+        if (this.#adsbService != null && !this.ADSBSettings.HideLADDCallsigns) {
+            let cached = this.#adsbService.GetCachedCallsign(aircraft);
+            if (cached != null) {
+                aircraft.Callsign = cached;
+                aircraft.FlightPlanCallsign = cached;
+                return;
+            }
+        }
+
+        if ((aircraft.FlightPlanCallsign == null || aircraft.FlightPlanCallsign.trim() === "") && !(aircraft.Callsign == null || aircraft.Callsign.trim() === "")) { // IsNullOrWhiteSpace
+            let associated = aircraft.Associated;
+
+            // If ADSB service is running and Callsign is a real callsign (not squawk),
+            // always fill FlightPlanCallsign — SWIM sometimes leaves FPC empty even when Callsign is set.
+            if (this.#adsbService != null && aircraft.Callsign !== aircraft.Squawk) {
+                aircraft.FlightPlanCallsign = aircraft.Callsign;
+            }
+            else if (this.UseADSBCallsigns && !associated && aircraft.Squawk != null && aircraft.Squawk !== "1200") {
+                aircraft.FlightPlanCallsign = aircraft.Callsign;
+            }
+            else if (this.UseADSBCallsigns1200 && !associated && aircraft.Squawk != null && aircraft.Squawk === "1200") {
+                aircraft.FlightPlanCallsign = aircraft.Callsign;
+            }
+            else if (this.UseADSBCallsignsAssociated && associated) {
+                aircraft.FlightPlanCallsign = aircraft.Callsign;
+            }
+        }
+    }
+    GenerateTarget(aircraft) {
+        Task.Run(() => this.GenerateTargetAsync(aircraft));
+    }
+    #generating = false; // bool generating
+    async GenerateTargets() {
+        if (this.#generating)
+            return;
+        this.#generating = true;
+        let tasks = new List(); // List<Task> (created but not awaited, as in source)
+        let time = RadarWindow.CurrentTime;
+        let ac; // Aircraft[]
+        // lock (Aircraft)
+        {
+            ac = [...RadarWindow.Aircraft]; // Aircraft.ToArray()
+            this.RadarSites.forEach(x => x.Scan(time));
+            if (!this.RadarSites.includes(this.#radar))
+                this.#radar.Scan(time);
+        }
+
+        for (let i = 0; i < ac.length; i++) {
+            let aircraft = ac[i];
+            let associated = !((aircraft.PositionInd == null || aircraft.PositionInd === "") || aircraft.PositionInd === "*");
+            let qlall = associated && this.QuickLookList.includes("ALL");
+            let qlallplus = associated && this.QuickLookList.includes("ALL+");
+            if (this.QuickLookList.includes(aircraft.PositionInd) || qlall) {
+                aircraft.QuickLookPlus = false;
+                aircraft.QuickLook = true;
+            }
+            else if (this.QuickLookList.includes(aircraft.PositionInd + "+") || qlallplus) {
+                aircraft.QuickLook = true;
+                aircraft.QuickLookPlus = true;
+            }
+            else if (this.QuickLook && this.InFilter(aircraft) &&
+                aircraft.LastMessageTime >= this.#addSeconds(RadarWindow.CurrentTime, -this.LostTargetSeconds)) {
+                aircraft.QuickLook = true;
+                aircraft.QuickLookPlus = false;
+            }
+            else {
+                aircraft.QuickLookPlus = false;
+                aircraft.QuickLook = false;
+            }
+            if (aircraft.Location != null)
+                this.GenerateTargetAsync(aircraft);
+            for (let j = 0; j < aircraft.History.length; j++) {
+                let target = aircraft.History[j];
+                if (target == null)
+                    continue;
+                if (target.Intensity < .001) {
+                    if (target.ParentAircraft.TargetReturn === target) {
+                        // lock (dataBlocks)
+                        this.dataBlocks.Remove(target.ParentAircraft.DataBlock);
+                        // lock (posIndicators)
+                        this.posIndicators.Remove(target.ParentAircraft.PositionIndicator);
+                    }
+                }
+            }
+        }
+        this.#generating = false;
+    }
+
+    // ===== PORTED THROUGH LINE 6134 / 6962 — next chunk continues here (OffsetDatablockLocation @6135) =====
 }

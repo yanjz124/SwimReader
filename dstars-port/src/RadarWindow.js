@@ -40,6 +40,11 @@ import { tryParseInt } from "./_shims/Primitives.js";
 import { Task } from "./_shims/Threading.js";
 import { Altitude } from "./Altitude.js";
 import { ADSBBeaconReaderService } from "./ADSBBeaconReader/ADSBBeaconReaderService.js";
+import { Aircraft } from "./Aircraft.js";
+import { DCBSubmenuButton, DCBAdjustmentButton } from "./DCBButton.js";
+import { Keyboard, Key, Mouse, ButtonState, Vector4 } from "./_shims/OpenTK.js";
+import { Clipboard } from "./_shims/WinForms.js";
+import { Environment } from "./_shims/System.js";
 
 export class RadarWindow {
     // ── static members used across the module graph (keep live during the chunked port) ──
@@ -828,5 +833,169 @@ export class RadarWindow {
         //window.CursorVisible = window.WindowState != WindowState.Fullscreen;
     }
 
-    // ===== PORTED THROUGH LINE 1355 / 6962 — next chunk continues here (Window_MouseMove @1358) =====
+    #_mousesettled = false; // bool
+    MouseLocation = new Point(0, 0); // Point
+    Window_MouseMove(sender, e) { // (object sender, MouseMoveEventArgs e)
+        this.MouseLocation = e.Position;
+        if (this.CurrentPrefSet.DCBVisible)
+            this.dcb.ActiveMenu.MouseMove(e.Position);
+        if (this.#tempLine != null)
+            this.#tempLine.End = this.LocationFromScreenPoint(e.Position);
+        if (!e.Mouse.IsAnyButtonDown) {
+
+            let move = Math.sqrt(Math.pow(e.XDelta, 2) + Math.pow(e.YDelta, 2));
+            if (move > 10 && this.#isScreenSaver && this.#_mousesettled) {
+                this.StopReceivers();
+                Environment.Exit(0);
+            }
+            this.#_mousesettled = true;
+
+        }
+        else if (e.Mouse.RightButton === ButtonState.Pressed) {
+            /*if (centeredmouse)
+                return;
+            float xMove = e.XDelta * pixelScale;
+            float yMove = e.YDelta * pixelScale;
+            var center = new Vector4((float)ScreenCenterPoint.Longitude, (float)ScreenCenterPoint.Latitude, 0.0f, 1.0f);
+            Vector4 move = new Vector4(-xMove, yMove, 0.0f, 1.0f);
+            move *= rotscale;
+            var trans = Matrix4.CreateTranslation(move.X, move.Y, move.Z);
+            center *= trans;
+            CurrentPrefSet.ScopeCentered = false;
+            CurrentPrefSet.ScreenCenterPoint = new GeoPoint(center.Y, center.X);
+            */
+        }
+    }
+    #hidewx = false; // bool
+    ClickedObject(ClickedPoint) { // object ClickedObject(Point ClickedPoint)
+        let clickpoint; // PointF
+        if (ClickedPoint == null)
+            clickpoint = this.LocationFromScreenPoint(new Point(Math.trunc(this.mouseprev.X), Math.trunc(this.mouseprev.Y)));
+        else
+            clickpoint = this.LocationFromScreenPoint(ClickedPoint);
+        let clicked; // object
+        if (this.CurrentPrefSet.DCBVisible && this.dcb.ActiveMenu.DrawnBounds.Contains(ClickedPoint)) {
+            return ClickedPoint;
+        }
+        // lock (Aircraft)
+        {
+            clicked = RadarWindow.Aircraft.filter(x => x.PositionIndicator.BoundsF.Contains(clickpoint)
+                && x.LastPositionTime > this.#addSeconds(RadarWindow.CurrentTime, -this.LostTargetSeconds)
+                && x.TargetReturn.Intensity > .001)[0] ?? null; // FirstOrDefault()
+            if (clicked == null) {
+                clicked = clickpoint;
+            }
+        }
+        return clicked;
+    }
+    #debugPlane; // Aircraft
+    Window_MouseDown(sender, e) { // (object sender, MouseEventArgs e)
+        let clicked; // object
+        let enterclick = false;
+        let mousepos; // Point
+        if (e != null) {
+            mousepos = e.Position;
+        }
+        else {
+            mousepos = new Point(Math.trunc(this.mouseprev.X), Math.trunc(this.mouseprev.Y));
+            enterclick = true;
+        }
+        clicked = this.ClickedObject(mousepos);
+        if (this.CurrentPrefSet.DCBVisible)
+            this.dcb.ActiveMenu.MouseDown();
+        if (enterclick || e.Mouse.LeftButton === ButtonState.Pressed) {
+            if ((Keyboard.GetState().IsKeyDown(Key.ControlLeft) || Keyboard.GetState().IsKeyDown(Key.ControlRight)) &&
+                (Keyboard.GetState().IsKeyDown(Key.ShiftLeft) || Keyboard.GetState().IsKeyDown(Key.ShiftRight))) {
+                Clipboard.SetText(this.ScreenToGeoPoint(e.Position).ToString());
+            }
+            else if (this.activeDcbButton != null && this.activeDcbButton.constructor !== DCBSubmenuButton) { // GetType() != typeof(DCBSubmenuButton)
+                if (this.activeDcbButton === this.dcbPlaceRRButton) {
+                    this.CurrentPrefSet.RangeRingLocation = this.ScreenToGeoPoint(e.Position);
+                    this.CurrentPrefSet.RangeRingsCentered = false;
+                }
+                else if (this.activeDcbButton.constructor === DCBAdjustmentButton) { // GetType() == typeof(DCBAdjustmentButton)
+                    let loc = new Point(this.#window.Location.X + this.activeDcbButton.DrawnBounds.X + this.activeDcbButton.Width / 2, this.#window.Location.Y + this.activeDcbButton.DrawnBounds.Y + this.activeDcbButton.Height / 2);
+                    Mouse.SetPosition(loc.X, loc.Y);
+                    this.#window.CursorVisible = true;
+                }
+                this.ReleaseDCBButton();
+            }
+            else if (this.#tempLine == null) {
+                this.ProcessCommand(this.Preview, clicked);
+            }
+            else if (clicked.constructor === Aircraft) { // GetType() == typeof(Aircraft)
+                this.#tempLine.EndPlane = clicked; // (Aircraft)clicked
+                this.#tempLine = null;
+                this.Preview.length = 0; // Preview.Clear()
+            }
+            else {
+                this.#tempLine.EndGeo = this.ScreenToGeoPoint(e.Position);
+                this.#tempLine = null;
+                this.Preview.length = 0; // Preview.Clear()
+            }
+        }
+        else if (e.Mouse.MiddleButton === ButtonState.Pressed) {
+            if (clicked.constructor === Aircraft) {
+                let plane = clicked; // (Aircraft)clicked
+                plane.Marked = plane.Marked ? false : true;
+                //GenerateDataBlock(plane);
+            }
+        }
+        else if (e.Mouse.RightButton === ButtonState.Pressed) {
+            if (clicked.constructor === Aircraft) {
+                this.#debugPlane = clicked; // (Aircraft)clicked
+            }
+        }
+    }
+
+    LocationFromScreenPoint(point) { // PointF LocationFromScreenPoint(Point point)
+        let vec = new Vector4(point.X, point.Y, 0, 1);
+        vec.mulEq(this.pixeltransform); // vec *= pixeltransform
+        return new PointF(vec.X, vec.Y);
+        // (unreachable — kept 1:1 with the C# source, which also has dead code after the return)
+        let x = (2 * (point.X / this.#window.ClientSize.Width) - 1);
+        let y = 1 - 2 * (point.Y / this.#window.ClientSize.Height);
+        if (this.#window.ClientSize.Width > this.#window.ClientSize.Height) {
+            x *= this.#aspect_ratio;
+        }
+        else {
+            y /= this.#aspect_ratio;
+        }
+        return new PointF(x, y);
+    }
+    Window_MouseWheel(sender, e) { // (object sender, MouseWheelEventArgs e)
+        let button = (this.activeDcbButton instanceof DCBAdjustmentButton) ? this.activeDcbButton : null; // as DCBAdjustmentButton
+        if (button != null) {
+            button.MouseWheel(e.Delta);
+        }
+        /*
+        if (e.Delta > 0 && CurrentPrefSet.Range > 6)
+            CurrentPrefSet.Range -= 1;
+        else if (e.Delta < 0)
+            CurrentPrefSet.Range += 1;
+        */
+    }
+
+    static KeyCode = Object.freeze({ // public enum KeyCode
+        Min: 59,
+        InitCntl: 12,
+        TermCntl: 13,
+        HndOff: 14,
+        VP: 15,
+        MultiFunc: 16,
+        FltData: 18,
+        CA: 20,
+        SignOn: 21,
+        RngRing: 201,
+        WX: 202,
+        RecenterEverything: 500,
+    });
+
+    Preview = []; // public List<object> Preview
+
+    #waitingfortarget = false; // bool
+    #tempLine;    // RangeBearingLine tempLine
+    #tempMinSep;  // MinSep tempMinSep
+
+    // ===== PORTED THROUGH LINE 1542 / 6962 — next chunk continues here (ProcessCommand @1543) =====
 }

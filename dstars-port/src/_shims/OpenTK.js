@@ -72,6 +72,7 @@ export class GameWindow {
     ClientSize = { Width: 0, Height: 0 };
     Size = { Width: 0, Height: 0 };
     Location = { X: 0, Y: 0 };
+    CursorVisible = true;
     // OpenTK window events RadarWindow.Initialize() subscribes to (`window.Load += …`).
     // The browser host raises these from requestAnimationFrame / DOM listeners.
     Load = new EventHandler();
@@ -103,6 +104,32 @@ export class Vector2 {
     constructor(x = 0, y = 0) { this.X = x; this.Y = y; }
     static get Zero() { return new Vector2(0, 0); }
 }
+
+// OpenTK.Input — mouse button state, key codes, and the polling Keyboard/Mouse statics.
+// ADAPTATION: OpenTK polls hardware state; the browser has no synchronous "is key down now?" API.
+// The host tracks modifier/button state from DOM key/mouse events and pushes it into these singletons,
+// so DGScope's `Keyboard.GetState().IsKeyDown(Key.X)` call-sites transliterate unchanged.
+export const ButtonState = Object.freeze({ Released: 0, Pressed: 1 });
+
+// OpenTK.Input.Key — only the codes DGScope references are enumerated (grow as needed).
+export const Key = Object.freeze({
+    ControlLeft: "ControlLeft", ControlRight: "ControlRight",
+    ShiftLeft: "ShiftLeft", ShiftRight: "ShiftRight",
+    AltLeft: "AltLeft", AltRight: "AltRight",
+    Enter: "Enter", Escape: "Escape", BackSpace: "Backspace", Space: "Space",
+});
+
+// Live keyboard state — the host sets/clears entries from DOM keydown/keyup.
+class KeyboardState {
+    #down = new Set();
+    IsKeyDown(key) { return this.#down.has(key); }
+    _set(key, isDown) { if (isDown) this.#down.add(key); else this.#down.delete(key); }
+}
+const _keyboardState = new KeyboardState();
+export const Keyboard = { GetState() { return _keyboardState; }, _state: _keyboardState };
+
+// OpenTK.Input.Mouse.SetPosition warps the OS cursor — impossible in the browser (security). No-op.
+export const Mouse = { SetPosition(x, y) { /* cursor warp not permitted in the browser — no-op */ } };
 
 export class Vector4 {
     X = 0; Y = 0; Z = 0; W = 0;

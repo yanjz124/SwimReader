@@ -14,3 +14,9 @@ export const RightToLeft = Object.freeze({ No: 0, Yes: 1, Inherit: 2 });
 
 // System.Windows.Forms.DialogResult
 export const DialogResult = Object.freeze({ None: 0, OK: 1, Cancel: 2, Abort: 3, Retry: 4, Ignore: 5, Yes: 6, No: 7 });
+
+// System.Windows.Forms.Clipboard.SetText — browser clipboard write is async & permission-gated,
+// so this fires navigator.clipboard.writeText and ignores the promise (C#'s call is void/sync).
+export const Clipboard = {
+    SetText(text) { try { globalThis.navigator?.clipboard?.writeText(String(text)); } catch { /* clipboard unavailable */ } },
+};

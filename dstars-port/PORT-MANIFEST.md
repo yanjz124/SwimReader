@@ -78,6 +78,7 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 1355 / 6962** (+ Aircraft_CollectionChanged, DeletePlane, per-aircraft handoff handlers, PositionChange, Run, wx/GC timer callbacks, DeleteTextures, Start/StopReceivers, ADSB service start/stop, OrderWaypoints).
+**RadarWindow.cs port progress: lines 1542 / 6962** (+ Window_MouseMove/MouseDown/MouseWheel, ClickedObject, LocationFromScreenPoint, KeyCode enum, Preview + temp-line fields).
+Shims added this chunk: OpenTK input (`Keyboard`/`Key`/`Mouse`/`ButtonState` + `CursorVisible`), `WinForms.Clipboard` (navigator.clipboard, async→fire-and-forget), `_shims/System.js` (`Environment.Exit`). Cursor-warp `Mouse.SetPosition` is a no-op (browser can't warp the OS cursor); GetType()==typeof(X) → constructor === X (exact-type, matches C#).
 Shims: `_shims/Collections.js` (ObservableCollection + NotifyCollectionChanged*), `_shims/Threading.js` (Timer/TimerCallback + Task), `_shims/Crypto.js` (sync MD5, RFC-1321, test-verified). GameWindow shim: OpenTK window events + Title + Run().
 Adaptation: the 4 per-aircraft event handlers (HandedOff/HandoffInitiated/Transferred/OwnershipChange) are arrow class fields, not methods — stable per-instance refs so C#'s `+=`/`-=` method-group symmetry survives.

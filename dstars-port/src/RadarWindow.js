@@ -52,7 +52,7 @@ import { RadarType } from "./Radar.js";
 import { Keyboard, Key, Mouse, ButtonState, Vector4, KeyToChar } from "./_shims/OpenTK.js";
 import { Value } from "./_shims/MetarDecoder.js";
 import { Clipboard, SaveFileDialog, Cursor } from "./_shims/WinForms.js";
-import { Rectangle } from "./_shims/SystemDrawing.js";
+import { Rectangle, RectangleF, SizeF } from "./_shims/SystemDrawing.js";
 import { PropertyForm } from "./PropertyForm.js";
 import { VideoMapSelector } from "./VideoMapSelector.js";
 import { ADSBBeaconReaderForm } from "./ADSBBeaconReader/ADSBBeaconReaderForm.js";
@@ -4493,5 +4493,220 @@ export class RadarWindow {
         this.#generating = false;
     }
 
-    // ===== PORTED THROUGH LINE 6134 / 6962 — next chunk continues here (OffsetDatablockLocation @6135) =====
+    // C# overloads OffsetDatablockLocation(Aircraft, LeaderDirection) and OffsetDatablockLocation(Aircraft)
+    // merged; the 1-arg form (direction===undefined) resolves the leader direction then calls the 2-arg form.
+    OffsetDatablockLocation(thisAircraft, direction) {
+        if (direction === undefined) { // private PointF OffsetDatablockLocation(Aircraft thisAircraft)
+            let newDirection = this.CurrentPrefSet.UnassociatedDataBlockPosition;
+            let oldDirection = this.CurrentPrefSet.UnassociatedDataBlockPosition;
+            if (thisAircraft.LDRDirection != null) {
+                oldDirection = thisAircraft.LDRDirection; // .Value
+                newDirection = thisAircraft.LDRDirection;
+            }
+            else if (thisAircraft.PositionInd == null) {
+
+            }
+            else if (thisAircraft.PositionInd === this.ThisPositionIndicator && thisAircraft.OwnerLeaderDirection != null) {
+                oldDirection = thisAircraft.OwnerLeaderDirection; // .Value
+                newDirection = thisAircraft.OwnerLeaderDirection;
+            }
+            else if (thisAircraft.PositionInd === this.ThisPositionIndicator) {
+                oldDirection = this.CurrentPrefSet.OwnedDataBlockPosition;
+                newDirection = this.CurrentPrefSet.OwnedDataBlockPosition;
+            }
+            else if (this.CurrentPrefSet.OtherOwnersLeaderDirections.has(thisAircraft.PositionInd)) { // TryGetValue(…, out dir)
+                let dir = this.CurrentPrefSet.OtherOwnersLeaderDirections.get(thisAircraft.PositionInd);
+                oldDirection = dir;
+                newDirection = dir;
+            }
+            else if (thisAircraft.Associated) {
+                oldDirection = this.CurrentPrefSet.UnownedDataBlockPosition;
+                newDirection = this.CurrentPrefSet.UnownedDataBlockPosition;
+            }
+
+            let blockLocation = this.OffsetDatablockLocation(thisAircraft, newDirection);
+
+            if (this.AutoOffset && thisAircraft.FDB && thisAircraft.LDRDirection == null) {
+
+                let bounds = new RectangleF(blockLocation, thisAircraft.DataBlock.SizeF);
+                let minconflicts = 2147483647; // int.MaxValue
+                let bestDirection = newDirection;
+                let sequence = [0, 2, 6, 7, 1, 3, 5, 4];
+                for (let i = 0; i < 8; i++) {
+                    let conflictcount = 0;
+                    let otherDataBlocks = new List(); // List<TransparentLabel>
+                    // lock (dataBlocks)
+                    otherDataBlocks.AddRange(this.dataBlocks);
+                    let d = newDirection; // (int)newDirection (LeaderDirection is numeric)
+                    if (d >= 5) {
+                        d--;
+                    }
+                    d = (d + sequence[i]) % 8;
+                    if (d >= 5) {
+                        d++;
+                    }
+                    newDirection = d; // (LeaderDirection)d
+                    blockLocation = this.OffsetDatablockLocation(thisAircraft, newDirection);
+
+                    bounds.Location = blockLocation;
+
+                    for (const otherDataBlock of otherDataBlocks) {
+                        let otherPlane = otherDataBlock.ParentAircraft;
+                        if (thisAircraft !== otherPlane) {
+                            let otherBounds = new RectangleF(otherPlane.DataBlock.LocationF, otherPlane.DataBlock.SizeF);
+
+                            if (bounds.IntersectsWith(otherBounds) && otherPlane.FDB) {
+                                conflictcount += 2;
+                            }
+                            if (bounds.IntersectsWith(otherPlane.TargetReturn.BoundsF)) {
+                                conflictcount++;
+                            }
+                            if (thisAircraft.ConnectingLine.IntersectsWith(otherPlane.ConnectingLine) ||
+                                thisAircraft.ConnectingLine.IntersectsWith(otherPlane.PositionIndicator.BoundsF) ||
+                                thisAircraft.ConnectingLine.IntersectsWith(otherBounds)) {
+                                conflictcount += 2;
+                            }
+                        }
+                    }
+                    if (conflictcount < minconflicts) {
+                        minconflicts = conflictcount;
+                        bestDirection = newDirection;
+                    }
+                    if (conflictcount === 0) {
+                        break;
+                    }
+                    else {
+
+                    }
+                }
+                if (minconflicts > 0) {
+                    newDirection = bestDirection;
+                }
+                blockLocation = this.OffsetDatablockLocation(thisAircraft, newDirection);
+            }
+
+            return blockLocation;
+        }
+
+        // private PointF OffsetDatablockLocation(Aircraft thisAircraft, LeaderDirection direction)
+        let blockLocation = new PointF();
+        blockLocation.X = thisAircraft.LocationF.X;
+        blockLocation.Y = thisAircraft.LocationF.Y;
+
+        switch (direction) {
+            case LeaderDirection.N:
+                blockLocation.Y = thisAircraft.PositionIndicator.BoundsF.Bottom + this.dataBlockOffset;
+                break;
+            case LeaderDirection.S:
+                blockLocation.Y = thisAircraft.PositionIndicator.BoundsF.Top - this.dataBlockOffset;
+                break;
+            case LeaderDirection.E:
+                blockLocation.X = thisAircraft.PositionIndicator.BoundsF.Right + this.dataBlockOffset;
+                break;
+            case LeaderDirection.W:
+                blockLocation.X = thisAircraft.PositionIndicator.BoundsF.Left - this.dataBlockOffset;
+                if (thisAircraft.DataBlock.SizeF.Width > thisAircraft.DataBlock2.SizeF.Width &&
+                    thisAircraft.DataBlock.SizeF.Width > thisAircraft.DataBlock3.SizeF.Width)
+                    blockLocation.X -= thisAircraft.DataBlock.SizeF.Width;
+                else if (thisAircraft.DataBlock2.SizeF.Width > thisAircraft.DataBlock3.SizeF.Width)
+                    blockLocation.X -= thisAircraft.DataBlock2.SizeF.Width;
+                else
+                    blockLocation.X -= thisAircraft.DataBlock3.SizeF.Width;
+                break;
+            case LeaderDirection.NE:
+                blockLocation.X = thisAircraft.PositionIndicator.BoundsF.Right + this.dataBlockDiagonalOffset;
+                blockLocation.Y = thisAircraft.PositionIndicator.BoundsF.Bottom + this.dataBlockDiagonalOffset;
+                break;
+            case LeaderDirection.SE:
+                blockLocation.X = thisAircraft.PositionIndicator.BoundsF.Right + this.dataBlockDiagonalOffset;
+                blockLocation.Y = thisAircraft.PositionIndicator.BoundsF.Top - this.dataBlockDiagonalOffset;
+                break;
+            case LeaderDirection.NW:
+                blockLocation.X = thisAircraft.PositionIndicator.BoundsF.Left - this.dataBlockDiagonalOffset;
+                if (thisAircraft.DataBlock.SizeF.Width > thisAircraft.DataBlock2.SizeF.Width &&
+                    thisAircraft.DataBlock.SizeF.Width > thisAircraft.DataBlock3.SizeF.Width)
+                    blockLocation.X -= thisAircraft.DataBlock.SizeF.Width;
+                else if (thisAircraft.DataBlock2.SizeF.Width > thisAircraft.DataBlock3.SizeF.Width)
+                    blockLocation.X -= thisAircraft.DataBlock2.SizeF.Width;
+                else
+                    blockLocation.X -= thisAircraft.DataBlock3.SizeF.Width;
+                blockLocation.Y = thisAircraft.PositionIndicator.BoundsF.Bottom + this.dataBlockDiagonalOffset;
+                break;
+            case LeaderDirection.SW:
+                blockLocation.X = thisAircraft.PositionIndicator.BoundsF.Left - this.dataBlockDiagonalOffset;
+                if (thisAircraft.DataBlock.SizeF.Width > thisAircraft.DataBlock2.SizeF.Width &&
+                    thisAircraft.DataBlock.SizeF.Width > thisAircraft.DataBlock3.SizeF.Width)
+                    blockLocation.X -= thisAircraft.DataBlock.SizeF.Width;
+                else if (thisAircraft.DataBlock2.SizeF.Width > thisAircraft.DataBlock3.SizeF.Width)
+                    blockLocation.X -= thisAircraft.DataBlock2.SizeF.Width;
+                else
+                    blockLocation.X -= thisAircraft.DataBlock3.SizeF.Width;
+                blockLocation.Y = thisAircraft.PositionIndicator.BoundsF.Top - this.dataBlockDiagonalOffset;
+                break;
+        }
+
+        blockLocation.Y -= this.dataBlockOffsetScale * 2.5;
+        let leaderStart = new PointF(thisAircraft.LocationF.X, thisAircraft.LocationF.Y);
+
+        switch (direction) {
+            case LeaderDirection.NE:
+                leaderStart.Y = thisAircraft.PositionIndicator.BoundsF.Bottom;
+                leaderStart.X = thisAircraft.PositionIndicator.BoundsF.Right;
+                break;
+            case LeaderDirection.N:
+                leaderStart.Y = thisAircraft.PositionIndicator.BoundsF.Bottom;
+                break;
+            case LeaderDirection.NW:
+                leaderStart.Y = thisAircraft.PositionIndicator.BoundsF.Bottom;
+                leaderStart.X = thisAircraft.PositionIndicator.BoundsF.Left;
+                break;
+            case LeaderDirection.SE:
+                leaderStart.Y = thisAircraft.PositionIndicator.BoundsF.Top;
+                leaderStart.X = thisAircraft.PositionIndicator.BoundsF.Right;
+                break;
+            case LeaderDirection.S:
+                leaderStart.Y = thisAircraft.PositionIndicator.BoundsF.Top;
+                break;
+            case LeaderDirection.SW:
+                leaderStart.Y = thisAircraft.PositionIndicator.BoundsF.Top;
+                leaderStart.X = thisAircraft.PositionIndicator.BoundsF.Left;
+                break;
+            case LeaderDirection.E:
+                leaderStart.X = thisAircraft.PositionIndicator.BoundsF.Right;
+                break;
+            case LeaderDirection.W:
+                leaderStart.X = thisAircraft.PositionIndicator.BoundsF.Left;
+                break;
+            default:
+                void 0; // Console.Write("wat")
+                break;
+        }
+        if (blockLocation.X < thisAircraft.LocationF.X) {
+            if (thisAircraft.DataBlock.SizeF.Width > thisAircraft.DataBlock2.SizeF.Width)
+                thisAircraft.ConnectingLine.End = new PointF(blockLocation.X + thisAircraft.DataBlock.SizeF.Width,
+                    blockLocation.Y + (this.dataBlockOffsetScale * 2.5));
+            else
+                thisAircraft.ConnectingLine.End = new PointF(blockLocation.X + thisAircraft.DataBlock2.SizeF.Width,
+                    blockLocation.Y + (this.dataBlockOffsetScale * 2.5));
+        }
+        else {
+            thisAircraft.ConnectingLine.End = new PointF(blockLocation.X, blockLocation.Y + (this.dataBlockOffsetScale * 2.5));
+        }
+        thisAircraft.ConnectingLine.Start = leaderStart;
+        if (direction !== thisAircraft.LastDrawnDirection)
+            // lock (thisAircraft)
+            thisAircraft.RedrawDataBlock(this.#radar, direction);
+
+        return blockLocation;
+    }
+
+    // #aircraftGCTimer field already declared (C# `Timer aircraftGCTimer;` @6406 — skipped)
+
+    InFilter(aircraft) { // private bool InFilter(Aircraft aircraft)
+        if (!aircraft.Associated)
+            return (aircraft.TrueAltitude <= this.MaxAltitude && aircraft.TrueAltitude >= this.MinAltitude);
+        return (aircraft.TrueAltitude <= this.MaxAltitudeAssociated && aircraft.TrueAltitude >= this.MinAltitudeAssociated);
+    }
+
+    // ===== PORTED THROUGH LINE 6418 / 6962 — next chunk continues here (DrawTarget @6419) =====
 }

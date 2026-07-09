@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 6134 / 6962** (+ GenerateDataBlock [async: tag colors by ownership/mark/pointout, alert-code labels], GenerateTargetAsync [async: history-return roll, PTL, data-block/pos-indicator placement, min-sep recalc], ADSBtoFlightPlanCallsigns/ADSBtoFlightPlanCallsign [LADD callsign backfill], GenerateTarget, GenerateTargets [per-aircraft quicklook + fire target gen]; + #generating). async Task→async; Dictionary indexers→Map .get/.set/.has; import PrimaryReturn.
+**RadarWindow.cs port progress: lines 6418 / 6962** (+ OffsetDatablockLocation [both overloads merged: per-leader-direction data-block placement + AutoOffset 8-way conflict-avoidance search], InFilter [altitude filter]). LeaderDirection is numeric so (int)/(LeaderDirection) casts are no-ops; SizeF now imported (fixed latent chunk-20 ref). Shims: RectangleF.IntersectsWith/Location/Size.
+
+Prior: **lines 6134** (+ GenerateDataBlock, GenerateTargetAsync, ADSBtoFlightPlanCallsign(s), GenerateTarget, GenerateTargets).
 
 Prior: **lines 5812** (+ #DrawPConeCore, DrawVideoMapLines, DrawLines, DrawLine, DrawPolygon, DrawNexrad; Collections.List shim).
 

@@ -145,9 +145,17 @@ export class RectangleF {
     get Top() { return this.Y; }                  // float
     get Right() { return this.X + this.Width; }   // float
     get Bottom() { return this.Y + this.Height; } // float
+    get Location() { return new PointF(this.X, this.Y); }
+    set Location(p) { this.X = p.X; this.Y = p.Y; }
+    get Size() { return new SizeF(this.Width, this.Height); }
     // bool Contains(PointF pt)
     Contains(pt) {
         return this.X <= pt.X && pt.X < this.X + this.Width &&
                this.Y <= pt.Y && pt.Y < this.Y + this.Height;
+    }
+    // System.Drawing.RectangleF.IntersectsWith(RectangleF)
+    IntersectsWith(rect) {
+        return (rect.X < this.X + this.Width) && (this.X < rect.X + rect.Width) &&
+               (rect.Y < this.Y + this.Height) && (this.Y < rect.Y + rect.Height);
     }
 }

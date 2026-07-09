@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 3939 / 6962** (+ ~60 DCB button/menu field decls [object-initializers → Object.assign], TCP property, SetupDCB [main/maps/shift/brite menu assembly + Click/Up/Down event wiring]). DCB buttons use private # fields; dcbPlaceRRButton + activeDcbButton public (read by mouse handlers).
+**RadarWindow.cs port progress: lines 4131 / 6962** (+ DcbLdrDirButton_Down/Up [leader-dir rotate], DcbSubmenuButtonClick [site menu build w/ radar-site buttons], DcbButtonClick [shift/DCB-location/RR-cntr/off-cntr/PTL/adjustment routing], SiteButton_Click [radar select]). Shim: GameWindow.PointToScreen. Imports: DCBLocation, RadarType.
+
+Prior: **lines 3939** (+ ~60 DCB button/menu field decls, TCP property, SetupDCB).
 
 Prior: **lines 3740** (+ Window_KeyPress/KeyDown/KeyUp, Window_Resize, Window_UpdateFrame). #showAllCallsigns + #centeredmouse (early; C# @4368). Shims: WinForms.SaveFileDialog, GameWindow.Width/Height.
 **IMPORTANT Key-shim correction:** `Key` is now the OpenTK 3.x **integer** enum (not Symbols) because Window_KeyDown does ordered comparisons (`e.Key >= Key.A && e.Key <= Key.Z`, `(int)e.Key > 9`). Chars stay 1-char strings, so `GetType()==typeof(char)` → `typeof x==="string"` still holds; KeyToChar/#previewMap are now number-keyed and (faithfully) conflate KeyCode with the F-keys via shared integers, matching C#'s `(int)` cast.

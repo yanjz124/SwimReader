@@ -43,7 +43,8 @@ import { ADSBBeaconReaderService } from "./ADSBBeaconReader/ADSBBeaconReaderServ
 import { Aircraft } from "./Aircraft.js";
 import { DCBSubmenuButton, DCBAdjustmentButton, DCBButton, DCBToggleButton, DCBActionButton } from "./DCBButton.js";
 import { DCBMenu } from "./DCBMenu.js";
-import { DCB } from "./DCB.js";
+import { DCB, DCBLocation } from "./DCB.js";
+import { RadarType } from "./Radar.js";
 import { Keyboard, Key, Mouse, ButtonState, Vector4, KeyToChar } from "./_shims/OpenTK.js";
 import { Value } from "./_shims/MetarDecoder.js";
 import { Clipboard, SaveFileDialog } from "./_shims/WinForms.js";
@@ -2770,5 +2771,170 @@ export class RadarWindow {
         this.#dcb.ActiveMenu = this.#dcbMainMenu;
     }
 
-    // ===== PORTED THROUGH LINE 3939 / 6962 — next chunk continues here (DcbLdrDirButton_Down @3940) =====
+    DcbLdrDirButton_Down(sender, e) { // (object sender, EventArgs e)
+        switch (this.CurrentPrefSet.OwnedDataBlockPosition) {
+            case LeaderDirection.NW:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.W;
+                break;
+            case LeaderDirection.N:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.NW;
+                break;
+            case LeaderDirection.NE:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.N;
+                break;
+            case LeaderDirection.E:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.NE;
+                break;
+            case LeaderDirection.SE:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.E;
+                break;
+            case LeaderDirection.S:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.SE;
+                break;
+            case LeaderDirection.SW:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.S;
+                break;
+            case LeaderDirection.W:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.SW;
+                break;
+        }
+    }
+
+    DcbLdrDirButton_Up(sender, e) { // (object sender, EventArgs e)
+        switch (this.CurrentPrefSet.OwnedDataBlockPosition) {
+            case LeaderDirection.NW:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.N;
+                break;
+            case LeaderDirection.N:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.NE;
+                break;
+            case LeaderDirection.NE:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.E;
+                break;
+            case LeaderDirection.E:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.SE;
+                break;
+            case LeaderDirection.SE:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.S;
+                break;
+            case LeaderDirection.S:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.SW;
+                break;
+            case LeaderDirection.SW:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.W;
+                break;
+            case LeaderDirection.W:
+                this.CurrentPrefSet.OwnedDataBlockPosition = LeaderDirection.NW;
+                break;
+        }
+    }
+
+    DcbSubmenuButtonClick(sender, e) { // (object sender, EventArgs e)
+        let button = sender; // sender as DCBSubmenuButton
+        button.SetScreenLocation(this.#window.PointToScreen(new Point(0, 0)));
+        this.activeDcbButton = button;
+
+
+        if (sender === this.#dcbSiteButton) {
+            this.activeDcbButton = this.#dcbSiteButton;
+            this.#siteMenu.ClearButtons();
+            let i = 1;
+            this.RadarSites.forEach(x => {
+                if (x.RadarType !== RadarType.SLANT_RANGE)
+                    return;
+                let siteButton = Object.assign(new DCBButton(), {
+                    Height: 80,
+                    Width: 80,
+                    Text: x.Char + "\r\n" + x.Name,
+                    Value: x,
+                    Active: this.#radar === x,
+                });
+                this.#siteMenu.AddButton(siteButton);
+                siteButton.Click.add(this.SiteButton_Click.bind(this));
+            });
+            let multiButton = Object.assign(new DCBButton(), {
+                Height: 80,
+                Width: 80,
+                Text: "MULTI",
+                Enabled: false,
+            });
+            this.#siteMenu.AddButton(multiButton);
+            multiButton.Click.add(this.SiteButton_Click.bind(this));
+            let fusedButton = Object.assign(new DCBButton(), {
+                Height: 80,
+                Width: 80,
+                Text: "FUSED",
+                Value: Radar.FUSED,
+                Active: this.#radar === Radar.FUSED,
+            });
+            this.#siteMenu.AddButton(fusedButton);
+            fusedButton.Click.add(this.SiteButton_Click.bind(this));
+        }
+    }
+
+    DcbButtonClick(sender, e) { // (object sender, EventArgs e)
+        if (sender === this.#dcbShiftButton) {
+            this.#dcb.ActiveMenu = this.#dcbShiftMenu;
+        }
+        else if (sender === this.#dcbShiftButton2) {
+            this.#dcb.ActiveMenu = this.#dcbMainMenu;
+        }
+        else if (sender === this.#dcbDcbTopButton) {
+            this.CurrentPrefSet.DCBLocation = DCBLocation.Top;
+        }
+        else if (sender === this.#dcbDcbLeftButton) {
+            this.CurrentPrefSet.DCBLocation = DCBLocation.Left;
+        }
+        else if (sender === this.#dcbDcbBottomButton) {
+            this.CurrentPrefSet.DCBLocation = DCBLocation.Bottom;
+        }
+        else if (sender === this.#dcbDcbRightButton) {
+            this.CurrentPrefSet.DCBLocation = DCBLocation.Right;
+        }
+        else if (sender === this.#dcbRRCntrButton) {
+            this.CurrentPrefSet.RangeRingsCentered = !this.CurrentPrefSet.RangeRingsCentered;
+        }
+        else if (sender === this.#dcbOffCntrButton) {
+            if (this.CurrentPrefSet.ScopeCentered) {
+                this.CurrentPrefSet.ScopeCentered = false;
+            }
+            else {
+                this.CurrentPrefSet.ScopeCentered = true;
+            }
+        }
+        else if (sender === this.#dcbPtlOwnButton) {
+            this.CurrentPrefSet.PTLOwn = !this.CurrentPrefSet.PTLOwn;
+            if (this.CurrentPrefSet.PTLOwn)
+                this.CurrentPrefSet.PTLAll = false;
+        }
+        else if (sender === this.#dcbPtlAllButton) {
+            this.CurrentPrefSet.PTLAll = !this.CurrentPrefSet.PTLAll;
+            if (this.CurrentPrefSet.PTLAll)
+                this.CurrentPrefSet.PTLOwn = false;
+        }
+        else if (sender.constructor === DCBAdjustmentButton) { // sender.GetType() == typeof(DCBAdjustmentButton)
+            this.#window.CursorVisible = false;
+            this.CenterMouse();
+            this.activeDcbButton = sender; // sender as DCBAdjustmentButton
+        }
+        else if (sender === this.#dcbMapsSubmenuDoneButton) {
+            this.#dcbMapsButton.OnClick(e);
+        }
+        else if (sender === this.#briteDoneButton) {
+            this.#dcbBriteButton.OnClick(e);
+        }
+    }
+
+    SiteButton_Click(sender, e) { // (object sender, EventArgs e)
+        this.#dcbSiteButton.Active = false;
+        let button = sender; // sender as DCBButton
+        //button.ParentMenu.Enabled = true;
+        if (button == null) { return; }
+        let site = (button.Value instanceof Radar) ? button.Value : null; // button.Value as Radar
+        if (site == null) { return; }
+        this.#radar = site;
+        this.ReleaseDCBButton();
+    }
+
+    // ===== PORTED THROUGH LINE 4131 / 6962 — next chunk continues here (DcbClearAllMapsButton_Click @4132) =====
 }

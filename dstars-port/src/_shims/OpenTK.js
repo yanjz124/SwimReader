@@ -98,6 +98,8 @@ export class GameWindow {
     Run() { this.Load.Invoke(this, {}); }
     get Width() { return this.ClientSize.Width; }   // GameWindow.Width (drawable area)
     get Height() { return this.ClientSize.Height; } // GameWindow.Height
+    // NativeWindow.PointToScreen: client-space point → screen coords (offset by window location).
+    PointToScreen(p) { return { X: this.Location.X + p.X, Y: this.Location.Y + p.Y }; }
 }
 
 // System.Numerics.Vector2 (used by NexradDisplay's ScopeServerWxRadarReport).

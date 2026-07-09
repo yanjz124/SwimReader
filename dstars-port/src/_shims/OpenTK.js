@@ -127,7 +127,31 @@ export const Key = Object.freeze({
     F5: Symbol("Key.F5"), F6: Symbol("Key.F6"), F7: Symbol("Key.F7"), F8: Symbol("Key.F8"),
     F9: Symbol("Key.F9"), F10: Symbol("Key.F10"), F11: Symbol("Key.F11"), F12: Symbol("Key.F12"),
     End: Symbol("Key.End"), KeypadMultiply: Symbol("Key.KeypadMultiply"),
+    // Letters/digits/period/plus that KeysToString maps back to characters (input may arrive as a
+    // Key enum rather than a char). Each is a Symbol; KeyToChar (below) is the (int)Key→string switch.
+    A: Symbol("Key.A"), B: Symbol("Key.B"), C: Symbol("Key.C"), D: Symbol("Key.D"), E: Symbol("Key.E"),
+    F: Symbol("Key.F"), G: Symbol("Key.G"), H: Symbol("Key.H"), I: Symbol("Key.I"), J: Symbol("Key.J"),
+    K: Symbol("Key.K"), L: Symbol("Key.L"), M: Symbol("Key.M"), N: Symbol("Key.N"), O: Symbol("Key.O"),
+    P: Symbol("Key.P"), Q: Symbol("Key.Q"), R: Symbol("Key.R"), S: Symbol("Key.S"), T: Symbol("Key.T"),
+    U: Symbol("Key.U"), V: Symbol("Key.V"), W: Symbol("Key.W"), X: Symbol("Key.X"), Y: Symbol("Key.Y"), Z: Symbol("Key.Z"),
+    Number0: Symbol("Key.Number0"), Number1: Symbol("Key.Number1"), Number2: Symbol("Key.Number2"), Number3: Symbol("Key.Number3"), Number4: Symbol("Key.Number4"),
+    Number5: Symbol("Key.Number5"), Number6: Symbol("Key.Number6"), Number7: Symbol("Key.Number7"), Number8: Symbol("Key.Number8"), Number9: Symbol("Key.Number9"),
+    Keypad0: Symbol("Key.Keypad0"), Keypad1: Symbol("Key.Keypad1"), Keypad2: Symbol("Key.Keypad2"), Keypad3: Symbol("Key.Keypad3"), Keypad4: Symbol("Key.Keypad4"),
+    Keypad5: Symbol("Key.Keypad5"), Keypad6: Symbol("Key.Keypad6"), Keypad7: Symbol("Key.Keypad7"), Keypad8: Symbol("Key.Keypad8"), Keypad9: Symbol("Key.Keypad9"),
+    Period: Symbol("Key.Period"), KeypadPeriod: Symbol("Key.KeypadPeriod"), Plus: Symbol("Key.Plus"), KeypadPlus: Symbol("Key.KeypadPlus"),
 });
+
+// Map of Key symbol → output character (RadarWindow.KeysToString's (int)Key switch, 1:1).
+export const KeyToChar = new Map([
+    [Key.A, "A"], [Key.B, "B"], [Key.C, "C"], [Key.D, "D"], [Key.E, "E"], [Key.F, "F"], [Key.G, "G"],
+    [Key.H, "H"], [Key.I, "I"], [Key.J, "J"], [Key.K, "K"], [Key.L, "L"], [Key.M, "M"], [Key.N, "N"],
+    [Key.O, "O"], [Key.P, "P"], [Key.Q, "Q"], [Key.R, "R"], [Key.S, "S"], [Key.T, "T"], [Key.U, "U"],
+    [Key.V, "V"], [Key.W, "W"], [Key.X, "X"], [Key.Y, "Y"], [Key.Z, "Z"],
+    [Key.Keypad0, "0"], [Key.Number0, "0"], [Key.Keypad1, "1"], [Key.Number1, "1"], [Key.Keypad2, "2"], [Key.Number2, "2"],
+    [Key.Keypad3, "3"], [Key.Number3, "3"], [Key.Keypad4, "4"], [Key.Number4, "4"], [Key.Keypad5, "5"], [Key.Number5, "5"],
+    [Key.Keypad6, "6"], [Key.Number6, "6"], [Key.Keypad7, "7"], [Key.Number7, "7"], [Key.Keypad8, "8"], [Key.Number8, "8"],
+    [Key.Keypad9, "9"], [Key.Number9, "9"], [Key.Period, "."], [Key.KeypadPeriod, "."], [Key.Plus, "+"], [Key.KeypadPlus, "+"],
+]);
 
 // Live keyboard state — the host sets/clears entries from DOM keydown/keyup.
 class KeyboardState {

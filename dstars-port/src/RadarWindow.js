@@ -42,7 +42,7 @@ import { Altitude } from "./Altitude.js";
 import { ADSBBeaconReaderService } from "./ADSBBeaconReader/ADSBBeaconReaderService.js";
 import { Aircraft } from "./Aircraft.js";
 import { DCBSubmenuButton, DCBAdjustmentButton } from "./DCBButton.js";
-import { Keyboard, Key, Mouse, ButtonState, Vector4 } from "./_shims/OpenTK.js";
+import { Keyboard, Key, Mouse, ButtonState, Vector4, KeyToChar } from "./_shims/OpenTK.js";
 import { Clipboard } from "./_shims/WinForms.js";
 import { Environment } from "./_shims/System.js";
 import { tryParseDouble } from "./_shims/Primitives.js";
@@ -2059,5 +2059,124 @@ export class RadarWindow {
     } // end ProcessCommand
     // ==== END ProcessCommand (source 1548-2879) ====
 
-    // ===== PORTED THROUGH LINE 2879 / 6962 — next chunk continues here (ProcessImpliedCommand @2880) =====
+    ProcessImpliedCommand(clicked = null) { // (object clicked = null)
+        /*
+            Aircraft plane = (Aircraft)clicked;
+            if (plane.Pointout)
+                plane.Pointout = false;
+            else if (!plane.Owned)
+                plane.FDB = plane.FDB ? false : true;
+            else if (plane.PositionInd != ThisPositionIndicator)
+            {
+                plane.Owned = false;
+            }
+            GenerateDataBlock(plane);
+         */
+        let clickedplane = false;
+        let enter = false;
+        if (clicked != null)
+            clickedplane = clicked.constructor === Aircraft; // GetType() == typeof(Aircraft)
+        else
+            enter = true;
+        if (clickedplane) {
+            let plane = clicked; // clicked as Aircraft
+            // Acknowledge alerts on this track (MSAW LA, Conflict Alert, and the
+            // squawk-derived SPC): a slew silences the tone(s); CA goes solid.
+            let unackedLA = plane.LowAltitude && !plane.LowAltitudeAcknowledged;
+            let unackedCA = plane.ConflictAlert && !plane.ConflictAlertAcknowledged;
+            let unackedSpc = plane.HasUnacknowledgedSpc;
+            if (unackedLA || unackedCA || unackedSpc) {
+                if (plane.LowAltitude)
+                    plane.LowAltitudeAcknowledged = true;
+                plane.SpcAcknowledged = true;
+                if (unackedCA) {
+                    plane.ConflictAlertAcknowledged = true;
+                    for (const partner of [...plane.ConflictingTracks]) { // ConflictingTracks.ToList()
+                        partner.ConflictAlertAcknowledged = true;
+                        partner.RedrawDataBlock(this.#radar);
+                    }
+                }
+                plane.RedrawDataBlock(this.#radar);
+                return;
+            }
+            // Accept Handoff, Recall handoff
+            if (plane.PendingHandoff === this.ThisPositionIndicator) {
+                plane.PositionInd = this.ThisPositionIndicator;
+                plane.PendingHandoff = null;
+                plane.SendUpdate();
+            }
+            else if (plane.PositionInd === this.ThisPositionIndicator && !(plane.PendingHandoff == null || plane.PendingHandoff === "")) {
+                plane.PendingHandoff = null;
+                plane.SendUpdate();
+            }
+            // Accept pointout, Recall pointout, Clear pointout color, Clear/reject / cancel pointout indication
+            else if (plane.Pointout) {
+                plane.Pointout = false;
+            }
+            else if (plane.ForceQuickLook) {
+                plane.ForceQuickLook = false;
+            }
+            // CRC STARS: first click during outbound-complete blink stops
+            // the flashing (data block stays white). Subsequent click hits
+            // the "Owned && PositionInd != me" branch below to go green.
+            else if (plane.DataBlock.Flashing && plane.Owned
+                && plane.PositionInd !== this.ThisPositionIndicator
+                && plane.PendingHandoff !== this.ThisPositionIndicator) {
+                plane.DataBlock.Flashing = false;
+                plane.DataBlock2.Flashing = false;
+                plane.DataBlock3.Flashing = false;
+                plane.JustTransferredAt = new Date(-8640000000000000); // DateTime.MinValue
+            }
+            // acknowledge CA / MSAW / SPC / FMA track … (see source for the full behavior list)
+            // Return data block to unowned color
+            else if (plane.Owned && plane.PositionInd !== this.ThisPositionIndicator) {
+                plane.Owned = false;
+            }
+            // Take control of interfacility track … Beacon readout - owned and associated track
+            else if (plane.Owned && !(plane.FlightPlanCallsign == null || plane.FlightPlanCallsign === "")) {
+                this.DisplayPreviewMessage(`${plane.FlightPlanCallsign} ${plane.Squawk ?? ""} ${plane.AssignedSquawk ?? ""}`);
+            }
+            // Toggle quick look for a single track
+            else if (!plane.Owned && !(plane.FlightPlanCallsign == null || plane.FlightPlanCallsign === "")) {
+                plane.FDB = !plane.FDB;
+            }
+            // Create FP and associate to LDB … Beacon Readout - unassociated track
+            else if (plane.FlightPlanCallsign == null || plane.FlightPlanCallsign === "") {
+                plane.FDB = !plane.FDB;
+            }
+            //GenerateDataBlock(plane);
+        }
+    }
+    KeysToString(keys, start = 0) { // string KeysToString(object[] keys, int start = 0)
+        let output = "";
+        for (let i = start; i < keys.length; i++) {
+            let key = keys[i];
+            // type == typeof(KeyCode) || type == typeof(Key) → mapped via KeyToChar (the (int)Key switch)
+            if (KeyToChar.has(key)) {
+                output += KeyToChar.get(key);
+            }
+            else if (typeof key === "string") { // key.GetType() == typeof(char)
+                output += key;
+            }
+        }
+        return output;
+    }
+
+    RenderPreview() {
+        let oldtext = this.#PreviewArea.Text;
+        if (this.#previewmessage != null && this.#previewmessageexpiry <= RadarWindow.CurrentTime)
+            this.#previewmessage = null;
+        else if (this.#previewmessage != null && this.Preview.length === 0)
+            this.#PreviewArea.Text = this.#previewmessage;
+        else
+            this.#PreviewArea.Text = this.GeneratePreviewString(this.Preview);
+        this.#PreviewArea.ForceRedraw();
+        this.#PreviewArea.ForeColor = RadarWindow.AdjustedColor(this.DataBlockColor, this.CurrentPrefSet.Brightness.FullDataBlocks);
+        this.#PreviewArea.LocationF = new PointF(this.PreviewLocation.X, this.PreviewLocation.Y - this.#PreviewArea.SizeF.Height);
+        this.DrawLabel(this.#PreviewArea);
+    }
+    #previewmessage = null;    // string
+    #previewmessageexpiry;     // DateTime
+
+    // ===== PORTED THROUGH LINE 3160 / 6962 — next chunk continues here (DisplayPreviewMessage @3161) =====
 }

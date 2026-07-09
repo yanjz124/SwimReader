@@ -112,11 +112,20 @@ export class Vector2 {
 export const ButtonState = Object.freeze({ Released: 0, Pressed: 1 });
 
 // OpenTK.Input.Key — only the codes DGScope references are enumerated (grow as needed).
+// KEY-REPRESENTATION CONTRACT (see RadarWindow.ProcessCommand): items in the command KeyList are
+// either a C# `char` — modeled as a 1-char JS string — or a `Key` enum value used for named/function
+// keys — modeled as a unique Symbol. So `x.GetType()==typeof(char)` transliterates to
+// `typeof x === "string"`, and `switch(item){ case Key.F3: … }` matches by Symbol identity.
+// Modifier keys (Control/Shift/Alt) are kept as strings matching DOM event.code, since they only
+// flow through Keyboard.GetState().IsKeyDown(...) (Set membership), never into the KeyList.
 export const Key = Object.freeze({
     ControlLeft: "ControlLeft", ControlRight: "ControlRight",
     ShiftLeft: "ShiftLeft", ShiftRight: "ShiftRight",
     AltLeft: "AltLeft", AltRight: "AltRight",
-    Enter: "Enter", Escape: "Escape", BackSpace: "Backspace", Space: "Space",
+    Enter: Symbol("Key.Enter"), Escape: Symbol("Key.Escape"), BackSpace: Symbol("Key.BackSpace"), Space: Symbol("Key.Space"),
+    F1: Symbol("Key.F1"), F2: Symbol("Key.F2"), F3: Symbol("Key.F3"), F4: Symbol("Key.F4"),
+    F5: Symbol("Key.F5"), F6: Symbol("Key.F6"), F7: Symbol("Key.F7"), F8: Symbol("Key.F8"),
+    F9: Symbol("Key.F9"), F10: Symbol("Key.F10"), F11: Symbol("Key.F11"), F12: Symbol("Key.F12"),
 });
 
 // Live keyboard state — the host sets/clears entries from DOM keydown/keyup.

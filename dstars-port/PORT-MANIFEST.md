@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 5212 / 6962** (+ GeoToScreenPoint, GeoToPixel, ScreenToGeoPoint [PointF+Point overloads merged via Point/PointF dispatch; dead code kept 1:1], DrawCompass [bezel + tick marks + 36 bearing labels], DrawATPAVolumes, DrawMSAWVolumes, DrawMSAWVolumeOutline; + #cmp_labels/#cmp_ar). Shims: Matrix4.Column0-3, Vector4.Length, Color.Aqua; import Line.
+**RadarWindow.cs port progress: lines 5423 / 6962** (+ DrawCASuppressionVolumes, DrawMinSeps [w/ DrawCircle], DrawRBLs [range/bearing line labels w/ traversal time], DrawStatic, GetActiveSpcCodes [out→holder {value}], RenderSSAAlertCodes [red/yellow SPC line under clock], Window_Load [screensaver/StartReceivers/SetupDCB/LoadVideoMapFile], Window_Closing). All fields pre-declared.
+
+Prior: **lines 5212** (+ GeoToScreenPoint/GeoToPixel/ScreenToGeoPoint [overloads merged], DrawCompass, DrawATPAVolumes, DrawMSAWVolumes, DrawMSAWVolumeOutline). Shims: Matrix4.Column0-3, Vector4.Length, Color.Aqua.
 
 Prior: **lines 4985** (+ ProcessMouse [.wip splice], CenterMouse). Shim: GameWindow.Bounds.
 

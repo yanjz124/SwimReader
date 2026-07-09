@@ -3685,5 +3685,185 @@ export class RadarWindow {
         }
     }
 
-    // ===== PORTED THROUGH LINE 5212 / 6962 — next chunk continues here (DrawCASuppressionVolumes @5213) =====
+    DrawCASuppressionVolumes() {
+        let volumes; // List<CASuppressionVolume>
+        // lock (ConflictAlert.SuppressionVolumes)
+        volumes = this.ConflictAlert.SuppressionVolumes.filter(v => v.Draw || this.DrawAllCASuppressionVolumes);
+        for (const v of volumes) {
+            if (v.RunwayThreshold == null)
+                continue;
+            let centerline = (v.TrueHeading + 180) % 360;
+            let nearLeft = v.RunwayThreshold.FromPoint(v.HalfWidth, centerline - 90);
+            let nearRight = v.RunwayThreshold.FromPoint(v.HalfWidth, centerline + 90);
+            let farCenter = v.RunwayThreshold.FromPoint(v.Length, centerline);
+            let farLeft = farCenter.FromPoint(v.HalfWidth, centerline - 90);
+            let farRight = farCenter.FromPoint(v.HalfWidth, centerline + 90);
+            this.DrawLine(new Line(nearLeft, farLeft), Color.Yellow);
+            this.DrawLine(new Line(farLeft, farRight), Color.Yellow);
+            this.DrawLine(new Line(farRight, nearRight), Color.Yellow);
+            this.DrawLine(new Line(nearRight, nearLeft), Color.Yellow);
+        }
+    }
+    DrawMinSeps() {
+        let seps; // List<MinSep>
+        // lock (minSeps)
+        seps = [...this.#minSeps];
+        for (const minsep of seps) {
+            if (minsep.Line1.End1 != null && minsep.Line2.End1 != null &&
+                minsep.Line1.End2 != null && minsep.Line2.End2 != null) {
+                this.DrawLine(minsep.Line1, RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools));
+                this.DrawLine(minsep.Line2, RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools));
+                let point1 = this.GeoToScreenPoint(minsep.Line1.End2);
+                let point2 = this.GeoToScreenPoint(minsep.Line2.End2);
+                this.DrawCircle(point1.X, point1.Y, 4 * this.#pixelScale, 1, 3, RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools), true);
+                this.DrawCircle(point2.X, point2.Y, 4 * this.#pixelScale, 1, 3, RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools), true);
+            }
+            if (minsep.SepLine.End1 != null && minsep.SepLine.End2 != null) {
+                this.DrawLine(minsep.SepLine, RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools));
+            }
+            else
+                continue;
+            if (minsep.SepLine.MidPoint == null)
+                continue;
+            let labelloc = this.GeoToScreenPoint(minsep.SepLine.MidPoint);
+            if (minsep.MinSepDistance != null)
+                minsep.Label.Text = this.#toFixedPad(minsep.MinSepDistance, 1, 2) + " NM"; // ((double)MinSepDistance).ToString("0.00")
+            if (minsep.NoXing === true)
+                minsep.Label.Text += "\r\nNO XING";
+            minsep.Label.ForeColor = RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools);
+            minsep.Label.Font = this.Font;
+            minsep.Label.CenterOnPoint(labelloc);
+            this.DrawLabel(minsep.Label);
+        }
+    }
+    DrawRBLs() {
+        let lines; // List<RangeBearingLine>
+        // lock (rangeBearingLines)
+        lines = [...this.#rangeBearingLines];
+        for (const line of lines) {
+            let index = this.#rangeBearingLines.indexOf(line) + 1;
+            if (line.End == null || (line.End.X === 0 && line.End.Y === 0))
+                return;
+            if (line.StartPlane != null) {
+                line.Start = line.StartPlane.LocationF;
+                line.StartGeo = line.StartPlane.SweptLocation(this.#radar);
+                line.Line.End1 = line.StartPlane.SweptLocation(this.#radar);
+            }
+            else if (line.StartGeo != null) {
+                line.Start = this.GeoToScreenPoint(line.StartGeo); // (GeoPoint)line.StartGeo
+                line.Line.End1 = line.StartGeo;
+            }
+            else {
+                return;
+            }
+
+            if (line.EndPlane != null) {
+                line.End = line.EndPlane.LocationF;
+                line.EndGeo = line.EndPlane.SweptLocation(this.#radar);
+                line.Line.End2 = line.EndPlane.SweptLocation(this.#radar);
+            }
+            else if (line.EndGeo != null) {
+                line.End = this.GeoToScreenPoint(line.EndGeo); // (GeoPoint)line.EndGeo
+                line.Line.End2 = line.EndGeo;
+            }
+
+            this.DrawLine(line.Start, line.End, RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools));
+            line.Label.ForeColor = RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools);
+            line.Label.LocationF = line.End;
+            let bearing = 0;
+            let range = 0;
+            if (line.EndGeo != null) {
+                bearing = line.StartGeo.BearingTo(line.EndGeo) - this.ScreenRotation;
+                if (bearing === 0)
+                    bearing = 360;
+                range = line.StartGeo.DistanceTo(line.EndGeo);
+            }
+            else {
+                let tempEndGeo = this.ScreenToGeoPoint(line.End);
+                bearing = line.StartGeo.BearingTo(tempEndGeo) - this.ScreenRotation;
+                if (bearing === 0)
+                    bearing = 360;
+                range = line.StartGeo.DistanceTo(tempEndGeo);
+            }
+            bearing = Math.trunc((bearing + 720.5) % 360); // (int)((bearing + 720.5) % 360)
+            if ((line.StartPlane != null && line.EndPlane == null) || (line.StartPlane == null && line.EndPlane != null)) {
+                let plane; // Aircraft
+                if (line.StartPlane == null)
+                    plane = line.EndPlane;
+                else
+                    plane = line.StartPlane;
+                let traversalTime = range * 60 / plane.GroundSpeed;
+                let time;
+                if (traversalTime - Math.trunc(traversalTime) >= 0.5)
+                    time = Math.trunc(traversalTime) + 1;
+                else
+                    time = Math.trunc(traversalTime);
+                line.Label.Text = `${this.#padNum(bearing, 3)}/${this.#toFixedPad(range, 1, 2)}/${time}-${index}`; // "{0}/{1}/{3}-{2}"
+            }
+            else
+                line.Label.Text = `${this.#padNum(bearing, 3)}/${this.#toFixedPad(range, 1, 2)}-${index}`; // "{0}/{1}-{2}"
+            this.DrawLabel(line.Label);
+        }
+    }
+    DrawStatic() {
+        this.RenderPreview();
+        this.RenderStatus();
+        this.RenderLACAMCIList();
+        this.RenderSSAAlertCodes();
+    }
+    GetActiveSpcCodes(red, yellow) { // (out string[] red, out string[] yellow) → holder objects {value}
+        let acs; // List<Aircraft>
+        // lock (Aircraft)
+        acs = RadarWindow.Aircraft.filter(x => !x.Deleted);
+        // SPC codes active anywhere in the system (CA/LA live in the LA/CA/MCI list).
+        let redOrder = ["HJ", "RF", "EM", "LL", "MI"];
+        let yellowOrder = ["OD", "ME", "MF", "LN"];
+        red.value = redOrder.filter(c => acs.some(a => a.ActiveRedCodes.includes(c)));
+        yellow.value = yellowOrder.filter(c => acs.some(a => a.ActiveYellowCodes.includes(c)));
+    }
+    RenderSSAAlertCodes() {
+        let red = { value: [] }, yellow = { value: [] }; // out var
+        this.GetActiveSpcCodes(red, yellow);
+        if (red.value.length === 0 && yellow.value.length === 0)
+            return;
+        let redText = red.value.join(" "); // string.Join(" ", red)
+        let yellowText = yellow.value.join(" ");
+        if (red.value.length > 0 && yellow.value.length > 0)
+            redText += " ";
+        this.#SSAAlertRed.Font = this.Font;
+        this.#SSAAlertYellow.Font = this.Font;
+        this.#SSAAlertRed.Text = redText;
+        this.#SSAAlertYellow.Text = yellowText;
+        this.#SSAAlertRed.ForeColor = RadarWindow.AdjustedColor(this.DataBlockEmergencyColor, this.CurrentPrefSet.Brightness.Lists);
+        this.#SSAAlertYellow.ForeColor = RadarWindow.AdjustedColor(Color.Yellow, this.CurrentPrefSet.Brightness.Lists);
+        // Size now so placement is correct the same frame.
+        this.#SSAAlertRed.Measure(this.#pixelScale);
+        this.#SSAAlertYellow.Measure(this.#pixelScale);
+        // The line directly below the clock (the reserved blank line in RenderStatus).
+        let lineHeight = Math.max(this.#SSAAlertRed.SizeF.Height, this.#SSAAlertYellow.SizeF.Height);
+        let y = this.StatusLocation.Y - (2 * lineHeight);
+        if (!(redText == null || redText === "")) {
+            this.#SSAAlertRed.LocationF = new PointF(this.StatusLocation.X, y);
+            this.DrawLabel(this.#SSAAlertRed);
+        }
+        if (!(yellowText == null || yellowText === "")) {
+            this.#SSAAlertYellow.LocationF = new PointF(this.StatusLocation.X + this.#SSAAlertRed.SizeF.Width, y);
+            this.DrawLabel(this.#SSAAlertYellow);
+        }
+    }
+    Window_Load(sender, e) { // (object sender, EventArgs e)
+        if (this.#isScreenSaver) {
+            this.#window.WindowState = WindowState.Fullscreen;
+            this.#window.CursorVisible = false;
+        }
+        this.StartReceivers();
+        this.SetupDCB();
+        this.LoadVideoMapFile(); // async → fire-and-forget (C# void)
+    }
+    Window_Closing(sender, e) { // (object sender, CancelEventArgs e)
+        //System.Xml.Serialization.XmlSerializer x = new ...(this.GetType());
+        this.StopReceivers();
+    }
+
+    // ===== PORTED THROUGH LINE 5423 / 6962 — next chunk continues here (SaveSettings @5424) =====
 }

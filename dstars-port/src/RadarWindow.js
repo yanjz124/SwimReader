@@ -30,7 +30,8 @@ import { WeatherService } from "./WeatherService.js";
 import { XmlSerializer } from "./XmlSerializer.js";
 import { MSAWImporter } from "./MSAWImporter.js";
 import { TargetExtentSymbols, SearchTargetParams, AzimuthExtentValues, FusedTrackTargetSymbolParams, BeaconTargetParams, FMATargetSymbolParams } from "./STARS/TargetExtentSymbols.js";
-import { GL, EnableCap, BlendingFactor, BlendEquationMode, ClearBufferMask, PrimitiveType } from "./_shims/GL.js";
+import { GL, EnableCap, BlendingFactor, BlendEquationMode, ClearBufferMask, PrimitiveType, TextureTarget, PixelInternalFormat, PixelFormat, PixelType, TextureParameterName, TextureMagFilter, TextureMinFilter, TextureWrapMode } from "./_shims/GL.js";
+import { ConnectingLineF } from "./LeaderLine.js";
 import { ATPAStatus } from "./ATPA.js";
 import { PrimaryReturn } from "./PrimaryReturn.js";
 import { Matrix4 } from "./_shims/OpenTK.js";
@@ -4361,7 +4362,7 @@ export class RadarWindow {
             let realWidth = aircraft.PositionIndicator.Width * this.#pixelScale;
             let realHeight = aircraft.PositionIndicator.Height * this.#pixelScale;
             aircraft.PositionIndicator.SizeF = new SizeF(realWidth, realHeight);
-            let posindlocation = this.GeoToScreenPoint(TargetExtentSymbols.PositionSymbolLocation(aircraft, this.#radar));
+            let posindlocation = this.GeoToScreenPoint(this.TargetExtentSymbols.PositionSymbolLocation(aircraft, this.#radar)); // instance member (field shadows class)
             aircraft.PositionIndicator.CenterOnPoint(posindlocation);
             if (!(aircraft.PositionInd == null || aircraft.PositionInd === ""))
                 aircraft.PositionIndicator.Text = aircraft.PositionInd[aircraft.PositionInd.length - 1]; // PositionInd.Last().ToString()
@@ -4708,5 +4709,436 @@ export class RadarWindow {
         return (aircraft.TrueAltitude <= this.MaxAltitudeAssociated && aircraft.TrueAltitude >= this.MinAltitudeAssociated);
     }
 
-    // ===== PORTED THROUGH LINE 6418 / 6962 — next chunk continues here (DrawTarget @6419) =====
+    DrawTarget(target) { // private void DrawTarget(PrimaryReturn target)
+        if (target == null)
+            return;
+        if (target.ParentAircraft.Location == null)
+            return;
+        if ((target.LastDrawnScreenCenter !== this.#ScreenCenterPoint || target.LastDrawnRange !== this.CurrentPrefSet.Range || target.LastDrawnScreenRotation !== this.ScreenRotation) && target.GeoLocation != null) {
+            target.LocationF = this.GeoToScreenPoint(target.GeoLocation);
+            target.LastDrawnScreenRotation = this.ScreenRotation;
+            target.LastDrawnScreenCenter = this.#ScreenCenterPoint;
+            target.LastDrawnRange = this.CurrentPrefSet.Range;
+            if (target.ParentAircraft != null && target === target.ParentAircraft.TargetReturn) {
+                target.ParentAircraft.LocationF = target.LocationF;
+            }
+        }
+        if (target.LocationF.X === 0 || target.LocationF.Y === 0)
+            return;
+        let history = target !== target.ParentAircraft.TargetReturn;
+        if (history) { // history
+            if (!this.InFilter(target.ParentAircraft) && !target.ParentAircraft.FDB)
+                return;
+            if (target.ParentAircraft.History.indexOf(target) >= this.CurrentPrefSet.HistoryNum) // Array.IndexOf
+                return;
+        }
+        let primarycolor = RadarWindow.AdjustedColor(this.ReturnColor, this.CurrentPrefSet.Brightness.PrimaryTargets);
+        let beaconcolor = RadarWindow.AdjustedColor(this.BeaconTargetColor, this.CurrentPrefSet.Brightness.BeaconTargets);
+        let rt = this.#radar.RadarType;
+        if (history)
+            rt = RadarType.FUSED;
+        let location = target.ParentAircraft.SweptLocation(this.#radar);
+        if (location == null)
+            return;
+        let targetWidth;
+        let targetHeight;
+        let targetHypotenuse;
+        let x1;
+        let angle;
+        switch (rt) {
+            case RadarType.SLANT_RANGE: {
+                targetWidth = this.TargetExtentSymbols.TargetWidth(target.ParentAircraft, this.#radar, this.#scale, this.#pixelScale);
+                targetHeight = (this.TargetExtentSymbols.SearchTargets.RangeExtent / 32) / this.#scale;
+                targetHypotenuse = (Math.sqrt((targetHeight * targetHeight) + (targetWidth * targetWidth)) / 2);
+                let beaconoffset = this.TargetExtentSymbols.BeaconTargets.RangeOffset / (32 * this.#scale);
+                x1 = (targetWidth / 2);
+                let y1 = (targetHeight / 2);
+                let x2 = x1 * (this.TargetExtentSymbols.BeaconTargets.AzimuthExtentFactor / 10);
+                let y2 = (this.TargetExtentSymbols.BeaconTargets.RangeExtent / 32) / this.#scale;
+
+                target.SizeF = new SizeF(targetHypotenuse * 2, targetHypotenuse * 2);
+
+                GL.PushMatrix();
+                angle = (-(location.BearingTo(this.#radar.Location) + 360) % 360) + this.ScreenRotation;
+                GL.Translate(target.LocationF.X, target.LocationF.Y, 0.0);
+                GL.Rotate(angle, 0.0, 0.0, 1.0);
+                GL.Ortho(-1.0, 1.0, -1.0, 1.0, 0.1, 0.0);
+
+                GL.Begin(PrimitiveType.Polygon);
+
+                GL.Color4(primarycolor);
+                GL.Vertex2(x1, y1);
+                GL.Vertex2(-x1, y1);
+                GL.Vertex2(-x1, -y1);
+                GL.Vertex2(x1, -y1);
+                GL.End();
+                if (!target.ParentAircraft.PrimaryOnly && !history) {
+                    GL.Begin(PrimitiveType.Polygon);
+                    GL.Color4(beaconcolor);
+                    GL.Vertex2(x2, y2 - beaconoffset);
+                    GL.Vertex2(-x2, y2 - beaconoffset);
+                    GL.Vertex2(-x2, -y2 - beaconoffset);
+                    GL.Vertex2(x2, -y2 - beaconoffset);
+                    GL.End();
+                }
+
+                GL.Translate(-target.LocationF.X, -target.LocationF.Y, 0.0);
+
+
+                GL.PopMatrix();
+                break;
+            }
+            case RadarType.FUSED: {
+                let size;
+                if (!target.ParentAircraft.PrimaryOnly && !history) {
+                    size = this.TargetExtentSymbols.TargetWidth(target.ParentAircraft, this.#radar, this.#scale, this.#pixelScale);
+                    target.SizeF = new SizeF(size, size);
+                    this.DrawCircle(target.LocationF.X, target.LocationF.Y, size / 2, 1, 30, primarycolor, true);
+                }
+                else if (!history) {
+                    targetWidth = this.TargetExtentSymbols.MultiRadarTargets.UncorrSymbolPlotSize * this.#pixelScale;
+                    targetHypotenuse = (Math.sqrt((targetWidth * targetWidth) + (targetWidth * targetWidth)) / 2);
+                    x1 = (Math.sqrt(2) * targetHypotenuse);
+                    target.SizeF = new SizeF(targetHypotenuse * 2, targetHypotenuse * 2);
+                    GL.PushMatrix();
+
+                    angle = 0; // -(float)ScreenRotation;
+                    GL.Translate(target.LocationF.X, target.LocationF.Y, 0.0);
+                    GL.Rotate(angle, 0.0, 0.0, 1.0);
+                    GL.Ortho(-1.0, 1.0, -1.0, 1.0, 0.1, 0.0);
+                    GL.Begin(PrimitiveType.Polygon);
+
+                    GL.Color4(RadarWindow.AdjustedColor(this.ReturnColor, this.CurrentPrefSet.Brightness.PrimaryTargets));
+                    GL.Vertex2(x1, x1);
+                    GL.Vertex2(-x1, x1);
+                    GL.Vertex2(-x1, -x1);
+                    GL.Vertex2(x1, -x1);
+
+
+                    GL.End();
+                    GL.Translate(-target.LocationF.X, -target.LocationF.Y, 0.0);
+
+
+                    GL.PopMatrix();
+                }
+                else {
+                    size = this.TargetExtentSymbols.FMATargetSymbols.Radius * this.#pixelScale;
+                    target.SizeF = new SizeF(size, size);
+                    this.DrawCircle(target.LocationF.X, target.LocationF.Y, size, 1, 30, RadarWindow.AdjustedColor(target.ForeColor, this.CurrentPrefSet.Brightness.History), true);
+                }
+                break;
+            }
+        }
+    }
+
+    DrawTargets() {
+        let aclist; // List<Aircraft>
+        let cutoff = this.#addSeconds(RadarWindow.CurrentTime, -this.LostTargetSeconds);
+        // lock (Aircraft)
+        {
+            aclist = new List(); // new List<Aircraft>(Aircraft.Count) — capacity hint dropped
+            for (const ac of RadarWindow.Aircraft) {
+                if (ac.LastMessageTime > cutoff)
+                    aclist.Add(ac);
+            }
+        }
+
+        // Single pass for ownership, TPA, handoff, flashing, and beaconator updates
+        for (let i = 0; i < aclist.length; i++) {
+            let x = aclist[i];
+
+            if (x.PositionInd === this.ThisPositionIndicator)
+                x.Owned = true;
+
+            if (x.TPA != null || x.ATPAFollowing != null)
+                this.DrawTPA(x);
+
+            if (x.PendingHandoff === this.ThisPositionIndicator) {
+                if (!(x.Owned && x.DataBlock.Flashing)) {
+                    x.Owned = true;
+                    x.DataBlock.Flashing = true;
+                    x.DataBlock2.Flashing = true;
+                }
+            }
+
+            if (x.PositionInd === x.PendingHandoff) {
+                if (x.PendingHandoff != null)
+                    x.PendingHandoff = null;
+                if (x.DataBlock.Flashing) {
+                    x.DataBlock.Flashing = false;
+                    x.DataBlock2.Flashing = false;
+                    x.DataBlock3.Flashing = false;
+                }
+            }
+
+            if (x.DataBlock.Flashing && x.PendingHandoff !== this.ThisPositionIndicator
+                && (new Date().getTime() - x.JustTransferredAt.getTime()) > 5000) { // (DateTime.UtcNow - JustTransferredAt) > TimeSpan.FromSeconds(5)
+                x.DataBlock.Flashing = false;
+                x.DataBlock2.Flashing = false;
+                x.DataBlock3.Flashing = false;
+            }
+
+            if (x.ShowCallsignWithNoSquawk !== this.#showAllCallsigns && x.LocationF.X !== 0) {
+                x.ShowCallsignWithNoSquawk = this.#showAllCallsigns;
+                // lock (x)
+                x.RedrawDataBlock(this.#radar);
+            }
+        }
+
+        // Draw history trails and target returns
+        for (let i = 0; i < aclist.length; i++) {
+            let x = aclist[i];
+            if (!x.PrimaryOnly || x.Associated) {
+                // lock (x.History)
+                {
+                    for (let j = x.History.length - 1; j >= 0; j--) {
+                        if (x.History[j] != null) {
+                            if (x.History[j].ParentAircraft == null)
+                                x.History[j].ParentAircraft = x;
+                            this.DrawTarget(x.History[j]);
+                        }
+                    }
+                }
+            }
+        }
+        for (let i = 0; i < aclist.length; i++) {
+            let x = aclist[i];
+            if (x.TargetReturn.ParentAircraft == null)
+                x.TargetReturn.ParentAircraft = x;
+            this.DrawTarget(x.TargetReturn);
+        }
+
+        // Build HashSet for O(1) membership checks
+        let acSet = new Set(aclist); // new HashSet<Aircraft>(aclist)
+
+        // lock (posIndicators)
+        {
+            for (let i = 0; i < this.posIndicators.length; i++) {
+                let x = this.posIndicators[i];
+                if (!x.ParentAircraft.FDB && acSet.has(x.ParentAircraft))
+                    this.DrawLabel(x);
+            }
+        }
+        // lock (dataBlocks)
+        {
+            // Collect, filter, and sort into a reusable list to avoid allocating per-frame
+            let sortedBlocks = new List(); // new List<TransparentLabel>(dataBlocks.Count)
+            let toRemove = null; // (List<TransparentLabel>)null
+            for (let i = 0; i < this.dataBlocks.length; i++) {
+                let block = this.dataBlocks[i];
+                if (block.ParentAircraft == null)
+                    continue;
+                if (!acSet.has(block.ParentAircraft)) {
+                    if (toRemove == null) toRemove = new List();
+                    toRemove.Add(block);
+                    toRemove.Add(block.ParentAircraft.DataBlock2);
+                    toRemove.Add(block.ParentAircraft.DataBlock3);
+                    continue;
+                }
+                if (block.ParentAircraft.FDB || block.ParentAircraft.Associated || !block.ParentAircraft.PrimaryOnly)
+                    sortedBlocks.Add(block);
+            }
+            if (toRemove != null) {
+                for (let i = 0; i < toRemove.length; i++)
+                    this.dataBlocks.Remove(toRemove[i]);
+            }
+            sortedBlocks.sort((a, b) => { // bool.CompareTo: false(0) < true(1)
+                let cmp = Number(a.ParentAircraft.FDB) - Number(b.ParentAircraft.FDB);
+                if (cmp !== 0) return cmp;
+                return Number(a.ParentAircraft.Owned) - Number(b.ParentAircraft.Owned);
+            });
+            for (let i = 0; i < sortedBlocks.length; i++) {
+                let block = sortedBlocks[i];
+                if (block.ParentAircraft === this.#debugPlane)
+                    this.#debugPlane = null;
+                if (this.CurrentPrefSet.PTLLength > 0 && (block.ParentAircraft.ShowPTL || (block.ParentAircraft.Owned && this.CurrentPrefSet.PTLOwn) || (block.ParentAircraft.FDB && this.CurrentPrefSet.PTLAll))) {
+                    this.DrawLine(block.ParentAircraft.PTL, RadarWindow.AdjustedColor(this.RBLColor, this.CurrentPrefSet.Brightness.Tools));
+                }
+                if (ClockPhase.Phase === 0)
+                    this.DrawLabel(block);
+                else if (ClockPhase.Phase === 1)
+                    this.DrawLabel(block.ParentAircraft.DataBlock2);
+                else if (ClockPhase.Phase === 2)
+                    this.DrawLabel(block.ParentAircraft.DataBlock3);
+                this.DrawAlertLine(block.ParentAircraft);
+            }
+        }
+        // lock (posIndicators)
+        {
+            for (let i = 0; i < this.posIndicators.length; i++) {
+                let x = this.posIndicators[i];
+                if (x.ParentAircraft.FDB && acSet.has(x.ParentAircraft))
+                    this.DrawLabel(x);
+            }
+        }
+    }
+    DrawAlertLine(ac) { // (Aircraft ac)
+        if (ac == null || !ac.HasAnyAlertCode)
+            return;
+        let db = ac.DataBlock;
+        let hasRed = !(ac.AlertLabelRed.Text == null || ac.AlertLabelRed.Text === "");
+        let hasYellow = !(ac.AlertLabelYellow.Text == null || ac.AlertLabelYellow.Text === "");
+        if (!hasRed && !hasYellow)
+            return;
+        let redW = ac.AlertLabelRed.SizeF.Width;
+        let yelW = ac.AlertLabelYellow.SizeF.Width;
+        // Sits directly above the first data-block line (LocationF is bottom-left).
+        let top = db.LocationF.Y + db.SizeF.Height;
+        // Match the data block's justification so the alert stays on the shifted edge.
+        let rightAlign = ac.LastDataBlockRightJustified;
+        let blockWidth = Math.max(ac.DataBlock.SizeF.Width,
+            Math.max(ac.DataBlock2.SizeF.Width, ac.DataBlock3.SizeF.Width));
+        let leftX = rightAlign
+            ? db.LocationF.X + blockWidth - (redW + yelW)
+            : db.LocationF.X;
+        // Only CA/LA blink (hidden on phase 1); SPCs and yellow tags stay solid.
+        let hideRed = ac.RedAlertBlinks && ClockPhase.Phase === 1;
+        if (hasRed && !hideRed) {
+            ac.AlertLabelRed.LocationF = new PointF(leftX, top);
+            this.DrawLabel(ac.AlertLabelRed);
+        }
+        if (hasYellow) {
+            ac.AlertLabelYellow.LocationF = new PointF(leftX + redW, top);
+            this.DrawLabel(ac.AlertLabelYellow);
+        }
+    }
+    DrawLabel(Label) { // private void DrawLabel(TransparentLabel Label)
+        // lock (Label)
+        {
+            let outline = false;
+            if (Label.Text == null || Label.Text === "")
+                return;
+            if (Label.ParentAircraft != null && Label === Label.ParentAircraft.PositionIndicator) {
+                outline = true;
+            }
+            GL.Enable(EnableCap.Texture2D);
+            let isNewTexture = Label.TextureID === 0;
+            if (isNewTexture)
+                Label.TextureID = GL.GenTexture();
+            let text_texture = Label.TextureID;
+            let color = Label.DrawColor; // Color
+
+            if (Label.Redraw) {
+                Label.Font = this.Font;
+                let text_bmp = Label.NewTextBitmap(outline); // Bitmap -> OffscreenCanvas
+                let realWidth = text_bmp.width * this.#pixelScale;
+                let realHeight = text_bmp.height * this.#pixelScale;
+                Label.SizeF = new SizeF(realWidth, realHeight);
+                GL.BindTexture(TextureTarget.Texture2D, text_texture);
+                // ADAPTATION: GDI Bitmap.LockBits/BitmapData/Scan0 → pass the OffscreenCanvas directly to
+                // TexImage2D (the Canvas2D GL shim uploads the canvas as the texture; see DCBButton).
+                GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, text_bmp.width, text_bmp.height, 0,
+                    PixelFormat.Bgra, PixelType.UnsignedByte, text_bmp);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, TextureMagFilter.Nearest);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, TextureMinFilter.Nearest);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, TextureWrapMode.ClampToEdge);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, TextureWrapMode.ClampToEdge);
+            }
+            if (Label.ParentAircraft != null) {
+                if (Label.ParentAircraft.Owned && Label === Label.ParentAircraft.PositionIndicator) {
+                    color = RadarWindow.AdjustedColor(Label.DrawColor, this.CurrentPrefSet.Brightness.PositionSymbols);
+                }
+                else if (Label.ParentAircraft.Owned) {
+                    color = RadarWindow.AdjustedColor(Label.DrawColor, this.CurrentPrefSet.Brightness.FullDataBlocks);
+                }
+                else if (Label.ParentAircraft.FDB) {
+                    color = RadarWindow.AdjustedColor(Label.DrawColor, this.CurrentPrefSet.Brightness.OtherFDBs);
+                }
+                else {
+                    color = RadarWindow.AdjustedColor(Label.DrawColor, this.CurrentPrefSet.Brightness.LimitedDataBlocks);
+                }
+                if (Label.ParentAircraft.LocationF.X !== 0 || Label.ParentAircraft.LocationF.Y !== 0) {
+                    if (Label === Label.ParentAircraft.DataBlock) {
+                        Label.LocationF = this.OffsetDatablockLocation(Label.ParentAircraft);
+                        Label.ParentAircraft.DataBlock2.LocationF = Label.LocationF;
+                        Label.ParentAircraft.DataBlock3.LocationF = Label.LocationF;
+                    }
+                    else if (Label === Label.ParentAircraft.DataBlock2) {
+                        Label.ParentAircraft.DataBlock.LocationF = this.OffsetDatablockLocation(Label.ParentAircraft);
+                        Label.LocationF = Label.ParentAircraft.DataBlock.LocationF;
+                        Label.ParentAircraft.DataBlock3.LocationF = Label.LocationF;
+                    }
+                    else if (Label === Label.ParentAircraft.DataBlock3) {
+                        Label.ParentAircraft.DataBlock.LocationF = this.OffsetDatablockLocation(Label.ParentAircraft);
+                        Label.LocationF = Label.ParentAircraft.DataBlock.LocationF;
+                        Label.ParentAircraft.DataBlock2.LocationF = Label.LocationF;
+                    }
+                }
+
+            }
+
+            GL.BindTexture(TextureTarget.Texture2D, text_texture);
+
+            let Location = Label.LocationF;
+            let x = RadarWindow.RoundUpToNearest(Location.X, this.#pixelScale);
+            let y = RadarWindow.RoundUpToNearest(Location.Y, this.#pixelScale);
+            let width = Label.SizeF.Width;
+            let height = Label.SizeF.Height;
+            let w1 = Label.SizeF.Width + (4 * this.#pixelScale);
+            let h1 = Label.SizeF.Height + (4 * this.#pixelScale);
+            let x1 = x - (2 * this.#pixelScale);
+            let y1 = y - (2 * this.#pixelScale);
+
+            /* black backing quad — commented out in source */
+
+            GL.Begin(PrimitiveType.Quads);
+            GL.Color3(color);
+            GL.TexCoord2(0, 0);
+            GL.Vertex2(x, height + y);
+            GL.TexCoord2(1, 0);
+            GL.Vertex2(width + x, height + y);
+            GL.TexCoord2(1, 1);
+            GL.Vertex2(width + x, y);
+            GL.TexCoord2(0, 1);
+            GL.Vertex2(x, y);
+            GL.End();
+
+            GL.BindTexture(TextureTarget.Texture2D, 0);
+            GL.Disable(EnableCap.Texture2D);
+
+
+            GL.Begin(PrimitiveType.Lines);
+            GL.Color4(color);
+        }
+        if (Label.ParentAircraft != null && this.CurrentPrefSet.LeaderLength > 0) {
+            if (Label === Label.ParentAircraft.DataBlock || Label === Label.ParentAircraft.DataBlock2 || Label === Label.ParentAircraft.DataBlock3) {
+                let line = new ConnectingLineF();
+                line = Label.ParentAircraft.ConnectingLine;
+                GL.Vertex2(line.Start.X, line.Start.Y);
+                GL.Vertex2(line.End.X, line.End.Y);
+            }
+        }
+        GL.End();
+    }
+
+    DrawAllScreenObjectBounds() {
+        let screenObjects = new List(); // List<IScreenObject>
+
+        for (const item of screenObjects) {
+            let bounds = new RectangleF(item.LocationF, item.SizeF);
+            this.DrawRectangle(bounds, Color.Gray);
+        }
+    }
+
+    DrawScreenObjectBounds(screenObject, color) { // (IScreenObject screenObject, Color color)
+        this.DrawRectangle(screenObject.BoundsF, color, false);
+    }
+    DrawRectangle(rectangle, color, fill = false) { // (RectangleF rectangle, Color color, bool fill=false)
+        GL.Begin(PrimitiveType.Lines);
+        GL.Color4(color);
+        GL.Vertex2(rectangle.Left, rectangle.Top);
+        GL.Vertex2(rectangle.Right, rectangle.Top);
+        GL.Vertex2(rectangle.Right, rectangle.Top);
+        GL.Vertex2(rectangle.Right, rectangle.Bottom);
+        GL.Vertex2(rectangle.Right, rectangle.Bottom);
+        GL.Vertex2(rectangle.Left, rectangle.Bottom);
+        GL.Vertex2(rectangle.Left, rectangle.Bottom);
+        GL.Vertex2(rectangle.Left, rectangle.Top);
+        GL.End();
+    }
+    // RoundUpToNearest (C# @6927) already ported early (static, identity). C# IScreenObject interface
+    // (@6950) is a duck-typed contract — no JS equivalent needed (LocationF/NewLocation/SizeF/BoundsF/
+    // ParentAircraft are provided ad hoc by TransparentLabel/PrimaryReturn).
+
+    // ===== RadarWindow.cs FULLY PORTED (6962 / 6962). IScreenObject interface dropped (JS duck-typed). =====
 }

@@ -75,14 +75,11 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ✅ | 520 | Metars.cs — ADDS XML METAR response DTOs (XSD-generated; fields flattened) |
 | ✅ | 719 | MapGeoJSON.cs — GeoJSONMapExporter; BAMCIS.GeoJSON→_shims/GeoJSON.js, JObject fixups→plain JSON; round-trip verified |
 | ✅ | 1086 | Aircraft.cs — FULLY ported (logic + RedrawDataBlock/OldRedrawDataBlock/RedrawTarget + real PrimaryReturn/TransparentLabel fields); FDB/LDB validated in test/aircraft.test.js |
-| ⬜ | 6962 | RadarWindow.cs |
+| ✅ | 6962 | RadarWindow.cs — FULLY ported across 22 chunks (config/props, DCB bar+menus, ProcessCommand [1332-line command switch], ProcessMouse, Window_RenderFrame render loop, all Draw* helpers, target/data-block generation, DrawLabel texture path). IScreenObject interface dropped (JS duck-typed). |
 
-**Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 6418 / 6962** (+ OffsetDatablockLocation [both overloads merged: per-leader-direction data-block placement + AutoOffset 8-way conflict-avoidance search], InFilter [altitude filter]). LeaderDirection is numeric so (int)/(LeaderDirection) casts are no-ops; SizeF now imported (fixed latent chunk-20 ref). Shims: RectangleF.IntersectsWith/Location/Size.
+**Progress: 73/73 files ported. 53 tests pass.** ✅ COMPLETE — the entire `scope/scope` DGScope project is transliterated to browser JavaScript under `dstars-port/src/`.
 
-Prior: **lines 6134** (+ GenerateDataBlock, GenerateTargetAsync, ADSBtoFlightPlanCallsign(s), GenerateTarget, GenerateTargets).
-
-Prior: **lines 5812** (+ #DrawPConeCore, DrawVideoMapLines, DrawLines, DrawLine, DrawPolygon, DrawNexrad; Collections.List shim).
+`RadarWindow.cs` (6962 lines) was ported in 22 chunks of ~300–500 lines against the tested GL shim, tests green at every step. Final chunk added: DrawTarget (slant-range/fused target symbols), DrawTargets (ownership/handoff/flashing pass + history/return/label draw with FDB-sort), DrawAlertLine, DrawLabel (GDI text→GL texture; LockBits/BitmapData→canvas passed to TexImage2D, mirroring DCBButton), DrawAllScreenObjectBounds/DrawScreenObjectBounds/DrawRectangle. Fixed latent chunk-20 ref (TargetExtentSymbols instance member).
 
 Prior: **lines 5631** (+ SaveSettings, DrawRangeRings, DrawCircle, DrawTPA, DrawJRing, DrawPCone, DrawATPACone, RoundUpToNearest).
 

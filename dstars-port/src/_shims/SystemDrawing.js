@@ -34,6 +34,8 @@ export class Color {
     static get Gray() { return new Color(255, 128, 128, 128); }
     static get Magenta() { return new Color(255, 255, 0, 255); }
     static get DarkGray() { return new Color(255, 169, 169, 169); }
+    static get SlateBlue() { return new Color(255, 106, 90, 205); }
+    static get DarkSlateBlue() { return new Color(255, 72, 61, 139); }
 }
 
 // System.Drawing.StringFormat + related enums (text layout). Translated to canvas

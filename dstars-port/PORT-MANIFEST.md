@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 4131 / 6962** (+ DcbLdrDirButton_Down/Up [leader-dir rotate], DcbSubmenuButtonClick [site menu build w/ radar-site buttons], DcbButtonClick [shift/DCB-location/RR-cntr/off-cntr/PTL/adjustment routing], SiteButton_Click [radar select]). Shim: GameWindow.PointToScreen. Imports: DCBLocation, RadarType.
+**RadarWindow.cs port progress: lines 4259 / 6962** (+ DcbClearAllMapsButton_Click, DcbMapsSubmenuDoneButton_Click, DcbScopeActionButtonClick, DcbMapButtonClick, DcbWxButtonClick, ReleaseDCBButton, UpdateDCB [all DCB button text/active/brightness state], + render-loop matrix fields geoToScreen/rotscale/arscale/pixeltransform [public — this.*-referenced], #centeredlast, dataBlockOffset*). Shim colors: SlateBlue/DarkSlateBlue; imports Rectangle, Cursor.
+
+Prior: **lines 4131** (+ DcbLdrDirButton_Down/Up, DcbSubmenuButtonClick, DcbButtonClick, SiteButton_Click). Shim: GameWindow.PointToScreen.
 
 Prior: **lines 3939** (+ ~60 DCB button/menu field decls, TCP property, SetupDCB).
 

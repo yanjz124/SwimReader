@@ -47,7 +47,8 @@ import { DCB, DCBLocation } from "./DCB.js";
 import { RadarType } from "./Radar.js";
 import { Keyboard, Key, Mouse, ButtonState, Vector4, KeyToChar } from "./_shims/OpenTK.js";
 import { Value } from "./_shims/MetarDecoder.js";
-import { Clipboard, SaveFileDialog } from "./_shims/WinForms.js";
+import { Clipboard, SaveFileDialog, Cursor } from "./_shims/WinForms.js";
+import { Rectangle } from "./_shims/SystemDrawing.js";
 import { PropertyForm } from "./PropertyForm.js";
 import { VideoMapSelector } from "./VideoMapSelector.js";
 import { ADSBBeaconReaderForm } from "./ADSBBeaconReader/ADSBBeaconReaderForm.js";
@@ -2936,5 +2937,119 @@ export class RadarWindow {
         this.ReleaseDCBButton();
     }
 
-    // ===== PORTED THROUGH LINE 4131 / 6962 — next chunk continues here (DcbClearAllMapsButton_Click @4132) =====
+    DcbClearAllMapsButton_Click(sender, e) { // (object sender, EventArgs e)
+        this.VideoMaps.forEach(x => x.Visible = false);
+    }
+
+    DcbMapsSubmenuDoneButton_Click(sender, e) { // (object sender, EventArgs e)
+    }
+
+    DcbScopeActionButtonClick(sender, e) { // (object sender, EventArgs e)
+        this.activeDcbButton = sender; // sender as DCBButton
+        if (this.activeDcbButton.constructor === DCBActionButton) // GetType() == typeof(DCBActionButton)
+            this.activeDcbButton.Active = true;
+    }
+
+    DcbMapButtonClick(sender, e) { // (object sender, EventArgs e)
+        for (let i = 0; i < this.#dcbMapButton.length; i++) {
+            if (sender === this.#dcbMapButton[i]) {
+                let map = this.VideoMaps.filter(x => x.Number === this.TCP.DCBMapList[i])[0] ?? null; // FirstOrDefault
+                if (map == null)
+                    return;
+                map.Visible = !map.Visible;
+            }
+        }
+    }
+
+    DcbWxButtonClick(sender, e) { // (object sender, EventArgs e)
+        for (let i = 0; i < this.#dcbWxButton.length; i++) {
+            if (sender === this.#dcbWxButton[i]) {
+                this.Nexrad.LevelsEnabled[i] = !this.Nexrad.LevelsEnabled[i];
+            }
+        }
+        this.Nexrad.RecomputeVertices();
+    }
+    ReleaseDCBButton() {
+        //if (activeDcbButton.GetType() != typeof(DCBAdjustmentButton))
+        //    activeDcbButton.Active = false;
+        if (this.activeDcbButton == null)
+            return;
+        if (this.activeDcbButton.constructor === DCBActionButton) // GetType() == typeof(DCBActionButton)
+            this.activeDcbButton.ActionDone(); // ((DCBActionButton)activeDcbButton).ActionDone()
+        this.activeDcbButton.Active = false;
+        if (this.activeDcbButton.ParentMenu != null) {
+            this.activeDcbButton.ParentMenu.Enabled = true;
+            this.activeDcbButton = this.activeDcbButton.ParentMenu.SubmenuButton;
+        }
+        else {
+            this.activeDcbButton = null;
+        }
+        this.#window.CursorVisible = true;
+        Cursor.Clip = new Rectangle(); // System.Windows.Forms.Cursor.Clip = new Rectangle()
+    }
+    UpdateDCB() {
+        this.#dcb.Location = this.CurrentPrefSet.DCBLocation;
+        this.#dcb.Visible = this.CurrentPrefSet.DCBVisible;
+        this.#dcbRangeButton.Text = "RANGE\r\n" + this.CurrentPrefSet.Range;
+        this.#dcbOffCntrButton.Active = this.#ScreenCenterPoint !== this.HomeLocation;
+        this.#dcbRRButton.Text = "RR\r\n" + Math.trunc(this.CurrentPrefSet.RangeRingSpacing);
+        this.#dcbRRCntrButton.Active = this.#RangeRingCenter === this.HomeLocation;
+        for (let i = 0; i < this.#dcbMapButton.length; i++) {
+            let map = this.VideoMaps.filter(x => x.Number === this.TCP.DCBMapList[i])[0] ?? null; // FirstOrDefault
+            if (map == null)
+                continue;
+            this.#dcbMapButton[i].Text = map.Number + "\r\n" + map.Mnemonic;
+            this.#dcbMapButton[i].Active = map.Visible;
+        }
+        for (let i = 0; i < this.#dcbWxButton.length; i++) {
+            if (this.Nexrad.LevelsEnabled == null || this.Nexrad.LevelsEnabled.length <= i)
+                break;
+            this.#dcbWxButton[i].Active = this.Nexrad.LevelsEnabled[i];
+            if (this.Nexrad.LevelsAvailable == null || this.Nexrad.LevelsAvailable.length <= i)
+                break;
+            this.#dcbWxButton[i].Text = this.Nexrad.LevelsAvailable[i] ? "WX" + (i + 1) + "\r\nAVL" : "WX" + (i + 1) + "\r\n ";
+            this.#dcbWxButton[i].BackColorActive = this.Nexrad.LevelsAvailable[i] ? Color.SlateBlue : Color.Green;
+            this.#dcbWxButton[i].BackColorInactive = this.Nexrad.LevelsAvailable[i] ? Color.DarkSlateBlue : Color.FromArgb(0, 80, 0);
+        }
+        this.#dcbLdrDirButton.Text = "LDR DIR\r\n" + this.CurrentPrefSet.OwnedDataBlockPosition;
+        this.#dcbLdrLenButton.Text = "LDR LEN\r\n" + this.CurrentPrefSet.LeaderLength;
+        this.#dcbSiteButton.Text = "SITE\r\n" + this.#radar.Name;
+        this.#dcbDcbTopButton.Active = this.#dcb.Location === DCBLocation.Top;
+        this.#dcbDcbBottomButton.Active = this.#dcb.Location === DCBLocation.Bottom;
+        this.#dcbDcbLeftButton.Active = this.#dcb.Location === DCBLocation.Left;
+        this.#dcbDcbRightButton.Active = this.#dcb.Location === DCBLocation.Right;
+        this.#dcbHistoryNumButton.Text = "HISTORY\r\n" + this.CurrentPrefSet.HistoryNum;
+        this.#dcbHistoryRateButton.Text = "H_RATE\r\n" + this.CurrentPrefSet.HistoryRate;
+        this.#dcbPtlLengthButton.Text = "PTL\r\nLNTH\r\n" + this.CurrentPrefSet.PTLLength;
+        this.#dcbPtlOwnButton.Active = this.CurrentPrefSet.PTLOwn;
+        this.#dcbPtlAllButton.Active = this.CurrentPrefSet.PTLAll;
+        this.#briteDCBbutton.Text = "DCB " + this.CurrentPrefSet.Brightness.DCB;
+        this.#briteBKCbutton.Text = "BKC " + this.CurrentPrefSet.Brightness.Background;
+        this.#briteMPAbutton.Text = "MPA " + this.CurrentPrefSet.Brightness.MapA;
+        this.#briteMPBbutton.Text = "MPB " + this.CurrentPrefSet.Brightness.MapB;
+        this.#briteFDBbutton.Text = "FDB " + this.CurrentPrefSet.Brightness.FullDataBlocks;
+        this.#briteLSTbutton.Text = "LST " + this.CurrentPrefSet.Brightness.Lists;
+        this.#britePOSbutton.Text = "POS " + this.CurrentPrefSet.Brightness.PositionSymbols;
+        this.#briteLDBbutton.Text = "LDB " + this.CurrentPrefSet.Brightness.LimitedDataBlocks;
+        this.#briteOTHbutton.Text = "OTH " + this.CurrentPrefSet.Brightness.OtherFDBs;
+        this.#briteTLSbutton.Text = "TLS " + this.CurrentPrefSet.Brightness.Tools;
+        this.#briteRRbutton.Text = "RR " + this.CurrentPrefSet.Brightness.RangeRings;
+        this.#briteCMPbutton.Text = "CMP " + this.CurrentPrefSet.Brightness.Compass;
+        this.#briteBCNbutton.Text = "BCN " + this.CurrentPrefSet.Brightness.BeaconTargets;
+        this.#britePRIbutton.Text = "PRI " + this.CurrentPrefSet.Brightness.PrimaryTargets;
+        this.#briteHSTbutton.Text = "HST " + this.CurrentPrefSet.Brightness.History;
+        this.#briteWXbutton.Text = "WX " + this.CurrentPrefSet.Brightness.Weather;
+        this.#briteWXCbutton.Text = "WXC " + this.CurrentPrefSet.Brightness.WeatherContrast;
+    }
+
+    // render-loop transform matrices (C# private; public here — referenced via this.* across methods)
+    geoToScreen;    // Matrix4
+    rotscale;       // Matrix4
+    arscale;        // Matrix4
+    pixeltransform; // Matrix4
+    #centeredlast = false; // private bool
+
+    dataBlockOffset = 0; dataBlockDiagonalOffset = 0; dataBlockOffsetScale = 0; // float
+
+    // ===== PORTED THROUGH LINE 4259 / 6962 — next chunk continues here (Window_RenderFrame @4260) =====
 }

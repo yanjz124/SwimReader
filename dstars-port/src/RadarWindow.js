@@ -3151,5 +3151,340 @@ export class RadarWindow {
     mousemove = Vector4.Zero;  // Vector4
     #mousescrollcount = 0;     // int
 
-    // ===== PORTED THROUGH LINE 4371 / 6962 — next chunk continues here (ProcessMouse @4372) =====
+    ProcessMouse() {
+        let button = (this.activeDcbButton instanceof DCBAdjustmentButton) ? this.activeDcbButton : null; // activeDcbButton as DCBAdjustmentButton
+        if (button != null) {
+            let mousethreshold = 20;
+            if ((this.mousemove.Y >= 0) === (this.#mousescrollcount >= 0) || (this.mousemove.Y <= 0) === (this.#mousescrollcount <= 0)) {
+                this.#mousescrollcount += Math.trunc(this.mousemove.Y); // (int)mousemove.Y
+            }
+            else {
+                this.#mousescrollcount = 0;
+            }
+            if (button === this.#dcbPlaceCntrButton) {
+                let centervec = new Vector4(this.#ScreenCenterPoint.Longitude, this.#ScreenCenterPoint.Latitude, 0, 1);
+                let mousevec = Vector4.Transform(this.mousemove, this.pixeltransform); // mousemove * pixeltransform
+                mousevec.mulEq(this.geoToScreen.Inverted()); // mousevec *= geoToScreen.Inverted()
+                mousevec.scaleEq(0.5); // mousevec *= 0.5f
+                centervec.addEq(mousevec); // centervec += mousevec
+                this.CurrentPrefSet.ScreenCenterPoint = new GeoPoint(centervec.Y, centervec.X);
+                this.CurrentPrefSet.ScopeCentered = false;
+            }
+            else if (button === this.#dcbHistoryNumButton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold)
+                    d = 1;
+                else if (this.#mousescrollcount < -mousethreshold)
+                    d = -1;
+
+                let newnum = this.CurrentPrefSet.HistoryNum + d;
+                if (newnum > 10) {
+                    this.CurrentPrefSet.HistoryNum = 10;
+                }
+                else if (newnum < 0) {
+                    this.CurrentPrefSet.HistoryNum = 0;
+                }
+                else {
+                    this.CurrentPrefSet.HistoryNum = newnum;
+                }
+            }
+            else if (button === this.#dcbHistoryRateButton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold)
+                    d = 0.5;
+                else if (this.#mousescrollcount < -mousethreshold)
+                    d = -0.5;
+
+                let newnum = this.CurrentPrefSet.HistoryRate + d;
+                if (newnum > 4.5) {
+                    this.CurrentPrefSet.HistoryRate = 4.5;
+                }
+                else if (newnum < 0) {
+                    this.CurrentPrefSet.HistoryRate = 0;
+                }
+                else {
+                    this.CurrentPrefSet.HistoryRate = newnum;
+                }
+            }
+            else if (button === this.#dcbLdrLenButton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold)
+                    d = 1;
+                else if (this.#mousescrollcount < -mousethreshold)
+                    d = -1;
+
+                let newnum = this.CurrentPrefSet.LeaderLength + d;
+                if (newnum > 8) {
+                    this.CurrentPrefSet.LeaderLength = 8;
+                }
+                else if (newnum < 0) {
+                    this.CurrentPrefSet.LeaderLength = 0;
+                }
+                else {
+                    this.CurrentPrefSet.LeaderLength = newnum;
+                }
+            }
+            else if (button === this.#dcbPtlLengthButton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold)
+                    d = 0.5;
+                else if (this.#mousescrollcount < -mousethreshold)
+                    d = -0.5;
+
+                let newnum = this.CurrentPrefSet.PTLLength + d;
+                if (newnum > 5) {
+                    this.CurrentPrefSet.PTLLength = 5;
+                }
+                else if (newnum < 0) {
+                    this.CurrentPrefSet.PTLLength = 0;
+                }
+                else {
+                    this.CurrentPrefSet.PTLLength = newnum;
+                }
+            }
+            else if (button === this.#dcbRangeButton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold)
+                    d = 1;
+                else if (this.#mousescrollcount < -mousethreshold)
+                    d = -1;
+
+                let newnum = this.CurrentPrefSet.Range + d;
+                if (newnum > 512) {
+                    this.CurrentPrefSet.Range = 512;
+                }
+                else if (newnum < 6) {
+                    this.CurrentPrefSet.Range = 6;
+                }
+                else {
+                    this.CurrentPrefSet.Range = Math.trunc(newnum); // (int)newnum
+                }
+            }
+            else if (button === this.#briteDCBbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 25;
+                let newnum = this.CurrentPrefSet.Brightness.DCB + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.DCB = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.DCB = min;
+                else this.CurrentPrefSet.Brightness.DCB = newnum;
+            }
+            else if (button === this.#briteBKCbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.Background + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.Background = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.Background = min;
+                else this.CurrentPrefSet.Brightness.Background = newnum;
+            }
+            else if (button === this.#briteMPAbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 5;
+                let newnum = this.CurrentPrefSet.Brightness.MapA + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.MapA = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.MapA = min;
+                else this.CurrentPrefSet.Brightness.MapA = newnum;
+            }
+            else if (button === this.#briteMPBbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 5;
+                let newnum = this.CurrentPrefSet.Brightness.MapB + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.MapB = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.MapB = min;
+                else this.CurrentPrefSet.Brightness.MapB = newnum;
+            }
+            else if (button === this.#briteFDBbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.FullDataBlocks + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.FullDataBlocks = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.FullDataBlocks = min;
+                else this.CurrentPrefSet.Brightness.FullDataBlocks = newnum;
+            }
+            else if (button === this.#briteLSTbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 25;
+                let newnum = this.CurrentPrefSet.Brightness.Lists + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.Lists = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.Lists = min;
+                else this.CurrentPrefSet.Brightness.Lists = newnum;
+            }
+            else if (button === this.#britePOSbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.PositionSymbols + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.PositionSymbols = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.PositionSymbols = min;
+                else this.CurrentPrefSet.Brightness.PositionSymbols = newnum;
+            }
+            else if (button === this.#briteLDBbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.LimitedDataBlocks + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.LimitedDataBlocks = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.LimitedDataBlocks = min;
+                else this.CurrentPrefSet.Brightness.LimitedDataBlocks = newnum;
+            }
+            else if (button === this.#briteOTHbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.OtherFDBs + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.OtherFDBs = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.OtherFDBs = min;
+                else this.CurrentPrefSet.Brightness.OtherFDBs = newnum;
+            }
+            else if (button === this.#briteTLSbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.Tools + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.Tools = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.Tools = min;
+                else this.CurrentPrefSet.Brightness.Tools = newnum;
+            }
+            else if (button === this.#briteRRbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.RangeRings + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.RangeRings = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.RangeRings = min;
+                else this.CurrentPrefSet.Brightness.RangeRings = newnum;
+            }
+            else if (button === this.#briteCMPbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.Compass + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.Compass = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.Compass = min;
+                else this.CurrentPrefSet.Brightness.Compass = newnum;
+            }
+            else if (button === this.#briteBCNbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.BeaconTargets + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.BeaconTargets = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.BeaconTargets = min;
+                else this.CurrentPrefSet.Brightness.BeaconTargets = newnum;
+            }
+            else if (button === this.#britePRIbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.PrimaryTargets + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.PrimaryTargets = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.PrimaryTargets = min;
+                else this.CurrentPrefSet.Brightness.PrimaryTargets = newnum;
+            }
+            else if (button === this.#briteHSTbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 0;
+                let newnum = this.CurrentPrefSet.Brightness.History + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.History = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.History = min;
+                else this.CurrentPrefSet.Brightness.History = newnum;
+            }
+            else if (button === this.#briteWXbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 5;
+                let newnum = this.CurrentPrefSet.Brightness.Weather + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.Weather = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.Weather = min;
+                else this.CurrentPrefSet.Brightness.Weather = newnum;
+            }
+            else if (button === this.#briteWXCbutton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold) d = 1;
+                else if (this.#mousescrollcount < -mousethreshold) d = -1;
+                let step = 5; let max = 100; let min = 5;
+                let newnum = this.CurrentPrefSet.Brightness.WeatherContrast + (d * step);
+                if (newnum > max) this.CurrentPrefSet.Brightness.WeatherContrast = max;
+                else if (newnum < min) this.CurrentPrefSet.Brightness.WeatherContrast = min;
+                else this.CurrentPrefSet.Brightness.WeatherContrast = newnum;
+            }
+
+            else if (button === this.#dcbRRButton) {
+                let d = 0;
+                if (this.#mousescrollcount > mousethreshold)
+                    d = 1;
+                else if (this.#mousescrollcount < -mousethreshold)
+                    d = -1;
+
+                if (d !== 0) {
+                    switch (this.CurrentPrefSet.RangeRingSpacing) {
+                        case 2: if (d > 0) { this.CurrentPrefSet.RangeRingSpacing = 5; break; } else { this.CurrentPrefSet.RangeRingSpacing = 2; break; } // 2 when d>0 -> 5; else default
+                        case 5:
+                            if (d > 0) this.CurrentPrefSet.RangeRingSpacing = 10; // 5 when d>0
+                            else if (d < 0) this.CurrentPrefSet.RangeRingSpacing = 2; // 5 when d<0
+                            break;
+                        case 10:
+                            if (d > 0) this.CurrentPrefSet.RangeRingSpacing = 20; // 10 when d>0
+                            else if (d < 0) this.CurrentPrefSet.RangeRingSpacing = 5; // 10 when d<0
+                            break;
+                        case 20:
+                            if (d < 0) this.CurrentPrefSet.RangeRingSpacing = 10; // 20 when d<0
+                            // 20 when d>0: no change
+                            break;
+                        default:
+                            this.CurrentPrefSet.RangeRingSpacing = 2;
+                            break;
+                    }
+                }
+            }
+            if (this.#mousescrollcount > mousethreshold)
+                button.OnAdjustUp(null);
+            else if (this.#mousescrollcount < -mousethreshold)
+                button.OnAdjustDown(null);
+
+            if (Math.abs(this.#mousescrollcount) > mousethreshold)
+                this.#mousescrollcount = 0;
+            if (this.activeDcbButton !== this.#dcbPlaceCntrButton) {
+                let clientOrigin = this.#window.PointToScreen(new Point(0, 0));
+                let relativeloc = new Point(clientOrigin.X + this.activeDcbButton.DrawnBounds.X, clientOrigin.Y + this.activeDcbButton.DrawnBounds.Y);
+                Cursor.Clip = new Rectangle(relativeloc, this.activeDcbButton.DrawnBounds.Size);
+            }
+            this.CenterMouse();
+        }
+    }
+
+    CenterMouse() {
+        if (this.#centeredlast)
+            return;
+        let clip = this.#window.Bounds; // Rectangle clip = window.Bounds
+        if (this.activeDcbButton != null && this.activeDcbButton.constructor === DCBAdjustmentButton && this.activeDcbButton !== this.#dcbPlaceCntrButton)
+            clip = Cursor.Clip;
+        let mousecenter = new Point(clip.Location.X + Math.trunc(clip.Width / 2), clip.Location.Y + Math.trunc(clip.Height / 2));
+        Mouse.SetPosition(mousecenter.X, mousecenter.Y);
+        this.#centeredmouse = true;
+    }
+
+    // ===== PORTED THROUGH LINE 4985 / 6962 — next chunk continues here (GeoToScreenPoint @4986) =====
 }

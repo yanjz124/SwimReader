@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 4371 / 6962** (+ Window_RenderFrame — the main render loop: mouse-delta, geo→screen/rotscale/pixeltransform matrices, GL clear/blend setup, Draw* dispatch [Nexrad/RangeRings/VideoMapLines/Static/Compass/RBLs/DCB/ATPA/MSAW/CA/Targets/MinSeps], MSAW/CA/SPC sound updates, FPS, ADSB callsign sync; + mouseprev/mousemove/#mousescrollcount fields). Shims: OpenTK Mouse.GetState, Vector4 Sub/Add/scaleEq/addEq, **Matrix4.Inverted** (general 4×4, test-verified), GameWindow.SwapBuffers; new `_shims/MathHelper.js` (DegreesToRadians); Font.Height (≈emSize×1.16). GL enums/methods already present.
+**RadarWindow.cs port progress: lines 4985 / 6962** (+ ProcessMouse [DCB adjustment-button drag: pan-center via matrix math, history num/rate, leader len, PTL len, range, all 17 brightness sliders, range-ring spacing switch, OnAdjustUp/Down, cursor clip] — spliced via .wip; + CenterMouse). Shim: GameWindow.Bounds.
+
+Prior: **lines 4371** (+ Window_RenderFrame — main render loop). Shims: Mouse.GetState, Vector4 Sub/Add/scaleEq/addEq, Matrix4.Inverted (test-verified), SwapBuffers, MathHelper, Font.Height.
 
 Prior: **lines 4259** (+ Dcb*Click handlers, ReleaseDCBButton, UpdateDCB, render-matrix fields).
 

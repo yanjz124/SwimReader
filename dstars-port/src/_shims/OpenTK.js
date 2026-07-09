@@ -136,6 +136,15 @@ export class GameWindow {
     PointToScreen(p) { return { X: this.Location.X + p.X, Y: this.Location.Y + p.Y }; }
     // GameWindow.SwapBuffers presents the back buffer; the Canvas2D GL shim draws immediately, so no-op.
     SwapBuffers() { /* no double-buffer swap needed with Canvas2D */ }
+    // NativeWindow.Bounds — window rectangle (Location + Size). Rectangle-shaped plain object to avoid
+    // importing System.Drawing.Rectangle here; consumers read .Location.X/.Y, .Width, .Height, .Size.
+    get Bounds() {
+        return {
+            Location: { X: this.Location.X, Y: this.Location.Y },
+            Width: this.Size.Width, Height: this.Size.Height,
+            Size: { Width: this.Size.Width, Height: this.Size.Height },
+        };
+    }
 }
 
 // System.Numerics.Vector2 (used by NexradDisplay's ScopeServerWxRadarReport).

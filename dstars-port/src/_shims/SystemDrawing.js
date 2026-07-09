@@ -117,6 +117,9 @@ export class Font {
     Unit = GraphicsUnit.Point; // GraphicsUnit
     constructor(family = null, size = 0, unit = GraphicsUnit.Point) { this.FontFamily = family; this.Size = size; this.Unit = unit; }
     get Name() { return this.FontFamily; }
+    // GDI Font.Height — the line-spacing height in pixels. Approximated as ceil(emSize × 1.16)
+    // (typical for monospace UI fonts like Consolas); used for data-block leader-offset scaling.
+    get Height() { return Math.ceil(this.Size * 1.16); }
     // Canvas font string. NOTE: em size is in points; 1pt≈1.333px — kept 1:1 for now.
     toCanvasFont() { return `${this.Size}px ${this.FontFamily}`; }
 }

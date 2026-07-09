@@ -30,7 +30,9 @@ import { WeatherService } from "./WeatherService.js";
 import { XmlSerializer } from "./XmlSerializer.js";
 import { MSAWImporter } from "./MSAWImporter.js";
 import { TargetExtentSymbols, SearchTargetParams, AzimuthExtentValues, FusedTrackTargetSymbolParams, BeaconTargetParams, FMATargetSymbolParams } from "./STARS/TargetExtentSymbols.js";
-import { GL } from "./_shims/GL.js";
+import { GL, EnableCap, BlendingFactor, BlendEquationMode, ClearBufferMask } from "./_shims/GL.js";
+import { Matrix4 } from "./_shims/OpenTK.js";
+import { MathHelper } from "./_shims/MathHelper.js";
 import { Timer, TimerCallback } from "./_shims/Threading.js";
 import { MD5 } from "./_shims/Crypto.js";
 import { ObservableCollection, NotifyCollectionChangedAction } from "./_shims/Collections.js";
@@ -3051,5 +3053,103 @@ export class RadarWindow {
 
     dataBlockOffset = 0; dataBlockDiagonalOffset = 0; dataBlockOffsetScale = 0; // float
 
-    // ===== PORTED THROUGH LINE 4259 / 6962 — next chunk continues here (Window_RenderFrame @4260) =====
+    Window_RenderFrame(sender, e) { // (object sender, FrameEventArgs e)
+        let state = Mouse.GetState();
+        let mousecurrent = new Vector4(state.X, state.Y, 0, 1);
+        if (!this.#centeredlast) {
+            this.mousemove = Vector4.Sub(mousecurrent, this.mouseprev); // mousecurrent - mouseprev
+            if (this.InvertMouse) {
+                this.mousemove.scaleEq(-1); // mousemove *= -1
+            }
+        }
+        this.#centeredlast = this.#centeredmouse;
+        this.#centeredmouse = false;
+        this.ProcessMouse();
+
+        this.mouseprev = mousecurrent;
+        this.DeleteTextures();
+
+        if (this.#window.WindowState === WindowState.Minimized)
+            return;
+        this.#aspect_ratio = this.#window.ClientSize.Width / this.#window.ClientSize.Height;
+        this.#pixelScale = this.#window.ClientSize.Width < this.#window.ClientSize.Height ? 2 / this.#window.ClientSize.Width : 2 / this.#window.ClientSize.Height;
+        let mtrans = Matrix4.CreateTranslation(-this.#ScreenCenterPoint.Longitude, -this.#ScreenCenterPoint.Latitude, 0.0);
+        let mscale = Matrix4.CreateScale((60 / this.#scale) * Math.cos(MathHelper.DegreesToRadians(this.#ScreenCenterPoint.Latitude)), (60 / this.#scale), 1.0);
+        let mrot = Matrix4.CreateRotationZ(MathHelper.DegreesToRadians(this.ScreenRotation));
+        this.geoToScreen = mtrans.mul(mscale).mul(mrot); // mtrans * mscale * mrot
+        this.rotscale = mscale.mul(mrot).Inverted(); // (mscale * mrot).Inverted()
+        this.pixeltransform = Matrix4.CreateTranslation(-this.#window.ClientSize.Width / 2, -this.#window.ClientSize.Height / 2, 0);
+        this.pixeltransform = this.pixeltransform.mul(Matrix4.CreateScale(2 / this.#window.ClientSize.Width, -2 / this.#window.ClientSize.Height, 1.0)); // pixeltransform *= ...
+        this.dataBlockOffsetScale = this.Font.Height * this.#pixelScale;
+        this.dataBlockOffset = (0.5 + this.CurrentPrefSet.LeaderLength) * this.dataBlockOffsetScale;
+        this.dataBlockDiagonalOffset = (this.dataBlockOffset * Math.sqrt(2)) / 2;
+        GL.ClearColor(RadarWindow.AdjustedColor(this.BackColor, this.CurrentPrefSet.Brightness.Background));
+        GL.Clear(ClearBufferMask.ColorBufferBit);
+        GL.Enable(EnableCap.Blend);
+        GL.BlendEquation(BlendEquationMode.FuncAdd);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        GL.LoadIdentity();
+        GL.PushMatrix();
+        if (this.#window.ClientSize.Width < this.#window.ClientSize.Height) {
+            GL.Scale(1.0, this.#aspect_ratio, 1.0);
+            this.arscale = Matrix4.CreateScale(1 / this.#aspect_ratio, 1.0, 1.0);
+            this.pixeltransform = this.pixeltransform.mul(Matrix4.CreateScale(1, 1 / this.#aspect_ratio, 1));
+        }
+        else if (this.#window.ClientSize.Width > this.#window.ClientSize.Height) {
+            GL.Scale(1 / this.#aspect_ratio, 1.0, 1.0);
+            this.arscale = Matrix4.CreateScale(1.0, this.#aspect_ratio, 1.0);
+            this.pixeltransform = this.pixeltransform.mul(Matrix4.CreateScale(this.#aspect_ratio, 1, 1));
+        }
+        else {
+            this.arscale = Matrix4.Identity;
+        }
+        if (!this.#hidewx) {
+            this.DrawNexrad();
+        }
+        this.DrawRangeRings();
+        this.DrawVideoMapLines();
+        this.DrawStatic();
+        this.DrawCompass();
+        this.DrawRBLs();
+        this.UpdateDCB();
+        this.#dcb.Draw(this.#window.ClientSize.Width, this.#window.ClientSize.Height, this.pixeltransform, this.CurrentPrefSet.Brightness.DCB); // ref pixeltransform (JS objects are by-reference)
+        if (this.ATPA.Active) {
+            this.ATPA.Calculate(RadarWindow.Aircraft, this.#radar);
+            this.DrawATPAVolumes();
+        }
+        if (this.MSAW.Active) {
+            this.MSAW.Calculate(RadarWindow.Aircraft, this.#radar);
+            if (this.DrawAllMSAWVolumes)
+                this.DrawMSAWVolumes();
+        }
+        this.#sounds.SetMsaw(this.MSAWSound && this.MSAW.Active && this.MSAW.UnacknowledgedAlert);
+        if (this.ConflictAlert.Active) {
+            this.ConflictAlert.Calculate(RadarWindow.Aircraft, this.#radar);
+            if (this.DrawAllCASuppressionVolumes)
+                this.DrawCASuppressionVolumes();
+        }
+        this.#sounds.SetConflictAlert(this.ConflictAlertSound && this.ConflictAlert.Active && this.ConflictAlert.UnacknowledgedAlert);
+        let anyUnackedSpc;
+        // lock (Aircraft)
+        anyUnackedSpc = RadarWindow.Aircraft.some(x => !x.Deleted && x.HasUnacknowledgedSpc); // Aircraft.Any(...)
+        this.#sounds.SetSpecialCode(anyUnackedSpc);
+        this.GenerateTargets();
+        this.DrawTargets();
+        this.DrawMinSeps();
+        GL.PopMatrix();
+        GL.Flush();
+        this.#window.SwapBuffers();
+        this.#fps = Math.trunc(1 / e.Time); // (int)(1f / e.Time)
+        if (this.UseADSBCallsigns || this.UseADSBCallsignsAssociated || this.UseADSBCallsigns1200 || this.#adsbService != null) {
+            // lock (Aircraft)
+            for (const ac of RadarWindow.Aircraft)
+                this.ADSBtoFlightPlanCallsign(ac);
+        }
+        this.#oldar = this.#aspect_ratio;
+    }
+    mouseprev = Vector4.Zero;  // Vector4
+    mousemove = Vector4.Zero;  // Vector4
+    #mousescrollcount = 0;     // int
+
+    // ===== PORTED THROUGH LINE 4371 / 6962 — next chunk continues here (ProcessMouse @4372) =====
 }

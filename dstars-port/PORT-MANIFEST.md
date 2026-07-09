@@ -78,7 +78,9 @@ Ordered roughly bottom-up (leaf data/enums first, `RadarWindow.cs` last).
 | ⬜ | 6962 | RadarWindow.cs |
 
 **Progress:** 72/73 files ported. 47 tests pass. **ONLY `RadarWindow.cs` (6962) REMAINS** — the main GL render loop, ported in ~300–500-line chunks against the tested GL shim.
-**RadarWindow.cs port progress: lines 4259 / 6962** (+ DcbClearAllMapsButton_Click, DcbMapsSubmenuDoneButton_Click, DcbScopeActionButtonClick, DcbMapButtonClick, DcbWxButtonClick, ReleaseDCBButton, UpdateDCB [all DCB button text/active/brightness state], + render-loop matrix fields geoToScreen/rotscale/arscale/pixeltransform [public — this.*-referenced], #centeredlast, dataBlockOffset*). Shim colors: SlateBlue/DarkSlateBlue; imports Rectangle, Cursor.
+**RadarWindow.cs port progress: lines 4371 / 6962** (+ Window_RenderFrame — the main render loop: mouse-delta, geo→screen/rotscale/pixeltransform matrices, GL clear/blend setup, Draw* dispatch [Nexrad/RangeRings/VideoMapLines/Static/Compass/RBLs/DCB/ATPA/MSAW/CA/Targets/MinSeps], MSAW/CA/SPC sound updates, FPS, ADSB callsign sync; + mouseprev/mousemove/#mousescrollcount fields). Shims: OpenTK Mouse.GetState, Vector4 Sub/Add/scaleEq/addEq, **Matrix4.Inverted** (general 4×4, test-verified), GameWindow.SwapBuffers; new `_shims/MathHelper.js` (DegreesToRadians); Font.Height (≈emSize×1.16). GL enums/methods already present.
+
+Prior: **lines 4259** (+ Dcb*Click handlers, ReleaseDCBButton, UpdateDCB, render-matrix fields).
 
 Prior: **lines 4131** (+ DcbLdrDirButton_Down/Up, DcbSubmenuButtonClick, DcbButtonClick, SiteButton_Click). Shim: GameWindow.PointToScreen.
 

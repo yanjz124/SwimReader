@@ -54,6 +54,40 @@ export class Matrix4 {
     // a * b  (OpenTK operator*)
     mul(b) { return Matrix4.Mult(this, b); }
     clone() { return Object.assign(new Matrix4(), this); }
+
+    // OpenTK Matrix4.Inverted() — general 4×4 inverse (cofactor/adjugate over the row-major M11..M44).
+    Inverted() {
+        const m = [
+            this.M11, this.M12, this.M13, this.M14,
+            this.M21, this.M22, this.M23, this.M24,
+            this.M31, this.M32, this.M33, this.M34,
+            this.M41, this.M42, this.M43, this.M44,
+        ];
+        const inv = new Array(16);
+        inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+        inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+        inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+        inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+        inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+        inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+        inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+        inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+        inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] + m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
+        inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] - m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
+        inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] + m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
+        inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] - m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
+        inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] - m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
+        inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] + m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
+        inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] - m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
+        inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] + m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
+        let det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+        if (det === 0) return Matrix4.Identity; // singular — OpenTK throws; identity is a safe stand-in
+        det = 1.0 / det;
+        const r = new Matrix4();
+        const keys = ["M11","M12","M13","M14","M21","M22","M23","M24","M31","M32","M33","M34","M41","M42","M43","M44"];
+        for (let i = 0; i < 16; i++) r[keys[i]] = inv[i] * det;
+        return r;
+    }
 }
 
 // OpenTK.WindowState (GameWindow state).
@@ -100,6 +134,8 @@ export class GameWindow {
     get Height() { return this.ClientSize.Height; } // GameWindow.Height
     // NativeWindow.PointToScreen: client-space point → screen coords (offset by window location).
     PointToScreen(p) { return { X: this.Location.X + p.X, Y: this.Location.Y + p.Y }; }
+    // GameWindow.SwapBuffers presents the back buffer; the Canvas2D GL shim draws immediately, so no-op.
+    SwapBuffers() { /* no double-buffer swap needed with Canvas2D */ }
 }
 
 // System.Numerics.Vector2 (used by NexradDisplay's ScopeServerWxRadarReport).
@@ -169,8 +205,14 @@ class KeyboardState {
 const _keyboardState = new KeyboardState();
 export const Keyboard = { GetState() { return _keyboardState; }, _state: _keyboardState };
 
-// OpenTK.Input.Mouse.SetPosition warps the OS cursor — impossible in the browser (security). No-op.
-export const Mouse = { SetPosition(x, y) { /* cursor warp not permitted in the browser — no-op */ } };
+// OpenTK.Input.Mouse — SetPosition warps the OS cursor (impossible in the browser: no-op).
+// GetState() returns the live cursor position; the host updates _mouseState from DOM mousemove.
+const _mouseState = { X: 0, Y: 0 };
+export const Mouse = {
+    SetPosition(x, y) { /* cursor warp not permitted in the browser — no-op */ },
+    GetState() { return _mouseState; },
+    _state: _mouseState,
+};
 
 export class Vector4 {
     X = 0; Y = 0; Z = 0; W = 0;
@@ -188,4 +230,10 @@ export class Vector4 {
     }
     // v *= matrix  (OpenTK Vector4 *= Matrix4)
     mulEq(m) { const r = Vector4.Transform(this, m); this.X = r.X; this.Y = r.Y; this.Z = r.Z; this.W = r.W; return this; }
+    // a - b, a + b (OpenTK operator- / operator+)
+    static Sub(a, b) { return new Vector4(a.X - b.X, a.Y - b.Y, a.Z - b.Z, a.W - b.W); }
+    static Add(a, b) { return new Vector4(a.X + b.X, a.Y + b.Y, a.Z + b.Z, a.W + b.W); }
+    // v *= scalar / v += vector (in-place, matching C# compound assignment)
+    scaleEq(s) { this.X *= s; this.Y *= s; this.Z *= s; this.W *= s; return this; }
+    addEq(b) { this.X += b.X; this.Y += b.Y; this.Z += b.Z; this.W += b.W; return this; }
 }

@@ -152,7 +152,9 @@
     background: transparent !important; border: none !important;
     color: #fff; font-weight: bold; font-size: 13px; letter-spacing: 0.5px;
     text-shadow: 0 0 4px #000, 0 0 2px #000;
-    white-space: nowrap;
+    white-space: nowrap; display: flex; align-items: center; justify-content: center;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
   }
   .split-no-data { color: var(--dim); font-size: 11px; padding: 8px 0; }
   .leaflet-control-category {
@@ -467,19 +469,6 @@ function ringCentroid(coords) {
     return [lat / coords.length, lon / coords.length];
 }
 
-function boundingBoxCenter(coords) {
-    if (!coords || coords.length === 0) return [0, 0];
-    let minLat = coords[0][0], maxLat = coords[0][0];
-    let minLon = coords[0][1], maxLon = coords[0][1];
-    for (const [la, lo] of coords) {
-        if (la < minLat) minLat = la;
-        if (la > maxLat) maxLat = la;
-        if (lo < minLon) minLon = lo;
-        if (lo > maxLon) maxLon = lo;
-    }
-    return [(minLat + maxLat) / 2, (minLon + maxLon) / 2];
-}
-
 function pointToSegmentDistance(p, a, b) {
     const dx = b[0] - a[0], dy = b[1] - a[1];
     if (dx === 0 && dy === 0) return Math.sqrt((p[0]-a[0])**2 + (p[1]-a[1])**2);
@@ -489,72 +478,69 @@ function pointToSegmentDistance(p, a, b) {
     return Math.sqrt((p[0]-closest[0])**2 + (p[1]-closest[1])**2);
 }
 
-function weightedCentroid(coords) {
-    if (!coords || coords.length === 0) return [0, 0];
+function largestInscribedCircleCenter(coords) {
+    if (!coords || coords.length < 3) return ringCentroid(coords);
 
-    // Calculate weight for each point (distance to nearest edge)
-    const weights = coords.map(pt => {
-        let minDist = Infinity;
+    // Start with basic centroid
+    let point = ringCentroid(coords);
+    const minClearance = 0.25;
+    const maxIterations = 20;
+
+    // Iteratively push the point away from nearest edges
+    for (let iter = 0; iter < maxIterations; iter++) {
+        let nearestEdgeIdx = -1;
+        let minDistToEdge = Infinity;
+
+        // Find nearest edge
         for (let i = 0; i < coords.length; i++) {
-            const d = pointToSegmentDistance(pt, coords[i], coords[(i+1) % coords.length]);
-            minDist = Math.min(minDist, d);
-        }
-        return Math.max(0.1, minDist); // minimum 0.1 to avoid zero weights
-    });
-
-    // Calculate weighted average
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    if (totalWeight === 0) return boundingBoxCenter(coords);
-
-    let weightedLat = 0, weightedLon = 0;
-    for (let i = 0; i < coords.length; i++) {
-        weightedLat += coords[i][0] * weights[i];
-        weightedLon += coords[i][1] * weights[i];
-    }
-
-    return [weightedLat / totalWeight, weightedLon / totalWeight];
-}
-
-function pointToSegmentDistance(p, a, b) {
-    const dx = b[0] - a[0], dy = b[1] - a[1];
-    if (dx === 0 && dy === 0) return Math.sqrt((p[0]-a[0])**2 + (p[1]-a[1])**2);
-    let t = ((p[0]-a[0])*dx + (p[1]-a[1])*dy) / (dx*dx + dy*dy);
-    t = Math.max(0, Math.min(1, t));
-    const closest = [a[0] + t*dx, a[1] + t*dy];
-    return Math.sqrt((p[0]-closest[0])**2 + (p[1]-closest[1])**2);
-}
-
-function poleOfInaccessibility(coords) {
-    if (!coords || coords.length === 0) return [0, 0];
-    let minLat = coords[0][0], maxLat = coords[0][0];
-    let minLon = coords[0][1], maxLon = coords[0][1];
-    for (const [la, lo] of coords) {
-        if (la < minLat) minLat = la;
-        if (la > maxLat) maxLat = la;
-        if (lo < minLon) minLon = lo;
-        if (lo > maxLon) maxLon = lo;
-    }
-    const width = maxLon - minLon, height = maxLat - minLat;
-    const cellSize = Math.min(width, height) / 4;
-    let bestCell = null, bestDistance = 0;
-
-    // Grid-based search
-    for (let lat = minLat; lat < maxLat; lat += cellSize) {
-        for (let lon = minLon; lon < maxLon; lon += cellSize) {
-            const pt = [lat, lon];
-            let minDist = Infinity;
-            for (let i = 0; i < coords.length; i++) {
-                const d = pointToSegmentDistance(pt, coords[i], coords[(i+1) % coords.length]);
-                minDist = Math.min(minDist, d);
-            }
-            if (minDist > bestDistance) {
-                bestDistance = minDist;
-                bestCell = pt;
+            const d = pointToSegmentDistance(point, coords[i], coords[(i+1) % coords.length]);
+            if (d < minDistToEdge) {
+                minDistToEdge = d;
+                nearestEdgeIdx = i;
             }
         }
+
+        // If far enough from all edges, we're done
+        if (minDistToEdge > minClearance) {
+            break;
+        }
+
+        // Find the closest point on the nearest edge
+        const [lat1, lon1] = coords[nearestEdgeIdx];
+        const [lat2, lon2] = coords[(nearestEdgeIdx + 1) % coords.length];
+
+        const dx = lon2 - lon1, dy = lat2 - lat1;
+        if (dx === 0 && dy === 0) break;
+
+        let t = ((point[1] - lon1) * dx + (point[0] - lat1) * dy) / (dx * dx + dy * dy);
+        t = Math.max(0, Math.min(1, t));
+
+        const closestLat = lat1 + t * dy;
+        const closestLon = lon1 + t * dx;
+
+        // Calculate unit vector pointing away from edge
+        const towardX = point[1] - closestLon;
+        const towardY = point[0] - closestLat;
+        const dist = Math.sqrt(towardX * towardX + towardY * towardY);
+
+        if (dist < 0.0001) {
+            // Point is on edge, push perpendicular
+            const perpX = -dy / Math.sqrt(dx * dx + dy * dy);
+            const perpY = dx / Math.sqrt(dx * dx + dy * dy);
+            point[0] += perpY * 0.03;
+            point[1] += perpX * 0.03;
+        } else {
+            // Push away from nearest edge
+            const pushDist = (minClearance - minDistToEdge) * 2;
+            point[0] += (towardY / dist) * pushDist;
+            point[1] += (towardX / dist) * pushDist;
+        }
     }
-    return bestCell || [(minLat + maxLat) / 2, (minLon + maxLon) / 2];
+
+    return point;
 }
+
+
 
 function hashSectorData(facility) {
     const d = data.find(x => x.facility === facility);
@@ -808,25 +794,39 @@ async function renderSplitMap(facility) {
                 }
             }
 
-            // Primary-sector labels at weighted centroid (center points weighted by distance from edges)
+            // Primary-sector labels at largest inscribed circle center
             for (const pos of uniquePositions) {
                 const polys = pos.controlledSectors
                     .map(id => sectors.find(s => s.sectorId === id))
                     .filter(Boolean);
                 if (!polys.length) continue;
-                const allPts = polys.flatMap(p => p.coords);
-                const c = weightedCentroid(allPts);
+
+                // For each individual sector polygon, find best point, then average
+                let bestPoints = [];
+                for (const poly of polys) {
+                    bestPoints.push(largestInscribedCircleCenter(poly.coords));
+                }
+                // Use the mean of all best points
+                const c = [
+                    bestPoints.reduce((a, p) => a + p[0], 0) / bestPoints.length,
+                    bestPoints.reduce((a, p) => a + p[1], 0) / bestPoints.length
+                ];
                 // Look up frequency for this primary sector
                 let labelHtml = pos.primarySector;
                 if (showFreqs) {
                     const freqKey = facility + "/" + pos.primarySector;
                     const freq = sectorFreqs[freqKey];
                     if (freq) {
-                        labelHtml = `<div style="text-align:center;line-height:1.1;">${pos.primarySector}<span style="font-size:0.75em;color:#999;margin-top:0px;margin-left:-11px;display:block;">${freq}</span></div>`;
+                        labelHtml = `<div style="text-align:center;line-height:1.1;">${pos.primarySector}<span style="font-size:0.75em;color:#999;margin-top:0px;margin-left:0px;display:block;">${freq}</span></div>`;
                     }
                 }
                 L.marker(c, {
-                    icon: L.divIcon({ className: 'split-label', html: labelHtml, iconSize: [0, 0] }),
+                    icon: L.divIcon({
+                        className: 'split-label',
+                        html: labelHtml,
+                        iconSize: [0, 0],
+                        iconAnchor: [0, 0]
+                    }),
                     interactive: false,
                 }).addTo(splitMapLayer);
             }

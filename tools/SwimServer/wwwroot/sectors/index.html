@@ -232,9 +232,10 @@ const filter = document.getElementById("filter");
 const rangeSel = document.getElementById("rangeSel");
 let data = [];        // array of facilities (was the whole body before; now from `.facilities`)
 let rangeMin = 60;    // mirrors rangeSel
+let showFreqs = false; // frequency visibility toggle
 let selected = null;
 
-// Allow ?facility=ZDC and ?range=180 in the URL.
+// Allow ?facility=ZDC and ?range=180 and ?freqs=1 in the URL.
 const initParams = new URLSearchParams(location.search);
 const initFac = initParams.get("facility");
 if (initFac) selected = initFac.toUpperCase();
@@ -242,6 +243,10 @@ const initRange = initParams.get("range");
 if (initRange && /^\d+$/.test(initRange)) {
     rangeMin = parseInt(initRange, 10);
     if (rangeSel) rangeSel.value = String(rangeMin);
+}
+const initFreqs = initParams.get("freqs");
+if (initFreqs === "1") {
+    showFreqs = true;
 }
 
 async function refresh() {
@@ -614,6 +619,16 @@ async function loadKmlSectors() {
     return out;
 }
 
+let sectorFreqs = {};  // cache sector frequencies globally
+
+async function fetchSectorFreqs() {
+    try {
+        const r = await fetch('/api/sectors/freqs');
+        if (!r.ok) return {};
+        return await r.json();
+    } catch { return {}; }
+}
+
 async function fetchAirspace(facility) {
     if (airspaceCache[facility]?.fetchedAt && Date.now() - airspaceCache[facility].fetchedAt < 55000)
         return airspaceCache[facility].data;
@@ -656,15 +671,30 @@ function ensureSplitMap() {
         options: { position: 'topright' },
         onAdd: (map) => {
             const div = L.DomUtil.create('div', 'leaflet-control-category');
-            div.innerHTML = `<select id="catSel">
-                <option value="Ultra High" ${selectedCat === 'Ultra High' ? 'selected' : ''}>Ultra High</option>
-                <option value="High Altitude" ${selectedCat === 'High Altitude' ? 'selected' : ''}>High Altitude</option>
-                <option value="Low Altitude" ${selectedCat === 'Low Altitude' ? 'selected' : ''}>Low Altitude</option>
-            </select>`;
+            div.innerHTML = `<div style="display:flex;gap:8px;align-items:center;">
+                <select id="catSel">
+                    <option value="Ultra High" ${selectedCat === 'Ultra High' ? 'selected' : ''}>Ultra High</option>
+                    <option value="High Altitude" ${selectedCat === 'High Altitude' ? 'selected' : ''}>High Altitude</option>
+                    <option value="Low Altitude" ${selectedCat === 'Low Altitude' ? 'selected' : ''}>Low Altitude</option>
+                </select>
+                <label for="mapShowFreqs" style="display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--text);font-size:11px;margin:0;white-space:nowrap;">
+                    <input type="checkbox" id="mapShowFreqs" ${showFreqs ? 'checked' : ''} style="cursor:pointer;accent-color:#666;filter:invert(0.3);">
+                    FREQ
+                </label>
+            </div>`;
             L.DomEvent.disableClickPropagation(div);
             const sel = div.querySelector('#catSel');
             sel.addEventListener('change', () => {
                 selectedCat = sel.value;
+                if (selected) renderSplitMap(selected);
+            });
+            const freqCheckbox = div.querySelector('#mapShowFreqs');
+            freqCheckbox.addEventListener('change', () => {
+                showFreqs = freqCheckbox.checked;
+                const url = new URL(location.href);
+                if (showFreqs) url.searchParams.set("freqs", "1");
+                else url.searchParams.delete("freqs");
+                history.replaceState(null, "", url);
                 if (selected) renderSplitMap(selected);
             });
             return div;
@@ -695,6 +725,7 @@ async function renderSplitMap(facility) {
         const [kmlAll, airspace] = await Promise.all([
             loadKmlSectors(),
             fetchAirspace(facility),
+            fetchSectorFreqs().then(freqs => { sectorFreqs = freqs; }),
         ]);
 
         const sectors = kmlAll.filter(s =>
@@ -785,8 +816,17 @@ async function renderSplitMap(facility) {
                 if (!polys.length) continue;
                 const allPts = polys.flatMap(p => p.coords);
                 const c = weightedCentroid(allPts);
+                // Look up frequency for this primary sector
+                let labelHtml = pos.primarySector;
+                if (showFreqs) {
+                    const freqKey = facility + "/" + pos.primarySector;
+                    const freq = sectorFreqs[freqKey];
+                    if (freq) {
+                        labelHtml = `<div style="text-align:center;line-height:1.1;">${pos.primarySector}<span style="font-size:0.75em;color:#999;margin-top:0px;margin-left:-11px;display:block;">${freq}</span></div>`;
+                    }
+                }
                 L.marker(c, {
-                    icon: L.divIcon({ className: 'split-label', html: pos.primarySector, iconSize: [0, 0] }),
+                    icon: L.divIcon({ className: 'split-label', html: labelHtml, iconSize: [0, 0] }),
                     interactive: false,
                 }).addTo(splitMapLayer);
             }

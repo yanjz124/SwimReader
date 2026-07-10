@@ -361,5 +361,11 @@ static class EramRoutes
             rows = rows.OrderBy(r => ((dynamic)r).edct as string).ToList();
             return Results.Json(new { count = rows.Count, flights = rows }, ctx.JsonOpts);
         });
+
+        // Sector frequencies — returns all facility/sector → MHz mappings
+        app.MapGet("/api/sectors/freqs", () =>
+        {
+            return Results.Json(ctx.SectorFreqs, ctx.JsonOpts);
+        });
     }
 }

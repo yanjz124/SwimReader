@@ -37,7 +37,7 @@
     background:#1a1a1a; color:var(--text); border:1px solid #333;
     padding:3px 8px; font-family:inherit; font-size:12px;
   }
-  .controls input[type="text"] { min-width:200px; }
+  .controls input[type="text"] { min-width:200px; text-transform:uppercase; }
   .controls .lbl { color:var(--dim); font-size:11px; }
   .controls .reload-note { color:var(--dim); font-size:11px; margin-left:auto; }
 
@@ -53,10 +53,16 @@
   }
   .fac-list .row:hover { background:#1a1a1a; }
   .fac-list .row.active { background:#2d2d10; color:var(--accent); border-left:3px solid var(--accent); padding-left:7px; }
-  .fac-list .row .name { font-weight:bold; font-size:13px; min-width:50px; }
+  .fac-list .row .name { font-weight:bold; font-size:13px; min-width:50px; display:flex; flex-direction:column; gap:2px; }
+  .fac-list .row .name .city { font-weight:normal; font-size:10px; color:var(--dim); }
   .fac-list .row .stats { color:var(--dim); font-size:10px; margin-left:auto; text-align:right; font-variant-numeric:tabular-nums; }
   .fac-list .row.active .stats { color:#bb9; }
   .fac-list .row .tracks { color:var(--accent); font-weight:bold; }
+  .fac-list .group-header {
+    padding:8px 10px; font-size:10px; font-weight:bold; color:var(--dim);
+    background:#0e0e0e; border-bottom:1px solid #333; letter-spacing:1px;
+    text-transform:uppercase; margin-top:0;
+  }
 
   .detail {
     background:var(--panel); border:1px solid var(--border); border-radius:4px;
@@ -268,17 +274,77 @@ async function refresh() {
     }
 }
 
+const PRIORITY_FACILITIES = ['ZAB', 'ZAU', 'ZBW', 'ZDC', 'ZDV', 'ZFW', 'ZHU', 'ZID', 'ZJX', 'ZKC', 'ZLA', 'ZLC', 'ZMA', 'ZME', 'ZMP', 'ZNY', 'ZOA', 'ZOB', 'ZSE', 'ZTL'];
+
+const ARTCC_CITIES = {
+    'ZAB': 'Albuquerque',
+    'ZAU': 'Chicago',
+    'ZBW': 'Boston',
+    'ZDC': 'Washington',
+    'ZDV': 'Denver',
+    'ZFW': 'Fort Worth',
+    'ZHU': 'Houston',
+    'ZID': 'Indianapolis',
+    'ZJX': 'Jacksonville',
+    'ZKC': 'Kansas City',
+    'ZLA': 'Los Angeles',
+    'ZLC': 'Salt Lake City',
+    'ZMA': 'Miami',
+    'ZME': 'Memphis',
+    'ZMP': 'Minneapolis',
+    'ZNY': 'New York',
+    'ZOA': 'Oakland',
+    'ZOB': 'Cleveland',
+    'ZSE': 'Seattle',
+    'ZTL': 'Atlanta'
+};
+
 function renderList() {
     const q = filter.value.trim().toUpperCase();
     const filtered = q ? data.filter(d => d.facility.toUpperCase().includes(q)) : data;
     if (!filtered.length) { facList.innerHTML = `<div class="empty">No facilities match</div>`; return; }
-    facList.innerHTML = filtered.map(d => {
+
+    // Separate into priority and non-priority, maintaining order
+    const priority = filtered.filter(d => PRIORITY_FACILITIES.includes(d.facility));
+    const other = filtered.filter(d => !PRIORITY_FACILITIES.includes(d.facility));
+
+    // Sort non-priority alphabetically
+    other.sort((a, b) => a.facility.localeCompare(b.facility));
+
+    // Build HTML: priority header, priority facilities, other header, then others
+    let html = '';
+
+    // Priority group header
+    if (priority.length) {
+        html += `<div class="group-header">U.S. ARTCCs</div>`;
+    }
+
+    // Priority group
+    html += priority.map(d => {
+        const active = selected === d.facility ? " active" : "";
+        const city = ARTCC_CITIES[d.facility] || '';
+        const nameHtml = city ? `${d.facility}<span class="city">${city}</span>` : d.facility;
+        return `<div class="row${active}" data-fac="${d.facility}">
+            <span class="name">${nameHtml}</span>
+            <span class="stats"><span class="tracks">${d.totalTracks}</span> trk · ${d.sectorCount} sec</span>
+        </div>`;
+    }).join("");
+
+    // Other facilities group header
+    if (other.length) {
+        html += `<div class="group-header">Other Facilities</div>`;
+    }
+
+    // Other facilities
+    html += other.map(d => {
         const active = selected === d.facility ? " active" : "";
         return `<div class="row${active}" data-fac="${d.facility}">
             <span class="name">${d.facility}</span>
             <span class="stats"><span class="tracks">${d.totalTracks}</span> trk · ${d.sectorCount} sec</span>
         </div>`;
     }).join("");
+
+    facList.innerHTML = html;
     facList.querySelectorAll(".row").forEach(el => {
         el.addEventListener("click", () => {
             const newFac = el.dataset.fac;
@@ -300,11 +366,13 @@ function renderList() {
             history.replaceState(null, "", url);
             renderList();
             renderDetail();
-            // Render map after detail is rendered
+            // Render map after detail is rendered (only for priority facilities)
             setTimeout(() => {
-                lastRenderedFacility = selected;
-                ensureSplitMap();
-                renderSplitMap(selected);
+                if (PRIORITY_FACILITIES.includes(selected)) {
+                    lastRenderedFacility = selected;
+                    ensureSplitMap();
+                    renderSplitMap(selected);
+                }
             }, 0);
         });
     });
@@ -353,7 +421,7 @@ function renderDetail() {
 
         if (h2 && summary && grid) {
             const rangeLabel = rangeMin >= 60 ? `${rangeMin / 60} h` : `${rangeMin} min`;
-            h2.innerHTML = `${d.facility} <small>${d.sectorCount} active controllers / ${d.sectors.length} known &middot; sparkline ${rangeLabel} (oldest → now)</small>`;
+            h2.innerHTML = `${d.facility} <small>${d.sectors.length} known position(s) &middot; sparkline ${rangeLabel} (oldest → now)</small>`;
             summary.innerHTML = `
                 <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
                 <div class="stat accent"><b>${d.sectorCount}</b>Active controllers</div>
@@ -379,19 +447,20 @@ function renderDetail() {
     } else {
         // New facility: full rebuild with new map section
         const rangeLabel = rangeMin >= 60 ? `${rangeMin / 60} h` : `${rangeMin} min`;
+        const showMap = PRIORITY_FACILITIES.includes(d.facility);
         detail.innerHTML = `
-            <h2>${d.facility} <small>${d.sectorCount} active controllers / ${d.sectors.length} known &middot; sparkline ${rangeLabel} (oldest → now)</small></h2>
+            <h2>${d.facility} <small>${d.sectors.length} known position(s) &middot; sparkline ${rangeLabel} (oldest → now)</small></h2>
             <div class="summary">
                 <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
                 <div class="stat accent"><b>${d.sectorCount}</b>Active controllers</div>
                 <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsIn,0)}</b>Handoffs in</div>
                 <div class="stat"><b>${d.sectors.reduce((a,s)=>a+s.handoffsOut,0)}</b>Handoffs out</div>
             </div>
-            <div class="split-section" id="splitSection">
+            ${showMap ? `<div class="split-section" id="splitSection">
                 <h3>SECTOR SPLIT MAP <small id="splitMapMeta">loading assignment data…</small></h3>
                 <div id="splitMap"></div>
                 <div id="splitLegend"></div>
-            </div>
+            </div>` : ''}
             <div class="sec-grid" id="secGrid">
             ${d.sectors.map(s => {
                 const zero = s.tracks === 0 ? ' zero' : '';
@@ -571,7 +640,40 @@ async function loadKmlSectors() {
         let artcc = parts.length >= 2 ? parts[1] : '';
         let category = '';
         let sectorId = name;
-        if (artcc) {
+
+        // Check for ZLA-style oceanic sectors (SEC field in table)
+        if (!artcc && data['SEC']) {
+            artcc = 'ZLA';
+            // For ZLA, format SEC as 2-digit zero-padded sector ID (matches first 2 digits of FAV)
+            const secVal = parseInt(data['SEC'], 10);
+            sectorId = secVal.toString().padStart(2, '0');
+
+            const area = data['AREA'] || '';
+
+            // Check folder name for ZLA altitude category
+            let folderName = '';
+            let el = pm.parentElement;
+            while (el) {
+                if (el.tagName === 'Folder') {
+                    folderName = (el.querySelector(':scope > name')?.textContent || '').toUpperCase();
+                    if (folderName) break;
+                }
+                el = el.parentElement;
+            }
+
+            // Categorize by folder name or area
+            if (area.toUpperCase().includes('OCEANIC') || name.toUpperCase().includes('OCEANIC')) {
+                category = 'Oceanic';
+            } else if (folderName.includes('HIGH')) {
+                category = 'High Altitude';
+            } else if (folderName.includes('LOW')) {
+                category = 'Low Altitude';
+            } else if (folderName.includes('ULTRA')) {
+                category = 'Ultra High';
+            } else {
+                category = 'High Altitude';  // default fallback
+            }
+        } else if (artcc) {
             const catRaw = parts.length >= 3 ? parts[2] : '';
             category = catRaw.replace(/\s*\(\d+\)$/, '');
             sectorId = parts.length >= 4 ? parts[3] : name;
@@ -599,7 +701,17 @@ async function loadKmlSectors() {
             return [parseFloat(lat), parseFloat(lon)];
         }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
         if (coords.length < 3) continue;
-        out.push({ artcc, sectorId, category, coords });
+
+        // Extract altitude range from PopupInfo (format: "SECTORID (letter) floor / ceiling")
+        let altFloor = null, altCeiling = null;
+        const popupInfo = data['PopupInfo'] || '';
+        const altMatch = popupInfo.match(/(\d+)\s*\/\s*(\d+)/);
+        if (altMatch) {
+            altFloor = parseInt(altMatch[1], 10);
+            altCeiling = parseInt(altMatch[2], 10);
+        }
+
+        out.push({ artcc, sectorId, category, coords, altFloor, altCeiling });
     }
     kmlSectorsCache = out;
     return out;
@@ -724,8 +836,32 @@ async function renderSplitMap(facility) {
             return;
         }
 
-        const groupMap = airspace?.sectorToGroup || {};
+        let groupMap = airspace?.sectorToGroup || {};
         const positions = airspace?.positions || [];
+
+        // For ZLA, rebuild groupMap using first 2 digits of FAV numbers
+        if (facility === 'ZLA' && positions.length > 0) {
+            groupMap = {};
+            const seenSectors = new Set();
+            for (const pos of positions) {
+                const zlaSectorIds = [];
+                const seenInPos = new Set();
+                for (const fav of pos.favNumbers || []) {
+                    const sectorId = fav.substring(0, 2);
+                    if (!seenInPos.has(sectorId)) {
+                        zlaSectorIds.push(sectorId);
+                        seenInPos.add(sectorId);
+                    }
+                    if (!seenSectors.has(sectorId)) {
+                        groupMap[sectorId] = pos.primarySector;
+                        seenSectors.add(sectorId);
+                    }
+                }
+                // Update position's controlledSectors to use 2-digit format for label rendering
+                pos.controlledSectors = zlaSectorIds;
+            }
+        }
+
         const hasSplits = Object.keys(groupMap).length > 0;
 
         if (!hasSplits) {
@@ -741,7 +877,7 @@ async function renderSplitMap(facility) {
             const ageMin = airspace.updatedAt
                 ? Math.round((Date.now() - new Date(airspace.updatedAt).getTime()) / 60000)
                 : null;
-            meta.textContent = `${positions.length} controller position(s)` +
+            meta.textContent = `${positions.length} sector(s)` +
                 (ageMin != null ? ` · updated ${ageMin < 120 ? ageMin + 'm' : Math.round(ageMin / 60) + 'h'} ago` : '');
 
             for (const sec of sectors) {
@@ -756,7 +892,12 @@ async function renderSplitMap(facility) {
                 }).addTo(splitMapLayer);
 
                 // Add popup on click with radar styling
-                poly.bindPopup(primary ? `<strong>${sec.sectorId}</strong><br/>Primary: ${primary}` : `<strong>${sec.sectorId}</strong>`, {
+                let popupHtml = `<strong>${sec.sectorId}</strong>`;
+                if (primary) popupHtml += `<br/>Primary: ${primary}`;
+                if (sec.altFloor !== null && sec.altCeiling !== null) {
+                    popupHtml += `<br/>ALT: ${sec.altFloor}-${sec.altCeiling}`;
+                }
+                poly.bindPopup(popupHtml, {
                     className: 'sector-popup'
                 });
 
@@ -832,6 +973,13 @@ async function renderSplitMap(facility) {
             }
 
             legend.textContent = '';
+
+            // Add header
+            const header = document.createElement('div');
+            header.style.cssText = 'font-weight: bold; color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;';
+            header.textContent = 'LEGEND';
+            legend.appendChild(header);
+
             const table = document.createElement('div');
             table.className = 'legend-table';
 
@@ -903,7 +1051,10 @@ function renderTransitionPanel() {
         </div>`;
 }
 
-filter.addEventListener("input", renderList);
+filter.addEventListener("input", () => {
+    filter.value = filter.value.toUpperCase();
+    renderList();
+});
 if (rangeSel) rangeSel.addEventListener("change", () => {
     rangeMin = parseInt(rangeSel.value, 10);
     const url = new URL(location.href);
@@ -913,8 +1064,8 @@ if (rangeSel) rangeSel.addEventListener("change", () => {
     refresh();
 });
 refresh().then(() => {
-    // Render map after initial data load
-    if (selected) {
+    // Render map after initial data load (only for priority facilities)
+    if (selected && PRIORITY_FACILITIES.includes(selected)) {
         lastRenderedFacility = selected;
         renderSplitMap(selected);
     }
@@ -922,8 +1073,8 @@ refresh().then(() => {
 });
 setInterval(refresh, 5000);
 setInterval(() => {
-    // Refresh map data periodically (AIXM assignments, etc.)
-    if (selected && selected === lastRenderedFacility) {
+    // Refresh map data periodically (AIXM assignments, etc.) - only for priority facilities
+    if (selected && selected === lastRenderedFacility && PRIORITY_FACILITIES.includes(selected)) {
         renderSplitMap(selected);
     }
 }, 60000);

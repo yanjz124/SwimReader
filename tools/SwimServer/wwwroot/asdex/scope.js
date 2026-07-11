@@ -1110,7 +1110,10 @@ function makeIcon(t) {
     const fix = dbShowFix ? (t.gateCode || '') : '';
 
     let dbHtml = '';
-    const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 0.87)}px`;
+    // Counter-rotate the data block so text stays upright when the map is rotated.
+    // Baked in here (not just applyRotation) so it survives icon rebuilds on updates.
+    const dbCounter = mapRotation === 360 ? 0 : mapRotation;
+    const dbStyle = `font-size:${dbFontSize}px;line-height:${Math.round(dbFontSize * 0.87)}px;transform:rotate(${dbCounter}deg)`;
     if (cs && cat !== 'unknown') {
         if (cat !== 'vehicle') {
             // Line 1: {callsign} {altitude?} {sensors?}

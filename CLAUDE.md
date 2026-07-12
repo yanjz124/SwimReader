@@ -60,6 +60,8 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 - **FDIO** (`/fdio`) — Two-panel flight plan viewer: left table + right detail panel with Flight Plan and Events tabs, raw XML viewing
 - **TAIS Directory** (`/tais`) — Facility grid with live track counts, click-through to detail
 - **TAIS Detail** (`/tais/{facility}`) — Terminal radar track table with search, sort, frozen filter, expandable detail
+- **Track a Flight** (`/track`, `/track/{callsign}`) — Mobile-first single-callsign aggregator across every source (SFDPS, TFMS, EDCT, TDLS, TAIS/STARS, ASDE-X); polls `/api/track/{callsign}`
+- **Track a Flight (text)** (`/t`, `/t/{callsign}`) — Ultra-light, no-JS, server-rendered version of the above for slow wifi (auto-refreshes via meta tag)
 - Future: strips, etc.
 
 ## Project Structure
@@ -408,6 +410,8 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/history?q=&date=` | Search flight history JSONL files by callsign/origin/dest (max 100 results) |
 | `GET /api/history/dates` | List available history dates with file sizes |
 | `GET /fdio` | FDIO two-panel flight plan viewer (reuses `/ws` WebSocket + `/api/flights/{gufi}` + `/api/event-xml/`) |
+| `GET /api/track/{callsign}` | Combined single-callsign snapshot across all sources — `{callsign, found, sfdps, freqs, tfms, edct, handoffHistory, tdls, tais, asdex}` |
+| `GET /t`, `GET /t/{callsign}` | Server-rendered no-JS text page (see Track a Flight section) |
 
 ### Handoff Detection Logic
 Server-side in `Program.cs` ProcessFlight():
@@ -764,6 +768,8 @@ VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z'
 
 **Rotation:** Aircraft SVG is rotated via `<g transform="rotate(${hdg})">` inline — not CSS, so it works across all browsers and doesn't require marker re-creation.
 
+**Map rotation (ROT input):** `applyRotation()` rotates the whole `#map` element via CSS `transform: rotate()`. Data blocks must stay **upright** (readable) regardless of map heading, so each `.db` is counter-rotated by the inverse angle. This counter-rotation is baked into `makeIcon()` (using the current `mapRotation`), **not only** applied in `applyRotation()` — because markers rebuild via `setIcon()` on ~1s position updates, and a fresh `.db` created after a rotation would otherwise inherit the map's rotation until the next slider input. `applyRotation()` still updates already-rendered blocks so the slider feels live.
+
 **Heavy type detection (client-side, ICAO type code):**
 ```javascript
 const HEAVY_PREFIXES = ['B74','B77','B78','A33','A34','A35','A38','A30',
@@ -928,6 +934,27 @@ When flights are purged from memory (>60 min stale), their complete state + all 
 - **Budget**: 14 GB max (2 GB headroom from 16 GB Pi budget), ~49 MB/day, ~320 days retention
 - **Cleanup**: hourly timer deletes oldest daily files when total exceeds budget
 - **APIs**: `GET /api/history?q=&date=` (search), `GET /api/history/dates` (list available dates)
+
+## Track a Flight (SwimServer)
+
+A mobile-first page that follows one callsign across **every** source at once, for pilots/enthusiasts who just want "where is this flight and what frequency is it on." A callsign can appear as several SFDPS GUFIs (one per ARTCC tracking it) plus TFMS/EDCT/TDLS/TAIS/ASDE-X records — the page aggregates them all.
+
+### Files & routes
+- **`wwwroot/track/index.html` + `track/track.js`** — full JS version at `/track` and `/track/{callsign}`. Polls `GET /api/track/{callsign}` every 4s (backs off / auto-falls-back to `/t` on Data-Saver, 2g, or 3 consecutive fetch failures).
+- **`Routes/TrackRoutes.cs`** — registers `GET /api/track/{callsign}` (combined JSON) and the server-rendered text page (`GET /t`, `GET /t/{callsign}`).
+
+### `/api/track/{callsign}` response
+`{callsign, found, ts, sfdps:[...], freqs:{FAC/SEC→freq}, tfms, edct, handoffHistory:[...], tdls:[...], tais:[...], asdex:[...]}`. `sfdps` is a lean per-GUFI projection (`SfdpsProjection`) with full flight plan, ownership/handoff, position, clearance (HSF), and times. `freqs` maps every sector referenced anywhere (controlling, handoff, point-out, STARS owner, and sectors named in history summaries) to its controller frequency via vNAS/TAIS data; the frontends append it wherever a `FAC/SECTOR` label appears. Sector-frequency lookup tolerates STARS TCP sub-position letters (`PCT/1J`→`PCT/1`) and leading-zero differences (`ZOB/01`↔`ZOB/1`).
+
+### Page sections (both versions render the same information)
+Hero (callsign, origin▸dest·type/wake·registration, **phase** label, prominent next-frequency handoff banner, center + terminal frequencies, source presence) → Position/Ownership (per GUFI: controlling+freq, CIDs, handoff+freq, point-out, altitude, Line-4 HSF, ground speed, squawk/assigned, position+age, coast, status) → Terminal/STARS (entry▸exit, scratchpad, owner+freq, handoff+freq, alt/gs/squawk) → Handoff/point-out history → EDCT → Flight plan (full ICAO + equipment/capabilities) → TDLS (CPDLC + departure messages) → Surface/ASDE-X → Traffic flow/TFMS.
+
+**No mock data blocks.** An earlier version rendered simplified ERAM/STARS data-block art in both the full page (`blocksCard`) and the text page (`EramText`). Both were removed as unrealistic — the same data (4th-line/HSF, handoff, STARS entry/exit/scratchpad) lives in the cards/rows below. Don't reintroduce the mock blocks. (`track.js` still contains the now-unused `blocksCard`/`eramBlockHtml`/`starsBlockHtml` helpers, dead but harmless.)
+
+### Text page (`/t`) and the inflight-wifi constraint
+`/t` is a ~few-KB, no-JS, `<meta http-equiv=refresh content=30>` page — deliberately light for **slow** connections. `TrackRoutes.TextPage()` renders it directly from the typed bridges via `TaisBridge.TracksByCallsign`, `TdlsBridge.AircraftByCallsign` (+ `TdlsAircraft.MessagesTyped()`), `AsdexBridge.TracksByCallsign`, and `TfmsBridge.FindByCallsign` (added specifically so the server can render their detail without going through the anonymous-`object` `ToJson()` projections).
+
+**Important:** `/t` does **not** work on airline "free messaging" wifi. Those captive portals block all HTTP/DNS except a whitelist of messaging endpoints, so no web page — however small — will load; it only helps on real-but-slow internet. Apps like Flighty deliver inflight updates over **APNs push** (the same whitelisted pathway as iMessage), not the web: the server pushes serialized lat/lon/alt/ETA every few minutes into a Live Activity, working even in Airplane Mode. Replicating that for SwimReader would require a whitelisted messaging channel (Telegram/WhatsApp/SMS bot, or native iOS APNs), not a lighter page. See [[track-text-wifi-limitation]].
 
 ## STDDS Data Pipeline (SwimReader.Server)
 

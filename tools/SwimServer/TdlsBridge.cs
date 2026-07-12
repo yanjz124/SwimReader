@@ -330,6 +330,17 @@ class TdlsBridge
                     result.Add(new { airport, aircraft = ac.ToJson() });
         return result;
     }
+
+    /// <summary>Typed TDLS aircraft for a callsign — used by the server-rendered text page.</summary>
+    public List<TdlsAircraft> AircraftByCallsign(string callsign)
+    {
+        var result = new List<TdlsAircraft>();
+        foreach (var aircraftDict in _state.Values)
+            foreach (var ac in aircraftDict.Values)
+                if (string.Equals(ac.AircraftId, callsign, StringComparison.OrdinalIgnoreCase))
+                    result.Add(ac);
+        return result;
+    }
 }
 
 // ── Data models ──────────────────────────────────────────────────────────────
@@ -411,5 +422,11 @@ class TdlsAircraft
         {
             return Messages.Select(m => m.ToJson()).ToArray();
         }
+    }
+
+    /// <summary>Thread-safe snapshot of the typed message list (for server-rendered pages).</summary>
+    public List<TdlsMessage> MessagesTyped()
+    {
+        lock (Messages) { return Messages.ToList(); }
     }
 }

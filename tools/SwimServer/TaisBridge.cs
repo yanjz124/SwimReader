@@ -359,6 +359,17 @@ class TaisBridge
         return result;
     }
 
+    /// <summary>Typed TAIS tracks for a callsign — used by the server-rendered text page.</summary>
+    public List<TaisTrack> TracksByCallsign(string callsign)
+    {
+        var result = new List<TaisTrack>();
+        foreach (var tracks in _state.Values)
+            foreach (var t in tracks.Values)
+                if (string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
+                    result.Add(t);
+        return result;
+    }
+
     /// <summary>(facility, owner-TCP) pairs for a callsign — used to resolve STARS position frequencies.</summary>
     public List<(string facility, string owner)> OwnersByCallsign(string callsign)
     {

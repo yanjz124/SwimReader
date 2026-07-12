@@ -205,132 +205,307 @@ static class TrackRoutes
         if (e.Contains("FAIL")) return "FAILED";
         return e;
     }
-    private static string EramText(FlightState f)
+    // Flight phase — mirrors phaseOf() in track.js so the text page labels flights the same way.
+    private static (string label, string cls) PhaseOf(FlightState? f, AsdexTrack? asd, TaisTrack? tais)
     {
-        var cid = (f.ControllingFacility != null && f.ComputerIds.TryGetValue(f.ControllingFacility, out var c)) ? c : (f.ComputerId ?? "----");
-        string aFL = f.AssignedAltitude != null ? ((int)Math.Round(f.AssignedAltitude.Value / 100)).ToString("000") : "";
-        string rFL = f.ReportedAltitude != null ? ((int)Math.Round(f.ReportedAltitude.Value / 100)).ToString("000") : "";
-        string l2 = aFL.Length > 0 ? (rFL.Length > 0 && Math.Abs(int.Parse(aFL) - int.Parse(rFL)) > 2 ? $"{aFL}{(int.Parse(rFL) < int.Parse(aFL) ? "^" : "v")}{rFL}" : aFL + "C") : (rFL.Length > 0 ? rFL : "---");
-        string fe = f.GroundSpeed != null ? Math.Round(f.GroundSpeed.Value).ToString() : "";
-        if (!string.IsNullOrEmpty(f.HandoffEvent) && !string.IsNullOrEmpty(f.HandoffReceiving))
+        if (f != null)
         {
-            var sec = f.HandoffReceiving; var i = sec.IndexOf('/'); if (i >= 0) sec = sec[(i + 1)..];
-            fe = (f.HandoffEvent.ToUpperInvariant().Contains("ACCEPT") ? "O" : "H") + sec + " (=" + fe + ")";
+            if (f.FlightStatus == "DROPPED") return ("DROPPED", "r");
+            if (f.Latitude != null && (f.GroundSpeed ?? 0) > 40) return ("AIRBORNE", "g");
+            if (f.FlightStatus == "PROPOSED" || f.Latitude == null) return ("PRE-DEPARTURE", "");
         }
-        string dest = f.Destination != null && f.Destination.Length == 4 && f.Destination[0] == 'K' ? f.Destination[1..] : (f.Destination ?? "");
-        return $"{f.Callsign}\n{l2}\n{cid} {fe}\n{dest}";
+        if (asd != null && (asd.SpeedKts ?? 0) < 40) return ("ON SURFACE", "g");
+        if (tais != null) return ("TERMINAL", "g");
+        return ("TRACKED", "");
     }
+
+    // Line-4 HSF (heading / speed / free text) — mirrors hsf() in track.js.
+    private static string? HsfText(FlightState f)
+    {
+        var p = new List<string>();
+        if (!string.IsNullOrEmpty(f.ClearanceHeading)) p.Add("H" + f.ClearanceHeading);
+        if (!string.IsNullOrEmpty(f.ClearanceSpeed)) p.Add("S" + f.ClearanceSpeed);
+        if (!string.IsNullOrEmpty(f.ClearanceText)) p.Add(f.ClearanceText);
+        return p.Count > 0 ? string.Join(" ", p) : null;
+    }
+
     private static void Row(StringBuilder sb, string k, string? v) { if (!string.IsNullOrEmpty(v)) sb.Append(He(k)).Append(": ").Append(He(v)).Append("<br>"); }
+
+    private static string HmDt(DateTime? dt) => dt == null ? "" : dt.Value.ToString("HHmm") + "Z";
 
     private static IResult TextPage(ServerContext ctx, string? cs)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
+        string? Freq(string? key) => FreqOf(ctx, key);
         var sb = new StringBuilder(2048);
         sb.Append("<!doctype html><html><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">");
         if (cs.Length > 0) sb.Append("<meta http-equiv=refresh content=30>");
         sb.Append("<title>").Append(cs.Length > 0 ? He(cs) : "Track").Append("</title>");
-        sb.Append("<style>body{background:#000;color:#cc4;font:14px/1.55 monospace;margin:8px;max-width:680px}h2{font-size:12px;color:#888;border-bottom:1px solid #333;margin:15px 0 5px;letter-spacing:1px}b{color:#fff}.w{color:#f80}.g{color:#4c4}pre{white-space:pre-wrap;margin:5px 0;color:#cc4}a{color:#4af}input{background:#111;color:#cc4;border:1px solid #444;padding:8px;text-transform:uppercase;width:9em}button{background:#123;color:#bcf;border:1px solid #356;padding:8px 12px}.rt{color:#dda;word-break:break-all}</style>");
+        sb.Append("<style>body{background:#000;color:#cc4;font:14px/1.55 monospace;margin:8px;max-width:680px}h2{font-size:12px;color:#888;border-bottom:1px solid #333;margin:15px 0 5px;letter-spacing:1px}b{color:#fff}.w{color:#f80}.g{color:#4c4}.r{color:#f44}.d{color:#888}a{color:#4af}input{background:#111;color:#cc4;border:1px solid #444;padding:8px;text-transform:uppercase;width:9em}button{background:#123;color:#bcf;border:1px solid #356;padding:8px 12px}.rt{color:#dda;word-break:break-all}.ban{background:#2a1e0a;border:1px solid #5a4010;color:#f80;padding:6px 9px;border-radius:6px;margin:9px 0;font-weight:bold}.frq{margin:5px 0}.frq b{font-size:16px}.blk{margin-top:9px}.ph{display:inline-block;padding:2px 9px;border:1px solid #333;border-radius:5px;margin-top:7px;font-weight:bold}</style>");
         sb.Append("</head><body>");
         sb.Append("<form action=/t><input name=cs value=\"").Append(He(cs)).Append("\" placeholder=CALLSIGN> <button>TRACK</button>");
         if (cs.Length > 0) sb.Append(" &nbsp;<a href=/track/").Append(He(cs)).Append(">full page</a>");
         sb.Append("</form>");
 
-        if (cs.Length == 0) { sb.Append("<p style=color:#888>Enter a callsign to follow a flight.<br>This is the light text-only version (no JS, auto-refresh 30s) for slow / inflight wifi.</p></body></html>"); return Results.Content(sb.ToString(), "text/html; charset=utf-8"); }
+        if (cs.Length == 0) { sb.Append("<p class=d>Enter a callsign to follow a flight.<br>This is the light text-only version (no JS, auto-refresh 30s) for slow wifi.</p></body></html>"); return Results.Content(sb.ToString(), "text/html; charset=utf-8"); }
 
         var flights = Matching(ctx, cs);
-        var tdls = ctx.Tdls.FindByCallsign(cs); var tais = ctx.Tais.FindByCallsign(cs); var asdex = ctx.Asdex.FindByCallsign(cs);
-        var tfms = ctx.Tfms.GetFlightByCallsign(cs);
+        var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
+        var taisTracks = ctx.Tais.TracksByCallsign(cs);
+        var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
+        var tfms = ctx.Tfms.FindByCallsign(cs);
         var ho = new List<FlightEvent>();
         string? edct = null;
         foreach (var f in flights) { foreach (var e in f.GetAllEvents()) if (HandoffSources.Contains(e.Source)) ho.Add(e); if (edct == null && !string.IsNullOrEmpty(f.EdctTime)) edct = f.EdctTime; }
 
-        if (flights.Count == 0 && tdls.Count == 0 && tais.Count == 0 && asdex.Count == 0 && tfms == null)
+        if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null)
         { sb.Append("<p class=w>Nothing is tracking ").Append(He(cs)).Append(" right now.</p></body></html>"); return Results.Content(sb.ToString(), "text/html; charset=utf-8"); }
 
         var best = flights.OrderBy(f => f.Latitude.HasValue ? 0 : 1)
             .ThenBy(f => f.LastPositionTime == default ? 9999 : (DateTime.UtcNow - f.LastPositionTime).TotalSeconds).FirstOrDefault();
+        var tais0 = taisTracks.FirstOrDefault();
+        var asd0 = asdexTracks.FirstOrDefault();
 
-        sb.Append("<div style=font-size:20px;color:#fff;margin:8px 0 2px>").Append(He(cs)).Append("</div>");
-        var org = best?.Origin; var dst = best?.Destination;
+        // ── Hero: callsign, route, type, phase, prominent frequencies ──
+        sb.Append("<div style=font-size:22px;color:#fff;margin:8px 0 2px>").Append(He(cs)).Append("</div>");
+        var org = best?.Origin ?? tais0?.Origin ?? asd0?.FpOrigin ?? tfms?.DepArpt;
+        var dst = best?.Destination ?? tais0?.Destination ?? asd0?.FpDestination ?? tfms?.ArrArpt;
+        var type = best?.AircraftType ?? tais0?.AircraftType ?? asd0?.AircraftType ?? tfms?.AircraftType;
+        var wake = best?.WakeCategory;
         sb.Append("<div>").Append(He(string.IsNullOrEmpty(org) ? "????" : org)).Append(" &#9656; ").Append(He(string.IsNullOrEmpty(dst) ? "????" : dst));
-        if (!string.IsNullOrEmpty(best?.AircraftType)) sb.Append(" · ").Append(He(best!.AircraftType));
+        var sub = new List<string>();
+        if (!string.IsNullOrEmpty(type)) sub.Add(type + (string.IsNullOrEmpty(wake) ? "" : "/" + wake));
+        if (!string.IsNullOrEmpty(best?.Registration)) sub.Add(best!.Registration!);
+        if (sub.Count > 0) sb.Append(" · ").Append(He(string.Join(" · ", sub)));
         sb.Append("</div>");
 
+        var ph = PhaseOf(best, asd0, tais0);
+        sb.Append("<div class=\"ph ").Append(ph.cls).Append("\">").Append(He(ph.label)).Append("</div>");
+
+        // Prominent "next frequency" handoff banner (en-route SFDPS, else STARS/TAIS).
+        var hoF = flights.FirstOrDefault(f => !string.IsNullOrEmpty(f.HandoffEvent) && !string.IsNullOrEmpty(f.HandoffReceiving));
+        if (hoF != null)
+        {
+            var he = hoF.HandoffEvent!.ToUpperInvariant();
+            var label = (he.Contains("INITIAT") || he.Contains("PROPOS")) ? "HANDOFF PENDING"
+                      : he.Contains("ACCEPT") ? "HANDOFF ACCEPTED"
+                      : he.Contains("EXECUT") ? "HANDING OFF" : "HANDOFF";
+            var rf = Freq(hoF.HandoffReceiving);
+            sb.Append("<div class=ban>").Append(He(label)).Append(" NEXT &#9656; <b>").Append(He(hoF.HandoffReceiving!)).Append("</b>");
+            if (rf != null) sb.Append(" &#183; <b>").Append(He(rf)).Append("</b>");
+            sb.Append("</div>");
+        }
+        else if (tais0 != null && !string.IsNullOrEmpty(tais0.PendingHandoff))
+        {
+            var recv = tais0.Facility + "/" + tais0.PendingHandoff;
+            var rf = Freq(recv);
+            sb.Append("<div class=ban>STARS HANDOFF NEXT &#9656; <b>").Append(He(recv)).Append("</b>");
+            if (rf != null) sb.Append(" &#183; <b>").Append(He(rf)).Append("</b>");
+            sb.Append("</div>");
+        }
+
+        // Current controller frequency (center + terminal), up front.
+        if (best?.ControllingFacility != null)
+        {
+            var cf = Freq(best.ControllingFacility + "/" + (best.ControllingSector ?? ""));
+            if (cf != null) sb.Append("<div class=frq>&#9673; <b>").Append(He(cf)).Append("</b> <span class=d>")
+                .Append(He(best.ControllingFacility + (best.ControllingSector != null ? "/" + best.ControllingSector : ""))).Append(" · center</span></div>");
+        }
+        if (tais0?.Owner != null)
+        {
+            var tf = Freq(tais0.Facility + "/" + tais0.Owner);
+            if (tf != null) sb.Append("<div class=frq><span class=g>&#9673; <b>").Append(He(tf)).Append("</b></span> <span class=d>")
+                .Append(He(tais0.Facility + "/" + tais0.Owner)).Append(" · terminal</span></div>");
+        }
+
+        // Source presence line.
+        var srcs = new List<string>();
+        if (flights.Count > 0) srcs.Add("SFDPS");
+        if (tfms != null) srcs.Add("TFMS");
+        if (tdlsAc.Count > 0) srcs.Add("TDLS");
+        if (taisTracks.Count > 0) srcs.Add("STARS");
+        if (asdexTracks.Count > 0) srcs.Add("ASDE-X");
+        if (!string.IsNullOrEmpty(edct)) srcs.Add("EDCT");
+        if (srcs.Count > 0) sb.Append("<div class=d style=margin-top:7px>in: <span class=g>").Append(He(string.Join(" · ", srcs))).Append("</span></div>");
+
+        // ── POSITION / OWNERSHIP ──
         if (flights.Count > 0)
         {
             sb.Append("<h2>POSITION / OWNERSHIP</h2>");
             var artccs = new List<string>();
             foreach (var f in flights) { AddU(artccs, f.ControllingFacility); AddU(artccs, f.ReportingFacility); foreach (var k in f.ComputerIds.Keys) AddU(artccs, k); }
             sb.Append("Tracked by: <b>").Append(He(string.Join(" ", artccs))).Append("</b>");
+            bool first = true;
             foreach (var f in flights)
             {
-                sb.Append("<div style=margin-top:7px><b>").Append(He(f.ControllingFacility ?? "?"));
+                sb.Append("<div class=blk><b>").Append(He(f.ControllingFacility ?? f.ReportingFacility ?? "?"));
                 if (f.ControllingSector != null) sb.Append("/").Append(He(f.ControllingSector));
                 sb.Append("</b>");
+                if (!first) sb.Append(" <span class=d>(also tracking)</span>");
+                first = false;
                 var cid = (f.ControllingFacility != null && f.ComputerIds.TryGetValue(f.ControllingFacility, out var cc)) ? cc : f.ComputerId;
                 if (!string.IsNullOrEmpty(cid)) sb.Append(" CID ").Append(He(cid));
-                var freq = FreqOf(ctx, (f.ControllingFacility ?? "") + "/" + (f.ControllingSector ?? ""));
+                var freq = Freq((f.ControllingFacility ?? "") + "/" + (f.ControllingSector ?? ""));
                 if (freq != null) sb.Append(" &#183; <b>").Append(He(freq)).Append("</b>");
                 sb.Append("<br>");
                 if (!string.IsNullOrEmpty(f.HandoffEvent))
                 {
-                    var hrFreq = FreqOf(ctx, f.HandoffReceiving);
+                    var hrFreq = Freq(f.HandoffReceiving);
                     sb.Append("<span class=w>Handoff ").Append(He(HoStatus(f.HandoffEvent))).Append(": ").Append(He(f.HandoffTransferring ?? "?")).Append(" &#9656; ").Append(He(f.HandoffReceiving ?? "?"));
                     if (hrFreq != null) sb.Append(" (").Append(He(hrFreq)).Append(")");
                     sb.Append("</span><br>");
                 }
+                if (!string.IsNullOrEmpty(f.PointoutOriginatingUnit) || !string.IsNullOrEmpty(f.PointoutReceivingUnit))
+                    sb.Append("Point-out: ").Append(He(AnnotateFreqs(ctx, (f.PointoutOriginatingUnit ?? "?") + " ▸ " + (f.PointoutReceivingUnit ?? "?")))).Append("<br>");
                 sb.Append(He(AltText(f)));
                 if (f.GroundSpeed != null) sb.Append(" · ").Append((int)Math.Round(f.GroundSpeed.Value)).Append(" kt");
                 if (!string.IsNullOrEmpty(f.Squawk)) sb.Append(" · sqk ").Append(He(f.Squawk));
+                if (!string.IsNullOrEmpty(f.AssignedSquawk) && f.AssignedSquawk != f.Squawk) sb.Append(" <span class=d>(asgn ").Append(He(f.AssignedSquawk)).Append(")</span>");
                 sb.Append("<br>");
-                if (f.Latitude != null) sb.Append("Pos ").Append(f.Latitude.Value.ToString("F3")).Append(", ").Append(f.Longitude!.Value.ToString("F3")).Append("<br>");
-                if (!f.ComputerIds.IsEmpty) sb.Append("CIDs ").Append(He(string.Join("  ", f.ComputerIds.Select(kv => kv.Key + ":" + kv.Value)))).Append("<br>");
+                var l4 = HsfText(f);
+                if (l4 != null) sb.Append("<span class=w>Line 4: ").Append(He(l4)).Append("</span><br>");
+                if (f.Latitude != null)
+                {
+                    sb.Append("Pos ").Append(f.Latitude.Value.ToString("F3")).Append(", ").Append(f.Longitude!.Value.ToString("F3"));
+                    if (f.LastPositionTime != default) sb.Append(" <span class=d>(").Append((int)(DateTime.UtcNow - f.LastPositionTime).TotalSeconds).Append("s old)</span>");
+                    sb.Append("<br>");
+                }
+                if (f.CoastIndicator) sb.Append("<span class=w>COAST</span><br>");
+                if (!string.IsNullOrEmpty(f.FlightStatus) && f.FlightStatus != "ACTIVE") sb.Append("Status: ").Append(He(f.FlightStatus)).Append("<br>");
+                if (!f.ComputerIds.IsEmpty) sb.Append("<span class=d>CIDs ").Append(He(string.Join("  ", f.ComputerIds.Select(kv => kv.Key + ":" + kv.Value)))).Append("</span><br>");
                 sb.Append("</div>");
             }
         }
 
-        if (best != null) sb.Append("<h2>ERAM DATA BLOCK</h2><pre>").Append(He(EramText(best))).Append("</pre>");
-
-        var taisOwners = ctx.Tais.OwnersByCallsign(cs).GroupBy(x => x.facility + "/" + x.owner).Select(g => g.First()).ToList();
-        if (taisOwners.Count > 0)
+        // ── TERMINAL (STARS / TAIS) ──
+        if (taisTracks.Count > 0)
         {
-            sb.Append("<h2>STARS (TERMINAL)</h2>");
-            foreach (var (fac, owner) in taisOwners)
+            sb.Append("<h2>TERMINAL (STARS)</h2>");
+            foreach (var t in taisTracks)
             {
-                sb.Append("<b>").Append(He(fac)).Append("/").Append(He(owner)).Append("</b>");
-                var tf = FreqOf(ctx, fac + "/" + owner);
+                sb.Append("<div class=blk><b>").Append(He(t.Facility));
+                if (!string.IsNullOrEmpty(t.Owner)) sb.Append("/").Append(He(t.Owner));
+                sb.Append("</b>");
+                var tf = Freq(t.Facility + "/" + (t.Owner ?? ""));
                 if (tf != null) sb.Append(" &#183; <b>").Append(He(tf)).Append("</b>");
+                if (!string.IsNullOrEmpty(t.TrackNum)) sb.Append(" <span class=d>#").Append(He(t.TrackNum)).Append("</span>");
                 sb.Append("<br>");
+                if (!string.IsNullOrEmpty(t.EntryFix) || !string.IsNullOrEmpty(t.ExitFix))
+                    sb.Append(He(string.IsNullOrEmpty(t.EntryFix) ? "—" : t.EntryFix)).Append(" &#9656; ").Append(He(string.IsNullOrEmpty(t.ExitFix) ? "—" : t.ExitFix)).Append("<br>");
+                var sp = string.Join(" ", new[] { t.Scratchpad1, t.Scratchpad2 }.Where(x => !string.IsNullOrEmpty(x)));
+                var meta = new List<string>();
+                if (!string.IsNullOrEmpty(sp)) meta.Add("SP " + sp);
+                if (!string.IsNullOrEmpty(t.Runway)) meta.Add("RWY " + t.Runway);
+                if (meta.Count > 0) sb.Append(He(string.Join(" · ", meta))).Append("<br>");
+                if (!string.IsNullOrEmpty(t.PendingHandoff))
+                {
+                    var hf = Freq(t.Facility + "/" + t.PendingHandoff);
+                    sb.Append("<span class=w>H/O &#9656; ").Append(He(t.PendingHandoff)).Append(hf != null ? " (" + He(hf) + ")" : "").Append("</span><br>");
+                }
+                var tl = new List<string>();
+                if (t.AltitudeFeet != null) tl.Add("FL" + Math.Round(t.AltitudeFeet.Value / 100.0));
+                if (t.GroundSpeedKnots != null) tl.Add(t.GroundSpeedKnots + " kt");
+                if (!string.IsNullOrEmpty(t.AssignedSquawk)) tl.Add("sqk " + t.AssignedSquawk);
+                if (tl.Count > 0) sb.Append(He(string.Join(" · ", tl))).Append("<br>");
+                sb.Append("</div>");
             }
         }
 
+        // ── HANDOFF / POINT-OUT HISTORY ──
         if (ho.Count > 0)
         {
-            sb.Append("<h2>HANDOFF HISTORY</h2>");
+            sb.Append("<h2>HANDOFF / POINT-OUT HISTORY</h2>");
             foreach (var e in ho.GroupBy(x => x.Time + x.Summary).Select(g => g.First()).OrderByDescending(x => x.Time).Take(12))
                 sb.Append(He(Hm(e.Time))).Append(" <span class=g>").Append(He(e.Source)).Append("</span> ").Append(He(AnnotateFreqs(ctx, e.Summary))).Append("<br>");
         }
 
         if (!string.IsNullOrEmpty(edct)) sb.Append("<h2>EDCT</h2>Controlled departure <b>").Append(He(Hm(edct))).Append("</b>");
 
+        // ── FLIGHT PLAN ──
         if (best != null)
         {
             sb.Append("<h2>FLIGHT PLAN</h2>");
-            Row(sb, "Rules", best.FlightRules); Row(sb, "Altitude", AltText(best)); Row(sb, "Alternate", best.AlternateAerodrome);
-            Row(sb, "PBN", best.PBNCode); Row(sb, "Equip", best.EquipmentQualifier); Row(sb, "SELCAL", best.SELCAL);
-            Row(sb, "EET", best.EstimatedElapsedTimes);
+            Row(sb, "Origin", best.Origin); Row(sb, "Destination", best.Destination); Row(sb, "Alternate", best.AlternateAerodrome);
+            Row(sb, "Rules", best.FlightRules); Row(sb, "Type", best.FlightType); Row(sb, "STAR", best.STAR);
+            Row(sb, "Altitude", AltText(best));
+            if (best.RequestedAltitude != null) Row(sb, "Req. Alt", Fl(best.RequestedAltitude));
+            if (best.RequestedSpeed != null) Row(sb, "Req. Speed", (int)Math.Round(best.RequestedSpeed.Value) + " kt");
+            Row(sb, "EET", best.EstimatedElapsedTimes); Row(sb, "Operator", best.Operator); Row(sb, "Originator", best.Originator);
+            var rmk = best.Remarks?.Replace('|', ' ').Trim();
+            Row(sb, "Remarks", string.IsNullOrEmpty(rmk) ? null : rmk);
             var route = best.OriginalRoute ?? best.Route;
             if (!string.IsNullOrEmpty(route)) sb.Append("Route:<br><span class=rt>").Append(He(route)).Append("</span><br>");
+            sb.Append("<div class=d style=margin-top:6px>EQUIPMENT / CAPABILITIES</div>");
+            Row(sb, "Equipment", best.EquipmentQualifier); Row(sb, "PBN", best.PBNCode);
+            Row(sb, "Navigation", string.Join("  ", new[] { best.NavigationCode, best.OtherNavigationCapabilities }.Where(x => !string.IsNullOrEmpty(x))));
+            Row(sb, "Comm", string.Join("  ", new[] { best.CommunicationCode, best.OtherCommunicationCapabilities }.Where(x => !string.IsNullOrEmpty(x))));
+            Row(sb, "Data Link", string.Join("  ", new[] { best.DataLinkCode, best.OtherDataLink }.Where(x => !string.IsNullOrEmpty(x))));
+            Row(sb, "Surveillance", string.Join("  ", new[] { best.SurveillanceCode, best.OtherSurveillanceCapabilities }.Where(x => !string.IsNullOrEmpty(x))));
+            Row(sb, "SELCAL", best.SELCAL); Row(sb, "Performance", best.AircraftPerformance);
         }
 
-        var extra = new List<string>();
-        if (tdls.Count > 0) extra.Add("TDLS(" + tdls.Count + ")");
-        if (tais.Count > 0) extra.Add("STARS(" + tais.Count + ")");
-        if (asdex.Count > 0) extra.Add("ASDE-X(" + asdex.Count + ")");
-        if (tfms != null) extra.Add("TFMS");
-        if (extra.Count > 0) sb.Append("<h2>ALSO IN</h2>").Append(He(string.Join(" · ", extra))).Append(" — <a href=/track/").Append(He(cs)).Append(">full page has detail</a>");
+        // ── TDLS (clearance / departure) ──
+        if (tdlsAc.Count > 0)
+        {
+            sb.Append("<h2>TDLS</h2>");
+            foreach (var ac in tdlsAc)
+            {
+                sb.Append("<div class=d style=margin-top:6px>").Append(He(ac.Airport)).Append(" · ").Append(He(ac.AircraftType ?? ""));
+                if (!string.IsNullOrEmpty(ac.Destination)) sb.Append(" &#8594; ").Append(He(ac.Destination));
+                sb.Append("</div>");
+                foreach (var m in ac.MessagesTyped().OrderByDescending(m => m.Time).Take(8))
+                {
+                    if (m.Type == "DEPART")
+                    {
+                        var parts = new List<string>();
+                        if (!string.IsNullOrEmpty(m.Gate)) parts.Add("Gate " + m.Gate);
+                        if (m.ClearanceTime != null) parts.Add("CLR " + HmDt(m.ClearanceTime));
+                        if (m.TaxiTime != null) parts.Add("TAXI " + HmDt(m.TaxiTime));
+                        if (m.TakeoffTime != null) parts.Add("T/O " + HmDt(m.TakeoffTime));
+                        if (!string.IsNullOrEmpty(m.TakeoffRunway)) parts.Add("RWY " + m.TakeoffRunway);
+                        sb.Append("<span class=w>DEP</span> ").Append(He(m.Time.ToString("HHmm"))).Append("Z ").Append(He(string.Join(" · ", parts))).Append("<br>");
+                    }
+                    else
+                    {
+                        var body = System.Text.RegularExpressions.Regex.Replace(m.DataBody ?? "", @"^\d{3}\s*", "");
+                        sb.Append("<span class=g>CPDLC</span> ").Append(He(m.Time.ToString("HHmm"))).Append("Z<br><span class=rt>").Append(He(body)).Append("</span><br>");
+                    }
+                }
+            }
+        }
 
-        sb.Append("<p style=color:#555;margin-top:16px>text mode · auto-refresh 30s · ").Append(DateTime.UtcNow.ToString("HHmm")).Append("Z</p></body></html>");
+        // ── SURFACE (ASDE-X) ──
+        if (asdexTracks.Count > 0)
+        {
+            sb.Append("<h2>SURFACE (ASDE-X)</h2>");
+            foreach (var t in asdexTracks)
+            {
+                sb.Append("<div class=d style=margin-top:6px>").Append(He(t.Airport)).Append(" · SURFACE</div>");
+                var p = new List<string>();
+                if (!string.IsNullOrEmpty(t.TargetType)) p.Add(t.TargetType);
+                var gate = t.TdlsGate ?? t.GateCode; if (!string.IsNullOrEmpty(gate)) p.Add("gate " + gate);
+                if (!string.IsNullOrEmpty(t.TdlsRunway)) p.Add("rwy " + t.TdlsRunway);
+                if (t.SpeedKts != null) p.Add(t.SpeedKts + " kt");
+                if (t.HeadingDegrees != null) p.Add(Math.Round(t.HeadingDegrees.Value) + "°");
+                if (t.AltitudeFeet != null) p.Add(Math.Round(t.AltitudeFeet.Value) + " ft");
+                if (!string.IsNullOrEmpty(t.Squawk)) p.Add("sqk " + t.Squawk);
+                sb.Append(He(string.Join(" · ", p))).Append("<br>");
+                sb.Append("Pos ").Append(t.Latitude.ToString("F4")).Append(", ").Append(t.Longitude.ToString("F4"))
+                  .Append(" <span class=d>(").Append((int)(DateTime.UtcNow - t.LastSeen).TotalSeconds).Append("s old)</span><br>");
+            }
+        }
+
+        // ── TRAFFIC FLOW (TFMS) ──
+        if (tfms != null)
+        {
+            sb.Append("<h2>TRAFFIC FLOW (TFMS)</h2>");
+            Row(sb, "Departure", tfms.DepArpt); Row(sb, "Arrival", tfms.ArrArpt); Row(sb, "Status", tfms.FlightStatus);
+            Row(sb, "ETA", HmDt(tfms.Eta)); Row(sb, "STAR", tfms.Star); Row(sb, "Type", tfms.AircraftType ?? tfms.AircraftModel);
+            if (tfms.Altitude != null) Row(sb, "Altitude", tfms.Altitude + " ft");
+            if (tfms.Speed != null) Row(sb, "Speed", tfms.Speed + " kt");
+        }
+
+        sb.Append("<p class=d style=margin-top:16px>text mode · auto-refresh 30s · ").Append(DateTime.UtcNow.ToString("HHmm")).Append("Z</p></body></html>");
         return Results.Content(sb.ToString(), "text/html; charset=utf-8");
     }
 }

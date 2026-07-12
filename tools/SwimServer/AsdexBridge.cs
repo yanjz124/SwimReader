@@ -657,6 +657,20 @@ class AsdexBridge
         return result;
     }
 
+    /// <summary>Typed ASDE-X tracks for a callsign — used by the server-rendered text page.</summary>
+    public List<AsdexTrack> TracksByCallsign(string callsign)
+    {
+        var result = new List<AsdexTrack>();
+        foreach (var tracks in _state.Values)
+            foreach (var t in tracks.Values)
+                if (string.Equals(t.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (OnEnrich is not null) OnEnrich(t);
+                    result.Add(t);
+                }
+        return result;
+    }
+
     /// <summary>
     /// Deduplicate tracks by callsign — when multiple tracks share the same callsign,
     /// keep only the one with the most recent LastSeen. Tracks without callsigns are always kept.

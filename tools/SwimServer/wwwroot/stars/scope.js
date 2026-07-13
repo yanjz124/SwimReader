@@ -2133,6 +2133,7 @@ cv.addEventListener("wheel", (e) => {
   const step = e.deltaY < 0 ? 0.85 : 1.18;
   prefSet.Range = Math.max(1, Math.min(400, Math.round(prefSet.Range * step)));
   recomputeScale();
+  _afterPrefChange();
 }, { passive: false });
 
 cv.addEventListener("contextmenu", (e) => {
@@ -2353,6 +2354,7 @@ function savePrefsToLocalStorage() {
       // ILM after RDU centered the scope on RDU.
       InvertKeyboard: prefSet.InvertKeyboard,
       Nexrad: prefSet.Nexrad ? { ...prefSet.Nexrad } : undefined,
+      wxLevels: starsState && starsState.wxLevels ? [...starsState.wxLevels] : undefined,
     };
     localStorage.setItem(STARS_PREFS_KEY, JSON.stringify(snap));
   } catch (e) { /* quota or disabled — silently skip */ }
@@ -2366,7 +2368,7 @@ function loadPrefsFromLocalStorage() {
     // cleanup) might still have — these come from the per-area
     // visibilityCenter at facility load and should never be cross-facility
     // sticky.
-    const ignore = new Set(["ScreenCenterPoint", "RangeRingLocation"]);
+    const ignore = new Set(["ScreenCenterPoint", "RangeRingLocation", "wxLevels"]);
     // Shallow-merge scalars; deep-merge sub-objects so a new default field
     // added later isn't wiped by the saved snapshot.
     for (const k of Object.keys(snap)) {
@@ -2377,6 +2379,10 @@ function loadPrefsFromLocalStorage() {
       } else {
         prefSet[k] = snap[k];
       }
+    }
+    // Restore wxLevels (stored separately in starsState, not prefSet)
+    if (snap.wxLevels && Array.isArray(snap.wxLevels)) {
+      starsState.wxLevels = snap.wxLevels;
     }
   } catch (e) { /* corrupt JSON — silently skip */ }
 }

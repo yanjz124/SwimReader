@@ -23,8 +23,8 @@
 
 // Color constants — DCBButton.cs lines 23-26 verbatim.
 const DCB_COLOR = {
-  ACTIVE_BG:        "rgb(0, 128, 0)",       // Color.Green
-  INACTIVE_BG:      "rgb(0, 80, 0)",        // Color.FromArgb(0,80,0)
+  ACTIVE_BG:        "rgb(0, 78, 0)",        // #004E00 selected
+  INACTIVE_BG:      "rgb(0, 44, 0)",        // #002C00 unselected
   DISABLED_BG:      "rgb(0, 40, 0)",        // Color.FromArgb(0,40,0)
   FRAME_BG:         "rgb(0, 35, 15)",       // DCB.cs:96 — main panel fill
   TEXT:             "rgb(255, 255, 255)",   // Color.White
@@ -42,17 +42,20 @@ function btn(id, text, opts = {}) {
   };
 }
 
-// Adjusted color per brightness slider.
+// Adjusted color per brightness slider — memoized cache
+const dcbAdjustCache = new Map();
 function dcbAdjust(rgbStr, brightness) {
+  const key = `${rgbStr}:${brightness}`;
+  if (dcbAdjustCache.has(key)) return dcbAdjustCache.get(key);
   // Parse "rgb(r,g,b)" → scaled
   const m = rgbStr.match(/\d+/g);
-  if (!m) return rgbStr;
-  const k = brightness / 100;
-  return `rgb(${(m[0]|0)*k|0}, ${(m[1]|0)*k|0}, ${(m[2]|0)*k|0})`;
+  const result = !m ? rgbStr : `rgb(${(m[0]|0)*brightness/100|0}, ${(m[1]|0)*brightness/100|0}, ${(m[2]|0)*brightness/100|0})`;
+  dcbAdjustCache.set(key, result);
+  return result;
 }
 
 // ── Menu definitions (button order matches RadarWindow.cs:3536-3590) ────────
-function mainMenu(state) {
+function mainMenu(state, dcb) {
   const p = state.prefSet;
   // Heights verbatim from scope/RadarWindow.cs:3468-3608 button declarations.
   const list = [
@@ -62,7 +65,7 @@ function mainMenu(state) {
     btn("RR_NUM", `RR\n${p.RangeRingSpacing}`),                                          // 80
     btn("PLACE_RR", "PLACE\nRR", { half: true }),                                        // 40
     btn("RR_CNTR", "RR\nCNTR", { active: p.RangeRingsCentered, half: true }),            // 40
-    btn("MAPS", "MAPS", { submenu: "MAPS" }),                                            // 80
+    btn("MAPS", "MAPS", { submenu: "MAPS", active: dcb?.popoutAnchorId === "MAPS" }),   // 80
   ];
   // Inline MAP buttons show the bound map's starsId + shortName, matching
   // WPF rendering ("37 MNORTH" / "38 MSOUTH" / ...). Falls back to "MAP n"
@@ -87,18 +90,18 @@ function mainMenu(state) {
       active: !!state.wxLevels[i], wx: i + 1, narrow: true,                              // 80h × 40w
     }));
   }
-  list.push(btn("BRITE", "BRITE", { submenu: "BRITE" }));                                // 80
+  list.push(btn("BRITE", "BRITE", { submenu: "BRITE", active: dcb?.popoutAnchorId === "BRITE" }));  // 80
   list.push(btn("LDR_DIR", `LDR DIR\n${ldrDirName(p.OwnedDataBlockPosition)}`,
     { half: true }));                                                                    // 40
   list.push(btn("LDR_LEN", `LDR LEN\n${p.LeaderLength}`, { half: true }));                // 40 (RadarWindow.cs:3946)
-  list.push(btn("CHAR_SIZE", "CHAR\nSIZE", { submenu: "CHARSIZE" }));                    // 80
+  list.push(btn("CHAR_SIZE", "CHAR\nSIZE", { submenu: "CHARSIZE", active: dcb?.popoutAnchorId === "CHARSIZE" }));  // 80
   list.push(btn("MODE", "MODE\nFSL", { disabled: true }));                               // 80
-  list.push(btn("SITE", "SITE", { submenu: "SITE" }));                                   // 80
+  list.push(btn("SITE", "SITE", { submenu: "SITE", active: dcb?.popoutAnchorId === "SITE" }));  // 80
   list.push(btn("SHIFT", "SHIFT", { submenu: "AUX" }));                                  // 80
   return list;
 }
 
-function auxMenu(state) {
+function auxMenu(state, dcb) {
   const p = state.prefSet;
   // Heights verbatim from scope/RadarWindow.cs:3492-3508.
   const list = [
@@ -245,7 +248,23 @@ class DCB {
     this.active = "MAIN";        // base menu always one of MAIN / AUX
     this.popout = null;           // current popout submenu key, or null
     this.popoutAnchorId = null;   // ID of the parent button so we can find rect
+    this.selectedBrite = null;     // brite ID currently in adjustment mode (e.g., "RR")
+    this.selectedBriteEl = null;   // DOM element of selected brightness button
     this.handlers = {};
+    this.buttonCache = new Map();  // id → {el, active state}
+
+    // Add static styles for DCB buttons (once)
+    if (!document.getElementById("dcb-styles")) {
+      const style = document.createElement("style");
+      style.id = "dcb-styles";
+      style.textContent = `
+        .dcb-btn:hover:not([data-disabled="1"]) {
+          color: #FFFF99 !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
     rootEl.addEventListener("click", (e) => this._onClick(e));
     rootEl.addEventListener("contextmenu", (e) => this._onRClick(e));
     rootEl.addEventListener("wheel",     (e) => this._onWheel(e), { passive: false });
@@ -258,7 +277,12 @@ class DCB {
       z-index: 19;
       display: none;
     `;
-    this.backdrop.addEventListener("click", () => { this.popout = null; this.popoutAnchorId = null; this.render(); });
+    this.backdrop.addEventListener("click", () => {
+      this.popout = null;
+      this.popoutAnchorId = null;
+      this._deselectBrite();
+      this.render();
+    });
     document.body.appendChild(this.backdrop);
     this.popoutEl = document.createElement("div");
     this.popoutEl.id = "dcb-popout";
@@ -270,6 +294,7 @@ class DCB {
       box-sizing: border-box;
       align-content: flex-start;
       font-family: FixedDemiBold, ui-monospace, monospace;
+      overflow: hidden;
     `;
     this.popoutEl.addEventListener("click", (e) => this._onPopoutClick(e));
     this.popoutEl.addEventListener("contextmenu", (e) => this._onPopoutRClick(e));
@@ -279,12 +304,24 @@ class DCB {
   on(event, fn) { (this.handlers[event] ||= []).push(fn); }
   emit(event, ...args) { (this.handlers[event] || []).forEach(fn => fn(...args)); }
 
+  updateButtonState(id, active) {
+    // Fast state update without full render
+    const btn = this.root.querySelector(`[data-id="${id}"]`);
+    if (btn) {
+      if (active) {
+        btn.setAttribute("data-active", "1");
+      } else {
+        btn.removeAttribute("data-active");
+      }
+    }
+  }
+
   buttons() {
     // Only MAIN/AUX render in the base DCB. Popout submenus render in
     // the popoutEl overlay.
     switch (this.active) {
-      case "MAIN": return mainMenu(this.state);
-      case "AUX":  return auxMenu(this.state);
+      case "MAIN": return mainMenu(this.state, this);
+      case "AUX":  return auxMenu(this.state, this);
     }
     return [];
   }
@@ -357,12 +394,17 @@ class DCB {
       // bordersize is 3 (cs:12). Easiest CSS analog is 4 differently-coloured
       // borders. AdjustedColor scales DarkGray (128,128,128) by Brightness.DCB.
       const bri = (p.Brightness?.DCB ?? 100) / 100;
-      const dark    = `rgb(${(128*bri)|0},${(128*bri)|0},${(128*bri)|0})`;  // Color.DarkGray
+      const dark    = `rgb(${(85*bri)|0},${(85*bri)|0},${(85*bri)|0})`;  // Darker gray
       const black   = "rgb(0,0,0)";
       // drawactive in WPF starts true when Active != (mousePressed && mouseInside).
       // Without hover state in our HTML render path, treat active = pressed look.
       const tl = b.active ? black : dark;       // top + left bevel
       const br = b.active ? dark  : black;      // bottom + right bevel
+      const isSelected = b.brite && this.selectedBrite === b.brite;
+      const fgColor = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
+      const activeBg = isSelected ? dcbAdjust(DCB_COLOR.ACTIVE_BG, p.Brightness.DCB) : dcbAdjust((b.active ? DCB_COLOR.ACTIVE_BG : DCB_COLOR.INACTIVE_BG), p.Brightness.DCB);
+      const disabledBg = dcbAdjust(DCB_COLOR.DISABLED_BG, p.Brightness.DCB);
+      const finalBg = b.disabled ? disabledBg : activeBg;
       return `<div class="dcb-btn" data-id="${b.id}"
         ${b.mapStarsId != null ? `data-map-stars="${b.mapStarsId}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
@@ -370,21 +412,26 @@ class DCB {
         ${b.csz ? `data-csz="${b.csz}"` : ""}
         ${b.submenu ? `data-submenu="${b.submenu}"` : ""}
         ${b.disabled ? `data-disabled="1"` : ""}
+        ${(b.active || isSelected) ? `data-active="1"` : ""}
+        ${isSelected ? `data-selected="1"` : ""}
         style="
           width:${w}px; height:${h}px;
-          background:${dcbAdjust(bg, p.Brightness.DCB)};
-          color:${fg};
-          border-top:3px solid ${tl};
-          border-left:3px solid ${tl};
-          border-right:3px solid ${br};
-          border-bottom:3px solid ${br};
+          background:${finalBg};
+          color:${fgColor};
+          border-top:2px solid ${tl};
+          border-left:2px solid ${tl};
+          border-right:2px solid ${br};
+          border-bottom:2px solid ${br};
           display:flex; align-items:center; justify-content:center;
           text-align:center; line-height:1.05; font-size:${fs}px;
-          white-space:pre; cursor:${b.disabled ? "default" : "pointer"};
+          white-space:pre; cursor:${b.disabled ? "default" : "crosshair"};
           flex:none; box-sizing:border-box;
         ">${b.text}</div>`;
     }).join("");
-    this.root.innerHTML = html;
+    // Only update DOM if content changed
+    if (this.root.innerHTML !== html) {
+      this.root.innerHTML = html;
+    }
     this._renderPopout();
   }
 
@@ -454,6 +501,11 @@ class DCB {
       const black = "rgb(0,0,0)";
       const tl = b.active ? black : dark;
       const br = b.active ? dark  : black;
+      const isSelected = b.brite && this.selectedBrite === b.brite;
+      const fgColor = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
+      const activeBg = isSelected ? dcbAdjust(DCB_COLOR.ACTIVE_BG, p.Brightness.DCB) : dcbAdjust((b.active ? DCB_COLOR.ACTIVE_BG : DCB_COLOR.INACTIVE_BG), p.Brightness.DCB);
+      const disabledBg = dcbAdjust(DCB_COLOR.DISABLED_BG, p.Brightness.DCB);
+      const finalBg = b.disabled ? disabledBg : activeBg;
       return `<div class="dcb-btn" data-id="${b.id}"
         ${b.mapStarsId != null ? `data-map-stars="${b.mapStarsId}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
@@ -461,21 +513,26 @@ class DCB {
         ${b.csz ? `data-csz="${b.csz}"` : ""}
         ${b.submenu ? `data-submenu="${b.submenu}"` : ""}
         ${b.disabled ? `data-disabled="1"` : ""}
+        ${(b.active || isSelected) ? `data-active="1"` : ""}
+        ${isSelected ? `data-selected="1"` : ""}
         style="
           width:${w}px; height:${h}px;
-          background:${dcbAdjust(bg, p.Brightness.DCB)};
-          color:${fg};
-          border-top:3px solid ${tl};
-          border-left:3px solid ${tl};
-          border-right:3px solid ${br};
-          border-bottom:3px solid ${br};
+          background:${finalBg};
+          color:${fgColor};
+          border-top:2px solid ${tl};
+          border-left:2px solid ${tl};
+          border-right:2px solid ${br};
+          border-bottom:2px solid ${br};
           display:flex; align-items:center; justify-content:center;
           text-align:center; line-height:1.05; font-size:${fs}px;
-          white-space:pre; cursor:${b.disabled ? "default" : "pointer"};
+          white-space:pre; cursor:${b.disabled ? "default" : "crosshair"};
           flex:none; box-sizing:border-box;
         ">${b.text}</div>`;
     }).join("");
-    this.popoutEl.innerHTML = html;
+    // Only update DOM if content changed
+    if (this.popoutEl.innerHTML !== html) {
+      this.popoutEl.innerHTML = html;
+    }
 
     // Compute width (horizontal DCB) so we know the popout's pixel extent
     // for clamping if it would go off-screen.
@@ -508,6 +565,7 @@ class DCB {
         if (this.popout === submenu && this.popoutAnchorId === id) {
           this.popout = null;
           this.popoutAnchorId = null;
+          this._deselectBrite();
         } else {
           this.popout = submenu;
           this.popoutAnchorId = id;
@@ -515,6 +573,7 @@ class DCB {
       } else if (submenu === "AUX" || submenu === "MAIN") {
         this.active = submenu;
         this.popout = null; this.popoutAnchorId = null;
+        this._deselectBrite();
       } else {
         this.active = submenu;
       }
@@ -527,7 +586,21 @@ class DCB {
       return;
     }
     if (el.dataset.wx)    { this.emit("wxToggle",   +el.dataset.wx);                   return; }
-    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, baseAdjust * 5); return; }
+    if (el.dataset.brite) {
+      // Brightness modal selection: click to toggle selection, scroll to adjust
+      const briteId = el.dataset.brite;
+      if (this.selectedBrite === briteId) {
+        // Already selected, click again to deselect/save
+        this._deselectBrite();
+      } else {
+        // Select this brightness button
+        this.selectedBrite = briteId;
+        this.selectedBriteEl = el;
+        this._setupBriteSelection();
+      }
+      this.render();
+      return;
+    }
     if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   baseAdjust);     return; }
     this.emit("numAdjust", id, baseAdjust);
   }
@@ -549,9 +622,19 @@ class DCB {
     const el = this._btn(e.target);
     if (!el || el.dataset.disabled) return;
     const dir = e.deltaY < 0 ? +1 : -1;
-    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, dir * 5); return; }
+    // Brightness only adjusts if already selected
+    if (el.dataset.brite) {
+      if (this.selectedBrite === el.dataset.brite) {
+        this.emit("briteAdjust", el.dataset.brite, dir * 5);
+      } else {
+        // No brightness selected, scroll the popout horizontally
+        this.popoutEl.scrollLeft += e.deltaY > 0 ? 40 : -40;
+      }
+      return;
+    }
     if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   dir);     return; }
-    this.emit("numAdjust", el.dataset.id, dir);
+    // For other buttons, scroll popout horizontally
+    this.popoutEl.scrollLeft += e.deltaY > 0 ? 40 : -40;
   }
   _onRClick(e) {
     e.preventDefault();
@@ -563,9 +646,37 @@ class DCB {
     if (!el || el.dataset.disabled) return;
     e.preventDefault();
     const dir = e.deltaY < 0 ? +1 : -1;
-    if (el.dataset.brite) { this.emit("briteAdjust", el.dataset.brite, dir * 5); return; }
+    // Brightness only adjusts if already selected
+    if (el.dataset.brite) {
+      if (this.selectedBrite === el.dataset.brite) {
+        this.emit("briteAdjust", el.dataset.brite, dir * 5);
+      }
+      return;
+    }
     if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   dir);     return; }
     this.emit("numAdjust", el.dataset.id, dir);
+  }
+
+  _setupBriteSelection() {
+    // Setup Escape key handler to deselect
+    if (!this._escapeKeyListener) {
+      this._escapeKeyListener = (e) => {
+        if (e.key === "Escape" && this.selectedBrite) {
+          this._deselectBrite();
+          this.render();
+        }
+      };
+      document.addEventListener("keydown", this._escapeKeyListener);
+    }
+  }
+
+  _deselectBrite() {
+    this.selectedBrite = null;
+    this.selectedBriteEl = null;
+    if (this._escapeKeyListener) {
+      document.removeEventListener("keydown", this._escapeKeyListener);
+      this._escapeKeyListener = null;
+    }
   }
 }
 

@@ -1004,6 +1004,41 @@ function copyIcaoFpl(ev) {
     });
 }
 
+// ── Fake fuel endurance — VATSIM prefile ONLY ────────────────────────────────
+// SWIM/SFDPS carries no fuel or endurance data (ICAO Field 19 is never in the feed),
+// so the ICAO FPL we build/display/copy deliberately omits it. But VATSIM's prefile
+// form has a required "Fuel Endurance" field that would otherwise have to be invented
+// by hand every time. We synthesize a realistic value from the flight's enroute time:
+//   endurance = enroute + reserve,  reserve = max(FUEL_RESERVE_MIN, FUEL_RESERVE_PCT × enroute)
+// This is injected ONLY into the VATSIM prefile link (buildVatsimRaw), never into the
+// ICAO FPL text shown or copied.
+const FUEL_RESERVE_MIN = 45;    // minimum extra endurance beyond enroute time (minutes)
+const FUEL_RESERVE_PCT = 0.15;  // ...or this fraction of enroute time, whichever is larger
+
+// Enroute time (minutes) from filed ETA vs off-block — same basis as Field 16 EET.
+function enrouteMinutes(d) {
+    if (!d.eta || !d.actualDepartureTime) return null;
+    const m = Math.round((new Date(d.eta) - new Date(d.actualDepartureTime)) / 60000);
+    return (m > 0 && m < 6000) ? m : null;
+}
+
+// Synthesized endurance as ICAO HHMM, or null when we have no enroute basis.
+function fakeEnduranceHHMM(d) {
+    const enroute = enrouteMinutes(d);
+    if (enroute == null) return null;
+    const reserve = Math.max(FUEL_RESERVE_MIN, Math.round(enroute * FUEL_RESERVE_PCT));
+    const total = enroute + reserve;
+    return String(Math.floor(total / 60)).padStart(2, '0') + String(total % 60).padStart(2, '0');
+}
+
+// VATSIM prefile raw = the ICAO FPL with a Field 19 endurance (E/hhmm) appended before
+// the closing paren. Returns the plain ICAO text unchanged when no endurance is available.
+function buildVatsimRaw(d, icaoText) {
+    const end = fakeEnduranceHHMM(d);
+    if (!end) return icaoText;
+    return icaoText.replace(/\)\s*$/, `\n-E/${end})`);
+}
+
 function renderFlightPlan(d) {
     const routeHtml = d.route
         ? `<div class="section"><h3>ROUTE</h3><div class="route-text">${esc(d.route)}</div></div>`
@@ -1022,7 +1057,7 @@ function renderFlightPlan(d) {
     const icaoBtn = `<button class="icao-btn" onclick="toggleIcaoFpl()">${showIcao ? 'HIDE ICAO FPL' : 'ICAO FPL'}</button>`;
     const sbUrl = buildSimBriefUrl(d);
     const sbBtn = `<a class="icao-btn simbrief-btn" href="${esc(sbUrl)}" target="_blank" rel="noopener">SIMBRIEF</a>`;
-    const vatUrl = 'https://my.vatsim.net/pilots/flightplan?raw=' + encodeURIComponent(lastIcaoText);
+    const vatUrl = 'https://my.vatsim.net/pilots/flightplan?raw=' + encodeURIComponent(buildVatsimRaw(d, lastIcaoText));
     const vatBtn = `<a class="icao-btn simbrief-btn" href="${esc(vatUrl)}" target="_blank" rel="noopener">VATSIM</a>`;
 
     return `${purgeBanner}${icaoBtn}${sbBtn}${vatBtn}${icaoHtml}

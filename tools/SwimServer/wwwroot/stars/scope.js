@@ -2265,9 +2265,14 @@ function mountDcb() {
   if (qMenu && ["MAIN","MAPS","BRITE","AUX","SITE"].includes(qMenu.toUpperCase()))
     dcb.active = qMenu.toUpperCase();
   dcb.on("numAdjust", (id, dir) => handleNumAdjust(id, dir));
+  dcb.on("rangeAdjust", (id, dir) => handleNumAdjust(id, dir));
   dcb.on("briteAdjust", (which, d) => handleBriteAdjust(which, d));
   dcb.on("cszAdjust", (which, d) => handleCszAdjust(which, d));
   dcb.on("mapToggle", (idx) => handleMapToggle(idx));
+  dcb.on("placeMode", (btnId) => {
+    // Enter place mode - map click will handle the actual placement
+    // Button stays selected until exitPlaceMode() is called
+  });
   // WX1-WX6: per RadarWindow.cs:3886-3896, each click toggles that
   // intensity layer (Nexrad.LevelsEnabled[i] flip). Buttons live on the
   // main DCB itself (cs:3568-3573), not in a submenu. We mirror that —
@@ -2535,6 +2540,7 @@ cv.addEventListener("click", (e) => {
       prefSet.RangeRingsCentered = false;
     }
     pendingMapAction = null;
+    dcb.exitPlaceMode();
     return;
   }
   // Aircraft hit-test

@@ -59,11 +59,11 @@ function mainMenu(state, dcb) {
   const p = state.prefSet;
   // Heights verbatim from scope/RadarWindow.cs:3468-3608 button declarations.
   const list = [
-    btn("RANGE", `RANGE\n${p.Range}`),                                                   // 80
-    btn("PLACE_CNTR", "PLACE\nCNTR", { half: true }),                                    // 40
+    btn("RANGE", `RANGE\n${p.Range}`, { range: "RANGE", active: dcb?.selectedRange === "RANGE" }),  // 80
+    btn("PLACE_CNTR", "PLACE\nCNTR", { half: true, placeBtn: true, active: dcb?.placeMode === "PLACE_CNTR" }),  // 40
     btn("OFF_CNTR", "OFF\nCNTR", { half: true }),                                        // 40
-    btn("RR_NUM", `RR\n${p.RangeRingSpacing}`),                                          // 80
-    btn("PLACE_RR", "PLACE\nRR", { half: true }),                                        // 40
+    btn("RR_NUM", `RR\n${p.RangeRingSpacing}`, { range: "RR_NUM", active: dcb?.selectedRange === "RR_NUM" }),  // 80
+    btn("PLACE_RR", "PLACE\nRR", { half: true, placeBtn: true, active: dcb?.placeMode === "PLACE_RR" }),  // 40
     btn("RR_CNTR", "RR\nCNTR", { active: p.RangeRingsCentered, half: true }),            // 40
     btn("MAPS", "MAPS", { submenu: "MAPS", active: dcb?.popoutAnchorId === "MAPS" }),   // 80
   ];
@@ -250,6 +250,9 @@ class DCB {
     this.popoutAnchorId = null;   // ID of the parent button so we can find rect
     this.selectedBrite = null;     // brite ID currently in adjustment mode (e.g., "RR")
     this.selectedBriteEl = null;   // DOM element of selected brightness button
+    this.selectedRange = null;     // range control ID currently in adjustment mode ("RANGE" or "RR_NUM")
+    this.selectedRangeEl = null;   // DOM element of selected range button
+    this.placeMode = null;         // place mode active: "PLACE_CNTR" or "PLACE_RR" or null
     this.handlers = {};
     this.buttonCache = new Map();  // id → {el, active state}
 
@@ -281,6 +284,7 @@ class DCB {
       this.popout = null;
       this.popoutAnchorId = null;
       this._deselectBrite();
+      this._deselectRange();
       this.render();
     });
     document.body.appendChild(this.backdrop);
@@ -400,7 +404,7 @@ class DCB {
       // Without hover state in our HTML render path, treat active = pressed look.
       const tl = b.active ? black : dark;       // top + left bevel
       const br = b.active ? dark  : black;      // bottom + right bevel
-      const isSelected = b.brite && this.selectedBrite === b.brite;
+      const isSelected = (b.brite && this.selectedBrite === b.brite) || (b.range && this.selectedRange === b.range);
       const fgColor = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
       const activeBg = isSelected ? dcbAdjust(DCB_COLOR.ACTIVE_BG, p.Brightness.DCB) : dcbAdjust((b.active ? DCB_COLOR.ACTIVE_BG : DCB_COLOR.INACTIVE_BG), p.Brightness.DCB);
       const disabledBg = dcbAdjust(DCB_COLOR.DISABLED_BG, p.Brightness.DCB);
@@ -408,6 +412,8 @@ class DCB {
       return `<div class="dcb-btn" data-id="${b.id}"
         ${b.mapStarsId != null ? `data-map-stars="${b.mapStarsId}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
+        ${b.range ? `data-range="${b.range}"` : ""}
+        ${b.placeBtn ? `data-place-btn="${b.id}"` : ""}
         ${b.wx ? `data-wx="${b.wx}"` : ""}
         ${b.csz ? `data-csz="${b.csz}"` : ""}
         ${b.submenu ? `data-submenu="${b.submenu}"` : ""}
@@ -501,7 +507,7 @@ class DCB {
       const black = "rgb(0,0,0)";
       const tl = b.active ? black : dark;
       const br = b.active ? dark  : black;
-      const isSelected = b.brite && this.selectedBrite === b.brite;
+      const isSelected = (b.brite && this.selectedBrite === b.brite) || (b.range && this.selectedRange === b.range);
       const fgColor = b.disabled ? DCB_COLOR.TEXT_DISABLED : DCB_COLOR.TEXT;
       const activeBg = isSelected ? dcbAdjust(DCB_COLOR.ACTIVE_BG, p.Brightness.DCB) : dcbAdjust((b.active ? DCB_COLOR.ACTIVE_BG : DCB_COLOR.INACTIVE_BG), p.Brightness.DCB);
       const disabledBg = dcbAdjust(DCB_COLOR.DISABLED_BG, p.Brightness.DCB);
@@ -509,6 +515,8 @@ class DCB {
       return `<div class="dcb-btn" data-id="${b.id}"
         ${b.mapStarsId != null ? `data-map-stars="${b.mapStarsId}"` : ""}
         ${b.brite ? `data-brite="${b.brite}"` : ""}
+        ${b.range ? `data-range="${b.range}"` : ""}
+        ${b.placeBtn ? `data-place-btn="${b.id}"` : ""}
         ${b.wx ? `data-wx="${b.wx}"` : ""}
         ${b.csz ? `data-csz="${b.csz}"` : ""}
         ${b.submenu ? `data-submenu="${b.submenu}"` : ""}
@@ -566,6 +574,7 @@ class DCB {
           this.popout = null;
           this.popoutAnchorId = null;
           this._deselectBrite();
+          this._deselectRange();
         } else {
           this.popout = submenu;
           this.popoutAnchorId = id;
@@ -574,22 +583,54 @@ class DCB {
         this.active = submenu;
         this.popout = null; this.popoutAnchorId = null;
         this._deselectBrite();
+        this._deselectRange();
       } else {
         this.active = submenu;
       }
       this.render();
       return;
     }
+    if (el.dataset.placeBtn) {
+      // Place mode toggle - enter place mode or cancel
+      const btnId = el.dataset.placeBtn;
+      if (this.placeMode === btnId) {
+        // Already in place mode, cancel
+        this.placeMode = null;
+        this.render();
+      } else {
+        // Enter place mode
+        this.placeMode = btnId;
+        this.emit("placeMode", btnId);
+        this.render();
+      }
+      return;
+    }
     if (el.dataset.mapStars != null) {
       // Dispatch by STARS map number; scope.js resolves to the live videoMaps entry.
       this.emit("mapToggle", +el.dataset.mapStars);
       // Update button appearance immediately
-      requestAnimationFrame(() => this.render());
+      this.render();
       return;
     }
     if (el.dataset.wx) {
       this.emit("wxToggle", +el.dataset.wx);
       requestAnimationFrame(() => this.render());
+      return;
+    }
+    if (el.dataset.range) {
+      // Range modal selection: click to toggle selection, scroll to adjust
+      const rangeId = el.dataset.range;
+      if (this.selectedRange === rangeId) {
+        // Already selected, click again to deselect/save
+        this._deselectRange();
+      } else {
+        // Select this range button (deselect any brite first)
+        this._deselectBrite();
+        this.selectedRange = rangeId;
+        this.selectedRangeEl = el;
+        this._setupRangeSelection();
+      }
+      this.render();
       return;
     }
     if (el.dataset.brite) {
@@ -599,7 +640,8 @@ class DCB {
         // Already selected, click again to deselect/save
         this._deselectBrite();
       } else {
-        // Select this brightness button
+        // Select this brightness button (deselect any range first)
+        this._deselectRange();
         this.selectedBrite = briteId;
         this.selectedBriteEl = el;
         this._setupBriteSelection();
@@ -632,6 +674,16 @@ class DCB {
     const el = this._btn(e.target);
     if (!el || el.dataset.disabled) return;
     const dir = e.deltaY < 0 ? +1 : -1;
+    // Range only adjusts if already selected
+    if (el.dataset.range) {
+      if (this.selectedRange === el.dataset.range) {
+        this.emit("rangeAdjust", el.dataset.range, dir);
+      } else {
+        // No range selected, scroll the popout horizontally
+        this.popoutEl.scrollLeft += e.deltaY > 0 ? 40 : -40;
+      }
+      return;
+    }
     // Brightness only adjusts if already selected
     if (el.dataset.brite) {
       if (this.selectedBrite === el.dataset.brite) {
@@ -656,6 +708,13 @@ class DCB {
     if (!el || el.dataset.disabled) return;
     e.preventDefault();
     const dir = e.deltaY < 0 ? +1 : -1;
+    // Range only adjusts if already selected
+    if (el.dataset.range) {
+      if (this.selectedRange === el.dataset.range) {
+        this.emit("rangeAdjust", el.dataset.range, dir);
+      }
+      return;
+    }
     // Brightness only adjusts if already selected
     if (el.dataset.brite) {
       if (this.selectedBrite === el.dataset.brite) {
@@ -671,13 +730,23 @@ class DCB {
     // Setup Escape key handler to deselect
     if (!this._escapeKeyListener) {
       this._escapeKeyListener = (e) => {
-        if (e.key === "Escape" && this.selectedBrite) {
-          this._deselectBrite();
-          this.render();
+        if (e.key === "Escape") {
+          if (this.selectedBrite) {
+            this._deselectBrite();
+            this.render();
+          } else if (this.selectedRange) {
+            this._deselectRange();
+            this.render();
+          }
         }
       };
       document.addEventListener("keydown", this._escapeKeyListener);
     }
+  }
+
+  _setupRangeSelection() {
+    // Reuse same Escape handler as brightness
+    this._setupBriteSelection();
   }
 
   _deselectBrite() {
@@ -686,6 +755,22 @@ class DCB {
     if (this._escapeKeyListener) {
       document.removeEventListener("keydown", this._escapeKeyListener);
       this._escapeKeyListener = null;
+    }
+  }
+
+  _deselectRange() {
+    this.selectedRange = null;
+    this.selectedRangeEl = null;
+    if (this._escapeKeyListener) {
+      document.removeEventListener("keydown", this._escapeKeyListener);
+      this._escapeKeyListener = null;
+    }
+  }
+
+  exitPlaceMode() {
+    if (this.placeMode) {
+      this.placeMode = null;
+      this.render();
     }
   }
 }

@@ -583,9 +583,15 @@ class DCB {
     if (el.dataset.mapStars != null) {
       // Dispatch by STARS map number; scope.js resolves to the live videoMaps entry.
       this.emit("mapToggle", +el.dataset.mapStars);
+      // Update button appearance immediately
+      requestAnimationFrame(() => this.render());
       return;
     }
-    if (el.dataset.wx)    { this.emit("wxToggle",   +el.dataset.wx);                   return; }
+    if (el.dataset.wx) {
+      this.emit("wxToggle", +el.dataset.wx);
+      requestAnimationFrame(() => this.render());
+      return;
+    }
     if (el.dataset.brite) {
       // Brightness modal selection: click to toggle selection, scroll to adjust
       const briteId = el.dataset.brite;
@@ -601,7 +607,11 @@ class DCB {
       this.render();
       return;
     }
-    if (el.dataset.csz)   { this.emit("cszAdjust",   el.dataset.csz,   baseAdjust);     return; }
+    if (el.dataset.csz) {
+      this.emit("cszAdjust", el.dataset.csz, baseAdjust);
+      requestAnimationFrame(() => this.render());
+      return;
+    }
     this.emit("numAdjust", id, baseAdjust);
   }
   _onClick(e) {

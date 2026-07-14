@@ -29,9 +29,15 @@ export const TextureWrapMode = Object.freeze({ ClampToEdge: 0, Repeat: 1 });
 
 function colorFrom(args) {
     // GL.Color3/Color4 overloads: (Color) | (r,g,b[,a]) as floats 0..1 (OpenTK float overload).
-    if (args.length === 1 && args[0] instanceof Color) return args[0].toCanvasRgba();
-    const [r, g, b, a = 1] = args;
-    return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
+    // Returns { css, r, g, b, a } — the parsed channels are needed to modulate textured quads (GL_MODULATE).
+    let r, g, b, a;
+    if (args.length === 1 && args[0] instanceof Color) {
+        r = args[0].R; g = args[0].G; b = args[0].B; a = args[0].A / 255;
+    } else {
+        const [fr, fg, fb, fa = 1] = args;
+        r = Math.round(fr * 255); g = Math.round(fg * 255); b = Math.round(fb * 255); a = fa;
+    }
+    return { css: `rgba(${r},${g},${b},${a})`, r, g, b, a };
 }
 
 export class GL {
@@ -44,6 +50,8 @@ export class GL {
     static #stack = [];
     static #clearColor = "rgba(0,0,0,1)";
     static #color = "rgba(0,255,0,1)";
+    static #colorRGBA = { r: 0, g: 255, b: 0, a: 1 }; // parsed current color, for GL_MODULATE on textures
+    static #tintScratch = null;                        // reused offscreen canvas for texture tinting
     static #lineWidth = 1;
     static #mode = null;       // current Begin() primitive
     static #verts = [];        // collected canvas-space points for the current primitive
@@ -101,8 +109,8 @@ export class GL {
     }
 
     // ── colors ──
-    static Color4(...args) { GL.#color = colorFrom(args); }
-    static Color3(...args) { GL.#color = colorFrom(args.length === 1 ? args : [args[0], args[1], args[2], 1]); }
+    static Color4(...args) { const col = colorFrom(args); GL.#color = col.css; GL.#colorRGBA = col; }
+    static Color3(...args) { const col = colorFrom(args.length === 1 ? args : [args[0], args[1], args[2], 1]); GL.#color = col.css; GL.#colorRGBA = col; }
 
     // ── immediate mode ──
     static Begin(mode) { GL.#mode = mode; GL.#verts = []; GL.#uvs = []; }
@@ -176,10 +184,37 @@ export class GL {
     static #drawTexturedQuads(c, pts, uvs) {
         const tex = GL.#textures.get(GL.#boundTex);
         if (!tex || !tex.canvas) return;
+        // GL_MODULATE: fragment = texture.rgb × color.rgb, alpha = texture.a × color.a. DGScope draws
+        // WHITE text into the texture and tints it with GL.Color3(color), so this modulation is what
+        // makes labels/DCB text their intended color. A white opaque color leaves the texture unchanged
+        // (e.g. NEXRAD tiles drawn with Color=white).
+        const col = GL.#colorRGBA;
+        const white = col.r >= 255 && col.g >= 255 && col.b >= 255;
+        const src = (white && col.a >= 1) ? tex.canvas : GL.#tintTexture(tex.canvas, col);
+        const prevA = c.globalAlpha;
+        if (!white || col.a < 1) c.globalAlpha = col.a; // modulate alpha
         for (let i = 0; i + 3 < pts.length; i += 4) {
             const xs = pts.slice(i, i + 4).map(p => p[0]), ys = pts.slice(i, i + 4).map(p => p[1]);
             const x0 = Math.min(...xs), y0 = Math.min(...ys), x1 = Math.max(...xs), y1 = Math.max(...ys);
-            c.drawImage(tex.canvas, x0, y0, x1 - x0, y1 - y0); // axis-aligned approximation
+            c.drawImage(src, x0, y0, x1 - x0, y1 - y0); // axis-aligned approximation
         }
+        c.globalAlpha = prevA;
+    }
+    // Multiply a texture's RGB by (r,g,b) while preserving its alpha mask — Canvas2D GL_MODULATE.
+    static #tintTexture(canvas, col) {
+        const w = canvas.width, h = canvas.height;
+        let t = GL.#tintScratch;
+        if (!t || t.width !== w || t.height !== h) t = GL.#tintScratch = new OffscreenCanvas(w, h);
+        const tc = t.getContext("2d");
+        tc.globalCompositeOperation = "source-over";
+        tc.clearRect(0, 0, w, h);
+        tc.globalAlpha = 1;
+        tc.drawImage(canvas, 0, 0);
+        tc.globalCompositeOperation = "multiply";          // texture.rgb × color.rgb (also fills transparent px)
+        tc.fillStyle = `rgb(${col.r},${col.g},${col.b})`;
+        tc.fillRect(0, 0, w, h);
+        tc.globalCompositeOperation = "destination-in";     // restore texture's alpha mask
+        tc.drawImage(canvas, 0, 0);
+        return t;
     }
 }

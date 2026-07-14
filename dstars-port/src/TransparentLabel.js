@@ -28,14 +28,20 @@ function FlashTimer() { // static System.Timers.Timer FlashTimer  -> setInterval
     return _flashtimer;
 }
 
-// Graphics.MeasureString(text, font) -> OffscreenCanvas measureText (used only inside methods).
+// Per-line height for a font (canvas has no equivalent of GDI's line spacing).
+function lineHeight(ctx, font) {
+    const m = ctx.measureText("Mg");
+    return (m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) || (font.Size * 1.3);
+}
+// Graphics.MeasureString(text, font) -> OffscreenCanvas measureText. GDI breaks on \r\n; canvas
+// fillText/measureText do NOT, so split lines here: width = widest line, height = lines × lineHeight.
 function measureString(text, font) {
     const c = new OffscreenCanvas(1, 1).getContext("2d");
     c.font = font.toCanvasFont();
-    const m = c.measureText(text ?? "");
-    const w = m.width;
-    const h = (m.actualBoundingBoxAscent + m.actualBoundingBoxDescent) || (font.Size * 1.3);
-    return new SizeF(w, h);
+    const lines = String(text ?? "").split(/\r\n|\r|\n/);
+    let w = 0;
+    for (const ln of lines) w = Math.max(w, c.measureText(ln).width);
+    return new SizeF(w, lineHeight(c, font) * lines.length);
 }
 
 /// <summary>A label that can be transparent.</summary>
@@ -143,16 +149,17 @@ export class TransparentLabel {
             let graphics = nb.getContext("2d");
             graphics.font = this.Font.toCanvasFont();
             graphics.textBaseline = "top";
+            const lines = String(this.Text).split(/\r\n|\r|\n/); // GDI DrawString breaks on \r\n
+            const lh = lineHeight(graphics, this.Font);
             if (outline) {
                 // GraphicsPath.AddString + DrawPath(Pen black,2) + FillPath(white)
                 graphics.lineWidth = 2; graphics.strokeStyle = Color.Black.toCanvasRgba();
-                graphics.strokeText(this.Text, point.X, point.Y);
                 graphics.fillStyle = Color.White.toCanvasRgba();
-                graphics.fillText(this.Text, point.X, point.Y);
+                lines.forEach((ln, i) => { graphics.strokeText(ln, point.X, point.Y + i * lh); graphics.fillText(ln, point.X, point.Y + i * lh); });
             }
             else {
                 graphics.fillStyle = Color.White.toCanvasRgba(); // SolidBrush(Color.White)
-                graphics.fillText(this.Text, point.X, point.Y);
+                lines.forEach((ln, i) => graphics.fillText(ln, point.X, point.Y + i * lh));
             }
         }
         this._backBuffer = nb;

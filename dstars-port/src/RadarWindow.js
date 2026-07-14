@@ -6,7 +6,7 @@
 // ⏳ PORTED IN CHUNKS. Current: lines 1–175 of 6962. The three static members that other modules
 // (Aircraft/Radar/MSAW/ConflictAlertSystem/ATPA...) import and use — Aircraft, CurrentTime,
 // AdjustedColor — are kept working throughout; real definitions replace stubs as their source is reached.
-import { LeaderDirection } from "./STARS/LeaderDirection.js";
+import { LeaderDirection, LeaderDirectionName } from "./STARS/LeaderDirection.js";
 import { TimeSync } from "./TimeSync.js";
 import { Color, Point, Size, PointF, Font, ContentAlignment } from "./_shims/SystemDrawing.js";
 import { WindowState, GameWindow } from "./_shims/OpenTK.js";
@@ -407,8 +407,8 @@ export class RadarWindow {
     get FontSizeUnit() { return this.Font.Unit; }
     set FontSizeUnit(value) { this.Font = new Font(this.Font.FontFamily, this.Font.Size, value); }
     // DCB Font (dcb field ported in a later chunk)
-    get DCBFont() { return this.dcb.Font; }
-    set DCBFont(value) { this.dcb.Font = value; }
+    get DCBFont() { return this.#dcb.Font; }
+    set DCBFont(value) { this.#dcb.Font = value; }
     get DCBFontName() { return this.DCBFont.FontFamily; }
     set DCBFontName(value) { this.DCBFont = new Font(value, this.DCBFont.Size, this.DCBFont.Unit); }
     get DCBFontSize() { return Math.trunc(this.DCBFont.Size); }
@@ -619,7 +619,7 @@ export class RadarWindow {
         this.#aircraftGCTimer = new Timer(new TimerCallback(this.cbAircraftGarbageCollectorTimer.bind(this)), null, this.AircraftGCInterval * 1000, this.AircraftGCInterval * 1000);
         this.#wxUpdateTimer = new Timer(new TimerCallback(this.cbWxUpdateTimer.bind(this)), null, 0, 180000);
         GL.ClearColor(RadarWindow.AdjustedColor(this.BackColor, this.CurrentPrefSet.Brightness.Background));
-        let settingsstring = XmlSerializer.Serialize(this); // XmlSerializer<RadarWindow>.Serialize(this)
+        let settingsstring = new XmlSerializer(RadarWindow).Serialize(this); // XmlSerializer<RadarWindow>.Serialize(this)
         if (settingsstring != null) {
             {
                 let md5 = MD5.Create();
@@ -637,7 +637,7 @@ export class RadarWindow {
 
     Window_MouseUp(sender, e) { // (object sender, MouseButtonEventArgs e)
         if (this.CurrentPrefSet.DCBVisible)
-            this.dcb.ActiveMenu.MouseUp();
+            this.#dcb.ActiveMenu.MouseUp();
     }
 
     Aircraft_CollectionChanged(sender, e) { // (object sender, NotifyCollectionChangedEventArgs e)
@@ -856,7 +856,7 @@ export class RadarWindow {
     Window_MouseMove(sender, e) { // (object sender, MouseMoveEventArgs e)
         this.MouseLocation = e.Position;
         if (this.CurrentPrefSet.DCBVisible)
-            this.dcb.ActiveMenu.MouseMove(e.Position);
+            this.#dcb.ActiveMenu.MouseMove(e.Position);
         if (this.#tempLine != null)
             this.#tempLine.End = this.LocationFromScreenPoint(e.Position);
         if (!e.Mouse.IsAnyButtonDown) {
@@ -892,7 +892,7 @@ export class RadarWindow {
         else
             clickpoint = this.LocationFromScreenPoint(ClickedPoint);
         let clicked; // object
-        if (this.CurrentPrefSet.DCBVisible && this.dcb.ActiveMenu.DrawnBounds.Contains(ClickedPoint)) {
+        if (this.CurrentPrefSet.DCBVisible && this.#dcb.ActiveMenu.DrawnBounds.Contains(ClickedPoint)) {
             return ClickedPoint;
         }
         // lock (Aircraft)
@@ -920,7 +920,7 @@ export class RadarWindow {
         }
         clicked = this.ClickedObject(mousepos);
         if (this.CurrentPrefSet.DCBVisible)
-            this.dcb.ActiveMenu.MouseDown();
+            this.#dcb.ActiveMenu.MouseDown();
         if (enterclick || e.Mouse.LeftButton === ButtonState.Pressed) {
             if ((Keyboard.GetState().IsKeyDown(Key.ControlLeft) || Keyboard.GetState().IsKeyDown(Key.ControlRight)) &&
                 (Keyboard.GetState().IsKeyDown(Key.ShiftLeft) || Keyboard.GetState().IsKeyDown(Key.ShiftRight))) {
@@ -1030,8 +1030,8 @@ export class RadarWindow {
         }
 
         if (enter && this.CurrentPrefSet.DCBVisible) {
-            this.dcb.ActiveMenu.MouseDown();
-            this.dcb.ActiveMenu.MouseUp();
+            this.#dcb.ActiveMenu.MouseDown();
+            this.#dcb.ActiveMenu.MouseUp();
         }
         if (KeyList.length < 1 && clicked != null && clicked.constructor === Aircraft) {
             let plane = clicked; // (Aircraft)clicked
@@ -3017,9 +3017,9 @@ export class RadarWindow {
             this.#dcbWxButton[i].BackColorActive = this.Nexrad.LevelsAvailable[i] ? Color.SlateBlue : Color.Green;
             this.#dcbWxButton[i].BackColorInactive = this.Nexrad.LevelsAvailable[i] ? Color.DarkSlateBlue : Color.FromArgb(0, 80, 0);
         }
-        this.#dcbLdrDirButton.Text = "LDR DIR\r\n" + this.CurrentPrefSet.OwnedDataBlockPosition;
+        this.#dcbLdrDirButton.Text = "LDR DIR\r\n" + LeaderDirectionName(this.CurrentPrefSet.OwnedDataBlockPosition); // C# enum→name (port enum is numeric)
         this.#dcbLdrLenButton.Text = "LDR LEN\r\n" + this.CurrentPrefSet.LeaderLength;
-        this.#dcbSiteButton.Text = "SITE\r\n" + this.#radar.Name;
+        this.#dcbSiteButton.Text = "SITE\r\n" + (this.#radar.Name ?? ""); // C# string+null = "" (JS would give "null")
         this.#dcbDcbTopButton.Active = this.#dcb.Location === DCBLocation.Top;
         this.#dcbDcbBottomButton.Active = this.#dcb.Location === DCBLocation.Bottom;
         this.#dcbDcbLeftButton.Active = this.#dcb.Location === DCBLocation.Left;
@@ -3873,7 +3873,7 @@ export class RadarWindow {
     SaveSettings(path) { // public void SaveSettings(string path)
         let settingsxml = "";
         try {
-            settingsxml = XmlSerializer.Serialize(this); // XmlSerializer<RadarWindow>.Serialize(this)
+            settingsxml = new XmlSerializer(RadarWindow).Serialize(this); // XmlSerializer<RadarWindow>.Serialize(this)
             if (settingsxml == null || settingsxml.length === 0) {
                 console.log("There was a problem serializing the settings"); // MessageBox.Show
                 return;

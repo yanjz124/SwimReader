@@ -55,18 +55,26 @@ export class XmlSerializer {
     static #escape(s) {
         return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
-    static #toXml(tag, value, depth) {
+    static #toXml(tag, value, depth, seen = new WeakSet()) {
         const pad = "\t".repeat(depth); // GetIndentedSettings: Indent=true, IndentChars="\t"
         if (value == null) return `${pad}<${tag} />\n`;
+        // ADAPTATION: .NET's XmlSerializer honors [XmlIgnore] (which excludes RadarWindow's runtime
+        // object graph — Aircraft, DCB buttons/menus, textures) and throws on circular references.
+        // Those attributes were dropped in the port, so guard against cycles/runaway depth here
+        // (best-effort settings XML — see README). A revisited object or depth>64 is emitted empty.
+        if (typeof value === "object") {
+            if (seen.has(value) || depth > 64) return `${pad}<${tag} />\n`;
+            seen.add(value);
+        }
         if (Array.isArray(value)) {
-            return value.map(v => XmlSerializer.#toXml(tag, v, depth)).join("");
+            return value.map(v => XmlSerializer.#toXml(tag, v, depth, seen)).join("");
         }
         if (typeof value === "object") {
             let inner = "";
             for (const k of Object.keys(value)) {
                 const v = value[k];
                 if (typeof v === "function") continue;
-                inner += XmlSerializer.#toXml(k, v, depth + 1);
+                inner += XmlSerializer.#toXml(k, v, depth + 1, seen);
             }
             return `${pad}<${tag}>\n${inner}${pad}</${tag}>\n`;
         }

@@ -51,9 +51,14 @@ export class DCBButton extends DCBMenuItem {
             if (this.Font) graphics.font = this.Font.toCanvasFont();
             graphics.textAlign = "center";   // StringAlignment.Center
             graphics.textBaseline = "middle"; // LineAlignment.Center
-            graphics.fillText(this.Text ?? "",
-                this.#internalrectangle.X + this.#internalrectangle.Width / 2,
-                this.#internalrectangle.Y + this.#internalrectangle.Height / 2);
+            // GDI DrawString(rect, center/center) breaks on \r\n; canvas fillText doesn't → split + stack.
+            const lines = String(this.Text ?? "").split(/\r\n|\r|\n/);
+            const lm = graphics.measureText("Mg");
+            const lh = (lm.actualBoundingBoxAscent + lm.actualBoundingBoxDescent) || ((this.Font?.Size ?? 10) * 1.3);
+            const cx = this.#internalrectangle.X + this.#internalrectangle.Width / 2;
+            const cy = this.#internalrectangle.Y + this.#internalrectangle.Height / 2;
+            const y0 = cy - (lines.length - 1) * lh / 2;
+            lines.forEach((ln, i) => graphics.fillText(ln, cx, y0 + i * lh));
         }
         GL.BindTexture(TextureTarget.Texture2D, this.#textureID);
         // LockBits/Scan0 (BGRA) -> upload the canvas directly.

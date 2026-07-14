@@ -270,6 +270,31 @@ if (!Directory.EnumerateFiles(repoRoot, "*.kml").Any()
     Console.WriteLine($"[kml] no .git root; serving KML from app base dir {repoRoot}");
 }
 
+// DGScope port (dstars-port) served same-origin at /dscope so its host page can reach /api/stars
+// (video maps) and /dstars (target feed) without CORS. Static files straight off the source tree.
+var dscopeDir = Path.GetFullPath(Path.Combine(repoRoot, "dstars-port"));
+if (Directory.Exists(dscopeDir))
+{
+    var dscopeProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(dscopeDir);
+    var dscopeTypes = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
+    dscopeTypes.Mappings[".otf"] = "font/otf";
+    dscopeTypes.Mappings[".geojson"] = "application/geo+json";
+    app.UseDefaultFiles(new DefaultFilesOptions
+    {
+        FileProvider = dscopeProvider,
+        RequestPath = "/dscope",
+        DefaultFileNames = new List<string> { "index.html" },
+    });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = dscopeProvider,
+        RequestPath = "/dscope",
+        ContentTypeProvider = dscopeTypes,
+        OnPrepareResponse = ctx => ctx.Context.Response.Headers["Cache-Control"] = "no-store",
+    });
+    Console.WriteLine($"[dscope] DGScope port served at /dscope/ from {dscopeDir}");
+}
+
 // NEXRAD tile proxy HTTP client (declared early so route classes can capture)
 var nexradHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
 nexradHttp.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader/1.0");

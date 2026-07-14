@@ -173,3 +173,30 @@ header .sub {
     .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 7px; }
     .card { padding: 10px 11px; }
 }
+
+/* Throughput stat tiles (home page THROUGHPUT section) */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+}
+.stat-tile {
+    background: #0d0d0d;
+    border: 1px solid #2a2a2a;
+    border-radius: 3px;
+    padding: 14px 16px;
+    text-align: center;
+}
+.stat-tile .v {
+    font-size: 22px;
+    color: #cccc44;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.5px;
+}
+.stat-tile .k {
+    font-size: 11px;
+    color: #666;
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}

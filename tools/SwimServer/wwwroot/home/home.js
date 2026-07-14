@@ -18,6 +18,20 @@ function fmtMB(mb) {
     if (mb == null) return '--';
     return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
 }
+// Compact count (e.g. 1.2M, 34K) for messages/day.
+function fmtCompact(n) {
+    n = n || 0;
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
+    return Math.round(n).toString();
+}
+// Data volume from a MB value (→ MB or GB).
+function fmtData(mb) {
+    if (mb == null) return '--';
+    return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
+}
+const setTile = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
 
 function renderServerDetail() {
     const s = _sys || {};
@@ -66,6 +80,25 @@ async function refreshStats() {
             const connEl = document.getElementById('connStat');
             connEl.className = s.connected ? 'stat live' : 'stat';
             connEl.textContent = s.connected ? 'LIVE' : 'OFFLINE';
+            // THROUGHPUT tiles
+            setTile('stFlights', (s.flights || 0).toLocaleString());
+            setTile('stRate', (s.rate || 0).toFixed(0));
+            setTile('stMsgDay', fmtCompact((s.rate || 0) * 86400)); // extrapolated from live rate
+        }
+    } catch {}
+
+    // Flight-history archive → data ingress per day (daily jsonl file sizes) + archive totals.
+    try {
+        const hr = await fetch('/api/history/dates');
+        if (hr.ok) {
+            const dates = await hr.json();               // [{ date: "YYYY-MM-DD", sizeMb }]
+            const days = dates.length;
+            const totalMb = dates.reduce((a, d) => a + (d.sizeMb || 0), 0);
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const today = dates.find(d => d.date === todayStr);
+            setTile('stTodayData', today ? fmtData(today.sizeMb) : '0 MB');
+            setTile('stAvgDay', days ? fmtData(totalMb / days) : '--');
+            setTile('stArchive', days ? `${days} d · ${fmtData(totalMb)}` : '--');
         }
     } catch {}
 

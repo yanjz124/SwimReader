@@ -14,6 +14,42 @@ serverCard.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleServer(); }
 });
 
+// ── Throughput card: same expand/collapse pattern ──
+let _thr = {};            // latest throughput metrics
+const throughputCard   = document.getElementById('throughputCard');
+const throughputDetail = document.getElementById('throughputDetail');
+function toggleThroughput() {
+    const open = throughputCard.classList.toggle('open');
+    throughputCard.setAttribute('aria-expanded', open ? 'true' : 'false');
+    throughputDetail.hidden = !open;
+    if (open) renderThroughputDetail();
+}
+throughputCard.addEventListener('click', toggleThroughput);
+throughputCard.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleThroughput(); }
+});
+function renderThroughputDetail() {
+    const t = _thr || {};
+    const fields = [
+        ['Flights tracked', (t.flights ?? 0).toLocaleString()],
+        ['Messages / sec', (t.rate ?? 0).toFixed(0)],
+        ['Messages / day (est)', fmtCompact((t.rate ?? 0) * 86400)],
+        ['Data ingress today', t.todayData ?? '--'],
+        ['Avg data / day', t.avgData ?? '--'],
+        ['Flight archive', t.archive ?? '--'],
+    ];
+    throughputDetail.innerHTML = fields.map(([l, v]) =>
+        `<span class="lbl">${l}</span><span class="val">${v}</span>`).join('');
+}
+function updateThroughput() {
+    const t = _thr || {};
+    const cEl = document.getElementById('throughputCount');
+    if (cEl) cEl.textContent =
+        `${(t.flights ?? 0).toLocaleString()} flights  ${(t.rate ?? 0).toFixed(0)}/s`
+        + (t.todayData ? `  ${t.todayData} today` : '');
+    if (throughputCard.classList.contains('open')) renderThroughputDetail();
+}
+
 function fmtMB(mb) {
     if (mb == null) return '--';
     return mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb + ' MB';
@@ -31,7 +67,6 @@ function fmtData(mb) {
     if (mb == null) return '--';
     return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
 }
-const setTile = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
 
 function renderServerDetail() {
     const s = _sys || {};
@@ -80,10 +115,10 @@ async function refreshStats() {
             const connEl = document.getElementById('connStat');
             connEl.className = s.connected ? 'stat live' : 'stat';
             connEl.textContent = s.connected ? 'LIVE' : 'OFFLINE';
-            // THROUGHPUT tiles
-            setTile('stFlights', (s.flights || 0).toLocaleString());
-            setTile('stRate', (s.rate || 0).toFixed(0));
-            setTile('stMsgDay', fmtCompact((s.rate || 0) * 86400)); // extrapolated from live rate
+            // THROUGHPUT card
+            _thr.flights = s.flights || 0;
+            _thr.rate = s.rate || 0;
+            updateThroughput();
         }
     } catch {}
 
@@ -96,9 +131,10 @@ async function refreshStats() {
             const totalMb = dates.reduce((a, d) => a + (d.sizeMb || 0), 0);
             const todayStr = new Date().toISOString().slice(0, 10);
             const today = dates.find(d => d.date === todayStr);
-            setTile('stTodayData', today ? fmtData(today.sizeMb) : '0 MB');
-            setTile('stAvgDay', days ? fmtData(totalMb / days) : '--');
-            setTile('stArchive', days ? `${days} d · ${fmtData(totalMb)}` : '--');
+            _thr.todayData = today ? fmtData(today.sizeMb) : '0 MB';
+            _thr.avgData = days ? fmtData(totalMb / days) : '--';
+            _thr.archive = days ? `${days} d · ${fmtData(totalMb)}` : '--';
+            updateThroughput();
         }
     } catch {}
 

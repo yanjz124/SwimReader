@@ -27,18 +27,6 @@
 <main class="content">
 
     <section class="group">
-        <h2 class="group-title">THROUGHPUT</h2>
-        <div class="stats-grid">
-            <div class="stat-tile"><div class="v" id="stFlights">--</div><div class="k">flights tracked</div></div>
-            <div class="stat-tile"><div class="v" id="stRate">--</div><div class="k">messages / sec</div></div>
-            <div class="stat-tile"><div class="v" id="stMsgDay">--</div><div class="k">messages / day (est)</div></div>
-            <div class="stat-tile"><div class="v" id="stTodayData">--</div><div class="k">data ingress today</div></div>
-            <div class="stat-tile"><div class="v" id="stAvgDay">--</div><div class="k">avg data / day</div></div>
-            <div class="stat-tile"><div class="v" id="stArchive">--</div><div class="k">flight archive</div></div>
-        </div>
-    </section>
-
-    <section class="group">
         <h2 class="group-title">EN ROUTE (SFDPS)</h2>
         <div class="grid">
             <a class="card" href="/eram">
@@ -102,7 +90,7 @@
                 <div class="desc">Terminal radar scope (hand-written port) — in active development</div>
             </a>
             <a class="card" href="/dscope/">
-                <div class="title">DGSCOPE 1:1 <span class="wip">WIP</span></div>
+                <div class="title">STARS SCOPE V2 <span class="wip">WIP</span></div>
                 <div class="desc">Faithful DGScope transliteration — full DCB, data blocks, GL render</div>
             </a>
             <a class="card" href="/asdex">
@@ -140,6 +128,12 @@
     <section class="group">
         <h2 class="group-title">SYSTEM</h2>
         <div class="grid">
+            <div class="card server-card" id="throughputCard" role="button" tabindex="0" aria-expanded="false">
+                <div class="title">THROUGHPUT</div>
+                <div class="desc">Data ingress + flight volume — tap for detail</div>
+                <div class="count" id="throughputCount"></div>
+                <div class="server-detail" id="throughputDetail" hidden></div>
+            </div>
             <div class="card server-card" id="serverCard" role="button" tabindex="0" aria-expanded="false">
                 <div class="title">SERVER STATUS</div>
                 <div class="desc">Performance, memory, uptime — tap for detail</div>
@@ -163,7 +157,7 @@
 <footer id="buildFooter" title="Deployed git commit and time — confirms what's live"
         style="text-align:center;color:#666;font-size:11px;padding:10px 12px;font-family:'Courier New',monospace;letter-spacing:0.3px;">build —</footer>
 
-<script src="/home/home.js?v=6"></script>
+<script src="/home/home.js?v=7"></script>
 <script src="/idle-timer.js?v=2"></script>
 </body>
 </html>

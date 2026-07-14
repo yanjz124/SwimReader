@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<!-- DGScope-port home screen — profile picker, styled after tools/SwimServer/wwwroot/stars/index.html.
+     Lists the facility-config profiles in ./profiles and launches the clean scope with the chosen one. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>DGScope — Facility Picker</title>
+<style>
+  @font-face { font-family: "FixedDemiBold"; src: url("./assets/FixedDemiBold.otf") format("opentype"); }
+  body {
+    margin: 0; background: #000; color: #00ff00;
+    font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; font-size: 13px;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header { padding: 12px 20px 4px; }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: 1px; }
+  header h1 .wip { font-size: 10px; letter-spacing: 1px; color: #ffb300; border: 1px solid #5a4300;
+    background: #1a1400; border-radius: 2px; padding: 1px 5px; vertical-align: middle; margin-left: 8px; }
+  .subhead { padding: 6px 20px 8px; border-bottom: 1px solid #1a3a1a; }
+  .subhead .sub { color: #6f6; font-size: 11px; }
+  .layout { display: grid; grid-template-columns: 320px 1fr; flex: 1; min-height: 0; }
+  .col { overflow-y: auto; border-right: 1px solid #1a3a1a; }
+  .col:last-child { border-right: none; }
+  .col h2 { margin: 0; padding: 8px 16px; font-size: 11px; letter-spacing: 1px; color: #6f6;
+    border-bottom: 1px solid #1a3a1a; background: #050505; position: sticky; top: 0; }
+  .row { padding: 8px 16px; border-bottom: 1px solid #0a1a0a; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center; }
+  .row:hover { background: #052005; }
+  .row .id { color: #6cf; font-weight: bold; }
+  .row .meta { color: #6f6; font-size: 11px; }
+  .placeholder { padding: 16px; color: #6f6; }
+  .detail { padding: 16px; color: #8c8; font-size: 12px; line-height: 1.6; }
+  .detail b { color: #cf6; }
+</style>
+</head>
+<body>
+<header><h1>DGScope PORT <span class="wip">1:1 TRANSLITERATION</span></h1></header>
+<div class="subhead">
+  <div class="sub">Pick a DGScope facility-config profile to launch the scope. Profiles are the XmlSerializer&lt;RadarWindow&gt; settings files in <code>./profiles</code>.</div>
+</div>
+<div class="layout">
+  <div class="col">
+    <h2>PROFILES</h2>
+    <div id="profiles"><div class="placeholder">Loading…</div></div>
+  </div>
+  <div class="col">
+    <h2>DETAIL</h2>
+    <div id="detail" class="detail">Select a profile.</div>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+// Profile → its ARTCC + STARS facility (for the video-map API and the dSTARS feed). Grows as
+// more local profiles are added; a profile with no mapping still launches (maps/feed just skip).
+const FACMAP = { ILM_default: { artcc: "ZDC", facility: "ILM" } };
+async function load() {
+  let names = [];
+  try { names = (await fetch("./api/profiles").then(r => r.json())).profiles || []; }
+  catch { names = Object.keys(FACMAP); } // fallback (e.g. served by SwimServer, no /api/profiles)
+  if (!names.length) names = Object.keys(FACMAP);
+  $("profiles").innerHTML = names.map(n => {
+    const f = FACMAP[n];
+    return `<div class="row" data-p="${n}"><span class="id">${n}</span><span class="meta">${f ? f.artcc + "/" + f.facility + " · " : ""}launch ▸</span></div>`;
+  }).join("");
+  for (const el of document.querySelectorAll("#profiles .row")) {
+    el.onclick = () => {
+      const n = el.dataset.p, f = FACMAP[n];
+      const q = new URLSearchParams({ profile: n }); if (f) { q.set("artcc", f.artcc); q.set("facility", f.facility); }
+      location.href = `./scope.html?${q}`;
+    };
+    el.onmouseenter = () => showDetail(el.dataset.p);
+  }
+}
+async function showDetail(name) {
+  try {
+    const xml = await fetch(`./profiles/${name}.xml`).then(r => r.text());
+    const d = new DOMParser().parseFromString(xml, "application/xml").documentElement;
+    const get = (t) => d.querySelector(`:scope > ${t}`)?.textContent ?? "—";
+    const home = d.querySelector(":scope > HomeLocation");
+    const lat = home?.querySelector("Latitude")?.textContent, lon = home?.querySelector("Longitude")?.textContent;
+    $("detail").innerHTML =
+      `<div><b>${name}</b></div>
+       <div>Home: ${lat && lon ? `${(+lat).toFixed(4)}, ${(+lon).toFixed(4)}` : "—"}</div>
+       <div>Screen rotation: ${get("ScreenRotation")}°</div>
+       <div>Alt filter: ${get("MinAltitude")} … ${get("MaxAltitude")}</div>
+       <div>Range: ${d.querySelector("CurrentPrefSet > Range")?.textContent ?? "—"} NM</div>
+       <div style="margin-top:8px;color:#6c9;">Click to launch → clean scope (?profile=${name})</div>`;
+  } catch (e) { $("detail").textContent = "Error reading " + name; }
+}
+load();
+</script>
+</body>
+</html>

@@ -19,17 +19,11 @@
     <div class="status-bar">
         <span id="tfmsStatus">TFMS: <b>connecting...</b></span>
         <span id="flightCount">Flights: <b>--</b></span>
-        <span id="tmiCount">TMIs: <b>--</b></span>
     </div>
 </header>
 
-<div class="tabs">
-    <button class="tab active" data-tab="flights">FLIGHTS</button>
-    <button class="tab" data-tab="tmis">TMI / FCAs</button>
-</div>
-
 <!-- ── Flights view ─────────────────────────────────────────── -->
-<div class="main" id="flightView">
+<div class="main" id="flightView" style="display:flex">
     <div class="list-panel">
         <div class="search-bar">
             <input type="text" id="flightSearch" placeholder="Search callsign, airport, route, STAR...">
@@ -55,27 +49,6 @@
     </div>
     <div class="detail-panel" id="flightDetail">
         <span class="detail-close" id="flightDetailClose">X</span>
-    </div>
-</div>
-
-<!-- ── TMI view ─────────────────────────────────────────────── -->
-<div class="main" id="tmiView" style="display:none">
-    <div class="tmi-sidebar">
-        <div class="search-bar">
-            <input type="text" id="tmiSearch" placeholder="Search TMI / FCA name...">
-        </div>
-        <div class="scrollable" id="tmiListBody"></div>
-    </div>
-    <div class="list-panel">
-        <div id="tmiDetail" style="flex:1; overflow-y:auto; padding:16px 20px;">
-            <div class="empty-state">
-                <div class="big">TFM</div>
-                <div>Select a TMI to view affected flights</div>
-            </div>
-        </div>
-    </div>
-    <div class="detail-panel" id="tmiFlightDetail">
-        <span class="detail-close" id="tmiFlightDetailClose">X</span>
     </div>
 </div>
 

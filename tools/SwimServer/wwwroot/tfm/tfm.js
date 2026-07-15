@@ -1,140 +1,9 @@
-// ── Tab switching ────────────────────────────────────────────
-document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        document.getElementById('flightView').style.display = tab.dataset.tab === 'flights' ? 'flex' : 'none';
-        document.getElementById('tmiView').style.display = tab.dataset.tab === 'tmis' ? 'flex' : 'none';
-    });
-});
-
 // ── State ────────────────────────────────────────────────────
-let tmis = [];
 let flights = [];
-let selectedTmi = null;
 let selectedFlight = null;
 let detailMap = null;
 let detailRouteLine = null;
 let detailMarkers = [];
-
-// ── TMI WebSocket ────────────────────────────────────────────
-function connectTmiWs() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${location.host}/tfms/ws/tmi`);
-    ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'snapshot') {
-            tmis = msg.data;
-            renderTmiList();
-        } else if (msg.type === 'update') {
-            for (const t of msg.data) {
-                const idx = tmis.findIndex(x => x.fcaId === t.fcaId);
-                if (idx >= 0) tmis[idx] = t;
-                else tmis.push(t);
-            }
-            renderTmiList();
-            if (selectedTmi) {
-                const updated = msg.data.find(t => t.fcaId === selectedTmi);
-                if (updated) loadTmiDetail(selectedTmi);
-            }
-        }
-    };
-    ws.onclose = () => setTimeout(connectTmiWs, 5000);
-    ws.onerror = () => ws.close();
-}
-connectTmiWs();
-
-// ── Render TMI list ──────────────────────────────────────────
-function renderTmiList() {
-    const search = (document.getElementById('tmiSearch').value || '').toUpperCase();
-    const filtered = tmis
-        .filter(t => {
-            if (!search) return true;
-            return (t.fcaName || '').toUpperCase().includes(search)
-                || (t.fcaId || '').toUpperCase().includes(search);
-        })
-        .sort((a, b) => (b.flightCount || 0) - (a.flightCount || 0));
-
-    const body = document.getElementById('tmiListBody');
-    body.innerHTML = filtered.map(t => {
-        const name = t.fcaName || t.fcaId || '?';
-        const ago = t.lastUpdated ? timeSince(t.lastUpdated) : '?';
-        const sel = selectedTmi === t.fcaId ? 'selected' : '';
-        return `<div class="tmi-item ${sel}" data-id="${esc(t.fcaId)}">
-            <div class="tmi-name">${esc(name)}</div>
-            <div class="tmi-id">${esc(t.fcaId)}</div>
-            <div class="tmi-meta">
-                <span class="flights">${t.flightCount || 0} flights</span>
-                <span class="updated">${ago}</span>
-            </div>
-        </div>`;
-    }).join('');
-
-    body.querySelectorAll('.tmi-item').forEach(el => {
-        el.addEventListener('click', () => {
-            selectedTmi = el.dataset.id;
-            renderTmiList();
-            loadTmiDetail(el.dataset.id);
-        });
-    });
-
-    document.getElementById('tmiCount').innerHTML = `TMIs: <b>${tmis.length}</b>`;
-}
-
-document.getElementById('tmiSearch').addEventListener('input', renderTmiList);
-
-// ── Load TMI detail ──────────────────────────────────────────
-async function loadTmiDetail(fcaId) {
-    try {
-        const r = await fetch(`/api/tfms/tmis/${encodeURIComponent(fcaId)}`);
-        if (!r.ok) return;
-        const t = await r.json();
-        renderTmiDetail(t);
-    } catch {}
-}
-
-function renderTmiDetail(t) {
-    const detail = document.getElementById('tmiDetail');
-    const fl = t.flights || [];
-    detail.innerHTML = `
-        <div style="margin-bottom:16px;">
-            <div style="font-size:16px; color:#cccc44; letter-spacing:2px;">${esc(t.fcaName || t.fcaId)}</div>
-            <div style="font-size:10px; color:#444; margin-top:4px;">${esc(t.fcaId)}</div>
-            <div style="margin-top:6px; font-size:11px; color:#666;">
-                ${fl.length} flights | Last updated: ${t.lastUpdated ? formatTime(t.lastUpdated) : '?'}
-            </div>
-        </div>
-        <table class="flight-table">
-            <thead>
-                <tr>
-                    <th>CALLSIGN</th>
-                    <th>DEP</th>
-                    <th>ARR</th>
-                    <th>STATUS</th>
-                    <th>ENTRY</th>
-                    <th>EXIT</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${fl.map(f => `<tr data-ref="${esc(f.flightRef || f.callsign || '')}" style="cursor:pointer">
-                    <td class="cs">${esc(f.callsign || '?')}</td>
-                    <td>${esc(f.depArpt || '')}</td>
-                    <td>${esc(f.arrArpt || '')}</td>
-                    <td class="${f.status === 'ACTIVE' ? 'active' : ''}">${esc(f.status || '')}</td>
-                    <td class="time">${f.entryTime ? formatTime(f.entryTime) : ''}</td>
-                    <td class="time">${f.exitTime ? formatTime(f.exitTime) : ''}</td>
-                </tr>`).join('')}
-            </tbody>
-        </table>
-    `;
-
-    detail.querySelectorAll('tr[data-ref]').forEach(row => {
-        row.addEventListener('click', () => {
-            const ref = row.dataset.ref;
-            if (ref) loadFlightDetail(ref, 'tmiFlightDetail');
-        });
-    });
-}
 
 // ── Flight polling ───────────────────────────────────────────
 async function refreshFlights() {
@@ -424,7 +293,6 @@ function closeDetail(panelId) {
 }
 
 document.getElementById('flightDetailClose').addEventListener('click', () => closeDetail('flightDetail'));
-document.getElementById('tmiFlightDetailClose').addEventListener('click', () => closeDetail('tmiFlightDetail'));
 
 // ── Stats polling ────────────────────────────────────────────
 async function refreshStats() {
@@ -436,7 +304,6 @@ async function refreshStats() {
             ? `TFMS: <b style="color:#44aa44">LIVE</b> ${s.messageCount?.toLocaleString() || 0} msg`
             : `TFMS: <b style="color:#aa4444">DISCONNECTED</b>`;
         document.getElementById('flightCount').innerHTML = `Flights: <b>${s.flightCount || 0}</b>`;
-        document.getElementById('tmiCount').innerHTML = `TMIs: <b>${s.tmiCount || 0}</b>`;
     } catch {}
 }
 

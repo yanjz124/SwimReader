@@ -440,6 +440,8 @@ const CMD_GROUPS = [
     { c: "QP J <FLID>",            d: "Toggles standard DRI",                                    s: "ok" },
     { c: "QP T <FLID>",            d: "Toggles reduced-separation DRI",                          s: "ok" },
     { c: "QL <sector>…",           d: "Quick Look sectors (force FDB)",                          s: "ok" },
+    { c: "NK <apt> ON|OFF",        d: "TMU arrival force: FDB up for all arrivals to <apt>",     s: "ok",
+      n: "not a CRC/vNAS command — models the real-ERAM TMU force-FDB-by-destination function" },
     { c: "RF <FLID> <facility>",   d: "Forces flight-plan transfer to facility",                 s: "no" },
   ]},
   { name: "Beacon Codes", cmds: [

@@ -38,6 +38,7 @@ let replayActive = false;   // replay mode active (set by replay system IIFE)
 let replayCurrentTime = null; // ISO string of current replay position
 const quickLookSectors = new Set(); // QL sectors — force FDB on tracks in these sectors without claiming ownership
 const quickLookDests = new Set();   // QL destinations — force FDB on flights to these airports (e.g. KCLT, KGSO)
+const nkDests = new Set();           // NK arrival-airport force FDB (TMU function): NK <apt> ON/OFF forces all data blocks up for arrivals to <apt>
 const fdbOverrides = new Map(); // gufi → true/false — user toggle for FDB/LDB per track
 const wasOwnOrHo = new Set();  // tracks that were own/ho — keeps FDB sticky when they become other
 const manuallyHidden = new Set(); // GUFIs user explicitly hid via middle-click cycle or QX command
@@ -2309,6 +2310,11 @@ function shouldShowFdb(gufi, cls) {
     if (quickLookDests.size > 0) {
         const f = flights.get(gufi);
         if (f && f.destination && quickLookDests.has(f.destination.toUpperCase())) return true;
+    }
+    // NK arrival force (TMU): force FDB on every flight landing at an NK-enabled airport
+    if (nkDests.size > 0) {
+        const f = flights.get(gufi);
+        if (f && f.destination && nkDests.has(f.destination.toUpperCase())) return true;
     }
     // Point-out tracks force FDB
     {
@@ -6155,6 +6161,40 @@ function processCommand(cmd) {
         ];
         if (args.length > 0) feedback.push({ type: 'info', text: args.join(' ') });
         return { feedback };
+    }
+
+    // NK <apt> [ON|OFF]  — TMU arrival force: force all data blocks up (FDB) for every
+    // flight landing at <apt>. `NK <apt> ON` enables, `NK <apt> OFF` disables. `NK <apt>`
+    // alone toggles. `NK` alone lists / `NK OFF` (no apt) clears all. This is a facility-wide
+    // TMU function (not per-controller), so it persists until turned off — unlike QL.
+    // Note: not part of the CRC/vNAS command set; models the real-ERAM TMU capability.
+    if (verb === 'NK') {
+        const args = parts.slice(1).map(s => s.toUpperCase());
+        // NK  /  NK OFF (no airport) → list or clear all
+        if (args.length === 0) {
+            const list = nkDests.size ? [...nkDests].join(' ') : 'NONE';
+            return { feedback: [{ type: 'info', text: 'NK ARRIVAL FORCE' }, { type: 'info', text: list }] };
+        }
+        if (args.length === 1 && (args[0] === 'OFF' || args[0] === 'CLEAR')) {
+            nkDests.clear();
+            invalidateAllMarkers(); lastRenderTime = 0;
+            return { feedback: [{ type: 'ok', text: 'ACCEPT' }, { type: 'info', text: 'NK CLEARED' }] };
+        }
+        // Otherwise: first token is the airport, optional ON/OFF follows (default ON).
+        const apt = args[0];
+        const state = args[1] || 'ON';
+        if (!/^[A-Z]{3,4}$/.test(apt) || (state !== 'ON' && state !== 'OFF')) {
+            return { feedback: [{ type: 'err', text: 'FORMAT' }, { type: 'info', text: 'NK <APT> ON|OFF' }] };
+        }
+        // Accept both ICAO (KSLC) and 3-letter (SLC) — SFDPS stores ICAO.
+        const keys = apt.length === 3 ? [apt, 'K' + apt] : [apt];
+        const on = state === 'ON';
+        for (const k of keys) { if (on) nkDests.add(k); else nkDests.delete(k); }
+        invalidateAllMarkers(); lastRenderTime = 0;
+        return { feedback: [
+            { type: 'ok', text: 'ACCEPT' },
+            { type: 'info', text: 'NK ' + apt + ' ' + state },
+        ] };
     }
 
     // QP J <FLID>          — toggle standard DRI (5nm halo)

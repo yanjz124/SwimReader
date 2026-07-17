@@ -124,7 +124,17 @@
   </header>
   <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Enter a callsign to follow a flight.</span></div>
   <div id="out"></div>
+  <div class="tgnote">
+    ✈ On a plane? Use the <a href="https://t.me/swimffbot" target="_blank" rel="noopener">Telegram bot @swimffbot</a> —
+    it works over free "messaging only" inflight wifi (which blocks this page). Send it a callsign, or
+    <code>/sub AAL123</code> to get updates as your flight changes. Multiple callsigns at once work too.
+  </div>
 </div>
+<style>
+  .tgnote { margin: 22px 0 10px; padding: 10px 12px; border: 1px solid #2a3a5a; border-radius: 8px;
+    background: #0b1424; color: #9db4d8; font-size: 13px; line-height: 1.5; }
+  .tgnote a { color: #6cf; } .tgnote code { color: #cf6; background: #10203a; padding: 1px 5px; border-radius: 4px; }
+</style>
 <script src="/track/track.js?v=13"></script>
 </body>
 </html>

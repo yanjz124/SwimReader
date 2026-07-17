@@ -226,22 +226,33 @@ static class TrackRoutes
             sb.Append("Next: ").Append(recv).Append(rf != null ? " · " + rf : "").Append('\n');
         }
 
-        // Current controlling sector + frequency
+        // Current controlling sector + frequency (+ CID)
         if (best != null && !string.IsNullOrEmpty(best.ControllingFacility))
         {
             var now = best.ControllingFacility + (string.IsNullOrEmpty(best.ControllingSector) ? "" : "/" + best.ControllingSector);
             var nf = FreqOf(ctx, now);
-            sb.Append("Now: ").Append(now).Append(nf != null ? " · " + nf : "").Append('\n');
+            var cid = (best.ControllingFacility != null && best.ComputerIds.TryGetValue(best.ControllingFacility, out var cc)) ? cc : best.ComputerId;
+            sb.Append("Now: ").Append(now).Append(nf != null ? " · " + nf : "").Append(!string.IsNullOrEmpty(cid) ? " · CID " + cid : "").Append('\n');
         }
 
-        // Altitude / ground speed / squawk
+        // Altitude (assigned/reported + climb/descent trend) and Line-4 HSF (heading/speed/free text)
+        if (best != null)
+        {
+            var at = AltText(best);
+            if (!string.IsNullOrEmpty(at)) sb.Append("Alt: ").Append(at).Append('\n');
+            var l4 = HsfText(best);
+            if (!string.IsNullOrEmpty(l4)) sb.Append("Line 4: ").Append(l4).Append('\n');
+            if (!string.IsNullOrEmpty(best.PointoutOriginatingUnit) || !string.IsNullOrEmpty(best.PointoutReceivingUnit))
+                sb.Append("Point-out: ").Append(best.PointoutOriginatingUnit ?? "?").Append(" ▸ ").Append(best.PointoutReceivingUnit ?? "?").Append('\n');
+        }
+
+        // Ground speed / squawk / coast
         var parts = new List<string>();
-        var alt = best?.ReportedAltitude ?? best?.AssignedAltitude;
-        if (alt.HasValue) parts.Add(FmtAlt(alt.Value));
         var gs = best?.GroundSpeed ?? (tais0?.GroundSpeedKnots is int gk ? (double?)gk : null);
         if (gs is > 0) parts.Add((int)gs + " kt");
         var sq = best?.Squawk ?? asd0?.Squawk;
         if (!string.IsNullOrEmpty(sq)) parts.Add("sq " + sq);
+        if (!string.IsNullOrEmpty(best?.AssignedSquawk) && best!.AssignedSquawk != best.Squawk) parts.Add("asgn " + best.AssignedSquawk);
         if (best?.CoastIndicator == true) parts.Add("COAST");
         if (parts.Count > 0) sb.Append(string.Join(" · ", parts)).Append('\n');
 
@@ -251,9 +262,60 @@ static class TrackRoutes
             var age = best.LastPositionTime == default ? "" : " · " + (int)(DateTime.UtcNow - best.LastPositionTime).TotalSeconds + "s ago";
             sb.Append($"Pos: {la:0.000}, {lo:0.000}{age}").Append('\n');
         }
+        if (!string.IsNullOrEmpty(best?.ETA)) sb.Append("ETA: ").Append(Hm(best!.ETA)).Append('\n');
+
+        // Terminal (STARS/TAIS): owner+freq, entry▸exit, scratchpad, runway
+        if (tais0 != null)
+        {
+            var tf = FreqOf(ctx, tais0.Facility + "/" + (tais0.Owner ?? ""));
+            sb.Append("STARS: ").Append(tais0.Facility).Append(!string.IsNullOrEmpty(tais0.Owner) ? "/" + tais0.Owner : "").Append(tf != null ? " · " + tf : "");
+            var tm = new List<string>();
+            if (!string.IsNullOrEmpty(tais0.EntryFix) || !string.IsNullOrEmpty(tais0.ExitFix)) tm.Add((tais0.EntryFix ?? "—") + "▸" + (tais0.ExitFix ?? "—"));
+            var spd = string.Join(" ", new[] { tais0.Scratchpad1, tais0.Scratchpad2 }.Where(x => !string.IsNullOrEmpty(x)));
+            if (!string.IsNullOrEmpty(spd)) tm.Add("SP " + spd);
+            if (!string.IsNullOrEmpty(tais0.Runway)) tm.Add("RWY " + tais0.Runway);
+            if (tm.Count > 0) sb.Append(" · ").Append(string.Join(" · ", tm));
+            sb.Append('\n');
+        }
+
+        // TDLS: most recent clearance/departure line
+        var tdls0 = tdlsAc.FirstOrDefault();
+        if (tdls0 != null)
+        {
+            var m = tdls0.MessagesTyped().OrderByDescending(x => x.Time).FirstOrDefault();
+            if (m != null)
+            {
+                if (m.Type == "DEPART")
+                {
+                    var dp = new List<string>();
+                    if (!string.IsNullOrEmpty(m.Gate)) dp.Add("Gate " + m.Gate);
+                    if (!string.IsNullOrEmpty(m.TakeoffRunway)) dp.Add("RWY " + m.TakeoffRunway);
+                    sb.Append("TDLS DEP: ").Append(dp.Count > 0 ? string.Join(" · ", dp) : m.Time.ToString("HHmm") + "Z").Append('\n');
+                }
+                else sb.Append("TDLS CPDLC @ ").Append(m.Time.ToString("HHmm")).Append("Z\n");
+            }
+        }
+
+        // Surface (ASDE-X): gate / runway
+        if (asd0 != null)
+        {
+            var surf = new List<string>();
+            if (!string.IsNullOrEmpty(asd0.TdlsGate)) surf.Add("gate " + asd0.TdlsGate);
+            if (!string.IsNullOrEmpty(asd0.TdlsRunway)) surf.Add("rwy " + asd0.TdlsRunway);
+            if (surf.Count > 0) sb.Append("Surface: ").Append(string.Join(" · ", surf)).Append('\n');
+        }
 
         var edct = flights.Select(f => f.EdctTime).FirstOrDefault(e => !string.IsNullOrEmpty(e));
-        if (!string.IsNullOrEmpty(edct)) sb.Append("EDCT: ").Append(edct).Append('\n');
+        if (!string.IsNullOrEmpty(edct)) sb.Append("EDCT: ").Append(Hm(edct)).Append('\n');
+
+        // Sources present
+        var srcs = new List<string>();
+        if (flights.Count > 0) srcs.Add("SFDPS");
+        if (tfms != null) srcs.Add("TFMS");
+        if (tdlsAc.Count > 0) srcs.Add("TDLS");
+        if (taisTracks.Count > 0) srcs.Add("STARS");
+        if (asdexTracks.Count > 0) srcs.Add("ASDE-X");
+        if (srcs.Count > 0) sb.Append("in: ").Append(string.Join(" · ", srcs));
 
         return sb.ToString().TrimEnd();
     }

@@ -76,31 +76,37 @@ class TelegramBridge
             case "/start":
             case "/help":
                 await Send(chat,
-                    "Follow a flight over inflight wifi.\n\n" +
-                    "Send a callsign (e.g. AAL123) for its status.\n" +
-                    "/sub AAL123 — get updates when it changes\n" +
-                    "/unsub AAL123 — stop that one\n" +
+                    "Follow flights over inflight wifi.\n\n" +
+                    "Send one or more callsigns (e.g. AAL123 or 'AAL123 UAL456 DAL9') for status.\n" +
+                    "/sub AAL123 UAL456 — get updates when they change\n" +
+                    "/unsub AAL123 — stop those\n" +
                     "/list — your subscriptions\n" +
                     "/stop — unsubscribe from everything");
                 return;
 
             case "/track":
-                await Send(chat, TrackRoutes.TelegramSummary(_ctx, arg));
+                await Send(chat, MultiSummary(Callsigns(arg)));
                 return;
 
             case "/sub":
-                if (arg.Length == 0) { await Send(chat, "Usage: /sub CALLSIGN"); return; }
-                _subs.GetOrAdd(chat, _ => new HashSet<string>());
-                lock (_subs[chat]) _subs[chat].Add(arg);
-                _lastSent.TryRemove(Key(chat, arg), out _);
-                await Send(chat, "Subscribed to " + arg + ". You'll get updates when it changes.\n\n" + TrackRoutes.TelegramSummary(_ctx, arg));
+            {
+                var css = Callsigns(arg);
+                if (css.Count == 0) { await Send(chat, "Usage: /sub CALLSIGN [CALLSIGN…]"); return; }
+                var set = _subs.GetOrAdd(chat, _ => new HashSet<string>());
+                lock (set) foreach (var cs in css) set.Add(cs);
+                foreach (var cs in css) _lastSent.TryRemove(Key(chat, cs), out _);
+                await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change.\n\n" + MultiSummary(css));
                 return;
+            }
 
             case "/unsub":
-                if (_subs.TryGetValue(chat, out var set1)) { lock (set1) set1.Remove(arg); }
-                _lastSent.TryRemove(Key(chat, arg), out _);
-                await Send(chat, "Unsubscribed from " + arg + ".");
+            {
+                var css = Callsigns(arg);
+                if (_subs.TryGetValue(chat, out var set1)) { lock (set1) foreach (var cs in css) set1.Remove(cs); }
+                foreach (var cs in css) _lastSent.TryRemove(Key(chat, cs), out _);
+                await Send(chat, css.Count > 0 ? "Unsubscribed from " + string.Join(", ", css) + "." : "Usage: /unsub CALLSIGN");
                 return;
+            }
 
             case "/stop":
                 _subs.TryRemove(chat, out _);
@@ -114,13 +120,24 @@ class TelegramBridge
                 return;
 
             default:
-                // Bare callsign (letters+digits) → status. Otherwise nudge to /help.
-                if (System.Text.RegularExpressions.Regex.IsMatch(text, "^[A-Za-z0-9]{2,8}$"))
-                    await Send(chat, TrackRoutes.TelegramSummary(_ctx, text));
-                else
-                    await Send(chat, "Send a callsign (e.g. AAL123) or /help.");
+                // Bare callsign(s) → status. Otherwise nudge to /help.
+                var bare = Callsigns(text);
+                if (bare.Count > 0) await Send(chat, MultiSummary(bare));
+                else await Send(chat, "Send a callsign (e.g. AAL123) or /help.");
                 return;
         }
+    }
+
+    // Split a message into callsign tokens (space/comma/newline separated, 2–8 alphanumerics), max 6.
+    private static List<string> Callsigns(string s) =>
+        (s ?? "").Split(new[] { ' ', ',', '\n', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+            .Where(x => System.Text.RegularExpressions.Regex.IsMatch(x, "^[A-Za-z0-9]{2,8}$"))
+            .Select(x => x.ToUpperInvariant()).Distinct().Take(6).ToList();
+
+    private string MultiSummary(List<string> callsigns)
+    {
+        if (callsigns.Count == 0) return "Send a callsign, e.g. AAL123";
+        return string.Join("\n\n———\n\n", callsigns.Select(cs => TrackRoutes.TelegramSummary(_ctx, cs)));
     }
 
     // ── outgoing: push subscribed flights when their summary changes ─────────────

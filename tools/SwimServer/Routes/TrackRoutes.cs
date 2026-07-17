@@ -177,6 +177,87 @@ static class TrackRoutes
     private static List<FlightState> Matching(ServerContext ctx, string cs) =>
         ctx.Flights.Values.Where(f => string.Equals(f.Callsign, cs, StringComparison.OrdinalIgnoreCase) && f.FlightStatus != "CANCELLED").ToList();
 
+    private static string FmtAlt(double feet)
+    {
+        int hundreds = (int)Math.Round(feet / 100.0);
+        return feet >= 18000 ? "FL" + hundreds.ToString("000") : (hundreds * 100).ToString("#,0") + " ft";
+    }
+
+    /// Concise plain-text status for the Telegram bot (same aggregation the /t page uses).
+    /// Kept short so it fits one chat message and works over inflight free-messaging wifi.
+    internal static string TelegramSummary(ServerContext ctx, string cs)
+    {
+        cs = (cs ?? "").Trim().ToUpperInvariant();
+        if (cs.Length == 0) return "Send a callsign, e.g. AAL123";
+        var flights = Matching(ctx, cs);
+        var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
+        var taisTracks = ctx.Tais.TracksByCallsign(cs);
+        var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
+        var tfms = ctx.Tfms.FindByCallsign(cs);
+        if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null)
+            return $"Nothing is tracking {cs} right now.";
+
+        var best = flights.OrderBy(f => f.Latitude.HasValue ? 0 : 1)
+            .ThenBy(f => f.LastPositionTime == default ? 9999 : (DateTime.UtcNow - f.LastPositionTime).TotalSeconds).FirstOrDefault();
+        var tais0 = taisTracks.FirstOrDefault();
+        var asd0 = asdexTracks.FirstOrDefault();
+
+        var sb = new StringBuilder(256);
+        sb.Append("✈ ").Append(cs).Append('\n');
+        var org = best?.Origin ?? tais0?.Origin ?? asd0?.FpOrigin ?? tfms?.DepArpt;
+        var dst = best?.Destination ?? tais0?.Destination ?? asd0?.FpDestination ?? tfms?.ArrArpt;
+        var type = best?.AircraftType ?? tais0?.AircraftType ?? asd0?.AircraftType ?? tfms?.AircraftType;
+        sb.Append(string.IsNullOrEmpty(org) ? "????" : org).Append(" ▸ ").Append(string.IsNullOrEmpty(dst) ? "????" : dst);
+        if (!string.IsNullOrEmpty(type)) sb.Append(" · ").Append(type + (string.IsNullOrEmpty(best?.WakeCategory) ? "" : "/" + best!.WakeCategory));
+        sb.Append('\n');
+
+        sb.Append("Phase: ").Append(PhaseOf(best, asd0, tais0).label).Append('\n');
+
+        // Next frequency (en-route SFDPS handoff, else STARS/TAIS pending handoff)
+        var hoF = flights.FirstOrDefault(f => !string.IsNullOrEmpty(f.HandoffEvent) && !string.IsNullOrEmpty(f.HandoffReceiving));
+        if (hoF != null)
+        {
+            var rf = FreqOf(ctx, hoF.HandoffReceiving);
+            sb.Append("Next: ").Append(hoF.HandoffReceiving).Append(rf != null ? " · " + rf : "").Append('\n');
+        }
+        else if (tais0 != null && !string.IsNullOrEmpty(tais0.PendingHandoff))
+        {
+            var recv = tais0.Facility + "/" + tais0.PendingHandoff; var rf = FreqOf(ctx, recv);
+            sb.Append("Next: ").Append(recv).Append(rf != null ? " · " + rf : "").Append('\n');
+        }
+
+        // Current controlling sector + frequency
+        if (best != null && !string.IsNullOrEmpty(best.ControllingFacility))
+        {
+            var now = best.ControllingFacility + (string.IsNullOrEmpty(best.ControllingSector) ? "" : "/" + best.ControllingSector);
+            var nf = FreqOf(ctx, now);
+            sb.Append("Now: ").Append(now).Append(nf != null ? " · " + nf : "").Append('\n');
+        }
+
+        // Altitude / ground speed / squawk
+        var parts = new List<string>();
+        var alt = best?.ReportedAltitude ?? best?.AssignedAltitude;
+        if (alt.HasValue) parts.Add(FmtAlt(alt.Value));
+        var gs = best?.GroundSpeed ?? (tais0?.GroundSpeedKnots is int gk ? (double?)gk : null);
+        if (gs is > 0) parts.Add((int)gs + " kt");
+        var sq = best?.Squawk ?? asd0?.Squawk;
+        if (!string.IsNullOrEmpty(sq)) parts.Add("sq " + sq);
+        if (best?.CoastIndicator == true) parts.Add("COAST");
+        if (parts.Count > 0) sb.Append(string.Join(" · ", parts)).Append('\n');
+
+        // Position + age
+        if (best?.Latitude is double la && best?.Longitude is double lo)
+        {
+            var age = best.LastPositionTime == default ? "" : " · " + (int)(DateTime.UtcNow - best.LastPositionTime).TotalSeconds + "s ago";
+            sb.Append($"Pos: {la:0.000}, {lo:0.000}{age}").Append('\n');
+        }
+
+        var edct = flights.Select(f => f.EdctTime).FirstOrDefault(e => !string.IsNullOrEmpty(e));
+        if (!string.IsNullOrEmpty(edct)) sb.Append("EDCT: ").Append(edct).Append('\n');
+
+        return sb.ToString().TrimEnd();
+    }
+
     private static string He(string? s) => WebUtility.HtmlEncode(s ?? "");
     private static void AddU(List<string> l, string? x) { if (!string.IsNullOrEmpty(x) && !l.Contains(x)) l.Add(x); }
     private static string Hm(string? iso)

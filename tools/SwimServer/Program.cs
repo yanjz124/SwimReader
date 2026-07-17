@@ -381,6 +381,12 @@ AirspaceRoutes.Register(app, serverCtx);
 // /api/track/{callsign} — aggregate one callsign across all sources (mobile track page)
 TrackRoutes.Register(app, serverCtx);
 
+// Telegram bot — follow a flight over inflight free-messaging wifi (Track-a-Flight over Telegram).
+// Enabled only when TELEGRAM_BOT_TOKEN is set (create the bot via @BotFather).
+var telegramToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
+if (!string.IsNullOrWhiteSpace(telegramToken))
+    new TelegramBridge(telegramToken, serverCtx).Start();
+
 // NASR data endpoints under /api/nasr/* and /api/route/{gufi}
 NasrRoutes.Register(app, serverCtx);
 

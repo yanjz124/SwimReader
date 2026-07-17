@@ -321,8 +321,15 @@ static class TrackRoutes
     }
 
     /// A signature of only the *meaningful* state — for the Telegram push loop to decide whether
-    /// anything worth notifying changed. Deliberately excludes position, age, ground speed, and
-    /// reported altitude (which drift every scan), so a stale/coasting flight never re-notifies.
+    /// anything worth notifying changed. We push only on genuine flight-plan / control events
+    /// (handoffs, point-outs, Line-4 HSF, EDCT, squawk assignment, status, STARS, TDLS), NOT on
+    /// position, ground speed, or altitude drift. Altitude is deliberately excluded entirely
+    /// (assigned, interim, and reported all move without being "news" for a follower).
+    ///
+    /// The flight is selected *stably* (by controlling-facility presence then GUFI, never by
+    /// freshest position): when several centres track the same callsign, a position-freshness pick
+    /// would flip between GUFIs every scan and churn the sector/handoff fields — which read to the
+    /// user as spurious "position/altitude" notifications. Stable selection kills that.
     internal static string TelegramChangeKey(ServerContext ctx, string cs)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
@@ -330,8 +337,9 @@ static class TrackRoutes
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
         var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
         var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
-        var best = flights.OrderBy(f => f.Latitude.HasValue ? 0 : 1)
-            .ThenBy(f => f.LastPositionTime == default ? 9999 : (DateTime.UtcNow - f.LastPositionTime).TotalSeconds).FirstOrDefault();
+        var best = flights
+            .OrderByDescending(f => string.IsNullOrEmpty(f.ControllingFacility) ? 0 : 1)
+            .ThenBy(f => f.Gufi, StringComparer.Ordinal).FirstOrDefault();
         var tais0 = taisTracks.FirstOrDefault();
         var asd0 = asdexTracks.FirstOrDefault();
 
@@ -341,7 +349,7 @@ static class TrackRoutes
         {
             sb.Append(best.ControllingFacility).Append('/').Append(best.ControllingSector).Append('|');
             sb.Append(best.HandoffEvent).Append('>').Append(best.HandoffReceiving).Append('|');
-            sb.Append(best.AssignedAltitude).Append('/').Append(best.InterimAltitude).Append('|'); // assigned/interim, not reported
+            // Altitude (assigned/interim/reported) intentionally omitted — not a push-worthy change.
             sb.Append(best.Squawk).Append('/').Append(best.AssignedSquawk).Append('|');
             sb.Append(best.FlightStatus).Append('|');
             sb.Append(best.PointoutOriginatingUnit).Append('>').Append(best.PointoutReceivingUnit).Append('|');

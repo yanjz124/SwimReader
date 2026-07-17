@@ -32,6 +32,7 @@ let scopeBckgrd = 0;        // 0-100, scope background brightness (BCKGRD). Defa
 let scopeBcklght = 70;      // 0-100, scope backlight brightness (BCKLGHT DCB slider)
 let showPortalFence = true; // two corner brackets on FDB with PO/R indicators
 let showMapBg = false;      // tile layer hidden by default
+let tmuMode = false;        // TMU mode: hide data blocks, show only icons (large scale view)
 let line4Mode = 'DEST';     // 'DEST' | 'TYPE' | 'OFF' — what FDB line 4 shows
 let boundaryStyle = 'dashed'; // 'solid' or 'dashed' — boundary line style
 let replayActive = false;   // replay mode active (set by replay system IIFE)
@@ -1222,7 +1223,7 @@ function drawOverlay() {
     const ctx = overlayCanvas.getContext('2d');
 
     // ── History symbols (dimmer target symbols — drawn as geometry, not font) ──
-    if (showHistory) {
+    if (showHistory && !tmuMode) {
         const histNow = performance.now();
         const histCutoff = histNow - (MAX_HISTORY * SCAN_INTERVAL);
         for (const [gufi, hist] of flightHistory) {
@@ -1256,7 +1257,7 @@ function drawOverlay() {
     }
 
     // ── Velocity vectors ──
-    if (vectorMinutes > 0) {
+    if (vectorMinutes > 0 && !tmuMode) {
         ctx.lineWidth = 1.5;
         ctx.globalAlpha = 1.0;
         for (const [gufi, f] of flights) {
@@ -1453,6 +1454,16 @@ const BOUNDARY_CAT_SLIDER = { 'Ultra High': 'rng-bnd-uhi', 'High Altitude': 'rng
 const BOUNDARY_CAT_LABEL = { 'Ultra High': 'lbl-bnd-uhi', 'High Altitude': 'lbl-bnd-hi', 'Low Altitude': 'lbl-bnd-lo', 'Approach Control': 'lbl-bnd-app' };
 let boundaryBrightness = { 'Ultra High': 60, 'High Altitude': 60, 'Low Altitude': 0, 'Approach Control': 30 };
 
+// ARTCC boundaries (GeoJSON)
+let artccBoundShow = false;
+let artccBoundLayer = null;
+let artccBoundBrightness = 60;
+
+// State boundaries (GeoJSON)
+let stateBoundShow = false;
+let stateBoundLayer = null;
+let stateBoundBrightness = 60;
+
 function bndColor(brightness) {
     const v = Math.round(brightness * 2.55);
     return `rgb(${v},${v},${v})`;
@@ -1633,6 +1644,120 @@ function zoomToFacility(artcc) {
 }
 
 loadKml();
+
+// ════════════════════════════════════════════════════════════════════════════
+// ARTCC boundaries (GeoJSON overlay)
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadArtccBound() {
+    try {
+        const resp = await fetch('/ARTCC_BOUND.geojson');
+        if (!resp.ok) {
+            console.warn('[ARTCC BOUND]', resp.status);
+            return null;
+        }
+        return await resp.json();
+    } catch (e) {
+        console.warn('[ARTCC BOUND]', e);
+        return null;
+    }
+}
+
+function toggleArtccBound(show) {
+    artccBoundShow = show;
+    if (show) {
+        if (artccBoundLayer) {
+            map.addLayer(artccBoundLayer);
+        } else {
+            loadArtccBound().then(data => {
+                if (data && data.features) {
+                    artccBoundLayer = L.geoJSON(data, {
+                        style: {
+                            color: bndColor(artccBoundBrightness),
+                            weight: 1,
+                            opacity: 1,
+                            fillOpacity: 0
+                        },
+                        interactive: false,
+                        className: 'bnd-path'
+                    });
+                    if (artccBoundShow) {
+                        map.addLayer(artccBoundLayer);
+                    }
+                }
+            });
+        }
+    } else {
+        if (artccBoundLayer && map.hasLayer(artccBoundLayer)) {
+            map.removeLayer(artccBoundLayer);
+        }
+    }
+    saveSettingsToLocalStorage();
+}
+
+function setArtccBoundBrightness(brightness) {
+    artccBoundBrightness = brightness;
+    if (artccBoundLayer) {
+        const col = bndColor(brightness);
+        artccBoundLayer.eachLayer(l => l.setStyle({ color: col }));
+    }
+    saveSettingsToLocalStorage();
+}
+
+async function loadStateBound() {
+    try {
+        const resp = await fetch('/STATE_BOUND.json');
+        if (!resp.ok) {
+            console.warn('[STATE BOUND]', resp.status);
+            return null;
+        }
+        return await resp.json();
+    } catch (e) {
+        console.warn('[STATE BOUND]', e);
+        return null;
+    }
+}
+
+function toggleStateBound(show) {
+    stateBoundShow = show;
+    if (show) {
+        if (stateBoundLayer) {
+            map.addLayer(stateBoundLayer);
+        } else {
+            loadStateBound().then(data => {
+                if (data && data.features) {
+                    stateBoundLayer = L.geoJSON(data, {
+                        style: {
+                            color: bndColor(stateBoundBrightness),
+                            weight: 1,
+                            opacity: 1,
+                            fillOpacity: 0
+                        },
+                        interactive: false,
+                        className: 'bnd-path'
+                    });
+                    if (stateBoundShow) {
+                        map.addLayer(stateBoundLayer);
+                    }
+                }
+            });
+        }
+    } else {
+        if (stateBoundLayer && map.hasLayer(stateBoundLayer)) {
+            map.removeLayer(stateBoundLayer);
+        }
+    }
+    saveSettingsToLocalStorage();
+}
+
+function setStateBoundBrightness(brightness) {
+    stateBoundBrightness = brightness;
+    if (stateBoundLayer) {
+        const col = bndColor(brightness);
+        stateBoundLayer.eachLayer(l => l.setStyle({ color: col }));
+    }
+    saveSettingsToLocalStorage();
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // NASR overlay layers (airways, VORs, SID/STARs)
@@ -2369,6 +2494,9 @@ function removeDwell(el, gufi) {
 }
 
 // Build target symbol as pure CSS geometry — no font metrics, pixel-perfect centering at (0,0)
+// Aircraft icon for TMU mode (pointing north/up, rotated by heading)
+const AIRCRAFT_ICON_PATH = 'M 0 -8 L 1.3 -5 L 1.3 -1 L 8 2 L 7.5 3 L 1.8 1.5 L 1.8 5 L 4 7 L 0 6 L -4 7 L -1.8 5 L -1.8 1.5 L -7.5 3 L -8 2 L -1.3 -1 L -1.3 -5 Z';
+
 function buildTargetSym(symChar, isEmrg, extraStyle) {
     const c = isEmrg ? '#ff4444' : '#cccc44';
     const st = extraStyle ? extraStyle + ';' : '';
@@ -2416,6 +2544,17 @@ function buildMarkerHtml(f, cls) {
     }
 
     const useFdb = shouldShowFdb(f.gufi, cls);
+
+    // TMU mode: render aircraft icon instead of data block (only for FDB flights with position)
+    if (tmuMode && useFdb && f.latitude && f.longitude) {
+        const c = isEmrg ? '#ff4444' : '#cccc44';
+        const hdg = f.trackVelocityX && f.trackVelocityY
+            ? Math.atan2(f.trackVelocityX, f.trackVelocityY) * 180 / Math.PI
+            : 0;
+        const hit = `<div style="position:absolute;width:24px;height:24px;left:-12px;top:-12px;pointer-events:auto;cursor:inherit;z-index:2;"></div>`;
+        const icon = `<svg viewBox="-9 -9 18 18" width="18" height="18" style="position:absolute;left:-9px;top:-9px;pointer-events:none;z-index:1;"><g transform="rotate(${hdg})"><path d="${AIRCRAFT_ICON_PATH}" fill="${c}"/></g></svg>`;
+        return hit + icon;
+    }
 
     // FDB: diamond + symbol; LDB: just the symbol character (no diamond for coast tracks)
     let html;
@@ -3854,6 +3993,22 @@ document.getElementById('chk-mca-kb').addEventListener('change', function () {
     saveSettingsToLocalStorage();
 });
 
+let preTmuLdbBrightness = 50;  // Store LDB brightness before TMU mode
+document.getElementById('chk-tmu').addEventListener('change', function () {
+    tmuMode = this.checked;
+    if (tmuMode) {
+        preTmuLdbBrightness = ldbBrightness;
+        ldbBrightness = 0;
+    } else {
+        ldbBrightness = preTmuLdbBrightness;
+    }
+    document.getElementById('rng-ldb-brightness').value = ldbBrightness;
+    document.getElementById('lbl-ldb-brightness').textContent = ldbBrightness;
+    document.body.classList.toggle('tmu-mode', tmuMode);
+    invalidateAllMarkers();
+    drawOverlay();
+});
+
 const chkMca = document.getElementById('chk-mca');
 const chkRa = document.getElementById('chk-ra');
 const chkTime = document.getElementById('chk-time');
@@ -5053,6 +5208,10 @@ function loadSettingsFromLocalStorage() {
         if (settings.showPortalFence !== undefined) showPortalFence = settings.showPortalFence;
         if (settings.crrRdbEnabled !== undefined) crrRdbEnabled = settings.crrRdbEnabled;
         if (settings.crrRdbOffset !== undefined) crrRdbOffset = settings.crrRdbOffset;
+        if (settings.artccBoundShow !== undefined) artccBoundShow = settings.artccBoundShow;
+        if (settings.artccBoundBrightness !== undefined) artccBoundBrightness = settings.artccBoundBrightness;
+        if (settings.stateBoundShow !== undefined) stateBoundShow = settings.stateBoundShow;
+        if (settings.stateBoundBrightness !== undefined) stateBoundBrightness = settings.stateBoundBrightness;
 
         // Sync button state with restored global variables
         tbState.bright.bckgrd = scopeBckgrd;
@@ -5111,6 +5270,12 @@ function loadSettingsFromLocalStorage() {
     if (nasrBrightness.centerlines > 0 && !centerlineData) {
         fetch('/api/nasr/centerlines').then(r => r.ok ? r.json() : null).then(d => { if (d) { centerlineData = d; drawOverlay(); } });
     }
+    if (artccBoundShow) {
+        toggleArtccBound(true);
+    }
+    if (stateBoundShow) {
+        toggleStateBound(true);
+    }
     showBoundariesForFacility(myFacility);
     updateScopeBackground();
 }
@@ -5148,6 +5313,10 @@ function saveSettingsToLocalStorage() {
         showPortalFence,
         crrRdbEnabled,
         crrRdbOffset,
+        artccBoundShow,
+        artccBoundBrightness,
+        stateBoundShow,
+        stateBoundBrightness,
         tbVisible: window._tbVisible,
         tbState: { bright: tbState.bright },
         // Map position/zoom
@@ -9015,6 +9184,11 @@ const TB_GEOMAP = {
                 isOn: () => getRangeVal('rng-bnd-app') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-app', on ? 60 : 0),
             }),
+            toggle('STATE\nBOUND', {
+                cls: 'tb-toggle-grey',
+                isOn: () => stateBoundShow,
+                onToggle: (on) => toggleStateBound(on),
+            }),
         ],
         [
             toggle('HI AWY', {
@@ -9036,6 +9210,11 @@ const TB_GEOMAP = {
                 cls: 'tb-toggle-grey',
                 isOn: () => getRangeVal('rng-airports') > 0,
                 onToggle: (on) => setRangeVal('rng-airports', on ? 60 : 0),
+            }),
+            toggle('ARTCC\nBOUND', {
+                cls: 'tb-toggle-grey',
+                isOn: () => artccBoundShow,
+                onToggle: (on) => toggleArtccBound(on),
             }),
         ],
     ],
@@ -9151,6 +9330,40 @@ const TB_MAP_BRIGHT = {
                 formatValue: v => v,
                 onDec: () => setRangeVal('rng-airports', Math.max(0, getRangeVal('rng-airports') - 10)),
                 onInc: () => setRangeVal('rng-airports', Math.min(100, getRangeVal('rng-airports') + 10)),
+            }),
+            incdec('ARTCC\nBND', {
+                cls: 'tb-green',
+                getValue: () => artccBoundBrightness,
+                formatValue: v => v,
+                onDec: () => {
+                    if (artccBoundShow) {
+                        setArtccBoundBrightness(Math.max(0, artccBoundBrightness - 10));
+                        setRangeVal('rng-artcc-bnd', artccBoundBrightness);
+                    }
+                },
+                onInc: () => {
+                    if (artccBoundShow) {
+                        setArtccBoundBrightness(Math.min(100, artccBoundBrightness + 10));
+                        setRangeVal('rng-artcc-bnd', artccBoundBrightness);
+                    }
+                },
+            }),
+            incdec('STATE\nBND', {
+                cls: 'tb-green',
+                getValue: () => stateBoundBrightness,
+                formatValue: v => v,
+                onDec: () => {
+                    if (stateBoundShow) {
+                        setStateBoundBrightness(Math.max(0, stateBoundBrightness - 10));
+                        setRangeVal('rng-state-bnd', stateBoundBrightness);
+                    }
+                },
+                onInc: () => {
+                    if (stateBoundShow) {
+                        setStateBoundBrightness(Math.min(100, stateBoundBrightness + 10));
+                        setRangeVal('rng-state-bnd', stateBoundBrightness);
+                    }
+                },
             }),
         ],
     ],

@@ -357,6 +357,10 @@ input[type="checkbox"]:checked::after {
 .ac-group.dwell-hide-fence .ac-portal-fence { display: none !important; }
 /* .ac-db.ho — handoff flash now driven by JS */
 
+/* ── TMU Mode: hide all data blocks and leader lines, show only aircraft icons ── */
+body.tmu-mode .ac-db { display: none !important; }
+body.tmu-mode .ac-leader { display: none !important; }
+
 /* ── Range Data Block (RDB) — distance to CRR group ── */
 .ac-rdb {
     position: absolute; white-space: nowrap; pointer-events: none;

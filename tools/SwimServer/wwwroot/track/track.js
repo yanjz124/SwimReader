@@ -138,7 +138,7 @@
 
   function heroCard(d, f, tais, asd) {
     const type = (f && f.acType) || (tais && tais.acType) || (asd && asd.track.acType) || (d.tfms && d.tfms.acType) || '';
-    const wake = (f && f.wake) ? '/' + f.wake : '';
+    const wake = (f && f.equip) ? '/' + f.equip : ''; // FAA equipment suffix (e.g. /L), not wake class
     const org = (f && f.origin) || (tais && tais.origin) || (asd && asd.track.origin) || (d.tfms && d.tfms.depArpt) || '';
     const dst = (f && f.dest) || (tais && tais.dest) || (asd && asd.track.dest) || (d.tfms && d.tfms.arrArpt) || '';
     const ph = phaseOf(d, f, tais, asd);

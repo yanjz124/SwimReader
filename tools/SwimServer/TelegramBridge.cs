@@ -94,8 +94,9 @@ class TelegramBridge
                 if (css.Count == 0) { await Send(chat, "Usage: /sub CALLSIGN [CALLSIGN…]"); return; }
                 var set = _subs.GetOrAdd(chat, _ => new HashSet<string>());
                 lock (set) foreach (var cs in css) set.Add(cs);
-                foreach (var cs in css) _lastSent.TryRemove(Key(chat, cs), out _);
                 await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change.\n\n" + MultiSummary(css));
+                // Baseline the change-key now so the push loop only fires on a real change (no immediate re-send).
+                foreach (var cs in css) _lastSent[Key(chat, cs)] = TrackRoutes.TelegramChangeKey(_ctx, cs);
                 return;
             }
 
@@ -153,11 +154,12 @@ class TelegramBridge
                     string[] callsigns; lock (set) callsigns = set.ToArray();
                     foreach (var cs in callsigns)
                     {
-                        var summary = TrackRoutes.TelegramSummary(_ctx, cs);
+                        // Notify only when the *meaningful* state changed (not position/age drift).
+                        var sig = TrackRoutes.TelegramChangeKey(_ctx, cs);
                         var key = Key(chat, cs);
-                        if (_lastSent.TryGetValue(key, out var prev) && prev == summary) continue; // no change
-                        _lastSent[key] = summary;
-                        await Send(chat, summary);
+                        if (_lastSent.TryGetValue(key, out var prev) && prev == sig) continue; // nothing worth pushing
+                        _lastSent[key] = sig;
+                        await Send(chat, TrackRoutes.TelegramSummary(_ctx, cs));
                     }
                 }
             }

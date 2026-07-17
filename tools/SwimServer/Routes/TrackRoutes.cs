@@ -208,7 +208,7 @@ static class TrackRoutes
         var dst = best?.Destination ?? tais0?.Destination ?? asd0?.FpDestination ?? tfms?.ArrArpt;
         var type = best?.AircraftType ?? tais0?.AircraftType ?? asd0?.AircraftType ?? tfms?.AircraftType;
         sb.Append(string.IsNullOrEmpty(org) ? "????" : org).Append(" ▸ ").Append(string.IsNullOrEmpty(dst) ? "????" : dst);
-        if (!string.IsNullOrEmpty(type)) sb.Append(" · ").Append(type + (string.IsNullOrEmpty(best?.WakeCategory) ? "" : "/" + best!.WakeCategory));
+        if (!string.IsNullOrEmpty(type)) sb.Append(" · ").Append(type + (string.IsNullOrEmpty(best?.EquipmentQualifier) ? "" : "/" + best!.EquipmentQualifier)); // FAA equipment suffix (e.g. /L), not wake
         sb.Append('\n');
 
         sb.Append("Phase: ").Append(PhaseOf(best, asd0, tais0).label).Append('\n');
@@ -318,6 +318,43 @@ static class TrackRoutes
         if (srcs.Count > 0) sb.Append("in: ").Append(string.Join(" · ", srcs));
 
         return sb.ToString().TrimEnd();
+    }
+
+    /// A signature of only the *meaningful* state — for the Telegram push loop to decide whether
+    /// anything worth notifying changed. Deliberately excludes position, age, ground speed, and
+    /// reported altitude (which drift every scan), so a stale/coasting flight never re-notifies.
+    internal static string TelegramChangeKey(ServerContext ctx, string cs)
+    {
+        cs = (cs ?? "").Trim().ToUpperInvariant();
+        var flights = Matching(ctx, cs);
+        var taisTracks = ctx.Tais.TracksByCallsign(cs);
+        var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
+        var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
+        var best = flights.OrderBy(f => f.Latitude.HasValue ? 0 : 1)
+            .ThenBy(f => f.LastPositionTime == default ? 9999 : (DateTime.UtcNow - f.LastPositionTime).TotalSeconds).FirstOrDefault();
+        var tais0 = taisTracks.FirstOrDefault();
+        var asd0 = asdexTracks.FirstOrDefault();
+
+        var sb = new StringBuilder(128);
+        sb.Append(PhaseOf(best, asd0, tais0).label).Append('|');
+        if (best != null)
+        {
+            sb.Append(best.ControllingFacility).Append('/').Append(best.ControllingSector).Append('|');
+            sb.Append(best.HandoffEvent).Append('>').Append(best.HandoffReceiving).Append('|');
+            sb.Append(best.AssignedAltitude).Append('/').Append(best.InterimAltitude).Append('|'); // assigned/interim, not reported
+            sb.Append(best.Squawk).Append('/').Append(best.AssignedSquawk).Append('|');
+            sb.Append(best.FlightStatus).Append('|');
+            sb.Append(best.PointoutOriginatingUnit).Append('>').Append(best.PointoutReceivingUnit).Append('|');
+            sb.Append(best.ClearanceHeading).Append(';').Append(best.ClearanceSpeed).Append(';').Append(best.ClearanceText).Append('|');
+        }
+        if (tais0 != null)
+            sb.Append(tais0.Owner).Append('/').Append(tais0.PendingHandoff).Append('/').Append(tais0.Scratchpad1).Append(tais0.Scratchpad2).Append('/').Append(tais0.Runway).Append('|');
+        sb.Append(flights.Select(f => f.EdctTime).FirstOrDefault(e => !string.IsNullOrEmpty(e))).Append('|');
+        var tm = tdlsAc.FirstOrDefault()?.MessagesTyped().OrderByDescending(m => m.Time).FirstOrDefault();
+        if (tm != null) sb.Append(tm.Time.Ticks);
+        sb.Append('|').Append(flights.Count > 0 ? 'S' : '-').Append(taisTracks.Count > 0 ? 'T' : '-')
+          .Append(asdexTracks.Count > 0 ? 'A' : '-').Append(tdlsAc.Count > 0 ? 'D' : '-');
+        return sb.ToString();
     }
 
     private static string He(string? s) => WebUtility.HtmlEncode(s ?? "");

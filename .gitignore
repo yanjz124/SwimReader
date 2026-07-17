@@ -70,3 +70,4 @@ tools/SwimServer/pointout-investigation-*.jsonl
 tools/SwimServer/tdls-history/
 x64/
 x86/
+telegram-subs.json

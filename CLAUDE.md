@@ -10,6 +10,8 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 
 **Before implementing any STARS display feature, command, color, or behavior, ALWAYS read `docs/crc-stars-reference.md` first.** This is a curated local capture of the authoritative CRC/vNAS STARS docs (https://docs.virtualnas.net/crc/stars/) — covers target/position symbols, data blocks (LDB/PDB/FDB), ownership colors, STCA/CA logic, special purpose codes, handoffs, and point outs. Match it exactly; if a detail is missing, fetch the live page and add it. This complements the DGScope WPF source in `../scope/` — use the source for rendering/algorithm details, the docs for user-facing behavior and appearance.
 
+**Supplementary ERAM command reference: `docs/eats-computer-commands.md`** (text extraction of `docs/eats-computer-commands.pdf`, the eATS simulator manual). Less authoritative than the CRC reference — CRC governs when they disagree — but very good coverage of classic NAS/ERAM CRD command formats (FP, AM field amendments, QF/QU/QL/QQ/QZ/QP/QD/CO/SR, quick-action keys, field-10 route amendments). Ignore its eATS-only simulation commands (`XX …`). Useful for command forms CRC doesn't document, e.g. `QL <airport>` (Quick Look by destination, additive up to 5) and `QD dddBddd` altitude limits.
+
 ## Architecture Overview
 
 ```

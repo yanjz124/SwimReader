@@ -226,9 +226,33 @@ static class TrackRoutes
         .OrderByDescending(t => t.LastSeen)
         .Take(3);
 
-    // A STARS/TAIS owner TCP of "C" means the en-route Center owns the track — the TRACON is only
-    // displaying it — so it must not be treated as terminal (TRACON) control on the "Now" line.
-    private static bool IsCenterOwned(string? tcp) => string.Equals(tcp?.Trim(), "C", StringComparison.OrdinalIgnoreCase);
+    // A STARS/TAIS TCP of "C" means the en-route Center — as an owner it means the Center owns the
+    // track (the TRACON is only displaying it); as a pendingHandoff target it means the track is being
+    // handed to the Center. TAIS never carries *which* ARTCC/sector, so "C" must be resolved via SFDPS.
+    private static bool IsCenterTcp(string? tcp) => string.Equals(tcp?.Trim(), "C", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsArtcc(string? fac) =>
+        !string.IsNullOrEmpty(fac) && fac!.Length == 3 && char.ToUpperInvariant(fac[0]) == 'Z';
+
+    // Name the en-route Centre from SFDPS when a terminal (STARS) handoff only says "C" — TAIS can't.
+    // Prefers an explicit SFDPS en-route handoff receiver that's an ARTCC; else the current SFDPS
+    // controlling sector when it's a Centre. Returns ("ZAU/47", freq) or null if SFDPS can't say.
+    private static (string label, string? freq)? SfdpsCenter(ServerContext ctx, List<FlightState> flights)
+    {
+        foreach (var f in flights)
+        {
+            if (string.IsNullOrEmpty(f.HandoffReceiving)) continue;
+            var (recv, _) = MapFacToken(ctx, f.ReportingFacility, f.HandoffReceiving!);
+            if (IsArtcc(recv.Split('/')[0])) return (recv, FreqOf(ctx, recv));
+        }
+        var best = BestFlight(flights);
+        if (best != null && IsArtcc(best.ControllingFacility) && !string.IsNullOrEmpty(best.ControllingSector))
+        {
+            var lbl = best.ControllingFacility + "/" + best.ControllingSector;
+            return (lbl, FreqOf(ctx, lbl));
+        }
+        return null;
+    }
 
     private static string FmtAlt(double feet)
     {
@@ -275,8 +299,19 @@ static class TrackRoutes
         }
         else if (tais0 != null && !string.IsNullOrEmpty(tais0.PendingHandoff))
         {
-            var recv = tais0.Facility + "/" + tais0.PendingHandoff; var rf = FreqOf(ctx, recv);
-            sb.Append("Next: ").Append(recv).Append(rf != null ? " · " + rf : "").Append('\n');
+            if (IsCenterTcp(tais0.PendingHandoff))
+            {
+                // Handoff to the Center — TAIS only says "C", never which ARTCC/sector. Name it from
+                // SFDPS (the en-route feed); fall back to a generic "Center" if SFDPS can't say yet.
+                var c = SfdpsCenter(ctx, flights);
+                sb.Append("Next: ").Append(c?.label ?? "Center").Append(" (Center)")
+                  .Append(c?.freq != null ? " · " + c.Value.freq : "").Append('\n');
+            }
+            else
+            {
+                var recv = tais0.Facility + "/" + tais0.PendingHandoff; var rf = FreqOf(ctx, recv);
+                sb.Append("Next: ").Append(recv).Append(rf != null ? " · " + rf : "").Append('\n');
+            }
         }
 
         // Current controller. Prefer a TRACON that *currently owns* the track in STARS/TAIS — that's
@@ -286,7 +321,7 @@ static class TrackRoutes
         // a track lingering after the aircraft climbed back out to the centre.
         var ownedTais = taisTracks
             .Where(t => !string.IsNullOrEmpty(t.Owner) && !string.IsNullOrEmpty(t.Facility)
-                        && !IsCenterOwned(t.Owner)   // owner "C" = Center owns it, not the TRACON
+                        && !IsCenterTcp(t.Owner)   // owner "C" = Center owns it, not the TRACON
                         && (DateTime.UtcNow - t.LastSeen).TotalSeconds < 45)
             .OrderByDescending(t => t.LastSeen)
             .FirstOrDefault();
@@ -356,7 +391,7 @@ static class TrackRoutes
         {
             var tf = FreqOf(ctx, t.Facility + "/" + (t.Owner ?? ""));
             sb.Append("STARS ").Append(t.Facility);
-            if (IsCenterOwned(t.Owner)) sb.Append(" · owned by Center");
+            if (IsCenterTcp(t.Owner)) sb.Append(" · owned by Center");
             else if (!string.IsNullOrEmpty(t.Owner)) sb.Append(" · owner ").Append(t.Owner).Append(tf != null ? " " + tf : "");
             if (!string.IsNullOrEmpty(t.HandoffOcr) && t.HandoffOcr != "no change") sb.Append(" · ").Append(t.HandoffOcr);
             var tm = new List<string>();

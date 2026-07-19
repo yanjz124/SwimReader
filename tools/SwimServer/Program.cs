@@ -166,6 +166,11 @@ var gateCodes = new ConcurrentDictionary<string, ConcurrentDictionary<string, st
 var vnasFixRules = new ConcurrentDictionary<string, List<KeyValuePair<string, string>>>();
 // vNAS ARTCC ERAM sector → controller frequency (MHz string), keyed "FAC/SECTOR" (e.g. "ZDC/32" → "133.725")
 var sectorFreqs = new ConcurrentDictionary<string, string>();
+// SFDPS controlling-facility NAS code → real TRACON id, keyed "ARTCC/starsId" (e.g. "ZAU/ORT" → "C90").
+// Scoped by ARTCC because the 3-letter starsId is reused as a placeholder across ARTCCs (TTT is SCT
+// in ZLA but TOL/TPA elsewhere); SFDPS supplies reportingFacility so we can key by both. From each
+// ARTCC's eramConfiguration.neighboringStarsConfigurations.
+var traconIds = new ConcurrentDictionary<string, string>();
 
 // Initialize Solace SDK (once, before any thread or connection is created)
 {
@@ -341,6 +346,7 @@ var serverCtx = new ServerContext
     GateCodes = gateCodes,
     VnasFixRules = vnasFixRules,
     SectorFreqs = sectorFreqs,
+    TraconIds = traconIds,
     GetNasr = () => nasrData,
     RouteCache = routeCache,
     SendSnapshot = c => SendSnapshot(c),
@@ -690,6 +696,19 @@ async Task FetchVnasFixRules()
 
 void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int totalAirports)
 {
+    // ARTCC ERAM adaptation → NAS-code-to-TRACON map (only on the ARTCC node, which carries
+    // eramConfiguration). Keyed "ARTCC/starsId" so SFDPS (reportingFacility, controllingFacility)
+    // resolves to the real TRACON id without the cross-ARTCC placeholder collisions.
+    if (facility.TryGetProperty("eramConfiguration", out var eramCfg) && eramCfg.ValueKind == JsonValueKind.Object
+        && facility.TryGetProperty("id", out var artccIdEl) && artccIdEl.GetString() is { Length: > 0 } artccId
+        && eramCfg.TryGetProperty("neighboringStarsConfigurations", out var nsc) && nsc.ValueKind == JsonValueKind.Array)
+    {
+        foreach (var n in nsc.EnumerateArray())
+            if (n.TryGetProperty("starsId", out var sidEl) && sidEl.GetString() is { Length: > 0 } starsId
+                && n.TryGetProperty("facilityId", out var facEl) && facEl.GetString() is { Length: > 0 } facId)
+                traconIds[$"{artccId}/{starsId}"] = facId;
+    }
+
     // Scan controller positions for sector frequencies (ARTCC ERAM sectors and
     // TRACON STARS TCPs → freq), keyed "FAC/SECTOR". Wrapped so a malformed vNAS
     // position can never abort the fix-rule scan below.

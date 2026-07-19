@@ -167,6 +167,23 @@ static class TrackRoutes
         return null;
     }
 
+    // Map an SFDPS controlling/handoff facility NAS code (e.g. "ORT") to the real TRACON id ("C90"),
+    // scoped by the reporting ARTCC — the code is only unique within that ARTCC's ERAM adaptation.
+    // Returns null when unmapped (an ARTCC sector, or a facility the reporting ARTCC didn't adapt).
+    private static string? ResolveTracon(ServerContext ctx, string? reportingFacility, string? code) =>
+        !string.IsNullOrEmpty(reportingFacility) && !string.IsNullOrEmpty(code)
+        && ctx.TraconIds.TryGetValue(reportingFacility + "/" + code, out var id) ? id : null;
+
+    // Rewrite the facility half of a "FAC/SEC" token (e.g. "ORT/1J" → "C90/1J") when it maps to a
+    // TRACON; leaves ARTCC sectors and unmapped codes untouched. Returns (display, mapped-or-null).
+    private static (string text, string? tracon) MapFacToken(ServerContext ctx, string? reportingFacility, string facSlashSec)
+    {
+        var i = facSlashSec.IndexOf('/');
+        var fac = i > 0 ? facSlashSec[..i] : facSlashSec;
+        var tracon = ResolveTracon(ctx, reportingFacility, fac);
+        return tracon == null ? (facSlashSec, null) : (tracon + (i > 0 ? facSlashSec[i..] : ""), tracon);
+    }
+
     // Annotate each "FAC/SECTOR" token in free text with its frequency, if known.
     private static string AnnotateFreqs(ServerContext ctx, string? text) =>
         string.IsNullOrEmpty(text) ? "" : System.Text.RegularExpressions.Regex.Replace(
@@ -237,8 +254,9 @@ static class TrackRoutes
         var hoF = flights.FirstOrDefault(f => !string.IsNullOrEmpty(f.HandoffEvent) && !string.IsNullOrEmpty(f.HandoffReceiving));
         if (hoF != null)
         {
-            var rf = FreqOf(ctx, hoF.HandoffReceiving);
-            sb.Append("Next: ").Append(hoF.HandoffReceiving).Append(rf != null ? " · " + rf : "").Append('\n');
+            var (recv, tracon) = MapFacToken(ctx, hoF.ReportingFacility, hoF.HandoffReceiving!);
+            var rf = FreqOf(ctx, recv);
+            sb.Append("Next: ").Append(recv).Append(tracon != null ? " (" + hoF.HandoffReceiving + ")" : "").Append(rf != null ? " · " + rf : "").Append('\n');
         }
         else if (tais0 != null && !string.IsNullOrEmpty(tais0.PendingHandoff))
         {
@@ -246,13 +264,16 @@ static class TrackRoutes
             sb.Append("Next: ").Append(recv).Append(rf != null ? " · " + rf : "").Append('\n');
         }
 
-        // Current controlling sector + frequency (+ CID)
+        // Current controlling sector + frequency (+ CID). SFDPS reports a TRACON's NAS code (e.g.
+        // "ORT") — map it to the real id ("C90") scoped by reportingFacility, keeping the raw code shown.
         if (best != null && !string.IsNullOrEmpty(best.ControllingFacility))
         {
-            var now = best.ControllingFacility + (string.IsNullOrEmpty(best.ControllingSector) ? "" : "/" + best.ControllingSector);
+            var tracon = ResolveTracon(ctx, best.ReportingFacility, best.ControllingFacility);
+            var fac = tracon ?? best.ControllingFacility!;
+            var now = fac + (string.IsNullOrEmpty(best.ControllingSector) ? "" : "/" + best.ControllingSector);
             var nf = FreqOf(ctx, now);
             var cid = (best.ControllingFacility != null && best.ComputerIds.TryGetValue(best.ControllingFacility, out var cc)) ? cc : best.ComputerId;
-            sb.Append("Now: ").Append(now).Append(nf != null ? " · " + nf : "").Append(!string.IsNullOrEmpty(cid) ? " · CID " + cid : "").Append('\n');
+            sb.Append("Now: ").Append(now).Append(tracon != null ? " (" + best.ControllingFacility + ")" : "").Append(nf != null ? " · " + nf : "").Append(!string.IsNullOrEmpty(cid) ? " · CID " + cid : "").Append('\n');
         }
 
         // Altitude (assigned/reported + climb/descent trend) and Line-4 HSF (heading/speed/free text)

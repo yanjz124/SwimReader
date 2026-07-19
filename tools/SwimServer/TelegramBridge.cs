@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -23,6 +24,11 @@ class TelegramBridge
     // chatId -> subscribed callsigns; and last summary sent per (chat, callsign) to push only on change.
     private readonly ConcurrentDictionary<long, HashSet<string>> _subs = new();
     private readonly ConcurrentDictionary<string, string> _lastSent = new();
+    // Per-(chat, callsign) subscription time (for the 24h auto-expiry) and last route we sent (to
+    // show previous-vs-new on a route amendment). Keyed by Key(chat, cs).
+    private readonly ConcurrentDictionary<string, DateTime> _subAt = new();
+    private readonly ConcurrentDictionary<string, string> _lastRoute = new();
+    private static readonly TimeSpan SubTtl = TimeSpan.FromHours(24);
     private long _offset;
 
     // Subscriptions persist across restarts so a deploy doesn't silently drop everyone's follows.
@@ -40,21 +46,39 @@ class TelegramBridge
         Console.WriteLine($"[telegram] bot started (long-poll) — {_subs.Count} chat(s) restored");
     }
 
-    // ── persistence: {chatId(string) -> [callsigns]} ─────────────────────────────
+    // ── persistence: {chatId(string) -> {callsign -> subscribedAt(ISO)}} ─────────
+    // Times persist so the 24h expiry survives a restart (a restart must not silently
+    // extend everyone's follows). Falls back to the old {chatId -> [callsigns]} format.
     private void LoadSubs()
     {
         try
         {
             if (!File.Exists(SubsPath)) return;
-            var map = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(File.ReadAllText(SubsPath));
+            var text = File.ReadAllText(SubsPath);
+            Dictionary<string, Dictionary<string, string>>? map = null;
+            try { map = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(text); }
+            catch { /* legacy array format handled below */ }
+            if (map == null)
+            {
+                var old = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(text);
+                map = old?.ToDictionary(kv => kv.Key,
+                    kv => kv.Value.ToDictionary(cs => cs, _ => DateTime.UtcNow.ToString("o")));
+            }
             if (map == null) return;
-            foreach (var (k, v) in map)
-                if (long.TryParse(k, out var chat) && v is { Count: > 0 })
+            foreach (var (k, csMap) in map)
+                if (long.TryParse(k, out var chat) && csMap is { Count: > 0 })
                 {
-                    var set = new HashSet<string>(v);
+                    var set = new HashSet<string>();
+                    foreach (var (cs, iso) in csMap)
+                    {
+                        set.Add(cs);
+                        var key = Key(chat, cs);
+                        _subAt[key] = DateTime.TryParse(iso, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var dt) ? dt : DateTime.UtcNow;
+                        // Baseline change-key + route so restored subs don't all re-notify on first push.
+                        _lastSent[key] = TrackRoutes.TelegramChangeKey(_ctx, cs);
+                        _lastRoute[key] = TrackRoutes.TelegramRoute(_ctx, cs) ?? "";
+                    }
                     _subs[chat] = set;
-                    // Baseline change-keys so restored subs don't all re-notify on first push.
-                    foreach (var cs in set) _lastSent[Key(chat, cs)] = TrackRoutes.TelegramChangeKey(_ctx, cs);
                 }
         }
         catch (Exception ex) { Console.WriteLine("[telegram] load subs error: " + ex.Message); }
@@ -64,11 +88,12 @@ class TelegramBridge
     {
         try
         {
-            Dictionary<string, List<string>> map;
             var snapshot = _subs.ToArray();
-            map = snapshot.ToDictionary(
+            var map = snapshot.ToDictionary(
                 kv => kv.Key.ToString(),
-                kv => { lock (kv.Value) return kv.Value.OrderBy(x => x).ToList(); });
+                kv => { lock (kv.Value) return kv.Value.OrderBy(x => x).ToDictionary(
+                            cs => cs,
+                            cs => (_subAt.TryGetValue(Key(kv.Key, cs), out var dt) ? dt : DateTime.UtcNow).ToString("o")); });
             var json = JsonSerializer.Serialize(map);
             lock (_saveLock)
             {
@@ -124,10 +149,10 @@ class TelegramBridge
                 await Send(chat,
                     "Follow flights over inflight wifi.\n\n" +
                     "Send one or more callsigns (e.g. AAL123 or 'AAL123 UAL456 DAL9') for status.\n" +
-                    "/sub AAL123 UAL456 — get updates when they change\n" +
+                    "/sub AAL123 UAL456 — get updates when they change (auto-expires after 24h)\n" +
                     "/unsub AAL123 — stop those\n" +
                     "/list — your subscriptions\n" +
-                    "/stop — unsubscribe from everything");
+                    "/unsuball (or /stop) — unsubscribe from everything");
                 return;
 
             case "/track":
@@ -140,10 +165,16 @@ class TelegramBridge
                 if (css.Count == 0) { await Send(chat, "Usage: /sub CALLSIGN [CALLSIGN…]"); return; }
                 var set = _subs.GetOrAdd(chat, _ => new HashSet<string>());
                 lock (set) foreach (var cs in css) set.Add(cs);
+                // Baseline change-key/route/time now so the push loop only fires on a real change.
+                foreach (var cs in css)
+                {
+                    var key = Key(chat, cs);
+                    _subAt[key] = DateTime.UtcNow;
+                    _lastSent[key] = TrackRoutes.TelegramChangeKey(_ctx, cs);
+                    _lastRoute[key] = TrackRoutes.TelegramRoute(_ctx, cs) ?? "";
+                }
                 SaveSubs();
-                await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change.\n\n" + MultiSummary(css));
-                // Baseline the change-key now so the push loop only fires on a real change (no immediate re-send).
-                foreach (var cs in css) _lastSent[Key(chat, cs)] = TrackRoutes.TelegramChangeKey(_ctx, cs);
+                await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change; auto-expires in 24h.\n\n" + MultiSummary(css));
                 return;
             }
 
@@ -151,14 +182,15 @@ class TelegramBridge
             {
                 var css = Callsigns(arg);
                 if (_subs.TryGetValue(chat, out var set1)) { lock (set1) foreach (var cs in css) set1.Remove(cs); }
-                foreach (var cs in css) _lastSent.TryRemove(Key(chat, cs), out _);
+                foreach (var cs in css) Forget(chat, cs);
                 SaveSubs();
                 await Send(chat, css.Count > 0 ? "Unsubscribed from " + string.Join(", ", css) + "." : "Usage: /unsub CALLSIGN");
                 return;
             }
 
             case "/stop":
-                _subs.TryRemove(chat, out _);
+            case "/unsuball":
+                if (_subs.TryRemove(chat, out var gone)) { lock (gone) foreach (var cs in gone) Forget(chat, cs); }
                 SaveSubs();
                 await Send(chat, "Unsubscribed from all flights.");
                 return;
@@ -203,12 +235,27 @@ class TelegramBridge
                     string[] callsigns; lock (set) callsigns = set.ToArray();
                     foreach (var cs in callsigns)
                     {
+                        var key = Key(chat, cs);
+
+                        // Auto-expire a follow after 24h so subscriptions don't accumulate forever.
+                        if (_subAt.TryGetValue(key, out var since) && DateTime.UtcNow - since > SubTtl)
+                        {
+                            if (_subs.TryGetValue(chat, out var s)) { lock (s) s.Remove(cs); }
+                            Forget(chat, cs);
+                            SaveSubs();
+                            await Send(chat, $"⏱ Stopped following {cs} after 24h. Send /sub {cs} to keep following.");
+                            continue;
+                        }
+
                         // Notify only when the *meaningful* state changed (not position/age drift).
                         var sig = TrackRoutes.TelegramChangeKey(_ctx, cs);
-                        var key = Key(chat, cs);
                         if (_lastSent.TryGetValue(key, out var prev) && prev == sig) continue; // nothing worth pushing
                         _lastSent[key] = sig;
-                        await Send(chat, TrackRoutes.TelegramSummary(_ctx, cs));
+
+                        // Pass the previously-sent route so the summary can show "was: …" on an amendment.
+                        var prevRoute = _lastRoute.TryGetValue(key, out var pr) && !string.IsNullOrEmpty(pr) ? pr : null;
+                        _lastRoute[key] = TrackRoutes.TelegramRoute(_ctx, cs) ?? "";
+                        await Send(chat, TrackRoutes.TelegramSummary(_ctx, cs, prevRoute));
                     }
                 }
             }
@@ -217,6 +264,15 @@ class TelegramBridge
     }
 
     private static string Key(long chat, string cs) => chat + "|" + cs;
+
+    // Drop all per-(chat, callsign) push state (change-key, route, sub time) on unsubscribe/expiry.
+    private void Forget(long chat, string cs)
+    {
+        var key = Key(chat, cs);
+        _lastSent.TryRemove(key, out _);
+        _lastRoute.TryRemove(key, out _);
+        _subAt.TryRemove(key, out _);
+    }
 
     private async Task Send(long chat, string text)
     {

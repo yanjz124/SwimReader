@@ -177,6 +177,27 @@ static class TrackRoutes
     private static List<FlightState> Matching(ServerContext ctx, string cs) =>
         ctx.Flights.Values.Where(f => string.Equals(f.Callsign, cs, StringComparison.OrdinalIgnoreCase) && f.FlightStatus != "CANCELLED").ToList();
 
+    // Pick the flight record that represents the *current* leg. A callsign is reused across the
+    // day (e.g. ORD-BNA earlier, then ORD-XNA), and a just-landed prior leg lingers in memory with
+    // a stale position; ordering by "has position" would surface that dead leg and show its
+    // destination (KBNA) for the flight actually sitting at the gate (KXNA). So prefer a live
+    // (non-DROPPED) record, then the freshest-updated one — the active leg always updates most
+    // recently, whether it's airborne or a proposed plan being amended pre-departure.
+    private static FlightState? BestFlight(List<FlightState> flights) => flights
+        .OrderBy(f => f.FlightStatus == "DROPPED" ? 1 : 0)
+        .ThenByDescending(f => f.LastSeen)
+        .FirstOrDefault();
+
+    private static string Trunc(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
+
+    // One STARS track per facility (freshest), so a flight straddling two TRACONs shows both — but a
+    // facility that re-sends the same track many times doesn't spam. Capped at 3 facilities.
+    private static IEnumerable<TaisTrack> StarsTracks(List<TaisTrack> tracks) => tracks
+        .GroupBy(t => t.Facility)
+        .Select(g => g.OrderByDescending(t => t.LastSeen).First())
+        .OrderByDescending(t => t.LastSeen)
+        .Take(3);
+
     private static string FmtAlt(double feet)
     {
         int hundreds = (int)Math.Round(feet / 100.0);
@@ -185,7 +206,7 @@ static class TrackRoutes
 
     /// Concise plain-text status for the Telegram bot (same aggregation the /t page uses).
     /// Kept short so it fits one chat message and works over inflight free-messaging wifi.
-    internal static string TelegramSummary(ServerContext ctx, string cs)
+    internal static string TelegramSummary(ServerContext ctx, string cs, string? prevRoute = null)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
         if (cs.Length == 0) return "Send a callsign, e.g. AAL123";
@@ -197,8 +218,7 @@ static class TrackRoutes
         if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null)
             return $"Nothing is tracking {cs} right now.";
 
-        var best = flights.OrderBy(f => f.Latitude.HasValue ? 0 : 1)
-            .ThenBy(f => f.LastPositionTime == default ? 9999 : (DateTime.UtcNow - f.LastPositionTime).TotalSeconds).FirstOrDefault();
+        var best = BestFlight(flights);
         var tais0 = taisTracks.FirstOrDefault();
         var asd0 = asdexTracks.FirstOrDefault();
 
@@ -246,6 +266,16 @@ static class TrackRoutes
                 sb.Append("Point-out: ").Append(best.PointoutOriginatingUnit ?? "?").Append(" ▸ ").Append(best.PointoutReceivingUnit ?? "?").Append('\n');
         }
 
+        // Route (SFDPS, else ASDE-X flight-plan route). If it changed since we last pushed, show the
+        // previous route underneath so a follower sees the amendment.
+        var route = best?.Route ?? asd0?.FpRoute;
+        if (!string.IsNullOrEmpty(route))
+        {
+            sb.Append("Route: ").Append(Trunc(route, 200)).Append('\n');
+            if (!string.IsNullOrEmpty(prevRoute) && prevRoute != route)
+                sb.Append("  (was: ").Append(Trunc(prevRoute, 200)).Append(")\n");
+        }
+
         // Ground speed / squawk / coast
         var parts = new List<string>();
         var gs = best?.GroundSpeed ?? (tais0?.GroundSpeedKnots is int gk ? (double?)gk : null);
@@ -264,16 +294,21 @@ static class TrackRoutes
         }
         if (!string.IsNullOrEmpty(best?.ETA)) sb.Append("ETA: ").Append(Hm(best!.ETA)).Append('\n');
 
-        // Terminal (STARS/TAIS): owner+freq, entry▸exit, scratchpad, runway
-        if (tais0 != null)
+        // Terminal (STARS/TAIS) — one line per facility (a flight can be in two TRACONs during a
+        // handoff, e.g. SBN then C90, and each carries its own owner/handoff). Owner is the STARS
+        // TCP/position ID (e.g. "1Z"), not a facility; handoff state comes from <ocr>. Entry/exit
+        // fixes are labelled so they're never mistaken for the destination airport.
+        foreach (var t in StarsTracks(taisTracks))
         {
-            var tf = FreqOf(ctx, tais0.Facility + "/" + (tais0.Owner ?? ""));
-            sb.Append("STARS: ").Append(tais0.Facility).Append(!string.IsNullOrEmpty(tais0.Owner) ? "/" + tais0.Owner : "").Append(tf != null ? " · " + tf : "");
+            var tf = FreqOf(ctx, t.Facility + "/" + (t.Owner ?? ""));
+            sb.Append("STARS ").Append(t.Facility);
+            if (!string.IsNullOrEmpty(t.Owner)) sb.Append(" · owner ").Append(t.Owner).Append(tf != null ? " " + tf : "");
+            if (!string.IsNullOrEmpty(t.HandoffOcr) && t.HandoffOcr != "no change") sb.Append(" · ").Append(t.HandoffOcr);
             var tm = new List<string>();
-            if (!string.IsNullOrEmpty(tais0.EntryFix) || !string.IsNullOrEmpty(tais0.ExitFix)) tm.Add((tais0.EntryFix ?? "—") + "▸" + (tais0.ExitFix ?? "—"));
-            var spd = string.Join(" ", new[] { tais0.Scratchpad1, tais0.Scratchpad2 }.Where(x => !string.IsNullOrEmpty(x)));
+            if (!string.IsNullOrEmpty(t.EntryFix) || !string.IsNullOrEmpty(t.ExitFix)) tm.Add("gates " + (t.EntryFix ?? "—") + "▸" + (t.ExitFix ?? "—"));
+            var spd = string.Join(" ", new[] { t.Scratchpad1, t.Scratchpad2 }.Where(x => !string.IsNullOrEmpty(x)));
             if (!string.IsNullOrEmpty(spd)) tm.Add("SP " + spd);
-            if (!string.IsNullOrEmpty(tais0.Runway)) tm.Add("RWY " + tais0.Runway);
+            if (!string.IsNullOrEmpty(t.Runway)) tm.Add("RWY " + t.Runway);
             if (tm.Count > 0) sb.Append(" · ").Append(string.Join(" · ", tm));
             sb.Append('\n');
         }
@@ -320,6 +355,14 @@ static class TrackRoutes
         return sb.ToString().TrimEnd();
     }
 
+    /// The route the summary would currently display for a callsign — so the push loop can remember
+    /// it and show "previous vs new" when it changes. Same source order as the summary's Route line.
+    internal static string? TelegramRoute(ServerContext ctx, string cs)
+    {
+        cs = (cs ?? "").Trim().ToUpperInvariant();
+        return BestFlight(Matching(ctx, cs))?.Route ?? ctx.Asdex.TracksByCallsign(cs).FirstOrDefault()?.FpRoute;
+    }
+
     /// A signature of only the *meaningful* state — for the Telegram push loop to decide whether
     /// anything worth notifying changed. We push only on genuine flight-plan / control events
     /// (handoffs, point-outs, Line-4 HSF, EDCT, squawk assignment, status, STARS, TDLS), NOT on
@@ -355,8 +398,13 @@ static class TrackRoutes
             sb.Append(best.PointoutOriginatingUnit).Append('>').Append(best.PointoutReceivingUnit).Append('|');
             sb.Append(best.ClearanceHeading).Append(';').Append(best.ClearanceSpeed).Append(';').Append(best.ClearanceText).Append('|');
         }
-        if (tais0 != null)
-            sb.Append(tais0.Owner).Append('/').Append(tais0.PendingHandoff).Append('/').Append(tais0.Scratchpad1).Append(tais0.Scratchpad2).Append('/').Append(tais0.Runway).Append('|');
+        // Route amendment is push-worthy — use the same value the summary displays.
+        sb.Append(BestFlight(flights)?.Route ?? asd0?.FpRoute).Append('|');
+        // Every STARS facility's owner/handoff (a flight straddling two TRACONs — SBN then C90 — must
+        // push when the second facility takes ownership, which a single-track key missed).
+        foreach (var t in taisTracks.OrderBy(x => x.Facility, StringComparer.Ordinal))
+            sb.Append(t.Facility).Append(':').Append(t.Owner).Append('/').Append(t.HandoffOcr).Append('/').Append(t.PendingHandoff)
+              .Append('/').Append(t.Scratchpad1).Append(t.Scratchpad2).Append('/').Append(t.Runway).Append('|');
         sb.Append(flights.Select(f => f.EdctTime).FirstOrDefault(e => !string.IsNullOrEmpty(e))).Append('|');
         var tm = tdlsAc.FirstOrDefault()?.MessagesTyped().OrderByDescending(m => m.Time).FirstOrDefault();
         if (tm != null) sb.Append(tm.Time.Ticks);

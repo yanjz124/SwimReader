@@ -45,11 +45,19 @@ static class TrackRoutes
             {
                 if (!string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase)) continue;
                 if (f.FlightStatus == "CANCELLED") continue;
-                string? hoFreq = null;
-                if (!string.IsNullOrEmpty(f.HandoffReceiving)) { var hp = f.HandoffReceiving.Split('/'); if (hp.Length == 2) hoFreq = secFreq(hp[0], hp[1]); }
-                sfdps.Add(SfdpsProjection(f, secFreq(f.ControllingFacility, f.ControllingSector), hoFreq));
-                if (!string.IsNullOrEmpty(f.ControllingFacility) && !string.IsNullOrEmpty(f.ControllingSector)) AddFreqKey(f.ControllingFacility + "/" + f.ControllingSector);
-                foreach (var u in new[] { f.HandoffReceiving, f.HandoffTransferring, f.PointoutOriginatingUnit, f.PointoutReceivingUnit })
+                // Map SFDPS TRACON NAS codes (e.g. ORT) to real ids (C90), scoped by reporting ARTCC.
+                var ctrlTracon = ResolveTracon(ctx, f.ReportingFacility, f.ControllingFacility);
+                var ctrlFac = ctrlTracon ?? f.ControllingFacility;
+                string? hoFreq = null, hoRecvMapped = null;
+                if (!string.IsNullOrEmpty(f.HandoffReceiving))
+                {
+                    var (recvText, recvTracon) = MapFacToken(ctx, f.ReportingFacility, f.HandoffReceiving);
+                    hoRecvMapped = recvTracon != null ? recvText : null;
+                    var hp = recvText.Split('/'); if (hp.Length == 2) hoFreq = secFreq(hp[0], hp[1]);
+                }
+                sfdps.Add(SfdpsProjection(f, secFreq(ctrlFac, f.ControllingSector), hoFreq, ctrlTracon, hoRecvMapped));
+                if (!string.IsNullOrEmpty(ctrlFac) && !string.IsNullOrEmpty(f.ControllingSector)) AddFreqKey(ctrlFac + "/" + f.ControllingSector);
+                foreach (var u in new[] { f.HandoffReceiving, hoRecvMapped, f.HandoffTransferring, f.PointoutOriginatingUnit, f.PointoutReceivingUnit })
                     if (!string.IsNullOrEmpty(u)) foreach (var part in u.Split(',')) AddFreqKey(part);
                 if (edct is null && !string.IsNullOrEmpty(f.EdctTime)) edct = f.EdctTime;
                 foreach (var e in f.GetAllEvents())
@@ -106,10 +114,13 @@ static class TrackRoutes
     // Lean per-flight projection (no events/history) with the fields the track page needs:
     // full ICAO flight plan, ownership/handoff, position, clearance, times — enough to render
     // the flight-plan card and the mock ERAM/STARS data blocks.
-    private static object SfdpsProjection(FlightState f, string? sectorFreq, string? handoffFreq) => new
+    private static object SfdpsProjection(FlightState f, string? sectorFreq, string? handoffFreq,
+        string? controllingTracon = null, string? handoffReceivingMapped = null) => new
     {
         gufi = f.Gufi, callsign = f.Callsign, cid = f.ComputerId, status = f.FlightStatus,
         sectorFreq, handoffFreq,
+        // Real TRACON id for an SFDPS NAS code (null when unmapped/an ARTCC sector); raw code stays in controllingFacility.
+        controllingTracon, handoffReceivingMapped,
         cids = f.ComputerIds.IsEmpty ? null : new Dictionary<string, string>(f.ComputerIds),
         // flight plan / identity
         origin = f.Origin, dest = f.Destination, alternate = f.AlternateAerodrome,
@@ -547,8 +558,10 @@ static class TrackRoutes
             var label = (he.Contains("INITIAT") || he.Contains("PROPOS")) ? "HANDOFF PENDING"
                       : he.Contains("ACCEPT") ? "HANDOFF ACCEPTED"
                       : he.Contains("EXECUT") ? "HANDING OFF" : "HANDOFF";
-            var rf = Freq(hoF.HandoffReceiving);
-            sb.Append("<div class=ban>").Append(He(label)).Append(" NEXT &#9656; <b>").Append(He(hoF.HandoffReceiving!)).Append("</b>");
+            var (recv, recvTracon) = MapFacToken(ctx, hoF.ReportingFacility, hoF.HandoffReceiving!);
+            var rf = Freq(recv);
+            var recvDisp = recvTracon != null ? recv + " (" + hoF.HandoffReceiving + ")" : recv;
+            sb.Append("<div class=ban>").Append(He(label)).Append(" NEXT &#9656; <b>").Append(He(recvDisp)).Append("</b>");
             if (rf != null) sb.Append(" &#183; <b>").Append(He(rf)).Append("</b>");
             sb.Append("</div>");
         }
@@ -561,12 +574,16 @@ static class TrackRoutes
             sb.Append("</div>");
         }
 
-        // Current controller frequency (center + terminal), up front.
+        // Current controller frequency (center + terminal), up front. Map a TRACON NAS code to its
+        // real id (raw code kept in parens).
         if (best?.ControllingFacility != null)
         {
-            var cf = Freq(best.ControllingFacility + "/" + (best.ControllingSector ?? ""));
+            var tracon = ResolveTracon(ctx, best.ReportingFacility, best.ControllingFacility);
+            var fac = tracon ?? best.ControllingFacility;
+            var cf = Freq(fac + "/" + (best.ControllingSector ?? ""));
+            var disp = fac + (best.ControllingSector != null ? "/" + best.ControllingSector : "") + (tracon != null ? " (" + best.ControllingFacility + ")" : "");
             if (cf != null) sb.Append("<div class=frq>&#9673; <b>").Append(He(cf)).Append("</b> <span class=d>")
-                .Append(He(best.ControllingFacility + (best.ControllingSector != null ? "/" + best.ControllingSector : ""))).Append(" · center</span></div>");
+                .Append(He(disp)).Append(" · center</span></div>");
         }
         if (tais0?.Owner != null)
         {
@@ -595,22 +612,31 @@ static class TrackRoutes
             bool first = true;
             foreach (var f in flights)
             {
-                sb.Append("<div class=blk><b>").Append(He(f.ControllingFacility ?? f.ReportingFacility ?? "?"));
+                var fTracon = ResolveTracon(ctx, f.ReportingFacility, f.ControllingFacility);
+                var fFac = fTracon ?? f.ControllingFacility;
+                sb.Append("<div class=blk><b>").Append(He(fFac ?? f.ReportingFacility ?? "?"));
                 if (f.ControllingSector != null) sb.Append("/").Append(He(f.ControllingSector));
                 sb.Append("</b>");
+                if (fTracon != null) sb.Append(" <span class=d>(").Append(He(f.ControllingFacility!)).Append(")</span>");
                 if (!first) sb.Append(" <span class=d>(also tracking)</span>");
                 first = false;
                 var cid = (f.ControllingFacility != null && f.ComputerIds.TryGetValue(f.ControllingFacility, out var cc)) ? cc : f.ComputerId;
                 if (!string.IsNullOrEmpty(cid)) sb.Append(" CID ").Append(He(cid));
-                var freq = Freq((f.ControllingFacility ?? "") + "/" + (f.ControllingSector ?? ""));
+                var freq = Freq((fFac ?? "") + "/" + (f.ControllingSector ?? ""));
                 if (freq != null) sb.Append(" &#183; <b>").Append(He(freq)).Append("</b>");
                 sb.Append("<br>");
-                if (!string.IsNullOrEmpty(f.HandoffEvent))
+                if (!string.IsNullOrEmpty(f.HandoffEvent) && !string.IsNullOrEmpty(f.HandoffReceiving))
                 {
-                    var hrFreq = Freq(f.HandoffReceiving);
-                    sb.Append("<span class=w>Handoff ").Append(He(HoStatus(f.HandoffEvent))).Append(": ").Append(He(f.HandoffTransferring ?? "?")).Append(" &#9656; ").Append(He(f.HandoffReceiving ?? "?"));
+                    var (hrecv, hrecvTracon) = MapFacToken(ctx, f.ReportingFacility, f.HandoffReceiving!);
+                    var hrFreq = Freq(hrecv);
+                    var hrecvDisp = hrecvTracon != null ? hrecv + " (" + f.HandoffReceiving + ")" : hrecv;
+                    sb.Append("<span class=w>Handoff ").Append(He(HoStatus(f.HandoffEvent))).Append(": ").Append(He(f.HandoffTransferring ?? "?")).Append(" &#9656; ").Append(He(hrecvDisp));
                     if (hrFreq != null) sb.Append(" (").Append(He(hrFreq)).Append(")");
                     sb.Append("</span><br>");
+                }
+                else if (!string.IsNullOrEmpty(f.HandoffEvent))
+                {
+                    sb.Append("<span class=w>Handoff ").Append(He(HoStatus(f.HandoffEvent))).Append(": ").Append(He(f.HandoffTransferring ?? "?")).Append(" &#9656; ?</span><br>");
                 }
                 if (!string.IsNullOrEmpty(f.PointoutOriginatingUnit) || !string.IsNullOrEmpty(f.PointoutReceivingUnit))
                     sb.Append("Point-out: ").Append(He(AnnotateFreqs(ctx, (f.PointoutOriginatingUnit ?? "?") + " ▸ " + (f.PointoutReceivingUnit ?? "?")))).Append("<br>");

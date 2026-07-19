@@ -81,6 +81,19 @@
     var f = freqOf(facSlashSec);
     return f ? facSlashSec + '  ·  ' + f : facSlashSec;
   }
+  // SFDPS reports a TRACON's controlling facility as a NAS code (e.g. ORT); the server resolves it
+  // to the real id (C90). Show the real id with the raw code in parens: "C90/1J (ORT)".
+  function facDisp(fac, sec, tracon) {
+    var secp = sec ? '/' + sec : '';
+    return tracon ? tracon + secp + ' (' + (fac || '') + ')' : (fac || '') + secp;
+  }
+  // Receiving handoff token with the raw NAS code in parens when the server mapped it.
+  function recvDisp(f) {
+    if (!f.handoffReceiving) return '?';
+    return f.handoffReceivingMapped
+      ? f.handoffReceivingMapped + ' (' + f.handoffReceiving.split('/')[0] + ')'
+      : f.handoffReceiving;
+  }
   // Annotate every "FAC/SECTOR" token found in free text with its frequency, if known.
   function annotateFreqs(text) {
     if (!text) return text;
@@ -147,7 +160,7 @@
       .map(function (x) { return `<span class="chip${x[1] ? ' on' : ''}">${x[0]}</span>`; }).join('');
     const sub = [type + wake, (f && f.registration) || ''].filter(Boolean).join(' · ');
     const freq = f && f.sectorFreq;
-    const ctrl = f ? (f.controllingFacility || '') + (f.controllingSector ? '/' + f.controllingSector : '') : '';
+    const ctrl = f ? facDisp(f.controllingFacility, f.controllingSector, f.controllingTracon) : '';
     // Terminal (STARS) frequency — the flight can be in a TRACON while ERAM still owns it.
     const sOwner = tais && tais.owner ? (tais.facility + '/' + tais.owner) : '';
     const sfreq = sOwner ? (FREQS[sOwner] || '') : '';
@@ -160,7 +173,7 @@
       const he = (hoF.handoffEvent || '').toUpperCase();
       const pending = /INITIAT|PROPOS/.test(he);
       const label = pending ? 'HANDOFF PENDING' : /ACCEPT/.test(he) ? 'HANDOFF ACCEPTED' : /EXECUT/.test(he) ? 'HANDING OFF' : 'HANDOFF';
-      const recv = hoF.handoffReceiving;
+      const recv = hoF.handoffReceivingMapped || hoF.handoffReceiving; // mapped key resolves the freq
       let rf = freqOf(recv);
       // ERAM handoff code (e.g. BOA/1M) can differ from the STARS facility id (A90/1M);
       // fall back to a TAIS track whose owner matches the receiving sector code.
@@ -169,7 +182,7 @@
         const match = (d.tais || []).find(function (t) { return t.owner === recvSec && FREQS[t.facility + '/' + t.owner]; });
         if (match) rf = freqOf(match.facility + '/' + match.owner);
       }
-      hoBanner = `<div class="hobar${pending ? ' pend' : ''}"><span class="hol">${label}</span> NEXT &rarr; <b>${esc(recv)}</b>${rf ? ` &middot; <b>${esc(rf)}</b>` : ''}</div>`;
+      hoBanner = `<div class="hobar${pending ? ' pend' : ''}"><span class="hol">${label}</span> NEXT &rarr; <b>${esc(recvDisp(hoF))}</b>${rf ? ` &middot; <b>${esc(rf)}</b>` : ''}</div>`;
     } else if (tHo) {
       const recv = tHo.facility + '/' + tHo.handoff;
       const rf = freqOf(recv);
@@ -295,7 +308,9 @@
     else if (/EXECUT/.test(e)) st = 'EXECUTING';
     else if (/RETRACT/.test(e)) st = 'RETRACTED';
     else if (/FAIL/.test(e)) st = 'FAILED';
-    return `${st}  ·  ${f.handoffTransferring ? withFreq(f.handoffTransferring) : '?'} ▸ ${f.handoffReceiving ? withFreq(f.handoffReceiving) : '?'}`;
+    const recvKey = f.handoffReceivingMapped || f.handoffReceiving;
+    const recvTxt = f.handoffReceiving ? (recvDisp(f) + (freqOf(recvKey) ? '  ·  ' + freqOf(recvKey) : '')) : '?';
+    return `${st}  ·  ${f.handoffTransferring ? withFreq(f.handoffTransferring) : '?'} ▸ ${recvTxt}`;
   }
   // All ARTCCs that touch this callsign (controlling + reporting + every facility with a CID) —
   // shown as a stable set instead of a single reportingFacility that flip-flops between centres.
@@ -310,10 +325,11 @@
     if (!flights.length) return '';
     let rows = grid([['Tracked by', reportingArtccs(flights), 'hl']]);
     flights.forEach(function (f, i) {
-      rows += `<div class="subhdr">${esc(f.controllingFacility || f.reportingFacility || '?')}${i > 0 ? ' (also tracking)' : ''}</div>`;
+      const subFac = f.controllingTracon ? f.controllingTracon + ' (' + f.controllingFacility + ')' : (f.controllingFacility || f.reportingFacility || '?');
+      rows += `<div class="subhdr">${esc(subFac)}${i > 0 ? ' (also tracking)' : ''}</div>`;
       const ho = handoffStr(f);
       rows += grid([
-        ['Controlling', f.controllingFacility ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '') : '—', 'hl'],
+        ['Controlling', f.controllingFacility ? facDisp(f.controllingFacility, f.controllingSector, f.controllingTracon) : '—', 'hl'],
         ['Frequency', f.sectorFreq ? f.sectorFreq + ' MHz' : null, 'hl'],
         ['CIDs', cidsStr(f)],
         ['Handoff', ho ? handoffStrFreq(f) : 'none pending', ho ? 'warn' : ''],

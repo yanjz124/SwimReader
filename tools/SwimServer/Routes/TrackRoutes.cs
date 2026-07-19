@@ -226,6 +226,10 @@ static class TrackRoutes
         .OrderByDescending(t => t.LastSeen)
         .Take(3);
 
+    // A STARS/TAIS owner TCP of "C" means the en-route Center owns the track — the TRACON is only
+    // displaying it — so it must not be treated as terminal (TRACON) control on the "Now" line.
+    private static bool IsCenterOwned(string? tcp) => string.Equals(tcp?.Trim(), "C", StringComparison.OrdinalIgnoreCase);
+
     private static string FmtAlt(double feet)
     {
         int hundreds = (int)Math.Round(feet / 100.0);
@@ -282,6 +286,7 @@ static class TrackRoutes
         // a track lingering after the aircraft climbed back out to the centre.
         var ownedTais = taisTracks
             .Where(t => !string.IsNullOrEmpty(t.Owner) && !string.IsNullOrEmpty(t.Facility)
+                        && !IsCenterOwned(t.Owner)   // owner "C" = Center owns it, not the TRACON
                         && (DateTime.UtcNow - t.LastSeen).TotalSeconds < 45)
             .OrderByDescending(t => t.LastSeen)
             .FirstOrDefault();
@@ -351,7 +356,8 @@ static class TrackRoutes
         {
             var tf = FreqOf(ctx, t.Facility + "/" + (t.Owner ?? ""));
             sb.Append("STARS ").Append(t.Facility);
-            if (!string.IsNullOrEmpty(t.Owner)) sb.Append(" · owner ").Append(t.Owner).Append(tf != null ? " " + tf : "");
+            if (IsCenterOwned(t.Owner)) sb.Append(" · owned by Center");
+            else if (!string.IsNullOrEmpty(t.Owner)) sb.Append(" · owner ").Append(t.Owner).Append(tf != null ? " " + tf : "");
             if (!string.IsNullOrEmpty(t.HandoffOcr) && t.HandoffOcr != "no change") sb.Append(" · ").Append(t.HandoffOcr);
             var tm = new List<string>();
             if (!string.IsNullOrEmpty(t.EntryFix) || !string.IsNullOrEmpty(t.ExitFix)) tm.Add("gates " + (t.EntryFix ?? "—") + "▸" + (t.ExitFix ?? "—"));

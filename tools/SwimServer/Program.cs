@@ -1898,8 +1898,10 @@ void ProcessFlight(XElement flight, string rawXml)
         var route = agreed.Elements().FirstOrDefault(e => e.Name.LocalName == "route");
         if (route is not null)
         {
-            var routeText = route.Attribute("nasRouteText")?.Value;
-            // Fall back to expandedRoute when nasRouteText is absent.
+            var nasRouteText = route.Attribute("nasRouteText")?.Value;
+            var routeText = nasRouteText;
+            // Fall back to expandedRoute when nasRouteText is absent (HX route transfers carry only
+            // the fix-by-fix expandedRoute, no compact text).
             if (string.IsNullOrEmpty(routeText))
             {
                 var expanded = route.Elements().FirstOrDefault(e => e.Name.LocalName == "expandedRoute");
@@ -1916,8 +1918,16 @@ void ProcessFlight(XElement flight, string rawXml)
             }
             if (!string.IsNullOrEmpty(routeText))
             {
-                if (string.IsNullOrEmpty(state.OriginalRoute)) state.OriginalRoute = routeText;
-                state.Route = routeText;
+                // Prefer the compact nasRouteText — it keeps SID/STAR and airway names (e.g.
+                // "SPI TRIDE3 .. JFUND2 KORD"). The expandedRoute fallback is an all-fixes list, so it
+                // may only *seed* a route we don't have yet; it must never overwrite a compact route we
+                // already stored, or an HX arriving after the FH degrades the display to a wall of fixes.
+                var compact = !string.IsNullOrEmpty(nasRouteText);
+                if (compact || string.IsNullOrEmpty(state.Route))
+                {
+                    if (string.IsNullOrEmpty(state.OriginalRoute)) state.OriginalRoute = routeText;
+                    state.Route = routeText;
+                }
             }
             var rules = route.Attribute("initialFlightRules")?.Value;
             if (!string.IsNullOrEmpty(rules)) state.FlightRules = rules;

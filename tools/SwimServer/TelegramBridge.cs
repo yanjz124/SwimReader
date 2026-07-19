@@ -28,7 +28,18 @@ class TelegramBridge
     // show previous-vs-new on a route amendment). Keyed by Key(chat, cs).
     private readonly ConcurrentDictionary<string, DateTime> _subAt = new();
     private readonly ConcurrentDictionary<string, string> _lastRoute = new();
+    // Per-(chat, callsign) "gone quiet" flag — set once a followed flight lands / stops updating so we
+    // send a single final note and then stop re-pushing its frozen record (cleared when it revives).
+    private readonly ConcurrentDictionary<string, byte> _quiet = new();
     private static readonly TimeSpan SubTtl = TimeSpan.FromHours(24);
+    // No position update anywhere for this long ⇒ treat the flight as arrived/quiet. Well past a coast
+    // (26s) or DROPPED grace (60s), so a brief en-route radar gap won't trip it; a landed flight whose
+    // record lingers for the full 60-min retention is silenced within 5 minutes.
+    private const int StaleSec = 300;
+    // After a restart the flight cache is loaded before Solace reconnects, so the change-keys baselined
+    // in LoadSubs are computed from stale state. Wait this long for the feed to repopulate, then
+    // re-baseline every subscription, so a redeploy doesn't fire a spurious "update" to everyone.
+    private static readonly TimeSpan WarmUp = TimeSpan.FromMinutes(2);
     private long _offset;
 
     // Subscriptions persist across restarts so a deploy doesn't silently drop everyone's follows.
@@ -172,6 +183,10 @@ class TelegramBridge
                     _subAt[key] = DateTime.UtcNow;
                     _lastSent[key] = TrackRoutes.TelegramChangeKey(_ctx, cs);
                     _lastRoute[key] = TrackRoutes.TelegramRoute(_ctx, cs) ?? "";
+                    // If it already landed when they subscribed, start quiet — the summary just sent
+                    // shows the stale position, so don't announce "arrived" two minutes later.
+                    var age = TrackRoutes.TelegramPositionAgeSec(_ctx, cs);
+                    if (age != null && age > StaleSec) _quiet[key] = 0; else _quiet.TryRemove(key, out _);
                 }
                 SaveSubs();
                 await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change; auto-expires in 24h.\n\n" + MultiSummary(css));
@@ -225,6 +240,23 @@ class TelegramBridge
     // ── outgoing: push subscribed flights when their summary changes ─────────────
     private async Task PushLoop()
     {
+        // Warm-up: let Solace reconnect and the feed repopulate after a restart, then re-baseline every
+        // subscription against the settled state so a redeploy doesn't push a spurious "update" to
+        // everyone. Flights already landed/quiet are pre-marked so they don't all announce "arrived".
+        await Task.Delay(WarmUp);
+        foreach (var (chat, set) in _subs)
+        {
+            string[] css; lock (set) css = set.ToArray();
+            foreach (var cs in css)
+            {
+                var key = Key(chat, cs);
+                _lastSent[key] = TrackRoutes.TelegramChangeKey(_ctx, cs);
+                _lastRoute[key] = TrackRoutes.TelegramRoute(_ctx, cs) ?? "";
+                var age = TrackRoutes.TelegramPositionAgeSec(_ctx, cs);
+                if (age != null && age > StaleSec) _quiet[key] = 0; else _quiet.TryRemove(key, out _);
+            }
+        }
+
         while (true)
         {
             await Task.Delay(TimeSpan.FromSeconds(120));
@@ -246,6 +278,30 @@ class TelegramBridge
                             await Send(chat, $"⏱ Stopped following {cs} after 24h. Send /sub {cs} to keep following.");
                             continue;
                         }
+
+                        // Landed / no-longer-updating: once no source has a fresh position, send one final
+                        // note and fall quiet — don't keep re-pushing a frozen record for its whole 60-min
+                        // retention. A flight that never had a position (pre-departure) is left to normal
+                        // handling so its EDCT/gate/route changes still push. Revives automatically when a
+                        // fresh position returns (a diversion, or just a radar gap that filled back in).
+                        var age = TrackRoutes.TelegramPositionAgeSec(_ctx, cs);
+                        var fresh = age != null && age <= StaleSec;
+                        if (fresh)
+                        {
+                            _quiet.TryRemove(key, out _);
+                        }
+                        else if ((age != null && age > StaleSec) || _quiet.ContainsKey(key))
+                        {
+                            // Stale-with-position now, or already quiet (its record has since purged to
+                            // null). Announce once, then stay silent.
+                            if (_quiet.TryAdd(key, 0) && age != null)
+                            {
+                                _lastSent[key] = TrackRoutes.TelegramChangeKey(_ctx, cs);
+                                await Send(chat, $"🛬 {cs} — no position update for {age / 60}m. Likely arrived; pausing updates. Send {cs} anytime for the last-known details, and I'll resume automatically if it starts moving again.");
+                            }
+                            continue;
+                        }
+                        // else: age == null and not quiet ⇒ pre-departure, fall through to normal handling.
 
                         // Notify only when the *meaningful* state changed (not position/age drift).
                         var sig = TrackRoutes.TelegramChangeKey(_ctx, cs);
@@ -272,6 +328,7 @@ class TelegramBridge
         _lastSent.TryRemove(key, out _);
         _lastRoute.TryRemove(key, out _);
         _subAt.TryRemove(key, out _);
+        _quiet.TryRemove(key, out _);
     }
 
     private async Task Send(long chat, string text)

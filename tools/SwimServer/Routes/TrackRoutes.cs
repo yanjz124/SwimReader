@@ -422,6 +422,28 @@ static class TrackRoutes
     /// freshest position): when several centres track the same callsign, a position-freshness pick
     /// would flip between GUFIs every scan and churn the sector/handoff fields — which read to the
     /// user as spurious "position/altitude" notifications. Stable selection kills that.
+    /// Seconds since the freshest position we hold for a callsign across SFDPS / STARS-TAIS / ASDE-X,
+    /// or null when we have no position at all (a proposed, not-yet-airborne flight). The Telegram push
+    /// loop uses this to fall quiet once a landed flight stops updating, instead of re-pushing a frozen
+    /// record for the rest of its 60-minute retention. TAIS/ASDE-X tracks purge within ~45-60s, so a
+    /// present terminal track always reads as fresh (a taxiing arrival is not "gone quiet").
+    internal static int? TelegramPositionAgeSec(ServerContext ctx, string cs)
+    {
+        cs = (cs ?? "").Trim().ToUpperInvariant();
+        int? best = null;
+        void Consider(DateTime t)
+        {
+            if (t == default) return;
+            var a = (int)(DateTime.UtcNow - t).TotalSeconds;
+            if (best == null || a < best) best = a;
+        }
+        var f = BestFlight(Matching(ctx, cs));
+        if (f?.Latitude != null) Consider(f.LastPositionTime);
+        foreach (var t in ctx.Tais.TracksByCallsign(cs)) Consider(t.LastSeen);
+        foreach (var t in ctx.Asdex.TracksByCallsign(cs)) Consider(t.LastSeen);
+        return best;
+    }
+
     internal static string TelegramChangeKey(ServerContext ctx, string cs)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();

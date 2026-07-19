@@ -317,7 +317,7 @@
   function reportingArtccs(flights) {
     const s = [];
     const add = x => { if (x && s.indexOf(x) < 0) s.push(x); };
-    flights.forEach(function (f) { add(f.controllingFacility); add(f.reportingFacility); if (f.cids) Object.keys(f.cids).forEach(add); });
+    flights.forEach(function (f) { add(f.controllingTracon || f.controllingFacility); add(f.reportingFacility); if (f.cids) Object.keys(f.cids).forEach(add); });
     return s.length ? s.join('  ') : null;
   }
 

@@ -607,7 +607,7 @@ static class TrackRoutes
         {
             sb.Append("<h2>POSITION / OWNERSHIP</h2>");
             var artccs = new List<string>();
-            foreach (var f in flights) { AddU(artccs, f.ControllingFacility); AddU(artccs, f.ReportingFacility); foreach (var k in f.ComputerIds.Keys) AddU(artccs, k); }
+            foreach (var f in flights) { AddU(artccs, ResolveTracon(ctx, f.ReportingFacility, f.ControllingFacility) ?? f.ControllingFacility); AddU(artccs, f.ReportingFacility); foreach (var k in f.ComputerIds.Keys) AddU(artccs, k); }
             sb.Append("Tracked by: <b>").Append(He(string.Join(" ", artccs))).Append("</b>");
             bool first = true;
             foreach (var f in flights)

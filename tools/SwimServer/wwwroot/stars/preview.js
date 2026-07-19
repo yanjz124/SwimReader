@@ -18,6 +18,7 @@ const PA = {
   response: "",        // last system response shown to user
   responseColor: null,
   clickedPlane: null,  // the aircraft last left-clicked (for "+ click" commands)
+  f7Initiated: false,  // true if current F prefix came from F7 key (not typed)
 };
 
 // STARS F-key prefixes — real STARS keyboards have dedicated function keys for
@@ -214,6 +215,7 @@ function onKeyDown(e) {
       // "1N"). EXCEPT F7 multifunction, whose subcommand concatenates into one
       // token ("F" + "2ATPAE" → "F2ATPAE"); whitespace there would break parsing.
       PA.buffer = (prefix === "F") ? prefix : prefix + "\n";
+      if (prefix === "F") PA.f7Initiated = true;
       refreshPreview();
     }
     return;
@@ -223,17 +225,23 @@ function onKeyDown(e) {
     e.preventDefault();
     executeCommand(PA.buffer.trim());
     PA.buffer = "";
+    PA.f7Initiated = false;
     refreshPreview();
     return;
   }
   if (e.key === "Escape") {
     e.preventDefault();
     PA.buffer = "";
+    PA.f7Initiated = false;
     refreshPreview();
     return;
   }
   if (e.key === "Backspace") {
     e.preventDefault();
+    // If F7-initiated and buffer is just "F", don't delete it (only Escape clears)
+    if (PA.f7Initiated && PA.buffer === "F") {
+      return;
+    }
     PA.buffer = PA.buffer.slice(0, -1);
     refreshPreview();
     return;
@@ -420,9 +428,14 @@ function executeCommand(line, opts = {}) {
   }
 
   // ── F7 multifunction tree (1926-2577) ───────────────────────────────────
-  // User typed "F " prefix (from F7 keypress) plus subcommand.
+  // Multifunction commands only work if F was initiated via F7, not typed directly.
   if (first === "F" && (keys[0].length >= 2 || parts.length >= 2)) {
-    return processMultifunction(keys[0], parts, clicked, clickedplane, enter);
+    if (PA.f7Initiated) {
+      return processMultifunction(keys[0], parts, clicked, clickedplane, enter);
+    }
+    // Typed F without F7 is not a valid command
+    setResponse("FORMAT");
+    return;
   }
 
   // ── KeyCode commands the user can type explicitly ──────────────────────
@@ -721,6 +734,7 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
             prefSet.AltitudeFilterAssociatedMax = max2 * 100;
           } else setResponse("FORMAT");
         }
+        if (typeof window.refreshSsa === "function") window.refreshSsa();
         return;
       }
     }

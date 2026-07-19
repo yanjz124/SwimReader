@@ -393,6 +393,14 @@ var telegramToken = Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
 if (!string.IsNullOrWhiteSpace(telegramToken))
     new TelegramBridge(telegramToken, serverCtx).Start();
 
+// WhatsApp bot — same Track-a-Flight over WhatsApp (some inflight portals whitelist WhatsApp but
+// not Telegram). Webhook-based via the Meta Cloud API; enabled only when all three vars are set.
+var waToken = Environment.GetEnvironmentVariable("WHATSAPP_TOKEN");
+var waPhoneId = Environment.GetEnvironmentVariable("WHATSAPP_PHONE_ID");
+var waVerify = Environment.GetEnvironmentVariable("WHATSAPP_VERIFY_TOKEN");
+if (!string.IsNullOrWhiteSpace(waToken) && !string.IsNullOrWhiteSpace(waPhoneId) && !string.IsNullOrWhiteSpace(waVerify))
+    new WhatsAppBridge(waToken, waPhoneId, waVerify, serverCtx).Register(app);
+
 // NASR data endpoints under /api/nasr/* and /api/route/{gufi}
 NasrRoutes.Register(app, serverCtx);
 

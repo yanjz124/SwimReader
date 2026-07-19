@@ -956,7 +956,24 @@ Hero (callsign, origin▸dest·type/wake·registration, **phase** label, promine
 ### Text page (`/t`) and the inflight-wifi constraint
 `/t` is a ~few-KB, no-JS, `<meta http-equiv=refresh content=30>` page — deliberately light for **slow** connections. `TrackRoutes.TextPage()` renders it directly from the typed bridges via `TaisBridge.TracksByCallsign`, `TdlsBridge.AircraftByCallsign` (+ `TdlsAircraft.MessagesTyped()`), `AsdexBridge.TracksByCallsign`, and `TfmsBridge.FindByCallsign` (added specifically so the server can render their detail without going through the anonymous-`object` `ToJson()` projections).
 
-**Important:** `/t` does **not** work on airline "free messaging" wifi. Those captive portals block all HTTP/DNS except a whitelist of messaging endpoints, so no web page — however small — will load; it only helps on real-but-slow internet. Apps like Flighty deliver inflight updates over **APNs push** (the same whitelisted pathway as iMessage), not the web: the server pushes serialized lat/lon/alt/ETA every few minutes into a Live Activity, working even in Airplane Mode. Replicating that for SwimReader would require a whitelisted messaging channel (Telegram/WhatsApp/SMS bot, or native iOS APNs), not a lighter page. See [[track-text-wifi-limitation]].
+**Important:** `/t` does **not** work on airline "free messaging" wifi. Those captive portals block all HTTP/DNS except a whitelist of messaging endpoints, so no web page — however small — will load; it only helps on real-but-slow internet. Apps like Flighty deliver inflight updates over **APNs push** (the same whitelisted pathway as iMessage), not the web: the server pushes serialized lat/lon/alt/ETA every few minutes into a Live Activity, working even in Airplane Mode. Replicating that for SwimReader would require a whitelisted messaging channel (Telegram/WhatsApp/SMS bot, or native iOS APNs), not a lighter page. See [[track-text-wifi-limitation]]. The Telegram and WhatsApp bots below are exactly this whitelisted-messaging approach.
+
+### Messaging bots (Telegram + WhatsApp) — Track-a-Flight over whitelisted messaging
+Both bots do the same thing over a channel that inflight "free messaging" portals let through: send one or more callsigns for status, `sub`/`unsub`/`list`/`stop` to follow flights and get pushed updates when their meaningful state changes. WhatsApp exists in addition to Telegram because some portals whitelist WhatsApp but not Telegram (and vice-versa). Both reuse the same transport-neutral formatters in `TrackRoutes` — `TelegramSummary` (message text), `TelegramRoute` (route for the "was: …" diff), `TelegramChangeKey` (push-worthy change signature that deliberately excludes drifting position/altitude/groundspeed). The change key selects the SFDPS record *stably* (controlling-facility presence, then GUFI ordinal) to avoid GUFI-flip churn producing spurious pushes.
+
+Shared behavior: max 6 callsigns per message; subscriptions persist to disk (gitignored `*-subs.json`) and auto-expire after 24h; push loop runs every 120s and sends only on a `TelegramChangeKey` change; on subscribe/restart the change-key and route are baselined so restored/new subs don't all re-notify on the first push.
+
+| | **Telegram** (`TelegramBridge.cs`) | **WhatsApp** (`WhatsAppBridge.cs`) |
+|---|---|---|
+| API | Telegram Bot API | Meta WhatsApp Cloud API (`graph.facebook.com/v21.0`) |
+| Inbound | long-poll `getUpdates` | **webhook** `GET`+`POST /whatsapp/webhook` (Meta pushes) |
+| Chat key | numeric `chat_id` (`long`) | sender phone E.164 (`string`) |
+| Commands | `/start /help /track /sub /unsub /list /stop` | same, with or without a leading `/` (WhatsApp users don't type slashes) |
+| Config | `TELEGRAM_BOT_TOKEN` | `WHATSAPP_TOKEN` + `WHATSAPP_PHONE_ID` + `WHATSAPP_VERIFY_TOKEN` (all three required) |
+| Subs file | `telegram-subs.json` | `whatsapp-subs.json` |
+| Enabled when | token set | all three vars set |
+
+**WhatsApp specifics:** it's webhook-only (no polling) — Program.cs calls `WhatsAppBridge.Register(app)` which maps the webhook routes and starts the push loop. The `GET` route answers Meta's verification handshake (echoes `hub.challenge` when `hub.verify_token` matches `WHATSAPP_VERIFY_TOKEN`); the `POST` route returns 200 fast and processes off-thread, deduping redelivered messages by id. Outbound is a bearer-authed POST to `/{phoneId}/messages`. WhatsApp only allows free-form messages within 24h of the user's last inbound message (the "customer service window") — which lines up with the 24h subscription TTL, so an active follower stays inside it. The public webhook URL is `https://swim.vncrcc.org/whatsapp/webhook` via the Cloudflare tunnel; set it plus the verify token and subscribe the `messages` field in the Meta app's WhatsApp > Configuration. See `.env.example` for full setup steps.
 
 ## STDDS Data Pipeline (SwimReader.Server)
 

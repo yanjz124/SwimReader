@@ -275,10 +275,27 @@ static class TrackRoutes
             sb.Append("Next: ").Append(recv).Append(rf != null ? " · " + rf : "").Append('\n');
         }
 
-        // Current controlling sector + frequency (+ CID). SFDPS reports a TRACON's NAS code (e.g.
-        // "ORT") — map it to the real id ("C90") scoped by reportingFacility, keeping the raw code shown.
-        if (best != null && !string.IsNullOrEmpty(best.ControllingFacility))
+        // Current controller. Prefer a TRACON that *currently owns* the track in STARS/TAIS — that's
+        // the position actually working the aircraft and the frequency the pilot is on — over the
+        // SFDPS en-route/ERAM controlling sector. An owned terminal track updates every few seconds
+        // (purged at 60s), so require a recent LastSeen to be sure it's live terminal control and not
+        // a track lingering after the aircraft climbed back out to the centre.
+        var ownedTais = taisTracks
+            .Where(t => !string.IsNullOrEmpty(t.Owner) && !string.IsNullOrEmpty(t.Facility)
+                        && (DateTime.UtcNow - t.LastSeen).TotalSeconds < 45)
+            .OrderByDescending(t => t.LastSeen)
+            .FirstOrDefault();
+        if (ownedTais != null)
         {
+            // Facility is already the real STARS id (e.g. "C90", "PCT") — no NAS-code mapping needed.
+            var now = ownedTais.Facility + "/" + ownedTais.Owner;
+            var nf = FreqOf(ctx, now);
+            sb.Append("Now: ").Append(now).Append(" (TRACON)").Append(nf != null ? " · " + nf : "").Append('\n');
+        }
+        else if (best != null && !string.IsNullOrEmpty(best.ControllingFacility))
+        {
+            // SFDPS reports a TRACON's NAS code (e.g. "ORT") — map it to the real id ("C90") scoped by
+            // reportingFacility, keeping the raw code shown.
             var tracon = ResolveTracon(ctx, best.ReportingFacility, best.ControllingFacility);
             var fac = tracon ?? best.ControllingFacility!;
             var now = fac + (string.IsNullOrEmpty(best.ControllingSector) ? "" : "/" + best.ControllingSector);

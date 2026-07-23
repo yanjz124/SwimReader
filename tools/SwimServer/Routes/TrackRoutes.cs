@@ -285,6 +285,8 @@ static class TrackRoutes
         var type = best?.AircraftType ?? tais0?.AircraftType ?? asd0?.AircraftType ?? tfms?.AircraftType;
         sb.Append(string.IsNullOrEmpty(org) ? "????" : org).Append(" ▸ ").Append(string.IsNullOrEmpty(dst) ? "????" : dst);
         if (!string.IsNullOrEmpty(type)) sb.Append(" · ").Append(type + (string.IsNullOrEmpty(best?.EquipmentQualifier) ? "" : "/" + best!.EquipmentQualifier)); // FAA equipment suffix (e.g. /L), not wake
+        var reg = best?.Registration;
+        if (!string.IsNullOrEmpty(reg)) sb.Append(" · ").Append(reg);
         sb.Append('\n');
 
         sb.Append("Phase: ").Append(PhaseOf(best, asd0, tais0).label).Append('\n');

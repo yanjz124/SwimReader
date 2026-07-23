@@ -28,6 +28,9 @@ class TelegramBridge
     // show previous-vs-new on a route amendment). Keyed by Key(chat, cs).
     private readonly ConcurrentDictionary<string, DateTime> _subAt = new();
     private readonly ConcurrentDictionary<string, string> _lastRoute = new();
+    // Last plain summary text we sent per (chat, callsign) — diffed against the next one so a push can
+    // bold the lines that actually changed since the follower last heard from us.
+    private readonly ConcurrentDictionary<string, string> _lastSummary = new();
     // Per-(chat, callsign) "gone quiet" flag — set once a followed flight lands / stops updating so we
     // send a single final note and then stop re-pushing its frozen record (cleared when it revives).
     private readonly ConcurrentDictionary<string, byte> _quiet = new();
@@ -167,7 +170,7 @@ class TelegramBridge
                 return;
 
             case "/track":
-                await Send(chat, MultiSummary(Callsigns(arg)));
+                await Send(chat, MultiSummary(Callsigns(arg)), html: true);
                 return;
 
             case "/sub":
@@ -189,7 +192,7 @@ class TelegramBridge
                     if (age != null && age > StaleSec) _quiet[key] = 0; else _quiet.TryRemove(key, out _);
                 }
                 SaveSubs();
-                await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change; auto-expires in 24h.\n\n" + MultiSummary(css));
+                await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change; auto-expires in 24h.\n\n" + MultiSummary(css), html: true);
                 return;
             }
 
@@ -219,7 +222,7 @@ class TelegramBridge
             default:
                 // Bare callsign(s) → status. Otherwise nudge to /help.
                 var bare = Callsigns(text);
-                if (bare.Count > 0) await Send(chat, MultiSummary(bare));
+                if (bare.Count > 0) await Send(chat, MultiSummary(bare), html: true);
                 else await Send(chat, "Send a callsign (e.g. AAL123) or /help.");
                 return;
         }
@@ -234,8 +237,35 @@ class TelegramBridge
     private string MultiSummary(List<string> callsigns)
     {
         if (callsigns.Count == 0) return "Send a callsign, e.g. AAL123";
-        return string.Join("\n\n———\n\n", callsigns.Select(cs => TrackRoutes.TelegramSummary(_ctx, cs)));
+        // On-demand (no "previous"): just format each — header bold, everything HTML-escaped.
+        return string.Join("\n\n———\n\n", callsigns.Select(cs => FormatSummary(TrackRoutes.TelegramSummary(_ctx, cs), null)));
     }
+
+    private static string HtmlEsc(string s) => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    // Render a summary as Telegram HTML. The header (✈ line) is always bold; when a previous summary
+    // is supplied, any line that's new or changed vs it is bolded too, so a follower sees at a glance
+    // what changed. Volatile lines (position, ground speed) are never bolded — they drift on every
+    // update and aren't "news". All text is HTML-escaped.
+    private static string FormatSummary(string cur, string? prev)
+    {
+        var prevLines = prev != null ? new HashSet<string>(prev.Split('\n')) : null;
+        var lines = cur.Split('\n');
+        var sb = new StringBuilder(cur.Length + 64);
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var esc = HtmlEsc(line);
+            bool bold = i == 0
+                || (prevLines != null && line.Length > 0 && !IsVolatileLine(line) && !prevLines.Contains(line));
+            sb.Append(bold ? "<b>" + esc + "</b>" : esc);
+            if (i < lines.Length - 1) sb.Append('\n');
+        }
+        return sb.ToString();
+    }
+
+    private static bool IsVolatileLine(string line) =>
+        line.StartsWith("Pos:") || System.Text.RegularExpressions.Regex.IsMatch(line, @"^\d+ kt\b");
 
     // ── outgoing: push subscribed flights when their summary changes ─────────────
     private async Task PushLoop()
@@ -311,7 +341,10 @@ class TelegramBridge
                         // Pass the previously-sent route so the summary can show "was: …" on an amendment.
                         var prevRoute = _lastRoute.TryGetValue(key, out var pr) && !string.IsNullOrEmpty(pr) ? pr : null;
                         _lastRoute[key] = TrackRoutes.TelegramRoute(_ctx, cs) ?? "";
-                        await Send(chat, TrackRoutes.TelegramSummary(_ctx, cs, prevRoute));
+                        var summary = TrackRoutes.TelegramSummary(_ctx, cs, prevRoute);
+                        var prevSummary = _lastSummary.TryGetValue(key, out var psum) ? psum : null;
+                        _lastSummary[key] = summary;
+                        await Send(chat, FormatSummary(summary, prevSummary), html: true);
                     }
                 }
             }
@@ -327,15 +360,19 @@ class TelegramBridge
         var key = Key(chat, cs);
         _lastSent.TryRemove(key, out _);
         _lastRoute.TryRemove(key, out _);
+        _lastSummary.TryRemove(key, out _);
         _subAt.TryRemove(key, out _);
         _quiet.TryRemove(key, out _);
     }
 
-    private async Task Send(long chat, string text)
+    private async Task Send(long chat, string text, bool html = false)
     {
         try
         {
-            var payload = JsonSerializer.Serialize(new { chat_id = chat, text, disable_web_page_preview = true });
+            object payloadObj = html
+                ? new { chat_id = chat, text, disable_web_page_preview = true, parse_mode = "HTML" }
+                : new { chat_id = chat, text, disable_web_page_preview = true };
+            var payload = JsonSerializer.Serialize(payloadObj);
             using var content = new StringContent(payload, Encoding.UTF8, "application/json");
             await _http.PostAsync($"https://api.telegram.org/bot{_token}/sendMessage", content);
         }

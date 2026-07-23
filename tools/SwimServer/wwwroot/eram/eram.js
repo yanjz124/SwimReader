@@ -3391,7 +3391,16 @@ function rebuildSectorCheckboxes() {
     });
 }
 
-// When a sector is deactivated, revert all flights that were own/ho for that sector back to LDB
+// A data block the controller has "touched" — explicitly toggled FDB/LDB, moved/rotated the block
+// (dbPositions), changed its leader length, or toggled VCI. These keep their state across a sector
+// switch so deliberate work isn't lost.
+function isManipulated(gufi) {
+    return fdbOverrides.has(gufi) || dbPositions.has(gufi) || ldrLenOverrides.has(gufi) || vciActive.has(gufi);
+}
+
+// When a sector is deactivated (a sector *switch*, not a combine — combining just adds a sector and
+// leaves its blocks up), revert its own/ho flights back to LDB, EXCEPT any the controller manually
+// manipulated, which stay up.
 function demoteSectorFlights(sector) {
     for (const [gufi, f] of flights) {
         const fac = f.controllingFacility || f.reportingFacility || '';
@@ -3402,7 +3411,7 @@ function demoteSectorFlights(sector) {
         if (fac === myFacility && sec === sector ||
             extractFac(f.handoffReceiving) === myFacility && hoRecvSec === sector ||
             extractFac(f.handoffTransferring) === myFacility && hoXferSec === sector) {
-            fdbOverrides.delete(gufi);
+            if (isManipulated(gufi)) continue;   // controller touched it — keep it up
             wasOwnOrHo.delete(gufi);
         }
     }

@@ -1047,6 +1047,12 @@ let flashTime = performance.now();
 
 // Dedup: when a facility is selected, only show one GUFI per callsign (prefer our facility)
 const bestGufiByCallsign = new Map();  // callsign → gufi — rebuilt each render cycle
+// Callsigns that currently have a fresh, live ACTIVE record. Used to suppress a DROPPED sibling —
+// during an inter-ARTCC handoff the losing centre drops its track (RH → DROPPED) while the gaining
+// centre resumes under a *different* GUFI, orphaning the old record at DROPPED with a still-fresh
+// position for up to 60s. If the same callsign is ACTIVE and moving elsewhere, it's plainly still
+// flying, so the DROPPED orphan should never be shown (or win dedup). Rebuilt each render cycle.
+const activeCallsignSet = new Set();
 // callsign → merged {facility: cid} across all that callsign's GUFIs. Lets getCid() show the
 // selected ARTCC's CID even when the displayed GUFI isn't the one carrying it — e.g. after an
 // inter-ARTCC handoff the old centre's CID lives on the old GUFI, but we still want to show it
@@ -2083,6 +2089,10 @@ function isVisible(f) {
     // Uses server-side posAge (seconds since last position) — immune to snapshot resets.
     if (f.flightStatus === 'CANCELLED') return false;
     if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) return false;
+    // A DROPPED record whose callsign is ACTIVE and moving elsewhere is an orphaned handoff drop —
+    // the aircraft is still flying, so don't show it as dropped (applies with or without a facility
+    // selected, so it's hidden even in "All" where the callsign dedup doesn't run).
+    if (f.flightStatus === 'DROPPED' && f.callsign && activeCallsignSet.has(f.callsign)) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
     // Hide stale ACTIVE flights — no position update for >5 min means track is lost
     // (SFDPS can have gaps during inter-facility handoff transitions). Uses effective age
@@ -3492,6 +3502,13 @@ function doRender() {
     // to prevent a "dead" GUFI from winning dedup over a "live" one during GUFI transitions.
     bestGufiByCallsign.clear();
     cidUnionByCallsign.clear();
+    // Which callsigns are live-ACTIVE right now (fresh position). A DROPPED sibling of one of these
+    // is an orphaned handoff record, not a real drop — suppressed in isVisible() and dedup below.
+    activeCallsignSet.clear();
+    for (const [, f] of flights) {
+        if (f.callsign && f.flightStatus === 'ACTIVE' && f.latitude != null && f.longitude != null && effAgeSec(f) <= 60)
+            activeCallsignSet.add(f.callsign);
+    }
     if (myFacility) {
         for (const [gufi, f] of flights) {
             if (!f.callsign) continue;
@@ -3512,6 +3529,11 @@ function doRender() {
             const prev = bestGufiByCallsign.get(cs);
             if (!prev) { bestGufiByCallsign.set(cs, gufi); continue; }
             const prevF = flights.get(prev);
+            // A live ACTIVE record always beats a DROPPED one for the same callsign — never let an
+            // orphaned handoff drop shadow the track that's actually flying.
+            const prevDropped = prevF.flightStatus === 'DROPPED', curDropped = f.flightStatus === 'DROPPED';
+            if (curDropped && !prevDropped) continue;
+            if (!curDropped && prevDropped) { bestGufiByCallsign.set(cs, gufi); continue; }
             const prevHasPos = prevF.latitude != null && prevF.longitude != null;
             const curHasPos = f.latitude != null && f.longitude != null;
             // Strong preference: has position beats no position

@@ -30,6 +30,7 @@
 *.xml
 *~
 .claude/scheduled_tasks.lock
+.claude/settings.local.json
 .env
 .idea/
 .stars-reference/

@@ -197,7 +197,10 @@ function onKeyDown(e) {
       } else if (action === "dcb-visible" && window.prefSet) {
         window.prefSet.DCBVisible = !window.prefSet.DCBVisible;
         const root = document.getElementById("dcb");
-        if (root) root.style.display = window.prefSet.DCBVisible ? "" : "none";
+        if (root) root.style.display = window.prefSet.DCBVisible ? "flex" : "none";
+        if (window.dcb) window.dcb.render();
+        if (window.pushUrlState) window.pushUrlState();
+        if (window.saveDCBVisibilityToSession) window.saveDCBVisibilityToSession();
       }
       return;
     }

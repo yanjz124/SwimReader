@@ -360,7 +360,7 @@ class DCB {
       pointerEvents: "auto",
       userSelect: "none",
       fontFamily: "FixedDemiBold, ui-monospace, monospace",
-      display: "flex",
+      display: p.DCBVisible !== false ? "flex" : "none",
       gap: "0",
       padding: "0",
       zIndex: 20,
@@ -432,6 +432,7 @@ class DCB {
           text-align:center; line-height:1.05; font-size:${fs}px;
           white-space:pre; cursor:${b.disabled ? "default" : "crosshair"};
           flex:none; box-sizing:border-box;
+          user-select:none; -webkit-user-select:none; pointer-events:auto;
         ">${b.text}</div>`;
     }).join("");
     // Only update DOM if content changed
@@ -535,6 +536,7 @@ class DCB {
           text-align:center; line-height:1.05; font-size:${fs}px;
           white-space:pre; cursor:${b.disabled ? "default" : "crosshair"};
           flex:none; box-sizing:border-box;
+          user-select:none; -webkit-user-select:none; pointer-events:auto;
         ">${b.text}</div>`;
     }).join("");
     // Only update DOM if content changed
@@ -564,6 +566,8 @@ class DCB {
     const id = el.dataset.id;
     const submenu = el.dataset.submenu;
     this.emit("click", { id, el });
+    // Force immediate render after state change (ERAM pattern)
+    if (window.forceDcbRender) window.forceDcbRender();
     if (submenu) {
       // SHIFT/Aux replace; everything else pops out.
       if (POPOUT_SUBMENUS.has(submenu)) {
@@ -657,15 +661,21 @@ class DCB {
     this.emit("numAdjust", id, baseAdjust);
   }
   _onClick(e) {
-    const el = this._btn(e.target);
+    e.preventDefault();
+    e.stopPropagation();
+const el = this._btn(e.target);
     this._handleButton(el, +1);
   }
   _onPopoutClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    this._skipRenderUntil = Date.now() + 150;
     const el = this._btn(e.target);
     this._handleButton(el, +1);
   }
   _onPopoutRClick(e) {
     e.preventDefault();
+    e.stopPropagation();
     const el = this._btn(e.target);
     this._handleButton(el, -1);
   }
@@ -700,6 +710,8 @@ class DCB {
   }
   _onRClick(e) {
     e.preventDefault();
+    e.stopPropagation();
+    this._skipRenderUntil = Date.now() + 150;
     const el = this._btn(e.target);
     this._handleButton(el, -1);
   }
@@ -707,6 +719,8 @@ class DCB {
     const el = this._btn(e.target);
     if (!el || el.dataset.disabled) return;
     e.preventDefault();
+    e.stopPropagation();
+    this._skipRenderUntil = Date.now() + 150;
     const dir = e.deltaY < 0 ? +1 : -1;
     // Range only adjusts if already selected
     if (el.dataset.range) {

@@ -1421,6 +1421,11 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   ctx.textAlign = padLeft ? "right" : "left";
   // textX = side of the block closest to the target = block's leader-side edge.
   const textX = padLeft ? (blockX + blockWidth) : blockX;
+  // Pad callsign when right-aligned (DGScope's PadLeft(9) — keeps short callsigns
+  // aligned with the rest of the block when text-align=right).
+  if (padLeft && lines.length > 0) {
+    lines[0] = lines[0].padStart(9);
+  }
   // Brightness category per RadarWindow.cs:6391-6399 — Owned → FullDataBlocks,
   // other FDB → OtherFDBs, LDB → LimitedDataBlocks. The collapsed
   // Brightness.DataBlock alias is only kept for renderers that haven't been
@@ -2212,6 +2217,8 @@ async function bootstrap() {
   // like deep-link ?r=20).
   loadPrefsFromLocalStorage();
   applyUrlState();
+  recomputeScale();  // Recalculate canvas scale after Range is loaded/applied
+  loadDCBVisibilityFromSession();  // Load DCB visibility for this session (defaults to true)
 
   // Phase 4: mount the Display Control Bar.
   mountDcb();
@@ -2282,8 +2289,19 @@ function mountDcb() {
   dcb.on("wxToggle", (n) => handleWxToggle(n));
   dcb.on("click", ({ id }) => handleDcbClick(id));
   dcb.render();
-  // Re-render DCB on prefSet changes (cheap; only DOM in DCB region).
-  setInterval(() => dcb.render(), 1000);
+  // Re-render DCB with debouncing (ERAM pattern: natural interval + force-immediate on state changes).
+  // Instead of rendering every 1000ms regardless, check elapsed time and only render if needed.
+  let dcbLastRenderTime = Date.now();
+  const DCB_RENDER_INTERVAL = 1000;
+  setInterval(() => {
+    const now = Date.now();
+    if (now - dcbLastRenderTime >= DCB_RENDER_INTERVAL) {
+      dcb.render();
+      dcbLastRenderTime = now;
+    }
+  }, 100);  // Check frequently, but only render if interval elapsed
+  // Export function so DCB click handlers can force immediate render
+  window.forceDcbRender = () => { dcbLastRenderTime = 0; };
 }
 
 // DcbWxButtonClick (RadarWindow.cs:3886-3896) — toggles Nexrad.LevelsEnabled[i].
@@ -2337,7 +2355,6 @@ function savePrefsToLocalStorage() {
       PTLOwn: prefSet.PTLOwn,
       PTLAll: prefSet.PTLAll,
       DCBLocation: prefSet.DCBLocation,
-      DCBVisible: prefSet.DCBVisible,
       OwnedDataBlockPosition: prefSet.OwnedDataBlockPosition,
       UnownedDataBlockPosition: prefSet.UnownedDataBlockPosition,
       UnassociatedDataBlockPosition: prefSet.UnassociatedDataBlockPosition,
@@ -2368,7 +2385,8 @@ function loadPrefsFromLocalStorage() {
     // cleanup) might still have — these come from the per-area
     // visibilityCenter at facility load and should never be cross-facility
     // sticky.
-    const ignore = new Set(["ScreenCenterPoint", "RangeRingLocation", "wxLevels"]);
+    // Also ignore DCBVisible — it's session-only, not persisted across page reloads.
+    const ignore = new Set(["ScreenCenterPoint", "RangeRingLocation", "wxLevels", "DCBVisible"]);
     // Shallow-merge scalars; deep-merge sub-objects so a new default field
     // added later isn't wiped by the saved snapshot.
     for (const k of Object.keys(snap)) {
@@ -2386,6 +2404,21 @@ function loadPrefsFromLocalStorage() {
     }
   } catch (e) { /* corrupt JSON — silently skip */ }
 }
+
+// DCBVisible session storage — preserved only for the current session/tab, resets on page reload
+function saveDCBVisibilityToSession() {
+  try {
+    sessionStorage.setItem("stars.dcb-visible", String(prefSet.DCBVisible));
+  } catch (e) { /* quota or disabled — silently skip */ }
+}
+function loadDCBVisibilityFromSession() {
+  try {
+    const raw = sessionStorage.getItem("stars.dcb-visible");
+    if (raw === "false") prefSet.DCBVisible = false;
+    // Otherwise stay at default (true), or true if raw is null/true
+  } catch (e) { /* quota or disabled — silently skip */ }
+}
+
 function handleNumAdjust(id, dir) {
   switch (id) {
     case "RANGE":
@@ -2668,5 +2701,6 @@ function _internalPushUrlState() {
 applyUrlState();
 // Push state when prefs change. Triggered from DCB handlers.
 window.pushUrlState = _internalPushUrlState;
+window.saveDCBVisibilityToSession = saveDCBVisibilityToSession;
 
 bootstrap();

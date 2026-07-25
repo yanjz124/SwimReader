@@ -1411,6 +1411,16 @@ function saveSearchToUrl() {
             if (sec) filterSector.value = sec;     // re-apply after rebuild
         }
     } catch {}
+
+    // Kick off the data load that the restored filters imply. Without this, a shared
+    // or refreshed link (e.g. ?q=PHM&status=historical) shows an empty table until the
+    // user pokes a filter: historical records are only fetched by searchHistory(), and
+    // renderNow() only runs on filter changes / WS snapshots. Run both once on load.
+    // loadHistoryDates() may still be in flight, so wait for it before searching.
+    Promise.resolve(loadHistoryDates()).then(() => {
+        if (searchTerm && searchTerm.length >= 2) searchHistory(searchTerm.toUpperCase());
+        renderNow();
+    });
 })();
 
 let searchTimeout;

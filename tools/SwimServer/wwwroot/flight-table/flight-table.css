@@ -79,7 +79,7 @@ body {
 /* Column header */
 .col-header {
     display: grid;
-    grid-template-columns: 22px 100px 54px 78px 78px 62px 52px 26px 80px 54px 26px 24px;
+    grid-template-columns: 22px 100px 54px 88px 88px 62px 52px 26px 80px 54px 26px 24px;
     gap: 6px;
     padding: 6px 12px;
     font-size: 10px;
@@ -107,7 +107,7 @@ body {
     box-sizing: border-box;
     height: 24px;
     display: grid;
-    grid-template-columns: 22px 100px 54px 78px 78px 62px 52px 26px 80px 54px 26px 24px;
+    grid-template-columns: 22px 100px 54px 88px 88px 62px 52px 26px 80px 54px 26px 24px;
     gap: 6px;
     padding: 4px 12px;
     font-size: 12px;

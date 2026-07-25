@@ -709,6 +709,15 @@ function toIcao(lid) {
     return 'K' + lid.toUpperCase();
 }
 
+// A real ICAO aerodrome is exactly 4 letters. Anything else — a lat/long point
+// (SFDPS "2802N/08913W" for oil-rig heli ops), a named fix, etc. — is NOT valid in
+// ICAO field 13/16 and must be filed as ZZZZ with the point in field 18 (DEP//DEST//ALTN/).
+// Putting the raw coordinate in field 13 breaks VATSIM's parser: it mis-reads the
+// departure/off-block and then fails to split field 15, leaving speed+level in the route.
+function isIcaoApt(code) { return /^[A-Z]{4}$/.test(code || ''); }
+// Sanitize a non-airport point for field 18: strip slashes/spaces → clean token (2802N08913W).
+function fieldPoint(s) { return (s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
 function nasToIcaoRoute(route, origin, dest) {
     if (!route) return 'DCT';
     let r = route;
@@ -800,7 +809,9 @@ function buildIcaoFpl(d) {
 
     // Field 13: Departure aerodrome + EOBT (estimated off-block time).
     // ICAO FPL convention uses 0000 as placeholder when EOBT is unknown / non-scheduled.
-    const dep = toIcao(d.origin) || 'ZZZZ';
+    const depIcao = toIcao(d.origin);
+    const depValid = isIcaoApt(depIcao);
+    const dep = depValid ? depIcao : 'ZZZZ';
     let depTime = '0000';
     if (d.actualDepartureTime) {
         const dt = new Date(d.actualDepartureTime);
@@ -854,7 +865,9 @@ function buildIcaoFpl(d) {
 
     // Field 16: Destination + EET (estimated elapsed time) + alternate(s).
     // ICAO uses 0000 as placeholder when EET unknown.
-    const dest = toIcao(d.destination) || 'ZZZZ';
+    const destIcao = toIcao(d.destination);
+    const destValid = isIcaoApt(destIcao);
+    const dest = destValid ? destIcao : 'ZZZZ';
     let eet = '0000';
     if (d.eta && d.actualDepartureTime) {
         const diffMin = Math.round((new Date(d.eta) - new Date(d.actualDepartureTime)) / 60000);
@@ -863,10 +876,18 @@ function buildIcaoFpl(d) {
                   String(diffMin % 60).padStart(2, '0');
         }
     }
-    // Alternate aerodrome(s) from SFDPS <arrivalAerodromeAlternate code="KMIA"/>
+    // Alternate aerodrome(s) from SFDPS <arrivalAerodromeAlternate code="KMIA"/>.
+    // Non-airport alternates become ZZZZ here and go to field 18 ALTN/ (same as dep/dest).
     let altnStr = '';
+    const altnPoints = [];
     if (d.alternateAerodrome) {
-        altnStr = ' ' + d.alternateAerodrome.split(' ').map(a => toIcao(a)).join(' ');
+        const mapped = d.alternateAerodrome.split(' ').filter(Boolean).map(a => {
+            const ic = toIcao(a);
+            if (isIcaoApt(ic)) return ic;
+            altnPoints.push(fieldPoint(a));
+            return 'ZZZZ';
+        });
+        altnStr = ' ' + mapped.join(' ');
     }
     const f16 = dest + eet + altnStr;
 
@@ -899,6 +920,11 @@ function buildIcaoFpl(d) {
         }
         f18.push('SUR/' + sur);
     }
+    // DEP/ DEST/ ALTN/ — required in field 18 when the aerodrome was filed as ZZZZ
+    // (non-airport lat/long points). ICAO order places these after SUR, before DOF.
+    if (!depValid && d.origin) f18.push('DEP/' + fieldPoint(d.origin));
+    if (!destValid && d.destination) f18.push('DEST/' + fieldPoint(d.destination));
+    if (altnPoints.length) f18.push('ALTN/' + altnPoints.join(' '));
     // DOF: date of flight (YYMMDD)
     if (d.actualDepartureTime) {
         const dt = new Date(d.actualDepartureTime);

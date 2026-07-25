@@ -79,7 +79,7 @@ body {
 /* Column header */
 .col-header {
     display: grid;
-    grid-template-columns: 22px 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
+    grid-template-columns: 22px 100px 54px 78px 78px 62px 52px 26px 80px 54px 26px 24px;
     gap: 6px;
     padding: 6px 12px;
     font-size: 10px;
@@ -107,7 +107,7 @@ body {
     box-sizing: border-box;
     height: 24px;
     display: grid;
-    grid-template-columns: 22px 90px 50px 46px 46px 60px 46px 24px 70px 50px 26px 24px;
+    grid-template-columns: 22px 100px 54px 78px 78px 62px 52px 26px 80px 54px 26px 24px;
     gap: 6px;
     padding: 4px 12px;
     font-size: 12px;
@@ -118,6 +118,9 @@ body {
 .flight-row:hover { background: #0a0a0a; }
 .flight-row:hover { background: #0a0a0a; }
 .flight-row.selected { background: #0a1a0a; border-left: 2px solid #44aa44; }
+/* Keep long values (e.g. lat/long dep/arr, long callsigns) inside their column —
+   show as much as fits, ellipsize the rest; full text is available via title tooltip. */
+.flight-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .flight-row .cs { color: #fff; }
 .flight-row .dep, .flight-row .arr { color: #888; }
 .flight-row .alt { color: #39d2c0; }
@@ -404,7 +407,7 @@ body {
     /* Keep the dense table readable by scrolling it horizontally instead of
        crushing the columns. */
     .flight-list { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .col-header, .flight-row { min-width: 620px; }
+    .col-header, .flight-row { min-width: 700px; }
 
     /* Detail panel becomes a full-screen overlay over the list. */
     .detail-panel {

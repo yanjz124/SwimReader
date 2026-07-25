@@ -550,14 +550,14 @@ function renderRow(f, selClass, index) {
     const top = (index || 0) * ROW_HEIGHT;
     return `<div class="flight-row${selClass}${histCls}" data-gufi="${f.gufi}" style="top:${top}px">
         <span class="pin${pinCls}" data-action="pin" title="${pinTitle}">${pinChar}</span>
-        <span class="cs">${f.callsign || '????'}</span>
-        <span>${f.aircraftType || ''}</span>
-        <span class="dep">${f.origin || ''}</span>
-        <span class="arr">${f.destination || ''}</span>
+        <span class="cs" title="${f.callsign || ''}">${f.callsign || '????'}</span>
+        <span title="${f.aircraftType || ''}">${f.aircraftType || ''}</span>
+        <span class="dep" title="${f.origin || ''}">${f.origin || ''}</span>
+        <span class="arr" title="${f.destination || ''}">${f.destination || ''}</span>
         <span class="alt${altCls}">${alt}</span>
         <span class="int">${intAlt}</span>
         <span class="rules">${rules}</span>
-        <span class="sector">${sector}</span>
+        <span class="sector" title="${sector}">${sector}</span>
         <span class="sqk">${f.squawk || ''}</span>
         <span class="dl ${f.dataLinkCode && f.dataLinkCode.includes('J') ? 'yes' : 'no'}">${f.dataLinkCode && f.dataLinkCode.includes('J') ? 'J' : ''}</span>
         <span class="st ${stCls}"></span>
@@ -812,22 +812,24 @@ function buildIcaoFpl(d) {
     // Field 15: Cruising speed + level + route.
     // ICAO format requires N#### for speed and F### for level — use 0000/000 as
     // placeholder when filed values are unknown.
+    // Prefer the pilot's filed TAS (requestedSpeed). Fall back to current ground
+    // speed only when airborne (>40 kt) so a taxiing/parked value isn't filed as cruise.
     let speed = 'N0000';
     if (d.requestedSpeed) {
         speed = 'N' + String(Math.round(d.requestedSpeed)).padStart(4, '0');
-    } else if (d.groundSpeed) {
+    } else if (d.groundSpeed && d.groundSpeed > 40) {
         speed = 'N' + String(Math.round(d.groundSpeed)).padStart(4, '0');
     }
-    // ICAO Field 15 shows the FILED level, not the current ATC-assigned one.
-    // Three-tier fallback:
-    //   1) originalAssignedAltitude — first ATC-assigned value, snapshotted
-    //      so amendments don't overwrite the originally-filed cruise level
-    //   2) requestedAltitude — the pilot's filed value from SFDPS
-    //      <requestedAltitude>, populated even on PROPOSED plans before
-    //      ATC has issued any clearance
-    //   3) current assignedAltitude — last resort if neither of the above
-    //      exists (very old flights, pre-feature deploy)
-    const filedAlt = d.originalAssignedAltitude ?? d.requestedAltitude ?? d.assignedAltitude;
+    // ICAO Field 15 shows the FILED level, not the current/interim ATC-assigned one.
+    // Three-tier fallback, in order of how "filed" the value is:
+    //   1) requestedAltitude — the pilot's own filed cruise from SFDPS
+    //      <requestedAltitude>. This is the true "initial request" and must win:
+    //      when we catch a flight already en route, originalAssignedAltitude can be
+    //      a mid-flight interim/stepped level, not the filed cruise.
+    //   2) originalAssignedAltitude — first ATC-assigned value we snapshotted, so
+    //      later amendments don't overwrite it (used when no requested value exists)
+    //   3) current assignedAltitude — last resort (very old flights, pre-feature)
+    const filedAlt = d.requestedAltitude ?? d.originalAssignedAltitude ?? d.assignedAltitude;
     const filedVfr = d.originalAssignedVfr ?? d.assignedVfr;
     let level = 'F000';
     if (filedVfr) {

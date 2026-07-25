@@ -55,6 +55,19 @@ header #status,
     header .stats { margin-left: 0; flex-basis: 100%; }
 }
 
+/* ── Universal font-size / UI-scale control (frame.js appends to the header) ── */
+.nav-fontsize {
+    margin-left: auto;               /* right-align; sits after any .stats/#count-bar */
+    display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0;
+}
+.nav-fontsize .fs-btn {
+    background: #1a1a1a; color: #cccc44; border: 1px solid #444;
+    font-family: 'Consolas', monospace; font-size: 11px; line-height: 1;
+    padding: 4px 7px; cursor: pointer; user-select: none;
+}
+.nav-fontsize .fs-btn:hover { background: #333; border-color: #cccc44; }
+.nav-fontsize .fs-lbl { min-width: 38px; text-align: center; color: #888; }
+
 /* ── HOME + up-one-level breadcrumb (frame.js builds the cluster) ──────────── */
 .nav-cluster { position: absolute; top: 8px; left: 8px; z-index: 1000; display: flex; gap: 6px; }
 .nav-cluster .nav-home,

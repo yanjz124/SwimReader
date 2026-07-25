@@ -1062,9 +1062,16 @@ function fakeEnduranceHHMM(d) {
 // VATSIM prefile raw = the ICAO FPL with a Field 19 endurance (E/hhmm) appended before
 // the closing paren. Returns the plain ICAO text unchanged when no endurance is available.
 function buildVatsimRaw(d, icaoText) {
+    // VATSIM's raw-FPL importer doesn't understand the ICAO "A" (below-transition
+    // altitude) level format, so a low-level plan (e.g. A030 for a 3000 ft heli) leaves
+    // the Altitude/Airspeed fields blank and dumps the whole "N0139A030 …" field 15 into
+    // the route. Rewrite the field-15 level A###→F### for the VATSIM link ONLY (F030 =
+    // 3000 ft to VATSIM); the displayed/copied ICAO FPL keeps the correct A### form.
+    // Anchored to the speed token at a field-line start so route fixes are never touched.
+    let raw = icaoText.replace(/(\n-[KNM]\d{3,4})A(\d{3})\b/, '$1F$2');
     const end = fakeEnduranceHHMM(d);
-    if (!end) return icaoText;
-    return icaoText.replace(/\)\s*$/, `\n-E/${end})`);
+    if (!end) return raw;
+    return raw.replace(/\)\s*$/, `\n-E/${end})`);
 }
 
 function renderFlightPlan(d) {

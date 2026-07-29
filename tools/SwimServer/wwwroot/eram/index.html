@@ -60,6 +60,11 @@
     font-size: 12px;
   }
   .sec-row:hover { background: #1c1c00; }
+  /* sectors with live traffic/handoffs — pop brighter so they stand out from idle ones.
+     Placed before .on so a selected sector's styling still wins. */
+  .sec-row[data-active="1"] { border-color: #cccc44; background: #1a1a02; }
+  .sec-row[data-active="1"] .sid { color: #ffff66; text-shadow: 0 0 5px rgba(204,204,68,.55); }
+  .sec-row[data-active="1"] .scnt { color: #dede55; }
   .sec-row.on { background: #3a3a0a; color: #fff; border-color: #6a6a14; }
   .sec-row .sid { font-weight: bold; }
   .sec-row .scnt { color: #888835; font-size: 10px; }

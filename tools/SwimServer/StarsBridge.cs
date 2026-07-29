@@ -82,7 +82,14 @@ class StarsBridge
                 ids.Add(id);
         }
         _artccIds = ids.OrderBy(x => x).ToArray();
-        Console.WriteLine($"[STARS] vNAS: {_artccIds.Length} ARTCCs available");
+        // Drop cached ARTCC facility trees so sector/frequency data genuinely re-pulls on the 24h
+        // tick (otherwise a loaded ARTCC's frequencies stay frozen until the next process restart).
+        // Just clear — don't dispose, since a concurrent request may still hold a doc reference;
+        // the pooled buffers are reclaimed by GC once the last reader releases them.
+        int evicted = _artccs.Count;
+        _artccs.Clear();
+        Console.WriteLine($"[STARS] vNAS: {_artccIds.Length} ARTCCs available" +
+            (evicted > 0 ? $"; evicted {evicted} cached facility tree(s) for refresh" : ""));
         _lastRefresh = DateTime.UtcNow;
     }
 

@@ -51,8 +51,7 @@ class ServerContext
     public required string TdlsHistoryDir { get; init; }
     public required string RepoRoot { get; init; }
 
-    // ── ASDE-X scratchpad / vNAS rules ──────────────────────────────────────
-    public required ConcurrentDictionary<string, ConcurrentDictionary<string, string>> GateCodes { get; init; }
+    // ── ASDE-X gate codes (vNAS adaptation only — no manual overrides) ───────
     public required ConcurrentDictionary<string, List<KeyValuePair<string, string>>> VnasFixRules { get; init; }
     // ARTCC ERAM sector → controller frequency (MHz string, e.g. "133.725"), keyed "FAC/SECTOR" (from vNAS).
     public required ConcurrentDictionary<string, string> SectorFreqs { get; init; }
@@ -65,7 +64,6 @@ class ServerContext
 
     // ── Helpers / callbacks ─────────────────────────────────────────────────
     public required Action<WsClient> SendSnapshot { get; init; }
-    public required Action SaveGateCodes { get; init; }
     public required Func<string, NavPoint?, NasrData, NavPoint?> LookupPoint { get; init; }
     public required Func<string, NasrData, NavPoint?> LookupAirport { get; init; }
     public required Func<string, string?, string?, NasrData, List<double[]>> ResolveRoute { get; init; }

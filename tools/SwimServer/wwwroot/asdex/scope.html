@@ -13,25 +13,6 @@
 <body>
 <div id="map"></div>
 <div id="crosshair"><div class="ch h"></div><div class="ch v"></div></div>
-<div id="gatecode-popup">
-    <h3>SCRATCHPAD CONFIG — <span id="gc-airport"></span></h3>
-    <div style="color:#ff8c00;font-size:10px;margin-bottom:6px">Changes apply to all users viewing this airport.</div>
-    <table><thead><tr><th>FIX</th><th>CODE</th><th></th></tr></thead><tbody id="gc-body"></tbody></table>
-    <div style="margin-top:8px">
-        <button class="gc-btn" id="gc-add">+ ADD</button>
-        <button class="gc-btn" id="gc-save">SAVE</button>
-        <button class="gc-btn" id="gc-close">CLOSE</button>
-    </div>
-    <details style="margin-top:10px;border-top:1px solid #333;padding-top:8px">
-        <summary style="color:#888;cursor:pointer;font-size:10px">PASTE IMPORT</summary>
-        <textarea id="gc-import-area" rows="4" style="width:100%;background:#111;border:1px solid #444;color:#ccc;font-family:inherit;font-size:10px;margin-top:4px;padding:4px;resize:vertical" placeholder="Paste tab/comma-separated lines: PATTERN  CODE"></textarea>
-        <button class="gc-btn" id="gc-import-btn">IMPORT</button>
-    </details>
-    <details id="vnas-rules-section" style="margin-top:10px;border-top:1px solid #333;padding-top:8px;display:none">
-        <summary style="color:#888;cursor:pointer;font-size:10px">vNAS AUTO RULES <span id="vnas-count" style="color:#666"></span></summary>
-        <div id="vnas-rules-body" style="margin-top:4px;color:#666;font-size:10px;max-height:200px;overflow-y:auto"></div>
-    </details>
-</div>
 <div id="flight-list">
     <div id="fl-header">
         <span style="color:#cccc44">FLIGHT LIST</span>
@@ -63,7 +44,6 @@
     <span style="border-left:1px solid #444;height:14px"></span>
     <button id="unk-toggle">UNKNOWNS</button>
     <button id="fl-toggle">FLT LIST</button>
-    <button id="gc-toggle">SP CONFIG</button>
     <button id="dn-toggle">NIGHT</button>
     <button id="hb-toggle">HOLDBARS</button>
     <button id="fs-toggle">FULL</button>

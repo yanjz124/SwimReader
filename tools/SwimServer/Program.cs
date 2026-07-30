@@ -158,9 +158,6 @@ PersistenceBudget.Watch("flight-history", historyDir, "*.jsonl");
 var tdlsHistoryDir = Path.Combine(Directory.GetCurrentDirectory(), "tdls-history");
 PersistenceBudget.Watch("tdls-history", tdlsHistoryDir, "*.jsonl");
 
-// ASDE-X departure gate codes: airport → pattern → abbreviation (declared early for route lambdas)
-var gateCodesPath = Path.Combine(Directory.GetCurrentDirectory(), "asdex-gatecodes.json");
-var gateCodes = new ConcurrentDictionary<string, ConcurrentDictionary<string, string>>();
 // vNAS fix rules: ICAO airport → ordered list of (pattern, code) (auto-fetched from data-api.vnas.vatsim.net)
 // Order matters — first match wins, so we preserve the API's rule ordering.
 var vnasFixRules = new ConcurrentDictionary<string, List<KeyValuePair<string, string>>>();
@@ -311,7 +308,7 @@ var csIndex = new Dictionary<string, List<FlightState>>();
 var sqIndex = new Dictionary<string, List<FlightState>>();
 
 // Build the shared ServerContext that gets passed to each route registrar.
-// Helper local functions (SendSnapshot, SaveGateCodes, LookupPoint, LookupAirport,
+// Helper local functions (SendSnapshot, LookupPoint, LookupAirport,
 // ResolveRoute) are forward-referenceable here because top-level local functions
 // are hoisted across the entire compilation unit.
 var serverCtx = new ServerContext
@@ -343,14 +340,12 @@ var serverCtx = new ServerContext
     HistoryDir = historyDir,
     TdlsHistoryDir = tdlsHistoryDir,
     RepoRoot = repoRoot,
-    GateCodes = gateCodes,
     VnasFixRules = vnasFixRules,
     SectorFreqs = sectorFreqs,
     TraconIds = traconIds,
     GetNasr = () => nasrData,
     RouteCache = routeCache,
     SendSnapshot = c => SendSnapshot(c),
-    SaveGateCodes = () => SaveGateCodes(),
     LookupPoint = (ident, near, nasr) => NasrService.LookupPoint(ident, near, nasr),
     LookupAirport = (code, nasr) => NasrService.LookupAirport(code, nasr),
     ResolveRoute = (text, origin, dest, nasr) => NasrService.ResolveRoute(text, origin, dest, nasr),
@@ -597,34 +592,6 @@ var csIndexTimer = new Timer(_ =>
     catch { /* best-effort */ }
 }, null, TimeSpan.Zero, TimeSpan.FromSeconds(5));
 
-// Gate codes: load pattern→code mappings from disk on startup
-try
-{
-    if (File.Exists(gateCodesPath))
-    {
-        var raw = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(
-            File.ReadAllText(gateCodesPath));
-        if (raw is not null)
-            foreach (var (apt, entries) in raw)
-                gateCodes[apt] = new ConcurrentDictionary<string, string>(entries);
-        Console.WriteLine($"[GateCodes] Loaded {gateCodes.Sum(kv => kv.Value.Count)} entries");
-    }
-}
-catch (Exception ex) { Console.WriteLine($"[GateCodes] Load error: {ex.Message}"); }
-
-void SaveGateCodes()
-{
-    try
-    {
-        var data = gateCodes.ToDictionary(kv => kv.Key,
-            kv => kv.Value.ToDictionary(e => e.Key, e => e.Value));
-        var tmp = gateCodesPath + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(data, jsonOpts));
-        File.Move(tmp, gateCodesPath, overwrite: true);
-    }
-    catch (Exception ex) { Console.Error.WriteLine($"[GateCodes] Save error: {ex.Message}"); }
-}
-
 // Map FAA LID → ICAO code for SMES matching
 string FaaToIcao(string faaLid)
 {
@@ -828,7 +795,7 @@ string? MatchFixRules(IEnumerable<KeyValuePair<string, string>> fixRules, string
     return null;
 }
 
-// Resolve departure gate code: manual gateCodes → vNAS fixRules → destination fallback
+// Resolve departure gate code: vNAS fixRules → destination fallback
 string? ResolveGateCode(string airport, string? route, string? destination)
 {
     if (route is null) return null;
@@ -842,14 +809,7 @@ string? ResolveGateCode(string airport, string? route, string? destination)
         if (stripped.Length > 0 && stripped.Length != rt.Length) routeSet.Add(stripped);
     }
 
-    // Priority 1: manual gate codes (user-configured per airport)
-    if (gateCodes.TryGetValue(airport, out var manualMap) && !manualMap.IsEmpty)
-    {
-        var result = MatchFixRules(manualMap, routeTokens, routeSet);
-        if (result is not null) return result;
-    }
-
-    // Priority 2: vNAS fix rules (auto-fetched from data-api.vnas.vatsim.net)
+    // vNAS fix rules (auto-fetched from data-api.vnas.vatsim.net) — the sole source of gate codes.
     if (vnasFixRules.TryGetValue(airport, out var vnasRules) && vnasRules.Count > 0)
     {
         var result = MatchFixRules(vnasRules, routeTokens, routeSet);

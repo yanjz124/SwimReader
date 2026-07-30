@@ -75,38 +75,9 @@ static class AsdexRoutes
         app.MapGet("/api/asdex/{airport}", (string airport) =>
             Results.Json(ctx.Asdex.GetSnapshot(airport.ToUpperInvariant()), ctx.JsonOpts));
 
-        // ASDEX scratchpad config — pattern→code mapping, shared across all clients.
-        // Pattern can be any substring matched against the route (SID, fix, SID+transition, airway, etc.)
-        app.MapGet("/api/asdex/{airport}/gatecodes", (string airport) =>
-        {
-            airport = airport.ToUpperInvariant();
-            if (ctx.GateCodes.TryGetValue(airport, out var codes))
-                return Results.Json(codes.ToDictionary(kv => kv.Key, kv => kv.Value), ctx.JsonOpts);
-            return Results.Json(new Dictionary<string, string>(), ctx.JsonOpts);
-        });
-
-        app.MapPut("/api/asdex/{airport}/gatecodes", async (HttpContext c, string airport) =>
-        {
-            airport = airport.ToUpperInvariant();
-            using var reader = new StreamReader(c.Request.Body);
-            var body = await reader.ReadToEndAsync();
-            var entries = JsonSerializer.Deserialize<Dictionary<string, string>>(body);
-            if (entries is null) return Results.BadRequest();
-            var map = new ConcurrentDictionary<string, string>();
-            foreach (var (pattern, code) in entries)
-            {
-                var k = pattern.Trim().ToUpperInvariant();
-                var v = code.Trim().ToUpperInvariant();
-                if (k.Length > 0 && v.Length > 0 && v.Length <= 10)
-                    map[k] = v;
-            }
-            if (map.IsEmpty)
-                ctx.GateCodes.TryRemove(airport, out _);
-            else
-                ctx.GateCodes[airport] = map;
-            Task.Run(ctx.SaveGateCodes);
-            return Results.Ok();
-        });
+        // Departure gate/scratchpad codes are derived solely from vNAS adaptation (asdexConfiguration
+        // .fixRules) — see the read-only /vnasrules endpoint below. There is intentionally no manual
+        // per-airport override: everything comes from vNAS so it stays consistent and unattended.
 
         // vNAS fix rules (auto-fetched, read-only) — returned as ordered array to preserve rule priority
         app.MapGet("/api/asdex/{airport}/vnasrules", (string airport) =>

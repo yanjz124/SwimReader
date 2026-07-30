@@ -7,7 +7,7 @@ let haloTid = null; // trackId of currently highlighted halo
 
 document.addEventListener('mousemove', e => {
     // Hide crosshair if over status bar, UI panels, or popups
-    const overUI = e.target.closest('.nav-home, #statusbar, #gatecode-popup, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay, #zulu-clock, #cmd-overlay, #fp-popup');
+    const overUI = e.target.closest('.nav-home, #statusbar, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay, #zulu-clock, #cmd-overlay, #fp-popup');
     
     if (overUI) {
         ch.style.display = 'none';
@@ -655,7 +655,7 @@ document.addEventListener('touchend', e => {
 // within the halo radius. This works regardless of overlapping data blocks.
 document.addEventListener('click', e => {
     // Don't toggle if clicking UI elements
-    if (e.target.closest('#statusbar, #gatecode-popup, #flight-list, #holdbar-panel')) return;
+    if (e.target.closest('#statusbar, #flight-list, #holdbar-panel')) return;
 
     const clickPt = { x: e.clientX, y: e.clientY };
     let bestTid = null, bestDist = Infinity;
@@ -729,96 +729,6 @@ document.addEventListener('click', e => {
 const connEl  = document.getElementById('conn');
 const cntEl   = document.getElementById('track-count');
 
-// ── Gate code configuration popup ───────────────────────────────────────────
-const gcPopup = document.getElementById('gatecode-popup');
-const gcBody = document.getElementById('gc-body');
-const gcAirportEl = document.getElementById('gc-airport');
-
-function gcAddRow(fix = '', code = '') {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td><input class="gc-fix" value="${fix}" placeholder="FIX"></td>` +
-        `<td><input class="gc-code" value="${code}" placeholder="CODE"></td>` +
-        `<td><span class="gc-del">\u2715</span></td>`;
-    tr.querySelector('.gc-del').onclick = () => tr.remove();
-    gcBody.appendChild(tr);
-    return tr;
-}
-
-async function gcOpen() {
-    gcAirportEl.textContent = AIRPORT;
-    gcBody.innerHTML = '';
-    try {
-        const resp = await fetch(`/api/asdex/${AIRPORT}/gatecodes`);
-        const data = await resp.json();
-        for (const [fix, code] of Object.entries(data)) gcAddRow(fix, code);
-    } catch {}
-    if (!gcBody.children.length) gcAddRow();
-    // Load vNAS auto rules (read-only display, ordered by vNAS priority)
-    try {
-        const resp = await fetch(`/api/asdex/${AIRPORT}/vnasrules`);
-        const rules = await resp.json();
-        const section = document.getElementById('vnas-rules-section');
-        if (rules.length > 0) {
-            section.style.display = 'block';
-            document.getElementById('vnas-count').textContent = `(${rules.length})`;
-            document.getElementById('vnas-rules-body').innerHTML = rules
-                .map(r => `<span style="color:#888">${r.pattern}</span> → <span style="color:#cccc44">${r.code}</span>`)
-                .join('<br>');
-        } else {
-            section.style.display = 'none';
-        }
-    } catch { document.getElementById('vnas-rules-section').style.display = 'none'; }
-    gcPopup.style.display = 'block';
-}
-
-async function gcSave() {
-    const entries = {};
-    for (const tr of gcBody.querySelectorAll('tr')) {
-        const fix = tr.querySelector('.gc-fix').value.trim().toUpperCase();
-        const code = tr.querySelector('.gc-code').value.trim().toUpperCase();
-        if (fix && code) entries[fix] = code;
-    }
-    await fetch(`/api/asdex/${AIRPORT}/gatecodes`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(entries)
-    });
-    gcPopup.style.display = 'none';
-    // Force hash invalidation so all icons rebuild with new gate codes
-    for (const tid of Object.keys(hashes)) hashes[tid] = '';
-}
-
-document.getElementById('gc-toggle').onclick = () => {
-    if (gcPopup.style.display === 'block') gcPopup.style.display = 'none';
-    else gcOpen();
-};
-document.getElementById('gc-add').onclick = () => { const tr = gcAddRow(); tr.querySelector('.gc-fix').focus(); };
-document.getElementById('gc-save').onclick = gcSave;
-document.getElementById('gc-close').onclick = () => { gcPopup.style.display = 'none'; };
-document.getElementById('gc-import-btn').onclick = () => {
-    const raw = document.getElementById('gc-import-area').value.trim();
-    if (!raw) return;
-    let count = 0;
-    for (const line of raw.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        // Try tab-separated, then comma, then 2+ spaces, then last whitespace token
-        let parts = trimmed.split('\t').map(s => s.trim()).filter(Boolean);
-        if (parts.length < 2) parts = trimmed.split(',').map(s => s.trim()).filter(Boolean);
-        if (parts.length < 2) parts = trimmed.split(/\s{2,}/).map(s => s.trim()).filter(Boolean);
-        if (parts.length < 2) {
-            // Last token is code, everything before is pattern
-            const m = trimmed.match(/^(.+)\s+(\S+)$/);
-            if (m) parts = [m[1].trim(), m[2].trim()];
-        }
-        if (parts.length >= 2) {
-            const pattern = parts.slice(0, parts.length - 1).join(' ').toUpperCase();
-            const code = parts[parts.length - 1].toUpperCase();
-            if (pattern && code) { gcAddRow(pattern, code); count++; }
-        }
-    }
-    document.getElementById('gc-import-area').value = '';
-    if (count) document.querySelector('details').removeAttribute('open');
-};
 
 // ── Flight list panel ────────────────────────────────────────────────────────
 const flPanel = document.getElementById('flight-list');

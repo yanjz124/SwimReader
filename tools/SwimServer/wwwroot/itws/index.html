@@ -237,13 +237,28 @@
   /* ── Weather map ───────── */
   #wxMap { width: 100%; height: 560px; background: #050505; border: 1px solid var(--border);
            filter: invert(0); }
-  /* Dim the OSM tiles so the radar overlay reads better */
-  #wxMap .leaflet-tile { filter: invert(1) hue-rotate(180deg) saturate(0.6) brightness(0.7); }
-  #wxMap .leaflet-control-attribution {
+  /* Dim the OSM tiles so the radar overlay reads better (shared with the national site map) */
+  #wxMap .leaflet-tile, #ovMap .leaflet-tile { filter: invert(1) hue-rotate(180deg) saturate(0.6) brightness(0.7); }
+  #wxMap .leaflet-control-attribution, #ovMap .leaflet-control-attribution {
     background: rgba(0,0,0,0.6) !important; color: var(--dim) !important;
     font-size: 9px;
   }
-  #wxMap .leaflet-control-attribution a { color: var(--accent) !important; }
+  #wxMap .leaflet-control-attribution a, #ovMap .leaflet-control-attribution a { color: var(--accent) !important; }
+  /* National overview: every ITWS site on one map (the default dashboard view) */
+  #ovWrap { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 1100px; }
+  #ovWrap .ov-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  #ovWrap .ov-head .t { color: var(--accent); font-size: 20px; letter-spacing: 0.5px; }
+  #ovWrap .ov-head .s { color: var(--dim); font-size: 12px; }
+  #ovMap { width: 100%; height: 62vh; min-height: 420px; background: #050505; border: 1px solid var(--border); border-radius: 4px; }
+  #ovMap .leaflet-tooltip { background:#111; border:1px solid var(--border); color:var(--fg);
+    font-family: inherit; font-size: 11px; box-shadow:none; }
+  #ovMap .leaflet-tooltip b { color: var(--accent); }
+  .ov-caption { color: var(--dim); font-size: 11px; }
+  /* "back to site map" toggle in the AIRPORTS panel header */
+  #airports h2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ov-btn { cursor: pointer; color: var(--accent); font-size: 11px; border: 1px solid var(--border);
+    border-radius: 3px; padding: 2px 7px; background: #1a1a1a; letter-spacing: 0.4px; }
+  .ov-btn:hover { background: #222; }
   .wxmap-legend {
     display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px;
     color: var(--dim); padding: 6px 0 0 2px;
@@ -340,14 +355,19 @@
 
 <div class="layout">
   <div id="airports">
-    <h2>AIRPORTS</h2>
+    <h2>AIRPORTS <span class="ov-btn" id="ovBtn" title="Show the national site map">▦ MAP</span></h2>
     <div id="airportsList"></div>
   </div>
   <div id="dash">
-    <div class="empty" id="dashEmpty">
-      <div style="color: var(--accent); font-size: 24px;">ITWS</div>
-      <div>Integrated Terminal Weather System</div>
-      <div>Select an airport to view its weather dashboard</div>
+    <div id="dashEmpty">
+      <div id="ovWrap">
+        <div class="ov-head">
+          <span class="t">ITWS SITES</span>
+          <span class="s" id="ovCount">— terminal areas</span>
+        </div>
+        <div id="ovMap"></div>
+        <div class="ov-caption">Each marker is an ITWS terminal weather site. Click one to open its dashboard. Positions are the terminal reference points reported in the live feed.</div>
+      </div>
     </div>
     <div id="dashContent" style="display:none"></div>
   </div>
@@ -1182,6 +1202,47 @@ const RotatedCanvasLayer = L.Layer.extend({
 });
 
 let _wxMap = null;
+let _ovMap = null, _ovMarkers = null;   // national ITWS site map (default dashboard view)
+
+// Build/refresh the national overview: one marker per ITWS site (reuses the same OSM dark tiles
+// and yellow marker style as the per-airport weather map). Click a marker → open its dashboard.
+function renderOverview() {
+  const el = document.getElementById("ovMap");
+  if (!el) return;
+  const sites = state.airports.filter(a => a.airport !== "ALL" && a.lat != null && a.lon != null);
+  const cnt = document.getElementById("ovCount");
+  if (cnt) cnt.textContent = `${sites.length} terminal areas`;
+  if (!_ovMap) {
+    _ovMap = L.map(el, { center: [39, -96], zoom: 4, minZoom: 3, maxZoom: 10,
+      zoomControl: true, attributionControl: true, worldCopyJump: true });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap | ITWS via SWIM", maxZoom: 19,
+    }).addTo(_ovMap);
+    _ovMarkers = L.layerGroup().addTo(_ovMap);
+  }
+  _ovMarkers.clearLayers();
+  const pts = [];
+  for (const a of sites) {
+    pts.push([a.lat, a.lon]);
+    L.circleMarker([a.lat, a.lon], {
+      radius: 5, color: "#fff", weight: 1.5, fillColor: "#cccc44", fillOpacity: 1,
+    }).addTo(_ovMarkers)
+      .bindTooltip(`<b>${a.airport}</b> &middot; ${a.products.length}p`, { direction: "top" })
+      .on("click", () => loadAirport(a.airport));
+  }
+  if (pts.length && !_ovMap._fitOnce) { _ovMap.fitBounds(pts, { padding: [30, 30], maxZoom: 6 }); _ovMap._fitOnce = true; }
+  setTimeout(() => _ovMap && _ovMap.invalidateSize(), 0);
+}
+
+// Return from an airport dashboard to the national site map.
+function showOverview() {
+  state.selected = null;
+  document.getElementById("dashContent").style.display = "none";
+  document.getElementById("dashEmpty").style.display = "";
+  history.replaceState({}, "", "/itws");
+  for (const el of document.querySelectorAll(".ap-row")) el.classList.remove("active");
+  renderOverview();
+}
 function paintWeatherMap(precip, sm) {
   if (!precip?.geo) return;
   const el = document.getElementById("wxMap");
@@ -1430,6 +1491,7 @@ async function pollOverview() {
     $("latestCount").textContent = stats.latestCount;
     state.airports = airports;
     renderAirports();
+    if (!state.selected) renderOverview();   // keep the national map fresh while it's the visible view
   } catch (e) { /* ignore */ }
 }
 
@@ -1438,6 +1500,7 @@ async function pollOverview() {
   const m = location.pathname.match(/^\/itws\/([A-Za-z0-9]+)\/?$/);
   if (m) state.selected = m[1].toUpperCase();
 }
+document.getElementById("ovBtn").onclick = showOverview;
 connectWs();
 pollOverview().then(() => { if (state.selected) loadAirport(state.selected); });
 setInterval(pollOverview, 10000);

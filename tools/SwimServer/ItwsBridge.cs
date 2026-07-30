@@ -30,6 +30,9 @@ class ItwsBridge
     private readonly ConcurrentDictionary<string, long> _productCounts = new(StringComparer.OrdinalIgnoreCase);
     // site (airport) → count
     private readonly ConcurrentDictionary<string, long> _siteCounts = new(StringComparer.OrdinalIgnoreCase);
+    // site → terminal reference point (lat, lon), from the precip product's TRP field. Lets the
+    // ITWS page plot every site on one national map without fetching each product.
+    private readonly ConcurrentDictionary<string, (double lat, double lon)> _siteCoords = new(StringComparer.OrdinalIgnoreCase);
     // first XML sample by productType (truncated)
     private readonly ConcurrentDictionary<string, string> _samples = new(StringComparer.OrdinalIgnoreCase);
     // unique topics seen
@@ -173,6 +176,7 @@ class ItwsBridge
         string? site = null;
         string? msgTime = null;
         string? subId = null;
+        double trpLat = double.NaN, trpLon = double.NaN;   // terminal reference point (micro-degrees → deg)
         try
         {
             var doc = XDocument.Parse(body);
@@ -209,6 +213,14 @@ class ItwsBridge
                     if (parts.Length >= 4) site = parts[3];
                     else if (parts.Length >= 3) site = parts[2];
                 }
+
+                // Terminal reference point — precip products carry it in micro-degrees.
+                var trpLatS = FirstNonEmpty(root, "prcp_TRP_latitude");
+                var trpLonS = FirstNonEmpty(root, "prcp_TRP_longitude");
+                if (long.TryParse(trpLatS, out var la) && long.TryParse(trpLonS, out var lo))
+                {
+                    trpLat = la * 1e-6; trpLon = lo * 1e-6;
+                }
             }
         }
         catch (Exception ex)
@@ -218,6 +230,10 @@ class ItwsBridge
 
         if (string.IsNullOrEmpty(site) || site == "000") site = "ALL";
         site = site.ToUpperInvariant();
+
+        // Record the site's reference point once we know a plausible CONUS/OCONUS coordinate.
+        if (!double.IsNaN(trpLat) && !double.IsNaN(trpLon) && trpLat is > 5 and < 72 && trpLon is > -180 and < -60)
+            _siteCoords[site] = (trpLat, trpLon);
 
         _productCounts.AddOrUpdate(productType, 1, (_, v) => v + 1);
         _siteCounts.AddOrUpdate(site, 1, (_, v) => v + 1);
@@ -513,16 +529,22 @@ class ItwsBridge
 
     public object GetAirports() =>
         _siteCounts
-            .Select(kv => new
+            .Select(kv =>
             {
-                airport = kv.Key,
-                messageCount = kv.Value,
-                products = _latest.Values
-                    .Where(m => string.Equals(m.Site, kv.Key, StringComparison.OrdinalIgnoreCase))
-                    .Select(m => m.ProductType)
-                    .Distinct()
-                    .OrderBy(p => p)
-                    .ToArray()
+                bool hasCo = _siteCoords.TryGetValue(kv.Key, out var co);
+                return new
+                {
+                    airport = kv.Key,
+                    messageCount = kv.Value,
+                    lat = hasCo ? (double?)co.lat : null,
+                    lon = hasCo ? (double?)co.lon : null,
+                    products = _latest.Values
+                        .Where(m => string.Equals(m.Site, kv.Key, StringComparison.OrdinalIgnoreCase))
+                        .Select(m => m.ProductType)
+                        .Distinct()
+                        .OrderBy(p => p)
+                        .ToArray()
+                };
             })
             .OrderByDescending(x => x.messageCount)
             .ToArray();

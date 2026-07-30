@@ -158,16 +158,12 @@ PersistenceBudget.Watch("flight-history", historyDir, "*.jsonl");
 var tdlsHistoryDir = Path.Combine(Directory.GetCurrentDirectory(), "tdls-history");
 PersistenceBudget.Watch("tdls-history", tdlsHistoryDir, "*.jsonl");
 
-// vNAS fix rules: ICAO airport → ordered list of (pattern, code) (auto-fetched from data-api.vnas.vatsim.net)
-// Order matters — first match wins, so we preserve the API's rule ordering.
-var vnasFixRules = new ConcurrentDictionary<string, List<KeyValuePair<string, string>>>();
-// vNAS ARTCC ERAM sector → controller frequency (MHz string), keyed "FAC/SECTOR" (e.g. "ZDC/32" → "133.725")
-var sectorFreqs = new ConcurrentDictionary<string, string>();
-// SFDPS controlling-facility NAS code → real TRACON id, keyed "ARTCC/starsId" (e.g. "ZAU/ORT" → "C90").
-// Scoped by ARTCC because the 3-letter starsId is reused as a placeholder across ARTCCs (TTT is SCT
-// in ZLA but TOL/TPA elsewhere); SFDPS supplies reportingFacility so we can key by both. From each
-// ARTCC's eramConfiguration.neighboringStarsConfigurations.
-var traconIds = new ConcurrentDictionary<string, string>();
+// All vNAS adaptation data (ASDE-X fix rules / gate codes, ERAM+STARS sector frequencies, and the
+// SFDPS NAS-code→TRACON map) lives in one place: fetched on startup, refreshed daily, and cached to
+// disk so a vNAS outage falls back to the last known-good data. Declared early so the route lambdas
+// below can reference vnas.FixRules etc.
+var vnas = new VnasBridge(Path.Combine(Directory.GetCurrentDirectory(), "vnas-cache.json"));
+vnas.Start();
 
 // Initialize Solace SDK (once, before any thread or connection is created)
 {
@@ -340,9 +336,9 @@ var serverCtx = new ServerContext
     HistoryDir = historyDir,
     TdlsHistoryDir = tdlsHistoryDir,
     RepoRoot = repoRoot,
-    VnasFixRules = vnasFixRules,
-    SectorFreqs = sectorFreqs,
-    TraconIds = traconIds,
+    VnasFixRules = vnas.FixRules,
+    SectorFreqs = vnas.SectorFreqs,
+    TraconIds = vnas.TraconIds,
     GetNasr = () => nasrData,
     RouteCache = routeCache,
     SendSnapshot = c => SendSnapshot(c),
@@ -592,185 +588,6 @@ var csIndexTimer = new Timer(_ =>
     catch { /* best-effort */ }
 }, null, TimeSpan.Zero, TimeSpan.FromSeconds(5));
 
-// Map FAA LID → ICAO code for SMES matching
-string FaaToIcao(string faaLid)
-{
-    // Alaska = PA prefix, Hawaii = PH prefix, everything else = K prefix
-    if (faaLid.Length == 3)
-    {
-        if (faaLid.StartsWith("A", StringComparison.OrdinalIgnoreCase) && faaLid != "ATL")
-        {
-            // Check known Alaska airports (ANC, ADQ, AKN, etc.)
-        }
-        // Hawaii: HNL → PHNL
-        if (faaLid is "HNL" or "OGG" or "LIH" or "KOA" or "ITO" or "MKK" or "LNY" or "JHM" or "HNM")
-            return "PH" + faaLid;
-        // Alaska: ANC → PANC
-        if (faaLid is "ANC" or "FAI" or "JNU" or "BET" or "SCC" or "ADQ" or "AKN" or "DLG" or "OME"
-            or "OTZ" or "BRW" or "SIT" or "KTN" or "CDV" or "YAK" or "VDZ" or "MRI" or "ENA")
-            return "PA" + faaLid;
-        return "K" + faaLid;
-    }
-    // Already 4 chars — probably already ICAO
-    return faaLid;
-}
-
-async Task FetchVnasFixRules()
-{
-    try
-    {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-        // Get list of all ARTCCs
-        var artccListJson = await http.GetStringAsync("https://data-api.vnas.vatsim.net/api/artccs/");
-        var artccList = JsonSerializer.Deserialize<JsonElement>(artccListJson);
-        var artccIds = new List<string>();
-        foreach (var artcc in artccList.EnumerateArray())
-        {
-            var id = artcc.GetProperty("id").GetString();
-            if (id is not null) artccIds.Add(id);
-        }
-
-        Console.WriteLine($"[vNAS] Fetching fix rules from {artccIds.Count} ARTCCs...");
-        int totalRules = 0, totalAirports = 0;
-
-        // Fetch each ARTCC (parallel, throttled)
-        var semaphore = new SemaphoreSlim(4);
-        var tasks = artccIds.Select(async artccId =>
-        {
-            await semaphore.WaitAsync();
-            try
-            {
-                var json = await http.GetStringAsync($"https://data-api.vnas.vatsim.net/api/artccs/{artccId}/");
-                var doc = JsonSerializer.Deserialize<JsonElement>(json);
-                var facility = doc.GetProperty("facility");
-                ScanFacilityFixRules(facility, ref totalRules, ref totalAirports);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[vNAS] Error fetching {artccId}: {ex.Message}");
-            }
-            finally { semaphore.Release(); }
-        });
-        await Task.WhenAll(tasks);
-
-        Console.WriteLine($"[vNAS] Loaded {totalRules} fix rules for {totalAirports} airports");
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[vNAS] Fix rules fetch failed: {ex.Message}");
-    }
-}
-
-void ScanFacilityFixRules(JsonElement facility, ref int totalRules, ref int totalAirports)
-{
-    // ARTCC ERAM adaptation → NAS-code-to-TRACON map (only on the ARTCC node, which carries
-    // eramConfiguration). Keyed "ARTCC/starsId" so SFDPS (reportingFacility, controllingFacility)
-    // resolves to the real TRACON id without the cross-ARTCC placeholder collisions.
-    if (facility.TryGetProperty("eramConfiguration", out var eramCfg) && eramCfg.ValueKind == JsonValueKind.Object
-        && facility.TryGetProperty("id", out var artccIdEl) && artccIdEl.GetString() is { Length: > 0 } artccId
-        && eramCfg.TryGetProperty("neighboringStarsConfigurations", out var nsc) && nsc.ValueKind == JsonValueKind.Array)
-    {
-        foreach (var n in nsc.EnumerateArray())
-            if (n.TryGetProperty("starsId", out var sidEl) && sidEl.GetString() is { Length: > 0 } starsId
-                && n.TryGetProperty("facilityId", out var facEl) && facEl.GetString() is { Length: > 0 } facId)
-                traconIds[$"{artccId}/{starsId}"] = facId;
-    }
-
-    // Scan controller positions for sector frequencies (ARTCC ERAM sectors and
-    // TRACON STARS TCPs → freq), keyed "FAC/SECTOR". Wrapped so a malformed vNAS
-    // position can never abort the fix-rule scan below.
-    var posFacId = facility.TryGetProperty("id", out var fidEl) ? fidEl.GetString() ?? "" : "";
-    if (posFacId.Length > 0)
-    {
-        try
-        {
-            // STARS: resolve tcpId → TCP code from starsConfiguration.tcps. The TCP code
-            // is subset+sectorId (e.g. subset 1 + sectorId "J" = "1J"), which is exactly
-            // the "owner" code STARS/TAIS reports (e.g. PCT/1J).
-            var tcpToSector = new Dictionary<string, string>();
-            if (facility.TryGetProperty("starsConfiguration", out var starsCfg) && starsCfg.ValueKind == JsonValueKind.Object
-                && starsCfg.TryGetProperty("tcps", out var tcps) && tcps.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var tcp in tcps.EnumerateArray())
-                {
-                    if (tcp.TryGetProperty("id", out var tid) && tid.GetString() is { Length: > 0 } tidS
-                        && tcp.TryGetProperty("sectorId", out var tsec) && tsec.GetString() is { Length: > 0 } tsecS)
-                    {
-                        var sub = tcp.TryGetProperty("subset", out var tsub) && tsub.ValueKind == JsonValueKind.Number
-                            ? tsub.GetInt32().ToString() : "";
-                        tcpToSector[tidS] = sub + tsecS;
-                    }
-                }
-            }
-
-            if (facility.TryGetProperty("positions", out var positions) && positions.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var p in positions.EnumerateArray())
-                {
-                    if (!p.TryGetProperty("frequency", out var fq) || fq.ValueKind != JsonValueKind.Number) continue;
-                    var hz = fq.GetInt64();
-                    if (hz <= 0) continue;
-                    var mhz = (hz / 1_000_000.0).ToString("0.000");
-
-                    // ERAM (ARTCC) sector.
-                    if (p.TryGetProperty("eramConfiguration", out var eram) && eram.ValueKind == JsonValueKind.Object
-                        && eram.TryGetProperty("sectorId", out var sid) && sid.GetString() is { Length: > 0 } sector)
-                        sectorFreqs[$"{posFacId}/{sector}"] = mhz;
-
-                    // STARS (TRACON) TCP code → freq. First position wins so a combined-up
-                    // position doesn't clobber the sector's own primary frequency.
-                    if (p.TryGetProperty("starsConfiguration", out var pstars) && pstars.ValueKind == JsonValueKind.Object
-                        && pstars.TryGetProperty("tcpId", out var ptcp) && ptcp.GetString() is { Length: > 0 } ptcpS
-                        && tcpToSector.TryGetValue(ptcpS, out var pcode))
-                        sectorFreqs.TryAdd($"{posFacId}/{pcode}", mhz);
-                }
-            }
-        }
-        catch { /* never let a frequency-scan hiccup break fix rules */ }
-    }
-
-    // Check this facility for asdexConfiguration.fixRules
-    if (facility.TryGetProperty("asdexConfiguration", out var asdexConfig)
-        && asdexConfig.TryGetProperty("fixRules", out var fixRulesArr)
-        && fixRulesArr.GetArrayLength() > 0)
-    {
-        var facId = facility.GetProperty("id").GetString() ?? "";
-        var icao = FaaToIcao(facId);
-        var list = new List<KeyValuePair<string, string>>();
-        foreach (var rule in fixRulesArr.EnumerateArray())
-        {
-            var pattern = rule.GetProperty("searchPattern").GetString()?.Trim().ToUpperInvariant();
-            var code = rule.GetProperty("fixId").GetString()?.Trim().ToUpperInvariant();
-            if (pattern is not null && code is not null && pattern.Length > 0 && code.Length > 0)
-                list.Add(new(pattern, code));
-        }
-        if (list.Count > 0)
-        {
-            vnasFixRules[icao] = list;
-            Interlocked.Add(ref totalRules, list.Count);
-            Interlocked.Increment(ref totalAirports);
-        }
-    }
-
-    // Recurse into child facilities
-    if (facility.TryGetProperty("childFacilities", out var children))
-    {
-        foreach (var child in children.EnumerateArray())
-            ScanFacilityFixRules(child, ref totalRules, ref totalAirports);
-    }
-}
-
-// Fetch vNAS fix rules on startup (background) and refresh daily
-_ = Task.Run(async () =>
-{
-    while (true)
-    {
-        try { await FetchVnasFixRules(); }
-        catch (Exception ex) { Console.WriteLine($"[vNAS] Rule fetch error: {ex.Message}"); }
-        await Task.Delay(TimeSpan.FromHours(24));
-    }
-});
-
 // Match route against a pattern→code map; returns first matching code or null
 string? MatchFixRules(IEnumerable<KeyValuePair<string, string>> fixRules, string[] routeTokens, HashSet<string> routeSet)
 {
@@ -810,7 +627,7 @@ string? ResolveGateCode(string airport, string? route, string? destination)
     }
 
     // vNAS fix rules (auto-fetched from data-api.vnas.vatsim.net) — the sole source of gate codes.
-    if (vnasFixRules.TryGetValue(airport, out var vnasRules) && vnasRules.Count > 0)
+    if (vnas.FixRules.TryGetValue(airport, out var vnasRules) && vnasRules.Count > 0)
     {
         var result = MatchFixRules(vnasRules, routeTokens, routeSet);
         if (result is not null) return result;

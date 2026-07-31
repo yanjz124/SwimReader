@@ -17,6 +17,18 @@ const SETTINGS_VERSION = 3;    // Increment when pushing breaking changes to res
 let myFacility = '';
 let mySectors = new Set();
 let facilityOnly = false;   // when true + facility selected, hide all non-facility aircraft
+
+// ── Auto VCI (aftermarket automation, OFF by default) ────────────────────────
+// Not real ERAM behaviour: real controllers toggle VCI manually as a track checks
+// in on frequency. As a sim aid, when enabled we auto-add VCI ~2.5 min after our
+// sector owns a track, and auto-remove it ~2.5 min after it leaves our control
+// (handoff accepted away). We only auto-manage VCI we set ourselves — a manual
+// toggle takes the track out of auto control so we never fight the controller.
+let autoVci = false;
+const AUTO_VCI_DELAY_MS = 150000;      // 2.5 min, in the 2–3 min band Leo asked for
+const ownedSince = new Map();          // gufi → ms when our sector first owned it
+const leftOwnAt = new Map();           // gufi → ms when it left our control (for auto-remove)
+const vciAutoManaged = new Set();      // gufis whose VCI is currently auto-controlled
 let showFdb = true;
 let showHistory = true;
 let vectorMinutes = 0;
@@ -3398,6 +3410,59 @@ function isManipulated(gufi) {
     return fdbOverrides.has(gufi) || dbPositions.has(gufi) || ldrLenOverrides.has(gufi) || vciActive.has(gufi);
 }
 
+// Auto VCI lifecycle (opt-in). Called per visible flight each render with its
+// ownership class. Adds VCI after AUTO_VCI_DELAY_MS of continuous ownership;
+// removes it AUTO_VCI_DELAY_MS after the track leaves our control. Only touches
+// VCI it set itself (vciAutoManaged) so a manual // toggle is never overridden.
+function applyAutoVci(gufi, cls, now) {
+    if (cls === 'own') {
+        leftOwnAt.delete(gufi);                       // back under control — cancel any removal timer
+        if (!ownedSince.has(gufi)) ownedSince.set(gufi, now);
+        // Add VCI only if the controller hasn't already set it manually.
+        if (!vciActive.has(gufi) && !vciAutoManaged.has(gufi) &&
+            now - ownedSince.get(gufi) >= AUTO_VCI_DELAY_MS) {
+            vciActive.add(gufi);
+            vciAutoManaged.add(gufi);
+            invalidateMarker(gufi);
+        }
+    } else {
+        ownedSince.delete(gufi);
+        // Auto-remove only VCI we auto-added, and only after the grace delay.
+        if (vciAutoManaged.has(gufi)) {
+            if (!leftOwnAt.has(gufi)) leftOwnAt.set(gufi, now);
+            if (now - leftOwnAt.get(gufi) >= AUTO_VCI_DELAY_MS) {
+                vciActive.delete(gufi);
+                vciAutoManaged.delete(gufi);
+                leftOwnAt.delete(gufi);
+                invalidateMarker(gufi);
+            }
+        }
+    }
+}
+
+// Restore every data block to its live SWIM ("IRL") state: drop all local edits
+// the controller made — FDB/LDB toggles, block placement, leader length, VCI,
+// and local ALT/HSF overrides. Point-out acknowledgment state is left alone.
+function restoreAllBlocks() {
+    fdbOverrides.clear();
+    wasOwnOrHo.clear();
+    manuallyHidden.clear();
+    dbPositions.clear();
+    ldrLenOverrides.clear();
+    vciActive.clear();
+    vciAutoManaged.clear();
+    ownedSince.clear();
+    leftOwnAt.clear();
+    localAssignedAlt.clear();
+    localInterimAlt.clear();
+    localReportedAlt.clear();
+    hsfData.clear();
+    hsfShowMap.clear();
+    hsfClrSuppressed.clear();
+    invalidateAllMarkers();
+    if (typeof drawOverlay === 'function') drawOverlay();
+}
+
 // When a sector is deactivated (a sector *switch*, not a combine — combining just adds a sector and
 // leaves its blocks up), revert its own/ho flights back to LDB, EXCEPT any the controller manually
 // manipulated, which stay up.
@@ -3583,6 +3648,9 @@ function doRender() {
         const cls = classifyTrack(f);
         counts[cls]++;
 
+        // Aftermarket auto-VCI lifecycle (opt-in; no-op when the toggle is off).
+        if (autoVci) applyAutoVci(gufi, cls, now);
+
         // Sticky FDB: when a track transitions from own/ho to other, keep FDB
         if (cls === 'own' || cls === 'ho') {
             wasOwnOrHo.add(gufi);
@@ -3674,6 +3742,7 @@ function doRender() {
                     if (e.target.closest('.ac-vci-hit')) {
                         if (vciActive.has(gufi)) vciActive.delete(gufi);
                         else vciActive.add(gufi);
+                        vciAutoManaged.delete(gufi);  // manual toggle → stop auto-managing this track
                         el._lastHash = '';
                         lastRenderTime = 0;
                         return;
@@ -3812,6 +3881,7 @@ function doRender() {
                     if (e.target.closest('.ac-vci-hit')) {
                         if (vciActive.has(gufi)) vciActive.delete(gufi);
                         else vciActive.add(gufi);
+                        vciAutoManaged.delete(gufi);  // manual toggle → stop auto-managing this track
                         el._lastHash = '';
                         lastRenderTime = 0;
                         return;
@@ -4038,6 +4108,24 @@ document.getElementById('chk-tmu').addEventListener('change', function () {
     document.body.classList.toggle('tmu-mode', tmuMode);
     invalidateAllMarkers();
     drawOverlay();
+});
+
+document.getElementById('chk-auto-vci').addEventListener('change', function () {
+    autoVci = this.checked;
+    if (!autoVci) {
+        // Turning it off releases auto-managed VCI (remove the auto-added indicators)
+        // but leaves anything the controller set by hand.
+        for (const gufi of vciAutoManaged) vciActive.delete(gufi);
+        vciAutoManaged.clear();
+        ownedSince.clear();
+        leftOwnAt.clear();
+        invalidateAllMarkers();
+    }
+    saveSettingsToLocalStorage();
+});
+
+document.getElementById('btn-restore-blocks').addEventListener('click', function () {
+    restoreAllBlocks();
 });
 
 const chkMca = document.getElementById('chk-mca');
@@ -5227,6 +5315,7 @@ function loadSettingsFromLocalStorage() {
         if (settings.altFilterHigh !== undefined) altFilterHigh = settings.altFilterHigh;
         if (settings.ldbBrightness !== undefined) ldbBrightness = settings.ldbBrightness;
         if (settings.facilityOnly !== undefined) facilityOnly = settings.facilityOnly;
+        if (settings.autoVci !== undefined) autoVci = settings.autoVci;
         if (settings.mcaKb !== undefined) document.getElementById('chk-mca-kb').checked = settings.mcaKb;
         if (settings.numinv !== undefined) document.getElementById('numpad-inverted').checked = !settings.numinv;
         if (settings.nasrBrightness) Object.assign(nasrBrightness, settings.nasrBrightness);
@@ -5265,6 +5354,7 @@ function loadSettingsFromLocalStorage() {
         document.getElementById(BOUNDARY_CAT_LABEL[cat]).textContent = boundaryBrightness[cat];
     }
     document.getElementById('chk-facility-only').checked = facilityOnly;
+    document.getElementById('chk-auto-vci').checked = autoVci;
     document.getElementById('chk-mapbg').checked = showMapBg;
     document.getElementById('sel-line4').value = line4Mode;
     document.getElementById('sel-boundary-style').value = boundaryStyle;
@@ -5329,6 +5419,7 @@ function saveSettingsToLocalStorage() {
         altFilterHigh,
         ldbBrightness,
         facilityOnly,
+        autoVci,
         mcaKb: document.getElementById('chk-mca-kb')?.checked || false,
         mcaVisible: document.getElementById('chk-mca')?.checked !== false,
         raVisible: document.getElementById('chk-ra')?.checked !== false,
@@ -5757,6 +5848,7 @@ function processCommand(cmd) {
                 }
                 if (vciActive.has(f.gufi)) vciActive.delete(f.gufi);
                 else vciActive.add(f.gufi);
+                vciAutoManaged.delete(f.gufi);  // manual // toggle → stop auto-managing this track
                 const m4 = markers.get(f.gufi);
                 if (m4) { const el = m4.getElement(); if (el) el._lastHash = ''; }
                 lastRenderTime = 0;

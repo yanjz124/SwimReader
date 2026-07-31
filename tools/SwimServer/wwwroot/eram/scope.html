@@ -42,6 +42,18 @@
         </div>
 
         <div class="panel-section">
+            <div class="panel-label">AUTOMATION</div>
+            <div class="ctrl-row" style="margin-top:4px;">
+                <label title="Not real ERAM — auto-checks a track on frequency (VCI) ~2.5 min after your sector owns it, and removes it ~2.5 min after handoff. Off = faithful manual VCI.">
+                    <input type="checkbox" id="chk-auto-vci"> Auto VCI
+                </label>
+            </div>
+            <div class="ctrl-row" style="margin-top:4px;">
+                <button id="btn-restore-blocks" title="Undo local data-block edits (FDB/LDB, position, leader, VCI, local ALT/HSF) and revert every block to its live SWIM state." style="background:#111;color:#cccc44;border:1px solid #444;border-radius:3px;padding:3px 8px;font:inherit;font-size:11px;cursor:pointer;">Restore blocks (IRL)</button>
+            </div>
+        </div>
+
+        <div class="panel-section">
             <div class="panel-label">DISPLAY</div>
             <div class="ctrl-row">
                 <label>Vector</label>
@@ -396,7 +408,7 @@
     </div>
 </div>
 
-<script src="/eram/eram.js?v=21"></script>
+<script src="/eram/eram.js?v=22"></script>
 <script src="/idle-timer.js?v=10"></script>
 </body>
 </html>

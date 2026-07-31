@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a">
+<title>Route Finder — Dispatch</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🗺️</text></svg>">
+<style>
+  :root { --yel:#cccc44; --dim:#8a8a3a; --bg:#0a0a0a; --card:#141414; --line:#333;
+          --accent:#4aa3ff; --ok:#44cc44; --warn:#ff8c00; --sb:#00b3b3; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--yel);
+    font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace; font-size:14px; }
+  body { padding-bottom:60px; }
+  a { color:var(--accent); }
+  .wrap { max-width:1000px; margin:0 auto; padding:0 12px; }
+
+  header { position:sticky; top:0; z-index:10; background:#000; border-bottom:1px solid var(--line);
+    padding:10px 12px; display:flex; gap:10px; align-items:baseline; }
+  header .home { color:var(--dim); text-decoration:none; font-size:13px; }
+  header h1 { font-size:16px; margin:0; letter-spacing:1px; color:var(--yel); font-weight:bold; }
+  header .sub { color:var(--dim); font-size:11px; }
+
+  form.search { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px;
+    padding:14px 12px; align-items:end; }
+  .fld { display:flex; flex-direction:column; gap:4px; }
+  .fld label { font-size:10px; letter-spacing:1.5px; color:var(--dim); }
+  .fld input, .fld select { background:#1a1a1a; color:var(--yel); border:1px solid var(--line);
+    border-radius:7px; padding:9px 10px; font:inherit; text-transform:uppercase; }
+  .fld input::placeholder { color:#555; text-transform:none; }
+  .go { background:#1e2e1e; color:#bfe6bf; border:1px solid #3a5a3a; border-radius:7px;
+    padding:10px 14px; font:inherit; font-weight:bold; cursor:pointer; height:38px; }
+  .go:disabled { opacity:.5; cursor:default; }
+
+  .status { padding:4px 14px 10px; color:var(--dim); font-size:12px; }
+  .msg { padding:40px 20px; text-align:center; color:var(--dim); line-height:1.7; }
+  .msg b { color:var(--yel); }
+
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  thead th { text-align:left; color:var(--dim); font-size:10px; letter-spacing:1px; font-weight:normal;
+    padding:6px 8px; border-bottom:1px solid var(--line); position:sticky; top:52px; background:#0a0a0a; }
+  tbody td { padding:8px; border-bottom:1px solid #1e1e1e; vertical-align:top; }
+  tbody tr.row { cursor:pointer; }
+  tbody tr.row:hover { background:#141400; }
+  .cs { color:#fff; font-weight:bold; letter-spacing:.5px; }
+  .od { color:var(--yel); } .od .arw { color:var(--dim); margin:0 3px; }
+  .type { color:#dcdcae; }
+  .gate { color:var(--ok); }
+  .muted { color:var(--dim); }
+  .pill { display:inline-block; font-size:10px; padding:1px 6px; border-radius:10px; background:#20202a;
+    color:var(--dim); margin-left:4px; }
+
+  /* expanded detail row */
+  tr.detail td { background:#0d0d0d; padding:0; }
+  .det { padding:12px 14px; display:grid; grid-template-columns:1fr; gap:10px; }
+  .det .rte { font-size:13px; color:#dcdcae; word-break:break-word; line-height:1.55;
+    background:#111; border:1px solid #222; border-radius:8px; padding:10px 12px; }
+  .det .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; font-size:12.5px; }
+  .det .kv .k { color:var(--dim); white-space:nowrap; } .det .kv .v { color:var(--yel); word-break:break-word; }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:2px; }
+  .btn { border:1px solid var(--line); border-radius:8px; padding:8px 12px; font:inherit; font-size:12px;
+    cursor:pointer; background:#151515; color:var(--yel); text-decoration:none; display:inline-block; }
+  .btn.sb { background:#04333a; color:#8fe9ef; border-color:#0a5a63; font-weight:bold; }
+  .btn.copy { background:#1a1420; color:#d8b6ff; border-color:#3a2a5a; }
+  .btn:hover { filter:brightness(1.25); }
+  .fpl { white-space:pre-wrap; font-size:12px; color:#cfe; background:#0b1418; border:1px solid #14343a;
+    border-radius:8px; padding:10px 12px; display:none; }
+
+  .foot { color:var(--dim); font-size:11.5px; line-height:1.6; padding:18px 14px; border-top:1px solid #1e1e1e;
+    margin-top:20px; }
+  .foot code { color:#cf6; background:#161608; padding:1px 5px; border-radius:4px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="home" href="/">&larr;</a>
+  <h1>ROUTE FINDER</h1>
+  <span class="sub">real SWIM flights → SimBrief / VATSIM</span>
+</header>
+
+<div class="wrap">
+  <form class="search" id="f">
+    <div class="fld"><label>FROM</label><input id="orig" placeholder="KORD / ORD" autocomplete="off" spellcheck="false"></div>
+    <div class="fld"><label>TO</label><input id="dest" placeholder="KLGA / LGA" autocomplete="off" spellcheck="false"></div>
+    <div class="fld"><label>AIRLINE (ICAO)</label><input id="airline" placeholder="AAL UAL DAL" autocomplete="off" spellcheck="false"></div>
+    <div class="fld"><label>AIRCRAFT</label><input id="type" placeholder="B738 A320" autocomplete="off" spellcheck="false"></div>
+    <div class="fld"><label>DAYS</label>
+      <select id="days"><option value="1">1</option><option value="3" selected>3</option><option value="7">7</option></select>
+    </div>
+    <button class="go" id="go" type="submit">SEARCH</button>
+  </form>
+  <div class="status" id="status">Search by any combination of route, airline, or aircraft type.</div>
+
+  <div id="out"></div>
+
+  <div class="foot">
+    Data is real filed flight plans pulled from SWIM/SFDPS history (the last few days of traffic). Each result
+    opens in <b>SimBrief</b> with the origin, destination, aircraft, route, cruise, and registration pre-filled —
+    just hit Generate. SimBrief can then prefile straight to <b>VATSIM</b>. <b>Copy plan</b> gives you an ICAO-style
+    block for manual VATSIM prefiling. Gate/runway come from live <code>TDLS</code> when the flight was seen recently.
+    Routes are shown as filed; tidy them in SimBrief if a fix has aged out of the nav data.
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+// ── airport / route helpers ──────────────────────────────────────────────────
+function sameApt(a, b){
+  if(!a||!b) return false; a=a.toUpperCase(); b=b.toUpperCase();
+  if(a===b) return true;
+  const strip = s => (s.length===4 && (s[0]==='K'||s[0]==='P')) ? s.slice(1) : s;
+  return strip(a)===strip(b);
+}
+// Turn a SWIM nasRouteText into a SimBrief-friendly space-separated route:
+// drop the leading/trailing airport, DCT, and per-token /altitude suffixes.
+function cleanRoute(route, orig, dest){
+  if(!route) return '';
+  // Split on the SWIM dot separators (.. ./. .) and whitespace, then strip any
+  // per-token /speed/altitude or /time suffix (everything from the first slash).
+  let toks = route.split(/\.\.|\.\/\.|\.|\s+/).filter(Boolean)
+    .map(t => { const s = t.indexOf('/'); return s >= 0 ? t.slice(0, s) : t; })
+    .filter(Boolean);
+  const out = [];
+  for(let i=0;i<toks.length;i++){
+    const t = toks[i];
+    if(t==='DCT') continue;
+    if(i===0 && sameApt(t,orig)) continue;
+    if(i===toks.length-1 && sameApt(t,dest)) continue;
+    out.push(t);
+  }
+  return out.join(' ');
+}
+function cruiseFt(c){ if(c==null) return ''; const n=Math.round(c); return n>=1000? String(n) : String(n*100); }
+function flLabel(c){ if(c==null) return ''; const n=Math.round(c); return 'FL'+String(Math.round((n>=1000?n:n*100)/100)).padStart(3,'0'); }
+
+function simbriefUrl(f){
+  const p = new URLSearchParams();
+  if(f.airline) p.set('airline', f.airline);
+  if(f.fltnum)  p.set('fltnum', f.fltnum);
+  if(f.orig)    p.set('orig', f.orig);
+  if(f.dest)    p.set('dest', f.dest);
+  if(f.type)    p.set('type', f.type);
+  const rte = cleanRoute(f.route, f.orig, f.dest);
+  if(rte)       p.set('route', rte);
+  if(f.altn)    p.set('altn', f.altn);
+  if(f.reg)     p.set('reg', f.reg);
+  const fl = cruiseFt(f.cruise); if(fl) p.set('fl', fl);
+  if(f.callsign) p.set('callsign', f.callsign);
+  return 'https://dispatch.simbrief.com/options/custom?' + p.toString();
+}
+// ICAO-ish block for a manual VATSIM prefile / copy.
+function fplText(f){
+  const rte = cleanRoute(f.route, f.orig, f.dest) || 'DCT';
+  const lines = [
+    f.callsign,
+    (f.type||'ZZZZ') + (f.wake?('/'+f.wake):'') + (f.equip?(' /'+f.equip):''),
+    (f.orig||'????') + ' -> ' + (f.dest||'????') + (f.cruise!=null? ('  '+flLabel(f.cruise)):''),
+    'RTE ' + rte,
+  ];
+  if(f.altn) lines.push('ALTN ' + f.altn);
+  if(f.reg) lines.push('REG ' + f.reg);
+  if(f.remarks) lines.push('RMK ' + f.remarks);
+  return lines.join('\n');
+}
+
+// ── render ────────────────────────────────────────────────────────────────────
+function rowHtml(f, i){
+  const gate = f.gate ? `<span class="gate">${esc(f.gate)}</span>` : '<span class="muted">—</span>';
+  return `<tr class="row" data-i="${i}">
+      <td class="cs">${esc(f.callsign)}</td>
+      <td class="od">${esc(f.orig)}<span class="arw">▸</span>${esc(f.dest)}</td>
+      <td class="type">${esc(f.type||'—')}${f.wake?`<span class="pill">${esc(f.wake)}</span>`:''}</td>
+      <td class="muted">${esc(f.reg||'—')}</td>
+      <td>${gate}</td>
+      <td class="muted">${esc(f.cruise!=null?flLabel(f.cruise):'—')}</td>
+    </tr>
+    <tr class="detail" id="det-${i}" style="display:none"><td colspan="6"></td></tr>`;
+}
+
+function detailHtml(f){
+  const rte = cleanRoute(f.route, f.orig, f.dest);
+  const kv = [];
+  const add=(k,v)=>{ if(v!=null && v!=='') kv.push(`<div class="k">${k}</div><div class="v">${esc(v)}</div>`); };
+  add('Filed', f.route);
+  add('Cruise', f.cruise!=null?flLabel(f.cruise):'');
+  add('Alternate', f.altn);
+  add('STAR', f.star);
+  add('Rules', f.rules);
+  add('Equip', f.equip?('/'+f.equip):'');
+  add('PBN', f.pbn); add('Nav', f.nav); add('Datalink', f.datalink);
+  add('Runway', f.runway);
+  add('Remarks', f.remarks);
+  add('Seen', (f.date||'') + (f.lastSeen?(' '+f.lastSeen):''));
+  return `<div class="det">
+      <div class="rte"><b>${esc(f.orig)} ▸ ${esc(f.dest)}</b> &nbsp; ${esc(rte||'DCT')}</div>
+      <div class="kv">${kv.join('')}</div>
+      <div class="actions">
+        <a class="btn sb" href="${esc(simbriefUrl(f))}" target="_blank" rel="noopener">Open in SimBrief ▸</a>
+        <button class="btn copy" data-act="copy">Copy plan (VATSIM)</button>
+        <a class="btn" href="/track/${encodeURIComponent(f.callsign)}" target="_blank" rel="noopener">Track live ▸</a>
+      </div>
+      <pre class="fpl"></pre>
+    </div>`;
+}
+
+let RESULTS = [];
+function render(list){
+  RESULTS = list;
+  if(!list.length){ $('out').innerHTML = '<div class="msg">No matching flights in the searched days.<br><b>Try</b> fewer filters, more days, or a busier route.</div>'; return; }
+  $('out').innerHTML = `<table><thead><tr>
+      <th>CALLSIGN</th><th>ROUTE</th><th>TYPE</th><th>REG</th><th>GATE</th><th>CRZ</th>
+    </tr></thead><tbody>${list.map(rowHtml).join('')}</tbody></table>`;
+  document.querySelectorAll('tr.row').forEach(tr => {
+    tr.addEventListener('click', () => toggle(+tr.dataset.i));
+  });
+}
+
+let openRow = -1;
+function toggle(i){
+  const det = $('det-'+i);
+  if(!det) return;
+  if(openRow===i){ det.style.display='none'; openRow=-1; return; }
+  if(openRow>=0){ const p=$('det-'+openRow); if(p) p.style.display='none'; }
+  det.firstElementChild.innerHTML = detailHtml(RESULTS[i]);
+  det.style.display='';
+  openRow=i;
+  const copyBtn = det.querySelector('[data-act="copy"]');
+  const pre = det.querySelector('.fpl');
+  copyBtn.addEventListener('click', async () => {
+    const txt = fplText(RESULTS[i]);
+    pre.textContent = txt; pre.style.display='block';
+    try { await navigator.clipboard.writeText(txt); copyBtn.textContent='Copied ✓';
+          setTimeout(()=>copyBtn.textContent='Copy plan (VATSIM)',1500); }
+    catch { copyBtn.textContent='Select & copy below'; }
+  });
+}
+
+async function search(ev){
+  if(ev) ev.preventDefault();
+  const p = new URLSearchParams();
+  const orig=$('orig').value.trim(), dest=$('dest').value.trim(),
+        airline=$('airline').value.trim(), type=$('type').value.trim();
+  if(orig) p.set('orig',orig); if(dest) p.set('dest',dest);
+  if(airline) p.set('airline',airline); if(type) p.set('type',type);
+  p.set('days', $('days').value);
+  if(![...p.keys()].some(k=>['orig','dest','airline','type'].includes(k))){
+    $('status').textContent='Enter at least one of route, airline, or aircraft type.'; return;
+  }
+  $('go').disabled=true; $('status').textContent='Searching…'; $('out').innerHTML='';
+  // reflect in URL so a search is shareable
+  history.replaceState(null,'', '/dispatch?'+p.toString());
+  try {
+    const r = await fetch('/api/dispatch/search?'+p.toString());
+    const data = await r.json();
+    if(data && data.error){ $('status').textContent=data.error; $('go').disabled=false; return; }
+    $('status').textContent = `${data.length} flight${data.length===1?'':'s'} found`;
+    render(data);
+  } catch(e){ $('status').textContent='Search failed: '+e.message; }
+  $('go').disabled=false;
+}
+$('f').addEventListener('submit', search);
+
+// hydrate from URL params (shareable searches)
+(function(){
+  const q=new URLSearchParams(location.search);
+  if(q.get('orig')) $('orig').value=q.get('orig');
+  if(q.get('dest')) $('dest').value=q.get('dest');
+  if(q.get('airline')) $('airline').value=q.get('airline');
+  if(q.get('type')) $('type').value=q.get('type');
+  if(q.get('days')) $('days').value=q.get('days');
+  if([...q.keys()].some(k=>['orig','dest','airline','type'].includes(k))) search();
+})();
+</script>
+</body>
+</html>

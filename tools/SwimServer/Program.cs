@@ -405,6 +405,9 @@ StarsProfileRoutes.Register(app, serverCtx);
 // Flight history search and retrieval
 HistoryRoutes.Register(app, serverCtx);
 
+// Flight-sim route finder (dispatch) — real flights by route/airline/type
+DispatchRoutes.Register(app, serverCtx);
+
 // History symbol: matches client getSymbolChar() logic
 static char GetHistSym(FlightState f)
 {

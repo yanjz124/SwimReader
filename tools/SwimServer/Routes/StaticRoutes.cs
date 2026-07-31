@@ -58,6 +58,13 @@ static class StaticRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "flight-table", "index.html"));
         });
 
+        // Flight-sim route finder (dispatch)
+        app.MapGet("/dispatch", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "dispatch", "index.html"));
+        });
+
         // Track a single flight (mobile) — /track and /track/{callsign}
         app.MapGet("/track", async (HttpContext c) =>
         {

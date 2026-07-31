@@ -121,7 +121,14 @@ function cleanRoute(route, orig, dest){
   // Split on the SWIM dot separators (.. ./. .) and whitespace, then strip any
   // per-token /speed/altitude or /time suffix (everything from the first slash).
   let toks = route.split(/\.\.|\.\/\.|\.|\s+/).filter(Boolean)
-    .map(t => { const s = t.indexOf('/'); return s >= 0 ? t.slice(0, s) : t; })
+    .map(t => {
+      // Coordinate fix "4149N/08447W" -> ICAO "4149N08447W" (keep both halves).
+      const c = t.match(/^(\d{2,4}[NS])\/(\d{3,5}[EW])$/);
+      if (c) return c[1] + c[2];
+      // Otherwise strip a /speed/altitude or /time suffix (everything from the slash).
+      const s = t.indexOf('/');
+      return s >= 0 ? t.slice(0, s) : t;
+    })
     .filter(Boolean);
   const out = [];
   for(let i=0;i<toks.length;i++){

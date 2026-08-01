@@ -236,7 +236,20 @@ class AsdexBridge
                 var eramGufi = report.Elements().FirstOrDefault(e => e.Name.LocalName == "enhancedData")
                     ?.Elements().FirstOrDefault(e => e.Name.LocalName == "eramGufi")?.Value;
 
-                var track = airportTracks.GetOrAdd(trackId,
+                // Position-based dedup for unidentified tracks or duplicate squawks.
+                // When an aircraft lacks a proper GUFI, or multiple reports share the same squawk,
+                // position reports can create duplicate tracks. Check for nearby candidates.
+                string effectiveTrackId = trackId;
+                if (eramGufi is null || squawk is not null)
+                {
+                    var nearbyTrack = FindNearbyTrack(airportTracks, lat, lon, squawk);
+                    if (nearbyTrack is not null)
+                    {
+                        effectiveTrackId = nearbyTrack.TrackId;
+                    }
+                }
+
+                var track = airportTracks.GetOrAdd(effectiveTrackId,
                     id => new AsdexTrack { Airport = airport, TrackId = id });
 
                 // If this AT track just gained a callsign, absorb any standalone AD track
@@ -338,7 +351,18 @@ class AsdexBridge
                 else
                 {
                     // No matching AT track — create/update AD track
-                    track = airportTracks.GetOrAdd(trackId,
+                    // Apply position-based dedup for null-callsign or duplicate-squawk AD reports
+                    string effectiveAdTrackId = trackId;
+                    if (adCallsign is null || adSquawk is not null)
+                    {
+                        var nearbyTrack = FindNearbyTrack(airportTracks, lat, lon, adSquawk);
+                        if (nearbyTrack is not null)
+                        {
+                            effectiveAdTrackId = nearbyTrack.TrackId;
+                        }
+                    }
+
+                    track = airportTracks.GetOrAdd(effectiveAdTrackId,
                         id => new AsdexTrack { Airport = airport, TrackId = id });
                     track.MergeFrom(lat, lon, adCallsign, adSquawk, adAcType, adTgtType, null, null, null, eramGufi,
                         sfdpsGufi: sfdpsGufi, adDep: adDep, adDest: adDest);
@@ -501,6 +525,40 @@ class AsdexBridge
         const double maxLatDeg = 0.00045;  // ~50m latitude
         const double maxLonDeg = 0.00060;  // ~50m longitude at ~40°N (slightly looser is fine)
         return Math.Abs(aLat - bLat) < maxLatDeg && Math.Abs(aLon - bLon) < maxLonDeg;
+    }
+
+    // Position-based deduplication: finds an existing track near the given position.
+    // For unidentified aircraft (no callsign, null GUFI), searches for nearby tracks
+    // regardless of squawk. For identified aircraft with a squawk, searches for nearby
+    // tracks with the same squawk to catch duplicate transponder reports.
+    // Tight 20m range ensures only truly duplicate reports merge, not adjacent aircraft.
+    private static AsdexTrack? FindNearbyTrack(ConcurrentDictionary<string, AsdexTrack> tracks, double lat, double lon, string? squawk)
+    {
+        const double maxLatDeg = 0.00018;  // ~20m latitude (tight threshold for same aircraft only)
+        const double maxLonDeg = 0.00024;  // ~20m longitude
+
+        AsdexTrack? best = null;
+        foreach (var t in tracks.Values)
+        {
+            // Position proximity check first (tight range)
+            if (Math.Abs(t.Latitude - lat) >= maxLatDeg || Math.Abs(t.Longitude - lon) >= maxLonDeg)
+                continue;
+
+            // Two dedup scenarios:
+            // 1. If both tracks have no callsign and null GUFI, they're unidentified — merge
+            if (string.IsNullOrEmpty(t.Callsign) && t.EramGufi is null)
+            {
+                if (best is null || t.LastSeen > best.LastSeen)
+                    best = t;
+            }
+            // 2. If both tracks have the same squawk (duplicate transponder), merge
+            else if (squawk is not null && t.Squawk == squawk)
+            {
+                if (best is null || t.LastSeen > best.LastSeen)
+                    best = t;
+            }
+        }
+        return best;
     }
 
     // ── Timer callbacks ──────────────────────────────────────────────────────

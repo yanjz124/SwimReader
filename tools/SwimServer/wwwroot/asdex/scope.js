@@ -103,8 +103,10 @@ function saveDbToggles() {
         cat: dbShowCat, fix: dbShowFix, vel: dbShowVel, unk: dbShowUnk
     }));
     dbToggleVer++;
-    // Invalidate all hashes so icons rebuild
+    // Invalidate all hashes and immediately re-render all tracks
     for (const tid of Object.keys(hashes)) hashes[tid] = '';
+    for (const t of Object.values(trackData)) applyTrack(t);
+    updateCount();
 }
 
 // Toggle button wiring
@@ -133,6 +135,12 @@ unkBtn.addEventListener('click', () => {
         for (const tid of Object.keys(markers)) {
             const t = trackData[tid];
             if (t && targetCategory(t) === 'unknown') removeTrack(tid);
+        }
+        updateCount();
+    } else {
+        // If toggling back on, re-render all unknown tracks
+        for (const t of Object.values(trackData)) {
+            if (targetCategory(t) === 'unknown') applyTrack(t);
         }
         updateCount();
     }

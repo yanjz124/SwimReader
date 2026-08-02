@@ -7615,8 +7615,69 @@ function clampBox(el) {
     el.style.right = 'auto';
 }
 
+// Clamp into the container only when the box is actually poking outside it.
+// Unlike clampBox this leaves an untouched box on its CSS bottom/right anchor,
+// so a content-sized box keeps growing in the direction its anchor implies.
+function clampIntoContainer(el) {
+    const container = el.parentElement;
+    if (!container) return false;
+    const c = container.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    if (r.left >= c.left && r.top >= c.top && r.right <= c.right && r.bottom <= c.bottom) return false;
+    const left = Math.max(0, Math.min(r.left - c.left, c.width - r.width));
+    const top  = Math.max(0, Math.min(r.top - c.top,  c.height - r.height));
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+    el.style.right = 'auto';
+    el.style.bottom = 'auto';
+    return true;
+}
+
+// The MCA and RA are sized by their content (no scrollbars — see eram.css), so
+// either can change size at any moment: a long QF/METAR readout widens and
+// lengthens the RA, a wrapped feedback line grows the MCA upward. Re-run this
+// on every size/viewport change to keep both fully inside #map-container and
+// off each other.
+const BOX_GAP = 4;
+function layoutMcaRa() {
+    const mca = document.getElementById('mca');
+    const ra = document.getElementById('ra');
+    if (!mca || !ra) return;
+    if (_boxDragging === mca || _boxDragging === ra) return;  // don't fight a drag
+    // MCA is the anchor box — it's kept on-screen but never moved for the RA.
+    if (mca.style.display !== 'none') clampIntoContainer(mca);
+    if (ra.style.display === 'none') return;
+    if (ra.dataset.dragged === '1') {
+        clampBox(ra);               // bounds + push away from the MCA
+        return;
+    }
+    // Undragged default: right-aligned with the MCA and sitting directly on
+    // top of it, so the RA grows upward and can't cover the MCA no matter how
+    // tall either box gets.
+    const c = ra.parentElement.getBoundingClientRect();
+    const m = mca.getBoundingClientRect();
+    ra.style.left = 'auto';
+    ra.style.top = 'auto';
+    if (mca.style.display === 'none' || m.width === 0) {
+        ra.style.right = '30px';
+        ra.style.bottom = '30px';
+    } else {
+        ra.style.right = Math.max(0, c.right - m.right) + 'px';
+        ra.style.bottom = Math.max(0, c.bottom - m.top + BOX_GAP) + 'px';
+    }
+    clampIntoContainer(ra);
+}
+
+let _boxLayoutQueued = false;
+function scheduleBoxLayout() {
+    if (_boxLayoutQueued) return;
+    _boxLayoutQueued = true;
+    requestAnimationFrame(() => { _boxLayoutQueued = false; layoutMcaRa(); });
+}
+
 function saveBoxPosition(el) {
     const key = 'boxPos_' + el.id;
+    el.dataset.dragged = '1';
     localStorage.setItem(key, JSON.stringify({ left: el.style.left, top: el.style.top }));
 }
 
@@ -7628,10 +7689,15 @@ function restoreBoxPosition(el) {
             const pos = JSON.parse(saved);
             if (pos.left) el.style.left = pos.left;
             if (pos.top) { el.style.top = pos.top; el.style.bottom = 'auto'; el.style.right = 'auto'; }
+            if (pos.left && pos.top) el.dataset.dragged = '1';
         } catch(e) {}
     }
-    // Clamp to viewport on restore (handles window resize since last save)
-    requestAnimationFrame(() => clampBox(el));
+    // Clamp to viewport on restore (handles window resize since last save).
+    // Only a box the user actually placed gets pinned to explicit left/top —
+    // everything else keeps its CSS anchor so it can still grow with content.
+    requestAnimationFrame(() => {
+        if (el.dataset.dragged === '1') clampBox(el); else clampIntoContainer(el);
+    });
 }
 
 function dropBox() {
@@ -7657,6 +7723,7 @@ function setupBoxDrag(el, handleEl) {
         if (_boxDragging) dropBox();
         // Pick up this box
         _boxDragging = el;
+        el.dataset.dragged = '1';
         el.classList.add('box-dragging');
         const rect = el.getBoundingClientRect();
         _boxDragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -7695,17 +7762,19 @@ window.addEventListener('resize', () => {
     clampBox(document.getElementById('time-view'));
     const fm = document.getElementById('field-menu');
     if (fm.style.display !== 'none') clampBox(fm);
-    // MCA + RA: clamp ONLY if they've been dragged to an explicit position
-    // (style.left set). Otherwise leave them on their bottom/right CSS
-    // defaults so they re-anchor to the bottom-right corner automatically.
-    const mca = document.getElementById('mca');
-    const ra = document.getElementById('ra');
-    if (mca && mca.style.left) clampBox(mca);
-    if (ra && ra.style.left) clampBox(ra);
+    scheduleBoxLayout();
 });
 
 setupBoxDrag(document.getElementById('mca'));
 setupBoxDrag(document.getElementById('ra'));
+// Either box changing size (new RA readout, wrapped MCA feedback, UI scale
+// change, box hidden/shown) re-runs the layout.
+if (window.ResizeObserver) {
+    const boxRo = new ResizeObserver(() => scheduleBoxLayout());
+    boxRo.observe(document.getElementById('mca'));
+    boxRo.observe(document.getElementById('ra'));
+}
+scheduleBoxLayout();
 setupBoxDrag(document.getElementById('po-menu'), document.getElementById('po-menu-title'));
 setupBoxDrag(document.getElementById('altim-menu'), document.getElementById('altim-menu-title'));
 setupBoxDrag(document.getElementById('wx-menu'), document.getElementById('wx-menu-title'));

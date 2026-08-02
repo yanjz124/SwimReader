@@ -24,11 +24,36 @@ let facilityOnly = false;   // when true + facility selected, hide all non-facil
 // sector owns a track, and auto-remove it ~2.5 min after it leaves our control
 // (handoff accepted away). We only auto-manage VCI we set ourselves — a manual
 // toggle takes the track out of auto control so we never fight the controller.
+// The ownership clock comes from the server's controlAgeSec (time since the
+// sector took the handoff), not from when this page saw the track — so opening a
+// sector mid-session immediately checks in everything already established on it.
 let autoVci = false;
 const AUTO_VCI_DELAY_MS = 150000;      // 2.5 min, in the 2–3 min band Leo asked for
 const ownedSince = new Map();          // gufi → ms when our sector first owned it
 const leftOwnAt = new Map();           // gufi → ms when it left our control (for auto-remove)
 const vciAutoManaged = new Set();      // gufis whose VCI is currently auto-controlled
+
+// ── Auto offset (aftermarket automation, OFF by default) ─────────────────────
+// Also not real ERAM: real controllers offset blocks by hand. When enabled, FDBs
+// that would overlap another FDB (or sit on top of another target) get nudged to
+// a different octant. Two rules keep it from being distracting:
+//   1. Minimise movement — a block only moves when it's actually in conflict,
+//      and then it takes the first acceptable slot in preference order and is
+//      held there for AUTO_OFF_HOLD_MS before it may move again.
+//   2. Prefer the sides — candidates are ranked by how close they are to abeam
+//      the aircraft's direction of travel (its own left/right, not screen
+//      left/right), which reads far better than blocks scattered fore and aft.
+let autoOffset = false;
+const autoDbPositions = new Map();     // gufi → auto-assigned numpad position
+const autoDbMovedAt = new Map();       // gufi → ms of last auto move (thrash guard)
+const AUTO_OFF_HOLD_MS = 10000;        // min time a block stays put once placed
+const AUTO_OFF_PAD = 3;                // px of clearance required around a block
+const AUTO_OFF_MAX = 250;              // give up above this many on-screen FDBs
+// Numpad octant → unit vector in screen space (x right, y down).
+const OCTANT_VEC = {
+    9: [ 0.707, -0.707], 8: [0, -1], 7: [-0.707, -0.707], 4: [-1, 0],
+    1: [-0.707,  0.707], 2: [0,  1], 3: [ 0.707,  0.707], 6: [ 1, 0],
+};
 let showFdb = true;
 let showHistory = true;
 let vectorMinutes = 0;
@@ -2241,8 +2266,16 @@ function numpadPos(n) {
     const inverted = !document.getElementById('numpad-inverted')?.checked;
     return inverted ? (NUMPAD_INVERT[n] ?? n) : n;
 }
-function getLeaderOffset(gufi) {
-    const pos = dbPositions.get(gufi);
+// Effective data block position: an explicit controller placement always wins,
+// otherwise the auto-offset pass's choice, otherwise 0 (= NE default).
+function effDbPos(gufi) {
+    return dbPositions.get(gufi) ?? autoDbPositions.get(gufi) ?? 0;
+}
+
+// posOverride lets the auto-offset pass ask "where would the block land if it
+// were at position N?" without mutating state.
+function getLeaderOffset(gufi, posOverride) {
+    const pos = posOverride ?? effDbPos(gufi);
     const level = ldrLenOverrides.get(gufi) ?? 1;
     const len = level * LDR_LEN;
     if (len === 0) return { dx: 0, dy: 0 };
@@ -2269,8 +2302,8 @@ function getLeaderOffset(gufi) {
 //   S:  left edge, between lines 1-2    SW: right edge, between lines 1-2
 //   W:  right edge, between lines 2-3   NW: right edge, between lines 2-3
 // xShift: 0 = left-aligned (text extends right), -1 = right-aligned (text extends left)
-function getDbAnchor(gufi, numLines) {
-    const pos = dbPositions.get(gufi) || 9;
+function getDbAnchor(gufi, numLines, posOverride) {
+    const pos = posOverride ?? (effDbPos(gufi) || 9);
     const isLeft = (pos === 1 || pos === 4 || pos === 7);
 
     if (numLines === 2) {
@@ -2593,7 +2626,7 @@ function buildMarkerHtml(f, cls) {
     const numLines = useFdb ? 4 : 2;
     const anchor = getDbAnchor(f.gufi, numLines);
     const isLeftPos = anchor.xShift === -1;
-    const pos = dbPositions.get(f.gufi) || 9;
+    const pos = effDbPos(f.gufi) || 9;
     const isVertical = (pos === 2 || pos === 8);
 
     // Gap from leader endpoint to data block (Column 0 is inline, provides visual separation)
@@ -3305,6 +3338,11 @@ function connectWs() {
             lastVisibleAt.delete(msg.data.gufi);
             driActive.delete(msg.data.gufi);
             pointoutBlocked.delete(msg.data.gufi);
+            autoDbPositions.delete(msg.data.gufi);
+            autoDbMovedAt.delete(msg.data.gufi);
+            ownedSince.delete(msg.data.gufi);
+            leftOwnAt.delete(msg.data.gufi);
+            vciAutoManaged.delete(msg.data.gufi);
             const m = markers.get(msg.data.gufi);
             if (m) { map.removeLayer(m); markers.delete(msg.data.gufi); }
             removeRoute(msg.data.gufi);
@@ -3414,10 +3452,18 @@ function isManipulated(gufi) {
 // ownership class. Adds VCI after AUTO_VCI_DELAY_MS of continuous ownership;
 // removes it AUTO_VCI_DELAY_MS after the track leaves our control. Only touches
 // VCI it set itself (vciAutoManaged) so a manual // toggle is never overridden.
-function applyAutoVci(gufi, cls, now) {
+function applyAutoVci(gufi, cls, now, f) {
     if (cls === 'own') {
         leftOwnAt.delete(gufi);                       // back under control — cancel any removal timer
-        if (!ownedSince.has(gufi)) ownedSince.set(gufi, now);
+        if (!ownedSince.has(gufi)) {
+            // Seed from the server's controlAgeSec (time since this sector took the
+            // handoff) rather than from "now", so opening a sector mid-session — or
+            // reloading the page — doesn't restart the clock on tracks that have
+            // already been on frequency. A track owned longer than the delay gets
+            // VCI on this very render.
+            const heldMs = (f && f.controlAgeSec != null) ? f.controlAgeSec * 1000 : 0;
+            ownedSince.set(gufi, now - heldMs);
+        }
         // Add VCI only if the controller hasn't already set it manually.
         if (!vciActive.has(gufi) && !vciAutoManaged.has(gufi) &&
             now - ownedSince.get(gufi) >= AUTO_VCI_DELAY_MS) {
@@ -3440,6 +3486,83 @@ function applyAutoVci(gufi, cls, now) {
     }
 }
 
+// ── Auto offset engine ───────────────────────────────────────────────────────
+// Screen rect a data block would occupy at numpad position `pos`, mirroring the
+// placement maths in buildMarkerHtml() (which is why both sides go through
+// getLeaderOffset/getDbAnchor rather than duplicating the octant table).
+function dbRectFor(gufi, pos, pt, w, h) {
+    const ldr = getLeaderOffset(gufi, pos);
+    const anchor = getDbAnchor(gufi, 4, pos);
+    const dbGap = Math.ceil(CHAR_W * 0.5);
+    let left;
+    if (anchor.xShift === -1) left = ldr.dx - dbGap - w;             // right-aligned block
+    else if (pos === 2 || pos === 8) left = ldr.dx - Math.round(CHAR_W * 1.5) - 2;
+    else left = ldr.dx + dbGap;
+    return { x: pt.x + left, y: pt.y + ldr.dy + anchor.yShift, w, h };
+}
+
+function rectsOverlap(a, b) {
+    return a.x - AUTO_OFF_PAD < b.x + b.w && a.x + a.w + AUTO_OFF_PAD > b.x &&
+           a.y - AUTO_OFF_PAD < b.y + b.h && a.y + a.h + AUTO_OFF_PAD > b.y;
+}
+
+// Candidate octants ranked by how close they are to abeam the aircraft's own
+// direction of travel — its left/right, not the screen's. Blocks parked off a
+// wingtip read much better than ones sitting ahead of or behind the target.
+// Ties break toward the right side so a formation doesn't split randomly.
+function autoOffsetCandidates(f) {
+    const octs = [9, 8, 7, 4, 1, 2, 3, 6];
+    const vx = f.trackVelocityX, vy = f.trackVelocityY;
+    const spd = (vx == null || vy == null) ? 0 : Math.hypot(vx, vy);
+    // No usable velocity (sitting still, missing vector): fall back to the ERAM
+    // default first, then the other corners, then the cardinals.
+    if (spd < 1) return [9, 3, 7, 1, 6, 4, 8, 2];
+    const dx = vx / spd, dy = -vy / spd;      // screen space: north is -y
+    const rx = -dy, ry = dx;                  // rotate +90° → right of track
+    return octs
+        .map(o => {
+            const v = OCTANT_VEC[o];
+            const dot = v[0] * rx + v[1] * ry;
+            return { o, abeam: Math.abs(dot), right: dot > 0 ? 1 : 0 };
+        })
+        .sort((a, b) => (b.abeam - a.abeam) || (b.right - a.right))
+        .map(c => c.o);
+}
+
+// One placement pass over the on-screen FDBs. `entries` is [{gufi, f, pt, w, h}]
+// and `fixed` is the rects that auto-placed blocks must avoid but can't move
+// (manually positioned blocks and every target symbol).
+function autoOffsetPass(entries, fixed, now) {
+    const placed = fixed.slice();
+    // Deterministic order — otherwise Map iteration order changes who yields to
+    // whom as flights come and go, and blocks shuffle for no reason.
+    entries.sort((a, b) => (a.gufi < b.gufi ? -1 : a.gufi > b.gufi ? 1 : 0));
+    for (const e of entries) {
+        const cur = autoDbPositions.get(e.gufi) ?? 9;
+        const curRect = dbRectFor(e.gufi, cur, e.pt, e.w, e.h);
+        if (!placed.some(r => rectsOverlap(curRect, r))) {
+            placed.push(curRect);           // still clear — leave it exactly where it is
+            continue;
+        }
+        // In conflict. Hold anything placed recently so blocks don't chase each
+        // other around the target every render.
+        if (now - (autoDbMovedAt.get(e.gufi) ?? 0) < AUTO_OFF_HOLD_MS) {
+            placed.push(curRect);
+            continue;
+        }
+        let best = null;
+        for (const pos of autoOffsetCandidates(e.f)) {
+            const r = dbRectFor(e.gufi, pos, e.pt, e.w, e.h);
+            if (!placed.some(o => rectsOverlap(r, o))) { best = { pos, r }; break; }
+        }
+        if (!best) { placed.push(curRect); continue; }   // nowhere clear — don't churn
+        autoDbPositions.set(e.gufi, best.pos);
+        autoDbMovedAt.set(e.gufi, now);
+        placed.push(best.r);
+        invalidateMarker(e.gufi);
+    }
+}
+
 // Restore every data block to its live SWIM ("IRL") state: drop all local edits
 // the controller made — FDB/LDB toggles, block placement, leader length, VCI,
 // and local ALT/HSF overrides. Point-out acknowledgment state is left alone.
@@ -3448,6 +3571,8 @@ function restoreAllBlocks() {
     wasOwnOrHo.clear();
     manuallyHidden.clear();
     dbPositions.clear();
+    autoDbPositions.clear();
+    autoDbMovedAt.clear();
     ldrLenOverrides.clear();
     vciActive.clear();
     vciAutoManaged.clear();
@@ -3496,7 +3621,7 @@ function flightHash(f, cls) {
     // Include hoCompleted + R state so marker rebuilds when handoff completes
     const hoc = hoCompletedInfo.has(f.gufi) ? 1 : 0;
     const rInd = shouldShowR(f, cls) ? 1 : 0;
-    const dbPos = dbPositions.get(f.gufi) || 0;
+    const dbPos = effDbPos(f.gufi);
     const ldrLen = ldrLenOverrides.get(f.gufi) ?? 1;
     const vci = vciActive.has(f.gufi) ? 1 : 0;
     const la = localAssignedAlt.get(f.gufi);
@@ -3568,6 +3693,7 @@ function doRender() {
         [mapBounds.getNorth() + padLat, mapBounds.getEast() + padLon]
     );
     const onScreenGufis = new Set();
+    const autoOffsetTracks = [];   // filled only when the Auto offset toggle is on
     const counts = { own: 0, ho: 0, other: 0, emrg: 0 };
 
     // Deduplicate: same callsign reported by multiple ARTCCs → keep only the best GUFI.
@@ -3649,7 +3775,7 @@ function doRender() {
         counts[cls]++;
 
         // Aftermarket auto-VCI lifecycle (opt-in; no-op when the toggle is off).
-        if (autoVci) applyAutoVci(gufi, cls, now);
+        if (autoVci) applyAutoVci(gufi, cls, now, f);
 
         // Sticky FDB: when a track transitions from own/ho to other, keep FDB
         if (cls === 'own' || cls === 'ho') {
@@ -3664,6 +3790,7 @@ function doRender() {
         if (!paddedBounds.contains(ll)) continue;
 
         onScreenGufis.add(gufi);
+        if (autoOffset) autoOffsetTracks.push({ gufi, f, ll, fdb: shouldShowFdb(gufi, cls) });
         const hash = flightHash(f, cls);
 
         const existing = markers.get(gufi);
@@ -3957,6 +4084,30 @@ function doRender() {
         }
     }
 
+    // Auto offset: runs after the markers exist so block sizes can be measured
+    // from the DOM. Any position change lands on the next render (the new
+    // position is in flightHash, so the marker rebuilds itself).
+    if (autoOffset && autoOffsetTracks.length && autoOffsetTracks.length <= AUTO_OFF_MAX) {
+        // All measurement first, then all writes — keeps this to one reflow.
+        const estW = Math.ceil(CHAR_W * 10), estH = 4 * LINE_H;
+        const movable = [], fixed = [];
+        for (const t of autoOffsetTracks) {
+            const pt = map.latLngToContainerPoint(t.ll);
+            // Target symbols are obstacles for every track, FDB or not — an
+            // offset block should never be parked on top of another return.
+            fixed.push({ x: pt.x - CHAR_W, y: pt.y - LINE_H / 2, w: CHAR_W * 2, h: LINE_H });
+            if (!t.fdb) continue;
+            const el = markers.get(t.gufi)?.getElement();
+            const db = el && el.querySelector('.ac-db');
+            const w = db?.offsetWidth || estW, h = db?.offsetHeight || estH;
+            // A block the controller placed by hand is immovable — auto blocks
+            // work around it, never the other way round.
+            if (dbPositions.has(t.gufi)) fixed.push(dbRectFor(t.gufi, dbPositions.get(t.gufi), pt, w, h));
+            else movable.push({ gufi: t.gufi, f: t.f, pt, w, h });
+        }
+        autoOffsetPass(movable, fixed, now);
+    }
+
     // Redraw canvas overlay
     drawOverlay();
 
@@ -4110,8 +4261,12 @@ document.getElementById('chk-tmu').addEventListener('change', function () {
     drawOverlay();
 });
 
-document.getElementById('chk-auto-vci').addEventListener('change', function () {
-    autoVci = this.checked;
+// Single entry point for the Auto VCI toggle — used by both the sidebar
+// checkbox and the XX VCI ON/OFF command so they can't drift apart.
+function setAutoVci(on) {
+    autoVci = !!on;
+    const chk = document.getElementById('chk-auto-vci');
+    if (chk) chk.checked = autoVci;
     if (!autoVci) {
         // Turning it off releases auto-managed VCI (remove the auto-added indicators)
         // but leaves anything the controller set by hand.
@@ -4122,6 +4277,29 @@ document.getElementById('chk-auto-vci').addEventListener('change', function () {
         invalidateAllMarkers();
     }
     saveSettingsToLocalStorage();
+}
+
+document.getElementById('chk-auto-vci').addEventListener('change', function () {
+    setAutoVci(this.checked);
+});
+
+// Same pattern for Auto offset — one setter shared by the checkbox and XX OFFSET.
+function setAutoOffset(on) {
+    autoOffset = !!on;
+    const chk = document.getElementById('chk-auto-offset');
+    if (chk) chk.checked = autoOffset;
+    if (!autoOffset) {
+        // Turning it off snaps every auto-placed block back to the default
+        // position; manual placements (dbPositions) are untouched.
+        autoDbPositions.clear();
+        autoDbMovedAt.clear();
+    }
+    invalidateAllMarkers();
+    saveSettingsToLocalStorage();
+}
+
+document.getElementById('chk-auto-offset').addEventListener('change', function () {
+    setAutoOffset(this.checked);
 });
 
 document.getElementById('btn-restore-blocks').addEventListener('click', function () {
@@ -5316,6 +5494,7 @@ function loadSettingsFromLocalStorage() {
         if (settings.ldbBrightness !== undefined) ldbBrightness = settings.ldbBrightness;
         if (settings.facilityOnly !== undefined) facilityOnly = settings.facilityOnly;
         if (settings.autoVci !== undefined) autoVci = settings.autoVci;
+        if (settings.autoOffset !== undefined) autoOffset = settings.autoOffset;
         if (settings.mcaKb !== undefined) document.getElementById('chk-mca-kb').checked = settings.mcaKb;
         if (settings.numinv !== undefined) document.getElementById('numpad-inverted').checked = !settings.numinv;
         if (settings.nasrBrightness) Object.assign(nasrBrightness, settings.nasrBrightness);
@@ -5355,6 +5534,7 @@ function loadSettingsFromLocalStorage() {
     }
     document.getElementById('chk-facility-only').checked = facilityOnly;
     document.getElementById('chk-auto-vci').checked = autoVci;
+    document.getElementById('chk-auto-offset').checked = autoOffset;
     document.getElementById('chk-mapbg').checked = showMapBg;
     document.getElementById('sel-line4').value = line4Mode;
     document.getElementById('sel-boundary-style').value = boundaryStyle;
@@ -5420,6 +5600,7 @@ function saveSettingsToLocalStorage() {
         ldbBrightness,
         facilityOnly,
         autoVci,
+        autoOffset,
         mcaKb: document.getElementById('chk-mca-kb')?.checked || false,
         mcaVisible: document.getElementById('chk-mca')?.checked !== false,
         raVisible: document.getElementById('chk-ra')?.checked !== false,
@@ -7226,7 +7407,29 @@ function processCommand(cmd) {
     // ═══════════════════════════════════════════════════════════════════════
     if (verb === 'XX') {
         const args = parts.slice(1).map(s => s.toUpperCase());
-        if (args.length === 0) return { feedback: [{ type: 'err', text: 'XX FAC <id> | XX SEC <sectors> | XX REPLAY [time]' }] };
+        if (args.length === 0) return { feedback: [{ type: 'err', text: 'XX FAC <id> | XX SEC <sectors> | XX VCI|OFFSET ON|OFF | XX REPLAY [time]' }] };
+
+        // XX VCI [ON|OFF] / XX OFFSET [ON|OFF] — the two aftermarket automations,
+        // same switches as the sidebar checkboxes. Bare form reports the state.
+        if (args[0] === 'VCI' || args[0] === 'OFFSET') {
+            const isVci = args[0] === 'VCI';
+            const label = isVci ? 'AUTO VCI' : 'AUTO OFFSET';
+            const state = args[1];
+            if (!state) {
+                return { feedback: [
+                    { type: 'info', text: label },
+                    { type: 'info', text: (isVci ? autoVci : autoOffset) ? 'ON' : 'OFF' },
+                ] };
+            }
+            if (state !== 'ON' && state !== 'OFF') {
+                return { feedback: [{ type: 'err', text: 'FORMAT' }, { type: 'info', text: 'XX ' + args[0] + ' ON|OFF' }] };
+            }
+            if (isVci) setAutoVci(state === 'ON'); else setAutoOffset(state === 'ON');
+            return { feedback: [
+                { type: 'ok', text: 'ACCEPT' },
+                { type: 'info', text: label + ' ' + state },
+            ] };
+        }
 
         // XX RP | XX REPLAY  — replay control. Delegates to the shared bar.
         if (args[0] === 'RP' || args[0] === 'REPLAY') {

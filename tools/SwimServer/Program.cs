@@ -1365,8 +1365,14 @@ void ProcessFlight(XElement flight, string rawXml)
         var newSec = cu.Attribute("sectorIdentifier")?.Value ?? "";
         var prevFac = state.ControllingFacility ?? "";
         var prevSec = state.ControllingSector ?? "";
-        if ((newFac != prevFac || newSec != prevSec) && !string.IsNullOrEmpty(prevFac))
-            sectorTracker.RecordTransition(prevFac, prevSec, newFac, newSec);
+        if (newFac != prevFac || newSec != prevSec)
+        {
+            if (!string.IsNullOrEmpty(prevFac))
+                sectorTracker.RecordTransition(prevFac, prevSec, newFac, newSec);
+            // Stamp when this sector took control, so a client opening the sector
+            // later knows how long the track has already been on its frequency.
+            state.ControlSince = DateTime.UtcNow;
+        }
         state.ControllingFacility = newFac;
         state.ControllingSector = newSec;
     }

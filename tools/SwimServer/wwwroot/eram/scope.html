@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -9,7 +9,7 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="/shared/common.css?v=10">
 <link rel="stylesheet" href="/shared/replay-bar.css?v=3">
-<link rel="stylesheet" href="/eram/eram.css?v=15">
+<link rel="stylesheet" href="/eram/eram.css?v=16">
 <script defer src="/shared/replay-bar.js?v=3"></script>
 </head>
 <body>
@@ -44,8 +44,13 @@
         <div class="panel-section">
             <div class="panel-label">AUTOMATION</div>
             <div class="ctrl-row" style="margin-top:4px;">
-                <label title="Not real ERAM — auto-checks a track on frequency (VCI) ~2.5 min after your sector owns it, and removes it ~2.5 min after handoff. Off = faithful manual VCI.">
+                <label title="Not real ERAM — auto-checks a track on frequency (VCI) ~2.5 min after your sector takes the handoff, and removes it ~2.5 min after handing it off. Timed from the real handoff, so opening a sector immediately checks in tracks already established on it. Off = faithful manual VCI.">
                     <input type="checkbox" id="chk-auto-vci"> Auto VCI
+                </label>
+            </div>
+            <div class="ctrl-row" style="margin-top:4px;">
+                <label title="Not real ERAM — offsets full data blocks that would overlap another block or target. Prefers a position abeam the aircraft's own left/right (relative to its track, not the screen), and only moves a block that is actually in conflict. Blocks you place by hand are never moved.">
+                    <input type="checkbox" id="chk-auto-offset"> Auto offset
                 </label>
             </div>
             <div class="ctrl-row" style="margin-top:4px;">
@@ -263,6 +268,8 @@
         <span class="cmd">XX SEC +&lt;s&gt; -&lt;s&gt;</span> <span class="desc">— Add/remove individual sectors (e.g. XX SEC +34 -32)</span><br>
         <span class="cmd">XX SEC ALL | NONE</span> <span class="desc">— Select all sectors / clear all</span><br>
         <span class="cmd">XX FAC &lt;id&gt; SEC &lt;sectors&gt;</span> <span class="desc">— Change facility and sectors together</span><br>
+        <span class="cmd">XX VCI ON|OFF</span> <span class="desc">— Auto VCI on/off (bare XX VCI reports state)</span><br>
+        <span class="cmd">XX OFFSET ON|OFF</span> <span class="desc">— Auto data block offset on/off</span><br>
         <h4>QUERIES</h4>
         <span class="cmd">QF &lt;FLID&gt;</span> <span class="desc">— Query flight plan → Response Area</span><br>
         <span class="cmd">QD</span> <span class="desc">— Clear Response Area</span><br>
@@ -408,7 +415,7 @@
     </div>
 </div>
 
-<script src="/eram/eram.js?v=23"></script>
+<script src="/eram/eram.js?v=24"></script>
 <script src="/idle-timer.js?v=10"></script>
 </body>
 </html>

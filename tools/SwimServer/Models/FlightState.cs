@@ -74,6 +74,11 @@ class FlightState
     public string? ReportingFacility { get; set; }
     public string? ControllingFacility { get; set; }
     public string? ControllingSector { get; set; }
+    /// <summary>UTC of the last controllingUnit change — i.e. when the current sector took the
+    /// handoff. Lets a client that connects (or opens a sector) mid-flight know how long the track
+    /// has already been under that sector's control instead of starting the clock at page load.
+    /// Persisted in the flight cache so it survives restarts.</summary>
+    public DateTime? ControlSince { get; set; }
     public string? HandoffEvent { get; set; }
     public string? HandoffReceiving { get; set; }
     public string? HandoffTransferring { get; set; }
@@ -235,6 +240,7 @@ class FlightState
         CoordinationTime = CoordinationTime, CoordinationFix = CoordinationFix,
         ReportingFacility = ReportingFacility,
         ControllingFacility = ControllingFacility, ControllingSector = ControllingSector,
+        ControlSince = ControlSince,
         HandoffEvent = HandoffEvent, HandoffReceiving = HandoffReceiving,
         HandoffTransferring = HandoffTransferring, HandoffAccepting = HandoffAccepting,
         HandoffForced = HandoffForced,
@@ -278,6 +284,7 @@ class FlightState
             CoordinationTime = s.CoordinationTime, CoordinationFix = s.CoordinationFix,
             ReportingFacility = s.ReportingFacility,
             ControllingFacility = s.ControllingFacility, ControllingSector = s.ControllingSector,
+            ControlSince = s.ControlSince,
             HandoffEvent = s.HandoffEvent, HandoffReceiving = s.HandoffReceiving,
             HandoffTransferring = s.HandoffTransferring, HandoffAccepting = s.HandoffAccepting,
             HandoffForced = s.HandoffForced,
@@ -317,6 +324,9 @@ class FlightState
         CoastIndicator = CoastIndicator ? true : (bool?)null,       // only send when true
         TargetLatitude, TargetLongitude, TargetAltitude,
         ControllingFacility, ControllingSector,
+        // Seconds the current sector has held the track. Sent as an age (not a
+        // timestamp) so it stays correct across clock skew, like PosAge.
+        ControlAgeSec = ControlSince.HasValue ? (int)(DateTime.UtcNow - ControlSince.Value).TotalSeconds : (int?)null,
         ReportingFacility,
         HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
         PointoutOriginatingUnit, PointoutReceivingUnit,
@@ -443,6 +453,7 @@ class FlightSnapshot
     public string? ReportingFacility { get; set; }
     public string? ControllingFacility { get; set; }
     public string? ControllingSector { get; set; }
+    public DateTime? ControlSince { get; set; }
     public string? HandoffEvent { get; set; }
     public string? HandoffReceiving { get; set; }
     public string? HandoffTransferring { get; set; }

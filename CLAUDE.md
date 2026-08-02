@@ -295,7 +295,7 @@ Core fields tracked per flight (by GUFI):
 - Flight plan: `origin`, `destination`, `aircraftType`, `route`, `star`, `remarks`, `flightRules`
 - Position: `latitude`, `longitude`, `groundSpeed`, `trackVelocityX/Y`, `targetLatitude`, `targetLongitude`, `coastIndicator`
 - Altitude: `assignedAltitude`, `assignedVfr`, `blockFloor`, `blockCeiling`, `interimAltitude`, `reportedAltitude`, `targetAltitude`
-- Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`
+- Ownership: `controllingFacility`, `controllingSector`, `reportingFacility`, `controlSince` (UTC of the last controllingUnit change — sent to clients as `controlAgeSec`)
 - Handoff: `handoffEvent`, `handoffReceiving`, `handoffTransferring`, `handoffAccepting`
 - Point-out: `pointoutOriginatingUnit`, `pointoutReceivingUnit` (comma-separated if multi-receiver, expire after 3 min via `PointoutTimestamp`)
 - Aircraft: `registration`, `wakeCategory`, `modeSCode`, `squawk`, `assignedSquawk`, `equipmentQualifier`
@@ -618,6 +618,8 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 | `QP A [sector] <FLID>` | Acknowledge point-out (receiver: removes P; originator: P→A) |
 | `QP <FLID>` | Clear point-out indicator + FDB→LDB |
 | `QX <FLID>` | Drop a track from display (instant timeout — one-way, no restore) |
+| `XX VCI ON\|OFF` | Auto VCI on/off (bare `XX VCI` reports state) — mirrors the sidebar checkbox |
+| `XX OFFSET ON\|OFF` | Auto data block offset on/off (bare `XX OFFSET` reports state) |
 | `WR R <station>` | Display METAR for station in Response Area (e.g. `WR R DCA` or `WR R KDCA`) |
 | `LA <loc1> <loc2> [/<spd>\|T/<spd>\|T]` | Range/bearing between two locations; T = true bearing |
 | `LB <fix>[/<spd>] <loc>` | Range/bearing from fix to location |
@@ -627,6 +629,19 @@ When a facility is selected, the same physical aircraft may exist as multiple GU
 FLIDs can be callsign, CID, or squawk (beacon code). Per CRC spec: "Aircraft IDs, assigned beacon codes, and CIDs are all FLIDs." Resolution priority: CID (facility-matched) > callsign > squawk, preferring visible flights. When multiple flights share the same CID (e.g., recycled CIDs from dropped flights not yet purged), `findFlight` prefers visible, non-dedup-hidden flights over stale/hidden ones.
 
 **F-key shortcuts:** F1=QF, F2=QP, F4=QX, F5=QZ, F6=QU, F7=QL, F8=QQ, F9=QB; Shift+F2=QD, Shift+F7=WR, Shift+F8=QR. Each clears MCA and inserts the command prefix.
+
+### Aftermarket Automation (not real ERAM, opt-in)
+Both live in the sidebar AUTOMATION panel, default OFF, persisted in localStorage, and toggleable from the MCA via `XX VCI ON|OFF` / `XX OFFSET ON|OFF`.
+
+**Auto VCI** — checks a track in on frequency (VCI) ~2.5 min after your sector takes it, and removes it ~2.5 min after it's handed off. Only VCI it set itself is auto-managed (`vciAutoManaged`), so a manual `//` toggle is never overridden. The ownership clock is seeded from the server's `controlAgeSec`, **not** from when the page first saw the track — so opening a sector mid-session (or reloading) immediately checks in everything already established on that frequency instead of restarting a 2.5 min timer on each.
+
+`controlAgeSec` comes from `FlightState.ControlSince`, stamped in `ProcessFlight()` whenever `<controllingUnit>` changes (the moment the handoff is taken). It's persisted in the flight cache and emitted by `ToSummary()` as an age in seconds, like `PosAge`.
+
+**Auto offset** — nudges full data blocks that would overlap another FDB or sit on top of another target. Runs once per render after markers exist (block sizes measured from the DOM), in `autoOffsetPass()`:
+- Candidate octants are ranked by how close they are to **abeam the aircraft's own direction of travel** (from `trackVelocityX/Y`, so its left/right, not the screen's) — blocks off a wingtip read much better than ones fore/aft. Right side wins ties.
+- Movement is minimised: a block only moves when its current position is actually in conflict, then it's held for `AUTO_OFF_HOLD_MS` (10s) before it may move again. Entries are processed in gufi order so placement is deterministic.
+- Manually placed blocks (`dbPositions`) are immovable obstacles — auto blocks work around them, never the reverse. Auto choices live in a separate `autoDbPositions` map; `effDbPos()` resolves manual → auto → default NE.
+- Skipped entirely above `AUTO_OFF_MAX` (250) on-screen FDBs.
 
 ### Track Suppression
 Middle-clicking a non-owned track's target symbol toggles: LDB ↔ FDB. `QX <FLID>` is a one-way drop (same as timeout). Hidden tracks (via QX) are cleared on facility change or page refresh. Per CRC spec, middle-clicking a target or map location with an MCA command pending appends the FLID/location and immediately executes (equivalent to left-click + Enter). Left-clicking a target or map location with MCA content inserts a FLID/location placeholder without executing. Locations for LA/LB/LC can be entered by clicking a target (inserts FLID), clicking the map (inserts lat/lon), or typing a callsign/CID/fix/navaid/airport.

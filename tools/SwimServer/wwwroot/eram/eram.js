@@ -3506,6 +3506,15 @@ function rectsOverlap(a, b) {
            a.y - AUTO_OFF_PAD < b.y + b.h && a.y + a.h + AUTO_OFF_PAD > b.y;
 }
 
+// Overlapping area in px², using the same padding convention as rectsOverlap
+// (`a` inflated by AUTO_OFF_PAD on all sides). Used to rank slots when the
+// screen is saturated and no slot is actually free.
+function overlapArea(a, b) {
+    const w = Math.min(a.x + a.w + AUTO_OFF_PAD, b.x + b.w) - Math.max(a.x - AUTO_OFF_PAD, b.x);
+    const h = Math.min(a.y + a.h + AUTO_OFF_PAD, b.y + b.h) - Math.max(a.y - AUTO_OFF_PAD, b.y);
+    return (w > 0 && h > 0) ? w * h : 0;
+}
+
 // Candidate octants ranked by how close they are to abeam the aircraft's own
 // direction of travel — its left/right, not the screen's. Blocks parked off a
 // wingtip read much better than ones sitting ahead of or behind the target.
@@ -3549,6 +3558,26 @@ function autoOffsetPass(entries, fixed, now) {
         }
         return null;
     };
+    // Saturation fallback: when nothing is free (zoomed out far, tiny screen,
+    // heavy traffic — overlap is then physically unavoidable), take the slot
+    // that overlaps least rather than dumping the block on its preferred side
+    // regardless. Ties go to the earlier slot, so this still favours abeam.
+    // Only walked when firstFree fails, so the common case pays nothing.
+    const leastOverlap = (e, order) => {
+        let best = null;
+        for (const pos of order) {
+            const r = dbRectFor(e.gufi, pos, e.pt, e.w, e.h);
+            let area = 0;
+            for (const o of placed) area += overlapArea(r, o);
+            if (!best || area < best.area) best = { pos, r, area };
+        }
+        return best;
+    };
+    const areaAt = (rect) => {
+        let area = 0;
+        for (const o of placed) area += overlapArea(rect, o);
+        return area;
+    };
     for (const e of entries) {
         const cands = autoOffsetCandidates(e.f);
         const cur = autoDbPositions.get(e.gufi) ?? 9;
@@ -3559,8 +3588,7 @@ function autoOffsetPass(entries, fixed, now) {
         // stacked at the NE default. Tracks with no vector yet are left at the
         // default and get placed once they're moving.
         if (!autoDbPositions.has(e.gufi) && cands) {
-            const pick = firstFree(e, cands)
-                      ?? { pos: cands[0], r: dbRectFor(e.gufi, cands[0], e.pt, e.w, e.h) };
+            const pick = firstFree(e, cands) ?? leastOverlap(e, cands);
             autoDbPositions.set(e.gufi, pick.pos);
             autoDbMovedAt.set(e.gufi, now);
             placed.push(pick.r);
@@ -3578,8 +3606,16 @@ function autoOffsetPass(entries, fixed, now) {
             placed.push(curRect);
             continue;
         }
-        const best = firstFree(e, cands ?? AUTO_OFF_NO_VECTOR);
-        if (!best) { placed.push(curRect); continue; }   // nowhere clear — don't churn
+        const order = cands ?? AUTO_OFF_NO_VECTOR;
+        let best = firstFree(e, order);
+        if (!best) {
+            // Saturated: relocating is only worth it if it measurably reduces
+            // the overlap. Otherwise stay put — moving a block from one bad
+            // slot to an equally bad one is pure churn.
+            const alt = leastOverlap(e, order);
+            if (!alt || alt.area >= areaAt(curRect)) { placed.push(curRect); continue; }
+            best = alt;
+        }
         autoDbPositions.set(e.gufi, best.pos);
         autoDbMovedAt.set(e.gufi, now);
         placed.push(best.r);

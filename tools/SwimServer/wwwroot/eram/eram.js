@@ -3510,13 +3510,13 @@ function rectsOverlap(a, b) {
 // direction of travel — its left/right, not the screen's. Blocks parked off a
 // wingtip read much better than ones sitting ahead of or behind the target.
 // Ties break toward the right side so a formation doesn't split randomly.
+// Returns null when the track has no usable vector (stationary, or velocity not
+// yet reported) — the caller leaves those alone rather than guessing a side.
 function autoOffsetCandidates(f) {
     const octs = [9, 8, 7, 4, 1, 2, 3, 6];
     const vx = f.trackVelocityX, vy = f.trackVelocityY;
     const spd = (vx == null || vy == null) ? 0 : Math.hypot(vx, vy);
-    // No usable velocity (sitting still, missing vector): fall back to the ERAM
-    // default first, then the other corners, then the cardinals.
-    if (spd < 1) return [9, 3, 7, 1, 6, 4, 8, 2];
+    if (spd < 1) return null;
     const dx = vx / spd, dy = -vy / spd;      // screen space: north is -y
     const rx = -dy, ry = dx;                  // rotate +90° → right of track
     return octs
@@ -3529,6 +3529,10 @@ function autoOffsetCandidates(f) {
         .map(c => c.o);
 }
 
+// Order used when the track has no vector to be abeam of: ERAM default first,
+// then the other corners, then the cardinals.
+const AUTO_OFF_NO_VECTOR = [9, 3, 7, 1, 6, 4, 8, 2];
+
 // One placement pass over the on-screen FDBs. `entries` is [{gufi, f, pt, w, h}]
 // and `fixed` is the rects that auto-placed blocks must avoid but can't move
 // (manually positioned blocks and every target symbol).
@@ -3537,9 +3541,33 @@ function autoOffsetPass(entries, fixed, now) {
     // Deterministic order — otherwise Map iteration order changes who yields to
     // whom as flights come and go, and blocks shuffle for no reason.
     entries.sort((a, b) => (a.gufi < b.gufi ? -1 : a.gufi > b.gufi ? 1 : 0));
+    // First free slot in preference order, or null if every one is taken.
+    const firstFree = (e, order) => {
+        for (const pos of order) {
+            const r = dbRectFor(e.gufi, pos, e.pt, e.w, e.h);
+            if (!placed.some(o => rectsOverlap(r, o))) return { pos, r };
+        }
+        return null;
+    };
     for (const e of entries) {
+        const cands = autoOffsetCandidates(e.f);
         const cur = autoDbPositions.get(e.gufi) ?? 9;
         const curRect = dbRectFor(e.gufi, cur, e.pt, e.w, e.h);
+
+        // First sight of a track with a usable vector: park it abeam right away,
+        // so the standing arrangement is wingtip blocks rather than everything
+        // stacked at the NE default. Tracks with no vector yet are left at the
+        // default and get placed once they're moving.
+        if (!autoDbPositions.has(e.gufi) && cands) {
+            const pick = firstFree(e, cands)
+                      ?? { pos: cands[0], r: dbRectFor(e.gufi, cands[0], e.pt, e.w, e.h) };
+            autoDbPositions.set(e.gufi, pick.pos);
+            autoDbMovedAt.set(e.gufi, now);
+            placed.push(pick.r);
+            invalidateMarker(e.gufi);
+            continue;
+        }
+
         if (!placed.some(r => rectsOverlap(curRect, r))) {
             placed.push(curRect);           // still clear — leave it exactly where it is
             continue;
@@ -3550,11 +3578,7 @@ function autoOffsetPass(entries, fixed, now) {
             placed.push(curRect);
             continue;
         }
-        let best = null;
-        for (const pos of autoOffsetCandidates(e.f)) {
-            const r = dbRectFor(e.gufi, pos, e.pt, e.w, e.h);
-            if (!placed.some(o => rectsOverlap(r, o))) { best = { pos, r }; break; }
-        }
+        const best = firstFree(e, cands ?? AUTO_OFF_NO_VECTOR);
         if (!best) { placed.push(curRect); continue; }   // nowhere clear — don't churn
         autoDbPositions.set(e.gufi, best.pos);
         autoDbMovedAt.set(e.gufi, now);

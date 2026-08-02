@@ -637,9 +637,10 @@ Both live in the sidebar AUTOMATION panel, default OFF, persisted in localStorag
 
 `controlAgeSec` comes from `FlightState.ControlSince`, stamped in `ProcessFlight()` whenever `<controllingUnit>` changes (the moment the handoff is taken). It's persisted in the flight cache and emitted by `ToSummary()` as an age in seconds, like `PosAge`.
 
-**Auto offset** — nudges full data blocks that would overlap another FDB or sit on top of another target. Runs once per render after markers exist (block sizes measured from the DOM), in `autoOffsetPass()`:
-- Candidate octants are ranked by how close they are to **abeam the aircraft's own direction of travel** (from `trackVelocityX/Y`, so its left/right, not the screen's) — blocks off a wingtip read much better than ones fore/aft. Right side wins ties.
-- Movement is minimised: a block only moves when its current position is actually in conflict, then it's held for `AUTO_OFF_HOLD_MS` (10s) before it may move again. Entries are processed in gufi order so placement is deterministic.
+**Auto offset** — parks full data blocks **abeam the aircraft's own direction of travel** and keeps them from overlapping each other. Runs once per render after markers exist (block sizes measured from the DOM), in `autoOffsetPass()`:
+- Candidate octants are ranked by how close they are to abeam the track vector (from `trackVelocityX/Y`, so the aircraft's left/right, not the screen's) — blocks off a wingtip read much better than ones fore/aft. Right side wins ties. For a northbound track the order is `6 (E), 4 (W), 9 (NE), 3 (SE), 7 (NW), 1 (SW), 8 (N), 2 (S)`.
+- **First sight**: a track with a usable vector is placed abeam immediately (first free slot in that order), so the standing arrangement is wingtip blocks rather than everything stacked at the NE default. A track with no vector yet (stationary, velocity not reported) is left at the default and placed once it's moving.
+- **After that it's sticky**: a placed block only moves when its current position is actually in conflict, then it's held for `AUTO_OFF_HOLD_MS` (10s) before it may move again. It does **not** re-orient as the aircraft turns. Entries are processed in gufi order so placement is deterministic.
 - Manually placed blocks (`dbPositions`) are immovable obstacles — auto blocks work around them, never the reverse. Auto choices live in a separate `autoDbPositions` map; `effDbPos()` resolves manual → auto → default NE.
 - Skipped entirely above `AUTO_OFF_MAX` (250) on-screen FDBs.
 

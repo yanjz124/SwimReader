@@ -49,7 +49,7 @@
                 </label>
             </div>
             <div class="ctrl-row" style="margin-top:4px;">
-                <label title="Not real ERAM — offsets full data blocks that would overlap another block or target. Prefers a position abeam the aircraft's own left/right (relative to its track, not the screen), and only moves a block that is actually in conflict. Blocks you place by hand are never moved.">
+                <label title="Not real ERAM — parks full data blocks abeam the aircraft's own left/right (relative to its track, not the screen), right wingtip preferred, falling back through the other octants only when a slot is taken. Once placed a block stays put until it would actually overlap another block or target; it does not re-orient as the aircraft turns. Blocks you place by hand are never moved.">
                     <input type="checkbox" id="chk-auto-offset"> Auto offset
                 </label>
             </div>
@@ -415,7 +415,7 @@
     </div>
 </div>
 
-<script src="/eram/eram.js?v=24"></script>
+<script src="/eram/eram.js?v=25"></script>
 <script src="/idle-timer.js?v=10"></script>
 </body>
 </html>

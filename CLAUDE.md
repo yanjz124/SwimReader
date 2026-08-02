@@ -633,7 +633,11 @@ FLIDs can be callsign, CID, or squawk (beacon code). Per CRC spec: "Aircraft IDs
 ### Aftermarket Automation (not real ERAM, opt-in)
 Both live in the sidebar AUTOMATION panel, default OFF, persisted in localStorage, and toggleable from the MCA via `XX VCI ON|OFF` / `XX OFFSET ON|OFF`.
 
-**Auto VCI** — checks a track in on frequency (VCI) ~2.5 min after your sector takes it, and removes it ~2.5 min after it's handed off. Only VCI it set itself is auto-managed (`vciAutoManaged`), so a manual `//` toggle is never overridden. The ownership clock is seeded from the server's `controlAgeSec`, **not** from when the page first saw the track — so opening a sector mid-session (or reloading) immediately checks in everything already established on that frequency instead of restarting a 2.5 min timer on each.
+**Auto VCI** — checks a track in on frequency (VCI) `AUTO_VCI_ON_DELAY_MS` (2.5 min) after your sector takes control, and removes it `AUTO_VCI_OFF_DELAY_MS` (1 min) after control transfers away. Only VCI it set itself is auto-managed (`vciAutoManaged`), so a manual `//` toggle is never overridden.
+
+Keyed on `iControl(f)` — whether the controlling unit is one of our sectors — **not** on the `classifyTrack()` display class. `classifyTrack()` returns `'ho'` the moment any handoff involves us, including an outgoing one we've only *proposed* while still working the aircraft, which would start the removal clock at handoff initiation instead of completion. Control only moves when the receiver accepts, so keying on `iControl` drops VCI a minute after the handoff completes. It also stops an emergency (class `'emrg'`) on our own frequency from losing its VCI.
+
+The on-clock is seeded from the server's `controlAgeSec`, **not** from when the page first saw the track — so opening a sector mid-session (or reloading) immediately checks in everything already established on that frequency instead of restarting a 2.5 min timer on each.
 
 `controlAgeSec` comes from `FlightState.ControlSince`, stamped in `ProcessFlight()` whenever `<controllingUnit>` changes (the moment the handoff is taken). It's persisted in the flight cache and emitted by `ToSummary()` as an age in seconds, like `PosAge`.
 

@@ -44,7 +44,7 @@
         <div class="panel-section">
             <div class="panel-label">AUTOMATION</div>
             <div class="ctrl-row" style="margin-top:4px;">
-                <label title="Not real ERAM — auto-checks a track on frequency (VCI) ~2.5 min after your sector takes the handoff, and removes it ~2.5 min after handing it off. Timed from the real handoff, so opening a sector immediately checks in tracks already established on it. Off = faithful manual VCI.">
+                <label title="Not real ERAM — auto-checks a track on frequency (VCI) ~2.5 min after your sector takes control, and removes it ~1 min after control transfers away (when the handoff completes, not when it's proposed — a track you've handed off but that hasn't been accepted keeps its VCI). Timed from the real handoff, so opening a sector immediately checks in tracks already established on it. Off = faithful manual VCI.">
                     <input type="checkbox" id="chk-auto-vci"> Auto VCI
                 </label>
             </div>
@@ -415,7 +415,7 @@
     </div>
 </div>
 
-<script src="/eram/eram.js?v=26"></script>
+<script src="/eram/eram.js?v=27"></script>
 <script src="/idle-timer.js?v=10"></script>
 </body>
 </html>

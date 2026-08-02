@@ -21,14 +21,16 @@ let facilityOnly = false;   // when true + facility selected, hide all non-facil
 // ── Auto VCI (aftermarket automation, OFF by default) ────────────────────────
 // Not real ERAM behaviour: real controllers toggle VCI manually as a track checks
 // in on frequency. As a sim aid, when enabled we auto-add VCI ~2.5 min after our
-// sector owns a track, and auto-remove it ~2.5 min after it leaves our control
-// (handoff accepted away). We only auto-manage VCI we set ourselves — a manual
-// toggle takes the track out of auto control so we never fight the controller.
+// sector takes control of a track, and auto-remove it ~1 min after control
+// transfers away — i.e. after the handoff *completes*, not when it's proposed.
+// We only auto-manage VCI we set ourselves — a manual toggle takes the track out
+// of auto control so we never fight the controller.
 // The ownership clock comes from the server's controlAgeSec (time since the
 // sector took the handoff), not from when this page saw the track — so opening a
 // sector mid-session immediately checks in everything already established on it.
 let autoVci = false;
-const AUTO_VCI_DELAY_MS = 150000;      // 2.5 min, in the 2–3 min band Leo asked for
+const AUTO_VCI_ON_DELAY_MS = 150000;   // 2.5 min of control before checking in
+const AUTO_VCI_OFF_DELAY_MS = 60000;   // 1 min after control transfers away
 const ownedSince = new Map();          // gufi → ms when our sector first owned it
 const leftOwnAt = new Map();           // gufi → ms when it left our control (for auto-remove)
 const vciAutoManaged = new Set();      // gufis whose VCI is currently auto-controlled
@@ -2177,14 +2179,24 @@ function isVisible(f) {
     return false;
 }
 
+// Do we actually control this track right now? This is ownership in the ERAM
+// sense (the controlling unit is one of our sectors) and is deliberately blind
+// to handoff state: an outgoing handoff we've proposed but the receiver hasn't
+// accepted still leaves us controlling. Callers that care about display class
+// want classifyTrack(); callers that care about "is this on my frequency" —
+// auto VCI — want this.
+function iControl(f) {
+    if (!myFacility || mySectors.size === 0) return false;
+    const fac = f.controllingFacility || f.reportingFacility || '';
+    return fac === myFacility && mySectors.has(f.controllingSector || '');
+}
+
 function classifyTrack(f) {
     if (isEmergency(f)) return 'emrg';
     if (!myFacility) return 'other';
     // Sectors must be selected to have own/ho tracks — prevents entire ARTCC from being FDB
     if (mySectors.size === 0) return 'other';
 
-    const fac = f.controllingFacility || f.reportingFacility || '';
-    const sec = f.controllingSector || '';
     const hoEvt = hoEventType(f.handoffEvent);
 
     // Active handoff involving our sector(s)
@@ -2198,7 +2210,7 @@ function classifyTrack(f) {
         if (recvIsMe || xferIsMe) return 'ho';
     }
 
-    if (fac === myFacility && mySectors.has(sec)) return 'own';
+    if (iControl(f)) return 'own';
     return 'other';
 }
 
@@ -3448,12 +3460,20 @@ function isManipulated(gufi) {
     return fdbOverrides.has(gufi) || dbPositions.has(gufi) || ldrLenOverrides.has(gufi) || vciActive.has(gufi);
 }
 
-// Auto VCI lifecycle (opt-in). Called per visible flight each render with its
-// ownership class. Adds VCI after AUTO_VCI_DELAY_MS of continuous ownership;
-// removes it AUTO_VCI_DELAY_MS after the track leaves our control. Only touches
-// VCI it set itself (vciAutoManaged) so a manual // toggle is never overridden.
-function applyAutoVci(gufi, cls, now, f) {
-    if (cls === 'own') {
+// Auto VCI lifecycle (opt-in). Adds VCI after AUTO_VCI_ON_DELAY_MS of continuous
+// control; removes it AUTO_VCI_OFF_DELAY_MS after control transfers away. Only
+// touches VCI it set itself (vciAutoManaged) so a manual // toggle is never
+// overridden.
+//
+// Keyed on iControl(f) — who actually controls the track — NOT on the display
+// class. classifyTrack() returns 'ho' the moment any handoff involves us, which
+// includes an outgoing handoff we just initiated while we're still working the
+// aircraft; keying on that started the removal clock at handoff *initiation*
+// instead of completion. Control only moves when the receiving sector accepts,
+// so this drops VCI a minute after the handoff completes. It also stops an
+// emergency (cls 'emrg') on our own frequency from losing its VCI.
+function applyAutoVci(gufi, now, f) {
+    if (iControl(f)) {
         leftOwnAt.delete(gufi);                       // back under control — cancel any removal timer
         if (!ownedSince.has(gufi)) {
             // Seed from the server's controlAgeSec (time since this sector took the
@@ -3466,17 +3486,19 @@ function applyAutoVci(gufi, cls, now, f) {
         }
         // Add VCI only if the controller hasn't already set it manually.
         if (!vciActive.has(gufi) && !vciAutoManaged.has(gufi) &&
-            now - ownedSince.get(gufi) >= AUTO_VCI_DELAY_MS) {
+            now - ownedSince.get(gufi) >= AUTO_VCI_ON_DELAY_MS) {
             vciActive.add(gufi);
             vciAutoManaged.add(gufi);
             invalidateMarker(gufi);
         }
     } else {
         ownedSince.delete(gufi);
-        // Auto-remove only VCI we auto-added, and only after the grace delay.
+        // Control has transferred away — the handoff is complete (an outgoing
+        // handoff that's merely proposed still leaves us controlling). Drop the
+        // VCI a minute later, and only the VCI we added ourselves.
         if (vciAutoManaged.has(gufi)) {
             if (!leftOwnAt.has(gufi)) leftOwnAt.set(gufi, now);
-            if (now - leftOwnAt.get(gufi) >= AUTO_VCI_DELAY_MS) {
+            if (now - leftOwnAt.get(gufi) >= AUTO_VCI_OFF_DELAY_MS) {
                 vciActive.delete(gufi);
                 vciAutoManaged.delete(gufi);
                 leftOwnAt.delete(gufi);
@@ -3835,7 +3857,7 @@ function doRender() {
         counts[cls]++;
 
         // Aftermarket auto-VCI lifecycle (opt-in; no-op when the toggle is off).
-        if (autoVci) applyAutoVci(gufi, cls, now, f);
+        if (autoVci) applyAutoVci(gufi, now, f);
 
         // Sticky FDB: when a track transitions from own/ho to other, keep FDB
         if (cls === 'own' || cls === 'ho') {

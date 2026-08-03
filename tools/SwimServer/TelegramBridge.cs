@@ -34,6 +34,14 @@ class TelegramBridge
     // Per-(chat, callsign) "gone quiet" flag — set once a followed flight lands / stops updating so we
     // send a single final note and then stop re-pushing its frozen record (cleared when it revives).
     private readonly ConcurrentDictionary<string, byte> _quiet = new();
+    // When the flight went quiet (UTC). After it stays quiet for LandedTtl we end the subscription —
+    // the follow is meant to last for the flight, not a fixed clock. Cleared if it revives (radar gap).
+    private readonly ConcurrentDictionary<string, DateTime> _quietAt = new();
+    // A followed flight is auto-unsubscribed once it has been landed/quiet this long. The confirmation
+    // window past the initial StaleSec silence lets a brief en-route radar gap recover before we stop.
+    private static readonly TimeSpan LandedTtl = TimeSpan.FromMinutes(10);
+    // Far backstop only — a flight that never produces a clean landing signal (e.g. never departs, or
+    // an oceanic record with no position) still can't follow forever.
     private static readonly TimeSpan SubTtl = TimeSpan.FromHours(24);
     // No position update anywhere for this long ⇒ treat the flight as arrived/quiet. Well past a coast
     // (26s) or DROPPED grace (60s), so a brief en-route radar gap won't trip it; a landed flight whose
@@ -163,7 +171,7 @@ class TelegramBridge
                 await Send(chat,
                     "Follow flights over inflight wifi.\n\n" +
                     "Send one or more callsigns (e.g. AAL123 or 'AAL123 UAL456 DAL9') for status.\n" +
-                    "/sub AAL123 UAL456 — get updates when they change (auto-expires after 24h)\n" +
+                    "/sub AAL123 UAL456 — get updates when they change (auto-stops once it lands)\n" +
                     "/unsub AAL123 — stop those\n" +
                     "/list — your subscriptions\n" +
                     "/unsuball (or /stop) — unsubscribe from everything");
@@ -189,10 +197,11 @@ class TelegramBridge
                     // If it already landed when they subscribed, start quiet — the summary just sent
                     // shows the stale position, so don't announce "arrived" two minutes later.
                     var age = TrackRoutes.TelegramPositionAgeSec(_ctx, cs);
-                    if (age != null && age > StaleSec) _quiet[key] = 0; else _quiet.TryRemove(key, out _);
+                    if (age != null && age > StaleSec) { _quiet[key] = 0; _quietAt[key] = DateTime.UtcNow; }
+                    else { _quiet.TryRemove(key, out _); _quietAt.TryRemove(key, out _); }
                 }
                 SaveSubs();
-                await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change; auto-expires in 24h.\n\n" + MultiSummary(css), html: true);
+                await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change; auto-stops once it lands.\n\n" + MultiSummary(css), html: true);
                 return;
             }
 
@@ -319,15 +328,28 @@ class TelegramBridge
                         if (fresh)
                         {
                             _quiet.TryRemove(key, out _);
+                            _quietAt.TryRemove(key, out _);   // revived (e.g. radar gap filled in)
                         }
                         else if ((age != null && age > StaleSec) || _quiet.ContainsKey(key))
                         {
                             // Stale-with-position now, or already quiet (its record has since purged to
                             // null). Announce once, then stay silent.
-                            if (_quiet.TryAdd(key, 0) && age != null)
+                            if (_quiet.TryAdd(key, 0))
                             {
-                                _lastSent[key] = TrackRoutes.TelegramChangeKey(_ctx, cs);
-                                await Send(chat, $"🛬 {cs} — no position update for {age / 60}m. Likely arrived; pausing updates. Send {cs} anytime for the last-known details, and I'll resume automatically if it starts moving again.");
+                                _quietAt[key] = DateTime.UtcNow;
+                                if (age != null)
+                                {
+                                    _lastSent[key] = TrackRoutes.TelegramChangeKey(_ctx, cs);
+                                    await Send(chat, $"🛬 {cs} — no position update for {age / 60}m. Likely arrived; I'll stop following it shortly unless it starts moving again. Send {cs} anytime for the last-known details.");
+                                }
+                            }
+                            // Once it's stayed quiet/landed for the confirmation window, end the follow.
+                            if (_quietAt.TryGetValue(key, out var quietSince) && DateTime.UtcNow - quietSince > LandedTtl)
+                            {
+                                if (_subs.TryGetValue(chat, out var qs)) { lock (qs) qs.Remove(cs); }
+                                Forget(chat, cs);
+                                SaveSubs();
+                                await Send(chat, $"✅ Stopped following {cs} — it's arrived. Send /sub {cs} to follow it again.");
                             }
                             continue;
                         }
@@ -363,6 +385,7 @@ class TelegramBridge
         _lastSummary.TryRemove(key, out _);
         _subAt.TryRemove(key, out _);
         _quiet.TryRemove(key, out _);
+        _quietAt.TryRemove(key, out _);
     }
 
     private async Task Send(long chat, string text, bool html = false)

@@ -67,9 +67,11 @@ header .sub { font-size: 11px; color: #555; }
 .col-fac { width: 78px; }
 .col-st  { width: 104px; }
 
-th.col-ap, th.col-tm, th.col-tu { text-align: inherit; }
-th.col-tm, th.col-tu { text-align: right; }
-th.col-ap { text-align: center; }
+/* Header alignment must match the data cells. Scope to `.edct-table thead th`
+   so it out-specifies the base `text-align:left` rule above. */
+.edct-table thead th.col-tm,
+.edct-table thead th.col-tu { text-align: right; }
+.edct-table thead th.col-ap { text-align: center; }
 
 /* cell colors */
 .col-cs a { color: #cccc44; font-weight: bold; text-decoration: none; }

@@ -1,6 +1,6 @@
 html, body {
     background: #000; color: #ccc; font-family: 'Consolas', 'Courier New', monospace;
-    font-size: 12px; height: 100%; overflow: hidden; display: flex; flex-direction: column;
+    font-size: 12px; height: 100%; margin: 0;
 }
 body { overflow: auto; position: relative; }
 
@@ -8,12 +8,8 @@ header {
     background: #0a0a0a; border-bottom: 1px solid #333;
     padding: 8px 16px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
 }
-header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; }
+header h1 { font-size: 14px; color: #cccc44; font-weight: normal; letter-spacing: 2px; margin: 0; }
 header .sub { font-size: 11px; color: #555; }
-
-.nav-up {
-    transform: translateY(0px) !important;
-}
 
 .status-bar { margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 8px; }
 .status-bar .dot { color: #444; }
@@ -24,44 +20,91 @@ header .sub { font-size: 11px; color: #555; }
 .filter-row {
     display: flex; align-items: center; gap: 10px;
     padding: 8px 16px; border-bottom: 1px solid #222; background: #050505;
-    flex-wrap: wrap;
+    flex-wrap: wrap; position: sticky; top: 0; z-index: 3;
 }
 .filter-row input {
     background: #111; border: 1px solid #333; color: #ccc;
-    padding: 5px 10px; font-family: inherit; font-size: 12px; width: 280px; outline: none;
-    text-transform: uppercase;
+    padding: 5px 10px; font-family: inherit; font-size: 12px; width: 260px; outline: none;
+    text-transform: uppercase; border-radius: 3px;
 }
 .filter-row input:focus { border-color: #cccc44; }
+.filter-row input::placeholder { text-transform: none; color: #555; }
 .filter-row label { font-size: 11px; color: #666; }
 .filter-row select {
     background: #111; border: 1px solid #333; color: #ccc;
-    padding: 4px 8px; font-family: inherit; font-size: 11px; outline: none;
+    padding: 4px 8px; font-family: inherit; font-size: 11px; outline: none; border-radius: 3px;
 }
 .filter-row .sort-label { margin-left: 12px; }
 
+/* horizontal scroll on narrow screens rather than crushing columns */
+.table-wrap { overflow-x: auto; }
+
 .edct-table {
     width: 100%; border-collapse: collapse; font-size: 12px;
+    table-layout: fixed; min-width: 860px;
 }
 .edct-table thead th {
-    background: #1a1a1a; color: #888; font-weight: normal;
-    padding: 6px 10px; text-align: left; border-bottom: 1px solid #333;
-    position: sticky; top: 0; z-index: 1;
-    font-size: 10px; letter-spacing: 1px;
+    background: #161616; color: #999; font-weight: normal;
+    padding: 7px 10px; text-align: left; border-bottom: 1px solid #333;
+    position: sticky; top: 39px; z-index: 2;
+    font-size: 10px; letter-spacing: 1px; white-space: nowrap;
 }
 .edct-table tbody td {
-    padding: 5px 10px; border-bottom: 1px solid #1a1a1a;
+    padding: 6px 10px; border-bottom: 1px solid #141414;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.edct-table tbody tr:hover { background: #0a0a0a; }
-.edct-table tbody tr.departed { color: #555; }
-.edct-table tbody tr.overdue td.col-tu { color: #ff4444; font-weight: bold; }
-.edct-table tbody tr.upcoming td.col-tu { color: #ff8c00; }
+.edct-table tbody tr:nth-child(even) td { background: #070707; }
+.edct-table tbody tr:hover td { background: #14140a; }
 
-.col-cs { color: #cccc44; font-weight: bold; }
-.col-tm { color: #4eaaff; }
-.col-tu { color: #888; text-align: right; min-width: 60px; }
-.col-fac { color: #aaa; }
-.col-st { color: #888; font-size: 11px; }
+/* column widths (fixed layout) */
+.col-cs  { width: 92px; }
+.col-tp  { width: 56px; }
+.col-ap  { width: 48px; text-align: center; }
+.col-arw { width: 16px; text-align: center; color: #555; padding: 0 !important; }
+.col-tm  { width: 74px; text-align: right; font-variant-numeric: tabular-nums; }
+.col-tu  { width: 66px; text-align: right; font-variant-numeric: tabular-nums; }
+.col-fac { width: 78px; }
+.col-st  { width: 104px; }
+
+th.col-ap, th.col-tm, th.col-tu { text-align: inherit; }
+th.col-tm, th.col-tu { text-align: right; }
+th.col-ap { text-align: center; }
+
+/* cell colors */
+.col-cs a { color: #cccc44; font-weight: bold; text-decoration: none; }
+.col-cs a:hover { text-decoration: underline; }
+.col-tp { color: #9a9a9a; }
+.col-ap { color: #ddd; }
+td.col-edct { color: #6cc0ff; font-weight: bold; }      /* EDCT — the headline time */
+td.col-off, td.col-eta { color: #4e7fa8; }              /* secondary times, quieter */
+.col-tu { color: #888; }
+.col-fac { color: #999; }
+
+/* countdown emphasis (only meaningful for on-ground flights) */
+tr.st-overdue td.col-tu { color: #ff5555; font-weight: bold; }
+tr.st-soon    td.col-tu { color: #ff9d2e; font-weight: bold; }
+tr.st-pending td.col-tu { color: #9fbf6f; }
+
+/* de-emphasize flights that no longer need action */
+tr.st-airborne  td:not(.col-st) { color: #6f6f6f; }
+tr.st-airborne  td.col-cs a { color: #8a8a55; }
+tr.st-cancelled td, tr.st-dropped td { color: #555; }
+tr.st-cancelled td.col-cs a { color: #6a5a5a; }
+
+/* status chip */
+.chip {
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    font-size: 10px; letter-spacing: 0.5px; font-weight: bold;
+    border: 1px solid transparent; white-space: nowrap;
+}
+.chip.overdue   { background: #3a0f0f; color: #ff6b6b; border-color: #5a1a1a; }
+.chip.soon      { background: #3a2408; color: #ffb454; border-color: #5a3a10; }
+.chip.pending   { background: #10240f; color: #9fd47a; border-color: #1f4a1c; }
+.chip.airborne  { background: #0d2233; color: #6cc0ff; border-color: #16405a; }
+.chip.departed  { background: #0d2233; color: #6cc0ff; border-color: #16405a; }
+.chip.cancelled { background: #1a1a1a; color: #888; border-color: #2a2a2a; }
+.chip.dropped   { background: #1a1414; color: #a07070; border-color: #2a1e1e; }
 
 .empty {
-    padding: 32px; text-align: center; color: #555; font-size: 13px;
+    padding: 40px 24px; text-align: center; color: #666; font-size: 13px; line-height: 1.6;
 }

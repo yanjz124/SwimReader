@@ -14,8 +14,29 @@ function fmtTime(iso) {
 function fmtMinutes(m) {
     if (m == null) return '';
     if (m === 0) return '0';
-    const sign = m < 0 ? '-' : '+';
+    // minutesUntil is (edct - now): positive = still ahead of EDCT, negative = past EDCT.
+    // Show as a signed countdown, e.g. "−12" (past) / "+45" (ahead).
+    const sign = m < 0 ? '−' : '+';
     return sign + Math.abs(m);
+}
+
+// Derive a clear operational status from the raw flight state. Key semantic fix:
+// a flight that is ACTIVE (airborne) is NOT "overdue" even if it's past its EDCT —
+// many foreign departures never report an actualDeparture time, so we can't rely on
+// the server's `departed` flag alone. Only flights still on the ground get the
+// countdown-based overdue/soon treatment.
+function deriveStatus(f) {
+    const st = f.flightStatus;
+    if (st === 'CANCELLED') return { key: 'cancelled', label: 'CANCELLED', onGround: false };
+    if (st === 'ACTIVE' || f.departed)
+        return { key: 'airborne', label: f.departed ? 'DEPARTED' : 'AIRBORNE', onGround: false };
+    if (st === 'DROPPED') return { key: 'dropped', label: 'DROPPED', onGround: false };
+    // Otherwise it's on the ground (PROPOSED) awaiting its EDCT.
+    const m = f.minutesUntil;
+    if (m == null) return { key: 'pending', label: 'PENDING', onGround: true };
+    if (m < 0)  return { key: 'overdue', label: 'OVERDUE', onGround: true };
+    if (m <= 30) return { key: 'soon', label: 'SOON', onGround: true };
+    return { key: 'pending', label: 'PENDING', onGround: true };
 }
 function uniqueSorted(arr) { return [...new Set(arr.filter(Boolean))].sort(); }
 
@@ -48,14 +69,13 @@ function applyFilters() {
                         .filter(Boolean).join(' ').toUpperCase();
             if (!hay.includes(q)) return false;
         }
-        if (statusMode === 'pending' && f.departed) return false;
-        if (statusMode === 'departed' && !f.departed) return false;
-        if (statusMode === 'upcoming30' &&
-            !(f.minutesUntil != null && !f.departed && f.minutesUntil >= 0 && f.minutesUntil <= 30))
-            return false;
-        if (statusMode === 'overdue' &&
-            !(f.minutesUntil != null && !f.departed && f.minutesUntil < 0))
-            return false;
+        if (statusMode !== 'all') {
+            const s = deriveStatus(f);
+            if (statusMode === 'ground' && !s.onGround) return false;
+            if (statusMode === 'soon' && s.key !== 'soon') return false;
+            if (statusMode === 'overdue' && s.key !== 'overdue') return false;
+            if (statusMode === 'airborne' && s.key !== 'airborne') return false;
+        }
         return true;
     });
 
@@ -74,7 +94,17 @@ function applyFilters() {
 }
 
 function render(list) {
-    countEl.textContent = `${list.length} of ${allFlights.length}`;
+    let ground = 0, overdue = 0, soon = 0;
+    for (const f of allFlights) {
+        const k = deriveStatus(f);
+        if (k.onGround) ground++;
+        if (k.key === 'overdue') overdue++;
+        if (k.key === 'soon') soon++;
+    }
+    countEl.innerHTML = `${list.length}/${allFlights.length}`
+        + ` &nbsp;·&nbsp; ${ground} on ground`
+        + (soon ? ` &nbsp;·&nbsp; <span style="color:#ffb454">${soon} soon</span>` : '')
+        + (overdue ? ` &nbsp;·&nbsp; <span style="color:#ff6b6b">${overdue} overdue</span>` : '');
     if (list.length === 0) {
         rowsEl.innerHTML = '';
         emptyEl.style.display = '';
@@ -85,24 +115,24 @@ function render(list) {
     }
     emptyEl.style.display = 'none';
     const html = list.map(f => {
-        const cls = [];
-        if (f.departed) cls.push('departed');
-        else if (f.minutesUntil != null && f.minutesUntil < 0) cls.push('overdue');
-        else if (f.minutesUntil != null && f.minutesUntil <= 30) cls.push('upcoming');
+        const s = deriveStatus(f);
         const sector = f.controllingFacility
             ? f.controllingFacility + (f.controllingSector ? '/' + f.controllingSector : '')
             : '';
-        return `<tr class="${cls.join(' ')}">
-            <td class="col-cs"><a href="/eram#facility=${f.controllingFacility || ''}&search=${f.callsign || ''}" style="color:inherit;text-decoration:none;">${f.callsign || ''}</a></td>
+        // Countdown only means something for flights still on the ground.
+        const inCell = s.onGround ? fmtMinutes(f.minutesUntil) : '·';
+        return `<tr class="st-${s.key}">
+            <td class="col-cs"><a href="/eram#facility=${f.controllingFacility || ''}&search=${f.callsign || ''}">${f.callsign || ''}</a></td>
             <td class="col-tp">${f.aircraftType || ''}</td>
             <td class="col-ap">${f.origin || ''}</td>
+            <td class="col-arw">▸</td>
             <td class="col-ap">${f.destination || ''}</td>
-            <td class="col-tm">${fmtTime(f.edct)}</td>
-            <td class="col-tu">${fmtMinutes(f.minutesUntil)}</td>
-            <td class="col-tm">${fmtTime(f.actualDeparture)}</td>
-            <td class="col-tm">${fmtTime(f.eta)}</td>
-            <td class="col-fac">${sector}</td>
-            <td class="col-st">${f.flightStatus || ''}</td>
+            <td class="col-tm col-edct">${fmtTime(f.edct)}</td>
+            <td class="col-tu">${inCell}</td>
+            <td class="col-tm col-off">${fmtTime(f.actualDeparture) || '·'}</td>
+            <td class="col-tm col-eta">${fmtTime(f.eta) || '·'}</td>
+            <td class="col-fac">${sector || '·'}</td>
+            <td class="col-st"><span class="chip ${s.key}">${s.label}</span></td>
         </tr>`;
     }).join('');
     rowsEl.innerHTML = html;

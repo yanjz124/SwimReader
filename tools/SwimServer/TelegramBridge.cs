@@ -343,13 +343,14 @@ class TelegramBridge
                                     await Send(chat, $"🛬 {cs} — no position update for {age / 60}m. Likely arrived; I'll stop following it shortly unless it starts moving again. Send {cs} anytime for the last-known details.");
                                 }
                             }
-                            // Once it's stayed quiet/landed for the confirmation window, end the follow.
+                            // Once it's stayed quiet/landed for the confirmation window, end the follow
+                            // SILENTLY — the "arrived, I'll stop following shortly" note already went out,
+                            // so we don't spam a second message. It just quietly drops off /list.
                             if (_quietAt.TryGetValue(key, out var quietSince) && DateTime.UtcNow - quietSince > LandedTtl)
                             {
                                 if (_subs.TryGetValue(chat, out var qs)) { lock (qs) qs.Remove(cs); }
                                 Forget(chat, cs);
                                 SaveSubs();
-                                await Send(chat, $"✅ Stopped following {cs} — it's arrived. Send /sub {cs} to follow it again.");
                             }
                             continue;
                         }

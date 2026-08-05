@@ -1,9 +1,16 @@
 # LADD block list (FAA compliance)
 
 Drop the FAA **IndustryLADD** file here (`.txt` or `.csv`). `LaddService` loads every
-identifier it finds (registration / call sign / flight number) and drops any matching
-aircraft from ingestion — real-time and historical — across every frontend, API, the
-route-finder exports, and the Telegram bot.
+identifier it finds (registration / call sign / flight number). Matching aircraft are
+kept in the data but their **identity is masked to "LADD"** on every public output —
+scopes (ERAM / ASDE-X / TAIS / TDLS / TFMS), the flight table, EDCT, the route finder,
+history search, and (for direct call-sign lookups) the Track page and Telegram bot.
+
+## Backdoor (owner reveal)
+Set env `LADD_BYPASS_KEY=<secret>`. A request carrying it — query `?laddKey=<secret>`,
+header `X-LADD-Key`, or cookie `laddKey` — sees the real, un-masked identities. For the
+ERAM WebSocket the key is read at connect (`/ws?laddKey=…`). Leave `LADD_BYPASS_KEY`
+unset to disable the backdoor entirely.
 
 ## Where to get it
 Download **IndustryLADD** from the FAA **ADX portal** — https://adx.faa.gov
@@ -22,6 +29,8 @@ Matching is case-insensitive with dashes/spaces removed (`N123-AB` == `N123AB`).
 ## Important
 - **Do not commit the actual list** — it identifies owners who requested privacy. The
   `.txt`/`.csv` files here are gitignored; only this README is tracked.
-- If no list is present, `LaddService` logs a prominent WARNING and filters nothing —
+- If no list is present, `LaddService` logs a prominent WARNING and masks nothing —
   which is **not** compliant for public display. Keep a current list here whenever the
   public site is reachable.
+- Real identities are still **stored** internally (flight cache + history), so the
+  backdoor can reveal them; only the public projection is masked.

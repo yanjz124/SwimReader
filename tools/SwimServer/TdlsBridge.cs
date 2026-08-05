@@ -69,7 +69,6 @@ class TdlsBridge
         var airport = El(root, "airportID");
         var aircraftId = El(root, "aircraftID");
         if (airport is null || aircraftId is null) return;
-        if (LaddService.IsBlocked(aircraftId, null)) return;   // LADD: never surface blocked aircraft
 
         var enhanced = root.Elements().FirstOrDefault(e => e.Name.LocalName == "enhancedData");
 
@@ -98,7 +97,6 @@ class TdlsBridge
         var airport = El(root, "departureAirport");
         var aircraftId = El(root, "aircraftID");
         if (airport is null || aircraftId is null) return;
-        if (LaddService.IsBlocked(aircraftId, null)) return;   // LADD: never surface blocked aircraft
 
         var enhanced = root.Elements().FirstOrDefault(e => e.Name.LocalName == "enhancedData");
 
@@ -370,25 +368,30 @@ class TdlsMessage
     public string? EramGufi { get; set; }
     public string? SfdpsGufi { get; set; }
 
-    public object ToJson() => new
+    public object ToJson()
     {
-        type = Type,
-        time = Time.ToString("o"),
-        airport = Airport,
-        aircraftId = AircraftId,
-        beaconCode = BeaconCode,
-        acType = AircraftType,
-        cid = ComputerId,
-        destination = Destination,
-        dataHeader = DataHeader,
-        dataBody = DataBody,
-        gate = Gate,
-        runway = TakeoffRunway,
-        clearanceTime = ClearanceTime?.ToString("o"),
-        taxiTime = TaxiTime?.ToString("o"),
-        takeoffTime = TakeoffTime?.ToString("o"),
-        eramGufi = EramGufi,
-    };
+        // LADD: mask the id, and blank the CPDLC header/body (they embed the call sign).
+        bool ladd = LaddService.IsBlocked(AircraftId, null);
+        return new
+        {
+            type = Type,
+            time = Time.ToString("o"),
+            airport = Airport,
+            aircraftId = ladd ? LaddService.Label : AircraftId,
+            beaconCode = BeaconCode,
+            acType = AircraftType,
+            cid = ladd ? null : ComputerId,
+            destination = Destination,
+            dataHeader = ladd ? null : DataHeader,
+            dataBody = ladd ? null : DataBody,
+            gate = Gate,
+            runway = TakeoffRunway,
+            clearanceTime = ClearanceTime?.ToString("o"),
+            taxiTime = TaxiTime?.ToString("o"),
+            takeoffTime = TakeoffTime?.ToString("o"),
+            eramGufi = EramGufi,
+        };
+    }
 }
 
 class TdlsAircraft
@@ -407,7 +410,7 @@ class TdlsAircraft
         {
             return new
             {
-                aircraftId = AircraftId,
+                aircraftId = LaddService.MaskCallsign(AircraftId, null, false),
                 acType = AircraftType,
                 destination = Destination,
                 beaconCode = BeaconCode,

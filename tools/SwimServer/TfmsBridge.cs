@@ -218,7 +218,6 @@ class TfmsBridge
 
         var acid = msg.Attribute("acid")?.Value;
         if (acid is null) return;
-        if (LaddService.IsBlocked(acid, null)) return;   // LADD: never surface blocked aircraft
 
         var flightRef = msg.Attribute("flightRef")?.Value;
         var airline = msg.Attribute("airline")?.Value;
@@ -1068,7 +1067,7 @@ class TfmsBridge
         .Select(f => new
         {
             flightRef = f.FlightRef,
-            callsign = f.Callsign,
+            callsign = LaddService.MaskCallsign(f.Callsign, null, false),
             airline = f.Airline,
             gufi = f.Gufi,
             depArpt = f.DepArpt,
@@ -1372,7 +1371,7 @@ class TfmsFlight
     public object ToJson() => new
     {
         flightRef = FlightRef,
-        callsign = Callsign,
+        callsign = LaddService.MaskCallsign(Callsign, null, false),
         depArpt = DepArpt,
         arrArpt = ArrArpt,
         lat = Latitude,

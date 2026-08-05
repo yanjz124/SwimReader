@@ -23,8 +23,9 @@ static class DispatchRoutes
         //   days       — how many recent day-files to search (1-7, default 3)
         //   limit      — max results (default 60, max 200)
         app.MapGet("/api/dispatch/search", (string? orig, string? dest, string? airline,
-            string? type, int? days, int? limit) =>
+            string? type, int? days, int? limit, HttpContext http) =>
         {
+            var reveal = LaddService.Reveal(http);
             var dir = ctx.HistoryDir;
             if (!Directory.Exists(dir)) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
 
@@ -67,9 +68,10 @@ static class DispatchRoutes
                     if (results.Count >= cap) break;
                     var callsign = Str(el, "callsign");
                     if (callsign.Length == 0 || seen.Contains(callsign)) continue;
-                    // LADD: guard pre-existing history captured before ingestion filtering —
-                    // never surface or export a blocked aircraft's plan.
-                    if (LaddService.IsBlocked(callsign, Str(el, "registration"))) continue;
+                    // LADD: a blocked flight is masked (not dropped) — show it as "LADD"
+                    // with no identifying registration, unless this request has the bypass.
+                    var registration = Str(el, "registration");
+                    bool ladd = LaddService.ShouldMask(callsign, registration, reveal);
 
                     var route = Str(el, "route");
                     if (route.Length == 0) continue;                       // want a filable plan
@@ -84,16 +86,16 @@ static class DispatchRoutes
                     if (td is { } t) { gate = t.gate; runway = t.runway; }
 
                     seen.Add(callsign);
-                    var (airl, fltnum) = SplitCallsign(callsign);
+                    var (airl, fltnum) = ladd ? ("", "") : SplitCallsign(callsign);
                     results.Add(new
                     {
-                        callsign,
+                        callsign = ladd ? LaddService.Label : callsign,
                         airline = airl,
                         fltnum,
                         orig = origin,
                         dest = destination,
                         type = recType,
-                        reg = Str(el, "registration"),
+                        reg = ladd ? "" : registration,
                         wake = Str(el, "wakeCategory"),
                         equip = Str(el, "equipmentQualifier"),
                         rules = Str(el, "flightRules"),

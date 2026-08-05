@@ -133,12 +133,6 @@ class TaisBridge
                 if (fp is not null)
                 {
                     track.Callsign = ElVal(fp, "acid") ?? track.Callsign;
-                    // LADD: drop terminal tracks whose call sign is on the LADD list.
-                    if (LaddService.IsBlocked(track.Callsign, null))
-                    {
-                        facilityTracks.TryRemove(trackNum, out _);
-                        continue;
-                    }
                     track.AircraftType = ElVal(fp, "acType") ?? track.AircraftType;
                     track.FlightRules = ElVal(fp, "flightRules") ?? track.FlightRules;
                     track.EntryFix = ElVal(fp, "entryFix") ?? track.EntryFix;
@@ -438,7 +432,7 @@ class TaisTrack
     {
         facility = Facility,
         trackNum = TrackNum,
-        callsign = Callsign,
+        callsign = LaddService.MaskCallsign(Callsign, null, false),
         acType = AircraftType,
         equip = EquipmentSuffix,
         wake = WakeCategory,

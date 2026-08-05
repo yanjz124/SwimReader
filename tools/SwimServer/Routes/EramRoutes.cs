@@ -20,7 +20,7 @@ static class EramRoutes
 
             using var ws = await c.WebSockets.AcceptWebSocketAsync();
             var clientId = Guid.NewGuid().ToString("N");
-            var client = new WsClient(ws);
+            var client = new WsClient(ws) { Reveal = LaddService.Reveal(c) };
             ctx.Clients[clientId] = client;
 
             // Background send pump — serializes all writes through a single task
@@ -133,10 +133,10 @@ static class EramRoutes
         });
 
         // REST API for flight detail (full state + event log)
-        app.MapGet("/api/flights/{*gufi}", (string gufi) =>
+        app.MapGet("/api/flights/{*gufi}", (string gufi, HttpContext http) =>
         {
             if (!ctx.Flights.TryGetValue(gufi, out var f)) return Results.NotFound();
-            return Results.Json(f.ToDetail(), ctx.JsonOpts);
+            return Results.Json(f.ToDetail(reveal: LaddService.Reveal(http)), ctx.JsonOpts);
         });
 
         // REST API for stats
@@ -324,8 +324,9 @@ static class EramRoutes
         // EDCT (Expected Departure Clearance Time) — flights currently under a GDP/CTOP/Ground Stop slot.
         // Returns ALL flights with EdctTime set, regardless of whether they've already departed.
         // Client can filter as needed.
-        app.MapGet("/api/edct", () =>
+        app.MapGet("/api/edct", (HttpContext http) =>
         {
+            var reveal = LaddService.Reveal(http);
             var now = DateTime.UtcNow;
             var rows = new List<object>();
             foreach (var f in ctx.Flights.Values)
@@ -340,7 +341,7 @@ static class EramRoutes
                 rows.Add(new
                 {
                     gufi = f.Gufi,
-                    callsign = f.Callsign,
+                    callsign = LaddService.MaskCallsign(f.Callsign, f.Registration, reveal),
                     origin = f.Origin,
                     destination = f.Destination,
                     aircraftType = f.AircraftType,

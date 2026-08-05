@@ -1173,15 +1173,6 @@ void ProcessFlight(XElement flight, string rawXml)
         }
     }
 
-    // LADD compliance: never store, broadcast, or persist an aircraft on the FAA
-    // Limiting Aircraft Data Displayed list. Drop as soon as the call sign is known
-    // (registration is re-checked below). No-op when no LADD list is loaded.
-    if (LaddService.IsBlocked(state.Callsign, state.Registration))
-    {
-        flights.TryRemove(gufi, out _);
-        return;
-    }
-
     // flightStatus
     var fstat = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "flightStatus");
     if (fstat is not null)
@@ -1640,13 +1631,6 @@ void ProcessFlight(XElement flight, string rawXml)
         if (!string.IsNullOrEmpty(acType)) state.AircraftType = acType;
         var reg = acft.Attribute("registration")?.Value;
         if (!string.IsNullOrEmpty(reg)) state.Registration = reg;
-        // LADD: registration may only arrive with the aircraft description (FH/AH/HU),
-        // after the early call-sign check above — re-check and drop if now blocked.
-        if (LaddService.IsBlocked(state.Callsign, state.Registration))
-        {
-            flights.TryRemove(gufi, out _);
-            return;
-        }
         var wake = acft.Attribute("wakeTurbulence")?.Value;
         if (!string.IsNullOrEmpty(wake)) state.WakeCategory = wake;
         var modeS = acft.Attribute("aircraftAddress")?.Value;
@@ -1929,7 +1913,7 @@ void SendSnapshot(WsClient client)
                 return false;
             return true;
         })
-        .Select(f => f.ToSummary(includeHistory: true))
+        .Select(f => f.ToSummary(includeHistory: true, reveal: client.Reveal))
         .ToArray();
     Console.WriteLine($"[WS] Snapshot: {summaries.Length} flights (of {flights.Count} total)");
     var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("snapshot", summaries), jsonOpts);
@@ -1946,6 +1930,30 @@ void Broadcast(WsMsg msg)
     }
 }
 
+// LADD-aware flight broadcast: public clients get masked identities, "reveal"
+// (backdoor) clients get real ones. The real payload is built lazily, only when a
+// reveal client is actually connected.
+void BroadcastFlights(string type, IReadOnlyList<FlightState> fs)
+{
+    byte[]? masked = null, revealed = null;
+    foreach (var (_, client) in clients)
+    {
+        if (client.Ws.State != WebSocketState.Open) continue;
+        if (client.Reveal)
+        {
+            revealed ??= JsonSerializer.SerializeToUtf8Bytes(
+                new WsMsg(type, fs.Select(f => f.ToSummary(reveal: true)).ToArray()), jsonOpts);
+            client.Enqueue(revealed);
+        }
+        else
+        {
+            masked ??= JsonSerializer.SerializeToUtf8Bytes(
+                new WsMsg(type, fs.Select(f => f.ToSummary()).ToArray()), jsonOpts);
+            client.Enqueue(masked);
+        }
+    }
+}
+
 void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
 {
     if (dirtySet.IsEmpty) return;
@@ -1953,7 +1961,7 @@ void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
     var gufis = dirtySet.Keys.ToArray();
     foreach (var g in gufis) dirtySet.TryRemove(g, out _);
 
-    var summaries = new List<object>(gufis.Length);
+    var dirtyFlights = new List<FlightState>(gufis.Length);
     foreach (var gufi in gufis)
     {
         // Include position-less flights too: the flight table renders them
@@ -1962,14 +1970,15 @@ void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
         // safely. Dropping these here was the root cause of "some flight
         // plans never show up" in the flight table.
         if (flights.TryGetValue(gufi, out var f))
-            summaries.Add(f.ToSummary());
+            dirtyFlights.Add(f);
     }
-    if (summaries.Count == 0) return;
+    if (dirtyFlights.Count == 0) return;
 
-    // Record for replay (always, regardless of connected clients)
-    eramRecorder.RecordBatch(summaries.ToArray(), DateTime.UtcNow);
+    // Record for replay (always, regardless of connected clients). Masked, so a
+    // replay can never leak a LADD identity that live viewers couldn't see.
+    eramRecorder.RecordBatch(dirtyFlights.Select(f => f.ToSummary()).ToArray(), DateTime.UtcNow);
 
     if (!clients.IsEmpty)
-        Broadcast(new WsMsg("batch", summaries));
+        BroadcastFlights("batch", dirtyFlights);
 }
 

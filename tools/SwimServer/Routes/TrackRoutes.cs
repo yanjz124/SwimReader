@@ -13,10 +13,15 @@ static class TrackRoutes
 {
     public static void Register(WebApplication app, ServerContext ctx)
     {
-        app.MapGet("/api/track/{callsign}", (string callsign) =>
+        app.MapGet("/api/track/{callsign}", (string callsign, HttpContext http) =>
         {
             callsign = (callsign ?? "").Trim().ToUpperInvariant();
             if (callsign.Length == 0) return Results.BadRequest(new { error = "empty callsign" });
+
+            // LADD: a direct lookup of a blocked call sign is itself identifying — don't
+            // confirm the flight exists or return any of its data (unless the bypass is present).
+            if (LaddService.ShouldMask(callsign, null, LaddService.Reveal(http)))
+                return Results.Json(new { callsign, found = false, ladd = true }, ctx.JsonOpts);
 
             // Frequency lookup for any "FAC/SECTOR": exact match, else (STARS TCPs like
             // "3B") retry with the trailing sub-position letter stripped → "FAC/3".
@@ -265,6 +270,8 @@ static class TrackRoutes
     internal static string TelegramSummary(ServerContext ctx, string cs, string? prevRoute = null)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
+        // LADD: never surface a blocked aircraft over the bot (no per-message bypass).
+        if (LaddService.IsBlocked(cs, null)) return $"{cs}: no data available.";
         if (cs.Length == 0) return "Send a callsign, e.g. AAL123";
         var flights = Matching(ctx, cs);
         var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
@@ -598,6 +605,9 @@ static class TrackRoutes
         sb.Append("</form>");
 
         if (cs.Length == 0) { sb.Append("<p class=d>Enter a callsign to follow a flight.<br>This is the light text-only version (no JS, auto-refresh 30s) for slow wifi.</p></body></html>"); return Results.Content(sb.ToString(), "text/html; charset=utf-8"); }
+
+        // LADD: don't surface a blocked aircraft on the public text page.
+        if (LaddService.IsBlocked(cs, null)) { sb.Append("<p class=d>No data available.</p></body></html>"); return Results.Content(sb.ToString(), "text/html; charset=utf-8"); }
 
         var flights = Matching(ctx, cs);
         var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);

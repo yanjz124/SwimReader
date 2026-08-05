@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Http;
+
 namespace SwimServer;
 
 /// <summary>
@@ -33,8 +35,16 @@ static class LaddService
     public static bool Active => _count > 0;
     public static string Directory_ => _dir;
 
+    /// <summary>Label shown in place of a blocked aircraft's identity.</summary>
+    public const string Label = "LADD";
+
+    // Secret that lets a request see real (un-masked) identities — the owner "backdoor".
+    // Set LADD_BYPASS_KEY in the environment; empty disables the bypass entirely.
+    public static string? BypassKey { get; private set; }
+
     public static void Init(string workingDir)
     {
+        BypassKey = Environment.GetEnvironmentVariable("LADD_BYPASS_KEY");
         _dir = Path.Combine(workingDir, "ladd");
         try { Directory.CreateDirectory(_dir); } catch { /* best effort */ }
         Load();
@@ -59,6 +69,27 @@ static class LaddService
         if (!string.IsNullOrEmpty(registration) && set.Contains(Normalize(registration))) return true;
         return false;
     }
+
+    /// <summary>Does this request carry the bypass key (query <c>?laddKey=</c>,
+    /// header <c>X-LADD-Key</c>, or cookie <c>laddKey</c>)? Grants real identities.</summary>
+    public static bool Reveal(HttpContext http)
+    {
+        var key = BypassKey;
+        if (string.IsNullOrEmpty(key)) return false;
+        if (http.Request.Query.TryGetValue("laddKey", out var q) && q == key) return true;
+        if (http.Request.Headers.TryGetValue("X-LADD-Key", out var h) && h == key) return true;
+        if (http.Request.Cookies.TryGetValue("laddKey", out var c) && c == key) return true;
+        return false;
+    }
+
+    /// <summary>The call sign to display: real when <paramref name="reveal"/>, else
+    /// "LADD" if blocked, else the real call sign.</summary>
+    public static string? MaskCallsign(string? callsign, string? registration, bool reveal)
+        => reveal || !IsBlocked(callsign, registration) ? callsign : Label;
+
+    /// <summary>Whether a (callsign, registration) pair should be masked for this reveal state.</summary>
+    public static bool ShouldMask(string? callsign, string? registration, bool reveal)
+        => !reveal && IsBlocked(callsign, registration);
 
     // Identifiers are matched case-insensitively with dashes/spaces removed, so the
     // list's "N123-AB" matches a feed's "N123AB" (and vice-versa).

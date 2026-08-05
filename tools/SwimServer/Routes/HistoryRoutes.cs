@@ -21,8 +21,9 @@ static class HistoryRoutes
         //   sq/squawk, route, rmk/remarks, star, status/flightStatus,
         //   fac/facility/controllingFacility, sector/controllingSector,
         //   gufi, alt/altitude/assignedAltitude
-        app.MapGet("/api/history", (string? q, string? date) =>
+        app.MapGet("/api/history", (string? q, string? date, HttpContext http) =>
         {
+            var reveal = LaddService.Reveal(http);
             var dir = ctx.HistoryDir;
             if (!Directory.Exists(dir)) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
             var raw = (q ?? "").Trim();
@@ -104,7 +105,7 @@ static class HistoryRoutes
             var records = FlightHistoryIndex.ReadMatching(dir, datePart, matches, 200);
 
             // Apply residual (non-indexed) clauses on the JSON
-            var results = new List<JsonElement>();
+            var results = new List<object>();
             foreach (var el in records)
             {
                 bool ok = true;
@@ -114,12 +115,11 @@ static class HistoryRoutes
                 }
                 if (ok)
                 {
-                    // LADD: never return a blocked aircraft from history search — covers
-                    // pre-existing files captured before ingestion filtering was added.
+                    // LADD: mask a blocked aircraft's identity (not drop it) unless the
+                    // request carries the bypass key. Covers pre-existing history files.
                     TryStr(el, "callsign", out var hcs);
                     TryStr(el, "registration", out var hreg);
-                    if (LaddService.IsBlocked(hcs, hreg)) continue;
-                    results.Add(el);
+                    results.Add(LaddService.ShouldMask(hcs, hreg, reveal) ? MaskRecord(el) : el);
                     if (results.Count >= 100) break;
                 }
             }
@@ -243,6 +243,18 @@ static class HistoryRoutes
             if (!ok) return Results.NotFound(new { error = "not pinned" });
             return Results.Ok(new { pinned = false, gufi });
         });
+    }
+
+    // Return a copy of a history record with identity fields redacted to "LADD".
+    private static System.Text.Json.Nodes.JsonObject MaskRecord(JsonElement el)
+    {
+        var obj = System.Text.Json.Nodes.JsonNode.Parse(el.GetRawText())!.AsObject();
+        obj["callsign"] = LaddService.Label;
+        obj["registration"] = null;
+        obj["operator"] = null;
+        obj["modeSCode"] = null;
+        obj["fdpsGufi"] = null;
+        return obj;
     }
 
     // ── Query parsing ───────────────────────────────────────────────────────

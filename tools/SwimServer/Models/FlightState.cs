@@ -311,11 +311,18 @@ class FlightState
         return f;
     }
 
-    public object ToSummary(bool includeHistory = false) => new
+    // LADD: mask identity for public output. _ladd == blocked && !reveal.
+    public object ToSummary(bool includeHistory = false, bool reveal = false)
     {
-        Gufi, Callsign, ComputerId,
+        bool _ladd = LaddService.ShouldMask(Callsign, Registration, reveal);
+        return new
+    {
+        Gufi,
+        Callsign = _ladd ? LaddService.Label : Callsign,
+        ComputerId,
         ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
-        Operator, Originator, FlightStatus,
+        Operator = _ladd ? null : Operator,
+        Originator, FlightStatus,
         Origin, Destination, AircraftType, WakeCategory,
         AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
         InterimAltitude, ReportedAltitude,
@@ -335,7 +342,8 @@ class FlightState
         OriginalAssignedAltitude, OriginalAssignedVfr,
         RequestedAltitude,
         Route, OriginalRoute, FlightRules, FlightType, STAR, Remarks,
-        Registration, EquipmentQualifier, AircraftPerformance, RequestedSpeed,
+        Registration = _ladd ? null : Registration,
+        EquipmentQualifier, AircraftPerformance, RequestedSpeed,
         OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
         CoordinationFix, CoordinationTime,
         ETA, ActualDepartureTime, EdctTime,
@@ -343,7 +351,8 @@ class FlightState
         LastSeen = LastSeen.ToString("HH:mm:ss"),
         PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
         History = includeHistory ? HistoryWithAge() : null
-    };
+        };
+    }
 
     private object[] HistoryWithAge()
     {
@@ -354,8 +363,9 @@ class FlightState
         }).ToArray();
     }
 
-    public object ToDetail()
+    public object ToDetail(bool reveal = false)
     {
+        bool _ladd = LaddService.ShouldMask(Callsign, Registration, reveal);
         List<object> allEvents;
         lock (_allEvents)
         {
@@ -367,11 +377,17 @@ class FlightState
         }
         return new
         {
-            Gufi, FdpsGufi, Callsign, ComputerId,
+            Gufi, FdpsGufi,
+            Callsign = _ladd ? LaddService.Label : Callsign,
+            ComputerId,
             ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
-            Operator, Originator, FlightStatus,
-            Origin, Destination, AlternateAerodrome, AircraftType, Registration, WakeCategory,
-            ModeSCode, EquipmentQualifier, AircraftPerformance, Squawk, AssignedSquawk, FlightRules, FlightType,
+            Operator = _ladd ? null : Operator,
+            Originator, FlightStatus,
+            Origin, Destination, AlternateAerodrome, AircraftType,
+            Registration = _ladd ? null : Registration,
+            WakeCategory,
+            ModeSCode = _ladd ? null : ModeSCode,
+            EquipmentQualifier, AircraftPerformance, Squawk, AssignedSquawk, FlightRules, FlightType,
             Route, OriginalRoute, STAR, Remarks,
             AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
             OriginalAssignedAltitude, OriginalAssignedVfr,

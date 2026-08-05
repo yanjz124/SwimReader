@@ -69,6 +69,7 @@ class TdlsBridge
         var airport = El(root, "airportID");
         var aircraftId = El(root, "aircraftID");
         if (airport is null || aircraftId is null) return;
+        if (LaddService.IsBlocked(aircraftId, null)) return;   // LADD: never surface blocked aircraft
 
         var enhanced = root.Elements().FirstOrDefault(e => e.Name.LocalName == "enhancedData");
 
@@ -97,6 +98,7 @@ class TdlsBridge
         var airport = El(root, "departureAirport");
         var aircraftId = El(root, "aircraftID");
         if (airport is null || aircraftId is null) return;
+        if (LaddService.IsBlocked(aircraftId, null)) return;   // LADD: never surface blocked aircraft
 
         var enhanced = root.Elements().FirstOrDefault(e => e.Name.LocalName == "enhancedData");
 

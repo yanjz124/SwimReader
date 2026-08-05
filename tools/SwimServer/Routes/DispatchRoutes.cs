@@ -67,6 +67,9 @@ static class DispatchRoutes
                     if (results.Count >= cap) break;
                     var callsign = Str(el, "callsign");
                     if (callsign.Length == 0 || seen.Contains(callsign)) continue;
+                    // LADD: guard pre-existing history captured before ingestion filtering —
+                    // never surface or export a blocked aircraft's plan.
+                    if (LaddService.IsBlocked(callsign, Str(el, "registration"))) continue;
 
                     var route = Str(el, "route");
                     if (route.Length == 0) continue;                       // want a filable plan

@@ -1,0 +1,27 @@
+# LADD block list (FAA compliance)
+
+Drop the FAA **IndustryLADD** file here (`.txt` or `.csv`). `LaddService` loads every
+identifier it finds (registration / call sign / flight number) and drops any matching
+aircraft from ingestion — real-time and historical — across every frontend, API, the
+route-finder exports, and the Telegram bot.
+
+## Where to get it
+Download **IndustryLADD** from the FAA **ADX portal** — https://adx.faa.gov
+(SCBlockAtIndustry Collaboration Community). Questions: LADD program office,
+(202) 267-0346 / LADD@faa.gov.
+
+## Cadence (required)
+- The list is published on the **first Thursday of each month**.
+- You must update your copy within **FIVE business days** of publication.
+- The server reloads this folder every ~6 hours, so replacing the file is enough — no restart needed.
+
+## Format
+One identifier per line is ideal; CSV/TSV is tolerated (tokens split on `, ; | tab space`).
+Matching is case-insensitive with dashes/spaces removed (`N123-AB` == `N123AB`).
+
+## Important
+- **Do not commit the actual list** — it identifies owners who requested privacy. The
+  `.txt`/`.csv` files here are gitignored; only this README is tracked.
+- If no list is present, `LaddService` logs a prominent WARNING and filters nothing —
+  which is **not** compliant for public display. Keep a current list here whenever the
+  public site is reachable.

@@ -154,6 +154,10 @@ var nexradRefreshTimer = new Timer(async _ => {
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
 PersistenceBudget.Watch("flight-history", historyDir, "*.jsonl");
 
+// FAA LADD (Limiting Aircraft Data Displayed) compliance — load the block list
+// before Solace connects so blocked aircraft are dropped from the first message.
+LaddService.Init(Directory.GetCurrentDirectory());
+
 // TDLS history directory
 var tdlsHistoryDir = Path.Combine(Directory.GetCurrentDirectory(), "tdls-history");
 PersistenceBudget.Watch("tdls-history", tdlsHistoryDir, "*.jsonl");
@@ -443,7 +447,10 @@ var solaceThread = new Thread(() =>
                     Host = host, VPNName = vpn, UserName = user, Password = pass,
                     ReconnectRetries = 100,
                     ReconnectRetriesWaitInMsecs = 5000,
-                    SSLValidateCertificate = false
+                    SSLValidateCertificate = false,
+                    // FAA SCDS requires data compression ("the only authorized method for
+                    // obtaining SCDS data products"). 9 = max compression.
+                    CompressionLevel = 9
                 };
 
                 using var session = context.CreateSession(sessionProps, null,
@@ -1166,6 +1173,15 @@ void ProcessFlight(XElement flight, string rawXml)
         }
     }
 
+    // LADD compliance: never store, broadcast, or persist an aircraft on the FAA
+    // Limiting Aircraft Data Displayed list. Drop as soon as the call sign is known
+    // (registration is re-checked below). No-op when no LADD list is loaded.
+    if (LaddService.IsBlocked(state.Callsign, state.Registration))
+    {
+        flights.TryRemove(gufi, out _);
+        return;
+    }
+
     // flightStatus
     var fstat = flight.Elements().FirstOrDefault(e => e.Name.LocalName == "flightStatus");
     if (fstat is not null)
@@ -1624,6 +1640,13 @@ void ProcessFlight(XElement flight, string rawXml)
         if (!string.IsNullOrEmpty(acType)) state.AircraftType = acType;
         var reg = acft.Attribute("registration")?.Value;
         if (!string.IsNullOrEmpty(reg)) state.Registration = reg;
+        // LADD: registration may only arrive with the aircraft description (FH/AH/HU),
+        // after the early call-sign check above — re-check and drop if now blocked.
+        if (LaddService.IsBlocked(state.Callsign, state.Registration))
+        {
+            flights.TryRemove(gufi, out _);
+            return;
+        }
         var wake = acft.Attribute("wakeTurbulence")?.Value;
         if (!string.IsNullOrEmpty(wake)) state.WakeCategory = wake;
         var modeS = acft.Attribute("aircraftAddress")?.Value;

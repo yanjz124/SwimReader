@@ -114,6 +114,11 @@ static class HistoryRoutes
                 }
                 if (ok)
                 {
+                    // LADD: never return a blocked aircraft from history search — covers
+                    // pre-existing files captured before ingestion filtering was added.
+                    TryStr(el, "callsign", out var hcs);
+                    TryStr(el, "registration", out var hreg);
+                    if (LaddService.IsBlocked(hcs, hreg)) continue;
                     results.Add(el);
                     if (results.Count >= 100) break;
                 }

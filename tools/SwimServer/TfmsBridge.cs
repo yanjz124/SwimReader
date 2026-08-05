@@ -84,7 +84,8 @@ class TfmsBridge
                 {
                     Host = _host, VPNName = _vpn, UserName = _user, Password = _pass,
                     ReconnectRetries = 100, ReconnectRetriesWaitInMsecs = 5000,
-                    SSLValidateCertificate = false
+                    SSLValidateCertificate = false,
+                    CompressionLevel = 9   // FAA SCDS requires compressed data products
                 };
 
                 using var session = context.CreateSession(sessionProps, null,
@@ -217,6 +218,7 @@ class TfmsBridge
 
         var acid = msg.Attribute("acid")?.Value;
         if (acid is null) return;
+        if (LaddService.IsBlocked(acid, null)) return;   // LADD: never surface blocked aircraft
 
         var flightRef = msg.Attribute("flightRef")?.Value;
         var airline = msg.Attribute("airline")?.Value;

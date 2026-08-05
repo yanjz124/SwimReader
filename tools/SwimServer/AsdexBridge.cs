@@ -100,7 +100,8 @@ class AsdexBridge
                 {
                     Host = _host, VPNName = _vpn, UserName = _user, Password = _pass,
                     ReconnectRetries = 100, ReconnectRetriesWaitInMsecs = 5000,
-                    SSLValidateCertificate = false
+                    SSLValidateCertificate = false,
+                    CompressionLevel = 9   // FAA SCDS requires compressed data products
                 };
 
                 using var session = context.CreateSession(sessionProps, null,
@@ -224,6 +225,13 @@ class AsdexBridge
                 var callsign = flightId?.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftId")?.Value;
                 var squawk   = flightId?.Elements().FirstOrDefault(e => e.Name.LocalName == "mode3ACode")?.Value;
 
+                // LADD: drop surface tracks whose call sign is on the LADD list.
+                if (callsign is not null && LaddService.IsBlocked(callsign, null))
+                {
+                    airportTracks.TryRemove(trackId, out _);
+                    continue;
+                }
+
                 var info   = report.Elements().FirstOrDefault(e => e.Name.LocalName == "flightInfo");
                 var acType = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "acType")?.Value;
                 var tgtType = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "tgtType")?.Value;
@@ -296,6 +304,13 @@ class AsdexBridge
                 var enhanced = report.Elements().FirstOrDefault(e => e.Name.LocalName == "enhancedData");
                 var eramGufi = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "eramGufi")?.Value;
                 var adCallsign = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "callsign")?.Value;
+
+                // LADD: drop ADS-B surface tracks whose call sign is on the LADD list.
+                if (adCallsign is not null && LaddService.IsBlocked(adCallsign, null))
+                {
+                    airportTracks.TryRemove(trackId, out _);
+                    continue;
+                }
                 var adAcType = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftType")?.Value;
                 var sfdpsGufi = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "sfdpsGufi")?.Value;
                 var adDep = enhanced?.Elements().FirstOrDefault(e => e.Name.LocalName == "departureAirport")?.Value;

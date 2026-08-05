@@ -22,6 +22,18 @@ Download **IndustryLADD** from the FAA **ADX portal** — https://adx.faa.gov
 - You must update your copy within **FIVE business days** of publication.
 - The server reloads this folder every ~6 hours, so replacing the file is enough — no restart needed.
 
+## Auto-fetch (optional — no manual download)
+Set `LADD_FETCH_URL` to the IndustryLADD download URL and the server pulls it **daily**
+into this folder itself (so it's never >1 day stale, satisfying the 5-day rule automatically).
+The ADX portal is auth-gated, so supply credentials from your ADX session:
+- `LADD_FETCH_COOKIE` — a full `Cookie:` header value from an authenticated ADX session, and/or
+- `LADD_FETCH_AUTH` — an `Authorization:` header value (e.g. `Bearer …`).
+
+The fetcher refuses to overwrite the list if the response looks like a login/HTML page (so an
+expired session won't wipe a good file). **You still need ADX access** — there is no public LADD
+endpoint; the FAA gates it behind the SCBlockAtIndustry community. Without `LADD_FETCH_URL`, drop
+the file here manually as above.
+
 ## Format
 One identifier per line is ideal; CSV/TSV is tolerated (tokens split on `, ; | tab space`).
 Matching is case-insensitive with dashes/spaces removed (`N123-AB` == `N123AB`).

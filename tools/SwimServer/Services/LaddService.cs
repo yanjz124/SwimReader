@@ -29,6 +29,7 @@ static class LaddService
     private static string _dir = "ladd";
     private static DateTime _loadedAt = DateTime.MinValue;
     private static volatile int _count;
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
 
     public static int Count => _count;
     public static DateTime LoadedAt => _loadedAt;
@@ -48,6 +49,25 @@ static class LaddService
         _dir = Path.Combine(workingDir, "ladd");
         try { Directory.CreateDirectory(_dir); } catch { /* best effort */ }
         Load();
+
+        // Optional self-update: if LADD_FETCH_URL is set, pull the IndustryLADD file
+        // ourselves (daily) so it's never more than a day stale — no manual download.
+        // The ADX portal is auth-gated, so pass credentials via LADD_FETCH_COOKIE
+        // (a full Cookie header) and/or LADD_FETCH_AUTH (an Authorization header).
+        var fetchUrl = Environment.GetEnvironmentVariable("LADD_FETCH_URL");
+        if (!string.IsNullOrWhiteSpace(fetchUrl))
+        {
+            _ = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    try { await FetchOnce(fetchUrl); }
+                    catch (Exception ex) { Console.Error.WriteLine("[LADD] fetch error: " + ex.Message); }
+                    await Task.Delay(TimeSpan.FromHours(24));
+                }
+            });
+        }
+
         // Reload periodically so a fresh monthly list is picked up without a restart.
         _ = Task.Run(async () =>
         {
@@ -57,6 +77,36 @@ static class LaddService
                 Load();
             }
         });
+    }
+
+    /// <summary>Download the IndustryLADD file from LADD_FETCH_URL into the ladd dir,
+    /// then reload. Credentials come from LADD_FETCH_COOKIE / LADD_FETCH_AUTH.</summary>
+    private static async Task FetchOnce(string url)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        var cookie = Environment.GetEnvironmentVariable("LADD_FETCH_COOKIE");
+        var auth = Environment.GetEnvironmentVariable("LADD_FETCH_AUTH");
+        if (!string.IsNullOrWhiteSpace(cookie)) req.Headers.TryAddWithoutValidation("Cookie", cookie);
+        if (!string.IsNullOrWhiteSpace(auth)) req.Headers.TryAddWithoutValidation("Authorization", auth);
+
+        using var resp = await _http.SendAsync(req);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync();
+
+        // Guard against fetching an auth/login HTML page instead of the list.
+        if (body.Length < 5 || body.Contains("<html", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine("[LADD] fetch: response doesn't look like a LADD list " +
+                "(login page / empty?) — keeping the existing file. Check LADD_FETCH_URL / credentials.");
+            return;
+        }
+
+        var path = Path.Combine(_dir, "IndustryLADD.txt");
+        var tmp = path + ".tmp";
+        await File.WriteAllTextAsync(tmp, body);
+        File.Move(tmp, path, overwrite: true);
+        Console.WriteLine($"[LADD] fetched {body.Length} bytes → {path}");
+        Load();
     }
 
     /// <summary>True if this call sign or registration is on the LADD list and must

@@ -236,6 +236,18 @@ class TfdmBridge
         info.Gridlock = Val(El(El(root, "airportPredictedGridlock"), "gridlockState")) ?? info.Gridlock;
         info.AmaGridlock = Val(El(El(root, "amaPredictedGridlock"), "gridlockState")) ?? info.AmaGridlock;
         info.DepartureDelay = Val(El(root, "airportDepartureDelay")) ?? info.DepartureDelay;
+        // Airport configuration + acceptance rates (a separate airportInformationData variant)
+        var cfg = El(root, "currentAirportConfiguration");
+        if (cfg is not null)
+        {
+            info.Config = Val(El(cfg, "configName")) ?? info.Config;
+            info.Aar = Val(El(El(cfg, "airportArrivalRate"), "aircraftPerHour")) ?? info.Aar;
+            info.Adr = Val(El(El(cfg, "airportDepartureRate"), "aircraftPerHour")) ?? info.Adr;
+        }
+        var closed = El(root, "closedRunways")?.Descendants()
+            .Where(e => e.Name.LocalName is "runway" or "runwayDesignator")
+            .Select(e => e.Value.Trim()).Where(v => v.Length > 0).Distinct().ToList();
+        if (closed is { Count: > 0 }) info.ClosedRunways = closed;
 
         var demand = new List<object>();
         foreach (var d in root.Descendants().Where(e => e.Name.LocalName == "demandInformation").Take(8))
@@ -398,13 +410,15 @@ class TfdmAirportInfo
     public string Airport = "";
     public Dictionary<string, int>? RunwayQueues;
     public int? AirportQueue;
-    public string? Gridlock, AmaGridlock, DepartureDelay;
+    public string? Gridlock, AmaGridlock, DepartureDelay, Config, Aar, Adr;
+    public List<string>? ClosedRunways;
     public List<object>? Demand;
     public DateTime LastSeen;
     public object ToJson() => new
     {
         airport = Airport, airportQueue = AirportQueue, runwayQueues = RunwayQueues,
-        gridlock = Gridlock, amaGridlock = AmaGridlock, departureDelay = DepartureDelay, demand = Demand,
+        gridlock = Gridlock, amaGridlock = AmaGridlock, departureDelay = DepartureDelay,
+        config = Config, aar = Aar, adr = Adr, closedRunways = ClosedRunways, demand = Demand,
         ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
 }

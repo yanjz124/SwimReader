@@ -138,6 +138,9 @@ function render(){
   const ib = document.getElementById('infobar'); ib.innerHTML='';
   if(info){
     const parts=[];
+    if(info.config) parts.push(`<span class="k">Config</span> <span class="v">${info.config.replace(/_/g,' ')}</span>`);
+    if(info.aar||info.adr) parts.push(`<span class="k">AAR / ADR</span> <span class="v">${info.aar||'–'} / ${info.adr||'–'}</span>`);
+    if(info.closedRunways&&info.closedRunways.length) parts.push(`<span class="k">Closed</span> <span class="gl-bad">${info.closedRunways.join(' ')}</span>`);
     if(info.gridlock) parts.push(`<span class="k">Gridlock</span> <span class="${info.gridlock.includes('NO')?'v':'gl-bad'}">${info.gridlock.replace(/_/g,' ')}</span>`);
     if(info.airportQueue!=null) parts.push(`<span class="k">Dep queue</span> <span class="qs">${info.airportQueue}</span>`);
     if(info.departureDelay) parts.push(`<span class="k">Dep delay</span> <span class="warn">${info.departureDelay}</span>`);

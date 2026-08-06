@@ -244,6 +244,37 @@ asdex.SetWebRoot(builder.Environment.WebRootPath);
 asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), long.MaxValue, replayDir);
 var app = builder.Build();
 
+// ── Private-access gate ──────────────────────────────────────────────────────
+// HTTP Basic Auth scoped to ONE public hostname (e.g. a personal swim.<domain>
+// deployment). Keeps the tool private (personal use, no public distribution)
+// without needing Cloudflare Access. Matched by Host, so it never touches local
+// access, the DGScope feed, or any other hostname. No-op unless all three of
+// SWIM_GATE_HOST / SWIM_GATE_USER / SWIM_GATE_PASS are set.
+var gateHost = Environment.GetEnvironmentVariable("SWIM_GATE_HOST");
+var gateUser = Environment.GetEnvironmentVariable("SWIM_GATE_USER");
+var gatePass = Environment.GetEnvironmentVariable("SWIM_GATE_PASS");
+if (!string.IsNullOrWhiteSpace(gateHost) && !string.IsNullOrWhiteSpace(gateUser) && !string.IsNullOrWhiteSpace(gatePass))
+{
+    var expected = System.Text.Encoding.UTF8.GetBytes(
+        "Basic " + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{gateUser}:{gatePass}")));
+    app.Use(async (ctx, next) =>
+    {
+        if (string.Equals(ctx.Request.Host.Host, gateHost, StringComparison.OrdinalIgnoreCase))
+        {
+            var provided = System.Text.Encoding.UTF8.GetBytes(ctx.Request.Headers["Authorization"].ToString());
+            if (provided.Length != expected.Length ||
+                !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(provided, expected))
+            {
+                ctx.Response.StatusCode = 401;
+                ctx.Response.Headers["WWW-Authenticate"] = "Basic realm=\"SwimReader\", charset=\"UTF-8\"";
+                return;
+            }
+        }
+        await next();
+    });
+    Console.WriteLine($"[GATE] Basic-auth private gate active for host '{gateHost}'");
+}
+
 app.UseDefaultFiles();
 var contentTypes = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
 contentTypes.Mappings[".geojson"] = "application/geo+json";

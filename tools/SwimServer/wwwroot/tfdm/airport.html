@@ -88,6 +88,7 @@ function fmtDur(d){ // ISO8601 duration PT#H#M -> minutes
 function delayMin(d){ if(!d) return null; const m=/P(?:T)?(?:(\d+)H)?(?:(\d+)M)?/.exec(d); if(!m) return null; return (+(m[1]||0))*60+(+(m[2]||0)); }
 function durNum(d){ if(!d) return 1e12; const m=/P(?:T)?(?:(\d+)H)?(?:(\d+)M)?/.exec(d); if(!m) return 1e12; return (+(m[1]||0))*60+(+(m[2]||0)); }
 function numOr(v,d){ const n=parseInt(v,10); return isNaN(n)?d:n; }
+function tms(iso){ if(!iso) return Infinity; const t=Date.parse(iso); return isNaN(t)?Infinity:t; }  // epoch for time sort
 function rwy(f){ return f.rwyActual||f.rwyAssigned||f.rwyPredicted||''; }
 function state(f){
   if(f.elapsedTaxi || f.rwyActual) return {c:'active',t:'OUT'};
@@ -102,8 +103,8 @@ const COLS_DEP = [
   {h:'→ DEST',   t:'s', k:f=>f.dest||'',                  td:f=>`<td class="rwy">${esc(f.dest)}</td>`},
   {h:'SPOT',     t:'s', k:f=>f.spot||'',                  td:f=>`<td class="spot">${esc(f.spot)}</td>`},
   {h:'RWY',      t:'s', k:f=>rwy(f),                       td:f=>`<td class="rwy">${rwy(f)||'·'}</td>`},
-  {h:'OBT Z',    t:'s', k:f=>f.offBlock||'~',              td:f=>`<td class="t">${fmtT(f.offBlock)}</td>`},
-  {h:'TSAT Z',   t:'s', k:f=>f.estDeparture||'~',          td:f=>`<td class="tsat">${fmtT(f.estDeparture)}</td>`},
+  {h:'OBT Z',    t:'n', k:f=>tms(f.offBlock),              td:f=>`<td class="t">${fmtT(f.offBlock)}</td>`},
+  {h:'TSAT Z',   t:'n', k:f=>tms(f.estDeparture),          td:f=>`<td class="tsat">${fmtT(f.estDeparture)}</td>`},
   {h:'TAXI',     t:'n', k:f=>durNum(f.taxiOutEst),         td:f=>`<td class="muted">${fmtDur(f.taxiOutEst)}</td>`},
   {h:'DELAY',    t:'n', k:f=>{const d=delayMin(f.delay);return d==null?-1:d;}, td:f=>{const d=delayMin(f.delay);return `<td class="delay ${d>0?'pos':''}">${d!=null?(d>0?'+'+d:d):'·'}</td>`;}},
   {h:'STATE',    t:'s', k:f=>state(f).t,                   td:f=>{const s=state(f);return `<td><span class="chip ${s.c}">${s.t}</span>${f.apreqRelease?'<span class="chip apreq">APREQ</span>':''}</td>`;}},
@@ -112,7 +113,7 @@ const COLS_ARR = [
   {h:'CALLSIGN', t:'s', k:f=>f.callsign||'', td:f=>`<td class="cs">${esc(f.callsign)}</td>`},
   {h:'FROM',     t:'s', k:f=>f.origin||'',   td:f=>`<td class="muted">${esc(f.origin)}</td>`},
   {h:'RWY',      t:'s', k:f=>rwy(f),          td:f=>`<td class="rwy">${rwy(f)||'·'}</td>`},
-  {h:'ETA Z',    t:'s', k:f=>f.arrivalEst||'~', td:f=>`<td class="t">${fmtT(f.arrivalEst)}</td>`},
+  {h:'ETA Z',    t:'n', k:f=>tms(f.arrivalEst), td:f=>`<td class="t">${fmtT(f.arrivalEst)}</td>`},
   {h:'SPOT',     t:'s', k:f=>f.spot||'',      td:f=>`<td class="spot">${esc(f.spot)}</td>`},
   {h:'STATE',    t:'s', k:f=>state(f).t,      td:f=>{const s=state(f);return `<td><span class="chip ${s.c}">${s.t}</span></td>`;}},
 ];

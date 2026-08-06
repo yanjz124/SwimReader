@@ -60,7 +60,7 @@
   <button data-f="dep" class="on">DEPARTURES</button>
   <button data-f="arr">ARRIVALS</button>
   <button data-f="all">ALL</button>
-  <input id="q" placeholder="filter callsign / dest">
+  <input id="q" placeholder="filter — ual*, *dfw, a*23">
   <span class="status"><span class="dot" id="dot"></span> <span id="cnt">–</span></span>
 </div>
 <div class="wrap"><table>
@@ -90,6 +90,14 @@ function durNum(d){ if(!d) return 1e12; const m=/P(?:T)?(?:(\d+)H)?(?:(\d+)M)?/.
 function numOr(v,d){ const n=parseInt(v,10); return isNaN(n)?d:n; }
 function tms(iso){ if(!iso) return Infinity; const t=Date.parse(iso); return isNaN(t)?Infinity:t; }  // epoch for time sort
 function rwy(f){ return f.rwyActual||f.rwyAssigned||f.rwyPredicted||''; }
+// Filter match with * wildcards: "ual*" prefix, "*23" suffix, "*al*" contains,
+// "u*23" middle. No * = plain contains (back-compatible). All uppercase.
+function wildMatch(pattern, val){
+  val = (val||'').toUpperCase();
+  if(!pattern.includes('*')) return val.includes(pattern);
+  const rx = new RegExp('^' + pattern.split('*').map(s=>s.replace(/[.+?^${}()|[\]\\]/g,'\\$&')).join('.*') + '$');
+  return rx.test(val);
+}
 function state(f){
   if(f.elapsedTaxi || f.rwyActual) return {c:'active',t:'OUT'};
   if(f.offBlock && new Date(f.offBlock) > new Date()) return {c:'sched',t:'SCHED'};
@@ -141,7 +149,7 @@ function render(){
   let list = DATA.flights.filter(f=>{
     if(mode==='dep' && f.origin!==AP) return false;
     if(mode==='arr' && f.dest!==AP) return false;
-    if(q){ const h=(f.callsign+' '+(f.dest||'')+' '+(f.origin||'')).toUpperCase(); if(!h.includes(q)) return false; }
+    if(q && !(wildMatch(q, f.callsign) || wildMatch(q, f.dest) || wildMatch(q, f.origin))) return false;
     return true;
   });
   const cols = mode==='arr' ? COLS_ARR : COLS_DEP;

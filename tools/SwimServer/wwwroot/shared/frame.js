@@ -84,11 +84,14 @@
         'background:transparent;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}' +
         '#op-badge{position:fixed;left:8px;bottom:6px;z-index:99998;font-family:ui-monospace,Consolas,monospace;' +
         'font-size:11px;color:#e0b050;background:rgba(0,0,0,.7);border:1px solid #5a4a14;border-radius:3px;' +
-        'padding:4px 9px;cursor:pointer;letter-spacing:.5px;-webkit-tap-highlight-color:transparent}';
+        'padding:4px 9px;cursor:pointer;letter-spacing:.5px;-webkit-tap-highlight-color:transparent}' +
+        // Signed-in indicator: the build/updated footer goes green (from its default grey).
+        '.op-signed #buildFooter{color:#5ed05e!important}';
     document.head.appendChild(css);
 
     // When signed in, a small unlabeled "exit" chip returns to the normal view.
     if (signedIn) {
+        document.documentElement.classList.add('op-signed');
         var badge = document.createElement('div');
         badge.id = 'op-badge';
         badge.textContent = '● exit';

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TFDM — Terminal Departure Boards</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛫</text></svg>">
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
+<style>
+  body { background:#000; color:#cccc44; font-family:'Consolas','Courier New',monospace; margin:0; }
+  .sub { padding:8px 16px; color:#888835; font-size:12px; border-bottom:1px solid #222; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; padding:16px; }
+  a.card { display:block; background:#0d0d0d; border:1px solid #2a2a08; border-radius:8px; padding:14px;
+    text-decoration:none; color:inherit; }
+  a.card:hover { background:#161602; border-color:#cccc44; }
+  .icao { font-size:22px; color:#cccc44; font-weight:bold; letter-spacing:1px; }
+  .name { font-size:11px; color:#777; margin-top:2px; min-height:13px; }
+  .cnt { font-size:13px; color:#dede55; margin-top:8px; }
+  .cnt b { font-size:20px; color:#fff; }
+  .empty { padding:40px; text-align:center; color:#666; }
+</style>
+</head>
+<body>
+<a class="nav-home" href="/">&larr; HOME</a>
+<header style="padding-left:100px">
+    <h1>TFDM</h1>
+    <span class="sub" style="border:none">Terminal Flight Data Manager — surface / departure boards</span>
+    <div class="status-bar" style="margin-left:auto"><span id="updated">--</span></div>
+</header>
+<div class="sub">Airports with live TFDM surface data. Click one for its departure board (off-block / TSAT / runway / taxi).</div>
+<div id="grid" class="grid"><div class="empty">Loading…</div></div>
+
+<script>
+const NAMES = {KATL:"Atlanta",KLAX:"Los Angeles",KORD:"Chicago O'Hare",KDFW:"Dallas-Ft Worth",KDEN:"Denver",
+ KJFK:"New York JFK",KLGA:"New York LaGuardia",KEWR:"Newark",KLAS:"Las Vegas",KMCO:"Orlando",KMIA:"Miami",
+ KCLT:"Charlotte",KSEA:"Seattle",KPHX:"Phoenix",KIAH:"Houston",KSFO:"San Francisco",KBOS:"Boston",
+ KDTW:"Detroit",KMSP:"Minneapolis",KFLL:"Ft Lauderdale",KMDW:"Chicago Midway",KTEB:"Teterboro",
+ KSAN:"San Diego",KIAD:"Washington Dulles",KDCA:"Washington National",KBWI:"Baltimore",KPDX:"Portland",
+ KSLC:"Salt Lake City",KSAT:"San Antonio",KAUS:"Austin",KOAK:"Oakland",KCMH:"Columbus"};
+async function load(){
+  try {
+    const r = await fetch('/api/tfdm'); const d = await r.json();
+    const g = document.getElementById('grid');
+    if(!d.length){ g.innerHTML='<div class="empty">No TFDM airports reporting yet.</div>'; return; }
+    g.innerHTML = d.map(a=>`<a class="card" href="/tfdm/${a.airport.toLowerCase()}">
+        <div class="icao">${a.airport}</div>
+        <div class="name">${NAMES[a.airport]||''}</div>
+        <div class="cnt"><b>${a.count}</b> flights</div></a>`).join('');
+    document.getElementById('updated').textContent = 'updated ' + new Date().toISOString().slice(11,19)+'Z';
+  } catch(e){ document.getElementById('updated').textContent='error'; }
+}
+load(); setInterval(load, 5000);
+</script>
+<script src="/shared/disclaimer.js?v=1"></script>
+<script src="/shared/frame.js?v=3"></script>
+</body>
+</html>

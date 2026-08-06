@@ -55,6 +55,13 @@ var tfmsQueue = Environment.GetEnvironmentVariable("TFMS_QUEUE") ?? "";
 var tfmsHost  = Environment.GetEnvironmentVariable("TFMS_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
 var tfmsVpn   = Environment.GetEnvironmentVariable("TFMS_VPN") ?? "TFMS";
 
+// TFDM credentials (Terminal Flight Data Manager — surface/departure management)
+var tfdmUser  = Environment.GetEnvironmentVariable("TFDM_USER") ?? "";
+var tfdmPass  = Environment.GetEnvironmentVariable("TFDM_PASS") ?? "";
+var tfdmQueue = Environment.GetEnvironmentVariable("TFDM_QUEUE") ?? "";
+var tfdmHost  = Environment.GetEnvironmentVariable("TFDM_HOST") ?? "tcps://ems3.swim.faa.gov:55443";
+var tfdmVpn   = Environment.GetEnvironmentVariable("TFDM_VPN") ?? "TFDM";
+
 // ITWS credentials (Integrated Terminal Weather System)
 var itwsUser  = Environment.GetEnvironmentVariable("ITWS_USER") ?? "";
 var itwsPass  = Environment.GetEnvironmentVariable("ITWS_PASS") ?? "";
@@ -185,6 +192,8 @@ var tdls = new TdlsBridge(jsonOpts) { HistoryDir = tdlsHistoryDir };
 var tais = new TaisBridge(jsonOpts);
 // TFMS bridge — own Solace session for Traffic Flow Management data
 var tfms = new TfmsBridge(tfmsUser, tfmsPass, tfmsQueue, tfmsHost, tfmsVpn, jsonOpts);
+// TFDM bridge — own Solace session (ems3/TFDM VPN) for terminal surface/departure data
+var tfdm = new TfdmBridge(tfdmUser, tfdmPass, tfdmQueue, tfdmHost, tfdmVpn, jsonOpts);
 // ITWS bridge — own Solace session for terminal weather products
 var itws = new ItwsBridge(itwsUser, itwsPass, itwsQueue, itwsHost, itwsVpn, jsonOpts);
 itws.SetHistoryDir(Path.Combine(Directory.GetCurrentDirectory(), "itws-history"));
@@ -375,6 +384,7 @@ var serverCtx = new ServerContext
     Tdls = tdls,
     Tais = tais,
     Tfms = tfms,
+    Tfdm = tfdm,
     Itws = itws,
     Stars = stars,
     EramRecorder = eramRecorder,
@@ -414,6 +424,7 @@ TaisRoutes.Register(app, serverCtx);
 
 // TFMS: WebSocket flight + TMI streams + /api/tfms/* REST
 TfmsRoutes.Register(app, serverCtx);
+TfdmRoutes.Register(app, serverCtx);
 
 // ITWS: terminal weather products page + /itws/ws WebSocket + /api/itws/* REST
 ItwsRoutes.Register(app, serverCtx);
@@ -608,6 +619,7 @@ solaceThread.IsBackground = true;
 solaceThread.Start();
 asdex.Start();
 tfms.Start();
+tfdm.Start();
 itws.Start();
 stars.Start();
 
@@ -1039,6 +1051,8 @@ var taisFlushTimer = new Timer(_ => tais.FlushDirty(), null, TimeSpan.FromSecond
 var taisPurgeTimer = new Timer(_ => tais.PurgeStaleTracks(), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+var tfdmFlushTimer = new Timer(_ => tfdm.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+var tfdmPurgeTimer = new Timer(_ => tfdm.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 // ITWS: persist 24h time-series history to disk every 5 min (and on shutdown)
 var itwsHistoryTimer = new Timer(_ => itws.SaveHistory(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 // Centralized disk-budget enforcement across all persisted data (replay + flight-history + tdls-history).

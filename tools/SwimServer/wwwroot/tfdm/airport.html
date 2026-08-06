@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TFDM Board</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛫</text></svg>">
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
+<style>
+  html,body { background:#000; color:#ccc; font-family:'Consolas','Courier New',monospace; margin:0; font-size:13px; }
+  .sub { font-size:11px; color:#888835; }
+  /* info strip */
+  .infobar { display:flex; flex-wrap:wrap; gap:8px 18px; padding:8px 16px; border-bottom:1px solid #222; background:#050505; font-size:12px; }
+  .infobar .k { color:#666; } .infobar .v { color:#cccc44; font-weight:bold; }
+  .infobar .warn { color:#ff8c00; }
+  .qs { color:#9fd47a; } .gl-bad { color:#ff5555; }
+  .tmis { padding:6px 16px; border-bottom:1px solid #222; font-size:11.5px; color:#dcb; }
+  .tmi { display:inline-block; margin:2px 8px 2px 0; padding:2px 8px; border-radius:4px; background:#2a1e0a; border:1px solid #5a4010; color:#ffb454; }
+  .tmi.susp { background:#1a1a1a; border-color:#333; color:#888; }
+  /* filters */
+  .filters { display:flex; gap:8px; align-items:center; padding:8px 16px; flex-wrap:wrap; }
+  .filters button { background:#111; color:#888835; border:1px solid #333; border-radius:5px; padding:5px 12px; font:inherit; font-size:12px; cursor:pointer; }
+  .filters button.on { background:#cccc44; color:#000; border-color:#cccc44; font-weight:bold; }
+  .filters input { background:#111; border:1px solid #333; color:#ccc; padding:5px 9px; font:inherit; font-size:12px; text-transform:uppercase; border-radius:5px; }
+  .filters .status { margin-left:auto; color:#666; font-size:11px; }
+  .filters .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#444; vertical-align:middle; }
+  .filters .dot.live { background:#44cc44; box-shadow:0 0 6px #44cc44; }
+  /* board */
+  .wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; min-width:820px; }
+  thead th { position:sticky; top:0; background:#161616; color:#999; font-weight:normal; font-size:10px;
+    letter-spacing:1px; text-align:left; padding:7px 10px; border-bottom:1px solid #333; white-space:nowrap; }
+  tbody td { padding:6px 10px; border-bottom:1px solid #141414; white-space:nowrap; }
+  tbody tr:nth-child(even) td { background:#070707; }
+  .cs { color:#fff; font-weight:bold; }
+  .seq { color:#6cc0ff; text-align:right; font-variant-numeric:tabular-nums; }
+  .t { color:#6cc0ff; font-variant-numeric:tabular-nums; }
+  .tsat { color:#39ff62; font-weight:bold; font-variant-numeric:tabular-nums; }
+  .rwy { color:#ffcc66; } .spot { color:#dcdcae; } .muted { color:#777; }
+  .delay { text-align:right; font-variant-numeric:tabular-nums; }
+  .delay.pos { color:#ff8c00; font-weight:bold; }
+  .chip { font-size:10px; padding:1px 7px; border-radius:3px; letter-spacing:.5px; }
+  .chip.sched { background:#10240f; color:#9fd47a; }
+  .chip.active { background:#0d2233; color:#6cc0ff; }
+  .chip.pend { background:#241a0a; color:#d0a040; }
+  .chip.apreq { background:#2a1a2a; color:#e0a0ff; margin-left:4px; }
+  .empty { padding:40px; text-align:center; color:#666; }
+</style>
+</head>
+<body>
+<a class="nav-home" href="/tfdm">&larr; TFDM</a>
+<header style="padding-left:100px">
+    <h1 id="apt">TFDM</h1>
+    <span class="sub" id="aptName"></span>
+</header>
+<div class="infobar" id="infobar"></div>
+<div class="tmis" id="tmis" style="display:none"></div>
+<div class="filters">
+  <button data-f="dep" class="on">DEPARTURES</button>
+  <button data-f="arr">ARRIVALS</button>
+  <button data-f="all">ALL</button>
+  <input id="q" placeholder="filter callsign / dest">
+  <span class="status"><span class="dot" id="dot"></span> <span id="cnt">–</span></span>
+</div>
+<div class="wrap"><table>
+  <thead><tr id="head"></tr></thead>
+  <tbody id="rows"></tbody>
+</table></div>
+<div id="empty" class="empty" style="display:none">No flights.</div>
+
+<script>
+const AP = location.pathname.split('/').pop().toUpperCase();
+document.getElementById('apt').textContent = 'TFDM ' + AP;
+const NAMES = {KLAS:"Las Vegas",KMDW:"Chicago Midway",KTEB:"Teterboro",KMIA:"Miami",KSEA:"Seattle",KIAD:"Washington Dulles",KOAK:"Oakland",KLGA:"New York LaGuardia",KDFW:"Dallas-Ft Worth",KATL:"Atlanta"};
+document.getElementById('aptName').textContent = NAMES[AP]||'';
+
+let DATA = { flights:[], info:null, tmis:[] };
+let mode = 'dep';
+
+const HEAD_DEP = ['SEQ','CALLSIGN','→ DEST','SPOT','RWY','OBT Z','TSAT Z','TAXI','DELAY','STATE'];
+const HEAD_ARR = ['CALLSIGN','FROM','RWY','ETA Z','SPOT','STATE'];
+
+function fmtT(iso){ if(!iso) return '·'; try { return new Date(iso).toISOString().slice(11,16)+'Z'; } catch { return '·'; } }
+function fmtDur(d){ // ISO8601 duration PT#H#M -> minutes
+  if(!d) return '·';
+  const m = /P(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(d); if(!m) return d;
+  const min = (+(m[1]||0))*60 + (+(m[2]||0)) + Math.round((+(m[3]||0))/60);
+  return min+'m';
+}
+function delayMin(d){ if(!d) return null; const m=/P(?:T)?(?:(\d+)H)?(?:(\d+)M)?/.exec(d); if(!m) return null; return (+(m[1]||0))*60+(+(m[2]||0)); }
+function state(f){
+  if(f.elapsedTaxi || f.rwyActual) return {c:'active',t:'OUT'};
+  if(f.offBlock && new Date(f.offBlock) > new Date()) return {c:'sched',t:'SCHED'};
+  return {c:'pend',t:'READY'};
+}
+
+function render(){
+  const info = DATA.info;
+  const ib = document.getElementById('infobar'); ib.innerHTML='';
+  if(info){
+    const parts=[];
+    if(info.gridlock) parts.push(`<span class="k">Gridlock</span> <span class="${info.gridlock.includes('NO')?'v':'gl-bad'}">${info.gridlock.replace(/_/g,' ')}</span>`);
+    if(info.airportQueue!=null) parts.push(`<span class="k">Dep queue</span> <span class="qs">${info.airportQueue}</span>`);
+    if(info.runwayQueues) parts.push('<span class="k">Rwy Q</span> <span class="v">'+Object.entries(info.runwayQueues).filter(([k,v])=>v>0).map(([k,v])=>`${k}:${v}`).join(' ')||'—'+'</span>');
+    if(info.demand&&info.demand[0]) parts.push(`<span class="k">Demand ${(info.demand[0].start||'').slice(11,16)}</span> <span class="v">${info.demand[0].dep||0} dep / ${info.demand[0].arr||0} arr</span>`);
+    ib.innerHTML = parts.join('');
+  }
+  const td = document.getElementById('tmis');
+  if(DATA.tmis&&DATA.tmis.length){ td.style.display='block';
+    td.innerHTML='<span class="k" style="color:#888">TMIs:</span> '+DATA.tmis.map(t=>
+      `<span class="tmi ${t.status==='ACTIVE'?'':'susp'}">${t.type||''} ${t.controlledElement||t.name||''}${t.restriction?' '+t.restriction:''}${t.minutesInTrail&&t.minutesInTrail!=='0'?' '+t.minutesInTrail+'MIT':''} <span style="opacity:.6">${t.status||''}</span></span>`).join(' ');
+  } else td.style.display='none';
+
+  const q = document.getElementById('q').value.trim().toUpperCase();
+  let list = DATA.flights.filter(f=>{
+    if(mode==='dep' && f.origin!==AP) return false;
+    if(mode==='arr' && f.dest!==AP) return false;
+    if(q){ const h=(f.callsign+' '+(f.dest||'')+' '+(f.origin||'')).toUpperCase(); if(!h.includes(q)) return false; }
+    return true;
+  });
+  document.getElementById('head').innerHTML = (mode==='arr'?HEAD_ARR:HEAD_DEP).map(h=>`<th>${h}</th>`).join('');
+  const rows = document.getElementById('rows');
+  document.getElementById('cnt').textContent = list.length+' flights';
+  if(!list.length){ rows.innerHTML=''; document.getElementById('empty').style.display=''; return; }
+  document.getElementById('empty').style.display='none';
+
+  if(mode==='arr'){
+    list.sort((a,b)=>(a.arrivalEst||'~').localeCompare(b.arrivalEst||'~'));
+    rows.innerHTML = list.map(f=>`<tr>
+      <td class="cs">${f.callsign||'·'}</td>
+      <td class="muted">${f.origin||'·'}</td>
+      <td class="rwy">${f.rwyActual||f.rwyAssigned||f.rwyPredicted||'·'}</td>
+      <td class="t">${fmtT(f.arrivalEst)}</td>
+      <td class="spot">${f.spot||'·'}</td>
+      <td>${(()=>{const s=state(f);return `<span class="chip ${s.c}">${s.t}</span>`;})()}</td>
+    </tr>`).join('');
+  } else {
+    list.sort((a,b)=>(a.estDeparture||a.offBlock||'~').localeCompare(b.estDeparture||b.offBlock||'~'));
+    rows.innerHTML = list.map(f=>{
+      const s=state(f); const dm=delayMin(f.delay);
+      return `<tr>
+        <td class="seq">${f.depSeq||'·'}</td>
+        <td class="cs">${f.callsign||'·'}</td>
+        <td class="rwy">${f.dest||'·'}</td>
+        <td class="spot">${f.spot||'·'}</td>
+        <td class="rwy">${f.rwyActual||f.rwyAssigned||f.rwyPredicted||'·'}</td>
+        <td class="t">${fmtT(f.offBlock)}</td>
+        <td class="tsat">${fmtT(f.estDeparture)}</td>
+        <td class="muted">${fmtDur(f.taxiOutEst)}</td>
+        <td class="delay ${dm>0?'pos':''}">${dm!=null?(dm>0?'+'+dm:dm):'·'}</td>
+        <td><span class="chip ${s.c}">${s.t}</span>${f.apreqRelease?'<span class="chip apreq">APREQ</span>':''}</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+document.querySelectorAll('.filters button').forEach(b=>b.onclick=()=>{
+  mode=b.dataset.f; document.querySelectorAll('.filters button').forEach(x=>x.classList.toggle('on',x===b)); render();
+});
+document.getElementById('q').addEventListener('input', render);
+
+let ws;
+function connect(){
+  ws = new WebSocket((location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/tfdm/ws/'+AP);
+  ws.onopen=()=>document.getElementById('dot').classList.add('live');
+  ws.onclose=()=>{ document.getElementById('dot').classList.remove('live'); setTimeout(connect,5000); };
+  ws.onmessage=e=>{ try{ const m=JSON.parse(e.data); if(m.type==='snapshot'){ DATA=m.data; render(); } }catch(x){} };
+}
+connect();
+</script>
+<script src="/shared/disclaimer.js?v=1"></script>
+<script src="/shared/frame.js?v=3"></script>
+</body>
+</html>

@@ -68,10 +68,11 @@
 })();
 
 
-// ── Operator view toggle (private) ──────────────────────────────────────────
-// Deliberately unlabeled: a 5-tap gesture on the footer (or the bottom-right hotspot
-// on footer-less pages) navigates to the browser's own native sign-in. Nothing on
-// screen says what it is for. Works with mouse and touch (click fires on tap).
+// ── Operator view toggle (private, unlabeled) ───────────────────────────────
+// When signed in, the build/updated footer turns green and a small "exit" chip
+// shows. To sign in: 5 clicks/taps within 4s in the very BOTTOM-RIGHT CORNER of
+// the window (coordinate-based, so it works on every page and over any content),
+// or 5 on the page footer → the browser's native sign-in. Nothing is labeled.
 (function () {
     function hasCookie(n) {
         return document.cookie.split('; ').some(function (r) { return r.indexOf(n + '=') === 0; });
@@ -80,44 +81,51 @@
 
     var css = document.createElement('style');
     css.textContent =
-        '#op-hot{position:fixed;right:0;bottom:0;width:34px;height:34px;z-index:99998;' +
-        'background:transparent;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}' +
-        '#op-badge{position:fixed;left:8px;bottom:6px;z-index:99998;font-family:ui-monospace,Consolas,monospace;' +
+        '#op-badge{position:fixed;left:8px;bottom:6px;z-index:2147483000;font-family:ui-monospace,Consolas,monospace;' +
         'font-size:11px;color:#e0b050;background:rgba(0,0,0,.7);border:1px solid #5a4a14;border-radius:3px;' +
         'padding:4px 9px;cursor:pointer;letter-spacing:.5px;-webkit-tap-highlight-color:transparent}' +
         // Signed-in indicator: the build/updated footer goes green (from its default grey).
         '.op-signed #buildFooter{color:#5ed05e!important}';
-    document.head.appendChild(css);
+    (document.head || document.documentElement).appendChild(css);
 
-    // When signed in, a small unlabeled "exit" chip returns to the normal view.
     if (signedIn) {
         document.documentElement.classList.add('op-signed');
-        var badge = document.createElement('div');
-        badge.id = 'op-badge';
-        badge.textContent = '● exit';
-        badge.addEventListener('click', function () {
-            fetch('/api/logout', { method: 'POST' }).then(function () { location.reload(); });
-        });
-        document.body.appendChild(badge);
+        var mkBadge = function () {
+            if (!document.body || document.getElementById('op-badge')) return;
+            var badge = document.createElement('div');
+            badge.id = 'op-badge';
+            badge.textContent = '\u25CF exit';
+            badge.addEventListener('click', function () {
+                fetch('/api/logout', { method: 'POST' }).then(function () { location.reload(); });
+            });
+            document.body.appendChild(badge);
+        };
+        if (document.body) mkBadge(); else document.addEventListener('DOMContentLoaded', mkBadge);
     }
 
-    // 5 taps within 5 s → native browser sign-in for this page.
+    // 5 hits within 4s → native browser sign-in for this page.
     var taps = [];
-    function tap(e) {
-        if (e) e.preventDefault();
+    function hit() {
+        if (signedIn) return;
         var now = Date.now();
         taps.push(now);
-        taps = taps.filter(function (t) { return now - t <= 5000; });
+        taps = taps.filter(function (t) { return now - t <= 4000; });
         if (taps.length >= 5) {
             taps = [];
-            if (signedIn) return;
             location.href = '/api/login?r=' + encodeURIComponent(location.pathname + location.search);
         }
     }
-    var footer = document.querySelector('footer');
-    if (footer) footer.addEventListener('click', tap);
-    var hot = document.createElement('div');
-    hot.id = 'op-hot';
-    hot.addEventListener('click', tap);
-    document.body.appendChild(hot);
+
+    // Primary trigger: bottom-right corner, by coordinates, on the capture phase so it
+    // fires no matter what element is there or whether it stops propagation.
+    document.addEventListener('click', function (e) {
+        if (e.clientX >= window.innerWidth - 64 && e.clientY >= window.innerHeight - 64) hit();
+    }, true);
+
+    // Secondary: the page footer, when a page has one.
+    var attachFooter = function () {
+        var f = document.querySelector('footer');
+        if (f) f.addEventListener('click', hit, true);
+    };
+    if (document.body) attachFooter(); else document.addEventListener('DOMContentLoaded', attachFooter);
 })();

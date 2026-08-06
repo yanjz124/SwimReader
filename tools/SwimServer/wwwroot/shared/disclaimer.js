@@ -56,6 +56,9 @@
               '<p>This is an unofficial tool that visualizes publicly-released SWIM data to recreate ' +
                 'situational awareness for <b>personal use only</b>. It is not FAA data and is not ' +
                 'affiliated with, or endorsed by, the FAA.</p>' +
+              '<p>In accordance with the FAA <b>LADD</b> program (Limiting Aircraft Data Displayed), ' +
+                'aircraft whose owners have requested privacy have their identity withheld and shown ' +
+                'as &ldquo;<b>LADD</b>&rdquo;.</p>' +
               '<p class="fine">Acknowledging continues to the tool. Declining returns you to the FAA SWIM Portal.</p>' +
               '<div class="btns">' +
                 '<button class="ack" type="button">I ACKNOWLEDGE</button>' +

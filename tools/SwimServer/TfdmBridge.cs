@@ -127,11 +127,12 @@ class TfdmBridge
         }
     }
 
-    // helpers: first descendant/attribute by local name
-    private static XElement? El(XElement p, string ln) =>
-        p.Descendants().FirstOrDefault(e => e.Name.LocalName == ln);
-    private static XElement? Child(XElement p, string ln) =>
-        p.Elements().FirstOrDefault(e => e.Name.LocalName == ln);
+    // helpers: first descendant/attribute by local name (null-safe on the parent so
+    // chained lookups like El(El(x,"a"),"b") never throw when "a" is absent)
+    private static XElement? El(XElement? p, string ln) =>
+        p?.Descendants().FirstOrDefault(e => e.Name.LocalName == ln);
+    private static XElement? Child(XElement? p, string ln) =>
+        p?.Elements().FirstOrDefault(e => e.Name.LocalName == ln);
     private static string? Val(XElement? e) => string.IsNullOrWhiteSpace(e?.Value) ? null : e!.Value.Trim();
     private static string? Attr(XElement? e, string a) => e?.Attributes().FirstOrDefault(x => x.Name.LocalName == a)?.Value;
     // A <foo><estimated|earliest source=..><time>T</time></...></foo> nested time

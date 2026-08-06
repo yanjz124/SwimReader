@@ -78,9 +78,6 @@ document.getElementById('aptName').textContent = NAMES[AP]||'';
 let DATA = { flights:[], info:null, tmis:[] };
 let mode = 'dep';
 
-const HEAD_DEP = ['SEQ','CALLSIGN','→ DEST','SPOT','RWY','OBT Z','TSAT Z','TAXI','DELAY','STATE'];
-const HEAD_ARR = ['CALLSIGN','FROM','RWY','ETA Z','SPOT','STATE'];
-
 function fmtT(iso){ if(!iso) return '·'; try { return new Date(iso).toISOString().slice(11,16)+'Z'; } catch { return '·'; } }
 function fmtDur(d){ // ISO8601 duration PT#H#M -> minutes
   if(!d) return '·';
@@ -89,11 +86,38 @@ function fmtDur(d){ // ISO8601 duration PT#H#M -> minutes
   return min+'m';
 }
 function delayMin(d){ if(!d) return null; const m=/P(?:T)?(?:(\d+)H)?(?:(\d+)M)?/.exec(d); if(!m) return null; return (+(m[1]||0))*60+(+(m[2]||0)); }
+function durNum(d){ if(!d) return 1e12; const m=/P(?:T)?(?:(\d+)H)?(?:(\d+)M)?/.exec(d); if(!m) return 1e12; return (+(m[1]||0))*60+(+(m[2]||0)); }
+function numOr(v,d){ const n=parseInt(v,10); return isNaN(n)?d:n; }
+function rwy(f){ return f.rwyActual||f.rwyAssigned||f.rwyPredicted||''; }
 function state(f){
   if(f.elapsedTaxi || f.rwyActual) return {c:'active',t:'OUT'};
   if(f.offBlock && new Date(f.offBlock) > new Date()) return {c:'sched',t:'SCHED'};
   return {c:'pend',t:'READY'};
 }
+const esc = s => (s==null?'·':String(s));
+// Each column: header, sort accessor (+type), and the <td> cell renderer.
+const COLS_DEP = [
+  {h:'SEQ',      t:'n', k:f=>numOr(f.depSeq,1e12),        td:f=>`<td class="seq">${esc(f.depSeq)}</td>`},
+  {h:'CALLSIGN', t:'s', k:f=>f.callsign||'',              td:f=>`<td class="cs">${esc(f.callsign)}</td>`},
+  {h:'→ DEST',   t:'s', k:f=>f.dest||'',                  td:f=>`<td class="rwy">${esc(f.dest)}</td>`},
+  {h:'SPOT',     t:'s', k:f=>f.spot||'',                  td:f=>`<td class="spot">${esc(f.spot)}</td>`},
+  {h:'RWY',      t:'s', k:f=>rwy(f),                       td:f=>`<td class="rwy">${rwy(f)||'·'}</td>`},
+  {h:'OBT Z',    t:'s', k:f=>f.offBlock||'~',              td:f=>`<td class="t">${fmtT(f.offBlock)}</td>`},
+  {h:'TSAT Z',   t:'s', k:f=>f.estDeparture||'~',          td:f=>`<td class="tsat">${fmtT(f.estDeparture)}</td>`},
+  {h:'TAXI',     t:'n', k:f=>durNum(f.taxiOutEst),         td:f=>`<td class="muted">${fmtDur(f.taxiOutEst)}</td>`},
+  {h:'DELAY',    t:'n', k:f=>{const d=delayMin(f.delay);return d==null?-1:d;}, td:f=>{const d=delayMin(f.delay);return `<td class="delay ${d>0?'pos':''}">${d!=null?(d>0?'+'+d:d):'·'}</td>`;}},
+  {h:'STATE',    t:'s', k:f=>state(f).t,                   td:f=>{const s=state(f);return `<td><span class="chip ${s.c}">${s.t}</span>${f.apreqRelease?'<span class="chip apreq">APREQ</span>':''}</td>`;}},
+];
+const COLS_ARR = [
+  {h:'CALLSIGN', t:'s', k:f=>f.callsign||'', td:f=>`<td class="cs">${esc(f.callsign)}</td>`},
+  {h:'FROM',     t:'s', k:f=>f.origin||'',   td:f=>`<td class="muted">${esc(f.origin)}</td>`},
+  {h:'RWY',      t:'s', k:f=>rwy(f),          td:f=>`<td class="rwy">${rwy(f)||'·'}</td>`},
+  {h:'ETA Z',    t:'s', k:f=>f.arrivalEst||'~', td:f=>`<td class="t">${fmtT(f.arrivalEst)}</td>`},
+  {h:'SPOT',     t:'s', k:f=>f.spot||'',      td:f=>`<td class="spot">${esc(f.spot)}</td>`},
+  {h:'STATE',    t:'s', k:f=>state(f).t,      td:f=>{const s=state(f);return `<td><span class="chip ${s.c}">${s.t}</span></td>`;}},
+];
+// sort state per mode; defaults: DEP→TSAT asc (idx6), ARR→ETA asc (idx3)
+const SORT = { dep:{i:6,dir:1}, arr:{i:3,dir:1} };
 
 function render(){
   const info = DATA.info;
@@ -119,40 +143,29 @@ function render(){
     if(q){ const h=(f.callsign+' '+(f.dest||'')+' '+(f.origin||'')).toUpperCase(); if(!h.includes(q)) return false; }
     return true;
   });
-  document.getElementById('head').innerHTML = (mode==='arr'?HEAD_ARR:HEAD_DEP).map(h=>`<th>${h}</th>`).join('');
+  const cols = mode==='arr' ? COLS_ARR : COLS_DEP;
+  const st = SORT[mode];
+  // clickable headers with a ▲/▼ indicator on the active column
+  document.getElementById('head').innerHTML = cols.map((c,i)=>
+    `<th data-i="${i}" style="cursor:pointer;user-select:none">${c.h}${i===st.i?(st.dir>0?' ▲':' ▼'):''}</th>`).join('');
+  document.querySelectorAll('#head th').forEach(th=>th.onclick=()=>{
+    const i=+th.dataset.i;
+    if(st.i===i) st.dir=-st.dir; else { st.i=i; st.dir=1; }
+    render();
+  });
+
   const rows = document.getElementById('rows');
   document.getElementById('cnt').textContent = list.length+' flights';
   if(!list.length){ rows.innerHTML=''; document.getElementById('empty').style.display=''; return; }
   document.getElementById('empty').style.display='none';
 
-  if(mode==='arr'){
-    list.sort((a,b)=>(a.arrivalEst||'~').localeCompare(b.arrivalEst||'~'));
-    rows.innerHTML = list.map(f=>`<tr>
-      <td class="cs">${f.callsign||'·'}</td>
-      <td class="muted">${f.origin||'·'}</td>
-      <td class="rwy">${f.rwyActual||f.rwyAssigned||f.rwyPredicted||'·'}</td>
-      <td class="t">${fmtT(f.arrivalEst)}</td>
-      <td class="spot">${f.spot||'·'}</td>
-      <td>${(()=>{const s=state(f);return `<span class="chip ${s.c}">${s.t}</span>`;})()}</td>
-    </tr>`).join('');
-  } else {
-    list.sort((a,b)=>(a.estDeparture||a.offBlock||'~').localeCompare(b.estDeparture||b.offBlock||'~'));
-    rows.innerHTML = list.map(f=>{
-      const s=state(f); const dm=delayMin(f.delay);
-      return `<tr>
-        <td class="seq">${f.depSeq||'·'}</td>
-        <td class="cs">${f.callsign||'·'}</td>
-        <td class="rwy">${f.dest||'·'}</td>
-        <td class="spot">${f.spot||'·'}</td>
-        <td class="rwy">${f.rwyActual||f.rwyAssigned||f.rwyPredicted||'·'}</td>
-        <td class="t">${fmtT(f.offBlock)}</td>
-        <td class="tsat">${fmtT(f.estDeparture)}</td>
-        <td class="muted">${fmtDur(f.taxiOutEst)}</td>
-        <td class="delay ${dm>0?'pos':''}">${dm!=null?(dm>0?'+'+dm:dm):'·'}</td>
-        <td><span class="chip ${s.c}">${s.t}</span>${f.apreqRelease?'<span class="chip apreq">APREQ</span>':''}</td>
-      </tr>`;
-    }).join('');
-  }
+  const col = cols[st.i];
+  list.sort((a,b)=>{
+    const ka=col.k(a), kb=col.k(b);
+    const cmp = col.t==='n' ? (ka-kb) : String(ka).localeCompare(String(kb));
+    return cmp*st.dir;
+  });
+  rows.innerHTML = list.map(f=>`<tr>${cols.map(c=>c.td(f)).join('')}</tr>`).join('');
 }
 
 document.querySelectorAll('.filters button').forEach(b=>b.onclick=()=>{

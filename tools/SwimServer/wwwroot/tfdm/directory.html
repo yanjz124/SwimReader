@@ -41,6 +41,7 @@ const NAMES = {KATL:"Atlanta",KLAX:"Los Angeles",KORD:"Chicago O'Hare",KDFW:"Dal
 async function load(){
   try {
     const r = await fetch('/api/tfdm'); const d = await r.json();
+    d.sort((a,b)=>a.airport.localeCompare(b.airport));   // alphabetical
     const g = document.getElementById('grid');
     if(!d.length){ g.innerHTML='<div class="empty">No TFDM airports reporting yet.</div>'; return; }
     g.innerHTML = d.map(a=>`<a class="card" href="/tfdm/${a.airport.toLowerCase()}">

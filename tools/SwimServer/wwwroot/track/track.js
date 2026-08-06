@@ -129,6 +129,7 @@
     if (d.edct) h += `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(d.edct), 'hl'], ['Slot', String(d.edct).slice(0, 16).replace('T', ' ') + 'Z']])}</div>`;
     if (flights[0]) h += flightPlanCard(flights[0]);
     if (d.tdls && d.tdls.length) h += tdlsCard(d.tdls);
+    if (d.tfdm && d.tfdm.length) h += tfdmCard(d.tfdm);
     if (d.asdex && d.asdex.length) h += asdexCard(d.asdex);
     if (taisList.length) h += taisCard(taisList);
     if (d.tfms) h += tfmsCard(d.tfms);
@@ -156,7 +157,7 @@
     const dst = (f && f.dest) || (tais && tais.dest) || (asd && asd.track.dest) || (d.tfms && d.tfms.arrArpt) || '';
     const ph = phaseOf(d, f, tais, asd);
     const chips = [['SFDPS', (d.sfdps || []).length > 0], ['TFMS', !!d.tfms], ['TDLS', (d.tdls || []).length > 0],
-      ['STARS', (d.tais || []).length > 0], ['ASDE-X', (d.asdex || []).length > 0], ['EDCT', !!d.edct]]
+      ['STARS', (d.tais || []).length > 0], ['ASDE-X', (d.asdex || []).length > 0], ['TFDM', (d.tfdm || []).length > 0], ['EDCT', !!d.edct]]
       .map(function (x) { return `<span class="chip${x[1] ? ' on' : ''}">${x[0]}</span>`; }).join('');
     const sub = [type + wake, (f && f.registration) || ''].filter(Boolean).join(' · ');
     const freq = f && f.sectorFreq;
@@ -414,6 +415,37 @@
       ]);
     });
     return `<div class="card"><h2>SURFACE (ASDE-X)</h2>${inner}</div>`;
+  }
+
+  // TFDM surface / departure timing — pairs with the SFDPS flight-plan card above
+  // (SFDPS = route/type/altitude, TFDM = off-block/TSAT/spot/taxi/sequence).
+  function tfdmCard(tfdm) {
+    const dur = function (d) {
+      if (!d) return null;
+      const m = /P(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(d); if (!m) return d;
+      const min = (+(m[1] || 0)) * 60 + (+(m[2] || 0)) + Math.round((+(m[3] || 0)) / 60);
+      return min + ' min';
+    };
+    let inner = '';
+    tfdm.forEach(function (f) {
+      inner += `<div class="subhdr">${esc(f.airport || '')} · SURFACE / DEPARTURE</div>`;
+      inner += grid([
+        ['Off-block (TOBT)', hhmm(f.offBlock), 'hl'],
+        ['TSAT (est. departure)', hhmm(f.estDeparture), 'hl'],
+        ['Earliest departure', hhmm(f.earliestDeparture)],
+        ['Runway', f.rwyActual || f.rwyAssigned || f.rwyPredicted],
+        ['Ramp spot', f.spot],
+        ['Taxi-out est.', dur(f.taxiOutEst)],
+        ['Dep. sequence', f.depSeq],
+        ['Delay', dur(f.delay)],
+        ['APREQ release', hhmm(f.apreqRelease)],
+        ['Clearance', hhmm(f.clearance)],
+        ['Arrival ETA', hhmm(f.arrivalEst)],
+        ['Dest', f.dest], ['Origin', f.origin],
+        ['Age', f.ageSec != null ? f.ageSec + 's' : null],
+      ]);
+    });
+    return `<div class="card"><h2>SURFACE / DEPARTURE (TFDM)</h2>${inner}</div>`;
   }
 
   function taisCard(tais) {

@@ -87,8 +87,10 @@ static class TrackRoutes
             var tais  = ctx.Tais.FindByCallsign(callsign);
             var asdex = ctx.Asdex.FindByCallsign(callsign);
             var tfms  = ctx.Tfms.GetFlightByCallsign(callsign);
+            var tfdm  = ctx.Tfdm.FindByCallsign(callsign);   // TFDM surface timing (joins to the SFDPS plan)
 
-            var found = sfdps.Count > 0 || tdls.Count > 0 || tais.Count > 0 || asdex.Count > 0 || tfms is not null;
+            var found = sfdps.Count > 0 || tdls.Count > 0 || tais.Count > 0 || asdex.Count > 0
+                        || tfms is not null || tfdm.Count > 0;
 
             return Results.Json(new
             {
@@ -103,6 +105,7 @@ static class TrackRoutes
                 tdls,
                 tais,
                 asdex,
+                tfdm,
             }, ctx.JsonOpts);
         });
 
@@ -614,11 +617,12 @@ static class TrackRoutes
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
         var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
         var tfms = ctx.Tfms.FindByCallsign(cs);
+        var tfdmFlights = ctx.Tfdm.FlightsByCallsign(cs);
         var ho = new List<FlightEvent>();
         string? edct = null;
         foreach (var f in flights) { foreach (var e in f.GetAllEvents()) if (HandoffSources.Contains(e.Source)) ho.Add(e); if (edct == null && !string.IsNullOrEmpty(f.EdctTime)) edct = f.EdctTime; }
 
-        if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null)
+        if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null && tfdmFlights.Count == 0)
         { sb.Append("<p class=w>Nothing is tracking ").Append(He(cs)).Append(" right now.</p></body></html>"); return Results.Content(sb.ToString(), "text/html; charset=utf-8"); }
 
         var best = flights.OrderBy(f => f.Latitude.HasValue ? 0 : 1)
@@ -691,6 +695,7 @@ static class TrackRoutes
         if (tdlsAc.Count > 0) srcs.Add("TDLS");
         if (taisTracks.Count > 0) srcs.Add("STARS");
         if (asdexTracks.Count > 0) srcs.Add("ASDE-X");
+        if (tfdmFlights.Count > 0) srcs.Add("TFDM");
         if (!string.IsNullOrEmpty(edct)) srcs.Add("EDCT");
         if (srcs.Count > 0) sb.Append("<div class=d style=margin-top:7px>in: <span class=g>").Append(He(string.Join(" · ", srcs))).Append("</span></div>");
 
@@ -867,6 +872,34 @@ static class TrackRoutes
                 sb.Append(He(string.Join(" · ", p))).Append("<br>");
                 sb.Append("Pos ").Append(t.Latitude.ToString("F4")).Append(", ").Append(t.Longitude.ToString("F4"))
                   .Append(" <span class=d>(").Append((int)(DateTime.UtcNow - t.LastSeen).TotalSeconds).Append("s old)</span><br>");
+            }
+        }
+
+        // ── SURFACE / DEPARTURE (TFDM) ──
+        if (tfdmFlights.Count > 0)
+        {
+            static string? Dm(string? d)  // ISO8601 duration → "N min"
+            {
+                if (string.IsNullOrEmpty(d)) return null;
+                var m = System.Text.RegularExpressions.Regex.Match(d, @"P(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?");
+                if (!m.Success) return d;
+                int min = (m.Groups[1].Success ? int.Parse(m.Groups[1].Value) : 0) * 60
+                        + (m.Groups[2].Success ? int.Parse(m.Groups[2].Value) : 0);
+                return min + " min";
+            }
+            sb.Append("<h2>SURFACE / DEPARTURE (TFDM)</h2>");
+            foreach (var f in tfdmFlights)
+            {
+                sb.Append("<div class=d style=margin-top:6px>").Append(He(f.Airport)).Append(" · SURFACE</div>");
+                Row(sb, "Off-block (TOBT)", Hm(f.OffBlockTime));
+                Row(sb, "TSAT (est dep)", Hm(f.EstDepartureTime));
+                Row(sb, "Runway", f.RunwayActual ?? f.RunwayAssigned ?? f.RunwayPredicted);
+                Row(sb, "Ramp spot", f.ActualSpot ?? f.PredictedSpot);
+                Row(sb, "Taxi-out est", Dm(f.TaxiOutEst));
+                Row(sb, "Dep sequence", f.DepSeq);
+                Row(sb, "Delay", Dm(f.DelayActual ?? f.DelayCurrent ?? f.DelayPredicted));
+                Row(sb, "APREQ release", Hm(f.ApreqReleaseTime));
+                Row(sb, "Dest", f.Dest);
             }
         }
 

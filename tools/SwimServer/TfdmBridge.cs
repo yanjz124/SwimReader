@@ -338,13 +338,17 @@ class TfdmBridge
     }
 
     /// <summary>TFDM surface record(s) for a callsign across all airports (for Track-a-Flight).</summary>
-    public List<object> FindByCallsign(string callsign)
+    public List<object> FindByCallsign(string callsign) =>
+        FlightsByCallsign(callsign).Select(f => f.ToJson()).ToList();
+
+    /// <summary>Typed variant for the server-rendered /t text page.</summary>
+    public List<TfdmFlight> FlightsByCallsign(string callsign)
     {
-        var res = new List<object>();
+        var res = new List<TfdmFlight>();
         foreach (var (_, fs) in _state)
             foreach (var f in fs.Values)
                 if (string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
-                    res.Add(f.ToJson());
+                    res.Add(f);
         return res;
     }
 }

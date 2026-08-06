@@ -35,6 +35,16 @@ CHANGING SETTINGS LATER
   swimreader.config.json next to the exe. Restart the app to apply changes.
   To change the port, set it on the setup page and restart.
 
+SECTOR BOUNDARY MAPS (optional)
+  This download does NOT include ARTCC sector-boundary maps, so the ERAM scope
+  starts with no boundary lines. To add them, place your own KML file(s) next to
+  SwimServer.exe and restart:
+        AllSectors.kml       - loaded automatically by the ERAM scope
+        AllHighSectors.kml   - optional, toggle in the scope sidebar
+        AllLowSectors.kml    - optional, toggle in the scope sidebar
+  KML categories are read from each placemark's <name> tag (UHI / HI / LO / APP).
+  Everything else works without them.
+
 IMPORTANT
   All SCDS data is pre-approved for public release by the FAA NAS Data Release
   Board and is NOT for operational use. This tool is for personal, non-

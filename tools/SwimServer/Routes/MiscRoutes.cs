@@ -59,56 +59,14 @@ static class MiscRoutes
         });
 
         // ── Operator sign-in (private view) ─────────────────────────────────────
-        // Unadvertised. Reached only by the client's 5-tap gesture, which navigates the
-        // browser to /api/login so the NATIVE browser credential dialog appears — the browser
-        // owns all of the text, nothing on screen says what it is for, and the URL is generic.
-        // Valid creds set an HttpOnly cookie that LaddService.Reveal() reads to serve this
-        // browser the un-masked view. Absent/wrong creds (or the feature being off) all look
-        // identical: another 401 dialog, so the feature isn't discoverable by probing.
-        app.MapGet("/api/login", async (HttpContext http) =>
-        {
-            string? u = null, p = null;
-            var hdr = http.Request.Headers["Authorization"].ToString();
-            if (hdr.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    var dec = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(hdr[6..].Trim()));
-                    var i = dec.IndexOf(':');
-                    if (i >= 0) { u = dec[..i]; p = dec[(i + 1)..]; }
-                }
-                catch { /* malformed header ⇒ treated as no creds */ }
-            }
-
-            // Local return path only (guards against open redirect).
-            var back = http.Request.Query["r"].ToString();
-            if (string.IsNullOrEmpty(back) || !back.StartsWith('/') || back.StartsWith("//")) back = "/";
-
-            if (string.IsNullOrEmpty(LaddService.BypassKey) || !LaddService.ValidateReveal(u, p))
-            {
-                http.Response.StatusCode = 401;
-                http.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Login\"";
-                // If the visitor cancels the dialog, bounce back instead of showing a blank 401.
-                http.Response.ContentType = "text/html";
-                await http.Response.WriteAsync(
-                    $"<meta http-equiv=\"refresh\" content=\"0;url={System.Net.WebUtility.HtmlEncode(back)}\">");
-                return;
-            }
-
-            var secure = http.Request.IsHttps;
-            http.Response.Cookies.Append("laddKey", LaddService.BypassKey!, new CookieOptions
-            {
-                HttpOnly = true, Secure = secure, SameSite = SameSiteMode.Lax,
-                Expires = DateTimeOffset.UtcNow.AddDays(30), Path = "/",
-            });
-            // Neutral, non-secret flag the UI reads to show the "exit" chip.
-            http.Response.Cookies.Append("sv", "1", new CookieOptions
-            {
-                HttpOnly = false, Secure = secure, SameSite = SameSiteMode.Lax,
-                Expires = DateTimeOffset.UtcNow.AddDays(30), Path = "/",
-            });
-            http.Response.Redirect(back);
-        });
+        // Reached either by the client's unlabeled 5-tap gesture or by typing /login. Both
+        // navigate here so the NATIVE browser credential dialog appears — the browser owns all
+        // the text, nothing on screen says what it is for, and the URL is generic. Valid creds
+        // set an HttpOnly cookie that LaddService.Reveal() reads to serve this browser the
+        // un-masked view. Absent/wrong creds (or the feature being off) all look identical:
+        // another 401 dialog, so the feature isn't discoverable by probing.
+        app.MapGet("/login", LoginHandler);
+        app.MapGet("/api/login", LoginHandler);
 
         app.MapPost("/api/logout", (HttpContext http) =>
         {
@@ -116,5 +74,50 @@ static class MiscRoutes
             http.Response.Cookies.Delete("sv", new CookieOptions { Path = "/" });
             return Results.Json(new { ok = true });
         });
+    }
+
+    private static async Task LoginHandler(HttpContext http)
+    {
+        string? u = null, p = null;
+        var hdr = http.Request.Headers["Authorization"].ToString();
+        if (hdr.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var dec = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(hdr[6..].Trim()));
+                var i = dec.IndexOf(':');
+                if (i >= 0) { u = dec[..i]; p = dec[(i + 1)..]; }
+            }
+            catch { /* malformed header ⇒ treated as no creds */ }
+        }
+
+        // Local return path only (guards against open redirect).
+        var back = http.Request.Query["r"].ToString();
+        if (string.IsNullOrEmpty(back) || !back.StartsWith('/') || back.StartsWith("//")) back = "/";
+
+        if (string.IsNullOrEmpty(LaddService.BypassKey) || !LaddService.ValidateReveal(u, p))
+        {
+            http.Response.StatusCode = 401;
+            http.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Login\"";
+            // If the visitor cancels the dialog, bounce back instead of showing a blank 401.
+            http.Response.ContentType = "text/html";
+            await http.Response.WriteAsync(
+                $"<meta http-equiv=\"refresh\" content=\"0;url={System.Net.WebUtility.HtmlEncode(back)}\">");
+            return;
+        }
+
+        var secure = http.Request.IsHttps;
+        http.Response.Cookies.Append("laddKey", LaddService.BypassKey!, new CookieOptions
+        {
+            HttpOnly = true, Secure = secure, SameSite = SameSiteMode.Lax,
+            Expires = DateTimeOffset.UtcNow.AddDays(30), Path = "/",
+        });
+        // Neutral, non-secret flag the UI reads to show the "exit" chip.
+        http.Response.Cookies.Append("sv", "1", new CookieOptions
+        {
+            HttpOnly = false, Secure = secure, SameSite = SameSiteMode.Lax,
+            Expires = DateTimeOffset.UtcNow.AddDays(30), Path = "/",
+        });
+        http.Response.Redirect(back);
     }
 }

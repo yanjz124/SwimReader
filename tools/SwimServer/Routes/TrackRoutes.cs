@@ -281,7 +281,8 @@ static class TrackRoutes
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
         var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
         var tfms = ctx.Tfms.FindByCallsign(cs);
-        if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null)
+        var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs).FirstOrDefault();
+        if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null && tfdm0 == null)
             return $"Nothing is tracking {cs} right now.";
 
         var best = BestFlight(flights);
@@ -442,6 +443,24 @@ static class TrackRoutes
             if (surf.Count > 0) sb.Append("Surface: ").Append(string.Join(" · ", surf)).Append('\n');
         }
 
+        // TFDM surface / departure timing (compact)
+        if (tfdm0 != null)
+        {
+            var p = new List<string>();
+            if (!string.IsNullOrEmpty(tfdm0.OffBlockTime)) p.Add("OBT " + Hm(tfdm0.OffBlockTime));
+            if (!string.IsNullOrEmpty(tfdm0.EstDepartureTime)) p.Add("TSAT " + Hm(tfdm0.EstDepartureTime));
+            var rwy = tfdm0.RunwayActual ?? tfdm0.RunwayAssigned ?? tfdm0.RunwayPredicted;
+            if (!string.IsNullOrEmpty(rwy)) p.Add("rwy " + rwy);
+            var spot = tfdm0.ActualSpot ?? tfdm0.PredictedSpot;
+            if (!string.IsNullOrEmpty(spot)) p.Add("spot " + spot);
+            if (!string.IsNullOrEmpty(tfdm0.DepSeq)) p.Add("seq " + tfdm0.DepSeq);
+            var tx = DurMin(tfdm0.TaxiOutEst); if (tx != null) p.Add("taxi " + tx);
+            var dl = DurMin(tfdm0.DelayActual ?? tfdm0.DelayCurrent ?? tfdm0.DelayPredicted);
+            if (dl != null && dl != "0m") p.Add("delay " + dl);
+            if (!string.IsNullOrEmpty(tfdm0.ApreqReleaseTime)) p.Add("APREQ " + Hm(tfdm0.ApreqReleaseTime));
+            if (p.Count > 0) sb.Append("TFDM: ").Append(string.Join(" · ", p)).Append('\n');
+        }
+
         var edct = flights.Select(f => f.EdctTime).FirstOrDefault(e => !string.IsNullOrEmpty(e));
         if (!string.IsNullOrEmpty(edct)) sb.Append("EDCT: ").Append(Hm(edct)).Append('\n');
 
@@ -452,6 +471,7 @@ static class TrackRoutes
         if (tdlsAc.Count > 0) srcs.Add("TDLS");
         if (taisTracks.Count > 0) srcs.Add("STARS");
         if (asdexTracks.Count > 0) srcs.Add("ASDE-X");
+        if (tfdm0 != null) srcs.Add("TFDM");
         if (srcs.Count > 0) sb.Append("in: ").Append(string.Join(" · ", srcs));
 
         return sb.ToString().TrimEnd();
@@ -504,6 +524,7 @@ static class TrackRoutes
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
         var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
         var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
+        var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs).FirstOrDefault();
         var best = flights
             .OrderByDescending(f => string.IsNullOrEmpty(f.ControllingFacility) ? 0 : 1)
             .ThenBy(f => f.Gufi, StringComparer.Ordinal).FirstOrDefault();
@@ -532,8 +553,13 @@ static class TrackRoutes
         sb.Append(flights.Select(f => f.EdctTime).FirstOrDefault(e => !string.IsNullOrEmpty(e))).Append('|');
         var tm = tdlsAc.FirstOrDefault()?.MessagesTyped().OrderByDescending(m => m.Time).FirstOrDefault();
         if (tm != null) sb.Append(tm.Time.Ticks);
+        // TFDM: only the DISCRETE surface events (runway assigned, dep sequence, APREQ release,
+        // scheduled pushback) — NOT the volatile TSAT/taxi/delay, which drift every update.
+        if (tfdm0 != null)
+            sb.Append('|').Append(tfdm0.RunwayAssigned ?? tfdm0.RunwayActual).Append(';')
+              .Append(tfdm0.DepSeq).Append(';').Append(tfdm0.ApreqReleaseTime).Append(';').Append(tfdm0.OffBlockTime);
         sb.Append('|').Append(flights.Count > 0 ? 'S' : '-').Append(taisTracks.Count > 0 ? 'T' : '-')
-          .Append(asdexTracks.Count > 0 ? 'A' : '-').Append(tdlsAc.Count > 0 ? 'D' : '-');
+          .Append(asdexTracks.Count > 0 ? 'A' : '-').Append(tdlsAc.Count > 0 ? 'D' : '-').Append(tfdm0 != null ? 'F' : '-');
         return sb.ToString();
     }
 
@@ -543,6 +569,16 @@ static class TrackRoutes
     {
         if (string.IsNullOrEmpty(iso)) return "";
         return DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var d) ? d.ToString("HHmm") + "Z" : iso;
+    }
+    // ISO-8601 duration (e.g. PT24M, PT1H5M, PT0S) → "24m" / "65m" / "0m". Null-safe.
+    private static string? DurMin(string? d)
+    {
+        if (string.IsNullOrEmpty(d)) return null;
+        var m = System.Text.RegularExpressions.Regex.Match(d, @"P(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?");
+        if (!m.Success) return d;
+        int min = (m.Groups[1].Success ? int.Parse(m.Groups[1].Value) : 0) * 60
+                + (m.Groups[2].Success ? int.Parse(m.Groups[2].Value) : 0);
+        return min + "m";
     }
     private static string? Fl(double? a) => a == null ? null : "FL" + Math.Round(a.Value / 100);
     private static string AltText(FlightState f)

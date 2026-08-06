@@ -959,10 +959,10 @@ body.tmu-mode .ac-leader { display: none !important; }
     background: #000000; border: 1px solid #888; color: #ffffff;
     padding: 3px 6px;
     /* Never scrolls. The box sizes to its content: it widens to the longest
-       line (up to the viewport cap, after which lines wrap) and grows as tall
-       as it needs. layoutMcaRa() keeps it on-screen and off the MCA as it
-       changes size. */
-    width: max-content; min-width: 500px; max-width: 100%;
+       line, but caps at ~80 columns so long lines (a filed route, remarks) wrap
+       and the box grows TALLER instead of running off to the viewport edge.
+       layoutMcaRa() keeps it on-screen and off the MCA as it changes size. */
+    width: max-content; min-width: 500px; max-width: min(100%, 80ch);
     min-height: 100px;
     font-size: 14px; line-height: 18px; white-space: pre-wrap; word-break: normal;
     /* Safety net: let space-less strings (e.g. a filed route) wrap instead of

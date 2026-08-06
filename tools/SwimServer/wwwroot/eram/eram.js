@@ -4322,6 +4322,18 @@ document.getElementById('chk-mapbg').addEventListener('change', function () {
     saveSettingsToLocalStorage();
 });
 
+// Scroll-wheel zoom toggle. Off = the mouse wheel no longer zooms (avoids accidental
+// zoom); deliberate zoom still works via the RANGE toolbar control. Default on.
+function applyScrollZoom() {
+    const on = document.getElementById('chk-scroll-zoom')?.checked !== false;
+    if (on) map.scrollWheelZoom.enable();
+    else map.scrollWheelZoom.disable();
+}
+document.getElementById('chk-scroll-zoom').addEventListener('change', function () {
+    applyScrollZoom();
+    saveSettingsToLocalStorage();
+});
+
 document.getElementById('chk-mca-kb').addEventListener('change', function () {
     document.getElementById('mca').classList.toggle('show-kb', this.checked);
     saveSettingsToLocalStorage();
@@ -5578,6 +5590,7 @@ function loadSettingsFromLocalStorage() {
         if (settings.autoVci !== undefined) autoVci = settings.autoVci;
         if (settings.autoOffset !== undefined) autoOffset = settings.autoOffset;
         if (settings.mcaKb !== undefined) document.getElementById('chk-mca-kb').checked = settings.mcaKb;
+        if (settings.scrollZoom !== undefined) document.getElementById('chk-scroll-zoom').checked = settings.scrollZoom;
         if (settings.numinv !== undefined) document.getElementById('numpad-inverted').checked = !settings.numinv;
         if (settings.nasrBrightness) Object.assign(nasrBrightness, settings.nasrBrightness);
         if (settings.nexradLevel !== undefined) nexradLevel = settings.nexradLevel;
@@ -5618,6 +5631,7 @@ function loadSettingsFromLocalStorage() {
     document.getElementById('chk-auto-vci').checked = autoVci;
     document.getElementById('chk-auto-offset').checked = autoOffset;
     document.getElementById('chk-mapbg').checked = showMapBg;
+    applyScrollZoom();
     document.getElementById('sel-line4').value = line4Mode;
     document.getElementById('sel-boundary-style').value = boundaryStyle;
     document.getElementById('sel-fontsize').value = fontSize;
@@ -5684,6 +5698,7 @@ function saveSettingsToLocalStorage() {
         autoVci,
         autoOffset,
         mcaKb: document.getElementById('chk-mca-kb')?.checked || false,
+        scrollZoom: document.getElementById('chk-scroll-zoom')?.checked !== false,
         mcaVisible: document.getElementById('chk-mca')?.checked !== false,
         raVisible: document.getElementById('chk-ra')?.checked !== false,
         timeVisible: document.getElementById('chk-time')?.checked !== false,

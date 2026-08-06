@@ -1,6 +1,16 @@
 # SwimReader
 
-Real-time FAA SWIM (System Wide Information Management) data platform. Ingests live flight data from multiple FAA data sources via Solace messaging, parses/normalizes it, and serves it through multiple frontends and API services.
+Real-time FAA SWIM (System Wide Information Management) data platform. Ingests live data from **five**
+FAA SCDS feeds over Solace messaging — **SFDPS** (en-route flight data), **STDDS** (terminal: TAIS/STARS,
+TDES/TDLS, SMES/ASDE-X), **TFMS** (traffic flow), **ITWS** (terminal weather), and **TFDM** (terminal
+surface / departure management) — parses/normalizes them, and serves the result through a suite of
+ATC-style displays, data explorers, a route/dispatch finder, a cross-source "track a flight" aggregator,
+and a Telegram bot.
+
+**Deployment note:** the public deployment is intentionally minimal and **login-gated** (personal use, not
+public redistribution — see the FAA LADD/TOS discussion in memory). Env-driven host-scoped HTTP Basic Auth
+(`SWIM_GATE_HOST`/`USER`/`PASS` in Program.cs) gates one public hostname; unset = open (local use). All
+frontends share the ERAM-yellow dark theme; the home page carries a cover title, not "FAA SWIM".
 
 ## IMPORTANT: Reference Documentation
 
@@ -47,9 +57,15 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 ```
 
 ### Data Sources (Parsers)
-- **STDDS** — Terminal automation data (TAIS, TDES, SMES, APDS, ISMC) — parsed via `SwimReader.Parsers`
 - **SFDPS** — En route flight data (FIXM XML) — parsed inline in `SwimServer/Program.cs`
-- Future: additional SWIM data sources as needed
+- **STDDS** — Terminal automation data (TAIS, TDES, SMES, APDS, ISMC) — `SwimReader.Parsers` (DGScope path) and inline bridges (`AsdexBridge`/`TdlsBridge`/`TaisBridge`) in SwimServer
+- **TFMS** — Traffic Flow Management data (flights, TMIs, FCAs, airport configs) — `TfmsBridge`
+- **ITWS** — Integrated Terminal Weather System (winds, microbursts, storms, lightning) — `ItwsBridge`
+- **TFDM** — Terminal Flight Data Manager (**ems3** / VPN `TFDM`): surface/departure management — per-flight
+  off-block/TOBT, TSAT, runway, ramp spot, taxi estimates, dep sequence, APREQ, reportable delay; airport
+  info (queues, demand, active runway config, AAR/ADR rates, closures); terminal TMRs — `TfdmBridge`.
+  Surface-only (no route/type — links to SFDPS by callsign). SMP/Operational-Metrics services exist but
+  aren't subscribed on the current queue.
 
 ### Frontends / API Services
 - **ERAM Scope** (`eram.html`) — Leaflet + Canvas radar display with ERAM-style data blocks
@@ -64,6 +80,9 @@ Real-time FAA SWIM (System Wide Information Management) data platform. Ingests l
 - **TAIS Detail** (`/tais/{facility}`) — Terminal radar track table with search, sort, frozen filter, expandable detail
 - **Track a Flight** (`/track`, `/track/{callsign}`) — Mobile-first single-callsign aggregator across every source (SFDPS, TFMS, EDCT, TDLS, TAIS/STARS, ASDE-X); polls `/api/track/{callsign}`
 - **Track a Flight (text)** (`/t`, `/t/{callsign}`) — Ultra-light, no-JS, server-rendered version of the above for slow wifi (auto-refreshes via meta tag)
+- **TFDM Boards** (`/tfdm`, `/tfdm/{airport}`) — Terminal surface/departure boards: per-airport live board (WS) with off-block/TSAT/runway/spot/taxi/sequence/delay, proposed-vs-active state, sortable columns + wildcard filter, and an info strip (config/AAR-ADR/closures/queues/gridlock/demand/TMRs). Directory sorted alphabetically.
+- **Route Finder / Dispatch** (`/dispatch`) — Search persisted flight history by route/airline/aircraft type → real callsign, filed route, cruise, airframe, gate; deep-links each into **SimBrief** (+ copyable VATSIM plan). `/api/dispatch/search`.
+- **Telegram bot** (`TelegramBridge`, `@swimffbot`) — Follow a flight over inflight "free-messaging" wifi: send a callsign for the same cross-source status the Track page shows; `/sub` pushes updates on meaningful state change. Enabled when `TELEGRAM_BOT_TOKEN` is set.
 - Future: strips, etc.
 
 ## Project Structure

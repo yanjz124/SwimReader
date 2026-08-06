@@ -67,104 +67,54 @@
     }
 })();
 
-// ── LADD reveal — secret operator un-mask gesture ───────────────────────────
-// Click the page footer (or the bottom-right hotspot on footer-less pages) 5×
-// within 5 seconds to open a private login. On success the server un-masks LADD
-// aircraft for this browser (via an HttpOnly cookie, so the key is never in JS).
-// Purely additive: does nothing visible unless the gesture is performed.
+
+// ── Operator view toggle (private) ──────────────────────────────────────────
+// Deliberately unlabeled: a 5-tap gesture on the footer (or the bottom-right hotspot
+// on footer-less pages) navigates to the browser's own native sign-in. Nothing on
+// screen says what it is for. Works with mouse and touch (click fires on tap).
 (function () {
-    function cookie(n) {
-        return document.cookie.split('; ').find(r => r.indexOf(n + '=') === 0);
+    function hasCookie(n) {
+        return document.cookie.split('; ').some(function (r) { return r.indexOf(n + '=') === 0; });
     }
-    var revealed = !!cookie('laddRevealed');
+    var signedIn = hasCookie('sv');
 
     var css = document.createElement('style');
-    css.textContent = [
-        '#ladd-hot{position:fixed;right:0;bottom:0;width:22px;height:22px;z-index:99998;cursor:default}',
-        '#ladd-modal{position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.8);display:none;align-items:center;justify-content:center;font-family:ui-monospace,Consolas,monospace}',
-        '#ladd-modal.on{display:flex}',
-        '#ladd-box{background:#0c0c0c;border:1px solid #3a3a14;border-radius:6px;padding:20px 22px;width:280px;color:#cccc44}',
-        '#ladd-box h3{margin:0 0 4px;font-size:13px;letter-spacing:1px}',
-        '#ladd-box p{margin:0 0 14px;color:#888835;font-size:11px}',
-        '#ladd-box input{width:100%;box-sizing:border-box;background:#000;border:1px solid #3a3a14;color:#eee;padding:8px 10px;font-family:inherit;font-size:13px;margin-bottom:8px}',
-        '#ladd-box input:focus{outline:none;border-color:#cccc44}',
-        '#ladd-box .row{display:flex;gap:8px;margin-top:6px}',
-        '#ladd-box button{flex:1;background:#1a1a05;color:#cccc44;border:1px solid #3a3a14;padding:8px;font-family:inherit;font-size:12px;cursor:pointer;letter-spacing:1px}',
-        '#ladd-box button.primary{background:#3a3a0a;color:#fff;border-color:#6a6a14}',
-        '#ladd-box .err{color:#e06666;font-size:11px;min-height:14px;margin-top:6px}',
-        '#ladd-badge{position:fixed;left:8px;bottom:6px;z-index:99998;font-family:ui-monospace,Consolas,monospace;font-size:10px;color:#e0b050;background:rgba(0,0,0,.7);border:1px solid #5a4a14;border-radius:3px;padding:2px 7px;cursor:pointer;letter-spacing:.5px}'
-    ].join('');
+    css.textContent =
+        '#op-hot{position:fixed;right:0;bottom:0;width:34px;height:34px;z-index:99998;' +
+        'background:transparent;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation}' +
+        '#op-badge{position:fixed;left:8px;bottom:6px;z-index:99998;font-family:ui-monospace,Consolas,monospace;' +
+        'font-size:11px;color:#e0b050;background:rgba(0,0,0,.7);border:1px solid #5a4a14;border-radius:3px;' +
+        'padding:4px 9px;cursor:pointer;letter-spacing:.5px;-webkit-tap-highlight-color:transparent}';
     document.head.appendChild(css);
 
-    // When already revealed, show a low-key badge that exits reveal on click.
-    if (revealed) {
+    // When signed in, a small unlabeled "exit" chip returns to the normal view.
+    if (signedIn) {
         var badge = document.createElement('div');
-        badge.id = 'ladd-badge';
-        badge.textContent = '◉ LADD REVEALED — exit';
-        badge.title = 'Showing un-masked data. Click to re-enable LADD masking.';
+        badge.id = 'op-badge';
+        badge.textContent = '● exit';
         badge.addEventListener('click', function () {
-            fetch('/api/ladd/hide', { method: 'POST' }).then(function () { location.reload(); });
+            fetch('/api/logout', { method: 'POST' }).then(function () { location.reload(); });
         });
         document.body.appendChild(badge);
     }
 
-    // Modal (built lazily on first trigger).
-    var modal = null;
-    function buildModal() {
-        modal = document.createElement('div');
-        modal.id = 'ladd-modal';
-        modal.innerHTML =
-            '<div id="ladd-box">' +
-            '<h3>RESTRICTED VIEW</h3>' +
-            '<p>Sign in to view unfiltered data.</p>' +
-            '<input id="ladd-u" placeholder="username" autocomplete="off" autocapitalize="off" spellcheck="false">' +
-            '<input id="ladd-p" type="password" placeholder="password" autocomplete="off">' +
-            '<div class="err" id="ladd-err"></div>' +
-            '<div class="row"><button id="ladd-cancel">CANCEL</button><button id="ladd-go" class="primary">UNLOCK</button></div>' +
-            '</div>';
-        document.body.appendChild(modal);
-        modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
-        modal.querySelector('#ladd-cancel').addEventListener('click', close);
-        modal.querySelector('#ladd-go').addEventListener('click', submit);
-        modal.querySelector('#ladd-p').addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
-    }
-    function open() {
-        if (!modal) buildModal();
-        modal.classList.add('on');
-        modal.querySelector('#ladd-err').textContent = '';
-        modal.querySelector('#ladd-u').value = '';
-        modal.querySelector('#ladd-p').value = '';
-        setTimeout(function () { modal.querySelector('#ladd-u').focus(); }, 0);
-    }
-    function close() { if (modal) modal.classList.remove('on'); }
-    function submit() {
-        var u = modal.querySelector('#ladd-u').value;
-        var p = modal.querySelector('#ladd-p').value;
-        var err = modal.querySelector('#ladd-err');
-        err.textContent = '';
-        fetch('/api/ladd/reveal', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user: u, pass: p })
-        }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
-          .then(function (res) {
-              if (res.ok && res.d.ok) location.reload();
-              else err.textContent = (res.d && res.d.error) || 'invalid login';
-          }).catch(function () { err.textContent = 'error'; });
-    }
-
-    // 5 clicks within 5 s on the footer (or the corner hotspot) → open.
-    var clicks = [];
-    function tap() {
+    // 5 taps within 5 s → native browser sign-in for this page.
+    var taps = [];
+    function tap(e) {
+        if (e) e.preventDefault();
         var now = Date.now();
-        clicks.push(now);
-        clicks = clicks.filter(function (t) { return now - t <= 5000; });
-        if (clicks.length >= 5) { clicks = []; if (revealed) return; open(); }
+        taps.push(now);
+        taps = taps.filter(function (t) { return now - t <= 5000; });
+        if (taps.length >= 5) {
+            taps = [];
+            if (signedIn) return;
+            location.href = '/api/login?r=' + encodeURIComponent(location.pathname + location.search);
+        }
     }
     var footer = document.querySelector('footer');
-    if (footer) { footer.style.cursor = 'default'; footer.addEventListener('click', tap); }
+    if (footer) footer.addEventListener('click', tap);
     var hot = document.createElement('div');
-    hot.id = 'ladd-hot';
+    hot.id = 'op-hot';
     hot.addEventListener('click', tap);
     document.body.appendChild(hot);
 })();

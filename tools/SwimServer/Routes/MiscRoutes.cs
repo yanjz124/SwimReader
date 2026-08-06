@@ -58,54 +58,63 @@ static class MiscRoutes
             return Results.File(path, "application/vnd.google-earth.kml+xml");
         });
 
-        // ── LADD reveal ("show the real data behind the mask") ──────────────────
-        // A private, UNADVERTISED un-mask for the operator: the frontend's secret
-        // 5-click-in-the-footer gesture prompts for the login and POSTs it here. On success
-        // we drop the bypass key into an HttpOnly cookie (so it never appears in page JS /
-        // inspect element) plus a readable "laddRevealed" flag so the UI can show its state.
-        // LaddService.Reveal() then un-masks every response for this browser. There is
-        // deliberately NO status endpoint and NO distinct "feature disabled" response — a
-        // failed attempt looks identical whether the key is unset or the login is wrong, so
-        // the feature's existence isn't discoverable by probing.
-
-        app.MapPost("/api/ladd/reveal", async (HttpContext http) =>
+        // ── Operator sign-in (private view) ─────────────────────────────────────
+        // Unadvertised. Reached only by the client's 5-tap gesture, which navigates the
+        // browser to /api/login so the NATIVE browser credential dialog appears — the browser
+        // owns all of the text, nothing on screen says what it is for, and the URL is generic.
+        // Valid creds set an HttpOnly cookie that LaddService.Reveal() reads to serve this
+        // browser the un-masked view. Absent/wrong creds (or the feature being off) all look
+        // identical: another 401 dialog, so the feature isn't discoverable by probing.
+        app.MapGet("/api/login", async (HttpContext http) =>
         {
-            RevealBody? body;
-            try { body = await http.Request.ReadFromJsonAsync<RevealBody>(); }
-            catch { return Results.Json(new { ok = false, error = "invalid login" }, statusCode: 401); }
-
-            // Uniform failure (disabled OR bad creds) — never reveal which.
-            if (string.IsNullOrEmpty(LaddService.BypassKey) || !LaddService.ValidateReveal(body?.user, body?.pass))
-                return Results.Json(new { ok = false, error = "invalid login" }, statusCode: 401);
-
-            var opts = new CookieOptions
+            string? u = null, p = null;
+            var hdr = http.Request.Headers["Authorization"].ToString();
+            if (hdr.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
             {
-                HttpOnly = true,                       // key not readable by JavaScript
-                Secure = http.Request.IsHttps,         // https-only when behind the tunnel
-                SameSite = SameSiteMode.Lax,
-                Expires = DateTimeOffset.UtcNow.AddDays(30),
-                Path = "/",
-            };
-            http.Response.Cookies.Append("laddKey", LaddService.BypassKey!, opts);
-            // Non-secret companion flag the UI can read to show "revealed" state.
-            http.Response.Cookies.Append("laddRevealed", "1", new CookieOptions
+                try
+                {
+                    var dec = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(hdr[6..].Trim()));
+                    var i = dec.IndexOf(':');
+                    if (i >= 0) { u = dec[..i]; p = dec[(i + 1)..]; }
+                }
+                catch { /* malformed header ⇒ treated as no creds */ }
+            }
+
+            // Local return path only (guards against open redirect).
+            var back = http.Request.Query["r"].ToString();
+            if (string.IsNullOrEmpty(back) || !back.StartsWith('/') || back.StartsWith("//")) back = "/";
+
+            if (string.IsNullOrEmpty(LaddService.BypassKey) || !LaddService.ValidateReveal(u, p))
             {
-                HttpOnly = false,
-                Secure = http.Request.IsHttps,
-                SameSite = SameSiteMode.Lax,
-                Expires = DateTimeOffset.UtcNow.AddDays(30),
-                Path = "/",
+                http.Response.StatusCode = 401;
+                http.Response.Headers["WWW-Authenticate"] = "Basic realm=\"Login\"";
+                // If the visitor cancels the dialog, bounce back instead of showing a blank 401.
+                http.Response.ContentType = "text/html";
+                await http.Response.WriteAsync(
+                    $"<meta http-equiv=\"refresh\" content=\"0;url={System.Net.WebUtility.HtmlEncode(back)}\">");
+                return;
+            }
+
+            var secure = http.Request.IsHttps;
+            http.Response.Cookies.Append("laddKey", LaddService.BypassKey!, new CookieOptions
+            {
+                HttpOnly = true, Secure = secure, SameSite = SameSiteMode.Lax,
+                Expires = DateTimeOffset.UtcNow.AddDays(30), Path = "/",
             });
-            return Results.Json(new { ok = true });
+            // Neutral, non-secret flag the UI reads to show the "exit" chip.
+            http.Response.Cookies.Append("sv", "1", new CookieOptions
+            {
+                HttpOnly = false, Secure = secure, SameSite = SameSiteMode.Lax,
+                Expires = DateTimeOffset.UtcNow.AddDays(30), Path = "/",
+            });
+            http.Response.Redirect(back);
         });
 
-        app.MapPost("/api/ladd/hide", (HttpContext http) =>
+        app.MapPost("/api/logout", (HttpContext http) =>
         {
             http.Response.Cookies.Delete("laddKey", new CookieOptions { Path = "/" });
-            http.Response.Cookies.Delete("laddRevealed", new CookieOptions { Path = "/" });
+            http.Response.Cookies.Delete("sv", new CookieOptions { Path = "/" });
             return Results.Json(new { ok = true });
         });
     }
-
-    private record RevealBody(string? user, string? pass);
 }

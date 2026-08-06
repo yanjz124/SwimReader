@@ -165,7 +165,9 @@ class TfdmBridge
         if (msgType is not null) f.MsgType = msgType;
         Merge(ref f.Callsign, callsign);
         Merge(ref f.ComputerId, Val(El(fid ?? flight, "computerId")));
-        Merge(ref f.FlightState, Val(El(flight, "tfdmFlightState")));
+        Merge(ref f.FlightState, Val(El(flight, "tfdmAtcFlightState")) ?? Val(El(flight, "tfdmFlightState")));
+        Merge(ref f.FlightClass, Attr(flight, "tfdmFlightClass"));
+        Merge(ref f.TmiType, Val(El(El(flight, "nasTmiList"), "tmiType")) ?? Val(El(flight, "tmiType")));
 
         if (dep is not null)
         {
@@ -181,6 +183,7 @@ class TfdmBridge
             Merge(ref f.PredictedSpot, Attr(El(dep, "predictedDepartureSpot"), "spotRegion"));
             Merge(ref f.ActualSpot, Val(El(dep, "actualDepartureSpot")));
             Merge(ref f.MoveAreaEntryTime, Val(El(dep, "movementAreaActualEntryTime")));
+            Merge(ref f.RunwayActualEntry, Val(El(dep, "runwayActualEntryTime")));   // entered the runway → departed
             Merge(ref f.TaxiOutEst, Val(El(El(dep, "departureTaxiTime"), "totalEstimatedTaxiOutTime")));
             Merge(ref f.ElapsedTaxi, Val(El(dep, "elapsedDepartureTaxiTime")));
             Merge(ref f.DepSeq, Val(El(dep, "departureSequenceNumber")));
@@ -191,12 +194,18 @@ class TfdmBridge
                 Merge(ref f.DelayPredicted, Val(El(delay, "predictedDelay")));
                 Merge(ref f.DelayCurrent, Val(El(delay, "currentDelay")));
                 Merge(ref f.DelayActual, Val(El(delay, "actualDelay")));
+                // Flight Delay (TTP-FDLY): reportable delay ≥15 min + reason + who it's charged to
+                Merge(ref f.ReportableDelay, Val(El(delay, "actualReportableDelay")));
+                Merge(ref f.ImpactingCondition, Val(El(delay, "impactingCondition")));
+                Merge(ref f.DelayChargeTo, Attr(El(delay, "facilityToCharge"), "atcUnitNameOrAlternate"));
             }
         }
         if (arr is not null)
         {
             Merge(ref f.Dest, Attr(arr, "destinationPointText"));
             Merge(ref f.ArrivalEstTime, NestedTime(El(arr, "runwayArrivalTime"), "estimated"));
+            Merge(ref f.ArrivalSpot, Val(El(arr, "actualArrivalSpot")) ?? Attr(El(arr, "predictedArrivalSpot"), "spotRegion"));
+            Merge(ref f.TaxiInEst, Val(El(El(arr, "arrivalTaxiTime"), "totalEstimatedTaxiInTime")));
         }
         _dirty[f.Airport] = 1;
     }
@@ -226,6 +235,7 @@ class TfdmBridge
         if (int.TryParse(aq, out var aqn)) info.AirportQueue = aqn;
         info.Gridlock = Val(El(El(root, "airportPredictedGridlock"), "gridlockState")) ?? info.Gridlock;
         info.AmaGridlock = Val(El(El(root, "amaPredictedGridlock"), "gridlockState")) ?? info.AmaGridlock;
+        info.DepartureDelay = Val(El(root, "airportDepartureDelay")) ?? info.DepartureDelay;
 
         var demand = new List<object>();
         foreach (var d in root.Descendants().Where(e => e.Name.LocalName == "demandInformation").Take(8))
@@ -361,19 +371,24 @@ class TfdmFlight
     public string? OffBlockTime, ClearanceDeliveryTime, EstDepartureTime, EarliestDepartureTime, ArrivalEstTime;
     public string? RunwayAssigned, RunwayPredicted, RunwayActual, DepartureFix, PredictedSpot, ActualSpot, MoveAreaEntryTime;
     public string? TaxiOutEst, ElapsedTaxi, DelayPredicted, DelayCurrent, DelayActual, DepSeq, ApreqReleaseTime;
+    // Flight Delay service (TTP-FDLY) fields + class + arrival-side + departed marker + per-flight TMI
+    public string? FlightClass, ReportableDelay, ImpactingCondition, DelayChargeTo;
+    public string? RunwayActualEntry, ArrivalSpot, TaxiInEst, TmiType;
     public DateTime LastSeen;
 
     public object ToJson() => new
     {
         tfdmId = TfdmId, airport = Airport, callsign = Callsign, cid = ComputerId,
-        origin = Origin, dest = Dest, state = FlightState,
+        origin = Origin, dest = Dest, state = FlightState, flightClass = FlightClass,
         offBlock = OffBlockTime, clearance = ClearanceDeliveryTime,
         estDeparture = EstDepartureTime, earliestDeparture = EarliestDepartureTime, arrivalEst = ArrivalEstTime,
         rwyAssigned = RunwayAssigned, rwyPredicted = RunwayPredicted, rwyActual = RunwayActual,
         depFix = DepartureFix, spot = ActualSpot ?? PredictedSpot, moveAreaEntry = MoveAreaEntryTime,
+        runwayEntry = RunwayActualEntry, arrivalSpot = ArrivalSpot, taxiInEst = TaxiInEst,
         taxiOutEst = TaxiOutEst, elapsedTaxi = ElapsedTaxi,
-        depSeq = DepSeq, apreqRelease = ApreqReleaseTime,
+        depSeq = DepSeq, apreqRelease = ApreqReleaseTime, tmi = TmiType,
         delay = DelayActual ?? DelayCurrent ?? DelayPredicted,
+        reportableDelay = ReportableDelay, delayReason = ImpactingCondition, delayChargeTo = DelayChargeTo,
         ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
 }
@@ -383,13 +398,13 @@ class TfdmAirportInfo
     public string Airport = "";
     public Dictionary<string, int>? RunwayQueues;
     public int? AirportQueue;
-    public string? Gridlock, AmaGridlock;
+    public string? Gridlock, AmaGridlock, DepartureDelay;
     public List<object>? Demand;
     public DateTime LastSeen;
     public object ToJson() => new
     {
         airport = Airport, airportQueue = AirportQueue, runwayQueues = RunwayQueues,
-        gridlock = Gridlock, amaGridlock = AmaGridlock, demand = Demand,
+        gridlock = Gridlock, amaGridlock = AmaGridlock, departureDelay = DepartureDelay, demand = Demand,
         ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
 }

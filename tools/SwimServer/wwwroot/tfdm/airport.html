@@ -99,10 +99,12 @@ function wildMatch(pattern, val){
   return rx.test(val);
 }
 function state(f){
+  if(f.runwayEntry) return {c:'active',t:'DEP'};        // entered the runway → departed
   if(f.elapsedTaxi || f.rwyActual) return {c:'active',t:'OUT'};
   if(f.offBlock && new Date(f.offBlock) > new Date()) return {c:'sched',t:'SCHED'};
   return {c:'pend',t:'READY'};
 }
+function esc2(s){ return (s==null?'':String(s)).replace(/"/g,'&quot;'); }
 const esc = s => (s==null?'·':String(s));
 // Each column: header, sort accessor (+type), and the <td> cell renderer.
 const COLS_DEP = [
@@ -114,7 +116,10 @@ const COLS_DEP = [
   {h:'OBT Z',    t:'n', k:f=>tms(f.offBlock),              td:f=>`<td class="t">${fmtT(f.offBlock)}</td>`},
   {h:'TSAT Z',   t:'n', k:f=>tms(f.estDeparture),          td:f=>`<td class="tsat">${fmtT(f.estDeparture)}</td>`},
   {h:'TAXI',     t:'n', k:f=>durNum(f.taxiOutEst),         td:f=>`<td class="muted">${fmtDur(f.taxiOutEst)}</td>`},
-  {h:'DELAY',    t:'n', k:f=>{const d=delayMin(f.delay);return d==null?-1:d;}, td:f=>{const d=delayMin(f.delay);return `<td class="delay ${d>0?'pos':''}">${d!=null?(d>0?'+'+d:d):'·'}</td>`;}},
+  {h:'DELAY',    t:'n', k:f=>{const d=delayMin(f.reportableDelay)??delayMin(f.delay);return d==null?-1:d;}, td:f=>{
+      const rd=delayMin(f.reportableDelay), d=rd!=null?rd:delayMin(f.delay);
+      const title=f.delayReason?` title="${esc2(f.delayReason)}${f.delayChargeTo?' · charge '+f.delayChargeTo:''}"`:'';
+      return `<td class="delay ${d>0?'pos':''}"${title}>${d!=null?(d>0?'+'+d:d):'·'}${rd!=null?'*':''}</td>`;}},
   {h:'STATE',    t:'s', k:f=>state(f).t,                   td:f=>{const s=state(f);return `<td><span class="chip ${s.c}">${s.t}</span>${f.apreqRelease?'<span class="chip apreq">APREQ</span>':''}</td>`;}},
 ];
 const COLS_ARR = [
@@ -135,6 +140,7 @@ function render(){
     const parts=[];
     if(info.gridlock) parts.push(`<span class="k">Gridlock</span> <span class="${info.gridlock.includes('NO')?'v':'gl-bad'}">${info.gridlock.replace(/_/g,' ')}</span>`);
     if(info.airportQueue!=null) parts.push(`<span class="k">Dep queue</span> <span class="qs">${info.airportQueue}</span>`);
+    if(info.departureDelay) parts.push(`<span class="k">Dep delay</span> <span class="warn">${info.departureDelay}</span>`);
     if(info.runwayQueues) parts.push('<span class="k">Rwy Q</span> <span class="v">'+Object.entries(info.runwayQueues).filter(([k,v])=>v>0).map(([k,v])=>`${k}:${v}`).join(' ')||'—'+'</span>');
     if(info.demand&&info.demand[0]) parts.push(`<span class="k">Demand ${(info.demand[0].start||'').slice(11,16)}</span> <span class="v">${info.demand[0].dep||0} dep / ${info.demand[0].arr||0} arr</span>`);
     ib.innerHTML = parts.join('');

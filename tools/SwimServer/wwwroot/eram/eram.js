@@ -5591,6 +5591,20 @@ function loadSettingsFromLocalStorage() {
         if (settings.autoOffset !== undefined) autoOffset = settings.autoOffset;
         if (settings.mcaKb !== undefined) document.getElementById('chk-mca-kb').checked = settings.mcaKb;
         if (settings.scrollZoom !== undefined) document.getElementById('chk-scroll-zoom').checked = settings.scrollZoom;
+        // MCA / RA / Time visibility: apply both the checkbox and the element's display
+        // (these were saved but never restored, so unchecking them didn't persist).
+        for (const [key, chkId, elId] of [
+            ['mcaVisible', 'chk-mca', 'mca'],
+            ['raVisible', 'chk-ra', 'ra'],
+            ['timeVisible', 'chk-time', 'time-view'],
+        ]) {
+            if (settings[key] !== undefined) {
+                const chk = document.getElementById(chkId);
+                const el = document.getElementById(elId);
+                if (chk) chk.checked = settings[key];
+                if (el) el.style.display = settings[key] ? 'block' : 'none';
+            }
+        }
         if (settings.numinv !== undefined) document.getElementById('numpad-inverted').checked = !settings.numinv;
         if (settings.nasrBrightness) Object.assign(nasrBrightness, settings.nasrBrightness);
         if (settings.nexradLevel !== undefined) nexradLevel = settings.nexradLevel;
@@ -7752,6 +7766,12 @@ document.addEventListener('keydown', e => {
         e.preventDefault(); return;
     }
 
+    // Shift+PageUp / Shift+PageDown → zoom in / out (keyboard zoom, same as the
+    // RANGE toolbar control) so you don't have to reach for the toolbar. Map's own
+    // keyboard zoom is disabled (conflicts with the MCA), so this is explicit.
+    if (e.shiftKey && e.key === 'PageUp')   { map.zoomIn(1);  e.preventDefault(); return; }
+    if (e.shiftKey && e.key === 'PageDown') { map.zoomOut(1); e.preventDefault(); return; }
+
     // PageUp / PageDown → cycle vector line minutes (0,1,2,4,8).
     //
     // We update the toolbar VECTOR button's text DIRECTLY via DOM query
@@ -7787,12 +7807,12 @@ document.addEventListener('keydown', e => {
             }, 250);
         }
     };
-    if (e.key === 'PageUp' && !e.ctrlKey) {
+    if (e.key === 'PageUp' && !e.ctrlKey && !e.shiftKey) {
         const idx = vectorSteps.indexOf(vectorMinutes);
         applyVectorChange(idx < vectorSteps.length - 1 ? vectorSteps[idx + 1] : vectorSteps[vectorSteps.length - 1]);
         e.preventDefault(); return;
     }
-    if (e.key === 'PageDown' && !e.ctrlKey) {
+    if (e.key === 'PageDown' && !e.ctrlKey && !e.shiftKey) {
         const idx = vectorSteps.indexOf(vectorMinutes);
         applyVectorChange(idx > 0 ? vectorSteps[idx - 1] : vectorSteps[0]);
         e.preventDefault(); return;
@@ -7953,6 +7973,17 @@ function layoutMcaRa() {
     if (mca.style.display !== 'none') clampIntoContainer(mca);
     if (ra.style.display === 'none') return;
     if (ra.dataset.dragged === '1') {
+        // Re-apply the user's placed anchor first so a shorter/taller readout clamps
+        // from the same home each time. Without this, a wide readout gets pushed in to
+        // fit and the box never returns — it ratchets across the screen as content varies.
+        if (ra.dataset.homePos) {
+            try {
+                const h = JSON.parse(ra.dataset.homePos);
+                if (h.left) ra.style.left = h.left;
+                if (h.top) ra.style.top = h.top;
+                ra.style.right = 'auto'; ra.style.bottom = 'auto';
+            } catch (e) {}
+        }
         clampBox(ra);               // bounds + push away from the MCA
         return;
     }
@@ -7983,7 +8014,11 @@ function scheduleBoxLayout() {
 function saveBoxPosition(el) {
     const key = 'boxPos_' + el.id;
     el.dataset.dragged = '1';
-    localStorage.setItem(key, JSON.stringify({ left: el.style.left, top: el.style.top }));
+    const pos = { left: el.style.left, top: el.style.top };
+    // Remembered home anchor, re-applied on every layout so a content-size change
+    // (shorter/taller readout) clamps from here instead of ratcheting the box away.
+    el.dataset.homePos = JSON.stringify(pos);
+    localStorage.setItem(key, JSON.stringify(pos));
 }
 
 function restoreBoxPosition(el) {
@@ -7994,7 +8029,7 @@ function restoreBoxPosition(el) {
             const pos = JSON.parse(saved);
             if (pos.left) el.style.left = pos.left;
             if (pos.top) { el.style.top = pos.top; el.style.bottom = 'auto'; el.style.right = 'auto'; }
-            if (pos.left && pos.top) el.dataset.dragged = '1';
+            if (pos.left && pos.top) { el.dataset.dragged = '1'; el.dataset.homePos = JSON.stringify(pos); }
         } catch(e) {}
     }
     // Clamp to viewport on restore (handles window resize since last save).

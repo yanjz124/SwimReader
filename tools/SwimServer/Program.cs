@@ -255,15 +255,30 @@ var gateUser = Environment.GetEnvironmentVariable("SWIM_GATE_USER");
 var gatePass = Environment.GetEnvironmentVariable("SWIM_GATE_PASS");
 if (!string.IsNullOrWhiteSpace(gateHost) && !string.IsNullOrWhiteSpace(gateUser) && !string.IsNullOrWhiteSpace(gatePass))
 {
-    var expected = System.Text.Encoding.UTF8.GetBytes(
-        "Basic " + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{gateUser}:{gatePass}")));
     app.Use(async (ctx, next) =>
     {
         if (string.Equals(ctx.Request.Host.Host, gateHost, StringComparison.OrdinalIgnoreCase))
         {
-            var provided = System.Text.Encoding.UTF8.GetBytes(ctx.Request.Headers["Authorization"].ToString());
-            if (provided.Length != expected.Length ||
-                !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(provided, expected))
+            // Parse "Basic base64(user:pass)". Username is case-insensitive; password exact.
+            // Credentials live only in the .env and are checked here server-side, so they
+            // never appear in any HTML/JS the browser can inspect. No valid login ⇒ 401,
+            // no page content at all.
+            bool ok = false;
+            var header = ctx.Request.Headers["Authorization"].ToString();
+            if (header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var decoded = System.Text.Encoding.UTF8.GetString(
+                        Convert.FromBase64String(header.Substring(6).Trim()));
+                    var sep = decoded.IndexOf(':');
+                    if (sep >= 0)
+                        ok = string.Equals(decoded[..sep], gateUser, StringComparison.OrdinalIgnoreCase)
+                             && decoded[(sep + 1)..] == gatePass;
+                }
+                catch { /* malformed header ⇒ not authorized */ }
+            }
+            if (!ok)
             {
                 ctx.Response.StatusCode = 401;
                 ctx.Response.Headers["WWW-Authenticate"] = "Basic realm=\"SwimReader\", charset=\"UTF-8\"";

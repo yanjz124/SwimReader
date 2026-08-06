@@ -965,6 +965,10 @@ body.tmu-mode .ac-leader { display: none !important; }
     width: max-content; min-width: 500px; max-width: 100%;
     min-height: 100px;
     font-size: 14px; line-height: 18px; white-space: pre-wrap; word-break: normal;
+    /* Safety net: let space-less strings (e.g. a filed route) wrap instead of
+       overflowing. showFlightInRA() also injects break points at fix separators
+       so the route breaks at fix boundaries rather than mid-fix. */
+    overflow-wrap: break-word;
     font-weight: normal;
 }
 

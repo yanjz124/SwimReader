@@ -7681,10 +7681,15 @@ function showFlightInRA(f) {
         routeStr = dest;
     }
 
+    // The route is one long, space-less string (fixes joined by . and /), which the RA
+    // box can't wrap on. Insert zero-width spaces after each separator so it wraps at fix
+    // boundaries instead of overflowing; the ZWSPs are invisible and don't shift alignment.
+    const routeWrapped = routeStr.replace(/([./])/g, '$1​');
+
     let text = `${zulu}\n`;
     text += `${cid} ${cs}(${sector}) ${type}${equip}\n`;
     text += `${bcn} ${spd} ${aalt} ${origin}..\n`;
-    text += `${routeStr}\n`;
+    text += `${routeWrapped}\n`;
     if (remarks) text += `${remarks}`;
     ra.textContent = text;
 }

@@ -314,7 +314,7 @@ class FlightState
     // LADD: mask identity for public output. _ladd == blocked && !reveal.
     public object ToSummary(bool includeHistory = false, bool reveal = false)
     {
-        bool _ladd = LaddService.ShouldMask(Callsign, Registration, reveal);
+        bool _ladd = LaddService.ShouldMask(Callsign, Registration, reveal, ModeSCode);
         return new
     {
         Gufi,
@@ -365,7 +365,7 @@ class FlightState
 
     public object ToDetail(bool reveal = false)
     {
-        bool _ladd = LaddService.ShouldMask(Callsign, Registration, reveal);
+        bool _ladd = LaddService.ShouldMask(Callsign, Registration, reveal, ModeSCode);
         List<object> allEvents;
         lock (_allEvents)
         {

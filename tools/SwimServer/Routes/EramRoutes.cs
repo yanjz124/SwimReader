@@ -341,7 +341,7 @@ static class EramRoutes
                 rows.Add(new
                 {
                     gufi = f.Gufi,
-                    callsign = LaddService.MaskCallsign(f.Callsign, f.Registration, reveal),
+                    callsign = LaddService.MaskCallsign(f.Callsign, f.Registration, reveal, f.ModeSCode),
                     origin = f.Origin,
                     destination = f.Destination,
                     aircraftType = f.AircraftType,

@@ -57,5 +57,63 @@ static class MiscRoutes
             if (!File.Exists(path)) return Results.NotFound();
             return Results.File(path, "application/vnd.google-earth.kml+xml");
         });
+
+        // ── LADD reveal ("show the real data behind the mask") ──────────────────
+        // A private un-mask for the operator: the frontend's secret 5-click-in-the-footer
+        // gesture prompts for the site login and POSTs it here. On success we drop the
+        // bypass key into an HttpOnly cookie (so it never appears in page JS / inspect
+        // element) plus a readable "laddRevealed" flag so the UI can show its state.
+        // LaddService.Reveal() then un-masks every response for this browser.
+        // No-op / always-fails unless LADD_BYPASS_KEY is set.
+
+        app.MapGet("/api/ladd/status", (HttpContext http) => Results.Json(new
+        {
+            enabled = !string.IsNullOrEmpty(LaddService.BypassKey),   // reveal feature available?
+            active = LaddService.Reveal(http),                        // is THIS browser revealed?
+            filtering = LaddService.Active,                           // is a LADD list loaded?
+            count = LaddService.Count,
+        }, ctx.JsonOpts));
+
+        app.MapPost("/api/ladd/reveal", async (HttpContext http) =>
+        {
+            RevealBody? body;
+            try { body = await http.Request.ReadFromJsonAsync<RevealBody>(); }
+            catch { return Results.BadRequest(new { ok = false, error = "invalid JSON" }); }
+
+            if (string.IsNullOrEmpty(LaddService.BypassKey))
+                return Results.Json(new { ok = false, error = "reveal is not enabled on this server" }, statusCode: 403);
+
+            if (!LaddService.ValidateReveal(body?.user, body?.pass))
+                return Results.Json(new { ok = false, error = "invalid login" }, statusCode: 401);
+
+            var opts = new CookieOptions
+            {
+                HttpOnly = true,                       // key not readable by JavaScript
+                Secure = http.Request.IsHttps,         // https-only when behind the tunnel
+                SameSite = SameSiteMode.Lax,
+                Expires = DateTimeOffset.UtcNow.AddDays(30),
+                Path = "/",
+            };
+            http.Response.Cookies.Append("laddKey", LaddService.BypassKey!, opts);
+            // Non-secret companion flag the UI can read to show "revealed" state.
+            http.Response.Cookies.Append("laddRevealed", "1", new CookieOptions
+            {
+                HttpOnly = false,
+                Secure = http.Request.IsHttps,
+                SameSite = SameSiteMode.Lax,
+                Expires = DateTimeOffset.UtcNow.AddDays(30),
+                Path = "/",
+            });
+            return Results.Json(new { ok = true });
+        });
+
+        app.MapPost("/api/ladd/hide", (HttpContext http) =>
+        {
+            http.Response.Cookies.Delete("laddKey", new CookieOptions { Path = "/" });
+            http.Response.Cookies.Delete("laddRevealed", new CookieOptions { Path = "/" });
+            return Results.Json(new { ok = true });
+        });
     }
+
+    private record RevealBody(string? user, string? pass);
 }

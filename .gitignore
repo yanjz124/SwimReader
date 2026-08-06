@@ -77,6 +77,13 @@ x64/
 x86/
 telegram-subs.json
 
-# FAA LADD block list — never commit (identifies privacy-requesting owners)
+# FAA LADD block list — never commit (identifies privacy-requesting owners).
+# The files are marked CUI//SP-PRVCY (Controlled Unclassified Information, Privacy).
 tools/SwimServer/ladd/*.txt
 tools/SwimServer/ladd/*.csv
+# Repo-root archive of downloaded ADX filter files, and the filenames themselves,
+# anywhere in the tree — defense in depth so a stray `git add .` can never publish them.
+/LADD/
+**/LADD_Industry_Filter*
+**/LADD_FAA_Source_Filter*
+**/*CUI_SP_PRVCY*

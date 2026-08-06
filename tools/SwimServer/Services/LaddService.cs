@@ -109,14 +109,18 @@ static class LaddService
         Load();
     }
 
-    /// <summary>True if this call sign or registration is on the LADD list and must
-    /// be blocked. Cheap no-op (returns false) when no list is loaded.</summary>
-    public static bool IsBlocked(string? callsign, string? registration)
+    /// <summary>True if this call sign, registration, OR Mode S (ICAO 24-bit) address is
+    /// on the LADD list and must be blocked. Cheap no-op (returns false) when no list is
+    /// loaded. The IndustryLADD file lists aircraft by any of these identifiers — ~2/3 of
+    /// its entries are hex Mode S addresses — so all three must be checked or blocked
+    /// aircraft leak through when only their Mode S address is on the list.</summary>
+    public static bool IsBlocked(string? callsign, string? registration, string? modeSCode = null)
     {
         if (_count == 0) return false;
         var set = _blocked;
         if (!string.IsNullOrEmpty(callsign) && set.Contains(Normalize(callsign))) return true;
         if (!string.IsNullOrEmpty(registration) && set.Contains(Normalize(registration))) return true;
+        if (!string.IsNullOrEmpty(modeSCode) && set.Contains(Normalize(modeSCode))) return true;
         return false;
     }
 
@@ -134,12 +138,28 @@ static class LaddService
 
     /// <summary>The call sign to display: real when <paramref name="reveal"/>, else
     /// "LADD" if blocked, else the real call sign.</summary>
-    public static string? MaskCallsign(string? callsign, string? registration, bool reveal)
-        => reveal || !IsBlocked(callsign, registration) ? callsign : Label;
+    public static string? MaskCallsign(string? callsign, string? registration, bool reveal, string? modeSCode = null)
+        => reveal || !IsBlocked(callsign, registration, modeSCode) ? callsign : Label;
 
-    /// <summary>Whether a (callsign, registration) pair should be masked for this reveal state.</summary>
-    public static bool ShouldMask(string? callsign, string? registration, bool reveal)
-        => !reveal && IsBlocked(callsign, registration);
+    /// <summary>Whether a (callsign, registration, Mode S) tuple should be masked for this reveal state.</summary>
+    public static bool ShouldMask(string? callsign, string? registration, bool reveal, string? modeSCode = null)
+        => !reveal && IsBlocked(callsign, registration, modeSCode);
+
+    /// <summary>Validate reveal-login credentials for the secret "show me the real data"
+    /// gesture. True only when the reveal feature is enabled (LADD_BYPASS_KEY set) AND the
+    /// supplied password equals that key, OR it matches the private-gate username+password
+    /// (SWIM_GATE_USER/PASS — the same login that fronts the site). The caller then stores
+    /// the bypass key in an HttpOnly cookie, so the key never touches client JavaScript.</summary>
+    public static bool ValidateReveal(string? user, string? pass)
+    {
+        var key = BypassKey;
+        if (string.IsNullOrEmpty(key)) return false;                 // feature disabled
+        if (!string.IsNullOrEmpty(pass) && pass == key) return true; // single-key form
+        var gu = Environment.GetEnvironmentVariable("SWIM_GATE_USER");
+        var gp = Environment.GetEnvironmentVariable("SWIM_GATE_PASS");
+        return !string.IsNullOrWhiteSpace(gu) && !string.IsNullOrWhiteSpace(gp)
+            && string.Equals(user, gu, StringComparison.OrdinalIgnoreCase) && pass == gp;
+    }
 
     // Identifiers are matched case-insensitively with dashes/spaces removed, so the
     // list's "N123-AB" matches a feed's "N123AB" (and vice-versa).

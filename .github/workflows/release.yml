@@ -1,0 +1,51 @@
+name: Release
+
+# Builds the downloadable Windows local edition and publishes it as a GitHub Release.
+# Trigger by pushing a version tag:   git tag v1.0.0 && git push origin v1.0.0
+# A clean CI checkout has no local .env or KML files, so the artifact ships free of
+# personal credentials and sector maps.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish self-contained single-file (win-x64)
+        working-directory: tools/SwimServer
+        run: >
+          dotnet publish -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish/win-x64 --nologo
+
+      - name: Stage quick-start README
+        working-directory: tools/SwimServer
+        run: Copy-Item README-local.txt publish/win-x64/README.txt -Force
+
+      - name: Package zip
+        working-directory: tools/SwimServer
+        run: Compress-Archive -Path publish/win-x64/* -DestinationPath SwimReader-${{ github.ref_name }}-win-x64.zip -Force
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: >
+          gh release create ${{ github.ref_name }}
+          "tools/SwimServer/SwimReader-${{ github.ref_name }}-win-x64.zip"
+          --title "SwimReader ${{ github.ref_name }}"
+          --notes "Windows local edition — self-contained single-file build (no install, no .NET required).`n`nDownload the zip, unzip it, and run **SwimServer.exe**. On first launch it opens a browser to a setup page where you enter your own FAA SWIM SCDS credentials (see README.txt for how to get them at portal.swim.faa.gov). Everything runs on your machine; nothing is uploaded.`n`nFor personal, non-operational use only."

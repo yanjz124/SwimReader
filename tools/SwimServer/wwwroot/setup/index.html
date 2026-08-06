@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — How's my friend at work doing?</title>
+<style>
+  :root { --y:#cccc44; --bg:#0c0c0c; --panel:#151515; --line:#2a2a2a; --dim:#888; }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--bg); color:#ddd;
+    font-family:'Segoe UI',system-ui,sans-serif; line-height:1.5;
+  }
+  .wrap { max-width:880px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { color:var(--y); font-size:22px; letter-spacing:1px; margin:0 0 4px; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:28px; }
+  h2 { color:var(--y); font-size:15px; letter-spacing:.5px; margin:28px 0 10px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:18px 20px; margin-bottom:18px; }
+  .intro { font-size:13.5px; color:#bbb; }
+  .intro ol { margin:10px 0 0; padding-left:20px; }
+  .intro li { margin-bottom:7px; }
+  .intro a { color:var(--y); }
+  code { background:#000; border:1px solid var(--line); border-radius:3px; padding:1px 5px; font-size:12px; color:#bcd; }
+  .feed { margin-bottom:14px; }
+  .feed-head { display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; }
+  .feed-head .chev { color:var(--dim); font-size:11px; transition:transform .15s; }
+  .feed.open .chev { transform:rotate(90deg); }
+  .feed-title { color:#eee; font-weight:600; font-size:14px; }
+  .feed-tag { font-size:10px; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--dim); }
+  .feed-tag.req { color:#7fd; border-color:#264; }
+  .feed-body { display:none; margin-top:12px; }
+  .feed.open .feed-body { display:block; }
+  .row { display:grid; grid-template-columns:150px 1fr; gap:10px; align-items:center; margin-bottom:8px; }
+  label { color:var(--dim); font-size:12px; }
+  input {
+    width:100%; background:#000; border:1px solid var(--line); border-radius:4px;
+    color:#eee; padding:8px 10px; font-family:'Consolas',monospace; font-size:13px;
+  }
+  input:focus { outline:none; border-color:var(--y); }
+  .hint { color:var(--dim); font-size:11px; grid-column:2; margin-top:-4px; }
+  .portrow { display:grid; grid-template-columns:150px 120px; gap:10px; align-items:center; }
+  .actions { position:sticky; bottom:0; background:linear-gradient(transparent,var(--bg) 30%); padding:20px 0 0; margin-top:24px; }
+  button {
+    background:var(--y); border:none; border-radius:5px; color:#111; font-weight:700;
+    font-size:14px; padding:11px 28px; cursor:pointer; letter-spacing:.5px;
+  }
+  button:hover { filter:brightness(1.1); }
+  button.ghost { background:transparent; border:1px solid var(--line); color:#ccc; font-weight:500; margin-left:10px; }
+  .msg { margin-top:14px; font-size:13px; padding:10px 14px; border-radius:5px; display:none; }
+  .msg.ok { display:block; background:#0f2417; border:1px solid #264; color:#7fd; }
+  .msg.err { display:block; background:#2a1414; border:1px solid #633; color:#f99; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>How's my friend at work doing?</h1>
+  <div class="sub">Local edition — first-time setup. Everything runs on your machine; credentials never leave it.</div>
+
+  <div class="card intro">
+    <b style="color:var(--y)">You need your own FAA SWIM SCDS credentials.</b> This tool connects directly to the FAA's
+    public SWIM feeds using a subscription registered to <i>you</i> — it is not shared.
+    <ol>
+      <li>Create an account at the <a href="https://portal.swim.faa.gov/" target="_blank" rel="noopener">FAA SWIM portal</a> (portal.swim.faa.gov).</li>
+      <li>Go to <b>SCDS</b> (SWIM Cloud Distribution Service) and request a subscription to the products you want:
+        <b>SFDPS</b> (en-route flights), <b>STDDS</b> (terminal / ASDE-X / TDLS), <b>TFMS</b> (traffic flow / EDCT),
+        <b>TFDM</b> (surface / departure metering), <b>ITWS</b> (weather).</li>
+      <li>Once approved, each subscription gives you a <b>host</b>, <b>VPN</b>, <b>username</b>, <b>password</b>, and a <b>queue name</b>.</li>
+      <li>Paste them below. You only need <b>SFDPS</b> to get started — the others are optional and unlock more pages.</li>
+    </ol>
+    <div style="margin-top:10px;color:var(--dim);font-size:12px">
+      All SCDS data is pre-approved for public release by the FAA NAS Data Release Board and is
+      <b>NOT for operational use</b>. This tool is for personal, non-operational visualization only.
+    </div>
+  </div>
+
+  <form id="form">
+    <h2>Feeds</h2>
+    <div id="feeds"></div>
+
+    <h2>Server</h2>
+    <div class="card">
+      <div class="portrow">
+        <label for="SWIM_PORT">Local port</label>
+        <input id="SWIM_PORT" name="SWIM_PORT" inputmode="numeric" placeholder="5001">
+      </div>
+      <div class="hint" style="grid-column:1/-1;margin-top:6px">The page will be at <code>http://localhost:&lt;port&gt;</code>. Default 5001. Changing this needs a restart.</div>
+    </div>
+
+    <div class="actions">
+      <button type="submit">Save &amp; instructions to restart</button>
+      <button type="button" class="ghost" id="skip">Skip for now →</button>
+      <div id="msg" class="msg"></div>
+    </div>
+  </form>
+</div>
+
+<script>
+// Feed definitions: which env keys make up each feed and its defaults.
+const FEEDS = [
+  { key:'SFDPS', title:'SFDPS — En-route flights', req:true, open:true,
+    host:'SFDPS_HOST', vpn:'SFDPS_VPN', user:'SFDPS_USER', pass:'SFDPS_PASS', queue:'SFDPS_QUEUE',
+    dHost:'tcps://ems2.swim.faa.gov:55443', dVpn:'FDPS' },
+  { key:'STDDS', title:'STDDS — Terminal / ASDE-X / TDLS / TAIS',
+    host:'SCDSCONNECTION__HOST', vpn:'SCDSCONNECTION__MESSAGEVPN', user:'SCDSCONNECTION__USERNAME', pass:'SCDSCONNECTION__PASSWORD', queue:'SCDSCONNECTION__QUEUENAME',
+    dHost:'tcps://ems2.swim.faa.gov:55443', dVpn:'STDDS' },
+  { key:'TFMS', title:'TFMS — Traffic flow / EDCT',
+    host:'TFMS_HOST', vpn:'TFMS_VPN', user:'TFMS_USER', pass:'TFMS_PASS', queue:'TFMS_QUEUE',
+    dHost:'tcps://ems1.swim.faa.gov:55443', dVpn:'TFMS' },
+  { key:'TFDM', title:'TFDM — Surface / departure metering',
+    host:'TFDM_HOST', vpn:'TFDM_VPN', user:'TFDM_USER', pass:'TFDM_PASS', queue:'TFDM_QUEUE',
+    dHost:'tcps://ems3.swim.faa.gov:55443', dVpn:'TFDM' },
+  { key:'ITWS', title:'ITWS — Terminal weather',
+    host:'ITWS_HOST', vpn:'ITWS_VPN', user:'ITWS_USER', pass:'ITWS_PASS', queue:'ITWS_QUEUE',
+    dHost:'tcps://ems1.swim.faa.gov:55443', dVpn:'ITWS' },
+];
+
+function fieldRow(id, label, ph, type) {
+  return `<div class="row"><label for="${id}">${label}</label>
+    <input id="${id}" name="${id}" type="${type||'text'}" placeholder="${ph||''}" autocomplete="off" spellcheck="false"></div>`;
+}
+
+function render() {
+  const c = document.getElementById('feeds');
+  c.innerHTML = FEEDS.map(f => `
+    <div class="feed card ${f.open?'open':''}" data-key="${f.key}">
+      <div class="feed-head">
+        <span class="chev">▶</span>
+        <span class="feed-title">${f.title}</span>
+        <span class="feed-tag ${f.req?'req':''}">${f.req?'recommended':'optional'}</span>
+      </div>
+      <div class="feed-body">
+        ${fieldRow(f.host,'Host', f.dHost)}
+        ${fieldRow(f.vpn,'VPN', f.dVpn)}
+        ${fieldRow(f.user,'Username')}
+        ${fieldRow(f.pass,'Password','', 'password')}
+        ${fieldRow(f.queue,'Queue name')}
+      </div>
+    </div>`).join('');
+  c.querySelectorAll('.feed-head').forEach(h =>
+    h.addEventListener('click', () => h.parentElement.classList.toggle('open')));
+}
+render();
+
+// Pre-fill from server (passwords come back masked as dots).
+fetch('/api/setup').then(r=>r.json()).then(d => {
+  for (const [k,v] of Object.entries(d.values||{})) {
+    const el = document.getElementById(k);
+    if (el && v) el.value = v;
+  }
+}).catch(()=>{});
+
+document.getElementById('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const body = {};
+  document.querySelectorAll('#form input').forEach(i => { body[i.name] = i.value; });
+  const msg = document.getElementById('msg');
+  try {
+    const r = await fetch('/api/setup', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+    const d = await r.json();
+    if (d.ok) {
+      msg.className = 'msg ok';
+      msg.innerHTML = 'Saved. <b>Close this window and restart the app</b> to connect with your new credentials.';
+    } else {
+      msg.className = 'msg err';
+      msg.textContent = 'Save failed: ' + (d.error||'unknown error');
+    }
+  } catch (err) {
+    msg.className = 'msg err';
+    msg.textContent = 'Save failed: ' + err;
+  }
+});
+
+document.getElementById('skip').addEventListener('click', () => { window.location.href = '/'; });
+</script>
+</body>
+</html>

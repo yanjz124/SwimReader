@@ -3,6 +3,14 @@
 // The page must set window.idleOnPause = function() { ... } to close WS / clear intervals
 // and window.idleOnResume = function() { ... } to reconnect.
 (function () {
+    // Local edition: the downloadable build serves on localhost for one user on their own
+    // machine — no shared-server load to protect, so the idle timeout is disabled entirely.
+    const h = window.location.hostname;
+    if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '') {
+        window.idlePaused = () => false;
+        return;
+    }
+
     // Secret bypass: ?jamesanthony in URL disables idle timeout entirely
     if (new URLSearchParams(window.location.search).has('jamesanthony')) {
         window.idlePaused = () => false;

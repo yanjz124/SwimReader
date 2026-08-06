@@ -32,6 +32,9 @@
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 .env
+# Local edition config — holds the user's SWIM SCDS credentials (never commit)
+swimreader.config.json
+**/swimreader.config.json
 .idea/
 .stars-reference/
 .vs/
@@ -63,6 +66,7 @@ publish/
 replay/
 secrets.json
 stars-profiles/
+tools/SwimReader.SfdpsExplorer/tfdm*/
 tools/SwimServer/crc-export/
 tools/SwimServer/flight-history/
 tools/SwimServer/investigation-*.jsonl

@@ -10,6 +10,15 @@ using SwimServer;
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
+// Desktop build: everything (wwwroot, swimreader.config.json, data dirs, .env) should
+// resolve next to the exe no matter how it was launched — double-click, Start-menu
+// shortcut (cwd=System32), or PATH. When wwwroot ships beside the binary (the published
+// self-contained build) we pin the working directory to the app base dir. The Pi runs
+// framework-dependent with wwwroot only in its cwd and none beside the dll, so this is
+// inert there and its existing cwd-based resolution is preserved.
+if (Directory.Exists(Path.Combine(AppContext.BaseDirectory, "wwwroot")))
+    Directory.SetCurrentDirectory(AppContext.BaseDirectory);
+
 // Load .env file — search upward from working directory to find repo root .env
 {
     var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
@@ -34,6 +43,34 @@ using SwimServer;
         dir = dir.Parent;
     }
 }
+
+// ── Local edition ────────────────────────────────────────────────────────────
+// A downloadable Windows build users run on their own machine. Local mode is ON when
+// SWIM_LOCAL is set, a config file exists next to the exe, OR no SWIM credentials are
+// present in the environment (a fresh download). In local mode we load that config file
+// into the environment, expose the /setup credential page, bind to localhost only, run
+// WITHOUT the auth gate, disable the idle timeout, and auto-open the browser.
+var configPath = Path.Combine(AppContext.BaseDirectory, "swimreader.config.json");
+bool haveEnvCreds =
+    !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SFDPS_USER"))
+    || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SCDSCONNECTION__USERNAME"))
+    || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TFDM_USER"));
+bool localMode = Environment.GetEnvironmentVariable("SWIM_LOCAL") is "1" or "true"
+              || File.Exists(configPath) || !haveEnvCreds;
+if (localMode && File.Exists(configPath))
+{
+    try
+    {
+        var cfg = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(configPath));
+        if (cfg is not null)
+            foreach (var (k, v) in cfg)
+                if (!string.IsNullOrWhiteSpace(v) && string.IsNullOrEmpty(Environment.GetEnvironmentVariable(k)))
+                    Environment.SetEnvironmentVariable(k, v);
+        Console.WriteLine($"[config] loaded {configPath}");
+    }
+    catch (Exception ex) { Console.Error.WriteLine("[config] load error: " + ex.Message); }
+}
+if (localMode) Console.WriteLine("[LOCAL] Running in local edition mode (localhost, no auth gate, /setup enabled)");
 
 var host = Environment.GetEnvironmentVariable("SFDPS_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
 var vpn = Environment.GetEnvironmentVariable("SFDPS_VPN") ?? "FDPS";
@@ -248,7 +285,12 @@ asdex.OnOtherMessage = (topic, body) =>
 // ── ASP.NET Core setup ──────────────────────────────────────────────────────
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://0.0.0.0:5001");
+// Port is configurable via SWIM_PORT (set through /setup in local mode); default 5001.
+// Local mode binds to localhost only; the public deployment binds all interfaces so the
+// Cloudflare tunnel / reverse proxy can reach it.
+var bindPort = int.TryParse(Environment.GetEnvironmentVariable("SWIM_PORT"), out var _pp) && _pp is > 0 and < 65536 ? _pp : 5001;
+var bindAddr = localMode ? "127.0.0.1" : "0.0.0.0";
+builder.WebHost.UseUrls($"http://{bindAddr}:{bindPort}");
 asdex.SetWebRoot(builder.Environment.WebRootPath);
 asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), long.MaxValue, replayDir);
 var app = builder.Build();
@@ -297,6 +339,97 @@ if (!string.IsNullOrWhiteSpace(gateHost) && !string.IsNullOrWhiteSpace(gateUser)
         await next();
     });
     Console.WriteLine($"[GATE] Basic-auth private gate active for host '{gateHost}'");
+}
+
+// ── Local edition: setup page + config save ──────────────────────────────────
+// Only wired in local mode. Lets the user paste their SWIM SCDS credentials into a
+// browser form; saved to swimreader.config.json next to the exe and applied on restart.
+if (localMode)
+{
+    // Keys the setup form manages, mapped to the env vars the rest of Program.cs reads.
+    var setupKeys = new[]
+    {
+        "SFDPS_HOST", "SFDPS_VPN", "SFDPS_USER", "SFDPS_PASS", "SFDPS_QUEUE",
+        "SCDSCONNECTION__HOST", "SCDSCONNECTION__MESSAGEVPN", "SCDSCONNECTION__USERNAME", "SCDSCONNECTION__PASSWORD", "SCDSCONNECTION__QUEUENAME",
+        "TFMS_HOST", "TFMS_VPN", "TFMS_USER", "TFMS_PASS", "TFMS_QUEUE",
+        "TFDM_HOST", "TFDM_VPN", "TFDM_USER", "TFDM_PASS", "TFDM_QUEUE",
+        "ITWS_HOST", "ITWS_VPN", "ITWS_USER", "ITWS_PASS", "ITWS_QUEUE",
+        "SWIM_PORT",
+    };
+
+    // Current values (passwords masked) so the form can pre-fill without leaking secrets.
+    app.MapGet("/api/setup", () =>
+    {
+        var vals = new Dictionary<string, string>();
+        foreach (var k in setupKeys)
+        {
+            var v = Environment.GetEnvironmentVariable(k) ?? "";
+            if (k.EndsWith("PASS") || k.EndsWith("PASSWORD"))
+                v = string.IsNullOrEmpty(v) ? "" : "••••••••"; // dots = a value is set
+            vals[k] = v;
+        }
+        return Results.Json(new { keys = setupKeys, values = vals, configPath, port = bindPort });
+    });
+
+    // Save form → merge into config file. Empty fields keep the existing value; the dot
+    // placeholder means "unchanged". A restart re-reads the file and reconnects Solace.
+    app.MapPost("/api/setup", async (HttpContext ctx) =>
+    {
+        Dictionary<string, string>? incoming;
+        try { incoming = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(ctx.Request.Body); }
+        catch { return Results.BadRequest(new { error = "invalid JSON" }); }
+        if (incoming is null) return Results.BadRequest(new { error = "empty body" });
+
+        Dictionary<string, string> cfg;
+        try { cfg = File.Exists(configPath) ? (JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(configPath)) ?? new()) : new(); }
+        catch { cfg = new(); }
+
+        foreach (var k in setupKeys)
+        {
+            if (!incoming.TryGetValue(k, out var v)) continue;
+            if (v is null) continue;
+            v = v.Trim();
+            // Ignore the masking placeholder so a blank re-save doesn't wipe a stored secret.
+            if (v.All(c => c == '•')) continue;
+            if (v.Length == 0) { cfg.Remove(k); continue; }
+            cfg[k] = v;
+        }
+        try
+        {
+            File.WriteAllText(configPath, JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex) { return Results.Json(new { ok = false, error = ex.Message }, statusCode: 500); }
+        return Results.Json(new { ok = true, saved = configPath });
+    });
+
+    // Fresh download with no credentials yet ⇒ send the browser to /setup.
+    bool configuredNow = haveEnvCreds
+        || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SFDPS_USER"))
+        || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TFDM_USER"))
+        || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SCDSCONNECTION__USERNAME"));
+    if (!configuredNow)
+    {
+        app.Use(async (ctx, next) =>
+        {
+            var p = ctx.Request.Path.Value ?? "/";
+            bool allowed = p.StartsWith("/setup") || p.StartsWith("/api/setup")
+                || p.EndsWith(".css") || p.EndsWith(".js") || p.EndsWith(".ttf") || p.EndsWith(".woff") || p.EndsWith(".woff2");
+            if (p == "/" || (!allowed && p == "/home/"))
+            {
+                ctx.Response.Redirect("/setup");
+                return;
+            }
+            await next();
+        });
+    }
+    // Serve the setup page (both /setup and /setup/).
+    app.MapGet("/setup", (HttpContext ctx) =>
+    {
+        var f = Path.Combine(builder.Environment.WebRootPath ?? "wwwroot", "setup", "index.html");
+        return File.Exists(f) ? Results.File(f, "text/html") : Results.NotFound();
+    });
+
+    Console.WriteLine("[LOCAL] /setup available" + (configuredNow ? "" : " (unconfigured — redirecting to /setup)"));
 }
 
 app.UseDefaultFiles();
@@ -1143,7 +1276,28 @@ await solaceReady.Task;
     }
 }
 
-Console.WriteLine("[Web] Starting on http://localhost:5001");
+var localUrl = $"http://localhost:{bindPort}";
+Console.WriteLine($"[Web] Starting on {localUrl}");
+if (localMode && Environment.GetEnvironmentVariable("SWIM_NO_OPEN") is not ("1" or "true"))
+{
+    // Auto-open the browser once the server is listening (local desktop edition).
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        try
+        {
+            bool cfgd = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SFDPS_USER"))
+                     || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TFDM_USER"))
+                     || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SCDSCONNECTION__USERNAME"));
+            var open = cfgd ? localUrl : localUrl + "/setup";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = open,
+                UseShellExecute = true
+            });
+        }
+        catch { /* headless / no browser — ignore */ }
+    });
+}
 app.Run();
 
 // ── Message processing ──────────────────────────────────────────────────────

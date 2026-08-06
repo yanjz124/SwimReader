@@ -35,15 +35,16 @@ CHANGING SETTINGS LATER
   swimreader.config.json next to the exe. Restart the app to apply changes.
   To change the port, set it on the setup page and restart.
 
-SECTOR BOUNDARY MAPS (optional)
-  This download does NOT include ARTCC sector-boundary maps, so the ERAM scope
-  starts with no boundary lines. To add them, place your own KML file(s) next to
-  SwimServer.exe and restart:
+SECTOR BOUNDARY MAPS
+  ARTCC sector-boundary maps are included and the ERAM scope loads them
+  automatically:
         AllSectors.kml       - loaded automatically by the ERAM scope
         AllHighSectors.kml   - optional, toggle in the scope sidebar
         AllLowSectors.kml    - optional, toggle in the scope sidebar
-  KML categories are read from each placemark's <name> tag (UHI / HI / LO / APP).
-  Everything else works without them.
+  These come from a public CWSU (Center Weather Service Unit) map layer on the
+  National Weather Service site, https://www.weather.gov/zse . To use your own
+  instead, replace the KML files next to SwimServer.exe and restart. KML
+  categories are read from each placemark's <name> tag (UHI / HI / LO / APP).
 
 IMPORTANT
   All SCDS data is pre-approved for public release by the FAA NAS Data Release

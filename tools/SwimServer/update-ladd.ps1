@@ -51,7 +51,7 @@ Write-Host "Installed locally -> $localDir\IndustryLADD.txt" -ForegroundColor Gr
 if ($LocalOnly) { return }
 
 # Ship to the Pi (single active file; overwrite).
-Write-Host "Copying to $PiHost:$PiLaddDir/IndustryLADD.txt ..." -ForegroundColor Cyan
+Write-Host "Copying to ${PiHost}:${PiLaddDir}/IndustryLADD.txt ..." -ForegroundColor Cyan
 ssh $PiHost "mkdir -p '$PiLaddDir' && rm -f '$PiLaddDir'/*.txt '$PiLaddDir'/*.csv 2>/dev/null; true"
 scp $newest.FullName "${PiHost}:${PiLaddDir}/IndustryLADD.txt"
 if ($LASTEXITCODE -ne 0) { throw "scp failed" }

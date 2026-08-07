@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using System.Xml.Linq;
 using SolaceSystems.Solclient.Messaging;
 using SwimServer;
@@ -42,6 +43,17 @@ class ItwsBridge
     private readonly ConcurrentDictionary<string, WsClient> _allClients = new();              // /itws/ws
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, WsClient>> _airportClients = new(StringComparer.OrdinalIgnoreCase); // /itws/ws/{airport}
 
+    // Parse work queue: the Solace dispatch thread drops raw (body, topic) here and returns;
+    // a small pool of workers parses in parallel. Bounded + drop-oldest so a burst can never
+    // grow memory unbounded — but with parallel parsing across idle cores it stays near-empty.
+    private readonly Channel<(string body, string topic)> _work =
+        Channel.CreateBounded<(string, string)>(new BoundedChannelOptions(20000)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = false,
+            SingleWriter = false,
+        });
+
     // Stats
     public long MessageCount;
     public DateTime LastMessageAt;
@@ -73,6 +85,25 @@ class ItwsBridge
             Console.WriteLine("[ITWS] No credentials configured — ITWS disabled");
             return;
         }
+
+        // Parse worker pool. ITWS is the heaviest feed (large weather grids) and parsing was
+        // single-threaded on the Solace dispatch thread, so the backlog expired on the broker
+        // even with idle cores. Spread parsing across a few workers; leave headroom for the
+        // co-tenant services and the rest of SwimServer.
+        int workers = Math.Clamp(Environment.ProcessorCount - 1, 2, 4);
+        for (int i = 0; i < workers; i++)
+        {
+            _ = Task.Run(async () =>
+            {
+                await foreach (var (body, topic) in _work.Reader.ReadAllAsync())
+                {
+                    try { ProcessBody(body, topic); }
+                    catch (Exception ex) { Console.Error.WriteLine("[ITWS] worker: " + ex.Message); }
+                }
+            });
+        }
+        Console.WriteLine($"[ITWS] Parse workers: {workers}");
+
         var t = new Thread(Run) { IsBackground = true, Name = "ItwsReceiver" };
         t.Start();
     }
@@ -156,18 +187,24 @@ class ItwsBridge
 
     // ── Message processing ──────────────────────────────────────────────────
 
+    // Solace dispatch-thread callback: decode the body fast and hand it to the worker pool so
+    // the dispatch thread returns immediately (fast ack → the broker stops expiring the
+    // backlog). Parsing then runs in parallel across the otherwise-idle cores.
     private void ProcessMessage(IMessage message)
     {
-        string? body = null;
-        if (message.BinaryAttachment is { Length: > 0 })
-            body = Encoding.UTF8.GetString(message.BinaryAttachment);
-        else if (message.XmlContent is { Length: > 0 })
-            body = Encoding.UTF8.GetString(message.XmlContent);
+        string? body =
+            message.BinaryAttachment is { Length: > 0 } ? Encoding.UTF8.GetString(message.BinaryAttachment) :
+            message.XmlContent is { Length: > 0 } ? Encoding.UTF8.GetString(message.XmlContent) : null;
         if (body is null) return;
-
-        var topic = message.Destination?.Name ?? "";
         Interlocked.Increment(ref MessageCount);
         LastMessageAt = DateTime.UtcNow;
+        _work.Writer.TryWrite((body, message.Destination?.Name ?? ""));
+    }
+
+    // Runs on a worker thread. Every field it touches is a ConcurrentDictionary (history lists
+    // are lock-guarded), so parallel workers are race-free.
+    private void ProcessBody(string body, string topic)
+    {
         _topics.AddOrUpdate(topic, 1, (_, v) => v + 1);
 
         // ITWS-specific shape: every message has root <itws_msg> with a <product_header>

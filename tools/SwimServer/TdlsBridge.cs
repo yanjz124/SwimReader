@@ -201,11 +201,18 @@ class TdlsBridge
             if (!_clients.TryGetValue(airport, out var airportClients) || airportClients.IsEmpty) continue;
 
             var messages = bag.ToArray();
-            var json = JsonSerializer.SerializeToUtf8Bytes(
-                new WsMsg("new", messages.Select(m => m.ToJson()).ToArray()), _jsonOpts);
+            // Signed-in clients get real identities + CPDLC text; everyone else the masked view.
+            byte[]? maskedJson = null, revealJson = null;
             foreach (var (_, client) in airportClients)
             {
                 if (client.Ws.State != WebSocketState.Open) continue;
+                byte[] json;
+                if (client.Reveal)
+                    json = revealJson ??= JsonSerializer.SerializeToUtf8Bytes(
+                        new WsMsg("new", messages.Select(m => m.ToJson(true)).ToArray()), _jsonOpts);
+                else
+                    json = maskedJson ??= JsonSerializer.SerializeToUtf8Bytes(
+                        new WsMsg("new", messages.Select(m => m.ToJson(false)).ToArray()), _jsonOpts);
                 client.Enqueue(json);
             }
         }
@@ -235,7 +242,7 @@ class TdlsBridge
         _clients.GetOrAdd(airport, _ => new ConcurrentDictionary<string, WsClient>())[clientId] = client;
 
         // Send full snapshot
-        var data = GetAirport(airport);
+        var data = GetAirport(airport, client.Reveal);
         var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("snapshot", data), _jsonOpts);
         client.Enqueue(json);
 
@@ -297,27 +304,27 @@ class TdlsBridge
             .ToArray();
 
     /// <summary>Full airport data with all aircraft and their messages.</summary>
-    public object GetAirport(string airport)
+    public object GetAirport(string airport, bool reveal = false)
     {
         if (!_state.TryGetValue(airport, out var aircraft))
             return new { airport, aircraft = Array.Empty<object>() };
 
         var list = aircraft.Values
             .OrderByDescending(a => a.LastSeen)
-            .Select(a => a.ToJson())
+            .Select(a => a.ToJson(reveal))
             .ToArray();
 
         return new { airport, aircraft = list };
     }
 
     /// <summary>Single aircraft message history.</summary>
-    public object GetAircraftMessages(string airport, string aircraftId)
+    public object GetAircraftMessages(string airport, string aircraftId, bool reveal = false)
     {
         if (!_state.TryGetValue(airport, out var aircraft) ||
             !aircraft.TryGetValue(aircraftId, out var ac))
             return new { airport, aircraftId, messages = Array.Empty<object>() };
 
-        return new { airport, aircraftId, messages = ac.MessagesToJson() };
+        return new { airport, aircraftId, messages = ac.MessagesToJson(reveal) };
     }
 
     /// <summary>All TDLS aircraft matching a callsign across every airport (for the track page).</summary>
@@ -368,10 +375,11 @@ class TdlsMessage
     public string? EramGufi { get; set; }
     public string? SfdpsGufi { get; set; }
 
-    public object ToJson()
+    public object ToJson(bool reveal = false)
     {
         // LADD: mask the id, and blank the CPDLC header/body (they embed the call sign).
-        bool ladd = LaddService.IsBlocked(AircraftId, null);
+        // reveal=true (operator signed in) shows everything.
+        bool ladd = !reveal && LaddService.IsBlocked(AircraftId, null);
         return new
         {
             type = Type,
@@ -404,28 +412,28 @@ class TdlsAircraft
     public List<TdlsMessage> Messages { get; } = new();
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
 
-    public object ToJson()
+    public object ToJson(bool reveal = false)
     {
         lock (Messages)
         {
             return new
             {
-                aircraftId = LaddService.MaskCallsign(AircraftId, null, false),
+                aircraftId = LaddService.MaskCallsign(AircraftId, null, reveal),
                 acType = AircraftType,
                 destination = Destination,
                 beaconCode = BeaconCode,
                 messageCount = Messages.Count,
                 lastSeen = LastSeen.ToString("o"),
-                messages = Messages.Select(m => m.ToJson()).ToArray()
+                messages = Messages.Select(m => m.ToJson(reveal)).ToArray()
             };
         }
     }
 
-    public object[] MessagesToJson()
+    public object[] MessagesToJson(bool reveal = false)
     {
         lock (Messages)
         {
-            return Messages.Select(m => m.ToJson()).ToArray();
+            return Messages.Select(m => m.ToJson(reveal)).ToArray();
         }
     }
 

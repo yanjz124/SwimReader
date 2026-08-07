@@ -35,7 +35,7 @@ static class TdlsRoutes
             if (!c.WebSockets.IsWebSocketRequest) { c.Response.StatusCode = 400; return; }
             airport = airport.ToUpperInvariant();
             using var ws = await c.WebSockets.AcceptWebSocketAsync();
-            var client = new WsClient(ws);
+            var client = new WsClient(ws) { Reveal = LaddService.Reveal(c) };
 
             var sendTask = Task.Run(async () =>
             {
@@ -79,9 +79,9 @@ static class TdlsRoutes
 
         // REST: directory + airport detail + per-aircraft messages
         app.MapGet("/api/tdls", () => Results.Json(ctx.Tdls.GetDirectory(), ctx.JsonOpts));
-        app.MapGet("/api/tdls/{airport}", (string airport) =>
-            Results.Json(ctx.Tdls.GetAirport(airport.ToUpperInvariant()), ctx.JsonOpts));
-        app.MapGet("/api/tdls/{airport}/{aircraftId}", (string airport, string aircraftId) =>
-            Results.Json(ctx.Tdls.GetAircraftMessages(airport.ToUpperInvariant(), aircraftId.ToUpperInvariant()), ctx.JsonOpts));
+        app.MapGet("/api/tdls/{airport}", (string airport, HttpContext http) =>
+            Results.Json(ctx.Tdls.GetAirport(airport.ToUpperInvariant(), LaddService.Reveal(http)), ctx.JsonOpts));
+        app.MapGet("/api/tdls/{airport}/{aircraftId}", (string airport, string aircraftId, HttpContext http) =>
+            Results.Json(ctx.Tdls.GetAircraftMessages(airport.ToUpperInvariant(), aircraftId.ToUpperInvariant(), LaddService.Reveal(http)), ctx.JsonOpts));
     }
 }

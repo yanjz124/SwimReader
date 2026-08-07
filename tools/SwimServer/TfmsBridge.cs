@@ -929,7 +929,7 @@ class TfmsBridge
         // Send snapshot
         var snapshot = _flights.Values
             .Where(f => f.Latitude != 0 && f.Longitude != 0)
-            .Select(f => f.ToJson())
+            .Select(f => f.ToJson(client.Reveal))
             .ToArray();
         var json = JsonSerializer.SerializeToUtf8Bytes(
             new { type = "snapshot", data = snapshot }, _jsonOpts);
@@ -974,16 +974,25 @@ class TfmsBridge
 
             if (!_flightClients.IsEmpty)
             {
-                var updates = keys
-                    .Where(k => _flights.TryGetValue(k, out _))
-                    .Select(k => _flights[k].ToJson())
-                    .ToArray();
-                if (updates.Length > 0)
+                var flights = keys
+                    .Where(k => _flights.ContainsKey(k))
+                    .Select(k => _flights[k])
+                    .ToList();
+                if (flights.Count > 0)
                 {
-                    var json = JsonSerializer.SerializeToUtf8Bytes(
-                        new { type = "batch", data = updates }, _jsonOpts);
+                    // Signed-in clients get real identities; everyone else the masked view.
+                    byte[]? maskedJson = null, revealJson = null;
                     foreach (var c in _flightClients.Values)
+                    {
+                        byte[] json;
+                        if (c.Reveal)
+                            json = revealJson ??= JsonSerializer.SerializeToUtf8Bytes(
+                                new { type = "batch", data = flights.Select(f => f.ToJson(true)).ToArray() }, _jsonOpts);
+                        else
+                            json = maskedJson ??= JsonSerializer.SerializeToUtf8Bytes(
+                                new { type = "batch", data = flights.Select(f => f.ToJson(false)).ToArray() }, _jsonOpts);
                         c.Queue.Writer.TryWrite(json);
+                    }
                 }
             }
         }
@@ -1052,22 +1061,22 @@ class TfmsBridge
         clientCount = _flightClients.Count + _tmiClients.Count
     };
 
-    public object[] GetFlights() => _flights.Values
+    public object[] GetFlights(bool reveal = false) => _flights.Values
         .Where(f => f.Latitude != 0 && f.Longitude != 0)
         .OrderBy(f => f.Callsign)
-        .Select(f => f.ToJson())
+        .Select(f => f.ToJson(reveal))
         .ToArray();
 
     /// <summary>
     /// Return ALL TFMS flights (including prefiled with no position yet) with the rich
     /// fields most useful for a FIDO-style table.
     /// </summary>
-    public object[] GetAllFlights() => _flights.Values
+    public object[] GetAllFlights(bool reveal = false) => _flights.Values
         .OrderBy(f => f.Igtd ?? f.Etd ?? DateTime.MaxValue)
         .Select(f => new
         {
             flightRef = f.FlightRef,
-            callsign = LaddService.MaskCallsign(f.Callsign, null, false),
+            callsign = LaddService.MaskCallsign(f.Callsign, null, reveal),
             airline = f.Airline,
             gufi = f.Gufi,
             depArpt = f.DepArpt,
@@ -1368,10 +1377,10 @@ class TfmsFlight
 
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
 
-    public object ToJson() => new
+    public object ToJson(bool reveal = false) => new
     {
         flightRef = FlightRef,
-        callsign = LaddService.MaskCallsign(Callsign, null, false),
+        callsign = LaddService.MaskCallsign(Callsign, null, reveal),
         depArpt = DepArpt,
         arrArpt = ArrArpt,
         lat = Latitude,

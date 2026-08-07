@@ -26,7 +26,7 @@ static class AsdexRoutes
             if (!c.WebSockets.IsWebSocketRequest) { c.Response.StatusCode = 400; return; }
             airport = airport.ToUpperInvariant();
             using var ws = await c.WebSockets.AcceptWebSocketAsync();
-            var client = new WsClient(ws);
+            var client = new WsClient(ws) { Reveal = LaddService.Reveal(c) };
 
             var sendTask = Task.Run(async () =>
             {
@@ -72,8 +72,8 @@ static class AsdexRoutes
         app.MapGet("/api/asdex", () => Results.Json(ctx.Asdex.GetDirectory(), ctx.JsonOpts));
 
         // ASDEX airport snapshot — all current tracks for one airport
-        app.MapGet("/api/asdex/{airport}", (string airport) =>
-            Results.Json(ctx.Asdex.GetSnapshot(airport.ToUpperInvariant()), ctx.JsonOpts));
+        app.MapGet("/api/asdex/{airport}", (string airport, HttpContext http) =>
+            Results.Json(ctx.Asdex.GetSnapshot(airport.ToUpperInvariant(), LaddService.Reveal(http)), ctx.JsonOpts));
 
         // Departure gate/scratchpad codes are derived solely from vNAS adaptation (asdexConfiguration
         // .fixRules) — see the read-only /vnasrules endpoint below. There is intentionally no manual

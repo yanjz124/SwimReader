@@ -15,7 +15,7 @@ static class TfmsRoutes
         {
             if (!c.WebSockets.IsWebSocketRequest) { c.Response.StatusCode = 400; return; }
             using var ws = await c.WebSockets.AcceptWebSocketAsync();
-            var client = new WsClient(ws);
+            var client = new WsClient(ws) { Reveal = LaddService.Reveal(c) };
 
             var sendTask = Task.Run(async () =>
             {
@@ -92,9 +92,9 @@ static class TfmsRoutes
 
         // REST API
         app.MapGet("/api/tfms/stats", () => Results.Json(ctx.Tfms.GetStats(), ctx.JsonOpts));
-        app.MapGet("/api/tfms/flights", () => Results.Json(ctx.Tfms.GetFlights(), ctx.JsonOpts));
+        app.MapGet("/api/tfms/flights", (HttpContext http) => Results.Json(ctx.Tfms.GetFlights(LaddService.Reveal(http)), ctx.JsonOpts));
         // All flights including prefiled / no-position — pure TFMS data, no merge.
-        app.MapGet("/api/tfms/all", () => Results.Json(ctx.Tfms.GetAllFlights(), ctx.JsonOpts));
+        app.MapGet("/api/tfms/all", (HttpContext http) => Results.Json(ctx.Tfms.GetAllFlights(LaddService.Reveal(http)), ctx.JsonOpts));
         // Airport configurations from APTC messages (current AAR/ADR, runway config, weather)
         app.MapGet("/api/tfms/aptc", () => Results.Json(ctx.Tfms.GetAirportConfigs(), ctx.JsonOpts));
         app.MapGet("/api/tfms/flights/{key}", (string key) =>

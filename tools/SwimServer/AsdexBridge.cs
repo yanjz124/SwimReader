@@ -578,18 +578,25 @@ class AsdexBridge
             if (OnEnrich is not null)
                 foreach (var t in tracks.Values) OnEnrich(t);
 
-            // Serialize tracks (needed for both replay recording and client broadcast)
-            var arr = DeduplicateByCallsign(tracks.Values).Select(t => t.ToJson()).ToArray();
-
-            // Record for replay (always, regardless of connected clients)
-            GetRecorder(airport)?.RecordBatch(arr, DateTime.UtcNow);
+            var deduped = DeduplicateByCallsign(tracks.Values).ToList();
+            // Replay records the masked view (as before).
+            var maskedArr = deduped.Select(t => t.ToJson(false)).ToArray();
+            GetRecorder(airport)?.RecordBatch(maskedArr, DateTime.UtcNow);
 
             // Only broadcast if there are connected clients
             if (!_clients.TryGetValue(airport, out var airportClients) || airportClients.IsEmpty) continue;
-            var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("batch", arr), _jsonOpts);
+            // Serialize each view lazily: signed-in clients get real identities, everyone
+            // else the masked view. Reveal clients are rare, so usually only masked is built.
+            byte[]? maskedJson = null, revealJson = null;
             foreach (var (_, client) in airportClients)
             {
                 if (client.Ws.State != WebSocketState.Open) continue;
+                byte[] json;
+                if (client.Reveal)
+                    json = revealJson ??= JsonSerializer.SerializeToUtf8Bytes(
+                        new WsMsg("batch", deduped.Select(t => t.ToJson(true)).ToArray()), _jsonOpts);
+                else
+                    json = maskedJson ??= JsonSerializer.SerializeToUtf8Bytes(new WsMsg("batch", maskedArr), _jsonOpts);
                 client.Enqueue(json);
             }
         }
@@ -648,7 +655,7 @@ class AsdexBridge
 
         // Immediate full snapshot so the client doesn't wait for the next dirty flush
         var tracks = _state.TryGetValue(airport, out var t)
-            ? DeduplicateByCallsign(t.Values).Select(x => x.ToJson()).ToArray()
+            ? DeduplicateByCallsign(t.Values).Select(x => x.ToJson(client.Reveal)).ToArray()
             : Array.Empty<object>();
         var json = JsonSerializer.SerializeToUtf8Bytes(
             new WsMsg("snapshot", new { airport, tracks }), _jsonOpts);
@@ -689,7 +696,7 @@ class AsdexBridge
             .ToArray();
 
     /// <summary>Full snapshot of all tracks for one airport.</summary>
-    public object GetSnapshot(string airport)
+    public object GetSnapshot(string airport, bool reveal = false)
     {
         if (!_state.TryGetValue(airport, out var t))
             return new { airport, tracks = Array.Empty<object>() };
@@ -698,7 +705,7 @@ class AsdexBridge
         if (OnEnrich is not null)
             foreach (var track in t.Values) OnEnrich(track);
 
-        var tracks = DeduplicateByCallsign(t.Values).Select(x => x.ToJson()).ToArray();
+        var tracks = DeduplicateByCallsign(t.Values).Select(x => x.ToJson(reveal)).ToArray();
         return new { airport, tracks };
     }
 
@@ -867,11 +874,12 @@ class AsdexTrack
         return (brg + 360.0) % 360.0;
     }
 
-    /// <summary>JSON-serializable representation for WebSocket / REST.</summary>
-    public object ToJson() => new
+    /// <summary>JSON-serializable representation for WebSocket / REST.
+    /// reveal=true (operator signed in) shows the real callsign instead of "LADD".</summary>
+    public object ToJson(bool reveal = false) => new
     {
         trackId  = TrackId,
-        callsign = LaddService.MaskCallsign(Callsign, null, false),
+        callsign = LaddService.MaskCallsign(Callsign, null, reveal),
         squawk   = Squawk,
         acType   = AircraftType,
         tgtType  = TargetType,

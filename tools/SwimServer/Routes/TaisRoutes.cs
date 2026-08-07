@@ -22,7 +22,7 @@ static class TaisRoutes
             if (!c.WebSockets.IsWebSocketRequest) { c.Response.StatusCode = 400; return; }
             facility = facility.ToUpperInvariant();
             using var ws = await c.WebSockets.AcceptWebSocketAsync();
-            var client = new WsClient(ws);
+            var client = new WsClient(ws) { Reveal = LaddService.Reveal(c) };
 
             var sendTask = Task.Run(async () =>
             {
@@ -69,7 +69,7 @@ static class TaisRoutes
         // Active controller positions (TCPs) owning tracks. Registered before the
         // {facility} route so the literal "tcps" wins.
         app.MapGet("/api/tais/tcps", () => Results.Json(ctx.Tais.GetActiveTcps(), ctx.JsonOpts));
-        app.MapGet("/api/tais/{facility}", (string facility) =>
-            Results.Json(ctx.Tais.GetSnapshot(facility.ToUpperInvariant()), ctx.JsonOpts));
+        app.MapGet("/api/tais/{facility}", (string facility, HttpContext http) =>
+            Results.Json(ctx.Tais.GetSnapshot(facility.ToUpperInvariant(), LaddService.Reveal(http)), ctx.JsonOpts));
     }
 }

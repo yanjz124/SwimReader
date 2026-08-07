@@ -245,11 +245,19 @@ class TaisBridge
             if (!_clients.TryGetValue(facility, out var facClients) || facClients.IsEmpty) continue;
             if (!_state.TryGetValue(facility, out var tracks)) continue;
 
-            var arr = tracks.Values.Select(t => t.ToJson()).ToArray();
-            var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("batch", arr), _jsonOpts);
+            var trackList = tracks.Values.ToList();
+            // Signed-in clients get real identities; everyone else the masked view.
+            byte[]? maskedJson = null, revealJson = null;
             foreach (var (_, client) in facClients)
             {
                 if (client.Ws.State != WebSocketState.Open) continue;
+                byte[] json;
+                if (client.Reveal)
+                    json = revealJson ??= JsonSerializer.SerializeToUtf8Bytes(
+                        new WsMsg("batch", trackList.Select(t => t.ToJson(true)).ToArray()), _jsonOpts);
+                else
+                    json = maskedJson ??= JsonSerializer.SerializeToUtf8Bytes(
+                        new WsMsg("batch", trackList.Select(t => t.ToJson(false)).ToArray()), _jsonOpts);
                 client.Enqueue(json);
             }
         }
@@ -284,7 +292,7 @@ class TaisBridge
         var clientId = Guid.NewGuid().ToString("N");
         _clients.GetOrAdd(facility, _ => new ConcurrentDictionary<string, WsClient>())[clientId] = client;
 
-        var snapshot = GetSnapshot(facility);
+        var snapshot = GetSnapshot(facility, client.Reveal);
         var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("snapshot", snapshot), _jsonOpts);
         client.Enqueue(json);
 
@@ -333,7 +341,7 @@ class TaisBridge
     }
 
     /// <summary>Full snapshot for one facility.</summary>
-    public object GetSnapshot(string facility)
+    public object GetSnapshot(string facility, bool reveal = false)
     {
         if (!_state.TryGetValue(facility, out var tracks))
             return new { facility, tracks = Array.Empty<object>() };
@@ -343,7 +351,7 @@ class TaisBridge
             facility,
             tracks = tracks.Values
                 .OrderBy(t => t.Callsign ?? t.TrackNum)
-                .Select(t => t.ToJson())
+                .Select(t => t.ToJson(reveal))
                 .ToArray()
         };
     }
@@ -428,11 +436,11 @@ class TaisTrack
     public bool IsPseudo { get; set; }
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
 
-    public object ToJson() => new
+    public object ToJson(bool reveal = false) => new
     {
         facility = Facility,
         trackNum = TrackNum,
-        callsign = LaddService.MaskCallsign(Callsign, null, false),
+        callsign = LaddService.MaskCallsign(Callsign, null, reveal),
         acType = AircraftType,
         equip = EquipmentSuffix,
         wake = WakeCategory,

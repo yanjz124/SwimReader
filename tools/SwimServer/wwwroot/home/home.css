@@ -140,7 +140,10 @@ header .sub {
 /* ── Server card (expand inline) ──────────────────────────── */
 .server-card { cursor: pointer; }
 .server-card.open { border-color: #cccc44; background: #14140a; }
-.server-detail {
+/* :not([hidden]) so the `hidden` attribute actually hides it — a bare
+   `display:grid` overrides the HTML hidden attribute, which left the detail
+   stuck open (it could expand but never collapse). */
+.server-detail:not([hidden]) {
     margin-top: 10px;
     padding-top: 10px;
     border-top: 1px solid #222;

@@ -6,7 +6,7 @@
 <title>How's my friend at work doing?</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>✈️</text></svg>">
 <link rel="stylesheet" href="/shared/common.css?v=2">
-<link rel="stylesheet" href="/home/home.css?v=6">
+<link rel="stylesheet" href="/home/home.css?v=7">
 <script defer src="/shared/frame.js?v=4"></script>
 </head>
 <body>
@@ -31,25 +31,25 @@
         <div class="grid">
             <a class="card" href="/eram">
                 <div class="title">ERAM SCOPE</div>
-                <div class="desc">Radar display with data blocks</div>
+                <div class="desc">En route&ndash;style radar scope</div>
                 <div class="count" id="eramCount"></div>
             </a>
             <a class="card" href="/flight-table">
                 <div class="title">FLIGHT TABLE</div>
-                <div class="desc">Flight plan viewer with event history</div>
+                <div class="desc">Searchable flights with full plan and event history</div>
             </a>
             <a class="card" href="/track">
                 <div class="title">TRACK A FLIGHT</div>
-                <div class="desc">Follow one callsign across every source — mobile friendly</div>
+                <div class="desc">Follow one callsign across every feed &mdash; mobile friendly</div>
             </a>
             <a class="card" href="/sectors">
                 <div class="title">SECTORS</div>
-                <div class="desc">Active sectors & track counts per facility</div>
+                <div class="desc">Live sector activity and track counts by ARTCC</div>
                 <div class="count" id="sectorsCount"></div>
             </a>
             <a class="card" href="/dispatch">
                 <div class="title">ROUTE FINDER <span class="wip">WIP</span></div>
-                <div class="desc">Real flights by route/airline/type → SimBrief &amp; VATSIM</div>
+                <div class="desc">Real filed routes by airport, airline, or type → SimBrief</div>
             </a>
         </div>
     </section>
@@ -59,28 +59,30 @@
         <div class="grid">
             <a class="card" href="/tfm">
                 <div class="title">TFM</div>
-                <div class="desc">TMI dashboard / flight data</div>
+                <div class="desc">Traffic management initiatives and flight data</div>
                 <div class="count" id="tfmCount"></div>
             </a>
+            <!-- Hidden for now (overlaps ROUTE FINDER / sector loading). Restore if it gains a unique view.
             <a class="card" href="/tfm/route">
                 <div class="title">ROUTE VIEWER</div>
-                <div class="desc">Route traversal with sectors</div>
+                <div class="desc">Trace a route fix-by-fix through sectors</div>
             </a>
+            -->
             <a class="card" href="/tfm/sectors">
                 <div class="title">SECTOR LOADING</div>
-                <div class="desc">Predicted sector traffic</div>
+                <div class="desc">Predicted sector demand over time</div>
             </a>
             <a class="card" href="/tfm/flow">
                 <div class="title">FLOW ADVISORY</div>
-                <div class="desc">FCA status and restrictions</div>
+                <div class="desc">Flow-constrained areas and active restrictions</div>
             </a>
             <a class="card" href="/tfm/aptc">
                 <div class="title">APTC</div>
-                <div class="desc">Airport configs — AAR/ADR, runways, weather</div>
+                <div class="desc">Airport configuration — AAR/ADR, runways, weather</div>
             </a>
             <a class="card" href="/edct">
                 <div class="title">EDCT</div>
-                <div class="desc">Departure clearance times (GDP/CTOP/GS)</div>
+                <div class="desc">Assigned departure times from ground stops &amp; delay programs</div>
                 <div class="count" id="edctCount"></div>
             </a>
         </div>
@@ -91,7 +93,7 @@
         <div class="grid">
             <a class="card" href="/stars">
                 <div class="title">STARS SCOPE <span class="wip">WIP</span></div>
-                <div class="desc">Terminal radar scope (hand-written port) — in active development</div>
+                <div class="desc">Terminal (TRACON) radar scope — in active development</div>
             </a>
             <!-- Hidden for now (non-functional). Restore when ready.
             <a class="card" href="/dscope/">
@@ -101,12 +103,12 @@
             -->
             <a class="card" href="/asdex">
                 <div class="title">ASDE-X</div>
-                <div class="desc">Airport surface surveillance</div>
+                <div class="desc">Live airport surface movement radar</div>
                 <div class="count" id="asdexCount"></div>
             </a>
             <a class="card" href="/tfdm">
                 <div class="title">TFDM <span class="wip">NEW</span></div>
-                <div class="desc">Terminal departure boards — off-block/TSAT, runway, taxi, surface TMIs</div>
+                <div class="desc">Surface &amp; departure boards — off-block, TSAT, runway, taxi</div>
                 <div class="count" id="tfdmCount"></div>
             </a>
             <!-- Hidden for now. The /dstars feed itself stays live for DGScope clients.
@@ -117,12 +119,12 @@
             -->
             <a class="card" href="/tdls">
                 <div class="title">TDLS</div>
-                <div class="desc">CPDLC clearances / departures</div>
+                <div class="desc">Datalink clearances (CPDLC) and tower departures</div>
                 <div class="count" id="tdlsCount"></div>
             </a>
             <a class="card" href="/tdls/history">
                 <div class="title">TDLS HISTORY</div>
-                <div class="desc">Searchable archive of past CPDLC + departures</div>
+                <div class="desc">Searchable archive of past datalink clearances</div>
             </a>
         </div>
     </section>
@@ -143,7 +145,7 @@
         <div class="grid">
             <div class="card server-card" id="throughputCard" role="button" tabindex="0" aria-expanded="false">
                 <div class="title">THROUGHPUT</div>
-                <div class="desc">Data ingress + flight volume — tap for detail</div>
+                <div class="desc">Live message rate and flight volume — tap for detail</div>
                 <div class="count" id="throughputCount"></div>
                 <div class="server-detail" id="throughputDetail" hidden></div>
             </div>

@@ -97,6 +97,7 @@ const COLORS = window.COLORS = {
   BeaconTarget:[0, 255, 0],       // line 74
   DataBlock:   [0, 255, 0],       // Color.Lime
   Pointout:    [255, 255, 0],     // line 80
+  Claimed:     [0, 255, 255],     // Light blue for middle-clicked aircraft (#00FFFF)
   Owned:       [255, 255, 255],
   LDB:         [0, 255, 0],
   Selected:    [0, 255, 255],
@@ -658,6 +659,7 @@ async function applyProfile(profileName) {
 // PTLs). Phase 3b adds the rest.
 
 const tracks = new Map();        // Guid → Track {Location, Squawk, Callsign, ...}
+const claimedTracks = new Set(); // Guids of tracks middle-clicked by user (light blue)
 const flightPlans = new Map();   // Guid → FlightPlan {AssociatedTrackGuid, Owner, ...}
 const trackToFp = new Map();     // trackGuid → flightPlan (cached lookup)
 const dstarsState = { connected: false, msgCount: 0, lastError: null };
@@ -852,7 +854,7 @@ function extrapolatedPosition(t) {
 // any slot index >= palette length uses the last color (cs:5562). Values
 // transcribed verbatim from cs:235.
 const HISTORY_COLORS = [
-  [30, 80, 200], [70, 70, 170], [50, 50, 130], [40, 40, 110], [30, 30, 90],
+  [30, 120, 254], [70, 70, 170], [50, 50, 130], [40, 40, 110], [30, 30, 90],
 ];
 
 function tickHistory(t, posNow) {
@@ -1411,6 +1413,8 @@ function drawDataBlockAndLeader(t, fp, posNow) {
     baseColor = COLORS.Selected;            // cyan
   } else if (t._forceQuickLook) {
     baseColor = COLORS.Pointout;            // yellow (cs:5448-5452)
+  } else if (claimedTracks.has(t.Guid)) {
+    baseColor = COLORS.Claimed;             // light blue (middle-clicked)
   } else if (ownedSticky || t._quickLookPlus) {
     baseColor = COLORS.Owned;               // white (cs:5454-5458)
   }
@@ -1557,19 +1561,30 @@ function drawPosition(t, posNow) {
   // Sticky Owned per cs:5612 — same flag the data-block color tier uses,
   // mirroring DGScope's Aircraft.Owned property read at PositionIndicator
   // color computation.
-  const Owned = !!t._owned;
-  const FDB   = dataBlockMode(t, fp) === "FDB";
-  let color;
-  if (t._marked)   color = COLORS.Selected;
-  else if (Owned)  color = COLORS.Owned;
-  else             color = COLORS.DataBlock;
-  const bright = Owned ? prefSet.Brightness.PositionSymbols
-                       : FDB ? prefSet.Brightness.OtherFDBs
-                             : prefSet.Brightness.LimitedDataBlocks;
-  ctx.fillStyle = adjusted(color, bright);
-  ctx.font = `${prefSet.CharSize.Position}px FixedDemiBold, ui-monospace, monospace`;
+  // Position indicator circle uses the same color as history trail (newest slot)
+  // with History brightness, not the data block colors.
+  const circleColor = HISTORY_COLORS[0];  // [30, 80, 200] — blue
+  ctx.fillStyle = adjusted(circleColor, prefSet.Brightness.History);
+  
+  // Draw position indicator circle (filled circle around the letter)
+  // Radius scaled to fit the character size with padding
+  const circleRadius = (prefSet.CharSize.Position * 0.5) | 0;
+  ctx.beginPath();
+  ctx.arc(px, py, circleRadius, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Draw position letter text on top of the circle (white text with border, scaled down)
+  ctx.font = `${prefSet.CharSize.Position * 0.75}px FixedDemiBold, ui-monospace, monospace`;
   ctx.textBaseline = "middle";
   ctx.textAlign = "center";
+  
+  // Draw text border/stroke in black
+  ctx.strokeStyle = adjusted([0, 0, 0], prefSet.Brightness.PositionSymbols);
+  ctx.lineWidth = 1.5;
+  ctx.strokeText(positionSymbolText(t, fp), px, py);
+  
+  // Draw text fill in #CCCCCC (light grey)
+  ctx.fillStyle = adjusted([204, 204, 204], prefSet.Brightness.PositionSymbols);
   ctx.fillText(positionSymbolText(t, fp), px, py);
 }
 
@@ -2071,6 +2086,19 @@ let panButton = -1;
 const PAN_THRESHOLD = 3;
 let downAt = null;
 cv.addEventListener("mousedown", (e) => {
+  if (e.button === 1) {
+    // Middle-click: toggle claimed status (light blue tag)
+    const hit = pickAircraft(e.clientX, e.clientY);
+    if (hit) {
+      if (claimedTracks.has(hit.Guid)) {
+        claimedTracks.delete(hit.Guid);
+      } else {
+        claimedTracks.add(hit.Guid);
+      }
+      e.preventDefault();
+      return;
+    }
+  }
   if (e.button === 1 || e.button === 2) {
     panning = true;
     panButton = e.button;
@@ -2569,6 +2597,7 @@ function handleDcbClick(id) {
 
 // PLACE CNTR / PLACE RR: next click on map sets the corresponding location.
 // Aircraft hit detection: find the closest track within 12 px and pass to MCA.
+// Middle-click (button 1) toggles claimed status (light blue tag).
 let pendingMapAction = null;
 cv.addEventListener("click", (e) => {
   if (pendingMapAction) {
@@ -2584,7 +2613,18 @@ cv.addEventListener("click", (e) => {
   }
   // Aircraft hit-test
   const hit = pickAircraft(e.clientX, e.clientY);
-  if (hit && window.previewSetClickedPlane) window.previewSetClickedPlane(hit);
+  if (e.button === 1) {
+    // Middle-click: toggle claimed status
+    if (hit) {
+      if (claimedTracks.has(hit.Guid)) {
+        claimedTracks.delete(hit.Guid);
+      } else {
+        claimedTracks.add(hit.Guid);
+      }
+    }
+  } else if (hit && window.previewSetClickedPlane) {
+    window.previewSetClickedPlane(hit);
+  }
 });
 function pickAircraft(px, py) {
   let best = null, bestD = Infinity;
@@ -2606,6 +2646,7 @@ window.handleMapToggle  = handleMapToggle;
 window.handleDcbClick   = handleDcbClick;
 window.prefSet          = prefSet;
 window.tracks           = tracks;
+window.claimedTracks    = claimedTracks;
 window.flightPlans      = flightPlans;
 window.trackToFp        = trackToFp;
 window.videoMaps        = videoMaps;

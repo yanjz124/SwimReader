@@ -40,7 +40,7 @@ static class ScratchpadRoutes
             {
                 if (string.IsNullOrWhiteSpace(t.Callsign)) continue;
 
-                var dir = Direction(t.EntryFix, t.ExitFix);
+                var dir = Direction(t, facility);
                 routeByCs.TryGetValue(t.Callsign!, out var route);
 
                 rows.Add(new
@@ -75,18 +75,30 @@ static class ScratchpadRoutes
         });
     }
 
-    // Departure vs arrival from TAIS entry/exit fixes. A departure exits the TRACON via an
-    // exit (departure) fix; an arrival enters via an entry (arrival) fix. Prefer whichever is
-    // set; unknown when neither is.
-    private static string Direction(string? entryFix, string? exitFix)
+    // Departure vs arrival. TAIS sets BOTH entry and exit fixes on nearly every track (they
+    // mark where it crosses the TRACON boundary), so those can't distinguish. Vertical rate is
+    // the clean signal — a departure is climbing, an arrival descending — and isn't position.
+    // For level flights, fall back to matching origin/destination against the facility's own
+    // airport (works for single-airport TRACONs like BHM=KBHM); overflights stay unknown.
+    private static string Direction(TaisTrack t, string facility)
     {
-        bool hasEntry = !string.IsNullOrWhiteSpace(entryFix);
-        bool hasExit = !string.IsNullOrWhiteSpace(exitFix);
-        if (hasExit && !hasEntry) return "OUT";
-        if (hasEntry && !hasExit) return "IN";
-        if (hasExit) return "OUT";
-        if (hasEntry) return "IN";
+        int vr = t.VerticalRateFpm ?? 0;
+        if (vr >= 250) return "OUT";
+        if (vr <= -250) return "IN";
+
+        bool destLocal = AirportMatchesFacility(t.Destination, facility);
+        bool origLocal = AirportMatchesFacility(t.Origin, facility);
+        if (destLocal && !origLocal) return "IN";
+        if (origLocal && !destLocal) return "OUT";
         return "?";
+    }
+
+    private static bool AirportMatchesFacility(string? airport, string? facility)
+    {
+        if (string.IsNullOrWhiteSpace(airport) || string.IsNullOrWhiteSpace(facility)) return false;
+        var a = airport.Trim().ToUpperInvariant();
+        if (a.Length == 4 && (a[0] == 'K' || a[0] == 'P')) a = a[1..];
+        return string.Equals(a, facility.Trim().ToUpperInvariant(), StringComparison.Ordinal);
     }
 
     // Trim the route string to the relevant end: first N elements for a departure, last N for

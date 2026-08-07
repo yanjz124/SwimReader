@@ -101,7 +101,7 @@ class AsdexBridge
                     Host = _host, VPNName = _vpn, UserName = _user, Password = _pass,
                     ReconnectRetries = 100, ReconnectRetriesWaitInMsecs = 5000,
                     SSLValidateCertificate = false,
-                    CompressionLevel = 9   // FAA SCDS requires compressed data products
+                    CompressionLevel = 1   // FAA SCDS requires compressed data; minimum level (decompression cost is level-independent)
                 };
 
                 using var session = context.CreateSession(sessionProps, null,

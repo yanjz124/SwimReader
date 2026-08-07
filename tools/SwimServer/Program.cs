@@ -662,8 +662,10 @@ var solaceThread = new Thread(() =>
                     ReconnectRetriesWaitInMsecs = 5000,
                     SSLValidateCertificate = false,
                     // FAA SCDS requires data compression ("the only authorized method for
-                    // obtaining SCDS data products"). 9 = max compression.
-                    CompressionLevel = 9
+                    // obtaining SCDS data products"). Use the minimum level — the consumer
+                    // only decompresses, and inflate cost is the same at any level, so 1
+                    // satisfies the requirement with the least broker/wire overhead.
+                    CompressionLevel = 1
                 };
 
                 using var session = context.CreateSession(sessionProps, null,

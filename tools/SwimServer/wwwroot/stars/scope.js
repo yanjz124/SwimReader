@@ -2075,6 +2075,16 @@ function updateTopbar() {
       (dstarsState.connected ? "LIVE" : (dstarsState.lastError || "off"));
 }
 
+// Background history ticker — runs even when tab is inactive so history trail
+// doesn't have gaps when the page is in the background. Complements the render-
+// loop ticker (drawTracks → tickHistory) to fill gaps during tab inactivity.
+setInterval(() => {
+  for (const t of tracks.values()) {
+    const posNow = displayPos(t);
+    if (posNow) tickHistory(t, posNow);
+  }
+}, 1000);  // Tick every second, independent of render loop
+
 // ── Input: pan / zoom / right-click set RR center ───────────────────────────
 // Mouse handlers mirror RadarWindow.cs ~lines 1300-1320 + 4636-4650 for zoom.
 // Pan via middle-button drag OR right-button drag (button 2). Drag distance

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scratchpads — TAIS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>📝</text></svg>">
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
+<script defer src="/shared/frame.js?v=4"></script>
+<style>
+  body { margin:0; background:#0a0a0a; color:#cccc44; font-family:ui-monospace,"Cascadia Mono",Consolas,monospace; }
+  .bar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 16px; border-bottom:1px solid #3a3a14; position:sticky; top:0; background:#0a0a0a; z-index:5; }
+  .bar h1 { font-size:15px; letter-spacing:1px; margin:0; }
+  .bar .sub { color:#888835; font-size:11px; }
+  .bar input { background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:5px 9px; font-family:inherit; font-size:12px; min-width:220px; }
+  .bar input:focus { outline:none; border-color:#cccc44; }
+  .bar .cnt { color:#b8b884; font-size:11px; margin-left:auto; }
+  .wrap { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th, td { text-align:left; padding:3px 8px; border-bottom:1px solid #1a1a08; white-space:nowrap; }
+  th { position:sticky; top:41px; background:#050505; color:#b8b884; font-weight:normal; letter-spacing:.5px; cursor:pointer; user-select:none; border-bottom:1px solid #3a3a14; }
+  th:hover { color:#cccc44; }
+  th.sorted::after { content:" ▲"; color:#cccc44; }
+  th.sorted.desc::after { content:" ▼"; }
+  tr:hover td { background:#161608; }
+  td.acid { color:#fff; font-weight:bold; }
+  td.sp { color:#ffd24a; }               /* scratchpads pop */
+  td.dim { color:#7a7a55; }
+  .dir { font-weight:bold; padding:0 5px; border-radius:2px; font-size:10px; }
+  .dir.OUT { color:#7fd07f; }
+  .dir.IN  { color:#6cc0ff; }
+  .dir\.q { color:#888835; }
+  td.route { color:#b8b884; max-width:340px; overflow:hidden; text-overflow:ellipsis; }
+  .ladd { color:#b06060; }
+  .empty { padding:24px 16px; color:#888835; font-style:italic; }
+</style>
+</head>
+<body>
+<a class="nav-home" href="/">&larr; HOME</a>
+<div class="bar">
+  <h1>SCRATCHPADS</h1>
+  <span class="sub">Every TAIS/STARS track — primary/secondary scratchpads, gate/runway, owner, and the filed route (out ▸ first fixes, in ▸ last fixes).</span>
+  <input id="filter" placeholder="filter: callsign, facility, scratchpad, route, fix… (* wildcard)" autocomplete="off" spellcheck="false">
+  <span class="cnt" id="cnt">—</span>
+</div>
+<div class="wrap">
+  <table>
+    <thead><tr id="head"></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" hidden>No tracks.</div>
+</div>
+
+<script>
+const COLS = [
+  { k:'facility', h:'FAC' },
+  { k:'callsign', h:'ACID', cls:'acid' },
+  { k:'acType',   h:'TYPE' },
+  { k:'dir',      h:'DIR', render:v => `<span class="dir ${v==='?'?'dir\\.q':v}">${v}</span>` },
+  { k:'origin',   h:'ORIG' },
+  { k:'dest',     h:'DEST' },
+  { k:'sp1',      h:'SP1', cls:'sp' },
+  { k:'sp2',      h:'SP2', cls:'sp' },
+  { k:'runway',   h:'RWY' },
+  { k:'owner',    h:'OWN' },
+  { k:'entryFix', h:'ENTRY' },
+  { k:'exitFix',  h:'EXIT' },
+  { k:'squawk',   h:'SQ' },
+  { k:'handoff',  h:'HO' },
+  { k:'routeKey', h:'ROUTE', cls:'route' },
+];
+
+let data = [];
+let sortKey = 'facility', sortDesc = false;
+const $ = id => document.getElementById(id);
+
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function buildHead(){
+  $('head').innerHTML = COLS.map(c =>
+    `<th data-k="${c.k}" class="${sortKey===c.k?'sorted '+(sortDesc?'desc':''):''}">${c.h}</th>`).join('');
+  $('head').querySelectorAll('th').forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    if (sortKey===k) sortDesc = !sortDesc; else { sortKey = k; sortDesc = false; }
+    buildHead(); render();
+  });
+}
+
+function wildcard(pat, val){
+  val = (val==null?'':String(val)).toLowerCase();
+  pat = pat.toLowerCase();
+  if (!pat.includes('*')) return val.includes(pat);
+  const rx = new RegExp('^' + pat.split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('.*') + '$');
+  return rx.test(val);
+}
+
+function render(){
+  const q = $('filter').value.trim();
+  let rows = data;
+  if (q) {
+    const terms = q.split(/\s+/);
+    rows = rows.filter(r => terms.every(t =>
+      ['callsign','facility','sp1','sp2','routeKey','route','origin','dest','owner','runway','entryFix','exitFix','acType']
+        .some(k => r[k] && wildcard(t, r[k]))));
+  }
+  rows = rows.slice().sort((a,b) => {
+    let x=a[sortKey], y=b[sortKey];
+    x = x==null?'':String(x); y = y==null?'':String(y);
+    return (sortDesc?-1:1) * x.localeCompare(y, undefined, {numeric:true});
+  });
+  $('cnt').textContent = `${rows.length} / ${data.length} tracks`;
+  $('empty').hidden = rows.length > 0;
+  $('rows').innerHTML = rows.map(r => {
+    const ladd = r.callsign === 'LADD';
+    return '<tr title="' + esc(r.route || '') + '">' + COLS.map(c => {
+      const v = r[c.k];
+      let cell = c.render ? c.render(v) : esc(v);
+      let cls = c.cls || '';
+      if (c.k==='callsign' && ladd) cls += ' ladd';
+      if ((v==null || v==='') && !c.render) cls += ' dim';
+      return `<td class="${cls}">${cell || ''}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+async function load(){
+  try {
+    const r = await fetch('/api/scratchpads');
+    if (r.ok) { data = await r.json(); render(); }
+  } catch {}
+}
+
+buildHead();
+$('filter').addEventListener('input', render);
+load();
+setInterval(load, 5000);
+</script>
+<script src="/shared/disclaimer.js?v=2"></script>
+</body>
+</html>

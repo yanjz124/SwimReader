@@ -367,6 +367,16 @@ class TaisBridge
         return result;
     }
 
+    /// <summary>Every live TAIS track (facility + typed track) — for the scratchpad collector.</summary>
+    public List<(string facility, TaisTrack track)> AllTracks()
+    {
+        var result = new List<(string, TaisTrack)>();
+        foreach (var (facility, tracks) in _state)
+            foreach (var t in tracks.Values)
+                result.Add((facility, t));
+        return result;
+    }
+
     /// <summary>Typed TAIS tracks for a callsign — used by the server-rendered text page.</summary>
     public List<TaisTrack> TracksByCallsign(string callsign)
     {

@@ -578,6 +578,9 @@ TdlsRoutes.Register(app, serverCtx);
 // TAIS: directory + facility detail + /tais/ws/{facility} WebSocket + /api/tais/* REST
 TaisRoutes.Register(app, serverCtx);
 
+// Scratchpad collector: /scratchpads page + /api/scratchpads (TAIS controller data + SFDPS route)
+ScratchpadRoutes.Register(app, serverCtx);
+
 // TFMS: WebSocket flight + TMI streams + /api/tfms/* REST
 TfmsRoutes.Register(app, serverCtx);
 TfdmRoutes.Register(app, serverCtx);

@@ -432,6 +432,29 @@ if (localMode)
     Console.WriteLine("[LOCAL] /setup available" + (configuredNow ? "" : " (unconfigured — redirecting to /setup)"));
 }
 
+// Reveal-sensitive API responses vary by the LADD reveal cookie: the same URL returns
+// masked identities when signed out and real ones when signed in. Without this they carry
+// no Cache-Control, so a browser could cache the masked response fetched before sign-in and
+// keep serving it afterward (LADD stuck in history/track). Mark them no-store so every
+// request re-fetches and reflects the current reveal state.
+app.Use(async (ctx, next) =>
+{
+    var p = ctx.Request.Path.Value ?? "";
+    if (p.StartsWith("/api/history", StringComparison.OrdinalIgnoreCase)
+        || p.StartsWith("/api/track", StringComparison.OrdinalIgnoreCase)
+        || p.StartsWith("/api/flights", StringComparison.OrdinalIgnoreCase)
+        || p.StartsWith("/api/edct", StringComparison.OrdinalIgnoreCase)
+        || p.StartsWith("/api/dispatch", StringComparison.OrdinalIgnoreCase))
+    {
+        ctx.Response.OnStarting(() =>
+        {
+            ctx.Response.Headers["Cache-Control"] = "no-store";
+            return Task.CompletedTask;
+        });
+    }
+    await next();
+});
+
 app.UseDefaultFiles();
 var contentTypes = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider();
 contentTypes.Mappings[".geojson"] = "application/geo+json";

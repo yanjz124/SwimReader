@@ -7882,11 +7882,27 @@ document.addEventListener('keydown', e => {
 let _boxDragging = null;
 let _boxDragOffset = { x: 0, y: 0 };
 
-function clampBox(el) {
+// Anchor a box to its nearest horizontal + vertical edge (right/bottom when its centre is in
+// that half). Right/bottom-anchored boxes hold their edge on window resize (so they don't
+// drift left/up) and grow inward with content — so a wide RA readout never limits how far
+// right you can place it.
+function applyEdgeAnchor(el, left, top, cRect, eRect) {
+    if (left + eRect.width / 2 > cRect.width / 2) {
+        el.style.right = Math.max(0, cRect.width - (left + eRect.width)) + 'px'; el.style.left = 'auto';
+    } else { el.style.left = Math.max(0, left) + 'px'; el.style.right = 'auto'; }
+    if (top + eRect.height / 2 > cRect.height / 2) {
+        el.style.bottom = Math.max(0, cRect.height - (top + eRect.height)) + 'px'; el.style.top = 'auto';
+    } else { el.style.top = Math.max(0, top) + 'px'; el.style.bottom = 'auto'; }
+}
+
+// anchor=true converts the final position to nearest-edge anchors (used on drop / layout /
+// restore / resize). anchor=false keeps raw left/top for smooth live dragging.
+function clampBox(el, anchor = true) {
     const container = el.parentElement;
     if (!container) return;
     const cRect = container.getBoundingClientRect();
     const eRect = el.getBoundingClientRect();
+    if (eRect.width === 0 && eRect.height === 0) return;   // hidden/unmeasured — don't anchor to 0,0
     let left = eRect.left - cRect.left;
     let top = eRect.top - cRect.top;
     left = Math.max(0, Math.min(left, cRect.width - eRect.width));
@@ -7934,10 +7950,14 @@ function clampBox(el) {
             }
         }
     }
-    el.style.left = left + 'px';
-    el.style.top = top + 'px';
-    el.style.bottom = 'auto';
-    el.style.right = 'auto';
+    if (anchor) {
+        applyEdgeAnchor(el, left, top, cRect, eRect);
+    } else {
+        el.style.left = left + 'px';
+        el.style.top = top + 'px';
+        el.style.bottom = 'auto';
+        el.style.right = 'auto';
+    }
 }
 
 // Clamp into the container only when the box is actually poking outside it.
@@ -7973,16 +7993,11 @@ function layoutMcaRa() {
     if (mca.style.display !== 'none') clampIntoContainer(mca);
     if (ra.style.display === 'none') return;
     if (ra.dataset.dragged === '1') {
-        // Re-apply the user's placed anchor first so a shorter/taller readout clamps
-        // from the same home each time. Without this, a wide readout gets pushed in to
-        // fit and the box never returns — it ratchets across the screen as content varies.
+        // Re-apply the user's placed edge anchor first, then clamp. Because the RA is
+        // anchored to its nearest edge (right/bottom when placed there), a shorter/taller
+        // readout grows inward from that edge instead of ratcheting the box across the map.
         if (ra.dataset.homePos) {
-            try {
-                const h = JSON.parse(ra.dataset.homePos);
-                if (h.left) ra.style.left = h.left;
-                if (h.top) ra.style.top = h.top;
-                ra.style.right = 'auto'; ra.style.bottom = 'auto';
-            } catch (e) {}
+            try { applyStoredAnchor(ra, JSON.parse(ra.dataset.homePos)); } catch (e) {}
         }
         clampBox(ra);               // bounds + push away from the MCA
         return;
@@ -8014,11 +8029,18 @@ function scheduleBoxLayout() {
 function saveBoxPosition(el) {
     const key = 'boxPos_' + el.id;
     el.dataset.dragged = '1';
-    const pos = { left: el.style.left, top: el.style.top };
-    // Remembered home anchor, re-applied on every layout so a content-size change
-    // (shorter/taller readout) clamps from here instead of ratcheting the box away.
+    // clampBox already set nearest-edge anchors (some of left/right/top/bottom are 'auto').
+    // Store all four so the box holds its edge on resize and re-applies to the same spot.
+    const pos = { left: el.style.left, right: el.style.right, top: el.style.top, bottom: el.style.bottom };
     el.dataset.homePos = JSON.stringify(pos);
     localStorage.setItem(key, JSON.stringify(pos));
+}
+
+function applyStoredAnchor(el, pos) {
+    el.style.left = pos.left || 'auto';
+    el.style.right = pos.right || 'auto';
+    el.style.top = pos.top || 'auto';
+    el.style.bottom = pos.bottom || 'auto';
 }
 
 function restoreBoxPosition(el) {
@@ -8026,10 +8048,10 @@ function restoreBoxPosition(el) {
     const saved = localStorage.getItem(key);
     if (saved) {
         try {
-            const pos = JSON.parse(saved);
-            if (pos.left) el.style.left = pos.left;
-            if (pos.top) { el.style.top = pos.top; el.style.bottom = 'auto'; el.style.right = 'auto'; }
-            if (pos.left && pos.top) { el.dataset.dragged = '1'; el.dataset.homePos = JSON.stringify(pos); }
+            const pos = JSON.parse(saved);   // new format has edge anchors; old had only {left, top}
+            applyStoredAnchor(el, pos);
+            const placed = (pos.left && pos.left !== 'auto') || (pos.right && pos.right !== 'auto');
+            if (placed) { el.dataset.dragged = '1'; el.dataset.homePos = JSON.stringify(pos); }
         } catch(e) {}
     }
     // Clamp to viewport on restore (handles window resize since last save).
@@ -8083,7 +8105,7 @@ document.addEventListener('mousemove', e => {
     _boxDragging.style.top = top + 'px';
     _boxDragging.style.bottom = 'auto';
     _boxDragging.style.right = 'auto';
-    clampBox(_boxDragging);
+    clampBox(_boxDragging, false);   // raw left/top while dragging; edge-anchor on drop
 });
 
 // Click outside the dragged box → drop it

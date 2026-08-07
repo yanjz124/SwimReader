@@ -9,20 +9,25 @@
 <link rel="stylesheet" href="/shared/frame.css?v=4">
 <script defer src="/shared/frame.js?v=4"></script>
 <style>
-  body { margin:0; background:#0a0a0a; color:#cccc44; font-family:ui-monospace,"Cascadia Mono",Consolas,monospace; }
-  .bar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 16px; border-bottom:1px solid #3a3a14; position:sticky; top:0; background:#0a0a0a; z-index:20; }
+  /* Fixed toolbar + a scrolling table region below it. The thead sticks to the top of
+     that region (top:0), so there's no offset to keep in sync and nothing overlaps. */
+  body { margin:0; background:#0a0a0a; color:#cccc44; font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+         height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+  .bar { flex:none; display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 16px 8px 60px; border-bottom:1px solid #3a3a14; background:#0a0a0a; }
   .bar h1 { font-size:15px; letter-spacing:1px; margin:0; }
   .bar .sub { color:#888835; font-size:11px; max-width:520px; }
   .bar .stats { color:#b8b884; font-size:11px; margin-left:auto; text-align:right; }
   .bar .stats b { color:#cccc44; }
   .bar button.tool { background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:4px 10px; font-family:inherit; font-size:11px; cursor:pointer; }
   .bar button.tool:hover { background:#2a2a08; }
-  .wrap { overflow-x:auto; }
+  .vtoggle { display:flex; border:1px solid #3a3a14; border-radius:3px; overflow:hidden; }
+  .vtoggle .vb { background:#1a1a05; color:#888835; border:none; padding:4px 14px; font-family:inherit; font-size:11px; letter-spacing:1px; cursor:pointer; }
+  .vtoggle .vb+.vb { border-left:1px solid #3a3a14; }
+  .vtoggle .vb.on { background:#3a3a0a; color:#fff; }
+  .wrap { flex:1; min-height:0; overflow:auto; }
   table { border-collapse:collapse; width:100%; font-size:12px; }
   th, td { text-align:left; padding:3px 8px; border-bottom:1px solid #1a1a08; white-space:nowrap; }
-  /* top is set to the real bar height at runtime (--barh) so the sticky header sits
-     flush under the toolbar instead of overlapping the rows or leaving a gap. */
-  th { position:sticky; top:var(--barh,42px); background:#050505; color:#b8b884; font-weight:normal; letter-spacing:.5px; border-bottom:1px solid #3a3a14; z-index:10; }
+  th { position:sticky; top:0; background:#050505; color:#b8b884; font-weight:normal; letter-spacing:.5px; border-bottom:1px solid #3a3a14; z-index:10; }
   th .thlabel { cursor:pointer; user-select:none; }
   th .thlabel:hover { color:#cccc44; }
   th.sorted .thlabel { color:#cccc44; }
@@ -63,7 +68,11 @@
 <a class="nav-home" href="/">&larr; HOME</a>
 <div class="bar" id="bar">
   <h1>SCRATCHPADS</h1>
-  <span class="sub">Every TAIS/STARS track — scratchpads, gate/runway, owner, filed route (out ▸ first fixes, in ▸ last). Snapshot for analysis; click a header to sort, click ▾ to filter.</span>
+  <span class="vtoggle" id="viewToggle">
+    <button class="vb on" data-v="live" title="Live snapshot of every current TAIS track">LIVE</button>
+    <button class="vb" data-v="rules" title="Distinct scratchpad codes each facility uses, accumulated over time">RULES</button>
+  </span>
+  <span class="sub" id="sub">Live snapshot of every TAIS track — scratchpads, gate/runway, owner, filed route. Click a header to sort, ▾ to filter.</span>
   <button class="tool" id="clearAll" title="Clear all column filters">CLEAR FILTERS</button>
   <button class="tool" id="refresh" title="Refresh the snapshot now">REFRESH</button>
   <span class="stats" id="stats">—</span>
@@ -78,7 +87,8 @@
 <div id="fdrop"></div>
 
 <script>
-const COLS = [
+const fmtTime = v => v ? new Date(v).toLocaleTimeString() : '';
+const COLS_LIVE = [
   { k:'facility', h:'FAC' },
   { k:'callsign', h:'ACID', cls:'acid' },
   { k:'acType',   h:'TYPE' },
@@ -95,13 +105,32 @@ const COLS = [
   { k:'handoff',  h:'HO' },
   { k:'routeKey', h:'ROUTE', cls:'route' },
 ];
+// RULES view: distinct (facility, scratchpad entries) accumulated over time.
+const COLS_RULES = [
+  { k:'facility',  h:'FAC' },
+  { k:'sp1',       h:'SP1', cls:'sp' },
+  { k:'sp2',       h:'SP2', cls:'sp' },
+  { k:'count',     h:'SEEN' },
+  { k:'flights',   h:'FLIGHTS' },
+  { k:'topRunway', h:'TOP RWY' },
+  { k:'topDest',   h:'TOP DEST' },
+  { k:'topOrigin', h:'TOP ORIG' },
+  { k:'last',      h:'LAST', render:fmtTime },
+];
+const VIEWS = {
+  live:  { cols:COLS_LIVE,  url:'/api/scratchpads',      sort:'facility', desc:false },
+  rules: { cols:COLS_RULES, url:'/api/scratchpad-rules', sort:'count',    desc:true  },
+};
 const BLANK = '(blank)';
 
+let view = 'live';
+let COLS = VIEWS.live.cols;
 let data = [];
 let sortKey = 'facility', sortDesc = false;
 // per-column filter: { text:'', checked:null|Set(values) }.  checked=null → all allowed.
-const colF = {};
-COLS.forEach(c => colF[c.k] = { text:'', checked:null });
+let colF = {};
+function initFilters(){ colF = {}; COLS.forEach(c => colF[c.k] = { text:'', checked:null }); }
+initFilters();
 let dropCol = null;
 
 const $ = id => document.getElementById(id);
@@ -207,9 +236,14 @@ function render(){
     let x=val(a,sortKey), y=val(b,sortKey);
     return (sortDesc?-1:1) * x.localeCompare(y, undefined, {numeric:true});
   });
-  const out = rows.filter(r=>r.dir==='OUT').length, inn = rows.filter(r=>r.dir==='IN').length;
-  const sp = rows.filter(r=>r.sp1||r.sp2).length;
-  $('stats').innerHTML = `<b>${rows.length}</b> / ${data.length} tracks · <b>${out}</b> out · <b>${inn}</b> in · <b>${sp}</b> w/ scratchpad`;
+  if (view==='rules'){
+    const obs = rows.reduce((a,r)=>a+(r.count||0),0);
+    $('stats').innerHTML = `<b>${rows.length}</b> / ${data.length} rules · <b>${obs.toLocaleString()}</b> observations`;
+  } else {
+    const out = rows.filter(r=>r.dir==='OUT').length, inn = rows.filter(r=>r.dir==='IN').length;
+    const sp = rows.filter(r=>r.sp1||r.sp2).length;
+    $('stats').innerHTML = `<b>${rows.length}</b> / ${data.length} tracks · <b>${out}</b> out · <b>${inn}</b> in · <b>${sp}</b> w/ scratchpad`;
+  }
   $('empty').hidden = rows.length>0;
   $('rows').innerHTML = rows.map(r => {
     const ladd = r.callsign==='LADD';
@@ -225,15 +259,22 @@ function render(){
 }
 
 async function load(){
-  try { const r = await fetch('/api/scratchpads'); if (r.ok){ data = await r.json(); render(); } } catch {}
+  try { const r = await fetch(VIEWS[view].url); if (r.ok){ data = await r.json(); render(); } } catch {}
 }
+function setView(v){
+  if (view===v) return;
+  view = v; const cfg = VIEWS[v]; COLS = cfg.cols; sortKey = cfg.sort; sortDesc = cfg.desc;
+  initFilters(); closeDrop();
+  document.querySelectorAll('#viewToggle .vb').forEach(b => b.classList.toggle('on', b.dataset.v===v));
+  $('sub').textContent = v==='rules'
+    ? 'Distinct scratchpad codes each facility uses, accumulated from changes over time — with the most common runway/dest to infer meaning. Sort/▾-filter as usual.'
+    : 'Live snapshot of every TAIS track — scratchpads, gate/runway, owner, filed route. Sort/▾-filter as usual.';
+  buildHead(); render(); load();
+}
+document.querySelectorAll('#viewToggle .vb').forEach(b => b.onclick = () => setView(b.dataset.v));
 
 $('clearAll').onclick = () => { COLS.forEach(c => colF[c.k] = {text:'',checked:null}); closeDrop(); buildHead(); render(); };
 $('refresh').onclick = load;
-
-// Keep the sticky column header flush under the toolbar even when it wraps.
-function syncBar(){ document.documentElement.style.setProperty('--barh', $('bar').offsetHeight + 'px'); }
-window.addEventListener('resize', syncBar); syncBar();
 
 buildHead();
 load();

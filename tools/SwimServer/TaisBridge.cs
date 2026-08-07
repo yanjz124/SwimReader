@@ -28,6 +28,11 @@ class TaisBridge
     // facilities modified since last FlushDirty()
     private readonly ConcurrentDictionary<string, byte> _dirty = new();
 
+    // Rule-discovery accumulator: "facility|sp1|sp2" → aggregated stats over time. Built from
+    // scratchpad *changes* so it captures the vocabulary each facility uses. In-memory (resets
+    // on restart); it rebuilds as tracks refresh.
+    private readonly ConcurrentDictionary<string, SpRuleAcc> _spRules = new();
+
     public TaisBridge(JsonSerializerOptions jsonOpts) => _jsonOpts = jsonOpts;
 
     // ── Message processing ─────────────────────────────────────────────────────
@@ -128,6 +133,8 @@ class TaisBridge
                     }
                 }
 
+                var prevSp1 = track.Scratchpad1; var prevSp2 = track.Scratchpad2;
+
                 // Flight plan fields (only present in some records)
                 var fp = El(record, "flightPlan");
                 if (fp is not null)
@@ -168,6 +175,13 @@ class TaisBridge
                     track.Origin = ElVal(enhanced, "departureAirport") ?? track.Origin;
                     track.Destination = ElVal(enhanced, "destinationAirport") ?? track.Destination;
                 }
+
+                // Rule discovery: record the scratchpad combination whenever it changes for
+                // this track, so each distinct iteration a facility applies is captured
+                // (keyed on facility + the scratchpad entries).
+                if ((track.Scratchpad1 != prevSp1 || track.Scratchpad2 != prevSp2)
+                    && (!string.IsNullOrEmpty(track.Scratchpad1) || !string.IsNullOrEmpty(track.Scratchpad2)))
+                    RecordScratchpad(facility, track);
             }
 
             _dirty.TryAdd(facility, 0);
@@ -377,6 +391,23 @@ class TaisBridge
         return result;
     }
 
+    // Accumulate one scratchpad observation, keyed on facility + the scratchpad entries.
+    private void RecordScratchpad(string facility, TaisTrack t)
+    {
+        var sp1 = t.Scratchpad1 ?? "";
+        var sp2 = t.Scratchpad2 ?? "";
+        var key = facility + "" + sp1 + "" + sp2;
+        _spRules.GetOrAdd(key, _ => new SpRuleAcc(facility, sp1, sp2)).Record(t);
+    }
+
+    /// <summary>Aggregated scratchpad usage per facility (rule discovery). No identities — counts only.</summary>
+    public List<object> GetScratchpadRules()
+    {
+        var list = new List<object>(_spRules.Count);
+        foreach (var a in _spRules.Values) list.Add(a.ToJson());
+        return list;
+    }
+
     /// <summary>Typed TAIS tracks for a callsign — used by the server-rendered text page.</summary>
     public List<TaisTrack> TracksByCallsign(string callsign)
     {
@@ -481,4 +512,74 @@ class TaisTrack
         pseudo = IsPseudo,
         ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
+}
+
+/// <summary>
+/// Aggregated scratchpad usage for one (facility, sp1, sp2) combination — the rule-discovery
+/// unit. Counts observations and distinct flights, and tracks the most common associated
+/// runway / destination / origin so a code's meaning can be inferred. No identities are kept.
+/// </summary>
+class SpRuleAcc
+{
+    public string Facility { get; }
+    public string Sp1 { get; }
+    public string Sp2 { get; }
+    private readonly object _lock = new();
+    private long _count;
+    private readonly HashSet<string> _flights = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _runways = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _dests = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _origins = new(StringComparer.OrdinalIgnoreCase);
+    private DateTime _first = DateTime.UtcNow, _last = DateTime.UtcNow;
+
+    public SpRuleAcc(string facility, string sp1, string sp2)
+    {
+        Facility = facility; Sp1 = sp1; Sp2 = sp2;
+    }
+
+    public void Record(TaisTrack t)
+    {
+        lock (_lock)
+        {
+            _count++;
+            _last = DateTime.UtcNow;
+            if (!string.IsNullOrEmpty(t.Callsign) && _flights.Count < 100000) _flights.Add(t.Callsign!);
+            Bump(_runways, t.Runway);
+            Bump(_dests, t.Destination);
+            Bump(_origins, t.Origin);
+        }
+    }
+
+    private static void Bump(Dictionary<string, int> d, string? k)
+    {
+        if (string.IsNullOrWhiteSpace(k) || d.Count > 500) return;
+        d[k!] = d.TryGetValue(k!, out var v) ? v + 1 : 1;
+    }
+
+    private static string? Top(Dictionary<string, int> d)
+    {
+        string? best = null; int bv = -1;
+        foreach (var (k, v) in d) if (v > bv) { bv = v; best = k; }
+        return best;
+    }
+
+    public object ToJson()
+    {
+        lock (_lock)
+        {
+            return new
+            {
+                facility = Facility,
+                sp1 = Sp1.Length == 0 ? null : Sp1,
+                sp2 = Sp2.Length == 0 ? null : Sp2,
+                count = _count,
+                flights = _flights.Count,
+                topRunway = Top(_runways),
+                topDest = Top(_dests),
+                topOrigin = Top(_origins),
+                first = _first.ToString("o"),
+                last = _last.ToString("o"),
+            };
+        }
+    }
 }

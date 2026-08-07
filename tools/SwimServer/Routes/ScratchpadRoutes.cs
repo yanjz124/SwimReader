@@ -73,6 +73,11 @@ static class ScratchpadRoutes
 
             return Results.Json(rows, ctx.JsonOpts);
         });
+
+        // Rule discovery: per (facility, scratchpad entries) usage accumulated over time from
+        // scratchpad changes — to reverse-engineer what each facility's scratchpad codes mean.
+        // Aggregate counts only (no identities), so it isn't LADD-sensitive.
+        app.MapGet("/api/scratchpad-rules", () => Results.Json(ctx.Tais.GetScratchpadRules(), ctx.JsonOpts));
     }
 
     // Departure vs arrival. TAIS sets BOTH entry and exit fixes on nearly every track (they

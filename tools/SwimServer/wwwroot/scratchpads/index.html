@@ -10,54 +10,79 @@
 <script defer src="/shared/frame.js?v=4"></script>
 <style>
   body { margin:0; background:#0a0a0a; color:#cccc44; font-family:ui-monospace,"Cascadia Mono",Consolas,monospace; }
-  .bar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 16px; border-bottom:1px solid #3a3a14; position:sticky; top:0; background:#0a0a0a; z-index:5; }
+  .bar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 16px; border-bottom:1px solid #3a3a14; position:sticky; top:0; background:#0a0a0a; z-index:20; }
   .bar h1 { font-size:15px; letter-spacing:1px; margin:0; }
-  .bar .sub { color:#888835; font-size:11px; }
-  .bar input { background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:5px 9px; font-family:inherit; font-size:12px; min-width:220px; }
-  .bar input:focus { outline:none; border-color:#cccc44; }
-  .bar .cnt { color:#b8b884; font-size:11px; margin-left:auto; }
+  .bar .sub { color:#888835; font-size:11px; max-width:520px; }
+  .bar .stats { color:#b8b884; font-size:11px; margin-left:auto; text-align:right; }
+  .bar .stats b { color:#cccc44; }
+  .bar button.tool { background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:4px 10px; font-family:inherit; font-size:11px; cursor:pointer; }
+  .bar button.tool:hover { background:#2a2a08; }
   .wrap { overflow-x:auto; }
   table { border-collapse:collapse; width:100%; font-size:12px; }
   th, td { text-align:left; padding:3px 8px; border-bottom:1px solid #1a1a08; white-space:nowrap; }
-  th { position:sticky; top:41px; background:#050505; color:#b8b884; font-weight:normal; letter-spacing:.5px; cursor:pointer; user-select:none; border-bottom:1px solid #3a3a14; }
-  th:hover { color:#cccc44; }
-  th.sorted::after { content:" ▲"; color:#cccc44; }
-  th.sorted.desc::after { content:" ▼"; }
+  /* top is set to the real bar height at runtime (--barh) so the sticky header sits
+     flush under the toolbar instead of overlapping the rows or leaving a gap. */
+  th { position:sticky; top:var(--barh,42px); background:#050505; color:#b8b884; font-weight:normal; letter-spacing:.5px; border-bottom:1px solid #3a3a14; z-index:10; }
+  th .thlabel { cursor:pointer; user-select:none; }
+  th .thlabel:hover { color:#cccc44; }
+  th.sorted .thlabel { color:#cccc44; }
+  th.sorted .thlabel::after { content:" ▲"; }
+  th.sorted.desc .thlabel::after { content:" ▼"; }
+  th .fbtn { cursor:pointer; margin-left:5px; color:#555; font-size:10px; padding:0 2px; }
+  th .fbtn:hover { color:#cccc44; }
+  th.filtered .fbtn { color:#ffd24a; }
   tr:hover td { background:#161608; }
   td.acid { color:#fff; font-weight:bold; }
-  td.sp { color:#ffd24a; }               /* scratchpads pop */
+  td.sp { color:#ffd24a; }
   td.dim { color:#7a7a55; }
-  .dir { font-weight:bold; padding:0 5px; border-radius:2px; font-size:10px; }
-  .dir.OUT { color:#7fd07f; }
-  .dir.IN  { color:#6cc0ff; }
-  .dir\.q { color:#888835; }
+  .dir { font-weight:bold; font-size:10px; }
+  .dir.OUT { color:#7fd07f; } .dir.IN { color:#6cc0ff; } .dir.q { color:#888835; }
   td.route { color:#b8b884; max-width:340px; overflow:hidden; text-overflow:ellipsis; }
   .ladd { color:#b06060; }
   .empty { padding:24px 16px; color:#888835; font-style:italic; }
+  /* ── Column filter dropdown ── */
+  #fdrop { position:fixed; z-index:100; display:none; background:#0e0e0e; border:1px solid #6a6a14;
+           border-radius:4px; box-shadow:0 6px 24px rgba(0,0,0,.7); width:230px; font-size:12px; }
+  #fdrop.on { display:block; }
+  #fdrop .head { padding:6px 8px; border-bottom:1px solid #2a2a08; color:#b8b884; font-size:10px; letter-spacing:1px; }
+  #fdrop input.search { width:calc(100% - 16px); margin:6px 8px; background:#1a1a05; color:#cccc44; border:1px solid #3a3a14; padding:5px 7px; font-family:inherit; font-size:12px; }
+  #fdrop input.search:focus { outline:none; border-color:#cccc44; }
+  #fdrop .acts { display:flex; gap:6px; padding:0 8px 6px; }
+  #fdrop .acts a { color:#888835; cursor:pointer; font-size:11px; }
+  #fdrop .acts a:hover { color:#cccc44; }
+  #fdrop .list { max-height:260px; overflow-y:auto; border-top:1px solid #2a2a08; }
+  #fdrop .opt { display:flex; align-items:center; gap:7px; padding:3px 9px; cursor:pointer; }
+  #fdrop .opt:hover { background:#1a1a05; }
+  #fdrop .opt input { accent-color:#cccc44; }
+  #fdrop .opt .v { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #fdrop .opt .c { color:#666; font-size:10px; }
+  #fdrop .trunc { padding:5px 9px; color:#888835; font-size:10px; font-style:italic; }
 </style>
 </head>
 <body>
 <a class="nav-home" href="/">&larr; HOME</a>
-<div class="bar">
+<div class="bar" id="bar">
   <h1>SCRATCHPADS</h1>
-  <span class="sub">Every TAIS/STARS track — primary/secondary scratchpads, gate/runway, owner, and the filed route (out ▸ first fixes, in ▸ last fixes).</span>
-  <input id="filter" placeholder="filter: callsign, facility, scratchpad, route, fix… (* wildcard)" autocomplete="off" spellcheck="false">
-  <span class="cnt" id="cnt">—</span>
+  <span class="sub">Every TAIS/STARS track — scratchpads, gate/runway, owner, filed route (out ▸ first fixes, in ▸ last). Snapshot for analysis; click a header to sort, click ▾ to filter.</span>
+  <button class="tool" id="clearAll" title="Clear all column filters">CLEAR FILTERS</button>
+  <button class="tool" id="refresh" title="Refresh the snapshot now">REFRESH</button>
+  <span class="stats" id="stats">—</span>
 </div>
 <div class="wrap">
   <table>
     <thead><tr id="head"></tr></thead>
     <tbody id="rows"></tbody>
   </table>
-  <div class="empty" id="empty" hidden>No tracks.</div>
+  <div class="empty" id="empty" hidden>No tracks match.</div>
 </div>
+<div id="fdrop"></div>
 
 <script>
 const COLS = [
   { k:'facility', h:'FAC' },
   { k:'callsign', h:'ACID', cls:'acid' },
   { k:'acType',   h:'TYPE' },
-  { k:'dir',      h:'DIR', render:v => `<span class="dir ${v==='?'?'dir\\.q':v}">${v}</span>` },
+  { k:'dir',      h:'DIR', render:v => `<span class="dir ${v==='?'?'q':v}">${v}</span>` },
   { k:'origin',   h:'ORIG' },
   { k:'dest',     h:'DEST' },
   { k:'sp1',      h:'SP1', cls:'sp' },
@@ -70,71 +95,150 @@ const COLS = [
   { k:'handoff',  h:'HO' },
   { k:'routeKey', h:'ROUTE', cls:'route' },
 ];
+const BLANK = '(blank)';
 
 let data = [];
 let sortKey = 'facility', sortDesc = false;
-const $ = id => document.getElementById(id);
+// per-column filter: { text:'', checked:null|Set(values) }.  checked=null → all allowed.
+const colF = {};
+COLS.forEach(c => colF[c.k] = { text:'', checked:null });
+let dropCol = null;
 
-function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+const $ = id => document.getElementById(id);
+const val = (r,k) => { const v = r[k]; return (v==null || v==='') ? BLANK : String(v); };
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function wildcard(pat, v){
+  v = String(v).toLowerCase(); pat = pat.toLowerCase();
+  if (!pat.includes('*')) return v.includes(pat);
+  const rx = new RegExp('^'+pat.split('*').map(s=>s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('.*')+'$');
+  return rx.test(v);
+}
+function isActive(k){ const f = colF[k]; return f.text!=='' || f.checked!==null; }
+
+function passes(r){
+  for (const c of COLS){
+    const f = colF[c.k]; if (!isActive(c.k)) continue;
+    const v = val(r, c.k);
+    if (f.text!=='' && !wildcard(f.text, v)) return false;
+    if (f.checked!==null && !f.checked.has(v)) return false;
+  }
+  return true;
+}
 
 function buildHead(){
-  $('head').innerHTML = COLS.map(c =>
-    `<th data-k="${c.k}" class="${sortKey===c.k?'sorted '+(sortDesc?'desc':''):''}">${c.h}</th>`).join('');
-  $('head').querySelectorAll('th').forEach(th => th.onclick = () => {
+  $('head').innerHTML = COLS.map(c => {
+    const sortCls = sortKey===c.k ? 'sorted '+(sortDesc?'desc':'') : '';
+    const filtCls = isActive(c.k) ? 'filtered' : '';
+    return `<th data-k="${c.k}" class="${sortCls} ${filtCls}">
+      <span class="thlabel">${c.h}</span><span class="fbtn" title="Filter">▾</span></th>`;
+  }).join('');
+  $('head').querySelectorAll('th').forEach(th => {
     const k = th.dataset.k;
-    if (sortKey===k) sortDesc = !sortDesc; else { sortKey = k; sortDesc = false; }
-    buildHead(); render();
+    th.querySelector('.thlabel').onclick = () => {
+      if (sortKey===k) sortDesc = !sortDesc; else { sortKey=k; sortDesc=false; }
+      buildHead(); render();
+    };
+    th.querySelector('.fbtn').onclick = e => { e.stopPropagation(); openDrop(k, th); };
   });
 }
 
-function wildcard(pat, val){
-  val = (val==null?'':String(val)).toLowerCase();
-  pat = pat.toLowerCase();
-  if (!pat.includes('*')) return val.includes(pat);
-  const rx = new RegExp('^' + pat.split('*').map(s => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('.*') + '$');
-  return rx.test(val);
+function distinct(k){
+  const m = new Map();
+  for (const r of data){ const v = val(r,k); m.set(v, (m.get(v)||0)+1); }
+  return [...m.entries()].sort((a,b)=> a[0].localeCompare(b[0], undefined, {numeric:true}));
 }
+
+function openDrop(k, th){
+  dropCol = k;
+  const f = colF[k];
+  const d = $('fdrop');
+  const rerender = () => {
+    const q = f.text;
+    let items = distinct(k);
+    if (q) items = items.filter(([v]) => wildcard(q, v));
+    const shown = items.slice(0, 400);
+    const checkedSet = f.checked; // null=all
+    d.querySelector('.list').innerHTML =
+      shown.map(([v,c]) => {
+        const on = checkedSet===null ? true : checkedSet.has(v);
+        return `<label class="opt"><input type="checkbox" data-v="${esc(v)}" ${on?'checked':''}>
+          <span class="v">${esc(v)}</span><span class="c">${c}</span></label>`;
+      }).join('') + (items.length>shown.length ? `<div class="trunc">…${items.length-shown.length} more (narrow with search)</div>`:'');
+    d.querySelectorAll('.opt input').forEach(inp => inp.onchange = () => {
+      // Materialize the current effective set, then toggle this value.
+      let set = f.checked!==null ? new Set(f.checked) : new Set(distinct(k).map(x=>x[0]));
+      const v = inp.dataset.v;
+      if (inp.checked) set.add(v); else set.delete(v);
+      // If everything is checked, treat as "no filter" (null).
+      const total = distinct(k).length;
+      f.checked = (set.size >= total) ? null : set;
+      buildHead(); render();
+    });
+  };
+  d.innerHTML =
+    `<div class="head">FILTER: ${COLS.find(c=>c.k===k).h}</div>
+     <input class="search" placeholder="wildcard e.g.  G0*" value="${esc(f.text)}">
+     <div class="acts"><a data-a="all">Select all</a><a data-a="clear">Clear</a><a data-a="matchonly">Only matches</a></div>
+     <div class="list"></div>`;
+  d.querySelector('.search').oninput = e => { f.text = e.target.value.trim(); buildHead(); render(); rerender(); };
+  d.querySelector('[data-a="all"]').onclick = () => { f.checked=null; buildHead(); render(); rerender(); };
+  d.querySelector('[data-a="clear"]').onclick = () => { f.checked=new Set(); buildHead(); render(); rerender(); };
+  d.querySelector('[data-a="matchonly"]').onclick = () => {
+    // restrict to values currently matching the search text
+    let items = distinct(k); if (f.text) items = items.filter(([v])=>wildcard(f.text,v));
+    f.checked = new Set(items.map(x=>x[0])); buildHead(); render(); rerender();
+  };
+  rerender();
+  const r = th.getBoundingClientRect();
+  d.style.left = Math.min(r.left, window.innerWidth-240) + 'px';
+  d.style.top = r.bottom + 'px';
+  d.classList.add('on');
+  d.querySelector('.search').focus();
+}
+function closeDrop(){ $('fdrop').classList.remove('on'); dropCol=null; }
+document.addEventListener('mousedown', e => {
+  if (dropCol && !$('fdrop').contains(e.target) && !e.target.classList.contains('fbtn')) closeDrop();
+});
+document.addEventListener('keydown', e => { if (e.key==='Escape') closeDrop(); });
 
 function render(){
-  const q = $('filter').value.trim();
-  let rows = data;
-  if (q) {
-    const terms = q.split(/\s+/);
-    rows = rows.filter(r => terms.every(t =>
-      ['callsign','facility','sp1','sp2','routeKey','route','origin','dest','owner','runway','entryFix','exitFix','acType']
-        .some(k => r[k] && wildcard(t, r[k]))));
-  }
-  rows = rows.slice().sort((a,b) => {
-    let x=a[sortKey], y=b[sortKey];
-    x = x==null?'':String(x); y = y==null?'':String(y);
+  let rows = data.filter(passes);
+  rows.sort((a,b) => {
+    let x=val(a,sortKey), y=val(b,sortKey);
     return (sortDesc?-1:1) * x.localeCompare(y, undefined, {numeric:true});
   });
-  $('cnt').textContent = `${rows.length} / ${data.length} tracks`;
-  $('empty').hidden = rows.length > 0;
+  const out = rows.filter(r=>r.dir==='OUT').length, inn = rows.filter(r=>r.dir==='IN').length;
+  const sp = rows.filter(r=>r.sp1||r.sp2).length;
+  $('stats').innerHTML = `<b>${rows.length}</b> / ${data.length} tracks · <b>${out}</b> out · <b>${inn}</b> in · <b>${sp}</b> w/ scratchpad`;
+  $('empty').hidden = rows.length>0;
   $('rows').innerHTML = rows.map(r => {
-    const ladd = r.callsign === 'LADD';
-    return '<tr title="' + esc(r.route || '') + '">' + COLS.map(c => {
+    const ladd = r.callsign==='LADD';
+    return '<tr title="'+esc(r.route||'')+'">' + COLS.map(c => {
       const v = r[c.k];
       let cell = c.render ? c.render(v) : esc(v);
       let cls = c.cls || '';
       if (c.k==='callsign' && ladd) cls += ' ladd';
-      if ((v==null || v==='') && !c.render) cls += ' dim';
-      return `<td class="${cls}">${cell || ''}</td>`;
+      if ((v==null||v==='') && !c.render) cls += ' dim';
+      return `<td class="${cls}">${cell||''}</td>`;
     }).join('') + '</tr>';
   }).join('');
 }
 
 async function load(){
-  try {
-    const r = await fetch('/api/scratchpads');
-    if (r.ok) { data = await r.json(); render(); }
-  } catch {}
+  try { const r = await fetch('/api/scratchpads'); if (r.ok){ data = await r.json(); render(); } } catch {}
 }
 
+$('clearAll').onclick = () => { COLS.forEach(c => colF[c.k] = {text:'',checked:null}); closeDrop(); buildHead(); render(); };
+$('refresh').onclick = load;
+
+// Keep the sticky column header flush under the toolbar even when it wraps.
+function syncBar(){ document.documentElement.style.setProperty('--barh', $('bar').offsetHeight + 'px'); }
+window.addEventListener('resize', syncBar); syncBar();
+
 buildHead();
-$('filter').addEventListener('input', render);
 load();
-setInterval(load, 5000);
+// Snapshot tool — refresh gently (30s), filters/sort are preserved across reloads.
+setInterval(load, 30000);
 </script>
 <script src="/shared/disclaimer.js?v=2"></script>
 </body>

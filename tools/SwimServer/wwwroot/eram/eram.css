@@ -958,11 +958,12 @@ body.tmu-mode .ac-leader { display: none !important; }
 #ra-content {
     background: #000000; border: 1px solid #888; color: #ffffff;
     padding: 3px 6px;
-    /* Never scrolls. The box sizes to its content: it widens to the longest
-       line, but caps at ~80 columns so long lines (a filed route, remarks) wrap
-       and the box grows TALLER instead of running off to the viewport edge.
-       layoutMcaRa() keeps it on-screen and off the MCA as it changes size. */
-    width: max-content; min-width: 500px; max-width: min(100%, 80ch);
+    /* FIXED width (not max-content). A content-sized box changed width with every
+       readout, which both left long routes un-wrapped until they hit the cap and made
+       the box bump sideways as it resized. A fixed 56-column width wraps a filed route
+       or remarks and grows only TALLER, so the box never shifts horizontally.
+       layoutMcaRa() keeps it on-screen and off the MCA. */
+    width: 56ch; max-width: 100%;
     min-height: 100px;
     font-size: 14px; line-height: 18px; white-space: pre-wrap; word-break: normal;
     /* Safety net: let space-less strings (e.g. a filed route) wrap instead of

@@ -1040,8 +1040,16 @@ function copyIcaoFpl(ev) {
 //   endurance = enroute + reserve,  reserve = max(FUEL_RESERVE_MIN, FUEL_RESERVE_PCT × enroute)
 // This is injected ONLY into the VATSIM prefile link (buildVatsimRaw), never into the
 // ICAO FPL text shown or copied.
+//
+// The E/ value is ALWAYS emitted, even when we have no enroute basis. VATSIM's
+// prefile form pre-populates from your last saved plan and the raw= import only
+// *sets* the fields the raw actually contains — anything absent keeps the
+// previous flight's value. Endurance is a required field there, so omitting it
+// guaranteed a stale carry-over from the flight you prefiled before this one.
+// Same reasoning as the '0000' EET placeholder in field 16: assert the field.
 const FUEL_RESERVE_MIN = 45;    // minimum extra endurance beyond enroute time (minutes)
 const FUEL_RESERVE_PCT = 0.15;  // ...or this fraction of enroute time, whichever is larger
+const FUEL_FALLBACK_HHMM = '0200';  // placeholder when enroute time is unknown
 
 // Enroute time (minutes) from filed ETA vs off-block — same basis as Field 16 EET.
 function enrouteMinutes(d) {
@@ -1050,17 +1058,18 @@ function enrouteMinutes(d) {
     return (m > 0 && m < 6000) ? m : null;
 }
 
-// Synthesized endurance as ICAO HHMM, or null when we have no enroute basis.
+// Synthesized endurance as ICAO HHMM. Never null — see the note above on why the
+// field must always be asserted for the VATSIM prefile.
 function fakeEnduranceHHMM(d) {
     const enroute = enrouteMinutes(d);
-    if (enroute == null) return null;
+    if (enroute == null) return FUEL_FALLBACK_HHMM;
     const reserve = Math.max(FUEL_RESERVE_MIN, Math.round(enroute * FUEL_RESERVE_PCT));
     const total = enroute + reserve;
     return String(Math.floor(total / 60)).padStart(2, '0') + String(total % 60).padStart(2, '0');
 }
 
 // VATSIM prefile raw = the ICAO FPL with a Field 19 endurance (E/hhmm) appended before
-// the closing paren. Returns the plain ICAO text unchanged when no endurance is available.
+// the closing paren.
 function buildVatsimRaw(d, icaoText) {
     // VATSIM's raw-FPL importer doesn't understand the ICAO "A" (below-transition
     // altitude) level format, so a low-level plan (e.g. A030 for a 3000 ft heli) leaves
@@ -1069,9 +1078,7 @@ function buildVatsimRaw(d, icaoText) {
     // 3000 ft to VATSIM); the displayed/copied ICAO FPL keeps the correct A### form.
     // Anchored to the speed token at a field-line start so route fixes are never touched.
     let raw = icaoText.replace(/(\n-[KNM]\d{3,4})A(\d{3})\b/, '$1F$2');
-    const end = fakeEnduranceHHMM(d);
-    if (!end) return raw;
-    return raw.replace(/\)\s*$/, `\n-E/${end})`);
+    return raw.replace(/\)\s*$/, `\n-E/${fakeEnduranceHHMM(d)})`);
 }
 
 function renderFlightPlan(d) {

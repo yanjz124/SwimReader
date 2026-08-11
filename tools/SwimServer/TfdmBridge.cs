@@ -363,6 +363,9 @@ class TfdmBridge
     public List<object> FindByCallsign(string callsign) =>
         FlightsByCallsign(callsign).Select(f => f.ToJson()).ToList();
 
+    public List<object> FindByCallsign(string callsign, string? origin, string? dest) =>
+        FlightsByCallsign(callsign, origin, dest).Select(f => f.ToJson()).ToList();
+
     /// <summary>Typed variant for the server-rendered /t text page.</summary>
     public List<TfdmFlight> FlightsByCallsign(string callsign)
     {
@@ -372,6 +375,31 @@ class TfdmBridge
                 if (string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
                     res.Add(f);
         return res;
+    }
+
+    /// <summary>
+    /// TFDM flights for a callsign, matched to the current leg (origin/dest). A reused flight
+    /// number can carry TFDM records for a previous leg (e.g. the outbound while you're tracking
+    /// the return), so prefer records whose origin/dest match the live SFDPS plan. Falls back to
+    /// either-side match, then callsign-only, when there's no leg info or no clean match.
+    /// </summary>
+    public List<TfdmFlight> FlightsByCallsign(string callsign, string? origin, string? dest)
+    {
+        var all = FlightsByCallsign(callsign);
+        if (all.Count <= 1 || (string.IsNullOrEmpty(origin) && string.IsNullOrEmpty(dest))) return all;
+        var both = all.Where(f => AirportEq(f.Origin, origin) && AirportEq(f.Dest, dest)).ToList();
+        if (both.Count > 0) return both;
+        var either = all.Where(f => AirportEq(f.Origin, origin) || AirportEq(f.Dest, dest)).ToList();
+        return either.Count > 0 ? either : all;
+    }
+
+    // Airport codes match across an ICAO K/P prefix (KDFW == DFW, PHNL == HNL). Empty != empty.
+    private static bool AirportEq(string? a, string? b)
+    {
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        if (a.Equals(b, StringComparison.OrdinalIgnoreCase)) return true;
+        static string Bare(string s) => s.Length == 4 && (s[0] is 'K' or 'P' or 'k' or 'p') ? s[1..] : s;
+        return Bare(a).Equals(Bare(b), StringComparison.OrdinalIgnoreCase);
     }
 }
 

@@ -87,7 +87,13 @@ static class TrackRoutes
             var tais  = ctx.Tais.FindByCallsign(callsign);
             var asdex = ctx.Asdex.FindByCallsign(callsign);
             var tfms  = ctx.Tfms.GetFlightByCallsign(callsign);
-            var tfdm  = ctx.Tfdm.FindByCallsign(callsign);   // TFDM surface timing (joins to the SFDPS plan)
+            // Match TFDM to the current leg (origin/dest) — a reused flight number can carry TFDM
+            // data for a previous leg. Prefer the live SFDPS record that has both airports.
+            var legF = ctx.Flights.Values
+                .Where(f => string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase) && f.FlightStatus != "CANCELLED")
+                .OrderByDescending(f => !string.IsNullOrEmpty(f.Origin) && !string.IsNullOrEmpty(f.Destination) ? 1 : 0)
+                .FirstOrDefault();
+            var tfdm  = ctx.Tfdm.FindByCallsign(callsign, legF?.Origin, legF?.Destination);   // TFDM surface timing (joins to the SFDPS plan)
 
             var found = sfdps.Count > 0 || tdls.Count > 0 || tais.Count > 0 || asdex.Count > 0
                         || tfms is not null || tfdm.Count > 0;
@@ -213,6 +219,15 @@ static class TrackRoutes
     private static List<FlightState> Matching(ServerContext ctx, string cs) =>
         ctx.Flights.Values.Where(f => string.Equals(f.Callsign, cs, StringComparison.OrdinalIgnoreCase) && f.FlightStatus != "CANCELLED").ToList();
 
+    // The current leg's origin/dest from the live SFDPS plan, so TFDM (and anything else that a
+    // reused flight number can mismatch) is matched to the leg being tracked, not a previous one.
+    private static (string? origin, string? dest) LegOf(List<FlightState> flights)
+    {
+        var f = flights.FirstOrDefault(x => !string.IsNullOrEmpty(x.Origin) && !string.IsNullOrEmpty(x.Destination))
+                ?? flights.FirstOrDefault(x => !string.IsNullOrEmpty(x.Origin) || !string.IsNullOrEmpty(x.Destination));
+        return (f?.Origin, f?.Destination);
+    }
+
     // Pick the flight record that represents the *current* leg. A callsign is reused across the
     // day (e.g. ORD-BNA earlier, then ORD-XNA), and a just-landed prior leg lingers in memory with
     // a stale position; ordering by "has position" would surface that dead leg and show its
@@ -281,7 +296,8 @@ static class TrackRoutes
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
         var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
         var tfms = ctx.Tfms.FindByCallsign(cs);
-        var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs).FirstOrDefault();
+        var (legO, legD) = LegOf(flights);
+        var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs, legO, legD).FirstOrDefault();
         if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null && tfdm0 == null)
             return $"Nothing is tracking {cs} right now.";
 
@@ -524,7 +540,8 @@ static class TrackRoutes
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
         var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
         var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
-        var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs).FirstOrDefault();
+        var (legO, legD) = LegOf(flights);
+        var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs, legO, legD).FirstOrDefault();
         var best = flights
             .OrderByDescending(f => string.IsNullOrEmpty(f.ControllingFacility) ? 0 : 1)
             .ThenBy(f => f.Gufi, StringComparer.Ordinal).FirstOrDefault();
@@ -692,7 +709,8 @@ static class TrackRoutes
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
         var asdexTracks = ctx.Asdex.TracksByCallsign(cs);
         var tfms = ctx.Tfms.FindByCallsign(cs);
-        var tfdmFlights = ctx.Tfdm.FlightsByCallsign(cs);
+        var (legO, legD) = LegOf(flights);
+        var tfdmFlights = ctx.Tfdm.FlightsByCallsign(cs, legO, legD);
         var ho = new List<FlightEvent>();
         string? edct = null;
         foreach (var f in flights) { foreach (var e in f.GetAllEvents()) if (HandoffSources.Contains(e.Source)) ho.Add(e); if (edct == null && !string.IsNullOrEmpty(f.EdctTime)) edct = f.EdctTime; }

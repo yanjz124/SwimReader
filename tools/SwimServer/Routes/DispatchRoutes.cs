@@ -73,17 +73,25 @@ static class DispatchRoutes
                     var registration = Str(el, "registration");
                     bool ladd = LaddService.ShouldMask(callsign, registration, reveal);
 
-                    var route = Str(el, "route");
+                    // Prefer the pilot's FILED route (before ATC/ERAM amendments) — the ERAM
+                    // "route" is expanded with radials/fixes (…OTT248017…) that don't refile cleanly.
+                    var route = Str(el, "originalRoute");
+                    if (route.Length == 0) route = Str(el, "route");
                     if (route.Length == 0) continue;                       // want a filable plan
                     var recType = Str(el, "aircraftType");
                     if (acType.Length > 0 && !recType.Contains(acType, StringComparison.OrdinalIgnoreCase)) continue;
 
                     var origin = Str(el, "origin");
                     var destination = Str(el, "destination");
-                    // Best-effort live TDLS gate/runway for the departure airport.
-                    string? gate = null, runway = null;
-                    var td = ctx.Tdls.FindAircraft(origin, callsign);
-                    if (td is { } t) { gate = t.gate; runway = t.runway; }
+                    // Gate/runway: prefer what was captured into history at save time (works for
+                    // old flights); fall back to live TDLS for flights still in the current session.
+                    string? gate = Str(el, "gate") is { Length: > 0 } sg ? sg : null;
+                    string? runway = Str(el, "runway") is { Length: > 0 } sr ? sr : null;
+                    if (gate is null)
+                    {
+                        var td = ctx.Tdls.FindAircraft(origin, callsign);
+                        if (td is { } t) { gate = t.gate; runway ??= t.runway; }
+                    }
 
                     seen.Add(callsign);
                     var (airl, fltnum) = ladd ? ("", "") : SplitCallsign(callsign);
@@ -100,7 +108,9 @@ static class DispatchRoutes
                         equip = Str(el, "equipmentQualifier"),
                         rules = Str(el, "flightRules"),
                         route,
-                        cruise = Num(el, "assignedAltitude") ?? Num(el, "requestedAltitude"),
+                        // FILED cruise, not the last-known ERAM altitude: pilot's requested → first
+                        // ATC-assigned (snapshotted) → current assigned as a last resort.
+                        cruise = Num(el, "requestedAltitude") ?? Num(el, "originalAssignedAltitude") ?? Num(el, "assignedAltitude"),
                         altn = Str(el, "alternateAerodrome"),
                         star = Str(el, "STAR"),
                         remarks = Str(el, "remarks"),

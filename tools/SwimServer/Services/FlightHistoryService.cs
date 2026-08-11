@@ -26,7 +26,11 @@ static class FlightHistoryService
         catch { return 2L * 1024 * 1024 * 1024; }
     }
 
-    public static void Save(FlightState f, string historyDir, JsonSerializerOptions historyJsonOpts)
+    // gate/runway are captured from live TDLS at save time — a departed flight is still in
+    // TDLS when SFDPS purges it, but won't be days later when the route finder searches
+    // history, so we bake it in now (SFDPS itself carries no gate).
+    public static void Save(FlightState f, string historyDir, JsonSerializerOptions historyJsonOpts,
+        string? gate = null, string? runway = null)
     {
         try
         {
@@ -39,7 +43,7 @@ static class FlightHistoryService
                 f.Origin, f.Destination, f.AircraftType, f.Registration, f.WakeCategory,
                 f.ModeSCode, f.EquipmentQualifier, f.AircraftPerformance, f.Squawk, f.AssignedSquawk, f.FlightRules, f.FlightType,
                 f.Route, f.OriginalRoute, f.STAR, f.Remarks,
-                f.AssignedAltitude, f.AssignedVfr, f.BlockFloor, f.BlockCeiling,
+                f.AssignedAltitude, f.OriginalAssignedAltitude, f.AssignedVfr, f.BlockFloor, f.BlockCeiling,
                 f.InterimAltitude, f.ReportedAltitude,
                 f.Latitude, f.Longitude, f.GroundSpeed, f.RequestedSpeed, f.RequestedAltitude,
                 f.ControllingFacility, f.ControllingSector, f.ReportingFacility,
@@ -54,6 +58,7 @@ static class FlightHistoryService
                 f.EdctTime,
                 f.CoordinationFix, f.CoordinationTime,
                 f.AlternateAerodrome,
+                gate, runway,   // captured from live TDLS at save time (see param note)
                 LastSeen = f.LastSeen.ToString("o"),
                 Events = f.GetAllEvents().Select(e => new { e.Time, e.Source, e.Centre, e.Summary }).ToArray()
             };

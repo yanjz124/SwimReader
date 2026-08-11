@@ -37,6 +37,10 @@ class TelegramBridge
     // When the flight went quiet (UTC). After it stays quiet for LandedTtl we end the subscription —
     // the follow is meant to last for the flight, not a fixed clock. Cleared if it revives (radar gap).
     private readonly ConcurrentDictionary<string, DateTime> _quietAt = new();
+    // High-water mark of the last TDLS (CPDLC clearance / departure event) message time we've pushed
+    // per (chat, callsign), so each new one is sent once. Baselined at subscribe to "now" so a fresh
+    // follow doesn't replay old clearances.
+    private readonly ConcurrentDictionary<string, DateTime> _lastTdlsAt = new();
     // A followed flight is auto-unsubscribed once it has been landed/quiet this long. The confirmation
     // window past the initial StaleSec silence lets a brief en-route radar gap recover before we stop.
     private static readonly TimeSpan LandedTtl = TimeSpan.FromMinutes(10);
@@ -199,6 +203,8 @@ class TelegramBridge
                     var age = TrackRoutes.TelegramPositionAgeSec(_ctx, cs);
                     if (age != null && age > StaleSec) { _quiet[key] = 0; _quietAt[key] = DateTime.UtcNow; }
                     else { _quiet.TryRemove(key, out _); _quietAt.TryRemove(key, out _); }
+                    // Baseline TDLS high-water to the latest existing message so we push only NEW ones.
+                    _lastTdlsAt[key] = TrackRoutes.TelegramTdlsLatestTime(_ctx, cs);
                 }
                 SaveSubs();
                 await Send(chat, "Subscribed to " + string.Join(", ", css) + ". Updates when they change; auto-stops once it lands.\n\n" + MultiSummary(css), html: true);
@@ -293,6 +299,9 @@ class TelegramBridge
                 _lastRoute[key] = TrackRoutes.TelegramRoute(_ctx, cs) ?? "";
                 var age = TrackRoutes.TelegramPositionAgeSec(_ctx, cs);
                 if (age != null && age > StaleSec) _quiet[key] = 0; else _quiet.TryRemove(key, out _);
+                // Only re-baseline TDLS if we have no mark yet (fresh restore) — don't move it
+                // backward/forward on an existing follow, or we'd resend or skip clearances.
+                _lastTdlsAt.TryAdd(key, TrackRoutes.TelegramTdlsLatestTime(_ctx, cs));
             }
         }
 
@@ -307,6 +316,18 @@ class TelegramBridge
                     foreach (var cs in callsigns)
                     {
                         var key = Key(chat, cs);
+
+                        // Push any NEW TDLS message (CPDLC clearance / departure event) verbatim.
+                        // Independent of the quiet/landed gate below — these fire pre-departure.
+                        if (_lastTdlsAt.TryGetValue(key, out var tdlsSince))
+                        {
+                            var tmsgs = TrackRoutes.TelegramTdlsSince(_ctx, cs, tdlsSince);
+                            if (tmsgs.Count > 0)
+                            {
+                                foreach (var (_, text) in tmsgs) await Send(chat, text, html: true);
+                                _lastTdlsAt[key] = tmsgs[^1].time;
+                            }
+                        }
 
                         // Auto-expire a follow after 24h so subscriptions don't accumulate forever.
                         if (_subAt.TryGetValue(key, out var since) && DateTime.UtcNow - since > SubTtl)
@@ -387,6 +408,7 @@ class TelegramBridge
         _subAt.TryRemove(key, out _);
         _quiet.TryRemove(key, out _);
         _quietAt.TryRemove(key, out _);
+        _lastTdlsAt.TryRemove(key, out _);
     }
 
     private async Task Send(long chat, string text, bool html = false)

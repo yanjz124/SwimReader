@@ -563,6 +563,45 @@ static class TrackRoutes
         return sb.ToString();
     }
 
+    /// <summary>Latest existing TDLS message time for a callsign (baseline so a new follow
+    /// doesn't replay old clearances). DateTime.MinValue if the flight has no TDLS messages.</summary>
+    internal static DateTime TelegramTdlsLatestTime(ServerContext ctx, string cs) =>
+        ctx.Tdls.AircraftByCallsign(cs).SelectMany(a => a.MessagesTyped()).Select(m => m.Time)
+            .DefaultIfEmpty(DateTime.MinValue).Max();
+
+    /// <summary>New TDLS messages (CPDLC clearances / departure events) for a callsign strictly
+    /// after <paramref name="since"/>, oldest-first, each formatted (Telegram HTML) for a push.</summary>
+    internal static List<(DateTime time, string text)> TelegramTdlsSince(ServerContext ctx, string cs, DateTime since)
+    {
+        var outp = new List<(DateTime, string)>();
+        foreach (var ac in ctx.Tdls.AircraftByCallsign(cs))
+        {
+            foreach (var m in ac.MessagesTyped().Where(m => m.Time > since))
+            {
+                string text;
+                if (m.Type == "DEPART")
+                {
+                    var parts = new List<string>();
+                    if (!string.IsNullOrEmpty(m.Gate)) parts.Add("Gate " + m.Gate);
+                    if (m.ClearanceTime != null) parts.Add("CLR " + HmDt(m.ClearanceTime));
+                    if (m.TaxiTime != null) parts.Add("TAXI " + HmDt(m.TaxiTime));
+                    if (m.TakeoffTime != null) parts.Add("T/O " + HmDt(m.TakeoffTime));
+                    if (!string.IsNullOrEmpty(m.TakeoffRunway)) parts.Add("RWY " + m.TakeoffRunway);
+                    text = $"📋 <b>{He(cs)} · TDLS departure</b> ({He(ac.Airport)}) {m.Time:HHmm}Z"
+                         + (parts.Count > 0 ? "\n" + He(string.Join(" · ", parts)) : "");
+                }
+                else
+                {
+                    // CPDLC clearance/departure text — strip the leading 3-digit sequence number.
+                    var body = System.Text.RegularExpressions.Regex.Replace(m.DataBody ?? "", @"^\d{3}\s*", "").Trim();
+                    text = $"📡 <b>{He(cs)} · CPDLC</b> ({He(ac.Airport)}) {m.Time:HHmm}Z\n<pre>{He(body)}</pre>";
+                }
+                outp.Add((m.Time, text));
+            }
+        }
+        return outp.OrderBy(x => x.Item1).ToList();
+    }
+
     private static string He(string? s) => WebUtility.HtmlEncode(s ?? "");
     private static void AddU(List<string> l, string? x) { if (!string.IsNullOrEmpty(x) && !l.Contains(x)) l.Add(x); }
     private static string Hm(string? iso)

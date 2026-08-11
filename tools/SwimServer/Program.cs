@@ -304,16 +304,28 @@ var app = builder.Build();
 // and this runs before the auth gate so credentials are never prompted over HTTP.
 app.Use(async (ctx, next) =>
 {
-    var proto = ctx.Request.Headers["X-Forwarded-Proto"].ToString();
-    if (proto.Length > 0
-        && !proto.Contains("https", StringComparison.OrdinalIgnoreCase)
-        && ctx.Request.Host.HasValue)
+    // Cloudflare signals the client's original scheme two ways; different zones populate
+    // them differently, so honour both. CF-Visitor is JSON like {"scheme":"http"}.
+    var xfp = ctx.Request.Headers["X-Forwarded-Proto"].ToString();
+    var cfv = ctx.Request.Headers["CF-Visitor"].ToString();
+    var cameOverHttp = xfp.Equals("http", StringComparison.OrdinalIgnoreCase)
+                       || cfv.Contains("\"scheme\":\"http\"", StringComparison.OrdinalIgnoreCase);
+    if (cameOverHttp && ctx.Request.Host.HasValue)
     {
         ctx.Response.Redirect("https://" + ctx.Request.Host.Value + ctx.Request.Path + ctx.Request.QueryString, permanent: true);
         return;
     }
     await next();
 });
+
+// Temporary: reveal what proxy scheme headers each hostname forwards (to debug HTTP→HTTPS).
+app.MapGet("/api/debug/proto", (HttpContext c) => Results.Json(new
+{
+    host = c.Request.Host.Value,
+    scheme = c.Request.Scheme,
+    xForwardedProto = c.Request.Headers["X-Forwarded-Proto"].ToString(),
+    cfVisitor = c.Request.Headers["CF-Visitor"].ToString(),
+}));
 
 // ── Private-access gate ──────────────────────────────────────────────────────
 // HTTP Basic Auth scoped to ONE public hostname (e.g. a personal swim.<domain>

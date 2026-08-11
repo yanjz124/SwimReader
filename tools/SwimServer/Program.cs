@@ -318,15 +318,6 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
-// Temporary: reveal what proxy scheme headers each hostname forwards (to debug HTTP→HTTPS).
-app.MapGet("/api/debug/proto", (HttpContext c) => Results.Json(new
-{
-    host = c.Request.Host.Value,
-    scheme = c.Request.Scheme,
-    xForwardedProto = c.Request.Headers["X-Forwarded-Proto"].ToString(),
-    cfVisitor = c.Request.Headers["CF-Visitor"].ToString(),
-}));
-
 // ── Private-access gate ──────────────────────────────────────────────────────
 // HTTP Basic Auth scoped to ONE public hostname (e.g. a personal swim.<domain>
 // deployment). Keeps the tool private (personal use, no public distribution)

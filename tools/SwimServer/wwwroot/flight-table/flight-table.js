@@ -1024,12 +1024,44 @@ function toggleIcaoFpl() {
     renderActiveTab();
 }
 
+// Robust clipboard copy. On mobile / iOS Safari navigator.clipboard is often
+// unavailable or rejects silently (no secure-context gesture, permissions policy,
+// not-focused) — the old code had no .catch/fallback so the button did nothing.
+// Try the async API, fall back to a temporary textarea + execCommand (with the
+// iOS-safe range selection), and always give the button visible feedback.
+function copyText(text, btn, okLabel, idleLabel) {
+    okLabel = okLabel || 'COPIED';
+    idleLabel = idleLabel || (btn ? btn.textContent : '');
+    const flash = label => { if (btn) { btn.textContent = label; setTimeout(() => { btn.textContent = idleLabel; }, 1500); } };
+    const legacy = () => {
+        let ok = false;
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.cssText = 'position:fixed;top:0;left:-9999px;';
+            document.body.appendChild(ta);
+            const range = document.createRange();
+            range.selectNodeContents(ta);
+            const sel = window.getSelection();
+            sel.removeAllRanges(); sel.addRange(range);
+            ta.setSelectionRange(0, text.length);   // iOS needs an explicit range
+            ok = document.execCommand('copy');
+            sel.removeAllRanges();
+            document.body.removeChild(ta);
+        } catch (e) { ok = false; }
+        flash(ok ? okLabel : '✕ COPY FAILED');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => flash(okLabel)).catch(legacy);
+    } else {
+        legacy();
+    }
+}
+
 function copyIcaoFpl(ev) {
     ev.stopPropagation();
-    navigator.clipboard.writeText(lastIcaoText).then(() => {
-        ev.target.textContent = 'COPIED';
-        setTimeout(() => { ev.target.textContent = 'COPY'; }, 1500);
-    });
+    copyText(lastIcaoText, ev.currentTarget || ev.target, 'COPIED', 'COPY');
 }
 
 // ── Fake fuel endurance — VATSIM prefile ONLY ────────────────────────────────
@@ -1265,11 +1297,7 @@ function copyXml(ev, key) {
     ev.stopPropagation();
     const xml = xmlCache[key];
     if (!xml) return;
-    navigator.clipboard.writeText(xml).then(() => {
-        const btn = ev.target;
-        btn.textContent = 'Copied';
-        setTimeout(() => btn.textContent = 'Copy', 1500);
-    });
+    copyText(xml, ev.currentTarget || ev.target, 'Copied', 'Copy');
 }
 
 function highlightXml(xml) {

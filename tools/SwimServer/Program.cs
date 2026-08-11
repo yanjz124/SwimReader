@@ -295,6 +295,26 @@ asdex.SetWebRoot(builder.Environment.WebRootPath);
 asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), long.MaxValue, replayDir);
 var app = builder.Build();
 
+// ── Force HTTPS for external traffic ─────────────────────────────────────────
+// Cloudflare terminates TLS and forwards over the tunnel as plain HTTP, tagging the
+// user's original scheme in X-Forwarded-Proto. If someone reached us over http://
+// (a typed/bookmarked link → Safari "Not Secure"), 301 them to https:// so secure-
+// context features (clipboard, service workers, etc.) work. Requests with no such
+// header — direct local access and tunnel health checks on 127.0.0.1 — are untouched,
+// and this runs before the auth gate so credentials are never prompted over HTTP.
+app.Use(async (ctx, next) =>
+{
+    var proto = ctx.Request.Headers["X-Forwarded-Proto"].ToString();
+    if (proto.Length > 0
+        && !proto.Contains("https", StringComparison.OrdinalIgnoreCase)
+        && ctx.Request.Host.HasValue)
+    {
+        ctx.Response.Redirect("https://" + ctx.Request.Host.Value + ctx.Request.Path + ctx.Request.QueryString, permanent: true);
+        return;
+    }
+    await next();
+});
+
 // ── Private-access gate ──────────────────────────────────────────────────────
 // HTTP Basic Auth scoped to ONE public hostname (e.g. a personal swim.<domain>
 // deployment). Keeps the tool private (personal use, no public distribution)

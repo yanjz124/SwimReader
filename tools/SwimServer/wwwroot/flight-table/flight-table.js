@@ -1038,8 +1038,11 @@ function copyText(text, btn, okLabel, idleLabel) {
         try {
             const ta = document.createElement('textarea');
             ta.value = text;
-            ta.setAttribute('readonly', '');
-            ta.style.cssText = 'position:fixed;top:0;left:-9999px;';
+            // iOS Safari WON'T copy from a readonly field via execCommand — it must be
+            // contentEditable + not readonly. font-size:16px stops the focus-zoom. This
+            // path also works over plain HTTP, where navigator.clipboard is unavailable.
+            ta.contentEditable = 'true';
+            ta.style.cssText = 'position:fixed;top:0;left:-9999px;font-size:16px;';
             document.body.appendChild(ta);
             const range = document.createRange();
             range.selectNodeContents(ta);
@@ -1050,7 +1053,11 @@ function copyText(text, btn, okLabel, idleLabel) {
             sel.removeAllRanges();
             document.body.removeChild(ta);
         } catch (e) { ok = false; }
-        flash(ok ? okLabel : '✕ COPY FAILED');
+        if (ok) { flash(okLabel); return; }
+        // Last resort (e.g. some iOS-over-HTTP cases): surface the text so it can be
+        // selected + copied by hand, and hint that HTTPS makes one-tap copy work.
+        flash('✕ COPY FAILED');
+        try { window.prompt('Copy failed — select all, then copy. (One-tap copy needs HTTPS.)', text); } catch (e) {}
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => flash(okLabel)).catch(legacy);

@@ -58,6 +58,16 @@ public sealed class ClientConnectionManager
         }
     }
 
+    /// <summary>True if at least one client is connected for the given facility. Lets the
+    /// adapter skip per-facility work (e.g. Conflict Alert) that has no viewer.</summary>
+    public bool HasClients(string facility)
+    {
+        foreach (var kvp in _clients)
+            if (string.Equals(kvp.Value.Facility, facility, StringComparison.OrdinalIgnoreCase))
+                return true;
+        return false;
+    }
+
     /// <summary>
     /// Broadcast a JSON line only to clients subscribed to the given facility.
     /// If facility is null, broadcasts to all clients.

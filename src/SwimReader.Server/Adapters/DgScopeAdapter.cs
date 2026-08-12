@@ -47,6 +47,15 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> _facilityTracks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> _facilityFlightPlans = new(StringComparer.OrdinalIgnoreCase);
 
+    // ── Conflict Alert (STCA) — DGScope's engine, run server-side ─────────────────
+    // Per-facility live track snapshot fed to the ported DGScope ConflictAlertSystem. The
+    // result (the set of conflicting track guids per facility) is broadcast as a UT=4 line
+    // that the JS STARS scope consumes; real DGScope clients ignore the unknown update type.
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, Ca.Aircraft>> _caTracks
+        = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Ca.ConflictAlertSystem _ca = new();
+    private readonly Ca.Radar _caRadar = new();
+
     /// <summary>
     /// Recent positions per track (newest-first, capped), injected into the
     /// snapshot so a freshly-connected scope renders a history trail instantly
@@ -128,6 +137,9 @@ public sealed class DgScopeAdapter : BackgroundService
 
         // Start stale purge timer
         _ = PurgeLoopAsync(stoppingToken);
+
+        // Start the server-side Conflict Alert loop (DGScope's engine over the live feed).
+        _ = CaLoopAsync(stoppingToken);
 
         await foreach (var evt in _eventBus.SubscribeAsync("DgScopeAdapter", stoppingToken))
         {
@@ -312,7 +324,63 @@ public sealed class DgScopeAdapter : BackgroundService
         if (update.Location is not null)
             RecordHistory(guid, update.Location, track.Timestamp);
 
+        if (track.Facility is not null)
+            UpdateCaTrack(track.Facility, guid, update, track.IsPseudo);
+
         return JsonSerializer.Serialize(update, JsonOptions);
+    }
+
+    // Keep the CA snapshot for this facility current from the track update we just built.
+    private void UpdateCaTrack(string facility, Guid guid, DstarsTrackUpdate u, bool pseudo)
+    {
+        var facTracks = _caTracks.GetOrAdd(facility, _ => new());
+        var a = facTracks.GetOrAdd(guid, g => new Ca.Aircraft { Guid = g });
+        if (u.Location is not null)
+            a.Location = new Ca.GeoPoint(u.Location.Latitude, u.Location.Longitude);
+        a.PrimaryOnly = pseudo;
+        if (u.Altitude is not null)
+        {
+            a.Altitude.TrueAltitude = u.Altitude.Value;
+            // DstarsAltitude.AltitudeType (0=Pressure,1=True,2=Unknown) maps 1:1 onto Ca.AltitudeType.
+            a.Altitude.AltitudeType = (Ca.AltitudeType)u.Altitude.AltitudeType;
+        }
+        a.GroundSpeed = u.GroundSpeed ?? a.GroundSpeed;
+        a.GroundTrack = u.GroundTrack ?? a.GroundTrack;
+        // The DGScope feed carries no sector ownership, so every correlated (non-pseudo,
+        // Mode-C) track is a CA candidate; the engine's valid/altitude filter gates the rest.
+        a.Owned = true;
+        a.Associated = true;
+        a.Deleted = false;
+        a.LastSeen = DateTime.UtcNow;
+    }
+
+    // Run DGScope's Conflict Alert engine once per second per viewed facility and broadcast the
+    // conflicting-guid set (UT=4). Purges tracks unseen for 30 s (mirrors the position purge).
+    private async Task CaLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await Task.Delay(1000, ct); }
+            catch (OperationCanceledException) { break; }
+            try
+            {
+                var cutoff = DateTime.UtcNow.AddSeconds(-30);
+                foreach (var (facility, facTracks) in _caTracks)
+                {
+                    foreach (var (g, a) in facTracks)
+                        if (a.LastSeen < cutoff) facTracks.TryRemove(g, out _);
+                    if (facTracks.IsEmpty) { _caTracks.TryRemove(facility, out _); continue; }
+                    if (!_clients.HasClients(facility)) continue;   // no viewer — skip the O(n²) pass
+
+                    var list = facTracks.Values.ToList();
+                    _ca.Calculate(list, _caRadar);
+                    var guids = list.Where(a => a.ConflictAlert).Select(a => a.Guid.ToString()).ToArray();
+                    var json = JsonSerializer.Serialize(new { UpdateType = 4, Guids = guids }, JsonOptions);
+                    _clients.Broadcast(json, facility);   // JS STARS scope reads it; DGScope ignores UT=4
+                }
+            }
+            catch (Exception ex) { _logger.LogError(ex, "CA loop error"); }
+        }
     }
 
     /// <summary>

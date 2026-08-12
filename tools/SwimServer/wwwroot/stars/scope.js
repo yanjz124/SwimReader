@@ -710,6 +710,21 @@ function handleUpdate(u) {
     case 1: handleFlightPlanUpdate(u); return;
     case 2: handleDeletion(u); return;
     // 3 = weather, handled in Phase 10
+    case 4: handleCA(u); return;   // server-side Conflict Alert (DGScope's engine)
+  }
+}
+
+// Server-side Conflict Alert (STCA). SwimReader.Server runs DGScope's actual
+// ConflictAlertSystem over the live feed and sends the current set of conflicting track
+// guids as UpdateType 4. We drive t._stca from it — the authoritative DGScope computation
+// replacing the local scanSTCA reimplementation. Real DGScope clients ignore UT=4.
+function handleCA(u) {
+  _lastServerCA = Date.now();
+  const set = new Set((u.Guids || []).map(String));
+  for (const [guid, t] of tracks) {
+    const on = set.has(String(guid));
+    if (t._stca && !on) t._caAcked = false;   // conflict cleared → reset the ack
+    t._stca = on;
   }
 }
 
@@ -1729,7 +1744,10 @@ window.starsAckCA = (track) => {
   }
   return true;
 };
-setInterval(scanSTCA, 1000);
+// CA is now computed server-side by DGScope's ConflictAlertSystem (see handleCA / UT=4).
+// The local scan is kept only as a fallback if no server CA arrives within a few seconds.
+let _lastServerCA = 0;
+setInterval(() => { if (Date.now() - _lastServerCA > 4000) scanSTCA(); }, 1000);
 
 // ── Radar sweep model (DGScope Radar.cs) — match it exactly, don't invent ────
 // UpdateRate = 1: the sweep rotates once per SECOND, so each target's DISPLAYED

@@ -13,6 +13,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Runway threshold DB (OurAirports, public domain, trimmed) — drives CA
+         suppression-corridor generation. Copied next to the binary. -->
+    <Content Include="Ca\data\runways.csv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
   </ItemGroup>
 

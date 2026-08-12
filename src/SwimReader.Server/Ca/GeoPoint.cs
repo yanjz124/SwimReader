@@ -35,6 +35,22 @@ public class GeoPoint
         return dist;
     }
 
+    // Ported byte-faithful from DGScope GeoPoint.BearingTo: initial great-circle
+    // bearing (degrees) from THIS point to From.
+    public double BearingTo(GeoPoint From)
+    {
+        double λ1 = Longitude * (Math.PI / 180);
+        double λ2 = From.Longitude * (Math.PI / 180);
+        double φ1 = Latitude * (Math.PI / 180);
+        double φ2 = From.Latitude * (Math.PI / 180);
+
+        double y = Math.Sin(λ2 - λ1) * Math.Cos(φ2);
+        double x = Math.Cos(φ1) * Math.Sin(φ2) -
+                  Math.Sin(φ1) * Math.Cos(φ2) * Math.Cos(λ2 - λ1);
+        double θ = Math.Atan2(y, x);
+        return (θ * (180 / Math.PI)) % 360; // in degrees
+    }
+
     public GeoPoint FromPoint(double Distance, double Bearing) => FromPoint(this, Distance, Bearing);
 
     public static GeoPoint FromPoint(GeoPoint Origin, double Distance, double Bearing)

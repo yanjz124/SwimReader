@@ -56,6 +56,14 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly Ca.ConflictAlertSystem _ca = new();
     private readonly Ca.Radar _caRadar = new();
 
+    // Runway DB → CA final-approach suppression corridors, so CA stops false-triggering on
+    // sequenced/parallel approaches. DGScope loads these from the facility profile; we auto-build
+    // them per facility from the runways near its live tracks (cached; rebuilt when the box drifts).
+    private readonly Ca.RunwayDb _runways = Ca.RunwayDb.Load(
+        Path.Combine(AppContext.BaseDirectory, "Ca", "data", "runways.csv"));
+    private readonly ConcurrentDictionary<string, (string BoxKey, DateTime Built, List<Ca.CASuppressionVolume> Vols)>
+        _caSuppression = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Recent positions per track (newest-first, capped), injected into the
     /// snapshot so a freshly-connected scope renders a history trail instantly
@@ -373,6 +381,7 @@ public sealed class DgScopeAdapter : BackgroundService
                     if (!_clients.HasClients(facility)) continue;   // no viewer — skip the O(n²) pass
 
                     var list = facTracks.Values.ToList();
+                    _ca.SuppressionVolumes = SuppressionVolumesFor(facility, list);
                     _ca.Calculate(list, _caRadar);
                     var guids = list.Where(a => a.ConflictAlert).Select(a => a.Guid.ToString()).ToArray();
                     var json = JsonSerializer.Serialize(new { UpdateType = 4, Guids = guids }, JsonOptions);
@@ -381,6 +390,39 @@ public sealed class DgScopeAdapter : BackgroundService
             }
             catch (Exception ex) { _logger.LogError(ex, "CA loop error"); }
         }
+    }
+
+    private static readonly List<Ca.CASuppressionVolume> _emptyVols = new();
+
+    // Build (or reuse) the CA final-approach suppression corridors for a facility. Corridors come from
+    // runway ends near the facility's live approach traffic; cached and only rebuilt when the coarse
+    // bounding box drifts or after 5 min. Faithful to DGScope's CASuppressionVolume geometry/defaults.
+    private List<Ca.CASuppressionVolume> SuppressionVolumesFor(string facility, List<Ca.Aircraft> list)
+    {
+        // Bounding box of approach-relevant tracks (positioned, below 18,000 ft).
+        double minLat = double.MaxValue, minLon = double.MaxValue, maxLat = double.MinValue, maxLon = double.MinValue;
+        int n = 0;
+        foreach (var a in list)
+        {
+            if (a.Location is null) continue;
+            if (a.Altitude.AltitudeType != Ca.AltitudeType.Unknown && a.TrueAltitude > 18000) continue;
+            minLat = Math.Min(minLat, a.Location.Latitude); maxLat = Math.Max(maxLat, a.Location.Latitude);
+            minLon = Math.Min(minLon, a.Location.Longitude); maxLon = Math.Max(maxLon, a.Location.Longitude);
+            n++;
+        }
+        if (n == 0) return _emptyVols;
+        // Expand by ~0.75° (~45 NM) so a 30 NM corridor whose threshold sits just outside the
+        // track cluster is still included, and round to 0.5° so the cache key is stable.
+        minLat = Math.Floor((minLat - 0.75) * 2) / 2; minLon = Math.Floor((minLon - 0.75) * 2) / 2;
+        maxLat = Math.Ceiling((maxLat + 0.75) * 2) / 2; maxLon = Math.Ceiling((maxLon + 0.75) * 2) / 2;
+        string boxKey = $"{minLat:F1},{minLon:F1},{maxLat:F1},{maxLon:F1}";
+        if (_caSuppression.TryGetValue(facility, out var cached)
+            && cached.BoxKey == boxKey && (DateTime.UtcNow - cached.Built) < TimeSpan.FromMinutes(5))
+            return cached.Vols;
+        var vols = _runways.VolumesInBox(minLat, minLon, maxLat, maxLon);
+        _caSuppression[facility] = (boxKey, DateTime.UtcNow, vols);
+        _logger.LogInformation("CA suppression: {N} corridors for {Facility} (box {Box})", vols.Count, facility, boxKey);
+        return vols;
     }
 
     /// <summary>

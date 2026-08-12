@@ -19,14 +19,6 @@ public class Altitude
 /// signatures stay identical to DGScope. SweptLocation just returns the current position.</summary>
 public class Radar { }
 
-/// <summary>Stub — no CA suppression volumes wired for the STDDS feed yet (DGScope loads them
-/// from adaptation). Present so ConflictAlertSystem's suppression code path stays byte-identical.</summary>
-public class CASuppressionVolume
-{
-    public bool Active { get; set; }
-    public bool Contains(GeoPoint loc, int altitude) => false;
-}
-
 /// <summary>Stand-in for DGScope's Aircraft, exposing only the members ConflictAlertSystem
 /// touches. One instance per live DGScope-feed track; DgScopeAdapter keeps its fields current.</summary>
 public class Aircraft

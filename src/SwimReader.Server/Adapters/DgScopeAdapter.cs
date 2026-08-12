@@ -61,7 +61,8 @@ public sealed class DgScopeAdapter : BackgroundService
     // them per facility from the runways near its live tracks (cached; rebuilt when the box drifts).
     private readonly Ca.RunwayDb _runways = Ca.RunwayDb.Load(
         Path.Combine(AppContext.BaseDirectory, "Ca", "data", "runways.csv"));
-    private readonly ConcurrentDictionary<string, (string BoxKey, DateTime Built, List<Ca.CASuppressionVolume> Vols)>
+    private readonly ConcurrentDictionary<string,
+        (double MinLat, double MinLon, double MaxLat, double MaxLon, DateTime Built, List<Ca.CASuppressionVolume> Vols)>
         _caSuppression = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -412,16 +413,26 @@ public sealed class DgScopeAdapter : BackgroundService
         }
         if (n == 0) return _emptyVols;
         // Expand by ~0.75° (~45 NM) so a 30 NM corridor whose threshold sits just outside the
-        // track cluster is still included, and round to 0.5° so the cache key is stable.
+        // track cluster is still included, and round to 0.5° so the box is stable.
         minLat = Math.Floor((minLat - 0.75) * 2) / 2; minLon = Math.Floor((minLon - 0.75) * 2) / 2;
         maxLat = Math.Ceiling((maxLat + 0.75) * 2) / 2; maxLon = Math.Ceiling((maxLon + 0.75) * 2) / 2;
-        string boxKey = $"{minLat:F1},{minLon:F1},{maxLat:F1},{maxLon:F1}";
-        if (_caSuppression.TryGetValue(facility, out var cached)
-            && cached.BoxKey == boxKey && (DateTime.UtcNow - cached.Built) < TimeSpan.FromMinutes(5))
+
+        bool fresh = _caSuppression.TryGetValue(facility, out var cached)
+                     && (DateTime.UtcNow - cached.Built) < TimeSpan.FromMinutes(5);
+        // Reuse while the fresh cached box still contains the current one — makes the box grow
+        // monotonically (a track leaving never forces a rebuild), so outliers don't thrash it.
+        if (fresh && minLat >= cached.MinLat && minLon >= cached.MinLon
+                  && maxLat <= cached.MaxLat && maxLon <= cached.MaxLon)
             return cached.Vols;
+        if (fresh)   // union with the still-fresh box so we only ever expand
+        {
+            minLat = Math.Min(minLat, cached.MinLat); minLon = Math.Min(minLon, cached.MinLon);
+            maxLat = Math.Max(maxLat, cached.MaxLat); maxLon = Math.Max(maxLon, cached.MaxLon);
+        }
         var vols = _runways.VolumesInBox(minLat, minLon, maxLat, maxLon);
-        _caSuppression[facility] = (boxKey, DateTime.UtcNow, vols);
-        _logger.LogInformation("CA suppression: {N} corridors for {Facility} (box {Box})", vols.Count, facility, boxKey);
+        _caSuppression[facility] = (minLat, minLon, maxLat, maxLon, DateTime.UtcNow, vols);
+        _logger.LogDebug("CA suppression: {N} corridors for {Facility} (box {A},{B},{C},{D})",
+            vols.Count, facility, minLat, minLon, maxLat, maxLon);
         return vols;
     }
 

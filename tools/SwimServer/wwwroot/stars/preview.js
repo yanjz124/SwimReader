@@ -1102,11 +1102,23 @@ function cmdRecenter(parts) {
 //   1 token, 4 chars no '+': aircraft Type        (cs:2655-2668)
 //   1 token, 2 chars: PendingHandoff (initiate)   (cs:2669-2683)
 //   tempLine end-target (RBL):                    (cs:2607-2626) TODO(rbl)
+const SPC_CODES = ["HJ", "RF", "EM", "MI", "LL", "OD", "ME", "MF", "LN"];
 function cmdDefaultClickedPlane(line, clicked) {
+  const token = line.trim();
+  // Manual SPC / alert tag — RadarWindow.cs:1619-1635. A 2-letter SPC code + slew toggles it on
+  // the track. Checked BEFORE the ownership/flight-plan guards (DGScope runs this before the
+  // default switch) so it works on any slewed track. Cleared by slewing again with the same code.
+  if (token.length === 2 && SPC_CODES.includes(token.toUpperCase())) {
+    const code = token.toUpperCase();
+    if (!Array.isArray(clicked._spc)) clicked._spc = [];
+    const i = clicked._spc.indexOf(code);
+    if (i >= 0) clicked._spc.splice(i, 1);
+    else { clicked._spc.push(code); clicked._spcAcked = false; }   // new SPC blinks until acked
+    return;
+  }
   const fp = trackToFp.get(clicked.Guid);
   if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
   if (!fp) return;
-  const token = line.trim();
   // RadarWindow.cs:2646-2702 default catchall on clicked plane. Length-based
   // routing: 3 → scratchpad, 4+'+' → scratchpad2, 4 → aircraft type, 2 →
   // PendingHandoff. STATE-field mutations (PendingHandoff) bump _updatedAt
@@ -1145,6 +1157,17 @@ window.previewSetClickedPlane = (plane) => {
     // (CRC STARS § STCA: "click either of the two tracks") — silences the alert
     // and turns CA solid red. Consumes the click.
     if (plane && plane._stca && !plane._caAcked && window.starsAckCA?.(plane)) {
+      refreshPreview();
+      return;
+    }
+    // Slewing a track with an unacknowledged SPC / MSAW alert acknowledges it first
+    // (RadarWindow.cs:2885-2909) — the annotation stops blinking. Consumes the click.
+    const beaconSpcSquawks = ["7500", "7600", "7700", "7777", "7400"];
+    const hasSpc = plane && (beaconSpcSquawks.includes(plane.Squawk) ||
+      (Array.isArray(plane._spc) && plane._spc.length) || plane._msaw);
+    if (hasSpc && !plane._spcAcked) {
+      plane._spcAcked = true;
+      if (plane._msaw) plane._laAcked = true;
       refreshPreview();
       return;
     }

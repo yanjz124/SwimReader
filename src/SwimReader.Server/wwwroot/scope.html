@@ -1,0 +1,197 @@
+<!doctype html>
+<!-- DGScope-port scope shell — clean full-screen canvas, nothing else on it (matches stars/scope.html).
+     Profile chosen on the home screen (index.html) and passed via ?profile=NAME. Optional ?test=1
+     injects a few aircraft for target rendering when there's no live feed. Errors go to the console. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>DGScope Scope</title>
+<style>
+  @font-face { font-family: "FixedDemiBold"; src: url("./assets/FixedDemiBold.otf") format("opentype"); font-display: block; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #scope { display: block; background: #000; cursor: crosshair; }
+  /* Hidden unless something throws — appears only on error (not chrome). */
+  #err { position: fixed; bottom: 0; left: 0; right: 0; max-height: 45%; overflow: auto; display: none;
+         background: rgba(40,0,0,.92); color: #f88; font: 12px monospace; padding: 6px; white-space: pre-wrap; z-index: 99; }
+</style>
+</head>
+<body>
+<canvas id="scope"></canvas>
+<pre id="err"></pre>
+<script type="module">
+import { RadarWindow } from "./src/RadarWindow.js";
+import { GameWindow, Key, Keyboard, Mouse, ButtonState } from "./src/_shims/OpenTK.js";
+import { GL } from "./src/_shims/GL.js";
+import { Point, PointF } from "./src/_shims/SystemDrawing.js";
+import { GeoPoint } from "./src/GeoPoint.js";
+import { connectFeed } from "./dstars-feed.js";
+import { loadVideoMaps } from "./dstars-maps.js";
+
+const FONT = "FixedDemiBold";
+const params = new URLSearchParams(location.search);
+const _seen = new Map();
+function err(where, e) {
+  console.error(`[dstars ${where}]`, e);
+  const el = document.getElementById("err");
+  const sig = `[${where}] ${e && e.message ? e.message : e}`;
+  const prev = _seen.get(sig);
+  if (prev) { prev.n++; prev.node.textContent = `${sig}  (×${prev.n})\n${(e && e.stack) || ""}`; return; }
+  el.style.display = "block";
+  const node = document.createElement("div"); node.textContent = `${sig}  (×1)\n${(e && e.stack) || ""}`;
+  el.appendChild(node); _seen.set(sig, { n: 1, node });
+}
+window.addEventListener("error", (ev) => err("window", ev.error || ev.message));
+window.addEventListener("unhandledrejection", (ev) => err("promise", ev.reason));
+
+const canvas = document.getElementById("scope");
+const gw = new GameWindow(window.innerWidth, window.innerHeight);
+GL.init(canvas.getContext("2d"), canvas.width, canvas.height);
+let rw = null;
+
+function resize() {
+  const w = Math.floor(window.innerWidth), h = Math.floor(window.innerHeight);
+  canvas.width = w; canvas.height = h;
+  gw.ClientSize = { Width: w, Height: h }; gw.Size = { Width: w, Height: h };
+  GL.vpW = w; GL.vpH = h;
+}
+window.addEventListener("resize", () => { try { resize(); } catch (e) { err("resize", e); } });
+
+function applyFont() {
+  if (!rw) return;
+  try { rw.FontName = FONT; rw.DCBFontName = FONT;
+    for (const ac of RadarWindow.Aircraft) { ac.DataBlock?.ForceRedraw?.(); ac.PositionIndicator?.ForceRedraw?.(); }
+  } catch (e) { err("font", e); }
+}
+
+// ---- facility-config profile loader (host-side adapter for the [XmlElement]/AsArgb mapping) ----
+const COLOR_MAP = { BackColor:"BackColorAsArgb", RangeRingColor:"RangeRingColorAsArgb", VideoMapLineColor:"VideoMapLineColorAsArgb",
+  VideoMapLineColorB:"VideoMapBLineColorAsArgb", ReturnColor:"ReturnColorAsArgb", BeaconColor:"BeaconColorAsArgb",
+  DataBlockColor:"DataBlockColorAsArgb", PointoutColor:"PointoutColorAsArgb", LDBColor:"LDBColorAsArgb",
+  SelectedColor:"SelectedColorAsArgb", OwnedColor:"OwnedColorAsArgb", DataBlockEmergencyColor:"DataBlockEmergencyColorAsArgb",
+  RBLColor:"RBLColorAsArgb", TPAColor:"TPAColorAsArgb" };
+const SCALARS = { MaxAltitude:["MaxAltitude","int"], MinAltitude:["MinAltitude","int"], MinAltitudeAssociated:["MinAltitudeAssociated","int"],
+  MaxAltitudeAssociated:["MaxAltitudeAssociated","int"], ScreenRotation:["ScreenRotation","num"], FadeTime:["FadeTime","num"],
+  LostTargetSeconds:["LostTargetSeconds","num"], AircraftGCInterval:["AircraftGCInterval","int"], ShowRangeRings:["ShowRangeRings","bool"],
+  TPASize:["TPASize","bool"], HistoryFade:["HistoryFade","bool"], PrimaryFade:["PrimaryFade","bool"], InvertMouse:["InvertMouse","bool"],
+  InvertKeyboard:["InvertKeyboard","bool"] };
+const POINTF = { StatusLocation:1, PreviewLocation:1, LACAMCIListLocation:1 }; // <X>/<Y> → PointF
+const coerce = (t, k) => k === "bool" ? t.trim() === "true" : k === "int" ? Math.trunc(+t) : +t;
+const geo = (el) => new GeoPoint(+el.querySelector("Latitude").textContent, +el.querySelector("Longitude").textContent);
+const pointf = (el) => new PointF(+el.querySelector("X").textContent, +el.querySelector("Y").textContent);
+
+function applyPrefSet(el) {
+  const ps = rw.CurrentPrefSet; if (!ps) return;
+  for (const c of el.children) {
+    const tag = c.tagName, txt = c.textContent;
+    try {
+      if (tag === "ScreenCenterPoint" || tag === "RangeRingLocation") ps[tag] = geo(c);
+      else if (tag === "Range" || tag === "RangeRingSpacing" || tag === "LeaderLength") ps[tag] = Math.trunc(+txt);
+      else if (tag === "PTLLength") ps[tag] = +txt;
+      else if (tag === "ScopeCentered" || tag === "RangeRingsCentered" || tag === "DCBVisible") ps[tag] = txt.trim() === "true";
+      else if (tag === "Brightness") for (const b of c.children) { const v = +b.textContent; if (!isNaN(v)) ps.Brightness[b.tagName] = v; }
+    } catch (e) { err("prefset:" + tag, e); }
+  }
+  rw.CurrentPrefSet = ps;
+}
+function applyProfile(xmlText) {
+  if (!rw) return;
+  const root = new DOMParser().parseFromString(xmlText, "application/xml").documentElement;
+  for (const el of root.children) {
+    const tag = el.tagName, txt = el.textContent;
+    try {
+      if (COLOR_MAP[tag]) rw[COLOR_MAP[tag]] = Math.trunc(+txt);
+      else if (SCALARS[tag]) { const [p, k] = SCALARS[tag]; rw[p] = coerce(txt, k); }
+      else if (POINTF[tag]) rw[tag] = pointf(el);
+      else if (tag === "HomeLocation") rw.HomeLocation = geo(el);
+      else if (tag === "ActiveRadarSite") rw.ActiveRadarSite = Math.trunc(+txt); // -1 → FUSED
+      else if (tag === "ShowLACAMCIList") rw.ShowLACAMCIList = txt.trim() === "true";
+      else if (tag === "QuickLookList") rw.QuickLookList = [...el.querySelectorAll("string")].map(s => s.textContent);
+      else if (tag === "CurrentPrefSet") applyPrefSet(el);
+    } catch (e) { err("profile:" + tag, e); }
+  }
+  try { const hc = [...root.querySelectorAll(":scope > HistoryColors")].map(e => Math.trunc(+e.textContent));
+        if (hc.length && "HistoryColorsAsArgb" in rw) rw.HistoryColorsAsArgb = hc; } catch {}
+  applyFont();
+}
+async function loadProfile(name) {
+  if (!name) return;
+  try { const r = await fetch(`./profiles/${name}.xml`); if (!r.ok) throw new Error(r.status); applyProfile(await r.text()); }
+  catch (e) { err("loadProfile", e); }
+}
+
+// ---- input wiring (DOM → OpenTK shims) ----
+const codeToKey = (code) => {
+  if (/^Key([A-Z])$/.test(code)) return Key[code[3]];
+  if (/^Digit(\d)$/.test(code)) return Key["Number" + code[5]];
+  if (/^Numpad(\d)$/.test(code)) return Key["Keypad" + code[6]];
+  const m = { Enter:Key.Enter, NumpadEnter:Key.KeypadEnter, Escape:Key.Escape, Space:Key.Space, Backspace:Key.BackSpace,
+    Tab:Key.Tab, End:Key.End, Period:Key.Period, NumpadDecimal:Key.KeypadPeriod, Slash:Key.Slash, NumpadDivide:Key.KeypadDivide,
+    NumpadMultiply:Key.KeypadMultiply, NumpadAdd:Key.KeypadPlus, Equal:Key.Plus, Minus:Key.Minus, Backquote:Key.Grave,
+    Quote:Key.Quote, BracketLeft:Key.BracketLeft, BracketRight:Key.BracketRight, PageDown:Key.PageDown,
+    ControlLeft:Key.ControlLeft, ControlRight:Key.ControlRight, ShiftLeft:Key.ShiftLeft, ShiftRight:Key.ShiftRight,
+    AltLeft:Key.AltLeft, AltRight:Key.AltRight };
+  if (m[code] !== undefined) return m[code];
+  const fn = /^F(\d{1,2})$/.exec(code); return fn ? Key["F" + fn[1]] : Key.Unknown;
+};
+let mx = 0, my = 0;
+canvas.addEventListener("mousemove", (ev) => {
+  const r = canvas.getBoundingClientRect(); const nx = ev.clientX - r.left, ny = ev.clientY - r.top;
+  const dx = nx - mx, dy = ny - my; mx = nx; my = ny; Mouse._state.X = nx; Mouse._state.Y = ny;
+  try { gw.MouseMove.Invoke(gw, { Position: new Point(nx, ny), XDelta: dx, YDelta: dy, Mouse: { IsAnyButtonDown: ev.buttons !== 0,
+    LeftButton:(ev.buttons&1)?ButtonState.Pressed:ButtonState.Released, RightButton:(ev.buttons&2)?ButtonState.Pressed:ButtonState.Released,
+    MiddleButton:(ev.buttons&4)?ButtonState.Pressed:ButtonState.Released } }); } catch (e) { err("mousemove", e); }
+});
+canvas.addEventListener("mousedown", (ev) => { ev.preventDefault();
+  const b = ev.button===0?"LeftButton":ev.button===1?"MiddleButton":"RightButton";
+  const mouse = { LeftButton:ButtonState.Released, MiddleButton:ButtonState.Released, RightButton:ButtonState.Released }; mouse[b]=ButtonState.Pressed;
+  try { gw.MouseDown.Invoke(gw, { Position: new Point(mx, my), Mouse: mouse }); } catch (e) { err("mousedown", e); } });
+canvas.addEventListener("mouseup", () => { try { gw.MouseUp.Invoke(gw, {}); } catch (e) { err("mouseup", e); } });
+canvas.addEventListener("contextmenu", (ev) => ev.preventDefault());
+canvas.addEventListener("wheel", (ev) => { ev.preventDefault(); try { gw.MouseWheel.Invoke(gw, { Delta: ev.deltaY < 0 ? 1 : -1 }); } catch (e) { err("wheel", e); } }, { passive: false });
+window.addEventListener("keydown", (ev) => {
+  try { gw.KeyDown.Invoke(gw, { Key: codeToKey(ev.code), Control: ev.ctrlKey, Shift: ev.shiftKey, Alt: ev.altKey });
+    if (!ev.ctrlKey && !ev.altKey && ev.key && ev.key.length === 1) gw.KeyPress.Invoke(gw, { KeyChar: ev.key });
+  } catch (e) { err("keydown", e); }
+  if (["Enter","Backspace","Slash","Space"].includes(ev.code) || ev.ctrlKey) ev.preventDefault();
+});
+window.addEventListener("keyup", (ev) => { try { gw.KeyUp.Invoke(gw, { Key: codeToKey(ev.code) }); } catch (e) { err("keyup", e); } });
+
+async function injectTestTargets() {
+  const { Aircraft } = await import("./src/Aircraft.js");
+  const home = rw.HomeLocation;
+  for (let i = 0; i < 6; i++) {
+    const ac = new Aircraft();
+    try { ac.Location = new GeoPoint(home.Latitude + Math.cos(i) * 0.35, home.Longitude + Math.sin(i) * 0.35); } catch {}
+    ac.Callsign = "TEST" + (i + 1); ac.FlightPlanCallsign = "TEST" + (i + 1); ac.Squawk = "12" + (30 + i);
+    try { ac.LastMessageTime = RadarWindow.CurrentTime; } catch {}
+    RadarWindow.Aircraft.Add(ac);
+  }
+}
+
+// ---- boot ----
+(async () => {
+  try { const face = new FontFace(FONT, 'url("./assets/FixedDemiBold.otf")'); await face.load(); document.fonts.add(face); await document.fonts.ready; }
+  catch (e) { err("font-load", e); }
+  try { rw = new RadarWindow(gw); resize(); applyFont(); gw.Load.Invoke(gw, {}); } catch (e) { err("construct", e); }
+  await loadProfile(params.get("profile"));
+  if (params.get("test")) { try { await injectTestTargets(); } catch (e) { err("test", e); } }
+  // Live SwimServer sources (same-origin under /dscope): video maps + dSTARS target feed.
+  const artcc = params.get("artcc"), facility = params.get("facility");
+  if (artcc && facility) { try { const r = await loadVideoMaps(rw, artcc, facility); console.log(`[dstars] ${r.loaded} video maps loaded`); } catch (e) { err("maps", e); } }
+  if (facility) { try { connectFeed(facility, (s) => console.log("[dstars feed]", s.connected ? "LIVE" : ("off" + (s.error ? " — " + s.error : "")))); } catch (e) { err("feed", e); } }
+  let last = performance.now(), running = !!rw;
+  let debugLogInterval = setInterval(() => {
+    if (RadarWindow.Aircraft && RadarWindow.Aircraft.length > 0) {
+      const ac = RadarWindow.Aircraft[0];
+      console.log(`[debug] First aircraft: Callsign=${ac.Callsign} Associated=${ac.Associated} FDB=${ac.FDB} PrimaryOnly=${ac.PrimaryOnly} DataBlock=${ac.DataBlock ? 'exists' : 'null'}`);
+    }
+  }, 5000);
+  (function frame(now) {
+    const dt = Math.max(1e-4, (now - last) / 1000); last = now;
+    if (running) { try { gw.RenderFrame.Invoke(gw, { Time: dt }); } catch (e) { running = false; err("RenderFrame", e); } }
+    requestAnimationFrame(frame);
+  })(performance.now());
+})();
+</script>
+</body>
+</html>

@@ -129,9 +129,10 @@ SwimReader.Server.Adapters.DgScopePersistence.Load(
     app.Services.GetRequiredService<ILogger<SwimReader.Server.Adapters.DgScopeAdapter>>());
 
 app.UseWebSockets();
+app.UseStaticFiles();
 app.MapControllers();
 
-app.MapGet("/", () => "SwimReader STDDS Server - GET /health for status, /dstars/{facility}/updates for data");
+app.MapFallbackToFile("index.html");
 
 app.Run();
 

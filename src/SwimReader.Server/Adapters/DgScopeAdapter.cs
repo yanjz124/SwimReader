@@ -134,6 +134,8 @@ public sealed class DgScopeAdapter : BackgroundService
             try
             {
                 var (json, facility, kind, guid) = ConvertToJsonWithFacility(evt);
+                if (kind == "F")
+                    _logger.LogInformation("Flight plan event: {Guid} {Facility} -> {Json}", guid, facility, json ?? "(suppressed-duplicate)");
                 if (json is not null)
                 {
                     // Cache the last broadcast value per Guid so a freshly-
@@ -280,6 +282,13 @@ public sealed class DgScopeAdapter : BackgroundService
         var guid = _trackState.GetTrackGuid(track.ModeSCode, track.TrackNumber, track.Facility);
         var positionOnly = track.IsPseudo;
 
+        // Use enriched callsign if available (from flight plans)
+        var callsign = track.Callsign;
+        if (string.IsNullOrEmpty(callsign))
+        {
+            _enrichedCallsigns.TryGetValue(guid, out callsign);
+        }
+
         var update = new DstarsTrackUpdate
         {
             Guid = guid,
@@ -302,7 +311,7 @@ public sealed class DgScopeAdapter : BackgroundService
             GroundTrack = track.GroundTrackDegrees,
             VerticalRate = positionOnly ? null : track.VerticalRateFpm,
             Squawk = positionOnly ? null : track.Squawk,
-            Callsign = positionOnly ? null : track.Callsign,
+            Callsign = positionOnly ? null : callsign,
             ModeSCode = positionOnly ? null : track.ModeSCode,
             Ident = track.Ident,
             IsOnGround = positionOnly ? null : track.IsOnGround,

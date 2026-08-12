@@ -221,14 +221,23 @@ static class EramRoutes
                 if (!inner.ContainsKey(sec) && ctx.SectorTracker.WasRecentlyActive(fac, sec))
                     inner[sec] = (0, 0, 0);
             }
-            // NAS-code → real TRACON id (e.g. "BBB" → "C90"), same resolution the track/Telegram
-            // paths use. TraconIds is keyed "ARTCC/starsId"; drop the ARTCC prefix for a bare lookup
-            // (TRACON NAS codes are distinct enough that cross-ARTCC collisions are negligible).
-            var bareTracon = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            // NAS-code → real TRACON id (e.g. "ORT" → "C90"), same resolution the track/Telegram paths
+            // use (they have the reporting ARTCC for context; the sectors view groups by code alone).
+            // TraconIds is keyed "ARTCC/starsId"; build a bare code→id map but resolve ONLY codes that
+            // map to a single real id across ARTCCs — a code that means different TRACONs in different
+            // centres (or a pseudo controlling-facility) is ambiguous, so we leave it unresolved.
+            var bareTracon = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
             foreach (var kv in ctx.TraconIds)
             {
                 var i = kv.Key.IndexOf('/');
-                if (i > 0) bareTracon[kv.Key[(i + 1)..]] = kv.Value;
+                if (i <= 0) continue;
+                var code = kv.Key[(i + 1)..];
+                if (bareTracon.TryGetValue(code, out var existing))
+                {
+                    if (existing != null && !string.Equals(existing, kv.Value, StringComparison.OrdinalIgnoreCase))
+                        bareTracon[code] = null;   // maps to >1 real id ⇒ ambiguous
+                }
+                else bareTracon[code] = kv.Value;
             }
             var rows = byFac
                 .Select(kv => new

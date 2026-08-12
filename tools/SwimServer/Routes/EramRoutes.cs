@@ -221,10 +221,22 @@ static class EramRoutes
                 if (!inner.ContainsKey(sec) && ctx.SectorTracker.WasRecentlyActive(fac, sec))
                     inner[sec] = (0, 0, 0);
             }
+            // NAS-code → real TRACON id (e.g. "BBB" → "C90"), same resolution the track/Telegram
+            // paths use. TraconIds is keyed "ARTCC/starsId"; drop the ARTCC prefix for a bare lookup
+            // (TRACON NAS codes are distinct enough that cross-ARTCC collisions are negligible).
+            var bareTracon = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in ctx.TraconIds)
+            {
+                var i = kv.Key.IndexOf('/');
+                if (i > 0) bareTracon[kv.Key[(i + 1)..]] = kv.Value;
+            }
             var rows = byFac
                 .Select(kv => new
                 {
                     facility    = kv.Key,
+                    // Real TRACON id when this facility is an ERAM NAS code (null otherwise).
+                    traconId    = bareTracon.TryGetValue(kv.Key, out var rid)
+                                  && !string.Equals(rid, kv.Key, StringComparison.OrdinalIgnoreCase) ? rid : null,
                     totalTracks = kv.Value.Values.Sum(v => v.tracks),
                     sectorCount = kv.Value.Count(s => s.Value.tracks > 0),
                     sectors = kv.Value

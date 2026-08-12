@@ -338,8 +338,10 @@ function renderList() {
     // Other facilities
     html += other.map(d => {
         const active = selected === d.facility ? " active" : "";
+        // Resolve an ERAM NAS code (e.g. BBB) to its real TRACON id (e.g. C90) as a subline.
+        const nameHtml = d.traconId ? `${d.facility}<span class="city">${d.traconId}</span>` : d.facility;
         return `<div class="row${active}" data-fac="${d.facility}">
-            <span class="name">${d.facility}</span>
+            <span class="name">${nameHtml}</span>
             <span class="stats"><span class="tracks">${d.totalTracks}</span> trk · ${d.sectorCount} sec</span>
         </div>`;
     }).join("");
@@ -421,7 +423,7 @@ function renderDetail() {
 
         if (h2 && summary && grid) {
             const rangeLabel = rangeMin >= 60 ? `${rangeMin / 60} h` : `${rangeMin} min`;
-            h2.innerHTML = `${d.facility} <small>${d.sectors.length} known position(s) &middot; sparkline ${rangeLabel} (oldest → now)</small>`;
+            h2.innerHTML = `${d.facility}${d.traconId ? ' · ' + d.traconId : ''} <small>${d.sectors.length} known position(s) &middot; sparkline ${rangeLabel} (oldest → now)</small>`;
             summary.innerHTML = `
                 <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
                 <div class="stat accent"><b>${d.sectorCount}</b>Active controllers</div>
@@ -449,7 +451,7 @@ function renderDetail() {
         const rangeLabel = rangeMin >= 60 ? `${rangeMin / 60} h` : `${rangeMin} min`;
         const showMap = PRIORITY_FACILITIES.includes(d.facility);
         detail.innerHTML = `
-            <h2>${d.facility} <small>${d.sectors.length} known position(s) &middot; sparkline ${rangeLabel} (oldest → now)</small></h2>
+            <h2>${d.facility}${d.traconId ? ' · ' + d.traconId : ''} <small>${d.sectors.length} known position(s) &middot; sparkline ${rangeLabel} (oldest → now)</small></h2>
             <div class="summary">
                 <div class="stat accent"><b>${d.totalTracks}</b>Tracks</div>
                 <div class="stat accent"><b>${d.sectorCount}</b>Active controllers</div>

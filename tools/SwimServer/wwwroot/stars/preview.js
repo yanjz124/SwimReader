@@ -389,6 +389,8 @@ function executeCommand(line, opts = {}) {
     if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }   // cs:1608
     // DeleteFP — terminate the flight-plan association (keep the radar track).
     if (fp) { fp.Owner = null; fp.Callsign = null; fp.AircraftType = null; trackToFp.delete(clicked.Guid); }
+    // Share the drop: DeletionUpdate (cs:1615 FpDeleted → Plane_FpDeleted).
+    window.sendFpUpdate?.(clicked.Guid, { UpdateType: 2 });
     return;
   }
 
@@ -419,6 +421,7 @@ function executeCommand(line, opts = {}) {
     const fp = trackToFp.get(clicked.Guid);
     if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
     if (fp) fp.Scratchpad1 = "";
+    window.sendFpUpdate?.(clicked.Guid, { Scratchpad1: "" });
     return;
   }
 
@@ -427,6 +430,7 @@ function executeCommand(line, opts = {}) {
     const fp = trackToFp.get(clicked.Guid);
     if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
     if (fp) fp.Scratchpad2 = "";
+    window.sendFpUpdate?.(clicked.Guid, { Scratchpad2: "" });
     return;
   }
 
@@ -456,14 +460,18 @@ function executeCommand(line, opts = {}) {
     const fp = trackToFp.get(clicked.Guid);
     if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
     const k = keys[0];
-    if (k.length === 1) { if (fp) fp.Scratchpad1 = ""; return; }
-    if (k.length === 2 && k[1] === "+") { if (fp) fp.Scratchpad2 = ""; return; }
+    if (k.length === 1) { if (fp) fp.Scratchpad1 = ""; window.sendFpUpdate?.(clicked.Guid, { Scratchpad1: "" }); return; }
+    if (k.length === 2 && k[1] === "+") { if (fp) fp.Scratchpad2 = ""; window.sendFpUpdate?.(clicked.Guid, { Scratchpad2: "" }); return; }
     if (k.length >= 2 && k.length <= 5 && k[1] !== "+") {
-      if (fp) fp.Scratchpad1 = k.slice(1).join("");
+      const v = k.slice(1).join("");
+      if (fp) fp.Scratchpad1 = v;
+      window.sendFpUpdate?.(clicked.Guid, { Scratchpad1: v });
       return;
     }
     if (k.length >= 3 && k.length <= 6 && k[1] === "+") {
-      if (fp) fp.Scratchpad2 = k.slice(2).join("");
+      const v = k.slice(2).join("");
+      if (fp) fp.Scratchpad2 = v;
+      window.sendFpUpdate?.(clicked.Guid, { Scratchpad2: v });
       return;
     }
     setResponse("FORMAT");
@@ -804,14 +812,18 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
     if (clickedplane && parts.length === 1) {
       const fp = trackToFp.get(clicked.Guid);
       if (illTrk(clicked, fp)) { setResponse("ILL TRK"); return; }
-      if (k.length === 2) { if (fp) fp.Scratchpad1 = ""; return; }
-      if (k.length === 3 && k[2] === "+") { if (fp) fp.Scratchpad2 = ""; return; }
+      if (k.length === 2) { if (fp) fp.Scratchpad1 = ""; window.sendFpUpdate?.(clicked.Guid, { Scratchpad1: "" }); return; }
+      if (k.length === 3 && k[2] === "+") { if (fp) fp.Scratchpad2 = ""; window.sendFpUpdate?.(clicked.Guid, { Scratchpad2: "" }); return; }
       if (k.length >= 3 && k.length <= 6 && k[2] !== "+") {
-        if (fp) fp.Scratchpad1 = k.slice(2).join("");
+        const v = k.slice(2).join("");
+        if (fp) fp.Scratchpad1 = v;
+        window.sendFpUpdate?.(clicked.Guid, { Scratchpad1: v });
         return;
       }
       if (k.length >= 4 && k.length <= 7 && k[2] === "+") {
-        if (fp) fp.Scratchpad2 = k.slice(3).join("");
+        const v = k.slice(3).join("");
+        if (fp) fp.Scratchpad2 = v;
+        window.sendFpUpdate?.(clicked.Guid, { Scratchpad2: v });
         return;
       }
       setResponse("FORMAT");
@@ -943,14 +955,16 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
       else if (fp?.AssignedSquawk?.trim() === planestring) planes.push({ t, fp });
     }
     if (planes.length !== 1) { setResponse("NO FLIGHT"); return; }
-    const { fp } = planes[0];
+    const { t: ptrk, fp } = planes[0];
     const tok = parts[1];
     if (tok.startsWith("+") && tok.length >= 2 && tok.length <= 5) {
       fp.Scratchpad2 = tok.slice(1);
+      window.sendFpUpdate?.(ptrk.Guid, { Scratchpad2: tok.slice(1) });
       return;
     }
     if (!tok.startsWith("+") && tok.length >= 1 && tok.length <= 4) {
       fp.Scratchpad1 = tok;
+      window.sendFpUpdate?.(ptrk.Guid, { Scratchpad1: tok });
       return;
     }
     setResponse("FORMAT");
@@ -1017,12 +1031,14 @@ function processImpliedLocal(plane) {
     fp.PendingHandoff = null;
     fp._updatedAt = Date.now();   // mergedFp freshness — see handoff.js
     plane._owned = true;
+    window.sendFpUpdate?.(plane.Guid, { Owner: me, PendingHandoff: "" });
     return;
   }
   // 2. RECALL — cs:2718-2722. Clear PendingHandoff. No preview text in DGScope.
   if (fp.Owner === me && fp.PendingHandoff) {
     fp.PendingHandoff = null;
     fp._updatedAt = Date.now();
+    window.sendFpUpdate?.(plane.Guid, { PendingHandoff: "" });
     return;
   }
   // 3. Clear pointout
@@ -1097,19 +1113,23 @@ function cmdDefaultClickedPlane(line, clicked) {
   // so mergedFp's freshest-wins rule doesn't shadow them with stale siblings.
   if (token.length === 3) {
     fp.Scratchpad1 = token;
+    window.sendFpUpdate?.(clicked.Guid, { Scratchpad1: token });
     return;
   }
   if (token.length === 4 && token.endsWith("+")) {
     fp.Scratchpad2 = token.slice(0, 3);
+    window.sendFpUpdate?.(clicked.Guid, { Scratchpad2: token.slice(0, 3) });
     return;
   }
   if (token.length === 4) {
     fp.AircraftType = token;
+    window.sendFpUpdate?.(clicked.Guid, { AircraftType: token });
     return;
   }
   if (token.length === 2) {
     fp.PendingHandoff = token;
     fp._updatedAt = Date.now();
+    window.sendFpUpdate?.(clicked.Guid, { PendingHandoff: token });
     return;
   }
 }

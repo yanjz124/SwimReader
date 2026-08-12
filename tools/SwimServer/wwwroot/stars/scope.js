@@ -669,6 +669,24 @@ function dstarsFacility() {
   return qs.get("dstars") || FACILITY;
 }
 
+// Command channel — POST a partial FlightPlanUpdate to the authoritative Dstars server
+// (SwimReader.Server), exactly like DGScope's ScopeServerClient.Send(). The server records it as a
+// controller override and rebroadcasts the merged FP to every client of the facility, so STARS
+// commands (scratchpad, type, ownership, handoff) actually persist over the read-only feed and are
+// shared. `fields` uses the DGScope FlightPlanUpdate names; "" clears, null/absent = unchanged.
+// UpdateType 2 (in fields.UpdateType) drops all overrides for the track.
+function sendFpUpdate(guid, fields) {
+  if (!guid) return;
+  const body = JSON.stringify(Object.assign({ Guid: guid, UpdateType: 1 }, fields));
+  fetch(`/dstars/${encodeURIComponent(dstarsFacility())}/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    credentials: "omit",
+  }).catch(() => { /* best-effort; local mutation already reflects intent */ });
+}
+window.sendFpUpdate = sendFpUpdate;
+
 async function startDstars() {
   const fac = dstarsFacility();
   const url = `/dstars/${encodeURIComponent(fac)}/updates`;

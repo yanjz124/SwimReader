@@ -206,12 +206,16 @@
       }
       plane._owned = true;
       plane._flashing = false;
+      // Share the accept: Owner=me, PendingHandoff cleared (cs:2714-2716 SendUpdate()).
+      if (window.sendFpUpdate) window.sendFpUpdate(plane.Guid, { Owner: meTcp, PendingHandoff: "" });
       return;
     }
     // 2. RECALL — cs:2718-2722
     if (pi === meTcp && ph) {
       if (fp) { fp.PendingHandoff = null; fp._updatedAt = Date.now(); }
       plane._flashing = false;
+      // Share the recall: PendingHandoff cleared (cs:2720 SendUpdate()).
+      if (window.sendFpUpdate) window.sendFpUpdate(plane.Guid, { PendingHandoff: "" });
       return;
     }
     // 3. Clear pointout — cs:2724-2727

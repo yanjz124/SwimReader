@@ -6,7 +6,7 @@ namespace SwimReader.Server.Adapters;
 /// JSON DTO matching DGScope's FlightPlanUpdate exactly (UpdateType 1).
 /// Property names must match DGScope.Receivers.ScopeServer.FlightPlanUpdate.
 /// </summary>
-public sealed class DstarsFlightPlanUpdate
+public sealed record DstarsFlightPlanUpdate
 {
     public required Guid Guid { get; init; }
     public DateTime TimeStamp { get; init; } = DateTime.UtcNow;

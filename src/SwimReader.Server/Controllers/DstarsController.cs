@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using SwimReader.Server.Adapters;
 using SwimReader.Server.Streaming;
@@ -31,6 +32,34 @@ public sealed class DstarsController : ControllerBase
     /// GET /dstars/{facility}/updates — streams newline-delimited JSON
     /// WS  /dstars/{facility}/updates — WebSocket with same format
     /// </summary>
+    private static readonly JsonSerializerOptions InOpts = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>
+    /// Command channel. A scope client POSTs a partial FlightPlanUpdate/DeletionUpdate here
+    /// (scratchpad/type/owner/pending-handoff) — the same message DGScope's ScopeServerClient sends
+    /// to <c>{baseUrl}update</c>. The server records it as a controller override and rebroadcasts the
+    /// merged flight plan to every client of the facility, so the edit persists over the live feed
+    /// and is shared. This is what makes STARS commands actually take effect.
+    /// </summary>
+    [HttpPost("{facility}/update")]
+    public async Task<IActionResult> PostUpdate(string facility, CancellationToken ct)
+    {
+        ClientFpUpdate? u;
+        try
+        {
+            u = await JsonSerializer.DeserializeAsync<ClientFpUpdate>(Request.Body, InOpts, ct);
+        }
+        catch (JsonException)
+        {
+            return BadRequest("malformed update");
+        }
+        if (u is null || u.Guid == Guid.Empty)
+            return BadRequest("missing guid");
+
+        _adapter.ApplyClientUpdate(facility, u);
+        return Ok();
+    }
+
     [HttpGet("{facility}/updates")]
     public async Task GetUpdates(string facility, CancellationToken ct)
     {

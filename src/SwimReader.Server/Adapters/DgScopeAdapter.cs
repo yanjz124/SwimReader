@@ -47,6 +47,10 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> _facilityTracks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, byte>> _facilityFlightPlans = new(StringComparer.OrdinalIgnoreCase);
 
+    // Controller command overrides (scratchpad/type/owner/handoff) layered on top of the read-only
+    // feed so STARS commands stick and are shared across all clients of a facility. See OverrideStore.
+    private readonly OverrideStore _overrides = new();
+
     // ── Conflict Alert (STCA) — DGScope's engine, run server-side ─────────────────
     // Per-facility live track snapshot fed to the ported DGScope ConflictAlertSystem. The
     // result (the set of conflicting track guids per facility) is broadcast as a UT=4 line
@@ -518,6 +522,10 @@ public sealed class DgScopeAdapter : BackgroundService
             AssociatedTrackGuid = trackGuid
         };
 
+        // Layer any controller command edits over the feed so they persist across TAIS batches.
+        if (_overrides.Get(guid) is { } ov)
+            update = ov.Apply(update);
+
         var json = JsonSerializer.Serialize(update, JsonOptions);
 
         // Dedup: TAIS sends full batches every ~5s with all tracks, so the same FP
@@ -529,6 +537,48 @@ public sealed class DgScopeAdapter : BackgroundService
         _lastFpJsonOut[guid] = json;     // store full JSON for snapshot replay
 
         return json;
+    }
+
+    /// <summary>
+    /// Apply a controller command POSTed by a scope client (<c>POST /dstars/{facility}/update</c>):
+    /// record the override and immediately rebroadcast the merged flight plan to every client of the
+    /// facility, so the edit sticks over the read-only feed and is shared. UpdateType 2 clears the
+    /// override. Mirrors DGScope's client→server FlightPlanUpdate/DeletionUpdate POST.
+    /// </summary>
+    public void ApplyClientUpdate(string facility, ClientFpUpdate u)
+    {
+        if (u.Guid == Guid.Empty) return;
+
+        if (u.UpdateType == 2)
+            _overrides.Remove(u.Guid);       // revert to the raw feed on the next FP rebuild
+        else
+            _overrides.Apply(u.Guid, u);
+
+        // Rebuild the merged FP from the last feed-derived FP (if we've seen one) and broadcast now.
+        // The cached base already has any prior override baked in; a removed override self-heals on
+        // the next TAIS batch (~5 s) when ConvertFlightPlan rebuilds from the raw feed.
+        DstarsFlightPlanUpdate? merged = null;
+        if (_lastFpJsonOut.TryGetValue(u.Guid, out var baseJson))
+        {
+            var baseDto = JsonSerializer.Deserialize<DstarsFlightPlanUpdate>(baseJson, JsonOptions);
+            if (baseDto is not null)
+                merged = _overrides.Get(u.Guid) is { } ov ? ov.Apply(baseDto) : baseDto;
+        }
+        merged ??= new DstarsFlightPlanUpdate
+        {
+            Guid = u.Guid,
+            Scratchpad1 = u.Scratchpad1 ?? "",
+            Scratchpad2 = u.Scratchpad2 ?? "",
+            AircraftType = u.AircraftType,
+            Owner = u.Owner,
+            PendingHandoff = u.PendingHandoff ?? "",
+        };
+
+        merged = merged with { TimeStamp = DateTime.UtcNow };
+        var json = JsonSerializer.Serialize(merged, JsonOptions);
+        _lastFpJsonOut[u.Guid] = json;
+        _lastFpJson[u.Guid] = BuildFpContentKey(merged);
+        _clients.BroadcastTracked(json, facility, u.Guid);
     }
 
     /// <summary>
@@ -655,6 +705,7 @@ public sealed class DgScopeAdapter : BackgroundService
                     _trackHistoryTime.TryRemove(guid, out _);
                     _taisHasCallsign.TryRemove(guid, out _);
                     _enrichedCallsigns.TryRemove(guid, out _);
+                    _overrides.Remove(guid);
                     if (facility is not null)
                     {
                         if (_facilityTracks.TryGetValue(facility, out var ft)) ft.TryRemove(guid, out _);

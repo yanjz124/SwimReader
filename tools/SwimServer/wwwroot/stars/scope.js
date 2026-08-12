@@ -767,10 +767,30 @@ function handleTrackUpdate(u) {
     t.Location = u.Location;
     t.lastPosUpdate = t.lastUpdate;
     if (fresh || moved) t.lastMoveT = t.lastUpdate;
+    // C# SetLocation behavior: reset extrapolation state to new location and time
+    t._extrapolatedpos = { Latitude: u.Location.Latitude, Longitude: u.Location.Longitude };
+    t._lastLocationExtrapolateTime = t.lastUpdate;
   }
   if (u.Altitude)      t.Altitude = u.Altitude;
   if (u.GroundSpeed != null)  t.GroundSpeed = u.GroundSpeed;
-  if (u.GroundTrack != null)  t.GroundTrack = u.GroundTrack;
+  if (u.GroundTrack != null) {
+    // Calculate rate of turn from track change (C# SetTrack logic - exact replica)
+    if (t.GroundTrack != null) {
+      let diff = u.GroundTrack - t.GroundTrack;
+      if (Math.abs(diff) > 180) {
+        if (diff > 0)
+          diff = 360 - diff;  // Turn left (shorter path)
+        else
+          diff = diff + 360;  // Turn right (shorter path)
+      }
+      const timeSinceLast = (t.lastUpdate - (t._lastTrackUpdateTime ?? t.lastUpdate)) / 1000;
+      if (timeSinceLast > 0) {
+        t._rateOfTurn = diff / timeSinceLast;
+      }
+    }
+    t.GroundTrack = u.GroundTrack;
+    t._lastTrackUpdateTime = t.lastUpdate;
+  }
   if (u.VerticalRate != null) t.VerticalRate = u.VerticalRate;
   if (u.Squawk != null)       t.Squawk = u.Squawk;
   if (u.Callsign != null)     t.Callsign = u.Callsign;
@@ -853,31 +873,44 @@ function isCoasting(t) {
   return (Date.now() - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate)) > 24000; // 2 × 12s scan
 }
 
-// ── Velocity extrapolation (RadarWindow.cs:displayPosition + Aircraft.ExtrapolatePosition)
-// Between scans we project the target along GroundTrack at GroundSpeed knots
-// from the last reported Location. Matches the WPF ExtrapolatePosition path
-// approximated for the time-delta since lastUpdate.
+// ── Velocity extrapolation (Aircraft.ExtrapolatePosition from scope-master C#)
+// Accumulating extrapolation that mutates state, matching the original C# behavior.
 function extrapolatedPosition(t) {
   if (!t.Location) return null;
-  // No coast-freeze: DGScope's ScanTarget extrapolates continuously every sweep
-  // (Radar.cs:104) right up until the track is hidden at LostTargetSeconds — it
-  // has no coast state. Freezing at 24s then snapping when a delayed fix lands
-  // is exactly the intermittent "lag then jump" artifact, so we don't do it.
   if (t.GroundSpeed == null || t.GroundTrack == null) return t.Location;
-  // Extrapolate from the last position fix (Aircraft.cs:884 uses the position
-  // extrapolate time, not message time).
-  const ageS = (Date.now() - (t.lastPosUpdate ?? t.lastUpdate)) / 1000;
-  if (ageS < 0.05) return t.Location;
-  // 1 NM = 1/60 degree latitude. Apply GroundTrack-bearing offset.
-  const distNM = (t.GroundSpeed * ageS) / 3600;
-  const θ = t.GroundTrack * Math.PI / 180;
-  const dLat = (distNM * Math.cos(θ)) / 60;
-  const latFactor = Math.cos(t.Location.Latitude * Math.PI / 180);
-  const dLon = (distNM * Math.sin(θ)) / (60 * latFactor);
-  return {
-    Latitude: t.Location.Latitude + dLat,
-    Longitude: t.Location.Longitude + dLon,
+
+  // Initialize on first call after position update
+  if (!t._extrapolatedpos) {
+    t._extrapolatedpos = { Latitude: t.Location.Latitude, Longitude: t.Location.Longitude };
+    // Use position update time, not current time (like C# SetLocation does)
+    t._lastLocationExtrapolateTime = t.lastPosUpdate ?? Date.now();
+  }
+
+  const now = Date.now();
+  const ageHours = (now - t._lastLocationExtrapolateTime) / 3600000;
+  const miles = (t.GroundSpeed * ageHours);
+
+  // Get track (with rate of turn if available)
+  const rateOfTurn = t._rateOfTurn ?? 0;
+  let track = t.GroundTrack;
+  if (Math.abs(rateOfTurn) <= 5) {
+    track = (t.GroundTrack + ((rateOfTurn / 2) * (now - t._lastLocationExtrapolateTime) / 1000)) % 360;
+  }
+
+  // Project from accumulated position along track
+  const θ = track * Math.PI / 180;
+  const dLat = (miles * Math.cos(θ)) / 60;
+  const latFactor = Math.cos(t._extrapolatedpos.Latitude * Math.PI / 180);
+  const dLon = (miles * Math.sin(θ)) / (60 * latFactor);
+
+  // Accumulate: update stored position
+  t._extrapolatedpos = {
+    Latitude: t._extrapolatedpos.Latitude + dLat,
+    Longitude: t._extrapolatedpos.Longitude + dLon,
   };
+  t._lastLocationExtrapolateTime = now;
+
+  return t._extrapolatedpos;
 }
 
 // ── HistoryColors — RadarWindow.cs:235 default array ───────────────────────
@@ -907,18 +940,26 @@ function tickHistory(t, posNow) {
 }
 
 function drawHistory(t) {
-  // History rendering — RadarWindow.cs:6171-6175 (RadarType.FUSED history
-  // branch): small filled circle, size FMATargetSymbols.Radius * pixelScale.
-  // ForeColor cycles through HistoryColors by slot (cs:5564 + 5561-5562
-  // last-color clamp). Brightness.History applies (cs:6174).
-  // Cull index >= HistoryNum per cs:6073.
-  if (!t._history || t._history.length === 0) return;
-  const max = Math.min(t._history.length, prefSet.HistoryNum);
-  for (let i = 0; i < max; i++) {
-    const p = geoToScreen(t._history[i]);
+  // Exact replica of C# history rendering (RadarWindow.cs:6171-6175)
+  // Draw History array with proper colors from TargetReturn objects
+  // Colors change by position in array, dot disappears when removed from position 9
+  if (!t.History) return;
+
+  for (let i = 0; i < t.History.length; i++) {
+    const historyReturn = t.History[i];
+    if (!historyReturn || !historyReturn.GeoLocation) continue;
+
+    const p = geoToScreen(historyReturn.GeoLocation);
     if (p.x < -4 || p.x > view.W + 4 || p.y < -4 || p.y > view.H + 4) continue;
-    const c = HISTORY_COLORS[Math.min(i, HISTORY_COLORS.length - 1)];
-    ctx.fillStyle = adjusted(c, prefSet.Brightness.History);
+
+    // Brightness decreases with array position: compress range for better visibility
+    // Position 0 = 80%, position 9 = 35% (less extreme fade)
+    const fadeFactor = 0.35 + (0.45 * (1 - i / (prefSet.HistoryNum - 1)));
+    const brightness = Math.round(prefSet.Brightness.History * fadeFactor);
+
+    // Use ForeColor from TargetReturn object
+    const c = historyReturn.ForeColor || COLORS.Return;
+    ctx.fillStyle = adjusted(c, brightness);
     ctx.beginPath();
     ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
     ctx.fill();
@@ -1574,11 +1615,19 @@ function drawPosition(t, posNow) {
   const px = p.x | 0, py = p.y | 0;
 
   // ── Primary target return — RadarWindow.cs:6134-6175 (RadarType.FUSED) ──
-  // Non-PrimaryOnly: filled circle, primarycolor (ReturnColor blue), radius
-  // = TargetExtentSymbols.TargetWidth/2 ≈ 3px at default scale (cs:6138-6140).
-  // PrimaryTargets brightness per cs:6076. PrimaryOnly + history variants
-  // not yet ported (square shape via GL polygon at cs:6155-6164).
-  ctx.fillStyle = adjusted(COLORS.Return, prefSet.Brightness.PrimaryTargets);
+  // Draw current TargetReturn with its assigned color and fade (from C# sweep logic)
+  const now = Date.now();
+  let brightness = prefSet.Brightness.PrimaryTargets;
+  if (t.TargetReturn?.Fading && t.TargetReturn?.FadeTime) {
+    const ageMs = now - (t.TargetReturn._createdAt ?? now);
+    const fadeMs = t.TargetReturn.FadeTime * 1000;
+    if (ageMs < fadeMs) {
+      const fadeRatio = 1 - (ageMs / fadeMs);
+      brightness = Math.round(brightness * fadeRatio);
+    }
+  }
+  const targetColor = t.TargetReturn?.ForeColor || COLORS.Return;
+  ctx.fillStyle = adjusted(targetColor, brightness);
   ctx.beginPath();
   ctx.arc(px, py, 3, 0, Math.PI * 2);
   ctx.fill();
@@ -1767,41 +1816,147 @@ window.starsAckCA = (track) => {
 let _lastServerCA = 0;
 setInterval(() => { if (Date.now() - _lastServerCA > 4000) scanSTCA(); }, 1000);
 
-// ── Radar sweep model (DGScope Radar.cs) — match it exactly, don't invent ────
-// UpdateRate = 1: the sweep rotates once per SECOND, so each target's DISPLAYED
-// position is updated ~1 Hz to its ExtrapolatePosition(now) (Radar.cs:95-110) —
-// a discrete 1 Hz step, NOT continuous 60 fps. A history dot is shifted in every
-// HistoryRate seconds at the swept position (RadarWindow.cs:5509-5542). A target
-// not updated within LostTargetSeconds is dropped/hidden (RadarWindow.cs:241).
+// Exact replica of C# Aircraft.ExtrapolatePosition() behavior
 const LOST_TARGET_MS = 30000;   // LostTargetSeconds = 30
+
 function radarSweep() {
   const now = Date.now();
+
   for (const t of tracks.values()) {
     if (!t.Location) continue;
-    // Stop sweeping a track whose position has gone stale (no movement within
-    // LostTargetSeconds) — it's coasting / has landed and will be hidden.
     if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue;
-    const pos = extrapolatedPosition(t);
-    if (!pos) continue;
-    t._sweptPos = pos;                                   // 1 Hz displayed position
-    if (!t._lastHistoryT) t._lastHistoryT = now;
-    if (now - t._lastHistoryT >= prefSet.HistoryRate * 1000) {
-      // Only deposit a history dot if the target actually moved since the last
-      // one — otherwise a frozen track stacks dots into a blob at one spot.
-      const last = t._history && t._history[0];
-      const moved = !last || Math.abs(pos.Latitude - last.Latitude) > 1e-5
-                          || Math.abs(pos.Longitude - last.Longitude) > 1e-5;
-      if (moved) {
-        (t._history ||= []).unshift({ Latitude: pos.Latitude, Longitude: pos.Longitude });
-        while (t._history.length > prefSet.HistoryNum) t._history.pop();
+
+    // Exact replica of C# ScanTarget / ExtrapolatePosition flow
+    const extrapolatedpos = extrapolatePosition(t, now);
+    if (!extrapolatedpos) continue;
+
+    t._sweptPos = extrapolatedpos;
+    t._sweptTime = now;
+
+    // Initialize LastHistoryTimes if not present (C# line 163-166 in Radar.cs)
+    if (!t._lastHistoryTime) {
+      t._lastHistoryTime = now;
+    }
+
+    // History update logic (exact replica of RadarWindow.cs:5277-5322)
+    // Check: (radar.SweptTimes[aircraft] - aircraft.LastHistoryTimes[radar]).TotalSeconds >= HistoryRate
+    if (now - t._lastHistoryTime >= prefSet.HistoryRate * 1000) {
+      // Initialize History array if needed (fixed size = HistoryNum)
+      if (!t.History) {
+        t.History = new Array(prefSet.HistoryNum).fill(null);
+        // Seed with server-provided history if available (from connection handshake)
+        if (t._history && t._history.length > 0) {
+          for (let j = 0; j < Math.min(t._history.length, prefSet.HistoryNum); j++) {
+            t.History[j] = {
+              GeoLocation: t._history[j],
+              ForeColor: HISTORY_COLORS[j] || COLORS.Return,
+              Fading: false,
+              FadeTime: FadeTime,
+              Intensity: 1,
+              _createdAt: now
+            };
+          }
+        }
       }
-      t._lastHistoryT = now;
+
+      // Shift history array down (C# lines 5291-5302)
+      const lastHistory = prefSet.HistoryNum - 1;
+      if (t.History[lastHistory] != null) {
+        t.History[lastHistory] = null; // Dispose equivalent
+      }
+      for (let i = lastHistory; i > 0; i--) {
+        t.History[i] = t.History[i - 1];
+        if (t.History[i] == null) continue;
+        // Update color based on new position in array
+        if (i >= COLORS.HistoryColors?.length || !COLORS.HistoryColors) {
+          t.History[i].ForeColor = COLORS.HistoryColors?.[COLORS.HistoryColors.length - 1] || COLORS.Return;
+        } else {
+          t.History[i].ForeColor = COLORS.HistoryColors[i];
+        }
+      }
+
+      // Move current TargetReturn to History[0] (C# line 5310)
+      // Set Fading based on HistoryFade (controls whether history dots fade)
+      if (!t.TargetReturn) {
+        t.TargetReturn = {
+          GeoLocation: extrapolatedpos,
+          ForeColor: COLORS.Return,
+          Fading: PrimaryFade,
+          FadeTime: FadeTime,
+          Intensity: 1,
+          _createdAt: now
+        };
+      }
+      // Ensure TargetReturn has the current swept position before moving to history
+      t.TargetReturn.GeoLocation = extrapolatedpos;
+      t.TargetReturn.ForeColor = COLORS.HistoryColors?.[0] || COLORS.Return;
+      t.TargetReturn.Fading = HistoryFade;  // Apply HistoryFade setting when moving to history
+      t.TargetReturn.FadeTime = FadeTime;
+      t.TargetReturn._createdAt = now;  // Start fade timer NOW when becoming a history dot
+      t.History[0] = t.TargetReturn;
+
+      // Create new TargetReturn for current position (C# lines 5309-5318)
+      // Set Fading based on PrimaryFade (controls whether primary target fades)
+      const newreturn = {
+        GeoLocation: extrapolatedpos,
+        ParentAircraft: t,
+        Fading: PrimaryFade,
+        FadeTime: FadeTime,
+        Intensity: 1,
+        ForeColor: COLORS.Return,
+        _createdAt: now  // Primary target's creation time (for primary fading if enabled)
+      };
+      t.TargetReturn = newreturn;
+
+      // Update LastHistoryTimes (C# line 5322)
+      t._lastHistoryTime = now;
     }
   }
 }
-setInterval(radarSweep, 1000);   // UpdateRate = 1 s
-// The DISPLAYED position the renderer should use (the 1 Hz swept value).
-function displayPos(t) { return t._sweptPos || t.Location || null; }
+
+// History colors from RadarWindow.cs defaults (for display)
+const HistoryFade = true;   // Enable fading for history dots (C# HistoryFade)
+const PrimaryFade = false;  // Fading for primary target (new TargetReturn)
+const FadeTime = 5;          // prefSet.FadeTime equivalent
+setInterval(radarSweep, 1000);  // UpdateRate = 1 second
+
+// Exact replica of C# Aircraft.ExtrapolateTrack(DateTime time)
+function extrapolateTrack(t, time) {
+  const rateOfTurn = t._rateOfTurn ?? 0;
+  if (Math.abs(rateOfTurn) > 5) return t.GroundTrack; // sanity check
+  return (t.GroundTrack + ((rateOfTurn / 2) * (time - (t._lastTrackUpdateTime ?? time)) / 1000) + 360) % 360;
+}
+
+// Exact replica of C# Aircraft.ExtrapolatePosition(DateTime time)
+function extrapolatePosition(t, time) {
+  if (!t._extrapolatedpos) return t.Location || null;
+  if (t.GroundSpeed == null || t.GroundTrack == null) return t._extrapolatedpos;
+
+  const ageHours = (time - t._lastLocationExtrapolateTime) / 3600000;
+  const miles = t.GroundSpeed * ageHours;
+  const track = extrapolateTrack(t, time);
+
+  // Use FromPoint to project along bearing (equivalent to C#)
+  const θ = track * Math.PI / 180;
+  const dLat = (miles * Math.cos(θ)) / 60;
+  const latFactor = Math.cos(t._extrapolatedpos.Latitude * Math.PI / 180);
+  const dLon = (miles * Math.sin(θ)) / (60 * latFactor);
+
+  // C# mutates extrapolatedpos in place
+  const location = {
+    Latitude: t._extrapolatedpos.Latitude + dLat,
+    Longitude: t._extrapolatedpos.Longitude + dLon,
+  };
+  t._extrapolatedpos = location;
+  t._lastLocationExtrapolateTime = time;
+
+  return location;
+}
+
+// Display swept position (from last sweep)
+function displayPos(t) {
+  return t._sweptPos || t.Location || null;
+}
 
 // Memory backstop: fully drop tracks not updated for a long time (the upstream
 // deletes after ~5 min). Visual hiding happens in drawTracks at LOST_TARGET_MS.

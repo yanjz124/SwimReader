@@ -50,6 +50,7 @@ export class Aircraft { // class Aircraft : IDisposable
     ATPAStatus = null;         // ATPAStatus?
     ATPACone = null;           // TPACone?
     #rateofturn = 0;           // private double
+    get RateOfTurn() { return this.#rateofturn; } // double
     #positionind;              // private string
     get PositionInd() { return this.#positionind; } // string
     set PositionInd(value) {

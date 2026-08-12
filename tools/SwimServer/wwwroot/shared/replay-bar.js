@@ -28,6 +28,10 @@
   let startMs = null, endMs = null;  // available range, from /api/replay/range
   let _vpTimer = null;
   let _saveTimer = null;
+  let _preloading = false;    // this session asked the server to burst a lead window first
+  let _gotData = false;       // first paced data seen → clears the "Buffering…" status
+  let _replayStartMs = null;  // the chosen replay start (ms), for preload progress
+  const PRELOAD_SECONDS = 120; // lead window (replay-time) the server bursts when Preload is on
 
   // ── DOM ───────────────────────────────────────────────────────────────
   function ensureCss() {
@@ -78,7 +82,10 @@
             <option value="8">8×</option>
             <option value="16">16×</option>
             <option value="60">60×</option>
+            <option value="120">120×</option>
+            <option value="300">300×</option>
           </select>
+          <label class="rb-preload" title="Buffer a lead of replay data before playback starts, so it plays smoothly (no mid-play buffering)"><input type="checkbox" id="rb-preload"> Preload</label>
           <input type="range" id="rb-scrub" min="0" max="1000" value="0" step="1" title="Scrub">
           <span id="rb-time">— : — : —</span>
           <button id="rb-share" title="Copy share link">🔗</button>
@@ -358,6 +365,12 @@
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const speed = bar.querySelector("#rb-speed").value || "1";
     let url = `${proto}//${location.host}${cfg.wsPath}?start=${encodeURIComponent(startISO)}&speed=${speed}`;
+    // Preload: ask the server to burst a lead window (2 min of replay time) at full speed
+    // before it settles into paced playback, so the scope is populated and plays smoothly.
+    _preloading = bar.querySelector("#rb-preload")?.checked || false;
+    if (_preloading) url += `&preload=${PRELOAD_SECONDS}`;
+    _gotData = false;
+    _replayStartMs = new Date(startISO).getTime();
     const vp = paddedBoundsFromCfg();
     if (vp) url += `&minLat=${vp.minLat}&minLon=${vp.minLon}&maxLat=${vp.maxLat}&maxLon=${vp.maxLon}`;
     ws = new WebSocket(url);
@@ -369,10 +382,21 @@
       let msg; try { msg = JSON.parse(evt.data); } catch { return; }
       if (msg.replayTime) {
         currentTime = msg.replayTime;
+        const tms = new Date(msg.replayTime).getTime();
         bar.querySelector("#rb-time").textContent = fmtClock(new Date(msg.replayTime));
         if (startMs && endMs && endMs > startMs) {
-          const frac = (new Date(msg.replayTime).getTime() - startMs) / (endMs - startMs);
+          const frac = (tms - startMs) / (endMs - startMs);
           bar.querySelector("#rb-scrub").value = Math.max(0, Math.min(1000, Math.round(frac * 1000)));
+        }
+        // Status: show a Loading… readout during the preload burst, then Playing once we're
+        // into paced playback. Also clears the previously-stuck "Buffering…" for normal plays.
+        if (!paused) {
+          if (_preloading && _replayStartMs != null && tms < _replayStartMs + PRELOAD_SECONDS * 1000) {
+            setStatus(`Loading… ${Math.round((tms - _replayStartMs) / 1000)}/${PRELOAD_SECONDS}s`);
+          } else if (!_gotData) {
+            _gotData = true;
+            setStatus("Playing", "ok");
+          }
         }
         cfg.onTime?.(msg.replayTime);
         throttleSaveUrl();
@@ -382,7 +406,7 @@
         case "batch":        cfg.onBatch?.(msg.data || [], msg);    break;
         case "remove":       cfg.onRemove?.(msg.data, msg);          break;
         case "replay_seek":  cfg.onSeek?.(msg);                       setStatus("Seeking…"); break;
-        case "replay_start": setStatus("Buffering…");                  break;
+        case "replay_start": setStatus(_preloading ? "Loading…" : "Buffering…"); break;
         case "replay_gap":   setStatus(`Gap: ${(msg.from||"").slice(11,19)}–${(msg.to||"").slice(11,19)}`); break;
         case "replay_end":   setStatus("End of data", "warn");        break;
         case "replay_error": setStatus(msg.message || "Error", "err"); break;

@@ -105,6 +105,10 @@
 }
 .rb-body input { cursor: text; min-width: 0; }
 .rb-body input::placeholder { color: #555; }
+/* Preload toggle sits inline with the speed selector */
+.rb-preload { display: inline-flex; align-items: center; gap: 3px; font-size: 11px;
+  color: var(--rb-text); white-space: nowrap; cursor: pointer; user-select: none; }
+.rb-preload input { cursor: pointer; }
 .rb-body button:hover { background: #222; color: var(--rb-accent); }
 .rb-body button.rb-go { background: #064; color: #cfc; }
 .rb-body button.rb-stop { background: #401010; color: #fff; border-color: #602020; }

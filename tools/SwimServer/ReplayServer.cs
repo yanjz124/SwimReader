@@ -114,7 +114,8 @@ public class ReplayServer
             var initialBounds = ParseBoundsFromQuery(ctx);
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             var dir = Path.Combine(_replayBaseDir, "eram");
-            await RunReplaySession(ws, dir, startTime, speed, initialBounds);
+            double.TryParse(ctx.Request.Query["preload"].FirstOrDefault(), out var preloadSeconds);
+            await RunReplaySession(ws, dir, startTime, speed, initialBounds, preloadSeconds);
         });
 
         // ASDE-X replay WebSocket
@@ -145,14 +146,20 @@ public class ReplayServer
             var initialBounds = ParseBoundsFromQuery(ctx);
             using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
             var dir = Path.Combine(_replayBaseDir, "asdex", icao);
-            await RunReplaySession(ws, dir, startTime, speed, initialBounds);
+            double.TryParse(ctx.Request.Query["preload"].FirstOrDefault(), out var preloadSeconds);
+            await RunReplaySession(ws, dir, startTime, speed, initialBounds, preloadSeconds);
         });
     }
 
-    private async Task RunReplaySession(WebSocket ws, string dataDir, DateTime startTime, double initialSpeed, Bounds? initialBounds = null)
+    private async Task RunReplaySession(WebSocket ws, string dataDir, DateTime startTime, double initialSpeed, Bounds? initialBounds = null, double preloadSeconds = 0)
     {
         var speed = initialSpeed;
         var paused = false;
+        // Preload: for the first `preloadSeconds` of replay time, run at effectively infinite speed
+        // so the client is fully populated up front, then settle into paced playback at `speed`.
+        long preloadUntilMs = preloadSeconds > 0
+            ? new DateTimeOffset(startTime.AddSeconds(preloadSeconds), TimeSpan.Zero).ToUnixTimeMilliseconds() : 0;
+        double SpeedAt(long ms) => (preloadUntilMs > 0 && ms <= preloadUntilMs) ? 1_000_000.0 : speed;
         var seekTarget = (DateTime?)null;
         var cts = new CancellationTokenSource();
 
@@ -218,7 +225,7 @@ public class ReplayServer
             await SendJson(ws, new { type = "replay_start", range, speed, startTime = startTime.ToString("o") }, cts.Token);
 
             // Main playback loop
-            await PlaybackLoop(ws, dataDir, startTime, () => speed, () => paused, () =>
+            await PlaybackLoop(ws, dataDir, startTime, SpeedAt, () => paused, () =>
             {
                 var t = seekTarget;
                 seekTarget = null;
@@ -241,7 +248,7 @@ public class ReplayServer
     }
 
     private async Task PlaybackLoop(WebSocket ws, string dataDir, DateTime startTime,
-        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> consumeSeek,
         Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         if (!Directory.Exists(dataDir))
@@ -287,7 +294,7 @@ public class ReplayServer
             // Read and play back all files for this hour
             foreach (var hourFile in hourFiles)
             {
-                currentTime = await PlayFile(ws, hourFile, currentTime, getSpeed, isPaused, consumeSeek, state, vp, ct);
+                currentTime = await PlayFile(ws, hourFile, currentTime, speedAt, isPaused, consumeSeek, state, vp, ct);
                 if (ct.IsCancellationRequested) break;
                 if (consumeSeek() != null) break;
             }
@@ -303,7 +310,7 @@ public class ReplayServer
     }
 
     private async Task<DateTime> PlayFile(WebSocket ws, string filePath, DateTime startFrom,
-        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> consumeSeek,
         Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         var lastSentTime = DateTimeOffset.MinValue;
@@ -379,15 +386,19 @@ public class ReplayServer
         }
 
         // Phase 2: Real-time paced playback of remaining lines (after the first record we already sent)
-        var endTime = await PlayRemainingLines(ws, sr, lastSentTime, getSpeed, isPaused, consumeSeek, state, vp, ct);
+        var endTime = await PlayRemainingLines(ws, sr, lastSentTime, speedAt, isPaused, consumeSeek, state, vp, ct);
         return DateTimeOffset.FromUnixTimeMilliseconds(endTime).UtcDateTime;
     }
 
     private async Task<long> PlayRemainingLines(WebSocket ws, StreamReader sr, DateTimeOffset lastSentTime,
-        Func<double> getSpeed, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> consumeSeek,
         Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         long lastMillis = lastSentTime.ToUnixTimeMilliseconds();
+        // Accumulate the scaled inter-record wait and only actually sleep in ~16ms chunks.
+        // Flooring each record to 16ms (as before) capped the effective rate at ~60×; accumulating
+        // lets high speeds (120/300×) burn through dense data while never awaiting faster than 60fps.
+        double accWaitMs = 0;
 
         string? line;
         while ((line = await sr.ReadLineAsync(ct)) != null)
@@ -425,16 +436,18 @@ public class ReplayServer
             if (lastMillis > 0 && millis > lastMillis)
             {
                 var deltaMs = millis - lastMillis;
-                var spd = getSpeed();
+                var spd = speedAt(millis);   // huge during a preload window → bursts with no wait
                 if (spd > 0 && deltaMs > 0)
                 {
-                    var waitMs = (int)(deltaMs / spd);
-                    // Cap max wait to 5 seconds (skip gaps)
-                    if (waitMs > 5000) waitMs = 100;
-                    // Floor: never send faster than ~60 fps (16ms) — client merges by gufi per frame
-                    if (waitMs < 16) waitMs = 16;
-                    if (waitMs > 10)
+                    var scaled = deltaMs / spd;
+                    if (scaled > 5000) accWaitMs = 0;      // large real gap → skip, don't sit idle
+                    else accWaitMs += scaled;
+                    if (accWaitMs >= 16)
+                    {
+                        var waitMs = (int)Math.Min(accWaitMs, 5000);
+                        accWaitMs -= waitMs;                // carry the sub-frame remainder
                         await Task.Delay(waitMs, ct);
+                    }
                 }
             }
 

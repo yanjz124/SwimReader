@@ -498,6 +498,18 @@ async function loadProfileMaps() {
       const pd = await pr.json();
       starsState.profileAltimeters = Array.isArray(pd.AltimeterStations) ? pd.AltimeterStations : [];
       if (window.pollMetars && starsState.profileAltimeters.length) window.pollMetars();
+      // Feed the profile's ATPA volumes to the client so F7 2 ATPA (enable/inhibit + per-volume) and
+      // the SSA INTRAIL line work. The cones themselves come from the server (UT=6); this is the
+      // command/status state DGScope keeps client-side.
+      if (Array.isArray(pd.ATPAVolumes)) {
+        starsState.ATPA = {
+          Active: pd.ATPAActive !== false,
+          Volumes: pd.ATPAVolumes.map(v => ({
+            VolumeId: v.VolumeId, Active: v.Active !== false,
+            TwoPointFiveEnabled: !!v.TwoPointFiveEnabled, TwoPointFiveActive: !!v.TwoPointFiveActive,
+          })),
+        };
+      }
     }
   } catch (e) { /* leave SSA on vNAS stations */ }
   let maps;
@@ -1147,7 +1159,9 @@ function buildLineZero(t) {
   if (t._stca) { all.push("CA"); if (t._caAcked) solid.push("CA"); }
   // LA — Low Altitude / MSAW (line 0 per CRC § MSAW). Detector not yet
   // wired, but render path is ready.
-  if (t._msaw) { all.push("LA"); if (t._laAcked) solid.push("LA"); }
+  if (t._msaw && !t._msawInhibited && window.starsState?.MSAWActive !== false) {
+    all.push("LA"); if (t._laAcked) solid.push("LA");
+  }
   // Beacon SPC from current squawk (Table 13). Slewing the track ACKs it.
   const beacon = BEACON_SPC[t.Squawk];
   if (beacon) { all.push(beacon); if (t._spcAcked) solid.push(beacon); }
@@ -2483,6 +2497,7 @@ window.starsState ||= {
   ATPA: { Active: false, Volumes: [] },
   TPASize: false,
   DrawATPAMonitorCones: false,
+  MSAWActive: true,       // F7 VMI/VME toggles this; gates the LA display client-side
   AutoOffset: false,
   rangeBearingLines: [],
   minSeps: [],

@@ -186,6 +186,9 @@ function onKeyDown(e) {
     const k = e.key.toUpperCase();
     // Ctrl+F-keys are scope-control shortcuts, not preview prefixes.
     if (e.ctrlKey) {
+      // Ctrl+Shift+F1 → RECENTER prompt (cs:3591); Ctrl+F9 → range-ring entry (cs:3604-3606).
+      if (k === "F1" && e.shiftKey) { PA.buffer = "RECENTER "; refreshPreview(); return; }
+      if (k === "F9") { PA.buffer = "RR "; refreshPreview(); return; }
       const action = FKEY_CTRL_ACTION[k];
       if (!action) return;
       if (action === "recenter" && typeof window.recenterScope === "function") {
@@ -794,6 +797,24 @@ function processMultifunction(k, parts, clicked, clickedplane, enter) {
       else if (idxPlus >= 0) ql.splice(idxPlus, 1);
       else ql.push(qlpos);
     }
+    return;
+  }
+  // F V  MSAW processing (cs:2456-2485). Slew: toggle per-track MSAW inhibit. VME/VMI: enable/inhibit
+  // system-wide. MSAW is computed server-side, so these suppress the LA display client-side.
+  if (sub === "V") {
+    if (clickedplane && k.length === 2) { clicked._msawInhibited = !clicked._msawInhibited; return; }
+    if (enter && k.length === 4 && k[2] === "M") {
+      if (k[3] === "E") window.starsState.MSAWActive = true;
+      else if (k[3] === "I") window.starsState.MSAWActive = false;
+      else setResponse("FORMAT");
+      return;
+    }
+    return;
+  }
+  // F Q <slew> on a track currently in MSAW alert → inhibit its MSAW (cs:2486-2500).
+  if (sub === "Q" && clickedplane && k.length === 2) {
+    if (clicked._msaw) clicked._msawInhibited = true;
+    else setResponse("ILL TRK");
     return;
   }
   // F O  auto-offset (2400-2410)

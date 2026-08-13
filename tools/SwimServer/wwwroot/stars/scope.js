@@ -777,6 +777,7 @@ function handleUpdate(u) {
 // M=mileage to leader, R=required, S=status (1 Monitor/2 Caution/3 Alert), B=bearing to leader.
 // ATPAMileageNow already renders on FDB line 3; status drives its color, B the (future) cone.
 function handleATPA(u) {
+  if (!window.STARSV2) return;   // ATPA is a v2-only display for now (keeps /stars as-is)
   const byGuid = new Map();
   for (const t of (u.Tracks || [])) byGuid.set(String(t.Guid), t);
   for (const [guid, t] of tracks) {
@@ -796,6 +797,7 @@ function handleATPA(u) {
 // facility's profile volumes and sends the set of tracks in alert as UpdateType 5; we drive t._msaw
 // from it (line-0 "LA"). Only sent for facilities whose profile defines MSAW volumes.
 function handleMSAW(u) {
+  if (!window.STARSV2) return;   // MSAW is a v2-only display for now (keeps /stars as-is)
   const set = new Set((u.Guids || []).map(String));
   for (const [guid, t] of tracks) {
     const on = set.has(String(guid));
@@ -1783,6 +1785,53 @@ function drawJRings() {
   }
 }
 
+// ── Cones — P-cones (*P tool) + ATPA required-separation cones ───────────────
+// Ported from RadarWindow.cs DrawPCone: a wedge from the aircraft along a track/bearing,
+// length = miles, widening to a fixed end width, with a centre gap for the mileage label.
+function drawCone(t, bearingDeg, milesNM, color, showSize) {
+  const pos = displayPos(t);
+  if (!pos || !milesNM) return;
+  const c = geoToScreen(pos);
+  // Screen-space direction for the compass bearing (honours ScreenRotation): project 1 NM out.
+  const θ = bearingDeg * Math.PI / 180;
+  const latF = Math.cos(pos.Latitude * Math.PI / 180) || 1;
+  const ahead = geoToScreen({ Latitude: pos.Latitude + Math.cos(θ) / 60,
+                              Longitude: pos.Longitude + Math.sin(θ) / (60 * latF) });
+  let dx = ahead.x - c.x, dy = ahead.y - c.y; const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+  const nx = -dy, ny = dx;                       // perpendicular (screen)
+  const len = milesNM / view.scale;              // NM → px (matches J-ring scale)
+  if (len < 6) return;
+  const endHalf = 8;                             // half-width at the far end (px)
+  const gap = showSize ? 14 : 0;                 // centre gap for the label
+  const y1 = Math.max(1, len / 2 - gap / 2), y2 = y1 + gap;
+  const h1 = endHalf * (y1 / len), h2 = endHalf * (y2 / len);
+  const P = (a, cross) => ({ x: c.x + dx * a + nx * cross, y: c.y + dy * a + ny * cross });
+  const seg = (a1, c1, a2, c2) => { const s = P(a1, c1), e = P(a2, c2); ctx.moveTo(s.x, s.y); ctx.lineTo(e.x, e.y); };
+  ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.beginPath();
+  seg(0, 0, y1, h1); seg(0, 0, y1, -h1);         // apex → near-gap, both sides
+  seg(y2, h2, len, endHalf); seg(y2, -h2, len, -endHalf); // far-gap → end, both sides
+  seg(len, endHalf, len, -endHalf);              // end cap
+  ctx.stroke();
+  if (showSize) {
+    const m = P(len / 2, 0);
+    ctx.fillStyle = color;
+    ctx.font = "10px FixedDemiBold, ui-monospace, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(milesNM < 10 ? String(milesNM) : String(Math.trunc(milesNM)), m.x, m.y);
+  }
+}
+function drawCones() {
+  for (const t of tracks.values()) {
+    if (!t.Location) continue;
+    // P-cone tool (*P<miles> + slew) — points along the aircraft's own track.
+    if (t.TPA && t.TPA.type === "PCone" && t.GroundTrack != null)
+      drawCone(t, t.GroundTrack, t.TPA.miles, adjusted(COLORS.TPA, prefSet.Brightness.Tools), t.TPA.showSize !== false);
+    // ATPA required-separation cone toward the leader (v2): caution amber, alert red.
+    if (window.STARSV2 && t._atpaStatus >= 2 && t._atpaRequired && t._atpaBearing != null)
+      drawCone(t, t._atpaBearing, t._atpaRequired, t._atpaStatus === 3 ? "rgba(255,80,80,.95)" : "rgba(255,215,80,.95)", true);
+  }
+}
+
 // ── Range/Bearing Lines (*T) — RadarWindow.cs DrawLine(rbl) ──────────────────
 function _rblGeo(s) {
   if (!s) return null;
@@ -2323,6 +2372,7 @@ function frame() {
   drawRangeRings();
   drawCompass();
   drawJRings();
+  drawCones();
   drawRBLs();
   drawTracks();
   drawMinSep();

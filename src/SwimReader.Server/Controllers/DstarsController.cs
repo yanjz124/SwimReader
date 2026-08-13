@@ -101,6 +101,29 @@ public sealed class DstarsController : ControllerBase
         return Ok(maps);
     }
 
+    /// <summary>
+    /// Upload one video-map geojson into the shared stars-profiles/VideoMaps store (keyed by basename,
+    /// matching the profile's VideoMapFile references). Raw geojson body; the client POSTs each file.
+    /// </summary>
+    [HttpPost("map/{name}")]
+    public async Task<IActionResult> UploadMap(string name, CancellationToken ct)
+    {
+        // basename only, must be a .geojson — no path traversal.
+        var baseName = System.IO.Path.GetFileName(name.Replace('\\', '/'));
+        if (string.IsNullOrEmpty(baseName) || !baseName.EndsWith(".geojson", StringComparison.OrdinalIgnoreCase))
+            return BadRequest("name must be a .geojson basename");
+        var dir = _profiles.MapsDir;
+        if (dir is null) return BadRequest("no profiles root");
+        using var srdr = new StreamReader(Request.Body);
+        var body = await srdr.ReadToEndAsync(ct);
+        if (string.IsNullOrWhiteSpace(body)) return BadRequest("empty body");
+        try { using var _ = System.Text.Json.JsonDocument.Parse(body); }   // reject non-JSON
+        catch (JsonException) { return BadRequest("not valid geojson/JSON"); }
+        Directory.CreateDirectory(dir);
+        await System.IO.File.WriteAllTextAsync(System.IO.Path.Combine(dir, baseName), body, ct);
+        return Ok(new { saved = true, name = baseName });
+    }
+
     /// <summary>Serve one profile video-map's geojson (resolved from stars-profiles/VideoMaps by basename).</summary>
     [HttpGet("profile/{facility}/map/{number:int}")]
     public IActionResult ProfileMap(string facility, int number)

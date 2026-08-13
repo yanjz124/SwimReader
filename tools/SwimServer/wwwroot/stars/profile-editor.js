@@ -50,6 +50,24 @@
     } catch (e) { status("upload failed: " + e); }
   }
 
+  async function uploadMaps() {
+    const files = panel.querySelector("#pe-mapfiles").files;
+    if (!files.length) return status("choose .geojson map files first");
+    let ok = 0, fail = 0;
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      status(`uploading maps ${i + 1}/${files.length}: ${f.name}`);
+      try {
+        const txt = await f.text();
+        const r = await fetch(`/dstars/map/${encodeURIComponent(f.name)}`, {
+          method: "POST", headers: { "Content-Type": "application/geo+json" }, body: txt, credentials: "omit",
+        });
+        r.ok ? ok++ : fail++;
+      } catch (e) { fail++; }
+    }
+    status(`maps uploaded: ${ok} ok${fail ? `, ${fail} failed` : ""}. Reload the scope to see them.`);
+  }
+
   // ── panel ─────────────────────────────────────────────────────────────────
   let panel, statusEl;
   function status(t) { if (statusEl) statusEl.textContent = t || ""; }
@@ -75,12 +93,18 @@
       <div class="pe-row"><button class="pe-btn save" id="pe-upload">⤒ UPLOAD</button>
         <button class="pe-btn" id="pe-refresh">REFRESH</button></div>
 
+      <h3>Upload video maps</h3>
+      <div class="pe-hint">Multi-select the profile's <b>VideoMaps</b> .geojson files. Stored by filename; the profile references them by basename. Reload the scope after uploading.</div>
+      <div class="pe-row"><input type="file" id="pe-mapfiles" accept=".geojson,application/geo+json" multiple></div>
+      <div class="pe-row"><button class="pe-btn save" id="pe-mapupload">⤒ UPLOAD MAPS</button></div>
+
       <h3><label class="pe-toggle-inline"><input type="checkbox" id="pe-show" ${showVolumes ? "checked" : ""}> show volumes on scope</label></h3>
       <div class="pe-hint">CA corridors <span style="color:#78c8ff">▭</span> · ATPA <span style="color:#a878ff">▭</span> · MSAW <span style="color:#ffb450">⬟</span> · MSAW-sup <span style="color:#888">⬟</span></div>
 
       <h3>Stored profiles</h3>
       <ul class="pe-list" id="pe-list"><li>…</li></ul>`;
     panel.querySelector("#pe-upload").onclick = upload;
+    panel.querySelector("#pe-mapupload").onclick = uploadMaps;
     panel.querySelector("#pe-refresh").onclick = () => { loadStatus(); refreshList(); };
     panel.querySelector("#pe-show").onchange = e => { showVolumes = e.target.checked; };
     refreshList();

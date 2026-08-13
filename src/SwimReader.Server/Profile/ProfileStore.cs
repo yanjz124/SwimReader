@@ -12,27 +12,37 @@ namespace SwimReader.Server.Profile;
 /// </summary>
 public sealed class ProfileStore
 {
-    private readonly string? _root;
+    private string? _root;
     private readonly ConcurrentDictionary<string, RadarWindowProfile?> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger? _log;
 
     public ProfileStore(ILogger<ProfileStore>? log = null)
     {
         _log = log;
-        _root = FindRoot();
-        if (_root != null) _log?.LogInformation("STARS profiles root: {Root}", _root);
+        EnsureRoot();
     }
 
-    public string? Root => _root;
+    // The profiles dir may not exist at startup (profiles are placed out-of-band), so re-resolve it
+    // lazily rather than caching a permanent null — otherwise adding profiles would need a restart.
+    private string? EnsureRoot()
+    {
+        if (_root != null) return _root;
+        _root = FindRoot();
+        if (_root != null) _log?.LogInformation("STARS profiles root: {Root}", _root);
+        return _root;
+    }
+
+    public string? Root => EnsureRoot();
 
     /// <summary>Loaded profile for a facility, or null. Cached (including negative results).</summary>
     public RadarWindowProfile? Get(string facility) => _cache.GetOrAdd(facility, Load);
 
-    /// <summary>Drop the cache so edited profiles reload on next Get.</summary>
-    public void Invalidate() => _cache.Clear();
+    /// <summary>Drop the cache so edited/added profiles reload on next Get (also re-resolves root).</summary>
+    public void Invalidate() { _cache.Clear(); _root = FindRoot(); }
 
     private RadarWindowProfile? Load(string facility)
     {
+        EnsureRoot();
         var file = FindFile(facility);
         if (file == null) return null;
         try

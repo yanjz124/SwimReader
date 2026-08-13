@@ -70,6 +70,8 @@ public class VideoMapFile
     public string? FullName { get; set; }
     public string? BrightnessGroup { get; set; }   // "A" | "B"
     public string? DCBButton { get; set; }          // DCB slot(s), may be comma-separated
+    // The profile's Filepath is the author's Windows path; extract the basename handling BOTH
+    // separators (Path.GetFileName on Linux doesn't treat '\' as a separator, so it wouldn't split it).
     [System.Xml.Serialization.XmlIgnore]
-    public string? BaseName => string.IsNullOrEmpty(Filepath) ? null : System.IO.Path.GetFileName(Filepath);
+    public string? BaseName => string.IsNullOrEmpty(Filepath) ? null : Filepath.Replace('\\', '/').Split('/').Last();
 }

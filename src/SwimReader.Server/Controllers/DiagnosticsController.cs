@@ -50,6 +50,12 @@ public sealed class DiagnosticsController : ControllerBase
                 volumes = p.MSAWVolumes.Count,
                 suppressionVolumes = p.MSAWSuppressionVolumes.Count,
                 sample = p.MSAWVolumes.Take(3).Select(v => new { v.Name, v.Floor, v.Ceiling, pts = v.Points.Count })
+            },
+            atpa = new
+            {
+                p.ATPAActive,
+                volumes = p.ATPAVolumes.Count,
+                sample = p.ATPAVolumes.Take(3).Select(v => new { v.Name, v.TrueHeading, v.Length, v.Destination })
             }
         });
     }

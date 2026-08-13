@@ -44,10 +44,28 @@ public class Aircraft
     public bool LowAltitude { get; set; }
     public bool LowAltitudeAcknowledged { get; set; }
 
+    // Identity/flight-plan fields used by ATPA filtering.
+    public string? PositionInd { get; set; }
+    public string? FlightPlanCallsign { get; set; }
+    public string? Squawk { get; set; }
+    public string? Destination { get; set; }
+    public string? Category { get; set; }   // CWT wake category (A–I), when known
+
+    // ATPA output (mirrors DGScope Aircraft). Sent to the JS scope per track.
+    public object? ATPAVolume { get; set; }
+    public Aircraft? ATPAFollowing { get; set; }
+    public double? ATPAMileageNow { get; set; }
+    public double? ATPAMileage24 { get; set; }
+    public double? ATPAMileage45 { get; set; }
+    public double? ATPARequiredMileage { get; set; }
+    public int? ATPAStatus { get; set; }        // 1=Monitor, 2=Caution, 3=Alert
+    public double? ATPATrackToLeader { get; set; }
+
     public DateTime LastSeen { get; set; }
 
     // Our feed has no radar sweep, so the current position IS the swept position.
     public GeoPoint? SweptLocation(Radar radar) => Location;
     // We don't turn-project; the reported ground track is the extrapolation heading.
     public double ExtrapolateTrack() => GroundTrack;
+    public double SweptTrack(Radar radar) => GroundTrack;
 }

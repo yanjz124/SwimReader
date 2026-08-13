@@ -1,0 +1,145 @@
+using SwimReader.Server.Ca;
+
+namespace SwimReader.Server.Atpa;
+
+/// <summary>
+/// Ported from DGScope's ATPAVolume.cs — the per-runway Automated Terminal Proximity Alert volume.
+/// Geometry, altitude/destination/heading/width gating and the CalculateATPA in-trail computation are
+/// faithful to the source. The profile-only advanced filters (leader-direction, scratchpad, TCP
+/// display/exclusion, per-volume ACID/SSR exclusions) are omitted here — they no-op unless authored,
+/// and our feed doesn't carry the fields they test. Deserialized from the profile's &lt;ATPAVolume&gt;.
+/// </summary>
+public class ATPAVolume
+{
+    public string? VolumeId { get; set; }
+    public bool Active { get; set; }
+    public bool Draw { get; set; }
+    public string? Name { get; set; }
+    public GeoPoint RunwayThreshold { get; set; } = new GeoPoint();
+    public int TrueHeading { get; set; }
+    public int MaxHeadingDeviation { get; set; }
+    public int Ceiling { get; set; }
+    public int Floor { get; set; }
+    public double Length { get; set; }
+    public int WidthLeft { get; set; }
+    public int WidthRight { get; set; }
+    public bool TwoPointFiveEnabled { get; set; }
+    public bool TwoPointFiveActive { get; set; }
+    public double TwoPointFiveDistance { get; set; }
+    public string? Destination { get; set; }
+
+    private int minHeading => TrueHeading - MaxHeadingDeviation;
+    private int maxHeading => TrueHeading + MaxHeadingDeviation;
+    private int minBearing => TrueHeading - 90;
+    private int maxBearing => TrueHeading + 90;
+
+    public bool IsInside(Aircraft aircraft, Radar radar, Atpa atpa)
+    {
+        if (aircraft == null)
+            return false;
+        if (aircraft.TrueAltitude > Ceiling || aircraft.TrueAltitude < Floor)
+            return false;
+        if (Destination != null && Destination != aircraft.Destination)
+            return false;
+        var acloc = aircraft.SweptLocation(radar);
+        if (acloc == null)
+            return false;
+        var acdistancetothreshold = acloc.DistanceTo(RunwayThreshold);
+        if (acdistancetothreshold > Length)
+            return false;
+        var acbearingtothreshold = acloc.BearingTo(RunwayThreshold);
+        if (!BearingIsBetween(acbearingtothreshold, minBearing, maxBearing))
+            return false;
+        if (!BearingIsBetween(aircraft.SweptTrack(radar), minHeading, maxHeading))
+            return false;
+        var angletothreshold = acbearingtothreshold - TrueHeading;
+        var disttocenterline = acdistancetothreshold * Math.Sin(Math.Abs(angletothreshold) * Math.PI / 180.0);
+        if (angletothreshold > 0 && disttocenterline * 6076 > WidthLeft) // left
+            return false;
+        if (angletothreshold < 0 && disttocenterline * 6076 > WidthRight) // right
+            return false;
+        return true;
+    }
+
+    private static bool BearingIsBetween(double bearing, double az1, double az2)
+    {
+        bearing = (bearing + 360) % 360;
+        az1 = (az1 + 360) % 360;
+        az2 = (az2 + 360) % 360;
+        if (az2 == az1)
+            return bearing == az1;
+        if (az2 > az1)
+            return bearing >= az1 && bearing <= az2;
+        return (bearing >= az1 && bearing <= 360) || bearing <= az2;
+    }
+
+    public static void ResetAircraftATPAValues(Aircraft aircraft, bool resetAcATPARef = true)
+    {
+        if (resetAcATPARef)
+            aircraft.ATPAVolume = null;
+        aircraft.ATPAFollowing = null;
+        aircraft.ATPAMileageNow = null;
+        aircraft.ATPAMileage24 = null;
+        aircraft.ATPAMileage45 = null;
+        aircraft.ATPARequiredMileage = null;
+        aircraft.ATPAStatus = null;
+        aircraft.ATPATrackToLeader = null;
+    }
+
+    public void CalculateATPA(List<Aircraft> aircraft, Atpa atpa, Radar radar)
+    {
+        if (!Active)
+        {
+            aircraft.Where(x => ReferenceEquals(x.ATPAVolume, this)).ToList().ForEach(x => ResetAircraftATPAValues(x));
+            return;
+        }
+        var order = aircraft.Where(x => IsInside(x, radar, atpa))
+            .OrderBy(x => x.SweptLocation(radar)!.DistanceTo(RunwayThreshold)).ToList();
+        aircraft.Where(x => ReferenceEquals(x.ATPAVolume, this) && !order.Contains(x)).ToList()
+            .ForEach(ResetThis);
+        if (order.Count > 1)
+        {
+            order[0].ATPAVolume = this;
+            ResetAircraftATPAValues(order[0], false);
+            for (int i = 1; i < order.Count; i++)
+            {
+                var leader = order[i - 1];
+                var follower = order[i];
+                follower.ATPAVolume = this;
+                follower.ATPAFollowing = leader;
+                follower.ATPAMileageNow = follower.SweptLocation(radar)!.DistanceTo(leader.SweptLocation(radar)!);
+                follower.ATPAMileage24 = follower.SweptLocation(radar)!.FromPoint(follower.GroundSpeed * 24 / 3600d, follower.ExtrapolateTrack())
+                    .DistanceTo(leader.SweptLocation(radar)!.FromPoint(leader.GroundSpeed * 24 / 3600d, leader.ExtrapolateTrack()));
+                follower.ATPAMileage45 = follower.SweptLocation(radar)!.FromPoint(follower.GroundSpeed * 45 / 3600d, follower.ExtrapolateTrack())
+                    .DistanceTo(leader.SweptLocation(radar)!.FromPoint(leader.GroundSpeed * 45 / 3600d, leader.ExtrapolateTrack()));
+                double minsep = 3;
+                if (TwoPointFiveEnabled && TwoPointFiveActive && follower.SweptLocation(radar)!.DistanceTo(RunwayThreshold) <= TwoPointFiveDistance)
+                    minsep = 2.5;
+                if (follower.Category != null && atpa.RequiredSeparation.TryGetValue(follower.Category, out var leaderTable)
+                    && leader.Category != null && leaderTable != null && leaderTable.TryGetValue(leader.Category, out var miles))
+                    follower.ATPARequiredMileage = miles;
+                else
+                    follower.ATPARequiredMileage = minsep;
+
+                if (follower.ATPAMileageNow < follower.ATPARequiredMileage || follower.ATPAMileage24 < follower.ATPARequiredMileage)
+                    follower.ATPAStatus = (int)ATPAStatus.Alert;
+                else if (follower.ATPAMileage45 < follower.ATPARequiredMileage)
+                    follower.ATPAStatus = (int)ATPAStatus.Caution;
+                else
+                    follower.ATPAStatus = (int)ATPAStatus.Monitor;
+                follower.ATPATrackToLeader = follower.SweptLocation(radar)!.BearingTo(leader.SweptLocation(radar)!);
+            }
+        }
+        else if (order.Count == 1)
+        {
+            order[0].ATPAVolume = this;
+            ResetAircraftATPAValues(order[0], false);
+        }
+    }
+
+    private static void ResetThis(Aircraft x) => ResetAircraftATPAValues(x);
+
+    public override string ToString() => Name ?? "";
+}
+
+public enum ATPAStatus { Monitor = 1, Caution = 2, Alert = 3 }

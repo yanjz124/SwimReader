@@ -730,6 +730,27 @@ function handleUpdate(u) {
     // 3 = weather, handled in Phase 10
     case 4: handleCA(u); return;   // server-side Conflict Alert (DGScope's engine)
     case 5: handleMSAW(u); return; // server-side MSAW / low-altitude (DGScope's engine)
+    case 6: handleATPA(u); return; // server-side ATPA in-trail mileage (DGScope's engine)
+  }
+}
+
+// Server-side ATPA (Automated Terminal Proximity Alert). SwimReader.Server runs DGScope's ATPA
+// engine over the facility's profile volumes and sends per-track in-trail data as UpdateType 6:
+// M=mileage to leader, R=required, S=status (1 Monitor/2 Caution/3 Alert), B=bearing to leader.
+// ATPAMileageNow already renders on FDB line 3; status drives its color, B the (future) cone.
+function handleATPA(u) {
+  const byGuid = new Map();
+  for (const t of (u.Tracks || [])) byGuid.set(String(t.Guid), t);
+  for (const [guid, t] of tracks) {
+    const a = byGuid.get(String(guid));
+    if (a) {
+      t.ATPAMileageNow = a.M;
+      t._atpaRequired = a.R;
+      t._atpaStatus = a.S;       // 1 Monitor, 2 Caution, 3 Alert
+      t._atpaBearing = a.B;
+    } else if (t.ATPAMileageNow != null) {
+      t.ATPAMileageNow = null; t._atpaRequired = null; t._atpaStatus = null; t._atpaBearing = null;
+    }
   }
 }
 

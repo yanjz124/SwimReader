@@ -36,5 +36,10 @@ public class RadarWindowProfile
     [XmlArrayItem("MSAWVolume")]
     public List<Msaw.MSAWVolume> MSAWSuppressionVolumes { get; set; } = new();
 
-    // ATPA volumes are added when the ATPA engine lands (own step).
+    // ── ATPA ──────────────────────────────────────────────────────────────────
+    public bool ATPAActive { get; set; } = true;
+
+    [XmlArray("ATPAVolumes")]
+    [XmlArrayItem("ATPAVolume")]
+    public List<Atpa.ATPAVolume> ATPAVolumes { get; set; } = new();
 }

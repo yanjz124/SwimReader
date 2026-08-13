@@ -71,6 +71,8 @@ public sealed class DgScopeAdapter : BackgroundService
 
     // ── MSAW — DGScope's engine, driven by profile volumes (UT=5 → JS "LA") ───────
     private readonly Msaw.MSAW _msaw = new();
+    // ── ATPA — DGScope's engine, driven by profile volumes (UT=6 → JS line-3 mileage) ──
+    private readonly Atpa.Atpa _atpa = new();
     private readonly Profile.ProfileStore _profiles;
 
     /// <summary>
@@ -431,6 +433,25 @@ public sealed class DgScopeAdapter : BackgroundService
                         _clients.Broadcast(
                             JsonSerializer.Serialize(new { UpdateType = 5, Guids = laGuids }, JsonOptions), facility);
                     }
+
+                    // ── ATPA ────────────────────────────────────────────────────
+                    // In-trail proximity on final. Volumes are facility-specific (per-runway) and
+                    // come only from the profile. Broadcasts per-track mileage/status as UT=6.
+                    if (profile is { ATPAActive: true, ATPAVolumes.Count: > 0 })
+                    {
+                        _atpa.Volumes = profile.ATPAVolumes;
+                        _atpa.Calculate(list, _caRadar);
+                        var atpaTracks = list.Where(a => a.ATPAMileageNow.HasValue).Select(a => new
+                        {
+                            Guid = a.Guid.ToString(),
+                            M = Math.Round(a.ATPAMileageNow!.Value, 2),
+                            R = a.ATPARequiredMileage.HasValue ? Math.Round(a.ATPARequiredMileage.Value, 1) : (double?)null,
+                            S = a.ATPAStatus,
+                            B = a.ATPATrackToLeader.HasValue ? Math.Round(a.ATPATrackToLeader.Value, 1) : (double?)null
+                        }).ToArray();
+                        _clients.Broadcast(
+                            JsonSerializer.Serialize(new { UpdateType = 6, Tracks = atpaTracks }, JsonOptions), facility);
+                    }
                 }
             }
             catch (Exception ex) { _logger.LogError(ex, "CA loop error"); }
@@ -565,6 +586,16 @@ public sealed class DgScopeAdapter : BackgroundService
         // Layer any controller command edits over the feed so they persist across TAIS batches.
         if (_overrides.Get(guid) is { } ov)
             update = ov.Apply(update);
+
+        // Feed ATPA-relevant identity onto the CA/ATPA aircraft snapshot (keyed by the track guid).
+        if (fp.Facility is not null && trackGuid is { } tg && tg != Guid.Empty
+            && _caTracks.TryGetValue(fp.Facility, out var facAc)
+            && facAc.TryGetValue(tg, out var caAc))
+        {
+            caAc.Destination = update.Destination;
+            caAc.FlightPlanCallsign = update.Callsign;
+            caAc.Squawk = update.AssignedSquawk;
+        }
 
         var json = JsonSerializer.Serialize(update, JsonOptions);
 

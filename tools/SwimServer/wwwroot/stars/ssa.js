@@ -39,6 +39,9 @@ const SSA = {
 function ssaStations() {
   const override = (new URLSearchParams(location.search)).get("metar");
   if (override) return override.split(",").map(s => s.trim()).filter(Boolean);
+  // STARS v2: the loaded DGScope profile's <AltimeterStations> drive the SSA (DGScope's source).
+  const prof = window.starsState?.profileAltimeters;
+  if (Array.isArray(prof) && prof.length) return prof;
   const ap = window.starsState?.area?.ssaAirports;
   if (Array.isArray(ap) && ap.length) return ap;
   if (window.starsState?.facilityHomeStation) return [window.starsState.facilityHomeStation];
@@ -264,3 +267,4 @@ function escapeHtml(s) {
 window.SSA = SSA;
 window.mountSsa = mountSsa;
 window.refreshSsa = refreshSsa;
+window.pollMetars = pollMetars;   // scope.js re-polls after loading profile altimeter stations

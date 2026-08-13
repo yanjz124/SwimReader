@@ -52,6 +52,11 @@ public class RadarWindowProfile
 
     // Just enough of the pref set to know which maps are displayed by default.
     public PrefSetLite? CurrentPrefSet { get; set; }
+
+    // METAR/altimeter stations shown in the SSA (DGScope <AltimeterStations>).
+    [XmlArray("AltimeterStations")]
+    [XmlArrayItem("string")]
+    public List<string> AltimeterStations { get; set; } = new();
 }
 
 public class PrefSetLite

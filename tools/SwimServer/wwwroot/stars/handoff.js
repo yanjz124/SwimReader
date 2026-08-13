@@ -238,15 +238,19 @@
       plane._owned = false;
       return;
     }
-    // 6. Beacon readout — cs:2752-2755
-    if (plane._owned && cs) {
+    // 6. Beacon readout — cs:2752-2755. DGScope gates this on Owned, but we can't own live FAA
+    // tracks (no real sign-on), so it would never fire. Adapt for the observation scope: read out
+    // when the block is already FDB (owned or force-shown) — so a second slew reads out, while the
+    // first slew still expands LDB→FDB (step 7) and middle-click still toggles FDB/LDB.
+    const isFdbNow = (typeof window.dataBlockMode === "function") && window.dataBlockMode(plane, fp) === "FDB";
+    if (cs && (plane._owned || isFdbNow)) {
       const sq = plane.Squawk || "";
       const asq = fp && fp.AssignedSquawk ? String(fp.AssignedSquawk).padStart(4, "0") : "";
       if (window.setResponse) window.setResponse(`${cs} ${sq} ${asq}`.trim());
       return;
     }
-    // 7. Toggle FDB — !Owned + callsign — cs:2757-2760
-    if (!plane._owned && cs) {
+    // 7. Toggle FDB — associated LDB → FDB — cs:2757-2760
+    if (cs) {
       const cur = (typeof window.dataBlockMode === "function")
         ? window.dataBlockMode(plane, fp) : "LDB";
       plane._forcedMode = (cur === "FDB") ? "LDB" : "FDB";

@@ -21,12 +21,13 @@ if ("textRendering" in ctx) ctx.textRendering = "geometricPrecision";
 
 // ── Path params: /stars/{artcc}/{facility} (or /starsv2/… — the test surface with
 //     the in-browser profile manager) ──────────────────────────────────────────
-const pathMatch = location.pathname.match(/^\/stars(v2)?\/([^/]+)\/([^/]+)/);
+const pathMatch = location.pathname.match(/^\/stars(?:v2)?\/([^/]+)\/([^/]+)/);
 if (!pathMatch) { location.href = "/stars"; throw new Error("bad path"); }
-const STARSV2 = !!pathMatch[1];
-const ARTCC = pathMatch[2];
-const FACILITY = pathMatch[3];
-window.STARSV2 = STARSV2;   // profile-editor.js mounts only when true
+const ARTCC = pathMatch[1];
+const FACILITY = pathMatch[2];
+// The web-DGScope + profile experience (engines, video maps, profile manager) is now THE STARS
+// scope — promoted from the /starsv2 test surface. Always on for both /stars and /starsv2.
+window.STARSV2 = true;
 
 // ── PrefSet — defaults exactly from scope/STARS/PrefSet.cs ──────────────────
 // Anything we add beyond the WPF defaults is marked with // (web-only).
@@ -489,6 +490,16 @@ async function warmAllMaps() {
 // <DisplayedMaps> sets initial visibility. Each map's geojson is served from the profile's uploads.
 async function loadProfileMaps() {
   if (!window.STARSV2) return;
+  // SSA altimeter stations come from the DGScope profile's <AltimeterStations> on v2 (independent
+  // of video maps) — DGScope drives the SSA METAR rows from the profile, not vNAS.
+  try {
+    const pr = await fetch(`/dstars/profile/${encodeURIComponent(FACILITY)}`, { credentials: "omit" });
+    if (pr.ok) {
+      const pd = await pr.json();
+      starsState.profileAltimeters = Array.isArray(pd.AltimeterStations) ? pd.AltimeterStations : [];
+      if (window.pollMetars && starsState.profileAltimeters.length) window.pollMetars();
+    }
+  } catch (e) { /* leave SSA on vNAS stations */ }
   let maps;
   try {
     const r = await fetch(`/dstars/profile/${encodeURIComponent(FACILITY)}/maps`, { credentials: "omit" });
@@ -1801,7 +1812,7 @@ function drawCone(t, bearingDeg, milesNM, color, showSize) {
   const nx = -dy, ny = dx;                       // perpendicular (screen)
   const len = milesNM / view.scale;              // NM → px (matches J-ring scale)
   if (len < 6) return;
-  const endHalf = 8;                             // half-width at the far end (px)
+  const endHalf = 5;                             // half of DGScope's TPAConeWidth (~10px) at the far end
   const gap = showSize ? 14 : 0;                 // centre gap for the label
   const y1 = Math.max(1, len / 2 - gap / 2), y2 = y1 + gap;
   const h1 = endHalf * (y1 / len), h2 = endHalf * (y2 / len);
@@ -1821,14 +1832,24 @@ function drawCone(t, bearingDeg, milesNM, color, showSize) {
   }
 }
 function drawCones() {
+  const tpaCol = adjusted(COLORS.TPA, prefSet.Brightness.Tools);
+  const showMonitor = !!window.starsState?.DrawATPAMonitorCones;   // *B toggle
   for (const t of tracks.values()) {
     if (!t.Location) continue;
     // P-cone tool (*P<miles> + slew) — points along the aircraft's own track.
-    if (t.TPA && t.TPA.type === "PCone" && t.GroundTrack != null)
-      drawCone(t, t.GroundTrack, t.TPA.miles, adjusted(COLORS.TPA, prefSet.Brightness.Tools), t.TPA.showSize !== false);
-    // ATPA required-separation cone toward the leader (v2): caution amber, alert red.
-    if (window.STARSV2 && t._atpaStatus >= 2 && t._atpaRequired && t._atpaBearing != null)
-      drawCone(t, t._atpaBearing, t._atpaRequired, t._atpaStatus === 3 ? "rgba(255,80,80,.95)" : "rgba(255,215,80,.95)", true);
+    if (t.TPA && t.TPA.type === "PCone" && t.GroundTrack != null) {
+      drawCone(t, t.GroundTrack, t.TPA.miles, tpaCol, t.TPA.showSize !== false);
+      continue;   // DGScope DrawTPA: manual TPA takes the track's cone slot
+    }
+    // ATPA required-separation cone toward the leader (DGScope DrawTPA). Caution/alert always;
+    // Monitor only when *B (DrawATPAMonitorCones) is on. No ownership gate — we can't own live
+    // FAA tracks, so ATPA is shown for all in-trail traffic (matches the server computing it for all).
+    if (window.STARSV2 && t._atpaRequired && t._atpaBearing != null) {
+      const st = t._atpaStatus;
+      if (st === 3)      drawCone(t, t._atpaBearing, t._atpaRequired, "rgba(255,80,80,.95)", true);   // Alert
+      else if (st === 2) drawCone(t, t._atpaBearing, t._atpaRequired, "rgba(255,215,80,.95)", true);  // Caution
+      else if (st === 1 && showMonitor) drawCone(t, t._atpaBearing, t._atpaRequired, tpaCol, true);   // Monitor
+    }
   }
 }
 

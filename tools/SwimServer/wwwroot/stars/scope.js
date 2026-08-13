@@ -484,11 +484,46 @@ async function warmAllMaps() {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 }
 
+// STARS v2 — replace the vNAS catalog with the DGScope profile's video maps (if any). They render
+// through the same videoMaps[]/drawVideoMapLines path; <DCBButton> feeds the DCB MAP buttons and
+// <DisplayedMaps> sets initial visibility. Each map's geojson is served from the profile's uploads.
+async function loadProfileMaps() {
+  if (!window.STARSV2) return;
+  let maps;
+  try {
+    const r = await fetch(`/dstars/profile/${encodeURIComponent(FACILITY)}/maps`, { credentials: "omit" });
+    if (!r.ok) return;
+    maps = await r.json();
+  } catch (e) { return; }
+  if (!Array.isArray(maps) || !maps.length) return;
+  // Profile maps supersede vNAS maps on v2.
+  videoMaps.length = 0;
+  activeMapIds = Array(38).fill(null);
+  for (const m of maps) {
+    if (m.available === false) continue;   // geojson not uploaded for this map
+    videoMaps.push({
+      id: "p" + m.number, name: m.fullName || "", shortName: m.shortName || "",
+      starsId: m.number, category: (m.category === "B") ? "B" : "A",
+      visible: !!m.visible, lines: null, _loading: false,
+      _url: `/dstars/profile/${encodeURIComponent(FACILITY)}/map/${m.number}`,
+    });
+    for (const tok of String(m.dcbButton || "").split(/[,;]/)) {
+      const slot = parseInt(tok, 10);
+      if (slot >= 1 && slot <= 38) activeMapIds[slot - 1] = m.number;
+    }
+  }
+  prefSet.DisplayedMaps = videoMaps.filter(m => m.visible).map(m => m.starsId);
+  for (const m of videoMaps) if (m.visible) ensureMapLoaded(m);
+  warmAllMaps();
+  console.log(`[STARSv2] loaded ${videoMaps.length} profile video maps (${prefSet.DisplayedMaps.length} visible)`);
+}
+
 async function ensureMapLoaded(map) {
   if (map.lines !== null || map._loading) return;
   map._loading = true;
   try {
-    const r = await fetch(`/api/stars/videoMap/${encodeURIComponent(ARTCC)}/${encodeURIComponent(map.id)}`);
+    // Profile maps (STARS v2) carry their own geojson URL; vNAS maps use the catalog endpoint.
+    const r = await fetch(map._url || `/api/stars/videoMap/${encodeURIComponent(ARTCC)}/${encodeURIComponent(map.id)}`);
     if (!r.ok) { map.lines = []; return; }
     const gj = await r.json();
     const out = [];
@@ -2458,6 +2493,9 @@ async function bootstrap() {
       await loadVideoMapsCatalog(fac.starsConfiguration, fac.videoMaps);
       warmAllMaps();   // background prefetch so MAP toggles render instantly
     }
+    // STARS v2: if a DGScope profile with video maps is loaded for this facility, use ITS maps
+    // (the profile is the source of truth) — rendered through the same videoMaps[] pipeline.
+    await loadProfileMaps();
     // Phase 4: ASR sites for SITE submenu (vNAS starsConfiguration → areas → asrSites if present)
     starsState.asrSites = fac?.starsConfiguration?.areas?.flatMap(a => a.asrSites || []) || [];
 

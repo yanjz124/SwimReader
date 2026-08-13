@@ -42,4 +42,34 @@ public class RadarWindowProfile
     [XmlArray("ATPAVolumes")]
     [XmlArrayItem("ATPAVolume")]
     public List<Atpa.ATPAVolume> ATPAVolumes { get; set; } = new();
+
+    // ── Video maps ──────────────────────────────────────────────────────────────
+    // References to external .geojson map files (geometry is NOT inline). Filepath is the
+    // profile-manager author's local path; we resolve maps server-side by its basename.
+    [XmlArray("VideoMapFiles")]
+    [XmlArrayItem("VideoMapFile")]
+    public List<VideoMapFile> VideoMapFiles { get; set; } = new();
+
+    // Just enough of the pref set to know which maps are displayed by default.
+    public PrefSetLite? CurrentPrefSet { get; set; }
+}
+
+public class PrefSetLite
+{
+    [XmlArray("DisplayedMaps")]
+    [XmlArrayItem("int")]
+    public List<int> DisplayedMaps { get; set; } = new();
+}
+
+/// <summary>One &lt;VideoMapFile&gt; entry from the profile — a reference to an external geojson map.</summary>
+public class VideoMapFile
+{
+    public string? Filepath { get; set; }
+    public int MapNumber { get; set; }
+    public string? ShortName { get; set; }
+    public string? FullName { get; set; }
+    public string? BrightnessGroup { get; set; }   // "A" | "B"
+    public string? DCBButton { get; set; }          // DCB slot(s), may be comma-separated
+    [System.Xml.Serialization.XmlIgnore]
+    public string? BaseName => string.IsNullOrEmpty(Filepath) ? null : System.IO.Path.GetFileName(Filepath);
 }

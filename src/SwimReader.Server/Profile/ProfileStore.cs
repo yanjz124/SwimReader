@@ -34,6 +34,9 @@ public sealed class ProfileStore
 
     public string? Root => EnsureRoot();
 
+    /// <summary>Directory holding uploaded video-map geojson (resolved by basename). stars-profiles/VideoMaps.</summary>
+    public string? MapsDir { get { var r = EnsureRoot(); return r == null ? null : Path.Combine(r, "VideoMaps"); } }
+
     /// <summary>Loaded profile for a facility, or null. Cached (including negative results).</summary>
     public RadarWindowProfile? Get(string facility) => _cache.GetOrAdd(facility, Load);
 

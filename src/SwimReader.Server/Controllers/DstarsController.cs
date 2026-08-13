@@ -76,6 +76,44 @@ public sealed class DstarsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Video-map catalog from a facility's profile — the &lt;VideoMapFiles&gt; entries plus whether each
+    /// map's geojson is present on the server and whether it's displayed by default. The scope injects
+    /// these into its videoMaps[] and renders them like vNAS maps.
+    /// </summary>
+    [HttpGet("profile/{facility}/maps")]
+    public IActionResult ProfileMaps(string facility)
+    {
+        var p = _profiles.Get(facility);
+        if (p is null) return Ok(Array.Empty<object>());
+        var dir = _profiles.MapsDir;
+        var displayed = p.CurrentPrefSet?.DisplayedMaps ?? new List<int>();
+        var maps = p.VideoMapFiles.Select(m => new
+        {
+            number = m.MapNumber,
+            shortName = m.ShortName,
+            fullName = m.FullName,
+            category = m.BrightnessGroup == "B" ? "B" : "A",
+            dcbButton = m.DCBButton,
+            visible = displayed.Contains(m.MapNumber),
+            available = dir != null && m.BaseName != null && System.IO.File.Exists(Path.Combine(dir, m.BaseName)),
+        }).ToArray();
+        return Ok(maps);
+    }
+
+    /// <summary>Serve one profile video-map's geojson (resolved from stars-profiles/VideoMaps by basename).</summary>
+    [HttpGet("profile/{facility}/map/{number:int}")]
+    public IActionResult ProfileMap(string facility, int number)
+    {
+        var p = _profiles.Get(facility);
+        var m = p?.VideoMapFiles.FirstOrDefault(x => x.MapNumber == number);
+        var dir = _profiles.MapsDir;
+        if (m?.BaseName is null || dir is null) return NotFound();
+        var file = Path.Combine(dir, m.BaseName);
+        if (!System.IO.File.Exists(file)) return NotFound();
+        return PhysicalFile(file, "application/geo+json");
+    }
+
     /// <summary>List stored profiles with parsed volume counts (for the manager UI).</summary>
     [HttpGet("profiles")]
     public IActionResult ListProfiles()

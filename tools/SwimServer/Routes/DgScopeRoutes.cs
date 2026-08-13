@@ -56,7 +56,16 @@ static class DgScopeRoutes
             var targetUrl = $"http://127.0.0.1:5000/dstars/{rest}{query}";
 
             using var httpClient = new HttpClient();
-            var request = new HttpRequestMessage(HttpMethod.Get, targetUrl);
+            // Preserve the request method + body so client→server commands (POST
+            // /dstars/{fac}/update) and profile saves (POST /dstars/profile/{fac}) proxy
+            // correctly — not just the GET streaming feed.
+            var request = new HttpRequestMessage(new HttpMethod(c.Request.Method), targetUrl);
+            if (!HttpMethods.IsGet(c.Request.Method) && !HttpMethods.IsHead(c.Request.Method))
+            {
+                request.Content = new StreamContent(c.Request.Body);
+                if (!string.IsNullOrEmpty(c.Request.ContentType))
+                    request.Content.Headers.TryAddWithoutValidation("Content-Type", c.Request.ContentType);
+            }
 
             var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, c.RequestAborted);
 

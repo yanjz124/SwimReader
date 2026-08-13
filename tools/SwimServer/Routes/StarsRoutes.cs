@@ -37,6 +37,37 @@ static class StarsRoutes
                 await c.Response.WriteAsync(html);
             });
 
+        // ── STARS v2 (test surface): scope + in-browser DGScope profile manager ──
+        // Not linked from the home page. Same scope assets as /stars plus profile-editor.js;
+        // scope.js keys the editor off the /starsv2/ path. Bare /starsv2 serves the picker with
+        // its facility links rewritten to /starsv2/.
+        app.MapGet("/starsv2", async (HttpContext c) =>
+        {
+            var html = await File.ReadAllTextAsync(Path.Combine(ctx.WebRootPath, "stars", "index.html"));
+            // Rewrite anchor navigations from /stars/ to /starsv2/ so picking a facility lands on v2.
+            html = html.Replace("</body>",
+                "<script>document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^=\"/stars/\"]');" +
+                "if(a){e.preventDefault();location.href=a.getAttribute('href').replace('/stars/','/starsv2/');}},true);</script></body>");
+            c.Response.Headers.CacheControl = "no-cache";
+            c.Response.ContentType = "text/html";
+            await c.Response.WriteAsync(html);
+        });
+        app.MapGet("/starsv2/{artcc:regex(^[A-Za-z0-9]+$)}/{facility:regex(^[A-Za-z0-9]+$)}",
+            async (HttpContext c, string artcc, string facility) =>
+            {
+                var dir = Path.Combine(ctx.WebRootPath, "stars");
+                var html = await File.ReadAllTextAsync(Path.Combine(dir, "starsv2.html"));
+                long ver = 0;
+                foreach (var f in System.IO.Directory.EnumerateFiles(dir)
+                             .Where(p => p.EndsWith(".js") || p.EndsWith(".css")))
+                    ver = System.Math.Max(ver, File.GetLastWriteTimeUtc(f).Ticks);
+                html = System.Text.RegularExpressions.Regex.Replace(
+                    html, "(src|href)=\"([\\w.-]+\\.(?:js|css))\"", $"$1=\"$2?v={ver}\"");
+                c.Response.Headers.CacheControl = "no-cache";
+                c.Response.ContentType = "text/html";
+                await c.Response.WriteAsync(html);
+            });
+
         // ── vNAS profile REST ────────────────────────────────────────────────
         app.MapGet("/api/stars/artccs", async () =>
         {

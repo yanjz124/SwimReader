@@ -40,6 +40,51 @@ public sealed class ProfileStore
     /// <summary>Drop the cache so edited/added profiles reload on next Get (also re-resolves root).</summary>
     public void Invalidate() { _cache.Clear(); _root = FindRoot(); }
 
+    /// <summary>
+    /// Store an uploaded DGScope RadarWindow XML profile (produced by the desktop profile-manager)
+    /// verbatim at <c>stars-profiles/{FAC}.xml</c> and reload so the engines pick it up. The raw bytes
+    /// are written unchanged — every element the profile-manager wrote is preserved, not just the
+    /// CA/MSAW/ATPA subset we parse. Validates it deserializes as a RadarWindow first; returns the
+    /// parsed profile (for reporting counts) or throws on malformed XML.
+    /// </summary>
+    public (string File, RadarWindowProfile Parsed) SaveRawXml(string facility, string xml)
+    {
+        // Validate it's a RadarWindow we can read before persisting.
+        var ser = new XmlSerializer(typeof(RadarWindowProfile));
+        RadarWindowProfile parsed;
+        using (var sr = new StringReader(xml))
+            parsed = (RadarWindowProfile)ser.Deserialize(sr)!;
+
+        var root = _root ?? CreateRoot();
+        Directory.CreateDirectory(root);
+        var file = Path.Combine(root, facility.ToUpperInvariant() + ".xml");
+        File.WriteAllText(file, xml);
+        _root = root;
+        Invalidate();
+        _log?.LogInformation("Uploaded STARS profile {File} ({CA} CA, {MSAW} MSAW, {ATPA} ATPA vols)",
+            file, parsed.ConflictAlertSuppressionVolumes.Count, parsed.MSAWVolumes.Count, parsed.ATPAVolumes.Count);
+        return (file, parsed);
+    }
+
+    /// <summary>List every stored profile (filename → parsed counts) for the manager UI.</summary>
+    public IEnumerable<(string Name, string File)> List()
+    {
+        var root = EnsureRoot();
+        if (root == null || !Directory.Exists(root)) yield break;
+        foreach (var f in Directory.EnumerateFiles(root, "*.xml", SearchOption.AllDirectories))
+            yield return (Path.GetFileNameWithoutExtension(f), f);
+    }
+
+    // When no stars-profiles/ exists yet, create it at the repo/app root (dir holding the solution or .git).
+    private static string CreateRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
+            if (File.Exists(Path.Combine(dir.FullName, "SwimReader.sln")) || Directory.Exists(Path.Combine(dir.FullName, ".git")))
+                return Path.Combine(dir.FullName, "stars-profiles");
+        return Path.Combine(AppContext.BaseDirectory, "stars-profiles");
+    }
+
     private RadarWindowProfile? Load(string facility)
     {
         EnsureRoot();

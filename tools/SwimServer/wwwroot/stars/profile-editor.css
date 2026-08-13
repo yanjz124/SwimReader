@@ -1,0 +1,39 @@
+/* STARS v2 in-browser DGScope profile manager. Only mounted on /starsv2. */
+#pe-toggle{
+  position:fixed; top:8px; right:8px; z-index:30;
+  font:12px/1 Consolas,monospace; color:#cceecc; background:#0a1a0a;
+  border:1px solid #2c5c2c; padding:5px 9px; cursor:pointer; letter-spacing:.5px;
+}
+#pe-toggle:hover{ background:#123012; }
+#pe-panel{
+  position:fixed; top:0; right:0; bottom:0; width:340px; z-index:29;
+  background:rgba(6,12,6,.96); border-left:1px solid #2c5c2c; color:#cde;
+  font:12px/1.4 Consolas,monospace; overflow-y:auto; display:none;
+  padding:34px 10px 40px;
+}
+#pe-panel.open{ display:block; }
+#pe-panel h2{ font-size:13px; color:#8f8; margin:2px 0 8px; letter-spacing:1px; }
+#pe-panel h3{ font-size:12px; color:#6c6; margin:14px 0 4px; border-bottom:1px solid #244; padding-bottom:2px; }
+.pe-row{ display:flex; gap:6px; align-items:center; margin:3px 0; }
+.pe-row label{ color:#9ab; min-width:64px; }
+.pe-row input, .pe-row select{
+  flex:1; min-width:0; background:#04140a; border:1px solid #285028; color:#dfe;
+  font:12px Consolas,monospace; padding:2px 4px;
+}
+.pe-btn{
+  background:#0a1a0a; border:1px solid #2c5c2c; color:#cceecc;
+  font:11px Consolas,monospace; padding:3px 8px; cursor:pointer;
+}
+.pe-btn:hover{ background:#123012; }
+.pe-btn.act{ background:#1c3c1c; border-color:#4a4; color:#dfd; }
+.pe-btn.save{ border-color:#6a6; color:#bfb; }
+.pe-btn.danger{ border-color:#a44; color:#f99; padding:1px 6px; }
+.pe-list{ list-style:none; margin:4px 0; padding:0; }
+.pe-list li{ display:flex; justify-content:space-between; align-items:center; gap:6px;
+  padding:2px 4px; border:1px solid #1c2c1c; margin:2px 0; background:#08120a; }
+.pe-list li .nm{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#pe-status{ position:fixed; bottom:8px; right:8px; width:320px; z-index:31;
+  color:#9d9; font:11px Consolas,monospace; text-align:right; pointer-events:none; }
+.pe-hint{ color:#7a9; font-size:11px; margin:2px 0 6px; }
+.pe-add{ border:1px dashed #2c5c2c; padding:6px; margin:4px 0 8px; }
+.pe-toggle-inline{ color:#9ab; cursor:pointer; user-select:none; }

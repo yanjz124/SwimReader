@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>STARS v2 · Scope + Profile Manager</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛠️</text></svg>">
+<base href="/stars/" />
+<link rel="stylesheet" href="scope.css" />
+<link rel="stylesheet" href="profile-editor.css" />
+<link rel="stylesheet" href="/shared/replay-bar.css?v=4" />
+<script defer src="/shared/replay-bar.js?v=4"></script>
+</head>
+<body>
+<canvas id="scope"></canvas>
+<div id="dstars-state" style="position:fixed;bottom:8px;right:8px;font-size:11px;color:#888;background:rgba(0,0,0,0.5);padding:2px 6px;z-index:8;">—</div>
+<div id="dcb"></div>
+<script src="handoff.js"></script>
+<script src="dcb.js"></script>
+<script src="preview.js"></script>
+<script src="ssa.js"></script>
+<script src="nexrad.js"></script>
+<script src="profile.js"></script>
+<script src="scope.js"></script>
+<!-- v2-only: the in-browser DGScope profile manager (CA/MSAW/ATPA volume authoring). -->
+<script src="profile-editor.js"></script>
+<script src="/shared/disclaimer.js?v=2"></script>
+</body>
+</html>

@@ -18,13 +18,80 @@ public sealed class DstarsController : ControllerBase
     private readonly ClientConnectionManager _clients;
     private readonly ILogger<DstarsController> _logger;
     private readonly DgScopeAdapter _adapter;
+    private readonly SwimReader.Server.Profile.ProfileStore _profiles;
 
     public DstarsController(ClientConnectionManager clients, ILogger<DstarsController> logger,
-        DgScopeAdapter adapter)
+        DgScopeAdapter adapter, SwimReader.Server.Profile.ProfileStore profiles)
     {
         _clients = clients;
         _logger = logger;
         _adapter = adapter;
+        _profiles = profiles;
+    }
+
+    private static readonly JsonSerializerOptions ProfileJson = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
+    };
+
+    /// <summary>
+    /// Web profile-manager read path. Returns the full editable RadarWindow-subset profile for a
+    /// facility as JSON (empty skeleton if none exists yet). Reached from the scope origin via the
+    /// SwimServer /dstars/* proxy.
+    /// </summary>
+    [HttpGet("profile/{facility}")]
+    public IActionResult GetProfile(string facility)
+    {
+        var p = _profiles.Get(facility) ?? new SwimReader.Server.Profile.RadarWindowProfile();
+        return new JsonResult(p, ProfileJson);
+    }
+
+    /// <summary>
+    /// Profile upload. Accepts a raw DGScope RadarWindow XML file (from the desktop profile-manager),
+    /// stores it verbatim at stars-profiles/{FAC}.xml, and reloads so the CA/MSAW/ATPA engines pick up
+    /// the volumes on the next 1 s pass. Every element is preserved (we only parse the subset we use).
+    /// </summary>
+    [HttpPost("profile/{facility}")]
+    public async Task<IActionResult> UploadProfile(string facility, CancellationToken ct)
+    {
+        using var sr = new StreamReader(Request.Body);
+        var xml = await sr.ReadToEndAsync(ct);
+        if (string.IsNullOrWhiteSpace(xml)) return BadRequest("empty body");
+        try
+        {
+            var (file, parsed) = _profiles.SaveRawXml(facility, xml);
+            return Ok(new
+            {
+                saved = true,
+                file = Path.GetFileName(file),
+                ca = parsed.ConflictAlertSuppressionVolumes.Count,
+                msaw = parsed.MSAWVolumes.Count,
+                atpa = parsed.ATPAVolumes.Count,
+            });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest("not a valid RadarWindow XML: " + ex.Message);
+        }
+    }
+
+    /// <summary>List stored profiles with parsed volume counts (for the manager UI).</summary>
+    [HttpGet("profiles")]
+    public IActionResult ListProfiles()
+    {
+        var items = _profiles.List().Select(p =>
+        {
+            var prof = _profiles.Get(p.Name);
+            return new
+            {
+                name = p.Name,
+                ca = prof?.ConflictAlertSuppressionVolumes.Count ?? 0,
+                msaw = prof?.MSAWVolumes.Count ?? 0,
+                atpa = prof?.ATPAVolumes.Count ?? 0,
+            };
+        }).ToArray();
+        return Ok(items);
     }
 
     /// <summary>

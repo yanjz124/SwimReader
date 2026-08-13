@@ -19,11 +19,14 @@ const ctx = cv.getContext("2d");
 // geometric glyph metrics over hinted anti-aliasing so text matches the WPF look.
 if ("textRendering" in ctx) ctx.textRendering = "geometricPrecision";
 
-// ── Path params: /stars/{artcc}/{facility} ──────────────────────────────────
-const pathMatch = location.pathname.match(/^\/stars\/([^/]+)\/([^/]+)/);
+// ── Path params: /stars/{artcc}/{facility} (or /starsv2/… — the test surface with
+//     the in-browser profile manager) ──────────────────────────────────────────
+const pathMatch = location.pathname.match(/^\/stars(v2)?\/([^/]+)\/([^/]+)/);
 if (!pathMatch) { location.href = "/stars"; throw new Error("bad path"); }
-const ARTCC = pathMatch[1];
-const FACILITY = pathMatch[2];
+const STARSV2 = !!pathMatch[1];
+const ARTCC = pathMatch[2];
+const FACILITY = pathMatch[3];
+window.STARSV2 = STARSV2;   // profile-editor.js mounts only when true
 
 // ── PrefSet — defaults exactly from scope/STARS/PrefSet.cs ──────────────────
 // Anything we add beyond the WPF defaults is marked with // (web-only).
@@ -2288,6 +2291,8 @@ function frame() {
   drawRBLs();
   drawTracks();
   drawMinSep();
+  // v2 profile-manager overlay (existing + in-progress CA/MSAW/ATPA volumes). No-op on /stars.
+  if (window.__editorDraw) { try { window.__editorDraw(ctx); } catch (e) {} }
   updateTopbar();
   requestAnimationFrame(frame);
 }

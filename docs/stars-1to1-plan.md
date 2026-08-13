@@ -108,6 +108,31 @@ box. Profile `<ConflictAlertSuppressionVolumes>` overrides the fallback when pre
 7. **JS render stubs** — PCone, feed-weather (UT=3) draw, manual SPC entry command, auto-offset render,
    RBL waypoint anchoring (server supplies waypoints/airports).
 
+## Progress (2026-08)
+
+Done + deployed + verified:
+1. **STCA/CA** — `Ca/ConflictAlertSystem` server-side, UT=4 → JS `_stca`.
+2. **CA suppression** — `Ca/CASuppressionVolume` + `Ca/RunwayDb` auto-corridors; PCT 26→5-9 conflicts.
+3. **Command write-path** — `POST /dstars/{fac}/update` → `OverrideStore` → rebroadcast; scratchpad live-test PASS.
+   JS `sendFpUpdate` wired to handoff/scratchpad/type/drop.
+4. **Manual SPC** entry + slew-ack (preview.js).
+5. **Profile XML loader** — `Profile/ProfileStore` + `RadarWindowProfile` POCO deserialize the shared
+   RadarWindow subset; `GET /api/stars/profile/{fac}` verifies. `stars-profiles/` is gitignored (profiles
+   land out-of-band on the server); root re-resolves lazily.
+6. **MSAW** — `Msaw/` engine, profile volumes → UT=5 → JS `_msaw` ("LA"). Lights up with a real profile.
+7. **ATPA** — `Atpa/` engine (ATPAVolume + 7110.126B CWT), profile volumes → UT=6 → JS `ATPAMileageNow`
+   (FDB line 3). Advanced profile-only filters omitted as no-ops. Lights up with a real profile.
+
+UpdateType map (our extensions, ignored by real DGScope): 4=CA, 5=MSAW, 6=ATPA.
+Example profile: `docs/examples/RadarWindow-profile-example.xml` (CA+MSAW+ATPA).
+
+Remaining:
+- **Video maps** — consume RadarWindow `<VideoMapFiles>` + geojson. Data-blocked: needs map geojson on
+  the server (the `Filepath`s in existing profiles are the author's Windows paths).
+- **JS render polish** — ATPA cones + status color, PCone render, auto-offset render, RBL waypoint anchoring
+  (server has NASR waypoints to expose). Not data-blocked; self-contained.
+- MSAW/ATPA **light up live** only once real facility profiles with volumes are placed in `stars-profiles/`.
+
 ## File map
 
 - Server engines: `src/SwimReader.Server/Ca/` (CA done; add `CASuppressionVolume`, `Msaw/`, `Atpa/`,

@@ -514,6 +514,27 @@ function executeCommand(line, opts = {}) {
   // Unknown command path - WPF silently does nothing. Match that.
 }
 
+// Resolve a STARS waypoint (fix / navaid / airport) to lat/lon for RBL anchoring, on demand.
+// Cached in window.starsWaypoints; misses hit the server's NASR lookup (/api/nasr/find/{ident}).
+async function resolveStarsWaypoint(id) {
+  id = String(id || "").trim().toUpperCase();
+  if (!id) return null;
+  window.starsWaypoints ||= [];
+  const cached = window.starsWaypoints.find(w => w.id === id);
+  if (cached) return cached;
+  try {
+    const r = await fetch(`/api/nasr/find/${encodeURIComponent(id)}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d && typeof d.lat === "number" && typeof d.lon === "number") {
+      const wp = { id, lat: d.lat, lon: d.lon };
+      window.starsWaypoints.push(wp);
+      return wp;
+    }
+  } catch (e) { /* network error → unresolved */ }
+  return null;
+}
+
 // ── '*' splat command tree (RadarWindow.cs:1636-1893) ─────────────────────
 //   *B [E|I]    — DrawATPAMonitorCones toggle/enable/inhibit
 //   *D+ [E|I]   — TPASize toggle/enable/inhibit (system-wide or per-plane)
@@ -579,15 +600,15 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
         rbls.push(window.starsState.tempLine);
       }
       if (k.length > 2) {
-        // DGScope Substring(1) on "*T<rest>" gives "T<rest>" — int parse
-        // on a string starting with 'T' fails, so only the waypoint
-        // lookup branch is reachable here. Matching that behaviour.
-        const entered = tokenAfterStar;                                // "T..."
-        const wp = (window.starsWaypoints || []).find(w => w.id === entered);
-        if (wp) window.starsState.tempLine.startGeo = { lat: wp.lat, lon: wp.lon };
-        // Bind to the clicked plane and finalize.
-        window.starsState.tempLine.endPlane = clicked;
-        window.starsState.tempLine = null;
+        // *T<wpt> anchored to the clicked plane: resolve the waypoint (fix/navaid/airport) via
+        // NASR, then bind the far end to the plane. Async — resolveStarsWaypoint fetches + caches.
+        const entered = k.slice(2).join("");                           // waypoint id after "*T"
+        resolveStarsWaypoint(entered).then(wp => {
+          if (!window.starsState.tempLine) return;
+          if (wp) window.starsState.tempLine.startGeo = { lat: wp.lat, lon: wp.lon };
+          window.starsState.tempLine.endPlane = clicked;
+          window.starsState.tempLine = null;
+        });
       }
       return;
     }
@@ -598,12 +619,11 @@ function processSplat(k, parts, clicked, clickedplane, enter) {
         const idx = parseInt(entered, 10);
         if (Number.isFinite(idx) && String(idx) === entered) {
           if (idx <= rbls.length && idx >= 1) rbls.splice(idx - 1, 1);  // cs:1770-1775
-        } else {
-          const wp = (window.starsWaypoints || []).find(w => w.id === entered);
-          if (wp) {                                                     // cs:1779-1789
-            window.starsState.tempLine = { startGeo: { lat: wp.lat, lon: wp.lon }, end: window.mouseGeo?.() };
-            rbls.push(window.starsState.tempLine);
-          }
+        } else {                                                        // cs:1779-1789 — RBL from a waypoint
+          resolveStarsWaypoint(entered).then(wp => {
+            if (wp) rbls.push({ startGeo: { lat: wp.lat, lon: wp.lon }, end: window.mouseGeo?.() });
+            else setResponse("ILL FIX");
+          });
         }
       }
       return;

@@ -1408,8 +1408,84 @@ function ldrEnum(v) {
   return 2; // 0/undefined/unknown → N
 }
 
+// Block top-left {x,y,w,h} for a given leader direction — mirrors the switch in
+// drawDataBlockAndLeader (block position only), used by autoOffsetPass to test placements.
+function blockOrigin(screen, w, h, dir) {
+  const charHeight = prefSet.CharSize.DataBlock + 2;
+  const off = (0.5 + prefSet.LeaderLength) * charHeight;
+  const dOff = off * Math.SQRT2 / 2;
+  const sr = prefSet.CharSize.Position * 0.5;
+  const pL = screen.x - sr, pR = screen.x + sr, pT = screen.y - sr, pB = screen.y + sr;
+  const SF = charHeight * 2.5, SN = charHeight * 1.25;
+  let x, y;
+  switch (dir) {
+    case 2: x = screen.x - w / 2; y = pT - off + SN - h; break;   // N
+    case 8: x = screen.x - w / 2; y = pB + off + SF - h; break;   // S
+    case 6: x = pR + off;         y = screen.y + SF - h; break;   // E
+    case 4: x = pL - off - w;     y = screen.y + SF - h; break;   // W
+    case 3: x = pR + dOff;        y = pT - dOff + SN - h; break;  // NE
+    case 9: x = pR + dOff;        y = pB + dOff + SF - h; break;  // SE
+    case 1: x = pL - dOff - w;    y = pT - dOff + SN - h; break;  // NW
+    case 7: x = pL - dOff - w;    y = pB + dOff + SF - h; break;  // SW
+    default: x = pR + off;        y = screen.y + SF - h;          // default E
+  }
+  return { x, y, w, h };
+}
+
+// Auto-offset (F7 O E) — RadarWindow.cs:6311-6385. For each FDB track with no explicit leader
+// direction, try the 8 directions and pick the one with the fewest conflicts (data-block overlaps
+// with other FDBs +2, target-symbol overlaps +1); store it on t._autoLeaderDir. Runs once per frame
+// before the draw pass. When off, clears the assignments so blocks return to their base direction.
+function autoOffsetPass(suppressed) {
+  if (!window.starsState?.AutoOffset) {
+    for (const t of tracks.values()) t._autoLeaderDir = null;
+    return;
+  }
+  const fontSize = prefSet.CharSize.DataBlock;
+  ctx.font = `${fontSize}px FixedDemiBold, ui-monospace, monospace`;
+  const charHeight = fontSize + 2, charWidth = fontSize * 0.55;
+  const sr = prefSet.CharSize.Position * 0.5;
+  const items = [];
+  for (const t of tracks.values()) {
+    if (!t.Location || suppressed.has(t.Guid) || t.IsOnGround) continue;
+    const fp = trackToFp.get(t.Guid);
+    if (dataBlockMode(t, fp) !== "FDB") continue;
+    const pos = displayPos(t); if (!pos) continue;
+    const screen = geoToScreen(pos);
+    const lines = buildDataBlock(t, fp);
+    if (!lines.length) continue;
+    const w = Math.max(...lines.map(l => l.length)) * charWidth, h = lines.length * charHeight;
+    const base = effectiveLeaderDir(t, fp);
+    const explicit = !!(t._leaderOverride || fp?.LDRDirection);
+    items.push({ t, fp, screen, w, h, base, explicit,
+      target: { x: screen.x - sr, y: screen.y - sr, w: sr * 2, h: sr * 2 },
+      rect: blockOrigin(screen, w, h, base) });
+  }
+  const overlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  const order = [2, 6, 8, 4, 3, 9, 1, 7];   // N,E,S,W,NE,SE,NW,SW
+  for (const it of items) {
+    if (it.explicit) { it.t._autoLeaderDir = null; continue; }
+    let best = it.base, bestC = Infinity;
+    const dirs = [it.base, ...order.filter(d => d !== it.base)];
+    for (const dir of dirs) {
+      const r = blockOrigin(it.screen, it.w, it.h, dir);
+      let c = 0;
+      for (const o of items) {
+        if (o === it) continue;
+        if (overlap(r, o.rect)) c += 2;
+        if (overlap(r, o.target)) c += 1;
+      }
+      if (c < bestC) { bestC = c; best = dir; }
+      if (c === 0) break;
+    }
+    it.t._autoLeaderDir = best;
+    it.rect = blockOrigin(it.screen, it.w, it.h, best);   // subsequent tracks avoid the chosen slot
+  }
+}
+
 function drawDataBlockAndLeader(t, fp, posNow) {
-  const dir = effectiveLeaderDir(t, fp);
+  // Auto-offset (F7 O) picks a low-conflict leader direction per frame; else the base direction.
+  const dir = (t._autoLeaderDir != null) ? t._autoLeaderDir : effectiveLeaderDir(t, fp);
   const lines = buildDataBlock(t, fp);
   if (lines.length === 0) return;
 
@@ -2358,6 +2434,9 @@ function drawTracks() {
       t._quickLook     = false;
     }
   }
+  // Auto-offset (F7 O): assign low-conflict leader directions before drawing the blocks.
+  autoOffsetPass(suppressed);
+
   // ── Draw pass — cs:6184-6342 ────────────────────────────────────────────
   for (const t of tracks.values()) {
     if (!t.Location) continue;                       // no position fix yet

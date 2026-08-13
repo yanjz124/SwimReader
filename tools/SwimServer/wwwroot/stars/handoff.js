@@ -238,26 +238,20 @@
       plane._owned = false;
       return;
     }
-    // 6. Beacon readout — cs:2752-2755. DGScope gates this on Owned, but we can't own live FAA
-    // tracks (no real sign-on), so it would never fire. Adapt for the observation scope: read out
-    // when the block is already FDB (owned or force-shown) — so a second slew reads out, while the
-    // first slew still expands LDB→FDB (step 7) and middle-click still toggles FDB/LDB.
-    const isFdbNow = (typeof window.dataBlockMode === "function") && window.dataBlockMode(plane, fp) === "FDB";
-    if (cs && (plane._owned || isFdbNow)) {
-      const sq = plane.Squawk || "";
+    // 6. Beacon readout — cs:2752-2755. DGScope gates this on Owned (you're working the track), which
+    // never holds over the read-only live feed. For the observation scope, a plain slew reads out ANY
+    // identified or beacon track — callsign, beacon (squawk), assigned beacon, and type — into the
+    // preview area. This is the "beacon reader": it fires on the first slew and works for ADSB/beacon-
+    // only targets (squawk, no callsign) too. FDB/LDB is driven by QuickLook / the profile, not slew.
+    const sq = plane.Squawk || "";
+    if (cs || sq) {
       const asq = fp && fp.AssignedSquawk ? String(fp.AssignedSquawk).padStart(4, "0") : "";
-      if (window.setResponse) window.setResponse(`${cs} ${sq} ${asq}`.trim());
+      const typ = (fp && fp.AircraftType) ? fp.AircraftType : "";
+      if (window.setResponse) window.setResponse([cs, sq, asq, typ].filter(Boolean).join("  "));
       return;
     }
-    // 7. Toggle FDB — associated LDB → FDB — cs:2757-2760
-    if (cs) {
-      const cur = (typeof window.dataBlockMode === "function")
-        ? window.dataBlockMode(plane, fp) : "LDB";
-      plane._forcedMode = (cur === "FDB") ? "LDB" : "FDB";
-      return;
-    }
-    // 8. Toggle FDB — unassociated — cs:2764-2767
-    if (!cs) {
+    // 7. Uncorrelated primary (no callsign, no beacon) → toggle FDB/LDB — cs:2757-2767.
+    {
       const cur = (typeof window.dataBlockMode === "function")
         ? window.dataBlockMode(plane, fp) : "LDB";
       plane._forcedMode = (cur === "FDB") ? "LDB" : "FDB";

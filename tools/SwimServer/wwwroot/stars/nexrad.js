@@ -137,9 +137,14 @@
   // an OpenGL draw. We translate each polygon directly to a canvas path
   // and fill with WXColor.MinColor, then overlay stipple via source-atop.
   function draw(ctx) {
-    if (!_radials || !prefSet?.Nexrad?.enabled) return;
-    if (!window.geoToScreen) return;
-    const enabledMask = prefSet.Nexrad.levels | 0;
+    if (!_radials || !window.geoToScreen) return;
+    // The WX DCB buttons (starsState.wxLevels) are the single source of truth for what shows — NOT
+    // the separately-persisted prefSet.Nexrad.enabled, which could stay true from a prior session and
+    // draw weather with no button pressed. Level i renders only when its WX button is on.
+    const wx = window.starsState?.wxLevels;
+    const enabledMask = Array.isArray(wx)
+      ? wx.reduce((m, on, i) => (on ? (m | (1 << i)) : m), 0)
+      : (prefSet?.Nexrad?.enabled ? (prefSet.Nexrad.levels | 0) : 0);
     if (!enabledMask) return;
 
     const radarLat   = _radials.radarLat;

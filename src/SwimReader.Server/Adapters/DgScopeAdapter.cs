@@ -69,6 +69,10 @@ public sealed class DgScopeAdapter : BackgroundService
         (double MinLat, double MinLon, double MaxLat, double MaxLon, DateTime Built, List<Ca.CASuppressionVolume> Vols)>
         _caSuppression = new(StringComparer.OrdinalIgnoreCase);
 
+    // ── MSAW — DGScope's engine, driven by profile volumes (UT=5 → JS "LA") ───────
+    private readonly Msaw.MSAW _msaw = new();
+    private readonly Profile.ProfileStore _profiles;
+
     /// <summary>
     /// Recent positions per track (newest-first, capped), injected into the
     /// snapshot so a freshly-connected scope renders a history trail instantly
@@ -136,11 +140,13 @@ public sealed class DgScopeAdapter : BackgroundService
         IEventBus eventBus,
         TrackStateManager trackState,
         ClientConnectionManager clients,
+        Profile.ProfileStore profiles,
         ILogger<DgScopeAdapter> logger)
     {
         _eventBus = eventBus;
         _trackState = trackState;
         _clients = clients;
+        _profiles = profiles;
         _logger = logger;
     }
 
@@ -359,6 +365,7 @@ public sealed class DgScopeAdapter : BackgroundService
         }
         a.GroundSpeed = u.GroundSpeed ?? a.GroundSpeed;
         a.GroundTrack = u.GroundTrack ?? a.GroundTrack;
+        if (u.IsOnGround is not null) a.IsOnGround = u.IsOnGround.Value;   // MSAW skips surface tracks
         // The DGScope feed carries no sector ownership, so every correlated (non-pseudo,
         // Mode-C) track is a CA candidate; the engine's valid/altitude filter gates the rest.
         a.Owned = true;
@@ -386,11 +393,44 @@ public sealed class DgScopeAdapter : BackgroundService
                     if (!_clients.HasClients(facility)) continue;   // no viewer — skip the O(n²) pass
 
                     var list = facTracks.Values.ToList();
-                    _ca.SuppressionVolumes = SuppressionVolumesFor(facility, list);
+                    var profile = _profiles.Get(facility);
+
+                    // ── Conflict Alert ──────────────────────────────────────────
+                    if (profile is not null)
+                    {
+                        _ca.Active = profile.ConflictAlertActive;
+                        _ca.LookAheadSeconds = profile.ConflictAlertLookAheadSeconds;
+                        _ca.HorizontalSeparation = profile.ConflictAlertHorizontalSeparation;
+                        _ca.VerticalSeparation = profile.ConflictAlertVerticalSeparation;
+                    }
+                    else
+                    {
+                        _ca.Active = true; _ca.LookAheadSeconds = 5;
+                        _ca.HorizontalSeparation = 3; _ca.VerticalSeparation = 1000;
+                    }
+                    // Runway-derived corridors as the baseline; profile CA volumes add to them.
+                    var suppression = SuppressionVolumesFor(facility, list);
+                    if (profile is { ConflictAlertSuppressionVolumes.Count: > 0 })
+                        suppression = suppression.Concat(profile.ConflictAlertSuppressionVolumes).ToList();
+                    _ca.SuppressionVolumes = suppression;
                     _ca.Calculate(list, _caRadar);
-                    var guids = list.Where(a => a.ConflictAlert).Select(a => a.Guid.ToString()).ToArray();
-                    var json = JsonSerializer.Serialize(new { UpdateType = 4, Guids = guids }, JsonOptions);
-                    _clients.Broadcast(json, facility);   // JS STARS scope reads it; DGScope ignores UT=4
+                    var caGuids = list.Where(a => a.ConflictAlert).Select(a => a.Guid.ToString()).ToArray();
+                    _clients.Broadcast(
+                        JsonSerializer.Serialize(new { UpdateType = 4, Guids = caGuids }, JsonOptions), facility);
+
+                    // ── MSAW ────────────────────────────────────────────────────
+                    // Only runs where the facility profile defines MSAW volumes (terrain/airspace
+                    // polygons are facility-specific and not derivable). No profile volumes → no LA.
+                    if (profile is { MSAWActive: true, MSAWVolumes.Count: > 0 })
+                    {
+                        _msaw.Volumes = profile.MSAWVolumes;
+                        _msaw.SuppressionVolumes = profile.MSAWSuppressionVolumes;
+                        _msaw.LookAheadSeconds = profile.MSAWLookAheadSeconds;
+                        _msaw.Calculate(list, _caRadar);
+                        var laGuids = list.Where(a => a.LowAltitude).Select(a => a.Guid.ToString()).ToArray();
+                        _clients.Broadcast(
+                            JsonSerializer.Serialize(new { UpdateType = 5, Guids = laGuids }, JsonOptions), facility);
+                    }
                 }
             }
             catch (Exception ex) { _logger.LogError(ex, "CA loop error"); }

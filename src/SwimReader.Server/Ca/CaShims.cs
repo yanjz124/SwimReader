@@ -38,6 +38,12 @@ public class Aircraft
     public bool ConflictAlertAcknowledged { get; set; }
     public List<Aircraft> ConflictingTracks { get; } = new();
 
+    // MSAW state (mirrors DGScope Aircraft). LowAltitude drives the JS "LA" line-0 annotation.
+    public bool IsOnGround { get; set; }
+    public bool IsMSAWInhibited { get; set; }
+    public bool LowAltitude { get; set; }
+    public bool LowAltitudeAcknowledged { get; set; }
+
     public DateTime LastSeen { get; set; }
 
     // Our feed has no radar sweep, so the current position IS the swept position.

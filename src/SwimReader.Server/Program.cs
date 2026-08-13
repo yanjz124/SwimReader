@@ -63,6 +63,7 @@ builder.Services.AddHostedService<ParserPipelineHostedService>();
 // --- DGScope adapter ---
 builder.Services.AddSingleton<TrackStateManager>();
 builder.Services.AddSingleton<ClientConnectionManager>();
+builder.Services.AddSingleton<SwimReader.Server.Profile.ProfileStore>();
 // Register as both singleton and hosted service so the controller can
 // resolve it for snapshot-on-connect.
 builder.Services.AddSingleton<DgScopeAdapter>();

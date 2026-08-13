@@ -729,6 +729,19 @@ function handleUpdate(u) {
     case 2: handleDeletion(u); return;
     // 3 = weather, handled in Phase 10
     case 4: handleCA(u); return;   // server-side Conflict Alert (DGScope's engine)
+    case 5: handleMSAW(u); return; // server-side MSAW / low-altitude (DGScope's engine)
+  }
+}
+
+// Server-side MSAW (low-altitude alert). SwimReader.Server runs DGScope's MSAW engine over the
+// facility's profile volumes and sends the set of tracks in alert as UpdateType 5; we drive t._msaw
+// from it (line-0 "LA"). Only sent for facilities whose profile defines MSAW volumes.
+function handleMSAW(u) {
+  const set = new Set((u.Guids || []).map(String));
+  for (const [guid, t] of tracks) {
+    const on = set.has(String(guid));
+    if (t._msaw && !on) t._laAcked = false;   // alert cleared → reset the ack
+    t._msaw = on;
   }
 }
 

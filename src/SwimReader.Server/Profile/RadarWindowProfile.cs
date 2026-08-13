@@ -1,0 +1,40 @@
+using System.Xml.Serialization;
+using SwimReader.Server.Ca;
+
+namespace SwimReader.Server.Profile;
+
+/// <summary>
+/// The subset of DGScope's <c>&lt;RadarWindow&gt;</c> profile XML that the server-side alert engines
+/// need. This is the exact format the DGScope profile-manager emits and DGScope itself loads — we
+/// deserialize it with XmlSerializer, which maps by element name and silently ignores every element
+/// not declared here (so the full RadarWindow config passes through untouched). Element names and the
+/// nested types (CASuppressionVolume/MSAWVolume/ATPAVolume, GeoPoint) match DGScope 1:1, so the same
+/// file drives both the C# engines and — parsed client-side — the JS scope.
+/// </summary>
+[XmlRoot("RadarWindow")]
+public class RadarWindowProfile
+{
+    // ── Conflict Alert (STCA) ─────────────────────────────────────────────────
+    public bool ConflictAlertActive { get; set; } = true;
+    public int ConflictAlertLookAheadSeconds { get; set; } = 5;
+    public double ConflictAlertHorizontalSeparation { get; set; } = 3;
+    public int ConflictAlertVerticalSeparation { get; set; } = 1000;
+
+    [XmlArray("ConflictAlertSuppressionVolumes")]
+    [XmlArrayItem("CASuppressionVolume")]
+    public List<CASuppressionVolume> ConflictAlertSuppressionVolumes { get; set; } = new();
+
+    // ── MSAW ──────────────────────────────────────────────────────────────────
+    public bool MSAWActive { get; set; } = true;
+    public int MSAWLookAheadSeconds { get; set; } = 30;
+
+    [XmlArray("MSAWVolumes")]
+    [XmlArrayItem("MSAWVolume")]
+    public List<Msaw.MSAWVolume> MSAWVolumes { get; set; } = new();
+
+    [XmlArray("MSAWSuppressionVolumes")]
+    [XmlArrayItem("MSAWVolume")]
+    public List<Msaw.MSAWVolume> MSAWSuppressionVolumes { get; set; } = new();
+
+    // ATPA volumes are added when the ATPA engine lands (own step).
+}

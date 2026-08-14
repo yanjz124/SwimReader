@@ -105,6 +105,11 @@
     // <handoff> element) — and to any future feed that does carry it.
     const ph = pendingHandoff(t, fp);
     if (!ph || ph === "?") return false;            // placeholder = unknown rx
+    // RadarWindow.cs:6572-6582 — when the controlling position equals the pending-handoff target
+    // the handoff is complete/self: DGScope clears PendingHandoff and stops the flash. Over the live
+    // TAIS feed owner and pending briefly coincide as a handoff completes, so without this the block
+    // flashes spuriously. No flash when PositionInd == PendingHandoff.
+    if (positionInd(t, fp) === ph) return false;
     return ph === meTcp;
   }
   function isOutboundHandoff(t, fp) {

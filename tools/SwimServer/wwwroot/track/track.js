@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const esc = s => (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const out = $('out'), statusText = $('statusText'), dot = $('dot');
-  let current = '', timer = null, lastData = null, selFac = null, fails = 0;
+  let current = '', timer = null, lastData = null, selFac = null, fails = 0, depFilter = null;
   function goText() { location.replace(current ? '/t/' + encodeURIComponent(current) : '/t'); }
 
   // ── format helpers ──
@@ -33,9 +33,12 @@
   });
   window.addEventListener('popstate', function () { const cs = initialCallsign(); if (cs) { $('cs').value = cs; startTrack(cs); } });
   window.trackSelFac = function (fac) { selFac = fac; if (lastData) render(lastData); };
+  // Departure-airport filter — a callsign reused for an inbound + outbound leg (same flight number
+  // both directions) mixes the two flights' clearance/surface data. Pick one departure to view.
+  window.trackSelDep = function (dep) { depFilter = dep || null; if (lastData) render(lastData); };
 
   function startTrack(cs) {
-    current = cs; selFac = null; lastData = null; fails = 0;
+    current = cs; selFac = null; lastData = null; fails = 0; depFilter = null;
     const tl = $('txtlink'); if (tl) tl.href = '/t/' + encodeURIComponent(cs);
     // Data Saver / 2g connection → go straight to the light text version.
     try { const c = navigator.connection; if (c && (c.saveData || /2g/.test(c.effectiveType || ''))) { goText(); return; } } catch (e) { }
@@ -112,28 +115,70 @@
       return;
     }
     statusText.textContent = `Tracking ${d.callsign} · updated ${agoStr(d.ts) || 'now'}`;
-    const flights = (d.sfdps || []).slice().sort(function (a, b) {
+    const flightsAll = (d.sfdps || []).slice().sort(function (a, b) {
       const ap = a.lat != null ? 0 : 1, bp = b.lat != null ? 0 : 1;
       return ap !== bp ? ap - bp : (a.posAgeSec == null ? 9999 : a.posAgeSec) - (b.posAgeSec == null ? 9999 : b.posAgeSec);
     });
-    const taisList = d.tais || [];
-    const asd = (d.asdex || [])[0] || null;
+
+    // Departure-airport filter: when the same callsign carries legs from >1 departure airport
+    // (inbound + outbound), filter the departure-side data (SFDPS leg, TDLS/PDC, surface, EDCT) to
+    // the chosen airport so the two flights don't mix. Default to the freshest leg's departure.
+    const deps = departureAirports(d);
+    if (deps.size <= 1) depFilter = null;
+    else if (depFilter == null && flightsAll[0] && flightsAll[0].origin) depFilter = normDep(flightsAll[0].origin);
+    else if (depFilter != null && !deps.has(depFilter)) depFilter = null;
+
+    const flights = depFilter ? flightsAll.filter(f => f.origin && normDep(f.origin) === depFilter) : flightsAll;
+    // The selected leg's arrival airport(s) — surface data can be at the destination (taxi-in), so
+    // keep ASDE-X for the departure OR the arrival of the chosen leg.
+    const selDests = new Set(flights.map(f => normDep(f.dest)).filter(Boolean));
+    const df = !depFilter ? d : Object.assign({}, d, {
+      sfdps: flights,
+      tdls:  (d.tdls  || []).filter(e => e.airport && normDep(e.airport) === depFilter),
+      tfdm:  (d.tfdm  || []).filter(f => f.airport && normDep(f.airport) === depFilter),
+      asdex: (d.asdex || []).filter(e => e.airport && (normDep(e.airport) === depFilter || selDests.has(normDep(e.airport)))),
+      tfms:  (d.tfms && d.tfms.depArpt && normDep(d.tfms.depArpt) === depFilter) ? d.tfms : null,
+    });
+    const taisList = df.tais || [];
+    const asd = (df.asdex || [])[0] || null;
+    const edctVal = (flights[0] && flights[0].edct) || (!depFilter ? d.edct : null);
 
     let h = '';
-    h += heroCard(d, flights[0] || null, taisList[0] || null, asd);
-    // Data-block mock disabled — the simplified render didn't faithfully replicate ERAM/STARS.
-    // All of its data (4th line/HSF, handoff, STARS entry/exit/scratchpad) lives in the cards below.
-    // h += blocksCard(flights, taisList);
+    h += heroCard(df, flights[0] || null, taisList[0] || null, asd);
+    h += departureBar(deps, depFilter);
     h += ownershipCard(flights);
     h += handoffHistoryCard(d.handoffHistory);
-    if (d.edct) h += `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(d.edct), 'hl'], ['Slot', String(d.edct).slice(0, 16).replace('T', ' ') + 'Z']])}</div>`;
+    if (edctVal) h += `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(edctVal), 'hl'], ['Slot', String(edctVal).slice(0, 16).replace('T', ' ') + 'Z']])}</div>`;
     if (flights[0]) h += flightPlanCard(flights[0]);
-    if (d.tdls && d.tdls.length) h += tdlsCard(d.tdls);
-    if (d.tfdm && d.tfdm.length) h += tfdmCard(d.tfdm);
-    if (d.asdex && d.asdex.length) h += asdexCard(d.asdex);
+    if (df.tdls && df.tdls.length) h += tdlsCard(df.tdls);
+    if (df.tfdm && df.tfdm.length) h += tfdmCard(df.tfdm);
+    if (df.asdex && df.asdex.length) h += asdexCard(df.asdex);
     if (taisList.length) h += taisCard(taisList);
-    if (d.tfms) h += tfmsCard(d.tfms);
+    if (df.tfms) h += tfmsCard(df.tfms);
     out.innerHTML = h;
+  }
+
+  // Normalized departure code (strip the ICAO K so KIND == IND) for grouping/compare.
+  function normDep(a) { a = String(a || '').trim().toUpperCase(); return (a.length === 4 && a[0] === 'K') ? a.slice(1) : a; }
+  // Distinct departure airports across every departure-tied source → Map(normalized → display).
+  function departureAirports(d) {
+    const m = new Map();
+    (d.sfdps || []).forEach(f => { if (f.origin)  m.set(normDep(f.origin),  lid(f.origin)  || f.origin); });
+    (d.tdls  || []).forEach(e => { if (e.airport) m.set(normDep(e.airport), lid(e.airport) || e.airport); });
+    (d.tfdm  || []).forEach(f => { if (f.airport) m.set(normDep(f.airport), lid(f.airport) || f.airport); });
+    (d.asdex || []).forEach(e => { if (e.airport) m.set(normDep(e.airport), lid(e.airport) || e.airport); });
+    if (d.tfms && d.tfms.depArpt) m.set(normDep(d.tfms.depArpt), lid(d.tfms.depArpt) || d.tfms.depArpt);
+    return m;
+  }
+  // The DEPARTURE section — clickable chips, only shown when a callsign has >1 departure airport.
+  function departureBar(deps, sel) {
+    if (deps.size <= 1) return '';
+    let chips = '';
+    deps.forEach(function (disp, norm) {
+      chips += `<span class="depchip${sel === norm ? ' on' : ''}" onclick="trackSelDep('${esc(norm)}')">${esc(disp)}</span>`;
+    });
+    chips += `<span class="depchip${sel == null ? ' on' : ''}" onclick="trackSelDep('')">ALL</span>`;
+    return `<div class="card"><h2>DEPARTURE <span class="tag">same callsign — pick the leg</span></h2><div class="deps">${chips}</div></div>`;
   }
 
   function phaseOf(d, f, tais, asd) {

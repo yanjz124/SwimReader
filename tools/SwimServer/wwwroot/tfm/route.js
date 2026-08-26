@@ -5,7 +5,7 @@ const map = L.map('map', {
     zoomControl: false
 });
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; OSM &copy; CARTO',
     maxZoom: 18
 }).addTo(map);

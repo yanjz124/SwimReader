@@ -25,6 +25,28 @@ static class MiscRoutes
             }
         });
 
+        // CARTO basemap tile proxy — served same-origin so the CARTO API key lives ONLY in the
+        // server's .env (CARTO_API_KEY), never in the committed frontend or the browser. Appends the
+        // key and caches hard (7 days) so browsers / Cloudflare serve most tiles without hitting the
+        // Pi. Frontends use /basemap/{style}/{z}/{x}/{y}{r}.png instead of *.basemaps.cartocdn.com.
+        var cartoKey = Environment.GetEnvironmentVariable("CARTO_API_KEY");
+        app.MapGet("/basemap/{**path}", async (string path, HttpContext http) =>
+        {
+            if (string.IsNullOrEmpty(path) || path.Contains("..")
+                || !path.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                return Results.NotFound();
+            var url = string.IsNullOrEmpty(cartoKey)
+                ? $"https://basemaps.cartocdn.com/{path}"
+                : $"https://basemaps.cartocdn.com/{path}?key={cartoKey}";
+            try
+            {
+                var bytes = await ctx.NexradHttp.GetByteArrayAsync(url);
+                http.Response.Headers.CacheControl = "public, max-age=604800, immutable";
+                return Results.Bytes(bytes, "image/png");
+            }
+            catch { return Results.StatusCode(502); }
+        });
+
         // Live METAR fetch
         app.MapGet("/api/metar/{station}", async (string station) =>
         {

@@ -1186,7 +1186,7 @@ const map = L.map('map', {
                           // vectors/PTL, rings) don't vanish-and-reappear on every zoom step
 });
 
-const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+const tileLayer = L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', {
     subdomains: 'abcd', maxZoom: 19, opacity: 0.4
 });
 

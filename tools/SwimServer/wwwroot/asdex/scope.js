@@ -299,7 +299,7 @@ fetch(`/asdex/maps/${AIRPORT}.geojson`)
     })
     .catch(() => {
         // No surface map — fall back to CartoDB dark tiles
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        L.tileLayer('/basemap/dark_all/{z}/{x}/{y}{r}.png', {
             subdomains: 'abcd', maxZoom: 20
         }).addTo(map);
     });

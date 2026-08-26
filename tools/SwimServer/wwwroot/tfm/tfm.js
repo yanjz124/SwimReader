@@ -245,7 +245,7 @@ function renderDetailMap(f, panelId) {
     if (!mapEl) return;
 
     const map = L.map(mapEl, { zoomControl: false, attributionControl: false });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(map);
+    L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 18 }).addTo(map);
 
     if (f.waypoints && f.waypoints.length > 1) {
         const latlngs = f.waypoints.map(w => [w.lat, w.lon]);

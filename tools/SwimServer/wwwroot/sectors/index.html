@@ -758,7 +758,7 @@ function ensureSplitMap() {
         .setView([39, -98], 5);
 
     // Add dark basemap for geographic context
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', {
         attribution: '',
         opacity: 0.45,
         zIndex: 1

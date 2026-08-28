@@ -110,6 +110,8 @@ header .sub {
     padding: 1px 4px;
     vertical-align: middle;
     margin-left: 4px;
+    position: relative;
+    top: -2px;
 }
 .card .desc {
     font-size: 11px;
@@ -138,8 +140,8 @@ header .sub {
 .tcp-chip b { color: #cccc44; font-weight: normal; margin-left: 3px; }
 
 /* ── Server card (expand inline) ──────────────────────────── */
-.server-card { cursor: pointer; }
-.server-card.open { border-color: #cccc44; background: #14140a; }
+.server-card { cursor: pointer; align-self: start; min-height: 110px; }
+.server-card.open { border-color: #cccc44; background: #14140a; min-height: unset; }
 /* :not([hidden]) so the `hidden` attribute actually hides it — a bare
    `display:grid` overrides the HTML hidden attribute, which left the detail
    stuck open (it could expand but never collapse). */

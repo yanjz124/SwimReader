@@ -3433,6 +3433,7 @@ function rebuildSectorCheckboxes() {
             }
             const cnt = container.querySelector('.sec-count');
             if (cnt) cnt.textContent = `${mySectors.size}/${secs.length}`;
+            purgeStaleWasOwnOrHo();
             invalidateAllMarkers();
             saveSettingsToLocalStorage();
         });
@@ -3446,6 +3447,7 @@ function rebuildSectorCheckboxes() {
                 for (const s of [...mySectors]) demoteSectorFlights(s);
                 mySectors.clear();
             }
+            purgeStaleWasOwnOrHo();
             rebuildSectorCheckboxes();
             invalidateAllMarkers();
             saveSettingsToLocalStorage();
@@ -3686,6 +3688,79 @@ function demoteSectorFlights(sector) {
             if (isManipulated(gufi)) continue;   // controller touched it — keep it up
             wasOwnOrHo.delete(gufi);
         }
+    }
+}
+
+// After changing sector selection, purge stale state for flights that no longer
+// belong to any selected sector (prevents sticky FDB, mid-flash O, etc. from old selections)
+function purgeStaleWasOwnOrHo() {
+    for (const gufi of [...wasOwnOrHo]) {
+        const f = flights.get(gufi);
+        if (!f) continue;
+
+        const fac = f.controllingFacility || f.reportingFacility || '';
+        const sec = f.controllingSector || '';
+        const hoRecvSec = extractSec(f.handoffReceiving);
+        const hoXferSec = extractSec(f.handoffTransferring);
+        const hoEvt = hoEventType(f.handoffEvent);
+
+        // Keep if currently controlled by a selected sector
+        if (fac === myFacility && mySectors.has(sec)) {
+            continue;
+        }
+
+        // Keep if in active handoff that involves a selected sector
+        // But only if it's an actual active handoff event, not just old data
+        if (hoEvt && f.handoffReceiving) {
+            const recvIsMe = extractFac(f.handoffReceiving) === myFacility && mySectors.has(hoRecvSec);
+            const xferIsMe = extractFac(f.handoffTransferring) === myFacility && mySectors.has(hoXferSec);
+            if (recvIsMe || xferIsMe) {
+                continue;  // Active handoff with selected sector, keep sticky FDB
+            }
+        }
+
+        // Flight doesn't belong to any selected sector → remove sticky FDB
+        wasOwnOrHo.delete(gufi);
+    }
+
+    // Also clean up completed handoff flash indicators for flights no longer in selected sectors
+    for (const gufi of [...hoCompletedInfo.keys()]) {
+        const f = flights.get(gufi);
+        if (!f) {
+            hoCompletedInfo.delete(gufi);
+            continue;
+        }
+        const completed = hoCompletedInfo.get(gufi);
+        // Keep O indicator only if it involves a currently selected sector
+        const recvIsMe = extractFac(completed.receiving) === myFacility && mySectors.has(extractSec(completed.receiving));
+        const xferIsMe = extractFac(completed.transferring) === myFacility && mySectors.has(extractSec(completed.transferring));
+        if (!recvIsMe && !xferIsMe) {
+            hoCompletedInfo.delete(gufi);
+        }
+    }
+
+    // Also remove sticky FDB for flights no longer in selected sectors
+    // (these got set when track transitioned from own/ho to other)
+    for (const gufi of [...fdbOverrides.keys()]) {
+        const f = flights.get(gufi);
+        if (!f) {
+            fdbOverrides.delete(gufi);
+            continue;
+        }
+        const fac = f.controllingFacility || f.reportingFacility || '';
+        const sec = f.controllingSector || '';
+        const hoRecvSec = extractSec(f.handoffReceiving);
+        const hoXferSec = extractSec(f.handoffTransferring);
+        const hoEvt = hoEventType(f.handoffEvent);
+
+        // Keep sticky FDB only if flight currently belongs to/involves a selected sector
+        if ((fac === myFacility && mySectors.has(sec)) ||
+            (hoEvt && f.handoffReceiving && extractFac(f.handoffReceiving) === myFacility && mySectors.has(hoRecvSec)) ||
+            (hoEvt && f.handoffTransferring && extractFac(f.handoffTransferring) === myFacility && mySectors.has(hoXferSec))) {
+            continue;
+        }
+        // Flight doesn't belong to selected sectors, remove sticky FDB
+        fdbOverrides.delete(gufi);
     }
 }
 
@@ -7649,6 +7724,7 @@ function processCommand(cmd) {
                 }
                 feedback.push({ type: 'info', text: `SECTORS: ${[...mySectors].sort().join(' ') || 'NONE'}` });
             }
+            purgeStaleWasOwnOrHo();
             rebuildSectorCheckboxes();
         } else if (secArgs !== null) {
             // XX SEC with no args

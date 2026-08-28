@@ -32,9 +32,9 @@ function renderThroughputDetail() {
     const t = _thr || {};
     const fields = [
         ['Flights tracked', (t.flights ?? 0).toLocaleString()],
-        ['Messages / sec', (t.rate ?? 0).toFixed(0)],
-        ['Messages / day (est)', fmtCompact((t.rate ?? 0) * 86400)],
-        ['Data ingress today', t.todayData ?? '--'],
+        ['Msg / sec', (t.rate ?? 0).toFixed(0)],
+        ['Msg / day (est)', fmtCompact((t.rate ?? 0) * 86400)],
+        ['Data ingress', t.todayData ?? '--'],
         ['Avg data / day', t.avgData ?? '--'],
         ['Flight archive', t.archive ?? '--'],
     ];
@@ -77,7 +77,7 @@ function renderServerDetail() {
         ['GC gen 0/1/2', `${s.gen0 ?? 0} / ${s.gen1 ?? 0} / ${s.gen2 ?? 0}`],
         ['Threads', s.threads ?? '--'],
         ['WS clients', s.wsClients ?? '--'],
-        ['Flights in memory', (s.flights ?? 0).toLocaleString()],
+        ['Flights stored', (s.flights ?? 0).toLocaleString()],
         ['Uptime', s.uptime ?? '--'],
         ['Disk free', (s.diskFreeGB ?? '--') + ' / ' + (s.diskTotalGB ?? '--') + ' GB'],
         ['Host', (s.machine ?? '--') + '  (pid ' + (s.pid ?? '--') + ')'],

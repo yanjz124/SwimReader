@@ -7,7 +7,7 @@
 <title>Route Finder — Dispatch</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🗺️</text></svg>">
 <style>
-  :root { --yel:#cccc44; --dim:#8a8a3a; --bg:#0a0a0a; --card:#141414; --line:#333;
+  :root { --yel:#cccc44; --dim:#888; --bg:#0a0a0a; --card:#141414; --line:#333;
           --accent:#4aa3ff; --ok:#44cc44; --warn:#ff8c00; --sb:#00b3b3; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; background:var(--bg); color:var(--yel);
@@ -16,11 +16,12 @@
   a { color:var(--accent); }
   .wrap { max-width:1000px; margin:0 auto; padding:0 12px; }
 
-  header { position:sticky; top:0; z-index:10; background:#000; border-bottom:1px solid var(--line);
-    padding:10px 12px; display:flex; gap:10px; align-items:baseline; }
-  header .home { color:var(--dim); text-decoration:none; font-size:13px; }
-  header h1 { font-size:16px; margin:0; letter-spacing:1px; color:var(--yel); font-weight:bold; }
-  header .sub { color:var(--dim); font-size:11px; }
+  header { position:sticky; top:0; z-index:10; background:var(--card); border-bottom:1px solid var(--line);
+    padding:10px 16px; display:flex; gap:12px; align-items:baseline; }
+  header a.home { color:var(--dim); text-decoration:none; padding:2px 6px; border:1px solid var(--line); border-radius:3px; font-size:11px; }
+  header a.home:hover { color:var(--yel); border-color:var(--yel); }
+  header h1 { font-size:18px; margin:0; letter-spacing:1px; color:var(--yel); font-weight:bold; transform:translateY(2px); }
+  header .sub { color:var(--dim); font-size:11px; letter-spacing:0.5px; }
 
   form.search { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px;
     padding:14px 12px; align-items:end; }
@@ -74,9 +75,9 @@
 </head>
 <body>
 <header>
-  <a class="home" href="/">&larr;</a>
+  <a class="home" href="/">&larr; HOME</a>
   <h1>ROUTE FINDER</h1>
-  <span class="sub">real SWIM flights → SimBrief / VATSIM</span>
+  <span class="sub">real filed flights → SimBrief / VATSIM</span>
 </header>
 
 <div class="wrap">

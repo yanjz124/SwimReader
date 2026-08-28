@@ -13,7 +13,7 @@
      that region (top:0), so there's no offset to keep in sync and nothing overlaps. */
   body { margin:0; background:#0a0a0a; color:#cccc44; font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
          height:100vh; display:flex; flex-direction:column; overflow:hidden; }
-  .bar { flex:none; display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 16px 8px 60px; border-bottom:1px solid #3a3a14; background:#0a0a0a; }
+  .bar { flex:none; display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding:8px 16px 8px 60px; border-bottom:1px solid #3a3a14; background:#0a0a0a; transform:translateX(15px); }
   .bar h1 { font-size:15px; letter-spacing:1px; margin:0; }
   .bar .sub { color:#888835; font-size:11px; max-width:520px; }
   .bar .stats { color:#b8b884; font-size:11px; margin-left:auto; text-align:right; }
@@ -72,7 +72,7 @@
     <button class="vb on" data-v="live" title="Live snapshot of every current TAIS track">LIVE</button>
     <button class="vb" data-v="rules" title="Distinct scratchpad codes each facility uses, accumulated over time">RULES</button>
   </span>
-  <span class="sub" id="sub">Live snapshot of every TAIS track — scratchpads, gate/runway, owner, filed route. Click a header to sort, ▾ to filter.</span>
+  <span class="sub" id="sub">Live snapshot of every TAIS track</span>
   <button class="tool" id="clearAll" title="Clear all column filters">CLEAR FILTERS</button>
   <button class="tool" id="refresh" title="Refresh the snapshot now">REFRESH</button>
   <span class="stats" id="stats">—</span>
@@ -263,12 +263,13 @@ async function load(){
 }
 function setView(v){
   if (view===v) return;
-  view = v; const cfg = VIEWS[v]; COLS = cfg.cols; sortKey = cfg.sort; sortDesc = cfg.desc;
+  view = v;
+  const cfg = VIEWS[v]; COLS = cfg.cols; sortKey = cfg.sort; sortDesc = cfg.desc;
   initFilters(); closeDrop();
   document.querySelectorAll('#viewToggle .vb').forEach(b => b.classList.toggle('on', b.dataset.v===v));
   $('sub').textContent = v==='rules'
-    ? 'Distinct scratchpad codes each facility uses, accumulated from changes over time — with the most common runway/dest to infer meaning. Sort/▾-filter as usual.'
-    : 'Live snapshot of every TAIS track — scratchpads, gate/runway, owner, filed route. Sort/▾-filter as usual.';
+    ? 'Distinct scratchpad codes each facility uses'
+    : 'Live snapshot of every TAIS track';
   buildHead(); render(); load();
 }
 document.querySelectorAll('#viewToggle .vb').forEach(b => b.onclick = () => setView(b.dataset.v));

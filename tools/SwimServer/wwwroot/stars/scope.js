@@ -791,6 +791,7 @@ async function startDstars() {
 // (TaisTrack.ToJson) is translated into the DGScope-shaped track + flight-plan
 // updates the renderer already understands, keyed by facility:trackNum.
 let _replayCentered = false;
+let _replayActive = false;   // true while an incident replay is playing (drives the topbar + SSA clock)
 function replayGuid(fac, trackNum) { return `${fac || FACILITY}:${trackNum}`; }
 function clearReplayTracks() {
   tracks.clear(); flightPlans.clear(); trackToFp.clear();
@@ -843,10 +844,12 @@ function startTaisReplay() {
     rangeUrl: `/api/incident/${encodeURIComponent(INCIDENT_ID)}/range`,
     rangeKey: "tais",
     rangeSubKey: fac,
+    onStart:    ()     => { _replayActive = true; clearReplayTracks(); },
+    onTime:     (iso)  => { if (window.SSA) window.SSA.replayTime = iso; },   // SSA clock → replay time
     onSnapshot: (list) => { clearReplayTracks(); (list || []).forEach(applyTaisRecord); replayAutoCenter(list); },
     onBatch:    (list) => { (list || []).forEach(applyTaisRecord); replayAutoCenter(list); },
     onRemove:   (d)    => { if (d && d.trackNum != null) handleDeletion({ Guid: replayGuid(d.facility, d.trackNum) }); },
-    onStop:     ()     => clearReplayTracks(),
+    onStop:     ()     => { _replayActive = false; if (window.SSA) window.SSA.replayTime = null; clearReplayTracks(); },
   });
   ReplayBar.open();
 }
@@ -2570,7 +2573,7 @@ function updateTopbar() {
   const el = document.getElementById("dstars-state");
   if (el)
     el.textContent = `DSTARS ${dstarsFacility()} · ${tracks.size}T/${flightPlans.size}FP · ` +
-      (dstarsState.connected ? "LIVE" : (dstarsState.lastError || "off"));
+      (_replayActive ? "REPLAY" : (dstarsState.connected ? "LIVE" : (dstarsState.lastError || "off")));
 }
 
 // Background history ticker — runs even when tab is inactive so history trail

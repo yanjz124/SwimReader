@@ -136,13 +136,16 @@ public sealed class IncidentArchive
             if (recs > 0) asdexRecords[ap] = recs;
         }
 
-        // ── TAIS / STARS terminal slice — every terminal facility whose tracks intersect the ────
-        // area (or match the callsign). TAIS summaries use lat/lon (not latitude/longitude).
+        // ── TAIS / STARS terminal slice — the terminal facilities SERVING the area ───────────────
+        // A facility is included only if one of its tracks intersects the area (or matches the
+        // callsign); pass-through remove records alone don't pull in a facility (or every facility
+        // that purged a stale track in the window would be captured). Relevant facilities are then
+        // kept IN FULL — the whole terminal picture, like ASDE-X keeps the whole airport surface.
         var taisRecords = new Dictionary<string, long>();
         var taisBase = Path.Combine(_replayDir, "tais");
         if (Directory.Exists(taisBase) && (callsign != null || bbox != null))
         {
-            Func<JsonElement, bool> keepTais = s =>
+            Func<JsonElement, bool> matchTais = s =>
             {
                 if (callsign != null && s.TryGetProperty("callsign", out var c) && c.ValueKind == JsonValueKind.String
                     && string.Equals(c.GetString(), callsign, StringComparison.OrdinalIgnoreCase)) return true;
@@ -157,9 +160,10 @@ public sealed class IncidentArchive
             };
             foreach (var facDir in Directory.GetDirectories(taisBase))
             {
+                if (!TaisFacilityRelevant(facDir, req.StartUtc, req.EndUtc, matchTais)) continue;
                 var fac = Path.GetFileName(facDir);
                 var recs = SliceReplay(facDir, Path.Combine(dir, "tais", fac),
-                    req.StartUtc, req.EndUtc, keepTais);
+                    req.StartUtc, req.EndUtc, keepSummary: null);   // whole terminal picture
                 if (recs > 0) taisRecords[fac] = recs;
             }
         }
@@ -316,6 +320,50 @@ public sealed class IncidentArchive
         }
         if (!any) return null;
         return (mnLa - padDeg, mnLo - padDeg, mxLa + padDeg, mxLo + padDeg);
+    }
+
+    /// <summary>
+    /// True if any batch/snapshot track in this TAIS facility's replay files, within [start,end],
+    /// satisfies <paramref name="match"/> (callsign or in-area). Used to decide whether a terminal
+    /// facility is relevant to the incident before slicing it — pass-through removes don't count.
+    /// Returns on the first match (cheap early-out for the common irrelevant-facility case).
+    /// </summary>
+    private bool TaisFacilityRelevant(string facDir, DateTime start, DateTime end, Func<JsonElement, bool> match)
+    {
+        long startMs = new DateTimeOffset(start, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        long endMs = new DateTimeOffset(end, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        foreach (var file in Directory.GetFiles(facDir, "*.jsonl.gz").OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var stem = Path.GetFileName(file).Replace(".jsonl.gz", "");
+            var hourStr = stem.Length >= 13 ? stem[..13] : stem;
+            if (DateTime.TryParseExact(hourStr, "yyyy-MM-dd'T'HH", CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var fileHour))
+                if (fileHour < start.AddHours(-1) || fileHour > end) continue;
+
+            using var fs = File.OpenRead(file);
+            using var gz = new GZipStream(fs, CompressionMode.Decompress);
+            using var sr = new StreamReader(gz);
+            string? line;
+            while ((line = sr.ReadLine()) != null)
+            {
+                if (line.Length == 0) continue;
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(line); } catch { continue; }
+                using (doc)
+                {
+                    var root = doc.RootElement;
+                    if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
+                    long t = tEl.GetInt64();
+                    if (t < startMs || t > endMs) continue;
+                    var kind = root.TryGetProperty("k", out var kEl) ? (kEl.GetString() ?? "B") : "B";
+                    if (kind != "B" && kind != "S") continue;
+                    if (!root.TryGetProperty("d", out var dEl) || dEl.ValueKind != JsonValueKind.Array) continue;
+                    foreach (var s in dEl.EnumerateArray())
+                        if (match(s)) return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// <summary>

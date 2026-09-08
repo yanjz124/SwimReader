@@ -333,15 +333,15 @@ public sealed class IncidentArchive
             while ((line = sr.ReadLine()) != null)
             {
                 if (line.Length == 0) continue;
+                long tf = FastT(line);
+                if (tf < 0) continue;
+                if (tf > endMs) break;
+                if (tf < startMs) continue;
                 JsonDocument doc;
                 try { doc = JsonDocument.Parse(line); } catch { continue; }
                 using (doc)
                 {
                     var root = doc.RootElement;
-                    if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
-                    long t = tEl.GetInt64();
-                    if (t > endMs) break;
-                    if (t < startMs) continue;
                     if (!root.TryGetProperty("d", out var dEl) || dEl.ValueKind != JsonValueKind.Array) continue;
                     foreach (var s in dEl.EnumerateArray())
                     {
@@ -386,15 +386,16 @@ public sealed class IncidentArchive
             while ((line = sr.ReadLine()) != null)
             {
                 if (line.Length == 0) continue;
+                long tf = FastT(line);
+                if (tf < 0) continue;
+                if (tf > endMs) break;
+                if (tf < startMs) continue;
                 JsonDocument doc;
                 try { doc = JsonDocument.Parse(line); } catch { continue; }
                 using (doc)
                 {
                     var root = doc.RootElement;
                     if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
-                    long t = tEl.GetInt64();
-                    if (t > endMs) break;
-                    if (t < startMs) continue;
                     var kind = root.TryGetProperty("k", out var kEl) ? (kEl.GetString() ?? "B") : "B";
                     if (kind != "B" && kind != "S") continue;
                     if (!root.TryGetProperty("d", out var dEl) || dEl.ValueKind != JsonValueKind.Array) continue;
@@ -454,6 +455,12 @@ public sealed class IncidentArchive
                 while ((line = sr.ReadLine()) != null)
                 {
                     if (line.Length == 0) continue;
+                    // Cheap timestamp gate before the (expensive) JSON parse: the hourly file can hold
+                    // an hour of data but we only need [start,end], and records are chronological.
+                    long tf = FastT(line);
+                    if (tf < 0) continue;
+                    if (tf > endMs) break;
+                    if (tf < startMs) continue;
                     JsonDocument doc;
                     try { doc = JsonDocument.Parse(line); } catch { continue; }
                     using (doc)
@@ -461,8 +468,6 @@ public sealed class IncidentArchive
                         var root = doc.RootElement;
                         if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
                         long t = tEl.GetInt64();
-                        if (t > endMs) break;          // records are chronological → nothing later matches
-                        if (t < startMs) continue;
                         var kind = root.TryGetProperty("k", out var kEl) ? (kEl.GetString() ?? "B") : "B";
                         if (!root.TryGetProperty("d", out var dEl)) continue;
 
@@ -490,6 +495,27 @@ public sealed class IncidentArchive
             foreach (var w in writers.Values) { try { w.sw.Flush(); w.gz.Flush(); w.sw.Dispose(); w.gz.Dispose(); w.fs.Dispose(); } catch { } }
         }
         return count;
+    }
+
+    /// <summary>
+    /// Cheaply read the leading "t" (unix millis) from a replay line — <c>{"t":123456,"k":...}</c> —
+    /// without a full JSON parse. Lets the slicers skip the (large) out-of-window portion of an
+    /// hourly file with only a substring scan, parsing JSON solely for the records they keep.
+    /// Returns -1 if not found.
+    /// </summary>
+    private static long FastT(string line)
+    {
+        int i = line.IndexOf("\"t\":", StringComparison.Ordinal);
+        if (i < 0) return -1;
+        i += 4;
+        long v = 0; bool any = false;
+        for (; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (c >= '0' && c <= '9') { v = v * 10 + (c - '0'); any = true; }
+            else break;
+        }
+        return any ? v : -1;
     }
 
     private static string Slug(string s)

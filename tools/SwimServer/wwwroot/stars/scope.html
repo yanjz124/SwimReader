@@ -6,8 +6,9 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>📡</text></svg>">
 <base href="/stars/" />
 <link rel="stylesheet" href="scope.css?v=3" />
-<!-- Shared floating ReplayBar (no STARS-specific replay backend yet; bar shows
-     'No replay data' until the server adds /replay/stars/ws/{facility}). -->
+<!-- Shared floating ReplayBar. Live scope has no terminal replay backend, but
+     ?incident={id} plays an archived TAIS/STARS slice via
+     /replay/incident/{id}/tais/ws/{facility} (see startTaisReplay in scope.js). -->
 <link rel="stylesheet" href="/shared/replay-bar.css?v=4" />
 <script defer src="/shared/replay-bar.js?v=4"></script>
 </head>
@@ -20,7 +21,7 @@
 <script src="ssa.js?v=8"></script>
 <script src="nexrad.js?v=9"></script>
 <script src="profile.js?v=3"></script>
-<script src="scope.js?v=55"></script>
+<script src="scope.js?v=56"></script>
 <script src="/shared/disclaimer.js?v=2"></script>
 </body>
 </html>

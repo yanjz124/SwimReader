@@ -32,6 +32,10 @@
   .inc .acts { display:flex; flex-wrap:wrap; gap:6px; }
   .tag { display:inline-block; border:1px solid #2c5c2c; color:#9d9; padding:0 5px; font-size:11px; margin-right:4px; }
   pre.fp { white-space:pre-wrap; word-break:break-word; background:#050505; border:1px solid #222; padding:8px; max-height:340px; overflow:auto; font-size:11px; color:#bcd; margin:6px 0 0; }
+  table.fpr { border-collapse:collapse; margin:8px 0 0; width:100%; max-width:560px; }
+  table.fpr td { border:1px solid #222; padding:3px 8px; font-size:12px; color:#cde; vertical-align:top; }
+  table.fpr td.fpr-k { color:#9ab; white-space:nowrap; width:110px; background:#0e0e0e; }
+  .fpr-note { color:var(--dim); font-size:11px; margin:4px 0 0; }
 </style>
 </head>
 <body>
@@ -47,8 +51,8 @@
     <div class="row"><label>Callsign</label><input id="f-cs" type="text" placeholder="e.g. AAL123 (optional if area given)"><span class="hint" style="margin:0">sweeps the flight's whole path corridor</span></div>
     <div class="row"><label>ASDE-X airports</label><input id="f-aps" type="text" placeholder="KORD (comma-separated)"><span class="hint" style="margin:0">full surface capture per airport</span></div>
     <div class="row"><label>Area radius (NM)</label><input id="f-nm" type="text" value="120" style="width:70px"><span class="hint" style="margin:0">box around the airports/callsign path; captures everything inside</span></div>
-    <div class="row"><label>Start (UTC · 24h)</label><input id="f-start" type="datetime-local" step="1"><label style="min-width:auto">End (UTC · 24h)</label><input id="f-end" type="datetime-local" step="1"></div>
-    <div class="hint">Times are UTC (Zulu), 24-hour. The date picker may show your local format, but the value is read as UTC.</div>
+    <div class="row"><label>Start (UTC · 24h)</label><input id="f-date" type="date"><input id="f-time" type="text" inputmode="numeric" maxlength="4" placeholder="HHMM" style="width:66px;text-align:center;font-variant-numeric:tabular-nums"><span class="hint" style="margin:0">Z</span><label style="min-width:auto;margin-left:12px">Duration (min)</label><input id="f-dur" type="number" value="60" min="1" style="width:80px"></div>
+    <div class="hint">Start is UTC (Zulu), 24-hour — pick the date and enter time as <b>HHMM</b> (e.g. 1609 = 16:09Z). No AM/PM. Duration is minutes.</div>
     <div class="row"><label>Notes</label><input id="f-notes" type="text" placeholder="optional" style="min-width:320px"></div>
     <div class="row"><button class="go" id="f-create">⤓ ARCHIVE INCIDENT</button><span id="status"></span></div>
   </div>
@@ -64,17 +68,32 @@ const $ = s => document.querySelector(s);
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const setStatus = (t,ok=true) => { const e=$("#status"); e.textContent=t||""; e.style.color = ok?"#9d9":"#f99"; };
 const zulu = d => d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0")+"T"+String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()||0).padStart(2,"0");
-// datetime-local value (no tz) → treat as UTC ISO
-const toUtcIso = v => v ? (v.length===16 ? v+":00" : v)+"Z" : null;
 const fmtWin = (a,b) => { try { const s=new Date(a), e=new Date(b); return s.toISOString().slice(0,16).replace("T"," ")+"Z → "+e.toISOString().slice(11,16)+"Z"; } catch { return a+" → "+b; } };
 const mb = n => n>=1048576 ? (n/1048576).toFixed(1)+" MB" : Math.round((n||0)/1024)+" KB";
+const p2 = n => String(n).padStart(2,"0");
 
-// default the window to the last hour, in UTC
+// Build a start ISO from the date + HHMM-Zulu fields, and an end ISO from duration (min).
+function windowFromForm(){
+  const dateV = $("#f-date").value;
+  const timeV = ($("#f-time").value||"").replace(/\D/g,"");
+  const durMin = parseInt($("#f-dur").value,10);
+  const dm = String(dateV).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!dm || timeV.length!==4) return null;
+  const hh=+timeV.slice(0,2), mm=+timeV.slice(2,4);
+  if (hh>23 || mm>59 || !(durMin>0)) return null;
+  const start = new Date(Date.UTC(+dm[1],+dm[2]-1,+dm[3],hh,mm,0));
+  if (isNaN(start)) return null;
+  return { startUtc: start.toISOString(), endUtc: new Date(start.getTime()+durMin*60000).toISOString() };
+}
+
+// default the start to one hour ago, in UTC (24h)
 (function seed(){
-  const now = new Date(), ago = new Date(now.getTime()-3600000);
-  const local = d => d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0")+"T"+String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0");
-  $("#f-start").value = local(ago); $("#f-end").value = local(now);
+  const ago = new Date(Date.now()-3600000);
+  $("#f-date").value = ago.getUTCFullYear()+"-"+p2(ago.getUTCMonth()+1)+"-"+p2(ago.getUTCDate());
+  $("#f-time").value = p2(ago.getUTCHours())+p2(ago.getUTCMinutes());
 })();
+// keep the time field digits-only
+$("#f-time").addEventListener("input", e => { const c=e.target.value.replace(/\D/g,"").slice(0,4); if(c!==e.target.value) e.target.value=c; });
 
 async function load(){
   try {
@@ -94,6 +113,7 @@ function renderList(list){
     const aps = (m.airports||[]);
     const taisFacs = Object.keys(m.taisRecords||{});
     const asdexBtns = aps.map(ap => `<button data-replay-asdex="${esc(m.id)}" data-ap="${esc(ap)}">▶ ASDE-X ${esc(ap)}</button>`).join("");
+    const starsBtns = taisFacs.map(f => `<button data-replay-stars="${esc(m.id)}" data-fac="${esc(f)}">▶ STARS ${esc(f)}</button>`).join("");
     const eramBtn = m.eramRecords>0 ? `<button data-replay-eram="${esc(m.id)}">▶ ERAM replay</button>` : "";
     const fpBtn = m.hasFlightPlan ? `<button data-fp="${esc(m.id)}">✈ flight plan</button>` : "";
     return `<li class="inc">
@@ -103,12 +123,13 @@ function renderList(list){
         ${esc(fmtWin(m.startUtc,m.endUtc))} · ${esc(m.capturedSources||"—")} · ${mb(m.totalBytes)} · ${m.eramRecords||0} ERAM recs${taisFacs.length?` · ${taisFacs.length} STARS fac`:""}
         ${m.notes?` · <i>${esc(m.notes)}</i>`:""}
       </div>
-      <div class="acts">${eramBtn}${asdexBtns}${fpBtn}<button class="danger" data-del="${esc(m.id)}">✕ delete</button></div>
+      <div class="acts">${eramBtn}${asdexBtns}${starsBtns}${fpBtn}<button class="danger" data-del="${esc(m.id)}">✕ delete</button></div>
       <div class="fpwrap" data-fpwrap="${esc(m.id)}"></div>
     </li>`;
   }).join("");
   el.querySelectorAll("[data-replay-eram]").forEach(b=>b.onclick=()=>openEram(b.dataset.replayEram));
   el.querySelectorAll("[data-replay-asdex]").forEach(b=>b.onclick=()=>openAsdex(b.dataset.replayAsdex, b.dataset.ap));
+  el.querySelectorAll("[data-replay-stars]").forEach(b=>b.onclick=()=>openStars(b.dataset.replayStars, b.dataset.fac));
   el.querySelectorAll("[data-fp]").forEach(b=>b.onclick=()=>toggleFp(b.dataset.fp));
   el.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>del(b.dataset.del));
 }
@@ -128,13 +149,49 @@ async function openAsdex(id, ap){
   const h = start ? `#replay=${encodeURIComponent(start)}&rspd=4` : "";
   window.open(`/asdex/${encodeURIComponent(ap.toLowerCase())}?incident=${encodeURIComponent(id)}${h}`, "_blank");
 }
+async function openStars(id, fac){
+  const r = await fetch(`/api/incident/${encodeURIComponent(id)}/range`).then(r=>r.json()).catch(()=>null);
+  const start = r?.tais?.[fac]?.start || r?.eram?.start;
+  // Resolve the facility's ARTCC so the STARS scope loads its config/video maps + centers correctly.
+  // Fall back to using the facility code as the ARTCC segment — the scope still renders the replay
+  // tracks and auto-centers on them if the config lookup misses.
+  let artcc = fac;
+  try { const rr = await fetch(`/api/stars/resolve/${encodeURIComponent(fac)}`).then(r=>r.ok?r.json():null); if (rr?.artccId) artcc = rr.artccId; } catch {}
+  const h = start ? `#replay=${encodeURIComponent(start)}&rspd=4` : "";
+  window.open(`/stars/${encodeURIComponent(artcc)}/${encodeURIComponent(fac)}?incident=${encodeURIComponent(id)}${h}`, "_blank");
+}
 async function toggleFp(id){
   const w = document.querySelector(`[data-fpwrap="${id}"]`);
   if (w.firstChild){ w.innerHTML=""; return; }
   try {
     const fp = await fetch(`/api/incidents/${encodeURIComponent(id)}/flightplan`).then(r=>r.json());
-    w.innerHTML = `<pre class="fp">${esc(JSON.stringify(fp, null, 2))}</pre>`;
+    w.innerHTML = fpReadable(fp) +
+      `<details style="margin-top:6px"><summary style="cursor:pointer;color:#9ab;font-size:12px">Raw JSON</summary><pre class="fp">${esc(JSON.stringify(fp, null, 2))}</pre></details>`;
   } catch(e){ w.innerHTML = `<pre class="fp">error: ${esc(e)}</pre>`; }
+}
+
+// Human-readable flight-plan summary, best-effort across the ToDetail/history field
+// shapes (field names vary), with the raw JSON kept below for the full picture.
+function fpReadable(fp){
+  const rec = (fp && fp.live && fp.live[0]) || (fp && fp.history && fp.history[0]) || fp || {};
+  const pick = (o, keys) => { for (const k of keys){ const v=o&&o[k]; if (v!=null && v!=="") return v; } return null; };
+  const origin = pick(rec,["origin","Origin","departureAirport","departure","depApt"]);
+  const dest   = pick(rec,["destination","Destination","arrivalAirport","arrival","arrApt"]);
+  const rows = [];
+  const add = (label,val) => { if (val!=null && val!=="") rows.push([label, val]); };
+  add("Callsign",    (fp&&fp.callsign) || pick(rec,["callsign","Callsign","aircraftId","acid"]));
+  add("Aircraft",    pick(rec,["aircraftType","AircraftType","acType","type"]));
+  add("Route",       (origin||dest) ? `${origin||"?"} → ${dest||"?"}` : null);
+  add("Filed route", pick(rec,["route","Route","nasRouteText","filedRoute"]));
+  add("Altitude",    pick(rec,["assignedAltitude","cruiseAltitude","altitude","Altitude","reqAlt","requestedAltitude"]));
+  add("Speed",       pick(rec,["filedSpeed","cruiseSpeed","groundSpeed","GroundSpeed","gs"]));
+  add("Squawk",      pick(rec,["squawk","Squawk","assignedSquawk","beaconCode"]));
+  add("Rules",       pick(rec,["flightRules","FlightRules","rules"]));
+  add("Equipment",   pick(rec,["equipment","equipmentQualifier","equip","EquipmentSuffix"]));
+  add("Remarks",     pick(rec,["remarks","Remarks"]));
+  const counts = `${(fp&&fp.live&&fp.live.length)||0} live · ${(fp&&fp.history&&fp.history.length)||0} history record(s)`;
+  if (!rows.length) return `<div class="fpr-note">No structured fields recognized — see raw JSON. (${esc(counts)})</div>`;
+  return `<table class="fpr">${rows.map(([k,v])=>`<tr><td class="fpr-k">${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table><div class="fpr-note">${esc(counts)}</div>`;
 }
 async function del(id){
   if (!confirm("Delete this archived incident permanently?")) return;
@@ -143,16 +200,17 @@ async function del(id){
 }
 
 $("#f-create").onclick = async () => {
+  const win = windowFromForm();
+  if (!win){ setStatus("set a valid start date, HHMM time, and duration", false); return; }
   const body = {
     title: $("#f-title").value.trim() || null,
     callsign: $("#f-cs").value.trim() || null,
     airports: $("#f-aps").value.split(",").map(s=>s.trim()).filter(Boolean),
     aroundNm: parseFloat($("#f-nm").value) || null,
-    startUtc: toUtcIso($("#f-start").value),
-    endUtc: toUtcIso($("#f-end").value),
+    startUtc: win.startUtc,
+    endUtc: win.endUtc,
     notes: $("#f-notes").value.trim() || null,
   };
-  if (!body.startUtc || !body.endUtc){ setStatus("set a start and end time", false); return; }
   if (!body.callsign && !(body.airports.length && body.aroundNm) && !body.minLat){ setStatus("provide a callsign and/or airports + area radius", false); return; }
   setStatus("archiving… (extracting replay slices, may take a few seconds)");
   try {

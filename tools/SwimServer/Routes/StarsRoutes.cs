@@ -88,6 +88,16 @@ static class StarsRoutes
                 return fac is not null ? Results.Json(fac, ctx.JsonOpts) : Results.NotFound();
             });
 
+        // Resolve which ARTCC a STARS facility belongs to — lets a caller with only the facility id
+        // (e.g. the incident STARS replay link) build the /stars/{artcc}/{facility} URL.
+        app.MapGet("/api/stars/resolve/{facilityId}", async (string facilityId) =>
+        {
+            var artcc = await ctx.Stars.ResolveArtccForFacilityAsync(facilityId);
+            return artcc is not null
+                ? Results.Json(new { facilityId = facilityId.ToUpperInvariant(), artccId = artcc }, ctx.JsonOpts)
+                : Results.NotFound(new { facilityId = facilityId.ToUpperInvariant(), error = "no_stars_artcc" });
+        });
+
         // ── Phase 2: video maps ─────────────────────────────────────────────
         // Reads from CRC export tree on disk. See KNOWN-DEVIATIONS G10 for why
         // we can't fetch from vNAS directly. Layout: crc-export/{artcc}/VideoMaps/{mapId}.geojson

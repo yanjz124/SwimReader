@@ -35,6 +35,46 @@ class TaisBridge
 
     public TaisBridge(JsonSerializerOptions jsonOpts) => _jsonOpts = jsonOpts;
 
+    // ── Replay recording — per-facility recorders created on demand (mirrors AsdexBridge) ──
+    // Records the masked terminal (STARS/TAIS) picture continuously so incidents can preserve
+    // it retroactively. Recording happens regardless of whether any client is connected.
+    private readonly ConcurrentDictionary<string, SwimServer.ReplayRecorder> _recorders = new();
+    private string? _replayBaseDir;
+    private string? _replayCleanupDir;
+    private long _replayBudget;
+
+    /// <summary>Enable replay recording. Call before Start().</summary>
+    public void SetReplayDir(string baseDir, long budgetBytes = 0, string? cleanupDir = null)
+    {
+        _replayBaseDir = baseDir;
+        _replayCleanupDir = cleanupDir ?? Directory.GetParent(baseDir)?.FullName ?? baseDir;
+        _replayBudget = budgetBytes > 0 ? budgetBytes : 5L * 1024 * 1024 * 1024;
+    }
+
+    private SwimServer.ReplayRecorder? GetRecorder(string facility)
+    {
+        if (_replayBaseDir == null) return null;
+        return _recorders.GetOrAdd(facility, f =>
+            new SwimServer.ReplayRecorder(Path.Combine(_replayBaseDir, f), _replayBudget, _replayCleanupDir));
+    }
+
+    /// <summary>Write snapshots for all active facilities (call from a timer, e.g. every 2 min) for seek support.</summary>
+    public void WriteReplaySnapshots()
+    {
+        foreach (var (facility, tracks) in _state)
+        {
+            if (tracks.IsEmpty) continue;
+            var arr = tracks.Values.Select(t => t.ToJson(false)).ToArray();
+            GetRecorder(facility)?.RecordSnapshot(arr, DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>Dispose all per-facility replay recorders.</summary>
+    public void DisposeRecorders()
+    {
+        foreach (var (_, r) in _recorders) r.Dispose();
+    }
+
     // ── Message processing ─────────────────────────────────────────────────────
 
     /// <summary>Called by AsdexBridge for non-SMES messages.</summary>
@@ -248,18 +288,31 @@ class TaisBridge
 
     // ── Timer callbacks ────────────────────────────────────────────────────────
 
-    /// <summary>Called every 1s. Sends all tracks for dirty facilities (batch pattern).</summary>
+    /// <summary>Called every 1s. Records the masked view for replay (regardless of viewers) and
+    /// sends all tracks for dirty facilities to connected clients (batch pattern).</summary>
     public void FlushDirty()
     {
-        if (_dirty.IsEmpty || _clients.IsEmpty) return;
+        if (_dirty.IsEmpty) return;
 
         foreach (var facility in _dirty.Keys.ToArray())
         {
             _dirty.TryRemove(facility, out _);
-            if (!_clients.TryGetValue(facility, out var facClients) || facClients.IsEmpty) continue;
             if (!_state.TryGetValue(facility, out var tracks)) continue;
 
             var trackList = tracks.Values.ToList();
+
+            // Record the masked view for replay, even with no viewers (so incidents can
+            // preserve the terminal picture retroactively). Reused as the masked WS payload.
+            object[]? maskedArr = null;
+            var rec = GetRecorder(facility);
+            if (rec != null && trackList.Count > 0)
+            {
+                maskedArr = trackList.Select(t => t.ToJson(false)).ToArray();
+                rec.RecordBatch(maskedArr, DateTime.UtcNow);
+            }
+
+            // Only broadcast if there are connected clients.
+            if (!_clients.TryGetValue(facility, out var facClients) || facClients.IsEmpty) continue;
             // Signed-in clients get real identities; everyone else the masked view.
             byte[]? maskedJson = null, revealJson = null;
             foreach (var (_, client) in facClients)
@@ -271,7 +324,7 @@ class TaisBridge
                         new WsMsg("batch", trackList.Select(t => t.ToJson(true)).ToArray()), _jsonOpts);
                 else
                     json = maskedJson ??= JsonSerializer.SerializeToUtf8Bytes(
-                        new WsMsg("batch", trackList.Select(t => t.ToJson(false)).ToArray()), _jsonOpts);
+                        new WsMsg("batch", maskedArr ?? trackList.Select(t => t.ToJson(false)).ToArray()), _jsonOpts);
                 client.Enqueue(json);
             }
         }
@@ -288,6 +341,7 @@ class TaisBridge
             foreach (var trackNum in stale)
             {
                 tracks.TryRemove(trackNum, out _);
+                GetRecorder(facility)?.RecordRemove(new { facility, trackNum }, DateTime.UtcNow);
                 if (_clients.TryGetValue(facility, out var fc))
                 {
                     var json = JsonSerializer.SerializeToUtf8Bytes(

@@ -170,7 +170,7 @@ long GbCap(string envVar, long defaultGb)
     var gb = long.TryParse(Environment.GetEnvironmentVariable(envVar), out var v) && v > 0 ? v : defaultGb;
     return gb * 1024L * 1024 * 1024;
 }
-var replayCapGb = GbCap("REPLAY_CAP_GB", 30);          // binary replay (eram + asdex) — pruned aggressively
+var replayCapGb = GbCap("REPLAY_CAP_GB", 30);          // binary replay (eram + asdex + tais) — pruned aggressively
 var historyCapGb = GbCap("HISTORY_CAP_GB", 25);        // flight-history text — keep long (~1.4 yr at 49 MB/day)
 var tdlsCapGb = GbCap("TDLS_CAP_GB", 5);               // tdls-history text — tiny, effectively unbounded
 PersistenceBudget.DefineBucket("replay", replayCapGb);
@@ -293,6 +293,7 @@ var bindAddr = localMode ? "127.0.0.1" : "0.0.0.0";
 builder.WebHost.UseUrls($"http://{bindAddr}:{bindPort}");
 asdex.SetWebRoot(builder.Environment.WebRootPath);
 asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), long.MaxValue, replayDir);
+tais.SetReplayDir(Path.Combine(replayDir, "tais"), long.MaxValue, replayDir);
 var app = builder.Build();
 
 // ── Force HTTPS for external traffic ─────────────────────────────────────────
@@ -1270,6 +1271,13 @@ var asdexSnapshotTimer = new Timer(_ =>
     catch (Exception ex) { Console.WriteLine($"[REPLAY] ASDE-X snapshot error: {ex.Message}"); }
 }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2));
 
+// Replay: periodic TAIS (STARS terminal) snapshots for seek support (every 2 minutes)
+var taisSnapshotTimer = new Timer(_ =>
+{
+    try { tais.WriteReplaySnapshots(); }
+    catch (Exception ex) { Console.WriteLine($"[REPLAY] TAIS snapshot error: {ex.Message}"); }
+}, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2));
+
 // Investigation: flush queued log entries to disk (uncomment with investigation logger vars)
 // var investigationFlushTimer = new Timer(_ =>
 // {
@@ -1298,8 +1306,8 @@ var asdexSnapshotTimer = new Timer(_ =>
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer /*, poFlushTimer, investigationFlushTimer */ };
-app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); itws.SaveHistory(); });
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer /*, poFlushTimer, investigationFlushTimer */ };
+app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); itws.SaveHistory(); });
 
 // Replay endpoints (WebSocket + REST)
 replayServer.MapEndpoints(app);

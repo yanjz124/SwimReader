@@ -164,15 +164,9 @@ public class ReplayServer
             if (!SafeId(id)) return Results.BadRequest();
             var baseD = Path.Combine(incidentsDir, id);
             var eram = GetTimeRange(Path.Combine(baseD, "eram"));
-            var asdexBase = Path.Combine(baseD, "asdex");
-            var asdex = new Dictionary<string, object>();
-            if (Directory.Exists(asdexBase))
-                foreach (var d in Directory.GetDirectories(asdexBase))
-                {
-                    var r = GetTimeRange(d);
-                    if (r != null) asdex[Path.GetFileName(d)] = r;
-                }
-            return Results.Json(new { eram, asdex }, _jsonOpts);
+            var asdex = RangesUnder(Path.Combine(baseD, "asdex"));
+            var tais = RangesUnder(Path.Combine(baseD, "tais"));
+            return Results.Json(new { eram, asdex, tais }, _jsonOpts);
         });
 
         app.Map("/replay/incident/{id}/ws", async (HttpContext ctx, string id) =>
@@ -188,6 +182,25 @@ public class ReplayServer
             if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
             await IncidentSession(ctx, Path.Combine(incidentsDir, id, "asdex", icao));
         });
+
+        app.Map("/replay/incident/{id}/tais/ws/{facility}", async (HttpContext ctx, string id, string facility) =>
+        {
+            if (!SafeId(id) || !SafeId(facility)) { ctx.Response.StatusCode = 400; return; }
+            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "tais", facility.ToUpperInvariant()));
+        });
+    }
+
+    /// <summary>Time-range map for every subdirectory under <paramref name="baseDir"/> (name → range).</summary>
+    private Dictionary<string, object> RangesUnder(string baseDir)
+    {
+        var map = new Dictionary<string, object>();
+        if (Directory.Exists(baseDir))
+            foreach (var d in Directory.GetDirectories(baseDir))
+            {
+                var r = GetTimeRange(d);
+                if (r != null) map[Path.GetFileName(d)] = r;
+            }
+        return map;
     }
 
     private async Task IncidentSession(HttpContext ctx, string dir)

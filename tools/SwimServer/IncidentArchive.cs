@@ -39,17 +39,24 @@ public sealed class IncidentMeta
     public string? Notes { get; set; }
     public long EramRecords { get; set; }
     public Dictionary<string, long> AsdexRecords { get; set; } = new();
+    public Dictionary<string, long> TaisRecords { get; set; } = new();   // facility → record count
     public long TotalBytes { get; set; }
     public bool HasFlightPlan { get; set; }
-    // STARS/TAIS terminal replay is not recorded upstream, so it can't be captured retroactively.
     public string CapturedSources { get; set; } = "";
 }
 
 /// <summary>
-/// Archives incident windows by slicing the live replay files (ERAM + per-airport ASDE-X) into a
-/// permanent per-incident directory, plus the flight plan. Slices keep the exact {t,k,d} hourly-gz
-/// format, so they replay through the same ReplayServer engine. The incidents dir lives OUTSIDE the
-/// budget-managed replay dir, so archived incidents are never pruned.
+/// Archives incident windows by slicing the live replay files (ERAM en-route + per-airport ASDE-X
+/// surface + per-facility TAIS/STARS terminal) into a permanent per-incident directory, plus the
+/// flight plan. Slices keep the exact {t,k,d} hourly-gz format, so they replay through the same
+/// ReplayServer engine. The incidents dir lives OUTSIDE the budget-managed replay dir, so archived
+/// incidents are never pruned.
+///
+/// Capture semantics: the area (explicit bbox, or a radius around the given airports) keeps EVERY
+/// track inside it — the whole en-route + terminal picture, not just the incident flight. ASDE-X
+/// keeps every surface track at each airport. When only a callsign is given, the incident flight's
+/// own ERAM track is first swept to build a padded corridor bbox, so "everything along the flight
+/// path" is captured too.
 /// </summary>
 public sealed class IncidentArchive
 {
@@ -81,8 +88,20 @@ public sealed class IncidentArchive
         var airports = (req.Airports ?? Array.Empty<string>())
             .Select(a => a.Trim().ToUpperInvariant()).Where(a => a.Length > 0).Distinct().ToArray();
 
-        // Resolve the ERAM area bbox: explicit, or a radius (deg) around the given airports.
+        // Resolve the area bbox: explicit, or a radius (deg) around the given airports.
         var bbox = ResolveBbox(req, airports);
+
+        // Callsign-only (no explicit/airport area): sweep the incident flight's own ERAM track and
+        // build a padded corridor bbox around it, so we capture EVERYTHING along the flight path
+        // (surrounding traffic + terminal), not just the one aircraft.
+        if (callsign != null)
+        {
+            double padDeg = (req.AroundNm ?? 50.0) / 60.0;   // default 50 NM corridor either side
+            var pathBox = ComputeCallsignBbox(Path.Combine(_replayDir, "eram"), req.StartUtc, req.EndUtc, callsign, padDeg);
+            if (pathBox != null)
+                bbox = bbox == null ? pathBox : Union(bbox.Value, pathBox.Value);
+        }
+
         if (callsign == null && bbox == null)
             throw new ArgumentException("Provide a callsign and/or an area (bbox or airports + aroundNm).");
 
@@ -117,6 +136,34 @@ public sealed class IncidentArchive
             if (recs > 0) asdexRecords[ap] = recs;
         }
 
+        // ── TAIS / STARS terminal slice — every terminal facility whose tracks intersect the ────
+        // area (or match the callsign). TAIS summaries use lat/lon (not latitude/longitude).
+        var taisRecords = new Dictionary<string, long>();
+        var taisBase = Path.Combine(_replayDir, "tais");
+        if (Directory.Exists(taisBase) && (callsign != null || bbox != null))
+        {
+            Func<JsonElement, bool> keepTais = s =>
+            {
+                if (callsign != null && s.TryGetProperty("callsign", out var c) && c.ValueKind == JsonValueKind.String
+                    && string.Equals(c.GetString(), callsign, StringComparison.OrdinalIgnoreCase)) return true;
+                if (bbox != null && s.TryGetProperty("lat", out var la) && s.TryGetProperty("lon", out var lo)
+                    && la.ValueKind == JsonValueKind.Number && lo.ValueKind == JsonValueKind.Number)
+                {
+                    double lat = la.GetDouble(), lon = lo.GetDouble();
+                    if (lat >= bbox.Value.minLat && lat <= bbox.Value.maxLat
+                        && lon >= bbox.Value.minLon && lon <= bbox.Value.maxLon) return true;
+                }
+                return false;
+            };
+            foreach (var facDir in Directory.GetDirectories(taisBase))
+            {
+                var fac = Path.GetFileName(facDir);
+                var recs = SliceReplay(facDir, Path.Combine(dir, "tais", fac),
+                    req.StartUtc, req.EndUtc, keepTais);
+                if (recs > 0) taisRecords[fac] = recs;
+            }
+        }
+
         // ── Flight plan (live snapshot + persisted history) ──────────────────────────
         bool hasFp = false;
         if (callsign != null)
@@ -136,6 +183,7 @@ public sealed class IncidentArchive
         var sources = new List<string>();
         if (eramRecords > 0) sources.Add("ERAM");
         if (asdexRecords.Count > 0) sources.Add("ASDE-X");
+        if (taisRecords.Count > 0) sources.Add("STARS/TAIS");
         if (hasFp) sources.Add("flight plan");
 
         var meta = new IncidentMeta
@@ -143,7 +191,7 @@ public sealed class IncidentArchive
             Id = id, Title = req.Title, Callsign = callsign, Airports = airports,
             MinLat = bbox?.minLat, MinLon = bbox?.minLon, MaxLat = bbox?.maxLat, MaxLon = bbox?.maxLon,
             StartUtc = req.StartUtc, EndUtc = req.EndUtc, CreatedUtc = DateTime.UtcNow, Notes = req.Notes,
-            EramRecords = eramRecords, AsdexRecords = asdexRecords, TotalBytes = total,
+            EramRecords = eramRecords, AsdexRecords = asdexRecords, TaisRecords = taisRecords, TotalBytes = total,
             HasFlightPlan = hasFp, CapturedSources = string.Join(", ", sources),
         };
         File.WriteAllText(Path.Combine(dir, "meta.json"), JsonSerializer.Serialize(meta, _json));
@@ -206,6 +254,68 @@ public sealed class IncidentArchive
             if (mnLa != null) return (mnLa!.Value, mnLo!.Value, mxLa!.Value, mxLo!.Value);
         }
         return null;
+    }
+
+    private static (double minLat, double minLon, double maxLat, double maxLon) Union(
+        (double minLat, double minLon, double maxLat, double maxLon) a,
+        (double minLat, double minLon, double maxLat, double maxLon) b) =>
+        (Math.Min(a.minLat, b.minLat), Math.Min(a.minLon, b.minLon),
+         Math.Max(a.maxLat, b.maxLat), Math.Max(a.maxLon, b.maxLon));
+
+    /// <summary>
+    /// Sweep the ERAM replay files in [start,end] for the callsign's own positions and return a
+    /// bounding box of its track, padded by <paramref name="padDeg"/> degrees on every side. Returns
+    /// null if the callsign is never seen (e.g. LADD-masked or outside the recorded window).
+    /// </summary>
+    private (double minLat, double minLon, double maxLat, double maxLon)? ComputeCallsignBbox(
+        string eramDir, DateTime start, DateTime end, string callsign, double padDeg)
+    {
+        if (!Directory.Exists(eramDir)) return null;
+        long startMs = new DateTimeOffset(start, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        long endMs = new DateTimeOffset(end, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        double mnLa = double.MaxValue, mnLo = double.MaxValue, mxLa = double.MinValue, mxLo = double.MinValue;
+        bool any = false;
+
+        foreach (var file in Directory.GetFiles(eramDir, "*.jsonl.gz").OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var stem = Path.GetFileName(file).Replace(".jsonl.gz", "");
+            var hourStr = stem.Length >= 13 ? stem[..13] : stem;
+            if (DateTime.TryParseExact(hourStr, "yyyy-MM-dd'T'HH", CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var fileHour))
+                if (fileHour < start.AddHours(-1) || fileHour > end) continue;
+
+            using var fs = File.OpenRead(file);
+            using var gz = new GZipStream(fs, CompressionMode.Decompress);
+            using var sr = new StreamReader(gz);
+            string? line;
+            while ((line = sr.ReadLine()) != null)
+            {
+                if (line.Length == 0) continue;
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(line); } catch { continue; }
+                using (doc)
+                {
+                    var root = doc.RootElement;
+                    if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
+                    long t = tEl.GetInt64();
+                    if (t < startMs || t > endMs) continue;
+                    if (!root.TryGetProperty("d", out var dEl) || dEl.ValueKind != JsonValueKind.Array) continue;
+                    foreach (var s in dEl.EnumerateArray())
+                    {
+                        if (!s.TryGetProperty("callsign", out var c) || c.ValueKind != JsonValueKind.String
+                            || !string.Equals(c.GetString(), callsign, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (!s.TryGetProperty("latitude", out var la) || !s.TryGetProperty("longitude", out var lo)
+                            || la.ValueKind != JsonValueKind.Number || lo.ValueKind != JsonValueKind.Number) continue;
+                        double lat = la.GetDouble(), lon = lo.GetDouble();
+                        mnLa = Math.Min(mnLa, lat); mxLa = Math.Max(mxLa, lat);
+                        mnLo = Math.Min(mnLo, lon); mxLo = Math.Max(mxLo, lon);
+                        any = true;
+                    }
+                }
+            }
+        }
+        if (!any) return null;
+        return (mnLa - padDeg, mnLo - padDeg, mxLa + padDeg, mxLo + padDeg);
     }
 
     /// <summary>

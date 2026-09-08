@@ -42,12 +42,13 @@
 <main>
   <div class="panel">
     <h2>NEW INCIDENT</h2>
-    <div class="hint">Pins the replay (ERAM en-route + per-airport ASDE-X surface) and flight plan for a callsign and/or an area over a UTC window — kept forever (outside the ~3-day rolling replay budget). Grab it before it ages out. STARS/TAIS terminal replay isn't recorded upstream, so it can't be captured retroactively.</div>
-    <div class="row"><label>Title</label><input id="f-title" type="text" placeholder="21 Air MIA — 2026-09-…"></div>
-    <div class="row"><label>Callsign</label><input id="f-cs" type="text" placeholder="e.g. CSB123 (optional if area given)"></div>
-    <div class="row"><label>ASDE-X airports</label><input id="f-aps" type="text" placeholder="KMIA (comma-separated)"><span class="hint" style="margin:0">surface capture</span></div>
-    <div class="row"><label>Area radius (NM)</label><input id="f-nm" type="text" value="120" style="width:70px"><span class="hint" style="margin:0">ERAM box around the airports; blank = callsign only</span></div>
-    <div class="row"><label>Start (UTC)</label><input id="f-start" type="datetime-local" step="1"><label style="min-width:auto">End (UTC)</label><input id="f-end" type="datetime-local" step="1"></div>
+    <div class="hint">Pins the replay (ERAM en-route + per-airport ASDE-X surface + STARS/TAIS terminal) and flight plan for a callsign and/or an area over a UTC window — kept forever (outside the ~3-day rolling replay budget). Grab it before it ages out. The area/airport capture keeps the <b>whole picture</b> (every track in the box / on the surface), not just the incident flight. STARS/TAIS is recorded only from when it was enabled onward, so windows before that won't have terminal replay.</div>
+    <div class="row"><label>Title</label><input id="f-title" type="text" placeholder="e.g. Runway incursion — ORD"></div>
+    <div class="row"><label>Callsign</label><input id="f-cs" type="text" placeholder="e.g. AAL123 (optional if area given)"><span class="hint" style="margin:0">sweeps the flight's whole path corridor</span></div>
+    <div class="row"><label>ASDE-X airports</label><input id="f-aps" type="text" placeholder="KORD (comma-separated)"><span class="hint" style="margin:0">full surface capture per airport</span></div>
+    <div class="row"><label>Area radius (NM)</label><input id="f-nm" type="text" value="120" style="width:70px"><span class="hint" style="margin:0">box around the airports/callsign path; captures everything inside</span></div>
+    <div class="row"><label>Start (UTC · 24h)</label><input id="f-start" type="datetime-local" step="1"><label style="min-width:auto">End (UTC · 24h)</label><input id="f-end" type="datetime-local" step="1"></div>
+    <div class="hint">Times are UTC (Zulu), 24-hour. The date picker may show your local format, but the value is read as UTC.</div>
     <div class="row"><label>Notes</label><input id="f-notes" type="text" placeholder="optional" style="min-width:320px"></div>
     <div class="row"><button class="go" id="f-create">⤓ ARCHIVE INCIDENT</button><span id="status"></span></div>
   </div>
@@ -91,14 +92,15 @@ function renderList(list){
   if (!list.length){ el.innerHTML = `<li class="sub">(none yet — create one above)</li>`; return; }
   el.innerHTML = list.map(m => {
     const aps = (m.airports||[]);
+    const taisFacs = Object.keys(m.taisRecords||{});
     const asdexBtns = aps.map(ap => `<button data-replay-asdex="${esc(m.id)}" data-ap="${esc(ap)}">▶ ASDE-X ${esc(ap)}</button>`).join("");
     const eramBtn = m.eramRecords>0 ? `<button data-replay-eram="${esc(m.id)}">▶ ERAM replay</button>` : "";
     const fpBtn = m.hasFlightPlan ? `<button data-fp="${esc(m.id)}">✈ flight plan</button>` : "";
     return `<li class="inc">
       <div class="t">${esc(m.title||m.callsign||m.id)}</div>
       <div class="meta">
-        ${m.callsign?`<span class="tag">${esc(m.callsign)}</span>`:""}${aps.map(a=>`<span class="tag">${esc(a)}</span>`).join("")}
-        ${esc(fmtWin(m.startUtc,m.endUtc))} · ${esc(m.capturedSources||"—")} · ${mb(m.totalBytes)} · ${m.eramRecords||0} ERAM recs
+        ${m.callsign?`<span class="tag">${esc(m.callsign)}</span>`:""}${aps.map(a=>`<span class="tag">${esc(a)}</span>`).join("")}${taisFacs.map(f=>`<span class="tag" title="STARS/TAIS terminal captured">STARS ${esc(f)}</span>`).join("")}
+        ${esc(fmtWin(m.startUtc,m.endUtc))} · ${esc(m.capturedSources||"—")} · ${mb(m.totalBytes)} · ${m.eramRecords||0} ERAM recs${taisFacs.length?` · ${taisFacs.length} STARS fac`:""}
         ${m.notes?` · <i>${esc(m.notes)}</i>`:""}
       </div>
       <div class="acts">${eramBtn}${asdexBtns}${fpBtn}<button class="danger" data-del="${esc(m.id)}">✕ delete</button></div>

@@ -65,6 +65,13 @@ static class StaticRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "dispatch", "index.html"));
         });
 
+        // Incident/accident archive — permanent replay + flight-plan capture
+        app.MapGet("/incidents", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "incidents", "index.html"));
+        });
+
         // Track a single flight (mobile) — /track and /track/{callsign}
         app.MapGet("/track", async (HttpContext c) =>
         {

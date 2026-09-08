@@ -1245,10 +1245,14 @@ function applyTracks(arr) {
 
 function init() {
     if (!window.ReplayBar) { setTimeout(init, 50); return; }
+    // Incident replay: ?incident=<id> points the ReplayBar at the archived incident's ASDE-X slice.
+    const _incident = new URLSearchParams(location.search).get('incident');
+    const _ap = AIRPORT.toUpperCase();
     window.ReplayBar.init({
-        wsPath:   '/replay/asdex/ws/' + AIRPORT.toUpperCase(),
+        wsPath:   _incident ? `/replay/incident/${encodeURIComponent(_incident)}/asdex/ws/${_ap}` : ('/replay/asdex/ws/' + _ap),
+        rangeUrl: _incident ? `/api/incident/${encodeURIComponent(_incident)}/range` : '/api/replay/range',
         rangeKey: 'asdex',
-        rangeSubKey: AIRPORT.toUpperCase(),
+        rangeSubKey: _ap,
         onStart: () => {
             if (ws) { ws.onclose = null; ws.close(); ws = null; }
             if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }

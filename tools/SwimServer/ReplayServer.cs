@@ -151,6 +151,61 @@ public class ReplayServer
         });
     }
 
+    /// <summary>
+    /// Replay endpoints for archived incidents — same engine as live replay, pointed at the incident's
+    /// own sliced ERAM / per-airport ASDE-X gz files. incidentsDir is the permanent archive root.
+    /// </summary>
+    public void MapIncidentEndpoints(WebApplication app, string incidentsDir)
+    {
+        static bool SafeId(string id) => !(id.Contains("..") || id.Contains('/') || id.Contains('\\'));
+
+        app.MapGet("/api/incident/{id}/range", (string id) =>
+        {
+            if (!SafeId(id)) return Results.BadRequest();
+            var baseD = Path.Combine(incidentsDir, id);
+            var eram = GetTimeRange(Path.Combine(baseD, "eram"));
+            var asdexBase = Path.Combine(baseD, "asdex");
+            var asdex = new Dictionary<string, object>();
+            if (Directory.Exists(asdexBase))
+                foreach (var d in Directory.GetDirectories(asdexBase))
+                {
+                    var r = GetTimeRange(d);
+                    if (r != null) asdex[Path.GetFileName(d)] = r;
+                }
+            return Results.Json(new { eram, asdex }, _jsonOpts);
+        });
+
+        app.Map("/replay/incident/{id}/ws", async (HttpContext ctx, string id) =>
+        {
+            if (!SafeId(id)) { ctx.Response.StatusCode = 400; return; }
+            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "eram"));
+        });
+
+        app.Map("/replay/incident/{id}/asdex/ws/{airport}", async (HttpContext ctx, string id, string airport) =>
+        {
+            if (!SafeId(id)) { ctx.Response.StatusCode = 400; return; }
+            var icao = airport.ToUpperInvariant();
+            if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
+            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "asdex", icao));
+        });
+    }
+
+    private async Task IncidentSession(HttpContext ctx, string dir)
+    {
+        if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+        var startParam = ctx.Request.Query["start"].FirstOrDefault();
+        if (string.IsNullOrEmpty(startParam)
+            || !DateTime.TryParse(startParam, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var startTime))
+        { ctx.Response.StatusCode = 400; return; }
+        if (!Directory.Exists(dir)) { ctx.Response.StatusCode = 404; return; }
+        var speed = 1.0;
+        if (double.TryParse(ctx.Request.Query["speed"].FirstOrDefault(), out var sp) && sp > 0) speed = sp;
+        var bounds = ParseBoundsFromQuery(ctx);
+        double.TryParse(ctx.Request.Query["preload"].FirstOrDefault(), out var preload);
+        using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+        await RunReplaySession(ws, dir, startTime, speed, bounds, preload);
+    }
+
     private async Task RunReplaySession(WebSocket ws, string dataDir, DateTime startTime, double initialSpeed, Bounds? initialBounds = null, double preloadSeconds = 0)
     {
         var speed = initialSpeed;

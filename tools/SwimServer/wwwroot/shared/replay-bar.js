@@ -283,7 +283,8 @@
   async function init(opts) {
     cfg = Object.assign({
       wsPath:    "/replay/ws",
-      rangeKey:  "eram",            // which sub-object of /api/replay/range to read
+      rangeUrl:  "/api/replay/range",  // range metadata endpoint (incident replay overrides this)
+      rangeKey:  "eram",            // which sub-object of the range response to read
       viewport:  null,              // optional () => { minLat, minLon, maxLat, maxLon }
       onSnapshot: () => {},
       onBatch:    () => {},
@@ -314,7 +315,7 @@
 
   async function fetchRange() {
     try {
-      const r = await fetch("/api/replay/range");
+      const r = await fetch(cfg.rangeUrl || "/api/replay/range");
       const d = await r.json();
       let info = d?.[cfg.rangeKey];
       if (info && typeof info === "object" && !info.start && cfg.rangeSubKey) info = info[cfg.rangeSubKey];

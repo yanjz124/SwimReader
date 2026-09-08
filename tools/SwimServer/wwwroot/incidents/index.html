@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Incident Archive</title>
+<style>
+  :root { --y:#cccc44; --bg:#0c0c0c; --card:#151515; --line:#2a2a2a; --dim:#888; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:#ddd; font:14px/1.45 ui-monospace,"Cascadia Mono",Consolas,monospace; }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; }
+  h1 { font-size:18px; color:var(--y); margin:0; letter-spacing:1px; }
+  .sub { color:var(--dim); font-size:12px; }
+  a { color:var(--y); }
+  main { max-width:1000px; margin:0 auto; padding:16px; }
+  .panel { background:var(--card); border:1px solid var(--line); padding:14px; margin-bottom:18px; }
+  .panel h2 { font-size:13px; color:var(--y); margin:0 0 10px; letter-spacing:1px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:6px 0; }
+  label { color:#9ab; min-width:120px; }
+  input { background:#050505; border:1px solid #333; color:#dfe; font:13px ui-monospace,monospace; padding:5px 7px; }
+  input[type=text]{ min-width:150px; }
+  .hint { color:var(--dim); font-size:12px; margin:2px 0 8px; }
+  button { background:#111; border:1px solid #3a3a3a; color:#cde; font:12px ui-monospace,monospace; padding:5px 11px; cursor:pointer; }
+  button:hover { background:#1c1c1c; }
+  button.go { border-color:#6a6; color:#bfb; }
+  button.danger { border-color:#a44; color:#f99; }
+  #status { color:#9d9; font-size:12px; min-height:16px; margin-top:6px; }
+  ul.list { list-style:none; margin:0; padding:0; }
+  .inc { border:1px solid var(--line); background:#101010; padding:12px; margin:8px 0; }
+  .inc .t { color:var(--y); font-size:14px; }
+  .inc .meta { color:var(--dim); font-size:12px; margin:3px 0 8px; }
+  .inc .acts { display:flex; flex-wrap:wrap; gap:6px; }
+  .tag { display:inline-block; border:1px solid #2c5c2c; color:#9d9; padding:0 5px; font-size:11px; margin-right:4px; }
+  pre.fp { white-space:pre-wrap; word-break:break-word; background:#050505; border:1px solid #222; padding:8px; max-height:340px; overflow:auto; font-size:11px; color:#bcd; margin:6px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>◼ INCIDENT ARCHIVE</h1>
+  <span class="sub">permanent replay + flight-plan capture for incidents/accidents · <a href="/">home</a></span>
+</header>
+<main>
+  <div class="panel">
+    <h2>NEW INCIDENT</h2>
+    <div class="hint">Pins the replay (ERAM en-route + per-airport ASDE-X surface) and flight plan for a callsign and/or an area over a UTC window — kept forever (outside the ~3-day rolling replay budget). Grab it before it ages out. STARS/TAIS terminal replay isn't recorded upstream, so it can't be captured retroactively.</div>
+    <div class="row"><label>Title</label><input id="f-title" type="text" placeholder="21 Air MIA — 2026-09-…"></div>
+    <div class="row"><label>Callsign</label><input id="f-cs" type="text" placeholder="e.g. CSB123 (optional if area given)"></div>
+    <div class="row"><label>ASDE-X airports</label><input id="f-aps" type="text" placeholder="KMIA (comma-separated)"><span class="hint" style="margin:0">surface capture</span></div>
+    <div class="row"><label>Area radius (NM)</label><input id="f-nm" type="text" value="120" style="width:70px"><span class="hint" style="margin:0">ERAM box around the airports; blank = callsign only</span></div>
+    <div class="row"><label>Start (UTC)</label><input id="f-start" type="datetime-local" step="1"><label style="min-width:auto">End (UTC)</label><input id="f-end" type="datetime-local" step="1"></div>
+    <div class="row"><label>Notes</label><input id="f-notes" type="text" placeholder="optional" style="min-width:320px"></div>
+    <div class="row"><button class="go" id="f-create">⤓ ARCHIVE INCIDENT</button><span id="status"></span></div>
+  </div>
+
+  <div class="panel">
+    <h2>ARCHIVED INCIDENTS</h2>
+    <div class="row" style="margin-bottom:8px"><button id="refresh">REFRESH</button><span id="range" class="sub"></span></div>
+    <ul class="list" id="list"><li class="sub">loading…</li></ul>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const setStatus = (t,ok=true) => { const e=$("#status"); e.textContent=t||""; e.style.color = ok?"#9d9":"#f99"; };
+const zulu = d => d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0")+"T"+String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()||0).padStart(2,"0");
+// datetime-local value (no tz) → treat as UTC ISO
+const toUtcIso = v => v ? (v.length===16 ? v+":00" : v)+"Z" : null;
+const fmtWin = (a,b) => { try { const s=new Date(a), e=new Date(b); return s.toISOString().slice(0,16).replace("T"," ")+"Z → "+e.toISOString().slice(11,16)+"Z"; } catch { return a+" → "+b; } };
+const mb = n => n>=1048576 ? (n/1048576).toFixed(1)+" MB" : Math.round((n||0)/1024)+" KB";
+
+// default the window to the last hour, in UTC
+(function seed(){
+  const now = new Date(), ago = new Date(now.getTime()-3600000);
+  const local = d => d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0")+"T"+String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0");
+  $("#f-start").value = local(ago); $("#f-end").value = local(now);
+})();
+
+async function load(){
+  try {
+    const [inc, rng] = await Promise.all([
+      fetch("/api/incidents").then(r=>r.json()),
+      fetch("/api/replay/range").then(r=>r.json()).catch(()=>null),
+    ]);
+    if (rng?.eram?.start) $("#range").textContent = `Live replay available: ${rng.eram.start.slice(0,16).replace("T"," ")}Z → ${rng.eram.end.slice(11,16)}Z (aging out under budget)`;
+    renderList(inc||[]);
+  } catch(e){ $("#list").innerHTML = `<li class="sub">error: ${esc(e)}</li>`; }
+}
+
+function renderList(list){
+  const el = $("#list");
+  if (!list.length){ el.innerHTML = `<li class="sub">(none yet — create one above)</li>`; return; }
+  el.innerHTML = list.map(m => {
+    const aps = (m.airports||[]);
+    const asdexBtns = aps.map(ap => `<button data-replay-asdex="${esc(m.id)}" data-ap="${esc(ap)}">▶ ASDE-X ${esc(ap)}</button>`).join("");
+    const eramBtn = m.eramRecords>0 ? `<button data-replay-eram="${esc(m.id)}">▶ ERAM replay</button>` : "";
+    const fpBtn = m.hasFlightPlan ? `<button data-fp="${esc(m.id)}">✈ flight plan</button>` : "";
+    return `<li class="inc">
+      <div class="t">${esc(m.title||m.callsign||m.id)}</div>
+      <div class="meta">
+        ${m.callsign?`<span class="tag">${esc(m.callsign)}</span>`:""}${aps.map(a=>`<span class="tag">${esc(a)}</span>`).join("")}
+        ${esc(fmtWin(m.startUtc,m.endUtc))} · ${esc(m.capturedSources||"—")} · ${mb(m.totalBytes)} · ${m.eramRecords||0} ERAM recs
+        ${m.notes?` · <i>${esc(m.notes)}</i>`:""}
+      </div>
+      <div class="acts">${eramBtn}${asdexBtns}${fpBtn}<button class="danger" data-del="${esc(m.id)}">✕ delete</button></div>
+      <div class="fpwrap" data-fpwrap="${esc(m.id)}"></div>
+    </li>`;
+  }).join("");
+  el.querySelectorAll("[data-replay-eram]").forEach(b=>b.onclick=()=>openEram(b.dataset.replayEram));
+  el.querySelectorAll("[data-replay-asdex]").forEach(b=>b.onclick=()=>openAsdex(b.dataset.replayAsdex, b.dataset.ap));
+  el.querySelectorAll("[data-fp]").forEach(b=>b.onclick=()=>toggleFp(b.dataset.fp));
+  el.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>del(b.dataset.del));
+}
+
+// Replay opens the real ERAM / ASDE-X scope in incident-replay mode (auto-starts at the window start).
+async function incidentStart(id){
+  try { const r = await fetch(`/api/incident/${encodeURIComponent(id)}/range`).then(r=>r.json()); return r?.eram?.start || null; } catch { return null; }
+}
+async function openEram(id){
+  const start = await incidentStart(id);
+  const h = start ? `#replay=${encodeURIComponent(start)}&rspd=4` : "";
+  window.open(`/eram.html?incident=${encodeURIComponent(id)}${h}`, "_blank");
+}
+async function openAsdex(id, ap){
+  const r = await fetch(`/api/incident/${encodeURIComponent(id)}/range`).then(r=>r.json()).catch(()=>null);
+  const start = r?.asdex?.[ap]?.start || r?.eram?.start;
+  const h = start ? `#replay=${encodeURIComponent(start)}&rspd=4` : "";
+  window.open(`/asdex/${encodeURIComponent(ap.toLowerCase())}?incident=${encodeURIComponent(id)}${h}`, "_blank");
+}
+async function toggleFp(id){
+  const w = document.querySelector(`[data-fpwrap="${id}"]`);
+  if (w.firstChild){ w.innerHTML=""; return; }
+  try {
+    const fp = await fetch(`/api/incidents/${encodeURIComponent(id)}/flightplan`).then(r=>r.json());
+    w.innerHTML = `<pre class="fp">${esc(JSON.stringify(fp, null, 2))}</pre>`;
+  } catch(e){ w.innerHTML = `<pre class="fp">error: ${esc(e)}</pre>`; }
+}
+async function del(id){
+  if (!confirm("Delete this archived incident permanently?")) return;
+  await fetch(`/api/incidents/${encodeURIComponent(id)}`, {method:"DELETE"});
+  load();
+}
+
+$("#f-create").onclick = async () => {
+  const body = {
+    title: $("#f-title").value.trim() || null,
+    callsign: $("#f-cs").value.trim() || null,
+    airports: $("#f-aps").value.split(",").map(s=>s.trim()).filter(Boolean),
+    aroundNm: parseFloat($("#f-nm").value) || null,
+    startUtc: toUtcIso($("#f-start").value),
+    endUtc: toUtcIso($("#f-end").value),
+    notes: $("#f-notes").value.trim() || null,
+  };
+  if (!body.startUtc || !body.endUtc){ setStatus("set a start and end time", false); return; }
+  if (!body.callsign && !(body.airports.length && body.aroundNm) && !body.minLat){ setStatus("provide a callsign and/or airports + area radius", false); return; }
+  setStatus("archiving… (extracting replay slices, may take a few seconds)");
+  try {
+    const r = await fetch("/api/incidents", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    if (!r.ok){ setStatus("failed: "+(await r.text()), false); return; }
+    const m = await r.json();
+    setStatus(`archived ✓ — ${m.capturedSources||"nothing"} · ${mb(m.totalBytes)}`);
+    load();
+  } catch(e){ setStatus("failed: "+e, false); }
+};
+$("#refresh").onclick = load;
+load();
+</script>
+</body>
+</html>

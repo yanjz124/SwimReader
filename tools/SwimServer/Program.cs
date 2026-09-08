@@ -1304,6 +1304,42 @@ app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t
 // Replay endpoints (WebSocket + REST)
 replayServer.MapEndpoints(app);
 
+// ── Incident/accident archive — permanently pin a callsign+area+window's replay + flight plan ──
+// Lives in incidents/ (OUTSIDE the budget-managed replay dir), so archived incidents are never pruned.
+var incidentsDir = Path.Combine(Directory.GetCurrentDirectory(), "incidents");
+var incidentArchive = new SwimServer.IncidentArchive(
+    incidentsDir, replayDir,
+    captureFlightPlan: req =>
+    {
+        var cs = (req.Callsign ?? "").Trim();
+        var live = flights.Values
+            .Where(f => string.Equals(f.Callsign, cs, StringComparison.OrdinalIgnoreCase))
+            .Select(f => f.ToDetail(reveal: true)).ToList();
+        var history = new List<System.Text.Json.JsonElement>();
+        for (var day = req.StartUtc.Date; day <= req.EndUtc.Date; day = day.AddDays(1))
+        {
+            var hf = Path.Combine(historyDir, day.ToString("yyyy-MM-dd") + ".jsonl");
+            if (!File.Exists(hf)) continue;
+            foreach (var line in File.ReadLines(hf))
+            {
+                if (line.IndexOf(cs, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                try { history.Add(System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(line)); } catch { }
+            }
+        }
+        return new { callsign = cs, capturedUtc = DateTime.UtcNow, live, history };
+    },
+    airportLoc: icao =>
+    {
+        var nasr = nasrData;
+        if (nasr == null) return null;
+        var pt = NasrService.LookupAirport(icao, nasr);
+        if (pt == null && icao.Length == 4 && (icao[0] == 'K' || icao[0] == 'P'))
+            pt = NasrService.LookupAirport(icao[1..], nasr);
+        return pt == null ? null : (pt.Lat, pt.Lon);
+    });
+IncidentRoutes.Register(app, incidentArchive);
+replayServer.MapIncidentEndpoints(app, incidentsDir);
+
 await solaceReady.Task;
 
 // Guard against duplicate route registration. Two Register() calls landing on

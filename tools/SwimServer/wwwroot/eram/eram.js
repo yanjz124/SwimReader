@@ -11709,8 +11709,11 @@ function clearReplayState() {
 
 function initReplayBar() {
     if (!window.ReplayBar) { setTimeout(initReplayBar, 50); return; }
+    // Incident replay: ?incident=<id> points the ReplayBar at the archived incident's own ERAM slice.
+    const _incident = new URLSearchParams(location.search).get('incident');
     window.ReplayBar.init({
-        wsPath:   '/replay/ws',
+        wsPath:   _incident ? `/replay/incident/${encodeURIComponent(_incident)}/ws` : '/replay/ws',
+        rangeUrl: _incident ? `/api/incident/${encodeURIComponent(_incident)}/range` : '/api/replay/range',
         rangeKey: 'eram',
         viewport: paddedBounds,
         onStart: () => {

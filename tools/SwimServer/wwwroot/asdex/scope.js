@@ -1120,18 +1120,26 @@ function centerOnTracks(tracks) {
 }
 
 // ── Zulu clock ───────────────────────────────────────────────────────────────
+// During replay the clock shows the REPLAY time (fed via the ReplayBar's onTime), not the live
+// wall clock, so it matches the traffic on screen. window._setReplayClock(iso) sets it; passing a
+// falsy value reverts to live time.
+let _replayClockTime = null;
 (function () {
     const el = document.getElementById('zulu-clock');
 
     function tick() {
-        const now = new Date();
+        const src = _replayClockTime ? new Date(_replayClockTime) : new Date();
+        const now = isNaN(src) ? new Date() : src;
         const hh  = String(now.getUTCHours()).padStart(2, '0');
         const mm  = String(now.getUTCMinutes()).padStart(2, '0');
         const ss  = String(now.getUTCSeconds()).padStart(2, '0');
         el.textContent = `${hh}${mm}/${ss}`;
+        el.style.color = _replayClockTime ? '#ff8c00' : '';   // amber during replay, so it reads as non-live
     }
     tick();
     setInterval(tick, 1000);
+    // Setter used by the ReplayBar wiring below.
+    window._setReplayClock = (iso) => { _replayClockTime = iso || null; tick(); };
 
     // Restore saved position (right-anchored default)
     const saved = localStorage.getItem('asdex-clock-pos');
@@ -1262,7 +1270,7 @@ function init() {
             connEl.className = '';
             connEl.style.color = '#ff8c00';
         },
-        onTime: () => {},
+        onTime: (t) => { if (window._setReplayClock) window._setReplayClock(t); },
         onSnapshot: (arr) => {
             for (const tid of Object.keys(markers)) removeTrack(tid);
             applyTracks(arr);
@@ -1284,6 +1292,7 @@ function init() {
             updateCount();
         },
         onStop: () => {
+            if (window._setReplayClock) window._setReplayClock(null);   // back to live time
             connEl.style.color = '';
             connect();
         },

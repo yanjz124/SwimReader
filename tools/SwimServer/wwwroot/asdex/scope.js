@@ -1121,8 +1121,8 @@ function centerOnTracks(tracks) {
 
 // ── Zulu clock ───────────────────────────────────────────────────────────────
 // During replay the clock shows the REPLAY time (fed via the ReplayBar's onTime), not the live
-// wall clock, so it matches the traffic on screen. window._setReplayClock(iso) sets it; passing a
-// falsy value reverts to live time.
+// wall clock, so it matches the traffic on screen (its color is unchanged — the orange REPLAY
+// indicator already signals the mode). window._setReplayClock(iso) sets it; falsy reverts to live.
 let _replayClockTime = null;
 (function () {
     const el = document.getElementById('zulu-clock');
@@ -1134,7 +1134,6 @@ let _replayClockTime = null;
         const mm  = String(now.getUTCMinutes()).padStart(2, '0');
         const ss  = String(now.getUTCSeconds()).padStart(2, '0');
         el.textContent = `${hh}${mm}/${ss}`;
-        el.style.color = _replayClockTime ? '#ff8c00' : '';   // amber during replay, so it reads as non-live
     }
     tick();
     setInterval(tick, 1000);

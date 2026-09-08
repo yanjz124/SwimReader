@@ -65,6 +65,9 @@
 </main>
 <script>
 const $ = s => document.querySelector(s);
+// Operator (reveal/backdoor) state — non-secret "sv=1" cookie set on sign-in. Deleting an archive
+// is operator-only; the server enforces it (403 without the key), this just hides the button.
+const REVEALED = /(?:^|;\s*)sv=1(?:;|$)/.test(document.cookie);
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const setStatus = (t,ok=true) => { const e=$("#status"); e.textContent=t||""; e.style.color = ok?"#9d9":"#f99"; };
 const zulu = d => d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0")+"T"+String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()||0).padStart(2,"0");
@@ -123,7 +126,7 @@ function renderList(list){
         ${esc(fmtWin(m.startUtc,m.endUtc))} · ${esc(m.capturedSources||"—")} · ${mb(m.totalBytes)} · ${m.eramRecords||0} ERAM recs${taisFacs.length?` · ${taisFacs.length} STARS fac`:""}
         ${m.notes?` · <i>${esc(m.notes)}</i>`:""}
       </div>
-      <div class="acts">${eramBtn}${asdexBtns}${starsBtns}${fpBtn}<button class="danger" data-del="${esc(m.id)}">✕ delete</button></div>
+      <div class="acts">${eramBtn}${asdexBtns}${starsBtns}${fpBtn}${REVEALED?`<button class="danger" data-del="${esc(m.id)}">✕ delete</button>`:""}</div>
       <div class="fpwrap" data-fpwrap="${esc(m.id)}"></div>
     </li>`;
   }).join("");
@@ -141,7 +144,9 @@ async function incidentStart(id){
 async function openEram(id){
   const start = await incidentStart(id);
   const h = start ? `#replay=${encodeURIComponent(start)}&rspd=4` : "";
-  window.open(`/eram.html?incident=${encodeURIComponent(id)}${h}`, "_blank");
+  // /eram/scope is the radar scope; /eram (and the legacy /eram.html redirect) is the picker
+  // landing page, which ignores ?incident= — so target the scope directly.
+  window.open(`/eram/scope?incident=${encodeURIComponent(id)}${h}`, "_blank");
 }
 async function openAsdex(id, ap){
   const r = await fetch(`/api/incident/${encodeURIComponent(id)}/range`).then(r=>r.json()).catch(()=>null);
@@ -199,7 +204,42 @@ async function del(id){
   load();
 }
 
+// ── Background archive job: POST returns a jobId immediately; the server keeps working even if
+// you leave. We poll for progress and remember the jobId so a refresh resumes the same job.
+const JOB_KEY = "incidents.job";
+let _pollTimer = null;
+function setArchiving(on){
+  $("#f-create").disabled = on;
+  $("#f-create").textContent = on ? "⏳ ARCHIVING…" : "⤓ ARCHIVE INCIDENT";
+  // Guard an accidental refresh/close while a job is in flight. The job is background-safe (it
+  // finishes server-side and a refresh resumes polling), but this avoids surprise mid-submit.
+  window.onbeforeunload = on ? (e)=>{ e.preventDefault(); e.returnValue=""; return ""; } : null;
+}
+function stopPolling(){ if (_pollTimer){ clearInterval(_pollTimer); _pollTimer=null; } }
+async function pollJob(jobId){
+  let j;
+  try {
+    const r = await fetch(`/api/incidents/jobs/${encodeURIComponent(jobId)}`);
+    if (r.status === 404){ stopPolling(); setArchiving(false); localStorage.removeItem(JOB_KEY);
+      setStatus("archive job not found (server may have restarted) — refreshing list", false); load(); return; }
+    j = await r.json();
+  } catch(e){ return; /* transient network — keep polling */ }
+  if (j.status === "running"){
+    setStatus(`archiving… ${esc(j.stage||"")} · ${j.elapsedSec||0}s — safe to leave, the server finishes on its own`);
+    return;
+  }
+  stopPolling(); setArchiving(false); localStorage.removeItem(JOB_KEY);
+  if (j.status === "done"){ const m=j.meta||{}; setStatus(`archived ✓ — ${m.capturedSources||"nothing"} · ${mb(m.totalBytes||0)} · ${j.elapsedSec||0}s`); load(); }
+  else { setStatus("failed: "+(j.error||"unknown error"), false); }
+}
+function startPolling(jobId){
+  stopPolling(); setArchiving(true); localStorage.setItem(JOB_KEY, jobId);
+  pollJob(jobId);
+  _pollTimer = setInterval(()=>pollJob(jobId), 1500);
+}
+
 $("#f-create").onclick = async () => {
+  if (_pollTimer){ return; }   // a job is already in flight — ignore repeat clicks
   const win = windowFromForm();
   if (!win){ setStatus("set a valid start date, HHMM time, and duration", false); return; }
   const body = {
@@ -211,17 +251,19 @@ $("#f-create").onclick = async () => {
     endUtc: win.endUtc,
     notes: $("#f-notes").value.trim() || null,
   };
-  if (!body.callsign && !(body.airports.length && body.aroundNm) && !body.minLat){ setStatus("provide a callsign and/or airports + area radius", false); return; }
-  setStatus("archiving… (extracting replay slices, may take a few seconds)");
+  if (!body.callsign && !(body.airports.length && body.aroundNm)){ setStatus("provide a callsign and/or airports + area radius", false); return; }
+  setStatus("starting…");
   try {
     const r = await fetch("/api/incidents", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
-    if (!r.ok){ setStatus("failed: "+(await r.text()), false); return; }
-    const m = await r.json();
-    setStatus(`archived ✓ — ${m.capturedSources||"nothing"} · ${mb(m.totalBytes)}`);
-    load();
+    if (!r.ok && r.status !== 202){ setStatus("failed: "+(await r.text()).slice(0,200), false); return; }
+    const j = await r.json();
+    if (j.jobId) startPolling(j.jobId);
+    else { setStatus(`archived ✓ — ${j.capturedSources||"nothing"}`); load(); }  // fallback for older server
   } catch(e){ setStatus("failed: "+e, false); }
 };
 $("#refresh").onclick = load;
+// Resume a job that was still in flight before a refresh/navigation.
+(function resumeJob(){ const jid = localStorage.getItem(JOB_KEY); if (jid) startPolling(jid); })();
 load();
 </script>
 </body>

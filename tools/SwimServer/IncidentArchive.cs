@@ -80,9 +80,11 @@ public sealed class IncidentArchive
 
     public string IncidentDir(string id) => Path.Combine(_incidentsDir, id);
 
-    /// <summary>Extract + persist an incident. Runs synchronously (I/O-bound over the replay files).</summary>
-    public IncidentMeta Create(IncidentRequest req)
+    /// <summary>Extract + persist an incident. Runs synchronously (I/O-bound over the replay files).
+    /// <paramref name="progress"/> (optional) receives coarse stage labels for a job/status UI.</summary>
+    public IncidentMeta Create(IncidentRequest req, Action<string>? progress = null)
     {
+        progress?.Invoke("starting");
         if (req.EndUtc <= req.StartUtc) throw new ArgumentException("EndUtc must be after StartUtc");
         var callsign = string.IsNullOrWhiteSpace(req.Callsign) ? null : req.Callsign.Trim().ToUpperInvariant();
         var airports = (req.Airports ?? Array.Empty<string>())
@@ -124,6 +126,7 @@ public sealed class IncidentArchive
             }
             return false;
         };
+        progress?.Invoke("ERAM en-route");
         eramRecords = SliceReplay(Path.Combine(_replayDir, "eram"), Path.Combine(dir, "eram"),
             req.StartUtc, req.EndUtc, keepEram);
 
@@ -131,6 +134,7 @@ public sealed class IncidentArchive
         var asdexRecords = new Dictionary<string, long>();
         foreach (var ap in airports)
         {
+            progress?.Invoke($"ASDE-X {ap}");
             var recs = SliceReplay(Path.Combine(_replayDir, "asdex", ap), Path.Combine(dir, "asdex", ap),
                 req.StartUtc, req.EndUtc, keepSummary: null);   // keep every surface track
             if (recs > 0) asdexRecords[ap] = recs;
@@ -158,10 +162,26 @@ public sealed class IncidentArchive
                 }
                 return false;
             };
+            progress?.Invoke("STARS/TAIS terminal");
             foreach (var facDir in Directory.GetDirectories(taisBase))
             {
+                // Cheap geographic prune first: skip facilities whose recorded centroid (loc.json)
+                // is far outside the area, so we don't decompress ~140 facility files per incident.
+                // Facilities with no loc hint fall through to the (correct but slower) content scan.
+                if (bbox != null)
+                {
+                    var loc = ReadFacilityLoc(facDir);
+                    if (loc != null)
+                    {
+                        const double pad = 1.5;   // ~90 NM of TRACON reach beyond the centroid
+                        if (loc.Value.lat < bbox.Value.minLat - pad || loc.Value.lat > bbox.Value.maxLat + pad
+                            || loc.Value.lon < bbox.Value.minLon - pad || loc.Value.lon > bbox.Value.maxLon + pad)
+                            continue;
+                    }
+                }
                 if (!TaisFacilityRelevant(facDir, req.StartUtc, req.EndUtc, matchTais)) continue;
                 var fac = Path.GetFileName(facDir);
+                progress?.Invoke($"STARS {fac}");
                 var recs = SliceReplay(facDir, Path.Combine(dir, "tais", fac),
                     req.StartUtc, req.EndUtc, keepSummary: null);   // whole terminal picture
                 if (recs > 0) taisRecords[fac] = recs;
@@ -172,6 +192,7 @@ public sealed class IncidentArchive
         bool hasFp = false;
         if (callsign != null)
         {
+            progress?.Invoke("flight plan");
             try
             {
                 var fp = _captureFlightPlan(req);
@@ -225,6 +246,23 @@ public sealed class IncidentArchive
     {
         var f = Path.Combine(IncidentDir(id), "flightplan.json");
         return File.Exists(f) ? f : null;
+    }
+
+    /// <summary>Read a facility's persisted centroid hint (loc.json), or null if absent/unparseable.</summary>
+    private static (double lat, double lon)? ReadFacilityLoc(string facDir)
+    {
+        try
+        {
+            var f = Path.Combine(facDir, "loc.json");
+            if (!File.Exists(f)) return null;
+            using var doc = JsonDocument.Parse(File.ReadAllText(f));
+            var r = doc.RootElement;
+            if (r.TryGetProperty("lat", out var la) && r.TryGetProperty("lon", out var lo)
+                && la.ValueKind == JsonValueKind.Number && lo.ValueKind == JsonValueKind.Number)
+                return (la.GetDouble(), lo.GetDouble());
+        }
+        catch { }
+        return null;
     }
 
     public bool Delete(string id)
@@ -302,7 +340,8 @@ public sealed class IncidentArchive
                     var root = doc.RootElement;
                     if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
                     long t = tEl.GetInt64();
-                    if (t < startMs || t > endMs) continue;
+                    if (t > endMs) break;
+                    if (t < startMs) continue;
                     if (!root.TryGetProperty("d", out var dEl) || dEl.ValueKind != JsonValueKind.Array) continue;
                     foreach (var s in dEl.EnumerateArray())
                     {
@@ -354,7 +393,8 @@ public sealed class IncidentArchive
                     var root = doc.RootElement;
                     if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
                     long t = tEl.GetInt64();
-                    if (t < startMs || t > endMs) continue;
+                    if (t > endMs) break;
+                    if (t < startMs) continue;
                     var kind = root.TryGetProperty("k", out var kEl) ? (kEl.GetString() ?? "B") : "B";
                     if (kind != "B" && kind != "S") continue;
                     if (!root.TryGetProperty("d", out var dEl) || dEl.ValueKind != JsonValueKind.Array) continue;
@@ -421,7 +461,8 @@ public sealed class IncidentArchive
                         var root = doc.RootElement;
                         if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
                         long t = tEl.GetInt64();
-                        if (t < startMs || t > endMs) continue;
+                        if (t > endMs) break;          // records are chronological → nothing later matches
+                        if (t < startMs) continue;
                         var kind = root.TryGetProperty("k", out var kEl) ? (kEl.GetString() ?? "B") : "B";
                         if (!root.TryGetProperty("d", out var dEl)) continue;
 

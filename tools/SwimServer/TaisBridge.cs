@@ -64,9 +64,36 @@ class TaisBridge
         foreach (var (facility, tracks) in _state)
         {
             if (tracks.IsEmpty) continue;
-            var arr = tracks.Values.Select(t => t.ToJson(false)).ToArray();
+            var vals = tracks.Values.ToList();
+            var arr = vals.Select(t => t.ToJson(false)).ToArray();
             GetRecorder(facility)?.RecordSnapshot(arr, DateTime.UtcNow);
+            WriteFacilityLoc(facility, vals);
         }
+    }
+
+    /// <summary>
+    /// Persist a tiny loc.json (facility track centroid) next to the facility's replay files.
+    /// The incident archiver uses it to geographically prune far-away facilities BEFORE
+    /// decompressing anything — otherwise every incident would scan all ~140 facilities' files.
+    /// </summary>
+    private void WriteFacilityLoc(string facility, List<TaisTrack> tracks)
+    {
+        if (_replayBaseDir == null) return;
+        double la = 0, lo = 0; int n = 0;
+        foreach (var t in tracks)
+        {
+            if (t.Latitude == 0 && t.Longitude == 0) continue;
+            la += t.Latitude; lo += t.Longitude; n++;
+        }
+        if (n == 0) return;
+        try
+        {
+            var dir = Path.Combine(_replayBaseDir, facility);
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "loc.json"),
+                $"{{\"lat\":{(la / n).ToString(CultureInfo.InvariantCulture)},\"lon\":{(lo / n).ToString(CultureInfo.InvariantCulture)}}}");
+        }
+        catch { /* best-effort hint */ }
     }
 
     /// <summary>Dispose all per-facility replay recorders.</summary>

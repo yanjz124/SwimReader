@@ -9348,6 +9348,19 @@ try {
 // Init
 // ════════════════════════════════════════════════════════════════════════════
 loadSettingsFromLocalStorage();
+// Deep-link: /eram/scope?facility=ZDC&sectors=32,34[&center=1] pre-selects a facility + sector(s)
+// so a link from Track-a-Flight / Flight Table lands on the scope already working that sector.
+try {
+    const _q = new URLSearchParams(location.search);
+    const _fac = (_q.get('facility') || _q.get('fac') || '').trim().toUpperCase();
+    if (_fac) {
+        myFacility = _fac;
+        const _secs = (_q.get('sectors') || _q.get('sector') || '').split(',').map(s => s.trim()).filter(Boolean);
+        mySectors = new Set(_secs);
+        facilityOnly = false;
+        saveSettingsToLocalStorage();
+    }
+} catch (e) { /* ignore bad deep-link params */ }
 rebuildFacilityDropdown();
 rebuildSectorCheckboxes();
 

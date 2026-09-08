@@ -1186,6 +1186,7 @@ function renderFlightPlan(d) {
             ['Accepting', d.handoffAccepting],
             ['Point-out', d.pointoutOriginatingUnit ? `${d.pointoutOriginatingUnit} \u2192 ${d.pointoutReceivingUnit || '?'}` : null],
         ])}
+        ${eramScopeLink(d)}
         ${section('Beacon', [
             ['Squawk', d.squawk],
             ['Assigned Sqk', d.assignedSquawk],
@@ -1317,6 +1318,16 @@ function highlightXml(xml) {
         .replace(/([\w:-]+)=(&apos;[^&]*&apos;)/g, '<span class="xml-attr">$1</span>=<span class="xml-val">$2</span>');
 }
 
+// Deep-link to the ERAM scope, pre-selecting the flight's controlling ARTCC + sector. Only for
+// en-route ARTCC facilities (Zxx) — the ERAM scope doesn't render terminal facilities.
+function eramScopeLink(d) {
+    const fac = (d.controllingFacility || '').toUpperCase();
+    if (!/^Z[A-Z]{2}$/.test(fac)) return '';
+    const sec = d.controllingSector ? '&sectors=' + encodeURIComponent(d.controllingSector) : '';
+    const tag = fac + (d.controllingSector ? '/' + d.controllingSector : '');
+    const lbl = 'Open ERAM ' + fac + (d.controllingSector ? ' sector ' + d.controllingSector : '');
+    return `<div class="section"><a href="/eram/scope?facility=${encodeURIComponent(fac)}${sec}&center=1" target="_blank" rel="noopener" title="${esc(lbl)}" style="display:inline-block;color:#cccc44;text-decoration:none;font-size:12px;border:1px solid #4a4a2a;padding:2px 9px;border-radius:3px">▶ Open in ERAM scope · ${esc(tag)}</a></div>`;
+}
 function section(title, fields) {
     const rows = fields.filter(f => f[1] != null && f[1] !== '');
     if (rows.length === 0) return '';

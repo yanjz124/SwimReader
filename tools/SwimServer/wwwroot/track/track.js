@@ -367,12 +367,21 @@
     return s.length ? s.join('  ') : null;
   }
 
+  // Deep-link to the ERAM scope, pre-selecting the flight's controlling ARTCC + sector so the
+  // scope opens already working that sector. Only for en-route ARTCC facilities (Zxx).
+  function eramLink(f) {
+    const fac = (f.controllingFacility || '').toUpperCase();
+    if (!/^Z[A-Z]{2}$/.test(fac)) return '';
+    const sec = f.controllingSector ? '&sectors=' + encodeURIComponent(f.controllingSector) : '';
+    const lbl = 'Open ERAM ' + fac + (f.controllingSector ? ' sector ' + f.controllingSector : '');
+    return ` <a href="/eram/scope?facility=${encodeURIComponent(fac)}${sec}&center=1" target="_blank" rel="noopener" title="${esc(lbl)}" style="color:#cccc44;text-decoration:none;font-size:11px;margin-left:8px;border:1px solid #4a4a2a;padding:0 5px;border-radius:3px;white-space:nowrap">▶ ERAM</a>`;
+  }
   function ownershipCard(flights) {
     if (!flights.length) return '';
     let rows = grid([['Tracked by', reportingArtccs(flights), 'hl']]);
     flights.forEach(function (f, i) {
       const subFac = f.controllingTracon ? f.controllingTracon + ' (' + f.controllingFacility + ')' : (f.controllingFacility || f.reportingFacility || '?');
-      rows += `<div class="subhdr">${esc(subFac)}${i > 0 ? ' (also tracking)' : ''}</div>`;
+      rows += `<div class="subhdr">${esc(subFac)}${i > 0 ? ' (also tracking)' : ''}${eramLink(f)}</div>`;
       const ho = handoffStr(f);
       rows += grid([
         ['Controlling', f.controllingFacility ? facDisp(f.controllingFacility, f.controllingSector, f.controllingTracon) : '—', 'hl'],

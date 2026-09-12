@@ -28,10 +28,21 @@
   let startMs = null, endMs = null;  // available range, from /api/replay/range
   let _vpTimer = null;
   let _saveTimer = null;
-  let _preloading = false;    // this session asked the server to burst a lead window first
-  let _gotData = false;       // first paced data seen → clears the "Buffering…" status
-  let _replayStartMs = null;  // the chosen replay start (ms), for preload progress
-  const PRELOAD_SECONDS = 120; // lead window (replay-time) the server bursts when Preload is on
+  let _gotData = false;       // first streamed data seen → clears the "Buffering…" status (stream mode)
+  let _replayStartMs = null;  // the chosen replay start (ms)
+  // ── "Load all" client-side buffered playback ────────────────────────────
+  // Downloads the whole window (server dumps it with no pacing via preload=huge),
+  // then plays it back entirely in the browser on a virtual-time clock — the
+  // server socket is closed once loaded, so pause/scrub/speed/seek are instant.
+  let _mode = 'stream';        // 'stream' | 'loading' | 'buffered'
+  let _buf = [];               // loaded render frames: [{ t: replayMs, msg }]
+  let _bufIdx = 0;             // next frame to dispatch during playback
+  let _bufStartMs = 0, _bufEndMs = 0;   // loaded time span (drives the scrub in buffered mode)
+  let _clockBaseMs = 0, _clockBaseWall = 0, _vt = 0;   // virtual replay-time clock
+  let _playRaf = null, _loadBytes = 0;
+  const LOAD_CAP_FRAMES = 500000;               // safety caps so a huge range can't OOM the tab
+  const LOAD_CAP_BYTES = 700 * 1024 * 1024;
+  const LIVE_EDGE_MS = 6000;                    // once loaded frames reach ~now, we've caught up to live
 
   // ── DOM ───────────────────────────────────────────────────────────────
   function ensureCss() {
@@ -85,7 +96,7 @@
             <option value="120">120×</option>
             <option value="300">300×</option>
           </select>
-          <label class="rb-preload" title="Buffer a lead of replay data before playback starts, so it plays smoothly (no mid-play buffering)"><input type="checkbox" id="rb-preload"> Preload</label>
+          <label class="rb-preload" title="Download the whole selected window into your browser first, then play it entirely client-side — pause/scrub/speed all instant, no server needed"><input type="checkbox" id="rb-preload"> Load all</label>
           <input type="range" id="rb-scrub" min="0" max="1000" value="0" step="1" title="Scrub">
           <span id="rb-time">— : — : —</span>
           <button id="rb-share" title="Copy share link">🔗</button>
@@ -124,12 +135,20 @@
     }
 
     bar.querySelector("#rb-pause").onclick = () => {
+      if (_mode === 'buffered') {                     // local clock — no server round-trip
+        if (!paused) _vt = currentVt();               // freeze at the current time
+        paused = !paused;
+        if (!paused) baselineClock(_vt);              // resume from the frozen time
+        bar.querySelector("#rb-pause").textContent = paused ? "▶" : "⏸";
+        return;
+      }
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       paused = !paused;
       ws.send(JSON.stringify({ cmd: paused ? "pause" : "resume" }));
       bar.querySelector("#rb-pause").textContent = paused ? "▶" : "⏸";
     };
     bar.querySelector("#rb-speed").onchange = (e) => {
+      if (_mode === 'buffered') { baselineClock(_vt); return; }   // re-anchor clock at new rate
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ cmd: "speed", value: parseFloat(e.target.value) }));
     };
@@ -144,8 +163,15 @@
     // Scrub - debounce so we don't spam seeks while dragging
     let _scrubTimer = null;
     bar.querySelector("#rb-scrub").addEventListener("input", (e) => {
-      if (!startMs || !endMs) return;
       const frac = parseFloat(e.target.value) / 1000;
+      if (_mode === 'buffered') {                     // scrub spans the loaded buffer
+        const ms = _bufStartMs + frac * (_bufEndMs - _bufStartMs);
+        bar.querySelector("#rb-time").textContent = fmtClock(new Date(ms));
+        if (_scrubTimer) clearTimeout(_scrubTimer);
+        _scrubTimer = setTimeout(() => seekBuffered(ms), 40);
+        return;
+      }
+      if (!startMs || !endMs) return;
       const t = new Date(startMs + frac * (endMs - startMs));
       bar.querySelector("#rb-time").textContent = fmtClock(t);
       if (_scrubTimer) clearTimeout(_scrubTimer);
@@ -355,6 +381,9 @@
   }
 
   function startReplay(startISO) {
+    // "Load all" → download the whole window client-side and play it locally.
+    if (bar.querySelector("#rb-preload")?.checked) { startLoadAll(startISO); return; }
+    stopPlayTimer(); _mode = 'stream'; _buf = [];
     if (ws) { ws.onclose = null; try { ws.close(); } catch {} ws = null; }
     active = true; paused = false;
     bar.classList.remove("rb-hidden");
@@ -366,10 +395,6 @@
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     const speed = bar.querySelector("#rb-speed").value || "1";
     let url = `${proto}//${location.host}${cfg.wsPath}?start=${encodeURIComponent(startISO)}&speed=${speed}`;
-    // Preload: ask the server to burst a lead window (2 min of replay time) at full speed
-    // before it settles into paced playback, so the scope is populated and plays smoothly.
-    _preloading = bar.querySelector("#rb-preload")?.checked || false;
-    if (_preloading) url += `&preload=${PRELOAD_SECONDS}`;
     _gotData = false;
     _replayStartMs = new Date(startISO).getTime();
     const vp = paddedBoundsFromCfg();
@@ -389,16 +414,8 @@
           const frac = (tms - startMs) / (endMs - startMs);
           bar.querySelector("#rb-scrub").value = Math.max(0, Math.min(1000, Math.round(frac * 1000)));
         }
-        // Status: show a Loading… readout during the preload burst, then Playing once we're
-        // into paced playback. Also clears the previously-stuck "Buffering…" for normal plays.
-        if (!paused) {
-          if (_preloading && _replayStartMs != null && tms < _replayStartMs + PRELOAD_SECONDS * 1000) {
-            setStatus(`Loading… ${Math.round((tms - _replayStartMs) / 1000)}/${PRELOAD_SECONDS}s`);
-          } else if (!_gotData) {
-            _gotData = true;
-            setStatus("Playing", "ok");
-          }
-        }
+        // Clear the previously-stuck "Buffering…" once paced data starts flowing.
+        if (!paused && !_gotData) { _gotData = true; setStatus("Playing", "ok"); }
         cfg.onTime?.(msg.replayTime);
         throttleSaveUrl();
       }
@@ -407,7 +424,7 @@
         case "batch":        cfg.onBatch?.(msg.data || [], msg);    break;
         case "remove":       cfg.onRemove?.(msg.data, msg);          break;
         case "replay_seek":  cfg.onSeek?.(msg);                       setStatus("Seeking…"); break;
-        case "replay_start": setStatus(_preloading ? "Loading…" : "Buffering…"); break;
+        case "replay_start": setStatus("Buffering…"); break;
         case "replay_gap":   setStatus(`Gap: ${(msg.from||"").slice(11,19)}–${(msg.to||"").slice(11,19)}`); break;
         case "replay_end":   setStatus("End of data", "warn");        break;
         case "replay_error": setStatus(msg.message || "Error", "err"); break;
@@ -418,6 +435,8 @@
 
   function stop() {
     active = false; paused = false;
+    stopPlayTimer();
+    _mode = 'stream'; _buf = []; _bufIdx = 0;   // free the buffer
     currentTime = null;
     if (ws) { ws.onclose = null; try { ws.close(); } catch {} ws = null; }
     bar.classList.remove("rb-playing");
@@ -427,12 +446,133 @@
     cfg.onStop?.();
   }
 
+  // ── "Load all": download the whole window, then play it entirely client-side ──
+  function startLoadAll(startISO) {
+    stopPlayTimer();
+    if (ws) { ws.onclose = null; ws.onmessage = null; try { ws.close(); } catch {} ws = null; }
+    active = true; paused = false; _mode = 'loading';
+    _buf = []; _bufIdx = 0; _loadBytes = 0;
+    _replayStartMs = new Date(startISO).getTime();
+    bar.classList.remove("rb-hidden"); bar.classList.add("rb-playing");
+    bar.querySelector("#rb-pause").textContent = "⏸";
+    setStatus("Loading…");
+    cfg.onStart?.(startISO);
+
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    // preload huge → the server dumps the whole range with no pacing (fast full download).
+    let url = `${proto}//${location.host}${cfg.wsPath}?start=${encodeURIComponent(startISO)}&speed=1&preload=99999999`;
+    const vp = paddedBoundsFromCfg();
+    if (vp) url += `&minLat=${vp.minLat}&minLon=${vp.minLon}&maxLat=${vp.maxLat}&maxLon=${vp.maxLon}`;
+    ws = new WebSocket(url);
+    ws.onopen  = () => setStatus("Loading…");
+    ws.onerror = () => setStatus("WS error", "err");
+    ws.onclose = () => { if (_mode === 'loading') finishLoad(); };   // server ended the dump
+    ws.onmessage = (evt) => {
+      const raw = evt.data;
+      let msg; try { msg = JSON.parse(raw); } catch { return; }
+      const ty = msg.type;
+      if (msg.replayTime && (ty === 'snapshot' || ty === 'batch' || ty === 'remove')) {
+        const t = new Date(msg.replayTime).getTime();
+        _buf.push({ t, msg });
+        _loadBytes += raw.length;
+        if ((_buf.length & 255) === 0)
+          setStatus(`Loading… ${_buf.length.toLocaleString()} frames · ${(_loadBytes / 1048576).toFixed(1)} MB`);
+        // Caught up to the live edge (the server would now tail in real time, never ending),
+        // or hit a safety cap → stop downloading and play what we have.
+        if (t >= Date.now() - LIVE_EDGE_MS) { finishLoad(); return; }
+        if (_buf.length >= LOAD_CAP_FRAMES || _loadBytes >= LOAD_CAP_BYTES) {
+          setStatus(`Loaded cap ${(_loadBytes / 1048576).toFixed(0)} MB — playing`, "warn");
+          finishLoad();
+        }
+      } else if (ty === 'replay_end') {
+        finishLoad();
+      } else if (ty === 'replay_error') {
+        setStatus(msg.message || "Error", "err");
+      }
+      // replay_start / replay_seek / replay_gap are ignored while loading
+    };
+  }
+
+  function finishLoad() {
+    if (_mode !== 'loading') return;
+    if (ws) { ws.onclose = null; ws.onmessage = null; try { ws.close(); } catch {} ws = null; }
+    if (_buf.length === 0) { setStatus("No data in that range", "warn"); _mode = 'stream'; active = false; return; }
+    _buf.sort((a, b) => a.t - b.t);
+    _bufStartMs = _buf[0].t; _bufEndMs = _buf[_buf.length - 1].t;
+    _mode = 'buffered'; _bufIdx = 0; _vt = 0; paused = false;
+    setStatus(`Loaded ${_buf.length.toLocaleString()} frames · ${(_loadBytes / 1048576).toFixed(1)} MB — playing`, "ok");
+    seekBuffered(_bufStartMs);   // render the opening state
+    startPlayTimer();
+  }
+
+  function baselineClock(ms) { _vt = ms; _clockBaseMs = ms; _clockBaseWall = performance.now(); }
+  function currentVt() {
+    if (paused) return _vt;
+    const spd = parseFloat(bar.querySelector("#rb-speed").value) || 1;
+    return _clockBaseMs + (performance.now() - _clockBaseWall) * spd;
+  }
+  function stopPlayTimer() { if (_playRaf) cancelAnimationFrame(_playRaf); _playRaf = null; }
+  function startPlayTimer() {
+    stopPlayTimer();
+    const tick = () => {
+      if (_mode !== 'buffered') return;
+      if (!paused) {
+        _vt = Math.min(currentVt(), _bufEndMs);
+        while (_bufIdx < _buf.length && _buf[_bufIdx].t <= _vt) dispatchFrame(_buf[_bufIdx++].msg);
+        updateBufferedUI(_vt);
+        if (_bufIdx >= _buf.length) {           // reached the end of the buffer → hold
+          paused = true; _vt = _bufEndMs;
+          bar.querySelector("#rb-pause").textContent = "▶";
+          setStatus("End of buffer", "warn");
+        }
+      }
+      _playRaf = requestAnimationFrame(tick);
+    };
+    _playRaf = requestAnimationFrame(tick);
+  }
+
+  function dispatchFrame(msg) {
+    switch (msg.type) {
+      case "snapshot": cfg.onSnapshot?.(msg.data || [], msg); break;
+      case "batch":    cfg.onBatch?.(msg.data || [], msg);    break;
+      case "remove":   cfg.onRemove?.(msg.data, msg);          break;
+    }
+    currentTime = msg.replayTime;
+    cfg.onTime?.(msg.replayTime);
+  }
+
+  // Jump to targetMs. Forward → fast-apply frames from the current index. Backward →
+  // rebuild from the last snapshot at/before the target, then apply up to it.
+  function seekBuffered(targetMs) {
+    targetMs = Math.max(_bufStartMs, Math.min(_bufEndMs, targetMs));
+    if (targetMs < _vt) {
+      let snapIdx = 0;
+      for (let i = 0; i < _buf.length && _buf[i].t <= targetMs; i++)
+        if (_buf[i].msg.type === 'snapshot') snapIdx = i;
+      _bufIdx = snapIdx;
+    }
+    while (_bufIdx < _buf.length && _buf[_bufIdx].t <= targetMs) dispatchFrame(_buf[_bufIdx++].msg);
+    baselineClock(targetMs);
+    updateBufferedUI(targetMs);
+  }
+
+  function updateBufferedUI(ms) {
+    bar.querySelector("#rb-time").textContent = fmtClock(new Date(ms));
+    if (_bufEndMs > _bufStartMs) {
+      const frac = (ms - _bufStartMs) / (_bufEndMs - _bufStartMs);
+      bar.querySelector("#rb-scrub").value = Math.max(0, Math.min(1000, Math.round(frac * 1000)));
+    }
+    throttleSaveUrl();
+  }
+
   function seek(timeISO) {
+    if (_mode === 'buffered') { seekBuffered(new Date(timeISO).getTime()); return; }
     if (!active || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ cmd: "seek", time: timeISO }));
   }
 
   function relSeek(seconds) {
+    if (_mode === 'buffered') { seekBuffered((_vt || _bufStartMs) + seconds * 1000); return; }
     if (!currentTime) return;
     const t = new Date(new Date(currentTime).getTime() + seconds * 1000);
     seek(t.toISOString());

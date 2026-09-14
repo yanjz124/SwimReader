@@ -11,8 +11,6 @@
 <link rel="stylesheet" href="/shared/frame.css?v=4">
 <style>
     [hidden] { display: none !important; }
-    .topbar .back { color: #888; text-decoration: none; font-size: 11px; border: 1px solid #333; padding: 2px 8px; border-radius: 2px; }
-    .topbar .back:hover { color: #cccc44; border-color: #cccc44; }
     .cat { font-size: 9.5px; letter-spacing: 1px; padding: 1px 6px; border-radius: 2px; border: 1px solid #333; }
     .cat.mainline { color: #5588ff; border-color: #243a6a; }
     .cat.regional { color: #39d2c0; border-color: #1d4a44; }
@@ -130,7 +128,6 @@
 <body>
 <a class="nav-home" href="/">&larr; HOME</a>
 <div class="topbar" style="padding-left:100px">
-    <a class="back" href="/airlines" id="backLink">&larr; AIRLINES</a>
     <h1 id="title">AIRLINE</h1>
     <span class="cat" id="cat"></span>
     <span class="partners" id="partners"></span>
@@ -233,7 +230,6 @@ function saveUrl() {
     if (tab !== 'network') h.set('tab', tab);
     if (openTailKey) h.set('tail', openTailKey);
     history.replaceState(null, '', `/airlines/${encodeURIComponent(ICAO)}?days=${days}` + (h.toString() ? '#' + h : ''));
-    $('backLink').href = '/airlines' + (days !== 7 ? '?days=' + days : '');
 }
 
 function renderWindow() {
@@ -269,7 +265,7 @@ function renderKpis() {
         ['AVG TURN', hm(s.turnMin), 'Average ground time between legs shorter than 5 h'],
         ['STAGE LENGTH', s.stageNm != null ? n0(s.stageNm) + ' nm' : '—', 'Average great-circle distance per flight'],
         ['INTERNATIONAL', s.intlPct != null ? n1(s.intlPct) + '%' : '—', 'Flights with an endpoint outside the US and its territories'],
-        ['OPR MATCH', s.opMatchPct != null ? n1(s.opMatchPct) + '%' : '—', `Filed operator resolves to ${ICAO} on this share of the ${n0(s.opKnown)} flights that filed one`],
+        ['OPR MATCH', s.opMatchPct != null ? n1(s.opMatchPct) + '%' : '—', `Filed operator resolves to ${ICAO} on this share of the ${n0(s.opKnown)} flights whose operator could be resolved to a designator (unrecognized names aren't counted)`],
         ['NON-REVENUE LEGS', n0(s.nonRevenue), 'Legs these tails flew under a registration or non-airline callsign (ferry, test, positioning)'],
     ];
     $('kpis').innerHTML = k.map(([l, v, tip]) =>
@@ -818,7 +814,10 @@ function renderIntel() {
             data.types.map(t => ({ cells: [t.type, n0(t.tails), n0(t.flights), n2(t.hpd), n2(t.flightsPerDay)] })))));
     out.push(card('OPERATOR FIELD vs CALLSIGN', s.opMatchPct != null ? `${n1(s.opMatchPct)}% of flights file an operator that resolves to ${esc(ICAO)}` : 'No operator filed',
         mini([{ l: 'FILED OPERATOR' }, { l: 'FLIGHTS', num: 1 }, { l: 'RESOLVES TO' }, { l: '' }],
-            data.ops.map(o => ({ cells: [o.op, n0(o.flights), o.resolved || '—', o.match ? { html: '<span class="good">✓</span>' } : { html: '<span class="warn">✗</span>' }] })))));
+            data.ops.map(o => ({ cells: [o.op, n0(o.flights), o.resolved || '—',
+                o.match ? { html: '<span class="good">✓</span>' }
+                    : o.resolved ? { html: '<span class="warn">✗</span>' }
+                    : { html: `<span class="dim" title="Not a designator or a name in the catalog — can't verify">?</span>` }] })))));
     const longest = data.routes.filter(r => r.nm != null).sort((a, b) => b.nm - a.nm).slice(0, 12);
     out.push(card('LONGEST ROUTES', '',
         mini([{ l: 'ROUTE' }, { l: 'NM', num: 1 }, { l: '/WK', num: 1 }, { l: 'AVG AIR', num: 1 }],

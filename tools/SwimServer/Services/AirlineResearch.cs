@@ -460,9 +460,12 @@ sealed class AirlineResearch
                 if (meta?.Type is { Length: > 0 } type) a.Types[type] = a.Types.GetValueOrDefault(type) + 1;
                 if (f.Op.Length > 0)
                 {
-                    a.OpKnown++;
-                    if (ResolveOperator(f.Op) == p) a.OpMatch++;
-                    else a.OpOther[f.Op] = a.OpOther.GetValueOrDefault(f.Op) + 1;
+                    // Only an operator that resolves to a designator can confirm or contradict the callsign. A name the
+                    // catalog doesn't know ("WESTJET" for a non-catalog carrier) is unverifiable, not a mismatch — it's
+                    // still kept in OpOther as the display hint.
+                    var res = ResolveOperator(f.Op);
+                    if (res.Length > 0) { a.OpKnown++; if (res == p) a.OpMatch++; }
+                    if (res != p) a.OpOther[f.Op] = a.OpOther.GetValueOrDefault(f.Op) + 1;
                 }
             }
         }
@@ -638,8 +641,8 @@ sealed class AirlineResearch
                 if (f.Op.Length > 0)
                 {
                     ops[f.Op] = ops.GetValueOrDefault(f.Op) + 1;
-                    opKnown++;
-                    if (ResolveOperator(f.Op) == icao) opMatch++;
+                    var res = ResolveOperator(f.Op);   // unresolvable names are unverifiable, not mismatches
+                    if (res.Length > 0) { opKnown++; if (res == icao) opMatch++; }
                 }
                 if (f.Last >= row.LastSeen) { row.LastSeen = f.Last; row.LastAt = f.D; row.LastCs = f.Cs; }
             }

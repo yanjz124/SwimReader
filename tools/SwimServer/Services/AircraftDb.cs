@@ -57,7 +57,7 @@ sealed class AircraftDb
     public void Observe(FlightState f)
     {
         var hex = NormHex(f.ModeSCode);
-        var reg = NormReg(f.Registration);
+        var reg = AircraftFlightLog.CleanReg(f.Registration, f.AircraftType);   // type-as-registration isn't a tail
         var seen = f.LastSeen == default ? DateTime.UtcNow : f.LastSeen;
         Upsert(hex, reg, f.SELCAL, f.AircraftType, f.Operator, f.WakeCategory, f.EquipmentQualifier,
             f.Callsign, f.Origin, f.Destination, seen);
@@ -303,7 +303,7 @@ sealed class AircraftDb
         {
             if (!File.Exists(_file)) return;
             var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-            int n = 0;
+            int n = 0, dropped = 0, cleared = 0;
             foreach (var line in File.ReadLines(_file))
             {
                 if (line.Length == 0) continue;
@@ -316,12 +316,26 @@ sealed class AircraftDb
                         var nowUtc = DateTime.UtcNow;
                         if (rec.LastSeenUtc > nowUtc) rec.LastSeenUtc = nowUtc;
                         if (rec.FirstSeenUtc > rec.LastSeenUtc) rec.FirstSeenUtc = rec.LastSeenUtc;
+                        // Records saved before type-as-registration was rejected (e.g. one fake "P212" tail for all
+                        // of Cape Air's P2012s): drop it when that was its only identity, else just clear the field
+                        // so a real hex-keyed airframe can't pull the whole fleet's REG: flight log into its own.
+                        if (rec.Registration != null && AircraftFlightLog.CleanReg(rec.Registration, rec.Type) == null)
+                        {
+                            if (rec.Icao24 == null) { dropped++; continue; }
+                            rec.Registration = null;
+                            cleared++;
+                        }
                         _byKey[rec.Key] = rec; n++;
                     }
                 }
                 catch { }
             }
             Console.WriteLine($"[AIRCRAFT] Loaded {n} aircraft from {Path.GetFileName(_file)}");
+            if (dropped + cleared > 0)
+            {
+                Console.WriteLine($"[AIRCRAFT] Type-as-registration cleanup: dropped {dropped} fake tail(s), cleared {cleared} registration(s)");
+                _dirty = true;   // rewrite the snapshot without them
+            }
         }
         catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Load error: {ex.Message}"); }
     }

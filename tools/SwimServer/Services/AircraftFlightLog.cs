@@ -81,6 +81,19 @@ sealed class AircraftFlightLog
     public static string? NormReg(string? reg) =>
         string.IsNullOrWhiteSpace(reg) ? null : reg.Trim().ToUpperInvariant();
 
+    /// <summary>
+    /// Normalized registration, or null when it isn't one. Some operators file the aircraft TYPE in the
+    /// registration field (Cape Air: REG "P212" on every Tecnam P2012, "C402" on its Cessna 402s); keyed as a
+    /// tail, that would merge a whole fleet into one fake airframe. No real registration equals an ICAO type
+    /// designator, so a match means "no registration".
+    /// </summary>
+    public static string? CleanReg(string? reg, string? type)
+    {
+        var r = NormReg(reg);
+        return r != null && !string.IsNullOrWhiteSpace(type)
+               && string.Equals(r, type.Trim(), StringComparison.OrdinalIgnoreCase) ? null : r;
+    }
+
     public static string KeyFor(string? hex, string? reg) => hex ?? "REG:" + reg;
 
     /// <summary>FNV-1a hash of the key → shard index.</summary>
@@ -392,7 +405,8 @@ sealed class AircraftFlightLog
         int ev = line.IndexOf("\"events\":", StringComparison.Ordinal);
         int end = ev < 0 ? line.Length : ev;
         var hex = NormHex(Field(line, "modeSCode", 0, end));
-        var reg = NormReg(Field(line, "registration", 0, end));
+        var type = Field(line, "aircraftType", 0, end);
+        var reg = CleanReg(Field(line, "registration", 0, end), type);
         if (hex == null && reg == null) return null;
         long dep = ParseEpoch(Field(line, "actualDepartureTime", 0, end));
         long last = ParseEpoch(Field(line, "lastSeen", 0, end));
@@ -400,7 +414,7 @@ sealed class AircraftFlightLog
         long seen = last > 0 ? last : first > 0 ? first : dep;
         if (seen <= 0) return null;
         var row = new HistoryRow(KeyFor(hex, reg), hex, reg,
-            Field(line, "selcal", 0, end), Field(line, "aircraftType", 0, end), Field(line, "operator", 0, end),
+            Field(line, "selcal", 0, end), type, Field(line, "operator", 0, end),
             Field(line, "wakeCategory", 0, end), Field(line, "equipmentQualifier", 0, end),
             Field(line, "callsign", 0, end), Field(line, "origin", 0, end), Field(line, "destination", 0, end),
             DateTimeOffset.FromUnixTimeSeconds(seen).UtcDateTime);

@@ -148,6 +148,43 @@ sealed class AircraftDb
         return int.MaxValue;
     }
 
+    /// <summary>
+    /// Browse the database as a table: optional substring filter, sort by a column, and return one
+    /// page plus the total match count. All server-side over the in-memory dictionary (~tens of
+    /// thousands of rows sorts in a few ms), so the client fetches only the page it shows.
+    /// </summary>
+    public (int total, List<AircraftRecord> page) Browse(
+        string? q, string sort, bool desc, int offset, int limit, bool reveal)
+    {
+        IEnumerable<AircraftRecord> items = _byKey.Values;
+        if (!reveal) items = items.Where(r => !LaddService.IsBlocked(null, r.Registration, r.Icao24));
+        var qq = (q ?? "").Trim().ToUpperInvariant();
+        if (qq.Length > 0)
+            items = items.Where(r => { bool m; lock (r) m = MatchRank(r, qq) < int.MaxValue; return m; });
+
+        var list = items.ToList();
+        int total = list.Count;
+
+        Func<AircraftRecord, IComparable> key = sort switch
+        {
+            "registration" => r => r.Registration ?? "",
+            "icao24"       => r => r.Icao24 ?? "",
+            "type"         => r => r.Type ?? "",
+            "operator"     => r => r.Operator ?? "",
+            "selcal"       => r => r.Selcal ?? "",
+            "wake"         => r => r.Wake ?? "",
+            "sightings"    => r => r.Sightings,
+            "firstSeen"    => r => r.FirstSeenUtc,
+            _              => r => r.LastSeenUtc,   // default: most recently seen
+        };
+        // Stable tiebreak on last-seen so equal keys page deterministically.
+        var ordered = desc
+            ? list.OrderByDescending(key).ThenByDescending(r => r.LastSeenUtc)
+            : list.OrderBy(key).ThenByDescending(r => r.LastSeenUtc);
+        var page = ordered.Skip(Math.Max(0, offset)).Take(limit).ToList();
+        return (total, page);
+    }
+
     /// <summary>Look up one aircraft by ICAO 24 hex or registration.</summary>
     public AircraftRecord? Get(string id)
     {

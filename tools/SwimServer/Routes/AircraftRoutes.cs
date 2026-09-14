@@ -26,6 +26,22 @@ static class AircraftRoutes
             });
         });
 
+        // Browse as a table: filter (optional) + sort + page. total lets the client show "X–Y of Z".
+        app.MapGet("/api/aircraft/list", (HttpContext c, string? q, string? sort, string? dir, int? offset, int? limit) =>
+        {
+            bool reveal = LaddService.Reveal(c);
+            int off = Math.Max(0, offset ?? 0);
+            int lim = Math.Clamp(limit ?? 100, 1, 500);
+            string s = sort ?? "lastSeen";
+            bool desc = !string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase);
+            var (total, page) = db.Browse(q, s, desc, off, lim, reveal);
+            return Results.Json(new
+            {
+                total, offset = off, limit = lim, sort = s, dir = desc ? "desc" : "asc",
+                results = page.Select(r => db.ToJson(r, reveal, detail: false)).ToArray(),
+            });
+        });
+
         app.MapGet("/api/aircraft/{id}", (HttpContext c, string id) =>
         {
             bool reveal = LaddService.Reveal(c);

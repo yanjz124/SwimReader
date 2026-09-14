@@ -8,41 +8,51 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛩️</text></svg>">
 <style>
   :root { --yel:#cccc44; --dim:#8a8a3a; --bg:#0a0a0a; --card:#141414; --line:#333;
-    --accent:#4aa3ff; --ok:#44cc44; --warn:#ff8c00; --white:#eee; }
+    --accent:#4aa3ff; --ok:#44cc44; --warn:#ff8c00; --white:#eee; --head:#101010; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; background:var(--bg); color:var(--yel);
-    font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace; font-size:15px; }
-  body { padding-bottom:48px; }
+    font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace; font-size:14px; }
+  body { padding-bottom:40px; }
   a { color:var(--accent); text-decoration:none; }
-  .wrap { max-width:820px; margin:0 auto; }
+  .wrap { max-width:1100px; margin:0 auto; }
 
   header { position:sticky; top:0; z-index:10; background:#000; border-bottom:1px solid var(--line);
-    padding:10px 12px; display:flex; gap:8px; align-items:center; }
+    padding:9px 12px; display:flex; gap:8px; align-items:center; }
   header .home { color:var(--dim); font-size:15px; padding:6px; }
   header form { flex:1; display:flex; gap:8px; }
   header input { flex:1; min-width:0; background:#1a1a1a; color:var(--yel); border:1px solid var(--line);
-    border-radius:8px; padding:11px 12px; font:inherit; text-transform:uppercase; letter-spacing:1px; }
+    border-radius:8px; padding:10px 12px; font:inherit; text-transform:uppercase; letter-spacing:1px; }
   header input::placeholder { color:#666; text-transform:none; letter-spacing:0; }
   header button { background:#1e2e1e; color:#bfe6bf; border:1px solid #3a5a3a; border-radius:8px;
-    padding:0 16px; font:inherit; font-weight:bold; cursor:pointer; }
+    padding:0 14px; font:inherit; font-weight:bold; cursor:pointer; }
 
-  .status { padding:8px 14px; color:var(--dim); font-size:12px; }
-  .msg { padding:36px 20px; text-align:center; color:var(--dim); line-height:1.6; }
+  /* toolbar: count + pagination */
+  .bar { display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:8px 14px; color:var(--dim); font-size:12px; flex-wrap:wrap; }
+  .bar .pg { display:flex; align-items:center; gap:6px; }
+  .bar button { background:#181818; color:var(--yel); border:1px solid var(--line); border-radius:6px;
+    padding:5px 11px; font:inherit; cursor:pointer; }
+  .bar button:disabled { opacity:.35; cursor:default; }
+
+  /* table */
+  .tablewrap { overflow-x:auto; padding:0 8px; }
+  table { border-collapse:collapse; width:100%; min-width:720px; font-size:13.5px; }
+  thead th { position:sticky; top:53px; background:var(--head); color:var(--dim); text-align:left;
+    font-weight:normal; letter-spacing:.5px; padding:9px 10px; border-bottom:1px solid var(--line);
+    cursor:pointer; white-space:nowrap; user-select:none; }
+  thead th:hover { color:var(--yel); }
+  thead th .ar { color:var(--yel); margin-left:3px; }
+  thead th.num, td.num { text-align:right; }
+  tbody td { padding:8px 10px; border-bottom:1px solid #1e1e1e; white-space:nowrap; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover td { background:#181808; }
+  td.reg { color:#fff; font-weight:bold; letter-spacing:.5px; }
+  td.hex { color:#8fb0d8; }
+  td.selcal { color:#39ff62; letter-spacing:1px; }
+  td.op, td.type, td.wake { color:var(--yel); }
+  td.dim { color:var(--dim); }
+  .msg { padding:34px 20px; text-align:center; color:var(--dim); line-height:1.6; }
   .msg b { color:var(--yel); }
-  .hint { padding:2px 14px 10px; color:var(--dim); font-size:12px; line-height:1.5; }
-  .hint code { color:var(--yel); background:#181818; padding:1px 5px; border-radius:4px; }
-
-  /* result rows */
-  .rows { padding:6px 12px; display:flex; flex-direction:column; gap:8px; }
-  .row { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 13px;
-    cursor:pointer; display:grid; grid-template-columns:1fr auto; gap:2px 12px; align-items:baseline; }
-  .row:hover { border-color:var(--yel); }
-  .row .reg { font-size:19px; font-weight:bold; color:#fff; letter-spacing:1px; }
-  .row .type { color:var(--yel); font-size:13px; }
-  .row .op { grid-column:1/2; color:var(--dim); font-size:13px; word-break:break-word; }
-  .row .meta { grid-column:2/3; text-align:right; color:var(--dim); font-size:12px; white-space:nowrap; }
-  .row .hex { color:#8fb0d8; }
-  .row .selcal { color:#39ff62; }
 
   /* detail */
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; margin:10px 12px; overflow:hidden; }
@@ -67,25 +77,31 @@
 <div class="wrap">
   <header>
     <a class="home" href="/" title="Home">&larr;</a>
-    <form id="f"><input id="q" placeholder="Registration, ICAO24 hex, SELCAL, callsign, operator…"
-      autocomplete="off" autocapitalize="characters" spellcheck="false"><button type="submit">SEARCH</button></form>
+    <form id="f"><input id="q" placeholder="Filter — registration, ICAO24, SELCAL, callsign, operator, type…"
+      autocomplete="off" autocapitalize="characters" spellcheck="false"><button type="submit">FILTER</button></form>
   </header>
-  <div class="status" id="status">Aircraft database — <span id="count">…</span> airframes seen on the live feed.</div>
-  <div class="hint">Search by tail number (<code>N123AB</code>), Mode&nbsp;S hex (<code>A1B2C3</code>),
-    SELCAL (<code>ABCD</code>), a callsign it flew, operator, or type.</div>
-  <div id="out"></div>
+  <div id="view"></div>
   <div class="disc">Built from aircraft observed on the FAA SWIM feed in US airspace — not a complete registry.
     Blocked (LADD) aircraft are hidden. NOT FOR OPERATIONAL USE.</div>
 </div>
 <script>
-const out = document.getElementById('out');
+const view = document.getElementById('view');
 const qEl = document.getElementById('q');
+const PAGE = 100;
 
-async function loadCount() {
-  try { const r = await fetch('/api/aircraft/stats'); const j = await r.json();
-    document.getElementById('count').textContent = (j.count ?? 0).toLocaleString(); }
-  catch { document.getElementById('count').textContent = '—'; }
-}
+const COLS = [
+  { key:'registration', label:'REG',      cls:'reg' },
+  { key:'type',         label:'TYPE',     cls:'type' },
+  { key:'operator',     label:'OPERATOR', cls:'op' },
+  { key:'icao24',       label:'ICAO24',   cls:'hex' },
+  { key:'selcal',       label:'SELCAL',   cls:'selcal' },
+  { key:'wake',         label:'WAKE',     cls:'wake' },
+  { key:'sightings',    label:'SEEN',     cls:'num dim', num:true },
+  { key:'lastSeen',     label:'LAST SEEN',cls:'dim' },
+];
+
+// table state (reflected in the URL query string)
+let state = { q:'', sort:'lastSeen', dir:'desc', offset:0, total:0 };
 
 function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function ago(iso){
@@ -97,47 +113,88 @@ function ago(iso){
   return Math.round(d/86400)+' d ago';
 }
 
-async function search(q, push) {
-  q = (q||'').trim();
-  if (!q) { out.innerHTML = ''; return; }
-  if (push !== false) history.pushState({q}, '', '/aircraft?q='+encodeURIComponent(q));
-  out.innerHTML = '<div class="msg">Searching…</div>';
-  try {
-    const r = await fetch('/api/aircraft/search?q='+encodeURIComponent(q)+'&limit=100');
-    const j = await r.json();
-    if (!j.results || j.results.length === 0) {
-      out.innerHTML = '<div class="msg">No aircraft found for <b>'+esc(q)+'</b>.<br>The database only has airframes seen on the live feed.</div>';
-      return;
-    }
-    out.innerHTML = '<div class="rows">' + j.results.map(rowHtml).join('') + '</div>';
-    out.querySelectorAll('.row').forEach(el => el.addEventListener('click', () => detail(el.dataset.id)));
-  } catch (e) { out.innerHTML = '<div class="msg">Search failed. Try again.</div>'; }
+function stateToUrl(replace){
+  const p = new URLSearchParams();
+  if (state.q) p.set('q', state.q);
+  if (state.sort !== 'lastSeen') p.set('sort', state.sort);
+  if (state.dir !== 'desc') p.set('dir', state.dir);
+  if (state.offset) p.set('offset', state.offset);
+  const url = '/aircraft' + (p.toString() ? '?'+p.toString() : '');
+  if (replace) history.replaceState({table:true}, '', url); else history.pushState({table:true}, '', url);
 }
 
-function rowHtml(a) {
-  const id = a.icao24 || a.registration || '';
-  const bits = [];
-  if (a.icao24) bits.push('<span class="hex">'+esc(a.icao24)+'</span>');
-  if (a.selcal) bits.push('<span class="selcal">'+esc(a.selcal)+'</span>');
-  bits.push(esc(a.sightings)+'&times; · '+esc(ago(a.lastSeen)));
-  return '<div class="row" data-id="'+esc(id)+'">'
-    + '<div class="reg">'+esc(a.registration||a.icao24||'?')+'</div>'
-    + '<div class="type">'+esc(a.type||'')+'</div>'
-    + '<div class="op">'+esc(a['operator']||'')+'</div>'
-    + '<div class="meta">'+bits.join(' · ')+'</div>'
-    + '</div>';
+async function loadTable(push){
+  stateToUrl(!push);
+  view.innerHTML = '<div class="msg">Loading…</div>';
+  try {
+    const p = new URLSearchParams({ sort:state.sort, dir:state.dir, offset:state.offset, limit:PAGE });
+    if (state.q) p.set('q', state.q);
+    const r = await fetch('/api/aircraft/list?'+p.toString());
+    const j = await r.json();
+    state.total = j.total;
+    view.innerHTML = tableHtml(j);
+    wireTable();
+  } catch (e) { view.innerHTML = '<div class="msg">Load failed. Try again.</div>'; }
+}
+
+function tableHtml(j){
+  const from = j.total ? j.offset+1 : 0;
+  const to = Math.min(j.offset + j.limit, j.total);
+  const hasPrev = j.offset > 0;
+  const hasNext = to < j.total;
+  const label = state.q
+    ? (j.total.toLocaleString()+' match'+(j.total===1?'':'es')+' for “'+esc(state.q)+'”')
+    : (j.total.toLocaleString()+' aircraft');
+  const bar =
+    '<div class="bar"><div>'+label+(j.total? ' · showing '+from+'–'+to : '')+'</div>'
+    + '<div class="pg">'
+      + '<button id="prev"'+(hasPrev?'':' disabled')+'>&larr; Prev</button>'
+      + '<button id="next"'+(hasNext?'':' disabled')+'>Next &rarr;</button>'
+    + '</div></div>';
+  if (!j.results.length)
+    return bar + '<div class="msg">No aircraft'+(state.q?' match <b>'+esc(state.q)+'</b>':'')+'.</div>';
+  const head = '<thead><tr>' + COLS.map(c => {
+    const active = state.sort === c.key;
+    const ar = active ? '<span class="ar">'+(state.dir==='asc'?'▲':'▼')+'</span>' : '';
+    return '<th data-key="'+c.key+'"'+(c.num?' class="num"':'')+'>'+c.label+ar+'</th>';
+  }).join('') + '</tr></thead>';
+  const rows = j.results.map(a => {
+    const id = a.icao24 || a.registration || '';
+    return '<tr data-id="'+esc(id)+'">' + COLS.map(c => {
+      let v = a[c.key];
+      if (c.key === 'lastSeen') v = ago(v);
+      else if (c.key === 'sightings') v = (v||0).toLocaleString();
+      else v = v || '';
+      return '<td class="'+c.cls+'">'+esc(v)+'</td>';
+    }).join('') + '</tr>';
+  }).join('');
+  return bar + '<div class="tablewrap"><table>'+head+'<tbody>'+rows+'</tbody></table></div>';
+}
+
+function wireTable(){
+  view.querySelectorAll('thead th').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.key;
+    if (state.sort === k) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+    else { state.sort = k; state.dir = (k==='sightings'||k==='lastSeen'||k==='firstSeen') ? 'desc' : 'asc'; }
+    state.offset = 0;
+    loadTable(true);
+  }));
+  view.querySelectorAll('tbody tr').forEach(tr => tr.addEventListener('click', () => detail(tr.dataset.id)));
+  const prev = view.querySelector('#prev'), next = view.querySelector('#next');
+  if (prev) prev.addEventListener('click', () => { state.offset = Math.max(0, state.offset - PAGE); loadTable(true); });
+  if (next) next.addEventListener('click', () => { state.offset += PAGE; loadTable(true); });
 }
 
 async function detail(id, push) {
   if (push !== false) history.pushState({id}, '', '/aircraft/'+encodeURIComponent(id));
-  out.innerHTML = '<div class="msg">Loading…</div>';
+  view.innerHTML = '<div class="msg">Loading…</div>';
   try {
     const r = await fetch('/api/aircraft/'+encodeURIComponent(id));
-    if (!r.ok) { out.innerHTML = '<div class="msg">Aircraft not found.</div>'; return; }
+    if (!r.ok) { view.innerHTML = '<div class="msg">Aircraft not found.</div>'; return; }
     const a = await r.json();
-    out.innerHTML = detailHtml(a);
-    const b = out.querySelector('.back'); if (b) b.addEventListener('click', () => history.back());
-  } catch { out.innerHTML = '<div class="msg">Load failed.</div>'; }
+    view.innerHTML = detailHtml(a);
+    const b = view.querySelector('.back'); if (b) b.addEventListener('click', () => history.back());
+  } catch { view.innerHTML = '<div class="msg">Load failed.</div>'; }
 }
 
 function kv(k,v,cls){ return v ? '<div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+v+'</div>' : ''; }
@@ -146,7 +203,7 @@ function detailHtml(a) {
   const cs = (a.callsigns||[]).map(c =>
     '<span class="chip"><a href="/track/'+encodeURIComponent(c)+'">'+esc(c)+'</a></span>').join('');
   const rt = (a.routes||[]).map(x => '<span class="chip">'+esc(x)+'</span>').join('');
-  return '<div class="back">&larr; back to results</div>'
+  return '<div class="back">&larr; back to table</div>'
     + '<div class="card"><h2>'
       + '<span class="reg">'+esc(a.registration||a.icao24||'?')+'</span>'
       + '<span class="type">'+esc(a.type||'')+'</span></h2>'
@@ -167,19 +224,23 @@ function detailHtml(a) {
     + '</div>';
 }
 
-// Routing: /aircraft/{id} → detail; /aircraft?q= → search.
+// Routing: /aircraft/{id} → detail; /aircraft?q=&sort=&dir=&offset= → table.
 function route() {
-  const path = location.pathname;
-  const m = path.match(/^\/aircraft\/([^/]+)$/);
-  if (m) { const id = decodeURIComponent(m[1]); detail(id, false); return; }
-  const q = new URLSearchParams(location.search).get('q');
-  if (q) { qEl.value = q; search(q, false); }
-  else out.innerHTML = '';
+  const m = location.pathname.match(/^\/aircraft\/([^/]+)$/);
+  if (m) { detail(decodeURIComponent(m[1]), false); return; }
+  const p = new URLSearchParams(location.search);
+  state.q = (p.get('q') || '').trim();
+  state.sort = p.get('sort') || 'lastSeen';
+  state.dir = p.get('dir') || 'desc';
+  state.offset = Math.max(0, parseInt(p.get('offset')||'0', 10) || 0);
+  qEl.value = state.q;
+  loadTable(false /* replaceState, don't push on plain nav */);
 }
 window.addEventListener('popstate', route);
-document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); search(qEl.value); });
+document.getElementById('f').addEventListener('submit', e => {
+  e.preventDefault(); state.q = qEl.value.trim(); state.offset = 0; loadTable(true);
+});
 
-loadCount();
 route();
 </script>
 <script src="/shared/disclaimer.js?v=3"></script>

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Channels;
 
 namespace SwimServer;
@@ -109,7 +110,16 @@ public sealed class ReplayRecorder : IDisposable
         DateTime lastFlush = DateTime.UtcNow;
         DateTime lastCleanup = DateTime.UtcNow;
 
-        var jsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+        // Drop null properties from every recorded object. Live broadcast uses a SEPARATE
+        // options instance (Program.cs), so this only slims the on-disk replay/incident files.
+        // The replay client full-replaces on snapshots and merges on batches, and both treat an
+        // absent key like an explicit null — so omitting nulls is lossless for playback while
+        // cutting file size (and therefore incident-slice decompress time on the Pi) by ~3x.
+        var jsonOpts = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        };
 
         try
         {

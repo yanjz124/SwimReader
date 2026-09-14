@@ -2288,7 +2288,7 @@ void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
 
     // Record for replay (always, regardless of connected clients). Masked, so a
     // replay can never leak a LADD identity that live viewers couldn't see.
-    eramRecorder.RecordBatch(dirtyFlights.Select(f => f.ToSummary()).ToArray(), DateTime.UtcNow);
+    eramRecorder.RecordBatch(dirtyFlights.Select(f => f.ToReplaySummary()).ToArray(), DateTime.UtcNow);
 
     if (!clients.IsEmpty)
         BroadcastFlights("batch", dirtyFlights);

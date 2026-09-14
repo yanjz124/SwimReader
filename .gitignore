@@ -73,6 +73,10 @@ tools/SwimServer/investigation-*.jsonl
 tools/SwimServer/itws-history/
 tools/SwimServer/pointout-investigation-*.jsonl
 tools/SwimServer/tdls-history/
+# Permanent per-deployment data. Both hold REAL identities (incl. LADD-blocked registrations), so a
+# stray `git add .` must never publish them, and ignoring them also keeps `git clean -fd` away.
+tools/SwimServer/aircraft-db/
+tools/SwimServer/incidents/
 x64/
 x86/
 telegram-subs.json

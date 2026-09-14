@@ -138,6 +138,13 @@ sealed class AirlineResearch
     }
 
     public bool Ready => _ready;
+
+    /// <summary>Index loaded AND the flight log isn't still importing history — until both, numbers are partial.</summary>
+    private bool FullyReady => _ready && !_log.BackfillRunning;
+
+    private string StateText() => _log.BackfillRunning
+        ? $"importing flight history ({_log.BackfillDone}/{_log.BackfillTotal} days)"
+        : _state;
     public int ClampDays(int? days) => Math.Clamp(days ?? 7, 1, WindowDays);
 
     // ── Index ────────────────────────────────────────────────────────────────────
@@ -269,8 +276,8 @@ sealed class AirlineResearch
 
     public object Status() => new
     {
-        ready = _ready,
-        state = _state,
+        ready = FullyReady,
+        state = StateText(),
         windowDays = WindowDays,
         flights = Interlocked.Read(ref _flights),
         tails = _tails.Count,
@@ -407,7 +414,7 @@ sealed class AirlineResearch
 
     private byte[]? Cached(string key, Func<object?> build)
     {
-        var ttl = _ready ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(15);   // partial results while indexing
+        var ttl = FullyReady ? TimeSpan.FromMinutes(5) : TimeSpan.FromSeconds(15);   // partial results while loading/importing
         if (_cache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.At < ttl) return hit.Json;
         lock (_buildLocks.GetOrAdd(key, _ => new object()))
         {
@@ -500,7 +507,7 @@ sealed class AirlineResearch
         return new
         {
             generated = now, days, span = Math.Round(span, 2), windowDays = WindowDays,
-            ready = _ready, state = _state, catalogAsOf = _catalogAsOf,
+            ready = FullyReady, state = StateText(), catalogAsOf = _catalogAsOf,
             carriers, others,
             ceased = _ceased.Select(c => new { icao = c.Icao, name = c.Name, ceased = c.Ceased, note = c.Note }).ToList(),
         };
@@ -768,7 +775,7 @@ sealed class AirlineResearch
 
         return new
         {
-            icao, generated = now, days, span = Math.Round(span, 2), windowDays = WindowDays, ready = _ready,
+            icao, generated = now, days, span = Math.Round(span, 2), windowDays = WindowDays, ready = FullyReady,
             carrier = carrier == null ? null : new
             {
                 name = carrier.Name, callsign = carrier.Callsign, category = carrier.Category,

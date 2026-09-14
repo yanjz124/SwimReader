@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a">
+<title>Aircraft Database</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛩️</text></svg>">
+<style>
+  :root { --yel:#cccc44; --dim:#8a8a3a; --bg:#0a0a0a; --card:#141414; --line:#333;
+    --accent:#4aa3ff; --ok:#44cc44; --warn:#ff8c00; --white:#eee; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--yel);
+    font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace; font-size:15px; }
+  body { padding-bottom:48px; }
+  a { color:var(--accent); text-decoration:none; }
+  .wrap { max-width:820px; margin:0 auto; }
+
+  header { position:sticky; top:0; z-index:10; background:#000; border-bottom:1px solid var(--line);
+    padding:10px 12px; display:flex; gap:8px; align-items:center; }
+  header .home { color:var(--dim); font-size:15px; padding:6px; }
+  header form { flex:1; display:flex; gap:8px; }
+  header input { flex:1; min-width:0; background:#1a1a1a; color:var(--yel); border:1px solid var(--line);
+    border-radius:8px; padding:11px 12px; font:inherit; text-transform:uppercase; letter-spacing:1px; }
+  header input::placeholder { color:#666; text-transform:none; letter-spacing:0; }
+  header button { background:#1e2e1e; color:#bfe6bf; border:1px solid #3a5a3a; border-radius:8px;
+    padding:0 16px; font:inherit; font-weight:bold; cursor:pointer; }
+
+  .status { padding:8px 14px; color:var(--dim); font-size:12px; }
+  .msg { padding:36px 20px; text-align:center; color:var(--dim); line-height:1.6; }
+  .msg b { color:var(--yel); }
+  .hint { padding:2px 14px 10px; color:var(--dim); font-size:12px; line-height:1.5; }
+  .hint code { color:var(--yel); background:#181818; padding:1px 5px; border-radius:4px; }
+
+  /* result rows */
+  .rows { padding:6px 12px; display:flex; flex-direction:column; gap:8px; }
+  .row { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 13px;
+    cursor:pointer; display:grid; grid-template-columns:1fr auto; gap:2px 12px; align-items:baseline; }
+  .row:hover { border-color:var(--yel); }
+  .row .reg { font-size:19px; font-weight:bold; color:#fff; letter-spacing:1px; }
+  .row .type { color:var(--yel); font-size:13px; }
+  .row .op { grid-column:1/2; color:var(--dim); font-size:13px; word-break:break-word; }
+  .row .meta { grid-column:2/3; text-align:right; color:var(--dim); font-size:12px; white-space:nowrap; }
+  .row .hex { color:#8fb0d8; }
+  .row .selcal { color:#39ff62; }
+
+  /* detail */
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; margin:10px 12px; overflow:hidden; }
+  .card > h2 { margin:0; padding:12px 14px; background:#0d0d0d; border-bottom:1px solid var(--line);
+    display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  .card > h2 .reg { font-size:26px; font-weight:bold; color:#fff; letter-spacing:2px; }
+  .card > h2 .type { font-size:15px; color:var(--yel); }
+  .grid { display:grid; grid-template-columns:auto 1fr; gap:5px 14px; padding:12px 14px; font-size:14px; }
+  .grid .k { color:var(--dim); white-space:nowrap; }
+  .grid .v { color:var(--yel); word-break:break-word; }
+  .grid .v.hl { color:#fff; }
+  .grid .v.hex { color:#8fb0d8; letter-spacing:1px; }
+  .grid .v.selcal { color:#39ff62; letter-spacing:2px; font-weight:bold; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { font-size:12px; padding:3px 9px; border-radius:6px; border:1px solid var(--line); color:var(--yel); background:#111; }
+  .chip a { color:var(--yel); }
+  .back { display:inline-block; margin:12px 14px 0; color:var(--dim); cursor:pointer; }
+  .disc { padding:14px; color:var(--dim); font-size:11px; text-align:center; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="home" href="/" title="Home">&larr;</a>
+    <form id="f"><input id="q" placeholder="Registration, ICAO24 hex, SELCAL, callsign, operator…"
+      autocomplete="off" autocapitalize="characters" spellcheck="false"><button type="submit">SEARCH</button></form>
+  </header>
+  <div class="status" id="status">Aircraft database — <span id="count">…</span> airframes seen on the live feed.</div>
+  <div class="hint">Search by tail number (<code>N123AB</code>), Mode&nbsp;S hex (<code>A1B2C3</code>),
+    SELCAL (<code>ABCD</code>), a callsign it flew, operator, or type.</div>
+  <div id="out"></div>
+  <div class="disc">Built from aircraft observed on the FAA SWIM feed in US airspace — not a complete registry.
+    Blocked (LADD) aircraft are hidden. NOT FOR OPERATIONAL USE.</div>
+</div>
+<script>
+const out = document.getElementById('out');
+const qEl = document.getElementById('q');
+
+async function loadCount() {
+  try { const r = await fetch('/api/aircraft/stats'); const j = await r.json();
+    document.getElementById('count').textContent = (j.count ?? 0).toLocaleString(); }
+  catch { document.getElementById('count').textContent = '—'; }
+}
+
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function ago(iso){
+  if(!iso) return '';
+  const d = (Date.now() - new Date(iso).getTime())/1000;
+  if (d < 90) return 'just now';
+  if (d < 5400) return Math.round(d/60)+' min ago';
+  if (d < 129600) return Math.round(d/3600)+' h ago';
+  return Math.round(d/86400)+' d ago';
+}
+
+async function search(q, push) {
+  q = (q||'').trim();
+  if (!q) { out.innerHTML = ''; return; }
+  if (push !== false) history.pushState({q}, '', '/aircraft?q='+encodeURIComponent(q));
+  out.innerHTML = '<div class="msg">Searching…</div>';
+  try {
+    const r = await fetch('/api/aircraft/search?q='+encodeURIComponent(q)+'&limit=100');
+    const j = await r.json();
+    if (!j.results || j.results.length === 0) {
+      out.innerHTML = '<div class="msg">No aircraft found for <b>'+esc(q)+'</b>.<br>The database only has airframes seen on the live feed.</div>';
+      return;
+    }
+    out.innerHTML = '<div class="rows">' + j.results.map(rowHtml).join('') + '</div>';
+    out.querySelectorAll('.row').forEach(el => el.addEventListener('click', () => detail(el.dataset.id)));
+  } catch (e) { out.innerHTML = '<div class="msg">Search failed. Try again.</div>'; }
+}
+
+function rowHtml(a) {
+  const id = a.icao24 || a.registration || '';
+  const bits = [];
+  if (a.icao24) bits.push('<span class="hex">'+esc(a.icao24)+'</span>');
+  if (a.selcal) bits.push('<span class="selcal">'+esc(a.selcal)+'</span>');
+  bits.push(esc(a.sightings)+'&times; · '+esc(ago(a.lastSeen)));
+  return '<div class="row" data-id="'+esc(id)+'">'
+    + '<div class="reg">'+esc(a.registration||a.icao24||'?')+'</div>'
+    + '<div class="type">'+esc(a.type||'')+'</div>'
+    + '<div class="op">'+esc(a['operator']||'')+'</div>'
+    + '<div class="meta">'+bits.join(' · ')+'</div>'
+    + '</div>';
+}
+
+async function detail(id, push) {
+  if (push !== false) history.pushState({id}, '', '/aircraft/'+encodeURIComponent(id));
+  out.innerHTML = '<div class="msg">Loading…</div>';
+  try {
+    const r = await fetch('/api/aircraft/'+encodeURIComponent(id));
+    if (!r.ok) { out.innerHTML = '<div class="msg">Aircraft not found.</div>'; return; }
+    const a = await r.json();
+    out.innerHTML = detailHtml(a);
+    const b = out.querySelector('.back'); if (b) b.addEventListener('click', () => history.back());
+  } catch { out.innerHTML = '<div class="msg">Load failed.</div>'; }
+}
+
+function kv(k,v,cls){ return v ? '<div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+v+'</div>' : ''; }
+
+function detailHtml(a) {
+  const cs = (a.callsigns||[]).map(c =>
+    '<span class="chip"><a href="/track/'+encodeURIComponent(c)+'">'+esc(c)+'</a></span>').join('');
+  const rt = (a.routes||[]).map(x => '<span class="chip">'+esc(x)+'</span>').join('');
+  return '<div class="back">&larr; back to results</div>'
+    + '<div class="card"><h2>'
+      + '<span class="reg">'+esc(a.registration||a.icao24||'?')+'</span>'
+      + '<span class="type">'+esc(a.type||'')+'</span></h2>'
+    + '<div class="grid">'
+      + kv('ICAO 24', esc(a.icao24), 'hex')
+      + kv('Registration', esc(a.registration), 'hl')
+      + kv('SELCAL', esc(a.selcal), 'selcal')
+      + kv('Type', esc(a.type))
+      + kv('Operator', esc(a['operator']), 'hl')
+      + kv('Wake', esc(a.wake))
+      + kv('Equipment', esc(a.equipment))
+      + kv('Times seen', esc((a.sightings||0).toLocaleString()))
+      + kv('First seen', a.firstSeen ? esc(new Date(a.firstSeen).toLocaleString())+' UTC' : '')
+      + kv('Last seen', a.lastSeen ? esc(new Date(a.lastSeen).toLocaleString())+' ('+esc(ago(a.lastSeen))+')' : '')
+    + '</div>'
+    + (cs ? '<div class="grid"><div class="k">Callsigns</div><div class="v"><div class="chips">'+cs+'</div></div></div>' : '')
+    + (rt ? '<div class="grid"><div class="k">Routes</div><div class="v"><div class="chips">'+rt+'</div></div></div>' : '')
+    + '</div>';
+}
+
+// Routing: /aircraft/{id} → detail; /aircraft?q= → search.
+function route() {
+  const path = location.pathname;
+  const m = path.match(/^\/aircraft\/([^/]+)$/);
+  if (m) { const id = decodeURIComponent(m[1]); detail(id, false); return; }
+  const q = new URLSearchParams(location.search).get('q');
+  if (q) { qEl.value = q; search(q, false); }
+  else out.innerHTML = '';
+}
+window.addEventListener('popstate', route);
+document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); search(qEl.value); });
+
+loadCount();
+route();
+</script>
+<script src="/shared/disclaimer.js?v=3"></script>
+</body>
+</html>

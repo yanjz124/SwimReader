@@ -72,6 +72,18 @@ static class StaticRoutes
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "incidents", "index.html"));
         });
 
+        // Aircraft database — search airframes by registration / ICAO 24 / SELCAL / operator / type
+        app.MapGet("/aircraft", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "aircraft", "index.html"));
+        });
+        app.MapGet("/aircraft/{id:regex(^[A-Za-z0-9-]+$)}", async (HttpContext c) =>
+        {
+            c.Response.ContentType = "text/html";
+            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "aircraft", "index.html"));
+        });
+
         // Track a single flight (mobile) — /track and /track/{callsign}
         app.MapGet("/track", async (HttpContext c) =>
         {

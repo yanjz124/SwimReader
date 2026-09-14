@@ -198,6 +198,14 @@ var nexradRefreshTimer = new Timer(async _ => {
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
 PersistenceBudget.Watch("flight-history", historyDir, "*.jsonl");
 
+// Aircraft database — a searchable per-airframe rollup (registration / ICAO 24 / SELCAL / type /
+// operator) built from the flights SwimReader sees. Load the saved snapshot; only scan the (large)
+// flight-history archive to seed it on the very first run, on a background task so startup is never
+// blocked. Thereafter the purge path (below) keeps it current.
+var aircraftDb = new AircraftDb(Directory.GetCurrentDirectory(), historyDir);
+aircraftDb.Load();
+if (aircraftDb.Count == 0) aircraftDb.BackfillAsync(TimeSpan.FromSeconds(60));
+
 // FAA LADD (Limiting Aircraft Data Displayed) compliance — load the block list
 // before Solace connects so blocked aircraft are dropped from the first message.
 LaddService.Init(Directory.GetCurrentDirectory());
@@ -1054,6 +1062,7 @@ var purgeTimer = new Timer(_ =>
             // the route finder searches this history days later, long after TDLS forgets it.
             var histTd = tdls.FindAircraft(f.Origin ?? "", f.Callsign ?? "");
             Task.Run(() => FlightHistoryService.Save(f, historyDir, historyJsonOpts, histTd?.gate, histTd?.runway));
+            aircraftDb.Observe(f);
         }
         // Expire point-out data after 3 minutes (SFDPS doesn't send clear signals)
         // Also clear legacy data with no timestamp (e.g. from cache before this fix)
@@ -1124,6 +1133,7 @@ var purgeTimer = new Timer(_ =>
                 Broadcast(new WsMsg("remove", new { gufi }));
                 var rmTd = tdls.FindAircraft(removed.Origin ?? "", removed.Callsign ?? "");
                 Task.Run(() => FlightHistoryService.Save(removed, historyDir, historyJsonOpts, rmTd?.gate, rmTd?.runway));
+                aircraftDb.Observe(removed);
                 retired++;
             }
         }
@@ -1209,6 +1219,9 @@ var nasrTimer = new Timer(async _ =>
     try { await LoadNasr(); }
     catch (Exception ex) { Console.WriteLine($"[NASR] Update check error: {ex.Message}"); }
 }, null, TimeSpan.FromHours(24), TimeSpan.FromHours(24));
+
+// Aircraft database — persist accumulated observations every 2 minutes (rewrite only if changed).
+var aircraftSaveTimer = new Timer(_ => aircraftDb.Save(), null, TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2));
 
 // Batch broadcast timers — flush dirty flights to all connected clients
 var batchTimer = new Timer(_ => FlushDirtyBatch(_dirty), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
@@ -1306,8 +1319,8 @@ var taisSnapshotTimer = new Timer(_ =>
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer /*, poFlushTimer, investigationFlushTimer */ };
-app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); itws.SaveHistory(); });
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer, aircraftSaveTimer /*, poFlushTimer, investigationFlushTimer */ };
+app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); itws.SaveHistory(); aircraftDb.Save(); });
 
 // Replay endpoints (WebSocket + REST)
 replayServer.MapEndpoints(app);
@@ -1347,6 +1360,7 @@ var incidentArchive = new SwimServer.IncidentArchive(
     });
 IncidentRoutes.Register(app, incidentArchive);
 replayServer.MapIncidentEndpoints(app, incidentsDir);
+AircraftRoutes.Register(app, aircraftDb);
 
 await solaceReady.Task;
 

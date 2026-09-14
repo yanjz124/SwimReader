@@ -35,7 +35,8 @@
     }
     .col-header .rsz:hover::after, .col-header .rsz.active::after { background: #cccc44; }
     body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none !important; }
-    .col-header .num, .flight-row .num { text-align: right; }
+    /* Right-aligned numbers get breathing room so SEEN doesn't run into the left-aligned LAST SEEN text. */
+    .col-header .num, .flight-row .num { text-align: right; padding-right: 10px; }
 
     .filter-row { display: grid; grid-template-columns: var(--cols); gap: 6px; padding: 0 12px 6px; }
     .filter-row input {

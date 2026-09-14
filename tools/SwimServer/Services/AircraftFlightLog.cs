@@ -1,0 +1,422 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Channels;
+
+namespace SwimServer;
+
+/// <summary>
+/// Permanent, dated flight log for every airframe in the aircraft database: one entry per flight with its
+/// departure time, callsign, origin and destination. Kept forever (deliberately not budget-managed).
+///
+/// Storage: append-only CSV lines <c>key,dep,first,last,callsign,origin,dest</c> (epoch seconds; dep is 0 when
+/// the feed never gave an actual departure time), sharded by a hash of the airframe key into 1,024 files under
+/// aircraft-db/flights/. Sharding avoids one tiny file per tail (tens of thousands of 4 KB blocks on the SD
+/// card) while keeping a tail lookup to a scan of ~1/1024 of the log.
+///
+/// Duplicates: one physical flight is purged once per ARTCC that tracked it (~1.6 GUFIs per flight), so the
+/// same flight arrives several times. A small per-tail memory of recent entries drops most duplicates before
+/// they are written; anything that slips through (e.g. across a restart) is merged on read. Two entries are the
+/// same flight when callsign + origin + destination match and their actual departure times are within 20 min —
+/// or, when either lacks one, their best times are within 12 h.
+///
+/// Backfill: on first start the whole flight-history archive is scanned newest day first on a background thread,
+/// throttled for the shared Pi, using fast field extraction instead of a full JSON parse of each multi-KB history
+/// line. Finished day files are recorded, so a restart resumes rather than starting over.
+/// </summary>
+sealed class AircraftFlightLog
+{
+    public readonly record struct Entry(long Dep, long First, long Last, string Cs, string O, string D)
+    {
+        /// <summary>Best time for the flight: actual departure, else first seen, else last seen.</summary>
+        public long T => Dep > 0 ? Dep : First > 0 ? First : Last;
+    }
+
+    /// <summary>One flight-history line reduced to the airframe + flight fields (fed to AircraftDb).</summary>
+    public sealed record HistoryRow(string Key, string? Hex, string? Reg, string? Selcal, string? Type,
+        string? Op, string? Wake, string? Equip, string? Cs, string? O, string? D, DateTime Seen);
+
+    public const int Shards = 1024;
+    private const int RecentPerKey = 6;
+    private const long SameDepWindow = 20 * 60;
+    private const long SameTimeWindow = 12 * 3600;
+
+    private readonly string _dir;
+    private readonly string _historyDir;
+    private readonly object[] _shardLocks;
+    private readonly Channel<(string Key, Entry E)> _queue = Channel.CreateUnbounded<(string Key, Entry E)>();
+    private readonly ConcurrentDictionary<string, List<Entry>> _recent = new();
+    private int _started;
+
+    private volatile int _backfillDone, _backfillTotal;
+    private volatile bool _backfillRunning;
+    public int BackfillDone => _backfillDone;
+    public int BackfillTotal => _backfillTotal;
+    public bool BackfillRunning => _backfillRunning;
+
+    public AircraftFlightLog(string dir, string historyDir)
+    {
+        _dir = dir;
+        _historyDir = historyDir;
+        _shardLocks = new object[Shards];
+        for (int i = 0; i < Shards; i++) _shardLocks[i] = new object();
+    }
+
+    // ── Keys (the single source of truth, shared with AircraftDb so log keys always match record keys) ──
+    // ICAO 24-bit Mode S address is the stable per-airframe key; registration is the fallback.
+    public static string? NormHex(string? modeS)
+    {
+        if (string.IsNullOrWhiteSpace(modeS)) return null;
+        var s = modeS.Trim().TrimStart('-').ToUpperInvariant();
+        // Keep only hex digits; SFDPS occasionally prefixes/pads the value.
+        Span<char> buf = stackalloc char[s.Length];
+        int n = 0;
+        foreach (var c in s)
+            if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) buf[n++] = c;
+        return n == 0 ? null : new string(buf[..n]);
+    }
+
+    public static string? NormReg(string? reg) =>
+        string.IsNullOrWhiteSpace(reg) ? null : reg.Trim().ToUpperInvariant();
+
+    public static string KeyFor(string? hex, string? reg) => hex ?? "REG:" + reg;
+
+    /// <summary>FNV-1a hash of the key → shard index.</summary>
+    public static int ShardOf(string key)
+    {
+        uint h = 2166136261;
+        foreach (var c in key) { h ^= c; h *= 16777619; }
+        return (int)(h & (Shards - 1));
+    }
+
+    private string ShardPath(int shard) => Path.Combine(_dir, shard.ToString("x3") + ".csv");
+
+    // ── Entries ──
+    public static long ParseEpoch(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return 0;
+        return DateTimeOffset.TryParse(s, CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var t) ? t.ToUnixTimeSeconds() : 0;
+    }
+
+    public static long Epoch(DateTime t) =>
+        t == default ? 0 : new DateTimeOffset(DateTime.SpecifyKind(t, DateTimeKind.Utc)).ToUnixTimeSeconds();
+
+    private static string Clean(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? "" : s.Trim().ToUpperInvariant().Replace(',', ' ').Replace('\n', ' ').Replace('\r', ' ');
+
+    public static Entry MakeEntry(long dep, long first, long last, string? cs, string? o, string? d)
+    {
+        long cap = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 300;   // a stray future time never sorts first
+        long Fix(long v) => v <= 0 ? 0 : Math.Min(v, cap);
+        return new Entry(Fix(dep), Fix(first), Fix(last), Clean(cs), Clean(o), Clean(d));
+    }
+
+    public static bool SameFlight(in Entry a, in Entry b)
+    {
+        if (a.Cs != b.Cs || a.O != b.O || a.D != b.D) return false;
+        if (a.Dep > 0 && b.Dep > 0) return Math.Abs(a.Dep - b.Dep) <= SameDepWindow;
+        return Math.Abs(a.T - b.T) <= SameTimeWindow;
+    }
+
+    // ── Write ──
+    /// <summary>Queue a flight for the log; dropped if it duplicates one recently logged for this tail.</summary>
+    public void Record(string key, Entry e)
+    {
+        if (e.T <= 0 || key.Contains(',') || SeenRecently(key, e)) return;
+        _queue.Writer.TryWrite((key, e));
+    }
+
+    private bool SeenRecently(string key, in Entry e)
+    {
+        var list = _recent.GetOrAdd(key, _ => new List<Entry>(RecentPerKey));
+        lock (list)
+        {
+            foreach (var x in list)
+                if (SameFlight(x, e)) return true;
+            list.Add(e);
+            if (list.Count > RecentPerKey) list.RemoveAt(0);
+            return false;
+        }
+    }
+
+    private static void AppendLine(StringBuilder sb, string key, in Entry e) =>
+        sb.Append(key).Append(',').Append(e.Dep).Append(',').Append(e.First).Append(',').Append(e.Last)
+          .Append(',').Append(e.Cs).Append(',').Append(e.O).Append(',').Append(e.D).Append('\n');
+
+    private void WriteBatch(Dictionary<int, StringBuilder> batch)
+    {
+        foreach (var (shard, sb) in batch)
+        {
+            if (sb.Length == 0) continue;
+            try
+            {
+                lock (_shardLocks[shard]) File.AppendAllText(ShardPath(shard), sb.ToString());
+            }
+            catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Flight-log write error ({shard:x3}): {ex.Message}"); }
+            sb.Clear();
+        }
+    }
+
+    private int DrainQueue(Dictionary<int, StringBuilder> batch)
+    {
+        int n = 0;
+        while (_queue.Reader.TryRead(out var item))
+        {
+            int s = ShardOf(item.Key);
+            if (!batch.TryGetValue(s, out var sb)) batch[s] = sb = new StringBuilder();
+            AppendLine(sb, item.Key, item.E);
+            n++;
+        }
+        return n;
+    }
+
+    /// <summary>Write everything queued now (called on the periodic save and at shutdown).</summary>
+    public void Flush()
+    {
+        var batch = new Dictionary<int, StringBuilder>();
+        if (DrainQueue(batch) > 0) WriteBatch(batch);
+    }
+
+    private async Task WriterLoop()
+    {
+        var batch = new Dictionary<int, StringBuilder>();
+        try
+        {
+            while (await _queue.Reader.WaitToReadAsync())
+            {
+                await Task.Delay(2000);            // let a purge burst collect, then touch each shard once
+                if (DrainQueue(batch) > 0) WriteBatch(batch);
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Flight-log writer stopped: {ex.Message}"); }
+    }
+
+    // ── Read ──
+    /// <summary>All logged flights for these keys, duplicates merged, oldest first.</summary>
+    public List<Entry> Read(IEnumerable<string> keys)
+    {
+        var all = new List<Entry>();
+        foreach (var key in keys.Distinct())
+        {
+            var path = ShardPath(ShardOf(key));
+            if (!File.Exists(path)) continue;
+            string text;
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var sr = new StreamReader(fs);
+                text = sr.ReadToEnd();
+            }
+            catch (IOException) { continue; }
+
+            // Only lines terminated by '\n' — anything after the last newline is an append still in progress.
+            int limit = text.LastIndexOf('\n');
+            var prefix = key + ",";
+            for (int pos = 0; pos < limit;)
+            {
+                int nl = text.IndexOf('\n', pos);
+                if (nl < 0 || nl > limit) break;
+                if (nl - pos > prefix.Length && string.CompareOrdinal(text, pos, prefix, 0, prefix.Length) == 0)
+                {
+                    var p = text.Substring(pos, nl - pos).Split(',');
+                    if (p.Length == 7 && long.TryParse(p[1], out var dep) && long.TryParse(p[2], out var first)
+                        && long.TryParse(p[3], out var last))
+                        all.Add(new Entry(dep, first, last, p[4], p[5], p[6]));
+                }
+                pos = nl + 1;
+            }
+        }
+        return Merge(all);
+    }
+
+    public static List<Entry> Merge(List<Entry> all)
+    {
+        all.Sort((a, b) => a.T.CompareTo(b.T));
+        var merged = new List<Entry>(all.Count);
+        var latest = new Dictionary<(string, string, string), int>();
+        foreach (var e in all)
+        {
+            var k = (e.Cs, e.O, e.D);
+            if (latest.TryGetValue(k, out var i) && SameFlight(merged[i], e))
+            {
+                var m = merged[i];
+                merged[i] = new Entry(m.Dep > 0 ? m.Dep : e.Dep, MinPositive(m.First, e.First),
+                                      Math.Max(m.Last, e.Last), m.Cs, m.O, m.D);
+            }
+            else
+            {
+                latest[k] = merged.Count;
+                merged.Add(e);
+            }
+        }
+        // A merge can give an entry placed by first-seen time its actual departure time — re-order.
+        merged.Sort((a, b) => a.T.CompareTo(b.T));
+        return merged;
+    }
+
+    private static long MinPositive(long a, long b) => a <= 0 ? b : b <= 0 ? a : Math.Min(a, b);
+
+    // ── Start / backfill ──
+    /// <summary>Start the background writer and the one-time, resumable history backfill.</summary>
+    public void Start(Action<HistoryRow>? onBackfillRow = null, Action? onBackfillComplete = null)
+    {
+        if (Interlocked.Exchange(ref _started, 1) == 1) return;
+        Directory.CreateDirectory(_dir);
+        RepairTornTails();
+        _ = Task.Run(WriterLoop);
+        var t = new Thread(() => Backfill(onBackfillRow, onBackfillComplete))
+        {
+            IsBackground = true,
+            Name = "flightlog-backfill",
+        };
+        try { t.Priority = ThreadPriority.BelowNormal; } catch { }
+        t.Start();
+    }
+
+    /// <summary>
+    /// A crash mid-append can leave a shard ending in a partial line; the next append would fuse onto it and
+    /// corrupt that entry too. Truncate each shard back to its last complete line.
+    /// </summary>
+    private void RepairTornTails()
+    {
+        foreach (var path in Directory.GetFiles(_dir, "*.csv"))
+        {
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+                if (fs.Length == 0) continue;
+                fs.Seek(-1, SeekOrigin.End);
+                if (fs.ReadByte() == '\n') continue;
+
+                long pos = fs.Length - 1, cut = 0;
+                var buf = new byte[4096];
+                while (pos > 0)
+                {
+                    int len = (int)Math.Min(buf.Length, pos);
+                    fs.Seek(pos - len, SeekOrigin.Begin);
+                    fs.ReadExactly(buf, 0, len);
+                    int nl = Array.LastIndexOf(buf, (byte)'\n', len - 1);
+                    if (nl >= 0) { cut = pos - len + nl + 1; break; }
+                    pos -= len;
+                }
+                fs.SetLength(cut);
+                Console.WriteLine($"[AIRCRAFT] Flight log {Path.GetFileName(path)}: dropped a torn final line");
+            }
+            catch (IOException) { }
+        }
+    }
+
+    private static readonly Regex DayFile = new(@"^\d{4}-\d{2}-\d{2}\.jsonl$", RegexOptions.Compiled);
+
+    private void Backfill(Action<HistoryRow>? onRow, Action? onComplete)
+    {
+        var doneFile = Path.Combine(_dir, "backfill-done.txt");
+        try
+        {
+            if (!Directory.Exists(_historyDir)) return;
+            var done = File.Exists(doneFile)
+                ? new HashSet<string>(File.ReadAllLines(doneFile).Select(l => l.Trim()).Where(l => l.Length > 0))
+                : new HashSet<string>();
+            var days = Directory.GetFiles(_historyDir, "*.jsonl")
+                .Select(Path.GetFileName).Where(n => n != null && DayFile.IsMatch(n)).Select(n => n!)
+                .OrderByDescending(n => n, StringComparer.Ordinal).ToList();
+            var todo = days.Where(n => !done.Contains(n)).ToList();
+            _backfillTotal = days.Count;
+            _backfillDone = days.Count - todo.Count;
+            if (todo.Count == 0) return;
+
+            _backfillRunning = true;
+            Console.WriteLine($"[AIRCRAFT] Flight-log backfill: {todo.Count} of {days.Count} history day(s) to scan");
+            var batch = new Dictionary<int, StringBuilder>();
+            // Duty-cycle throttle: work 100 ms, rest 100 ms → at most ~half of one core. Thread priority is
+            // effectively ignored on Linux, and this Pi's CPU is shared with the live SWIM pipeline, so the
+            // one-time import takes longer rather than competing with it.
+            var burst = Stopwatch.StartNew();
+            foreach (var name in todo)
+            {
+                var sw = Stopwatch.StartNew();
+                long lines = 0, logged = 0;
+                try
+                {
+                    using var fs = new FileStream(Path.Combine(_historyDir, name), FileMode.Open, FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete, 1 << 16);
+                    using var sr = new StreamReader(fs);
+                    string? line;
+                    while ((line = sr.ReadLine()) != null)
+                    {
+                        lines++;
+                        if (burst.ElapsedMilliseconds >= 100) { WriteBatch(batch); Thread.Sleep(100); burst.Restart(); }
+                        var h = ParseHistoryLine(line);
+                        if (h == null) continue;
+                        onRow?.Invoke(h.Value.Row);
+                        var e = MakeEntry(h.Value.Dep, h.Value.First, h.Value.Last, h.Value.Row.Cs, h.Value.Row.O, h.Value.Row.D);
+                        var key = h.Value.Row.Key;
+                        if (e.T <= 0 || key.Contains(',') || SeenRecently(key, e)) continue;
+                        int s = ShardOf(key);
+                        if (!batch.TryGetValue(s, out var sb)) batch[s] = sb = new StringBuilder();
+                        AppendLine(sb, key, e);
+                        logged++;
+                    }
+                }
+                catch (IOException ex)
+                {
+                    Console.WriteLine($"[AIRCRAFT] Flight-log backfill skipped {name} (will retry next start): {ex.Message}");
+                    continue;
+                }
+                WriteBatch(batch);
+                File.AppendAllText(doneFile, name + "\n");
+                _backfillDone++;
+                if (_recent.Count > 300_000) _recent.Clear();   // bound memory; read-time merge covers the rest
+                Console.WriteLine($"[AIRCRAFT] Flight-log backfill {name}: {logged:N0} flights from {lines:N0} records " +
+                                  $"in {sw.Elapsed.TotalSeconds:F0}s ({_backfillDone}/{_backfillTotal})");
+            }
+            onComplete?.Invoke();
+        }
+        catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Flight-log backfill error: {ex.Message}"); }
+        finally { _backfillRunning = false; }
+    }
+
+    private readonly record struct Parsed(HistoryRow Row, long Dep, long First, long Last);
+
+    /// <summary>
+    /// Pull the needed fields out of one flight-history JSON line without parsing all of it. The airframe/flight
+    /// fields come from the part before "events" (so text inside event summaries can never be mistaken for them);
+    /// the first event's time is the moment the feed first saw the flight.
+    /// </summary>
+    private static Parsed? ParseHistoryLine(string line)
+    {
+        if (line.Length < 32 || line[0] != '{') return null;
+        int ev = line.IndexOf("\"events\":", StringComparison.Ordinal);
+        int end = ev < 0 ? line.Length : ev;
+        var hex = NormHex(Field(line, "modeSCode", 0, end));
+        var reg = NormReg(Field(line, "registration", 0, end));
+        if (hex == null && reg == null) return null;
+        long dep = ParseEpoch(Field(line, "actualDepartureTime", 0, end));
+        long last = ParseEpoch(Field(line, "lastSeen", 0, end));
+        long first = ev < 0 ? 0 : ParseEpoch(Field(line, "time", ev, line.Length));
+        long seen = last > 0 ? last : first > 0 ? first : dep;
+        if (seen <= 0) return null;
+        var row = new HistoryRow(KeyFor(hex, reg), hex, reg,
+            Field(line, "selcal", 0, end), Field(line, "aircraftType", 0, end), Field(line, "operator", 0, end),
+            Field(line, "wakeCategory", 0, end), Field(line, "equipmentQualifier", 0, end),
+            Field(line, "callsign", 0, end), Field(line, "origin", 0, end), Field(line, "destination", 0, end),
+            DateTimeOffset.FromUnixTimeSeconds(seen).UtcDateTime);
+        return new Parsed(row, dep, first, last);
+    }
+
+    /// <summary>Value of the first <c>"key":"…"</c> string property within [start, end).</summary>
+    private static string? Field(string s, string key, int start, int end)
+    {
+        var pat = "\"" + key + "\":\"";
+        if (end - start < pat.Length) return null;
+        int i = s.IndexOf(pat, start, end - start, StringComparison.Ordinal);
+        if (i < 0) return null;
+        i += pat.Length;
+        int j = i;
+        while (j < s.Length && s[j] != '"') j += s[j] == '\\' ? 2 : 1;
+        return s.Substring(i, Math.Min(j, s.Length) - i);
+    }
+}

@@ -30,12 +30,15 @@ sealed class AircraftDb
     private volatile bool _dirty;
     private const int MaxCallsigns = 24;
     private const int MaxRoutes = 40;
+    private readonly AircraftFlightLog _log;
+    private readonly HashSet<string> _backfillCreated = new();   // keys the history backfill created
 
     public AircraftDb(string baseDir, string historyDir)
     {
         _dir = Path.Combine(baseDir, "aircraft-db");
         _file = Path.Combine(_dir, "aircraft.jsonl");
         _historyDir = historyDir;
+        _log = new AircraftFlightLog(Path.Combine(_dir, "flights"), _historyDir);
         Instance = this;
     }
 
@@ -44,43 +47,27 @@ sealed class AircraftDb
     // ── Identity ────────────────────────────────────────────────────────────────
     // ICAO 24-bit Mode S address is the stable per-airframe key (never reused within a country's
     // scheme); registration is the human key. Prefer the hex; fall back to REG: when no hex is known.
-    private static string? NormHex(string? modeS)
-    {
-        if (string.IsNullOrWhiteSpace(modeS)) return null;
-        var s = modeS.Trim().TrimStart('-').ToUpperInvariant();
-        // Keep only hex digits; SFDPS occasionally prefixes/pads the value.
-        Span<char> buf = stackalloc char[s.Length];
-        int n = 0;
-        foreach (var c in s)
-            if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) buf[n++] = c;
-        return n == 0 ? null : new string(buf[..n]);
-    }
-
-    private static string? NormReg(string? reg) =>
-        string.IsNullOrWhiteSpace(reg) ? null : reg.Trim().ToUpperInvariant();
-
-    private static string KeyFor(string? hex, string? reg) =>
-        hex != null ? hex : "REG:" + reg;
+    // Key rules live in AircraftFlightLog so the flight log and these records can never disagree on a key.
+    private static string? NormHex(string? modeS) => AircraftFlightLog.NormHex(modeS);
+    private static string? NormReg(string? reg) => AircraftFlightLog.NormReg(reg);
+    private static string KeyFor(string? hex, string? reg) => AircraftFlightLog.KeyFor(hex, reg);
 
     // ── Ingest ────────────────────────────────────────────────────────────────
-    /// <summary>Roll a live/purged flight into the database.</summary>
-    public void Observe(FlightState f) => Upsert(
-        NormHex(f.ModeSCode), NormReg(f.Registration), f.SELCAL, f.AircraftType, f.Operator,
-        f.WakeCategory, f.EquipmentQualifier, f.Callsign, f.Origin, f.Destination,
-        f.LastSeen == default ? DateTime.UtcNow : f.LastSeen);
-
-    /// <summary>Roll one flight-history JSON record into the database (used by the backfill).</summary>
-    private void ObserveHistory(JsonElement r)
+    /// <summary>Roll a live/purged flight into the database and its permanent flight log.</summary>
+    public void Observe(FlightState f)
     {
-        string? S(string k) => r.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-        var hex = NormHex(S("modeSCode"));
-        var reg = NormReg(S("registration"));
-        if (hex == null && reg == null) return;   // can't identify the airframe
-        DateTime last = DateTime.UtcNow;
-        if (r.TryGetProperty("lastSeen", out var ls) && ls.ValueKind == JsonValueKind.String
-            && DateTime.TryParse(ls.GetString(), out var dt)) last = dt.ToUniversalTime();
-        Upsert(hex, reg, S("selcal"), S("aircraftType"), S("operator"), S("wakeCategory"),
-            S("equipmentQualifier"), S("callsign"), S("origin"), S("destination"), last);
+        var hex = NormHex(f.ModeSCode);
+        var reg = NormReg(f.Registration);
+        var seen = f.LastSeen == default ? DateTime.UtcNow : f.LastSeen;
+        Upsert(hex, reg, f.SELCAL, f.AircraftType, f.Operator, f.WakeCategory, f.EquipmentQualifier,
+            f.Callsign, f.Origin, f.Destination, seen);
+        if (hex == null && reg == null) return;
+
+        var events = f.GetAllEvents();   // chronological — the first is when the feed first saw this GUFI
+        long firstSeen = events.Count > 0 ? AircraftFlightLog.ParseEpoch(events[0].Time) : 0;
+        _log.Record(KeyFor(hex, reg), AircraftFlightLog.MakeEntry(
+            AircraftFlightLog.ParseEpoch(f.ActualDepartureTime), firstSeen, AircraftFlightLog.Epoch(seen),
+            f.Callsign, f.Origin, f.Destination));
     }
 
     private void Upsert(string? hex, string? reg, string? selcal, string? type, string? op,
@@ -342,6 +329,7 @@ sealed class AircraftDb
     /// <summary>Rewrite the on-disk snapshot if anything changed since the last save.</summary>
     public void Save()
     {
+        _log.Flush();   // append any queued flight-log lines (independent of the records' dirty flag)
         if (!_dirty) return;
         _dirty = false;
         try
@@ -363,41 +351,52 @@ sealed class AircraftDb
         catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Save error: {ex.Message}"); _dirty = true; }
     }
 
+    // ── Flight log ──────────────────────────────────────────────────────────────
+    public AircraftFlightLog Log => _log;
+
     /// <summary>
-    /// One-time seed from existing flight-history, newest file first, on a background task so it never
-    /// blocks startup. Bounded by a wall-clock budget so a huge history archive can't peg the Pi — the
-    /// live save path keeps the DB current regardless of how far back the backfill reaches.
+    /// Start the flight-log writer and its one-time, resumable scan of the whole flight-history archive. The
+    /// scan also creates records for airframes that only appear in older history, so every logged tail is
+    /// browsable (this replaces the old 60-second first-run seed).
     /// </summary>
-    public void BackfillAsync(TimeSpan budget) => Task.Run(() =>
+    public void StartFlightLog() => _log.Start(OnBackfillRow, () =>
     {
-        try
-        {
-            if (!Directory.Exists(_historyDir)) return;
-            var files = Directory.GetFiles(_historyDir, "*.jsonl")
-                .OrderByDescending(f => f, StringComparer.Ordinal).ToList();   // newest day first
-            var deadline = DateTime.UtcNow + budget;
-            long lines = 0; int filesDone = 0;
-            foreach (var file in files)
-            {
-                if (DateTime.UtcNow > deadline) break;
-                try
-                {
-                    foreach (var line in File.ReadLines(file))
-                    {
-                        if (line.Length == 0) continue;
-                        try { using var doc = JsonDocument.Parse(line); ObserveHistory(doc.RootElement); }
-                        catch { }
-                        if ((++lines & 0x3FFF) == 0 && DateTime.UtcNow > deadline) break;
-                    }
-                }
-                catch { }
-                filesDone++;
-            }
-            Console.WriteLine($"[AIRCRAFT] Backfill scanned {lines} history records from {filesDone} file(s) → {_byKey.Count} aircraft");
-            Save();
-        }
-        catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Backfill error: {ex.Message}"); }
+        lock (_backfillCreated) _backfillCreated.Clear();
+        Save();
     });
+
+    /// <summary>Every dated flight for this airframe, oldest first. Also reads the other key form it may have been
+    /// logged under (Mode S hex vs REG:) before its Mode S code was known.</summary>
+    public List<AircraftFlightLog.Entry> FlightsFor(AircraftRecord rec)
+    {
+        var keys = new List<string> { rec.Key };
+        if (rec.Icao24 != null) keys.Add(rec.Icao24);
+        if (rec.Registration != null) keys.Add("REG:" + rec.Registration);
+        return _log.Read(keys);
+    }
+
+    // Records the backfill creates get full upserts from every history line; records that already existed only
+    // have FirstSeen pulled earlier, so their sightings aren't double-counted.
+    private void OnBackfillRow(AircraftFlightLog.HistoryRow h)
+    {
+        bool create;
+        lock (_backfillCreated)
+        {
+            create = _backfillCreated.Contains(h.Key) || !_byKey.ContainsKey(h.Key);
+            if (create) _backfillCreated.Add(h.Key);
+        }
+        if (create)
+        {
+            Upsert(h.Hex, h.Reg, h.Selcal, h.Type, h.Op, h.Wake, h.Equip, h.Cs, h.O, h.D, h.Seen);
+        }
+        else if (_byKey.TryGetValue(h.Key, out var rec))
+        {
+            lock (rec)
+            {
+                if (h.Seen < rec.FirstSeenUtc) { rec.FirstSeenUtc = h.Seen; _dirty = true; }
+            }
+        }
+    }
 
     // ── API projection (masked) ──────────────────────────────────────────────────
     public object ToJson(AircraftRecord r, bool reveal, bool detail)

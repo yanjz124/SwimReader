@@ -64,6 +64,25 @@
     .xlink:hover { border-color: #cccc44; }
     .note { font-size: 11px; color: #555; line-height: 1.5; margin-top: 4px; }
 
+    /* FLIGHTS tab — dated flight log */
+    .log-summary { font-size: 11px; color: #666; margin-bottom: 6px; }
+    .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .log-table th {
+        position: sticky; top: -10px; background: #050505; text-align: left; font-weight: normal;
+        font-size: 10px; letter-spacing: 1px; color: #555; padding: 4px 8px 5px 0; border-bottom: 1px solid #222;
+    }
+    .log-table th[data-logsort] { cursor: pointer; user-select: none; }
+    .log-table th.sorted { color: #cccc44; }
+    .log-table td { padding: 3px 8px 3px 0; border-bottom: 1px solid #0f0f0f; white-space: nowrap; }
+    .log-table tbody tr:hover td { background: #0c0c0c; }
+    .log-table .ldate { color: #ccc; }
+    .log-table .ltime { color: #888; }
+    .log-table .ltime.est { color: #555; font-style: italic; }
+    .log-table .lcs a { color: #cccc44; text-decoration: none; }
+    .log-table .lcs a:hover { text-decoration: underline; }
+    .log-table .lroute { color: #39d2c0; }
+    .log-more { margin: 10px 0 4px; }
+
 </style>
 </head>
 <body>
@@ -152,6 +171,7 @@ let view = [];                // master after filters
 let sortKey = 'last', sortAsc = false;
 let lastRange = { start: -1, end: -1 };
 let selectedId = null, currentDetail = null, activeTab = 'airframe';
+let flightLog = null;         // { id, list (oldest→newest) | null, error, shown, asc } for the selected tail
 const INVALID = Symbol('invalid');
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -496,6 +516,7 @@ async function selectAircraft(id) {
     const local = master.find(r => r.id === id);
     if (local) renderDetailHeader({ registration: local.reg, icao24: local.hex, type: local.type, operator: local.opr });
     detailBody.innerHTML = '<div class="loading">Loading…</div>';
+    loadFlightLog(id);                               // in parallel with the airframe detail
     try {
         const r = await fetch('/api/aircraft/' + encodeURIComponent(id));
         if (selectedId !== id) return;               // user clicked another row mid-fetch
@@ -523,7 +544,7 @@ function renderDetailHeader(d) {
     const op = document.getElementById('detailOp');
     op.textContent = d.operator || '';
     op.style.display = d.operator ? '' : 'none';
-    document.getElementById('flightCount').textContent = d.callsigns ? ` (${d.callsigns.length})` : '';
+    updateFlightCount();
 }
 
 function section(title, fields) {
@@ -537,6 +558,7 @@ function section(title, fields) {
 }
 
 function renderActiveTab() {
+    if (activeTab === 'flights') { detailBody.innerHTML = renderFlightLog(); return; }
     const d = currentDetail;
     if (!d) return;
     if (activeTab === 'airframe') {
@@ -568,15 +590,78 @@ function renderActiveTab() {
                 : '')
             + links
             + '<div class="note">Built from flights observed on the FAA SWIM feed in US airspace — not a complete registry.</div>';
-    } else {
-        const cs = (d.callsigns || []).map(c => `<a href="/track/${encodeURIComponent(c)}">${esc(c)}</a>`).join('   ');
-        const rt = (d.routes || []).map(esc).join('\n');
-        detailBody.innerHTML =
-            (cs ? `<div class="section"><h3>CALLSIGNS FLOWN</h3><div class="route-text">${cs}</div></div>` : '')
-            + (rt ? `<div class="section"><h3>ROUTES</h3><div class="route-text">${rt}</div></div>` : '')
-            + (!cs && !rt ? '<div class="loading">No flights recorded</div>' : '');
     }
 }
+
+// ── Flight log (FLIGHTS tab) ────────────────────────────────────────────────
+// Every dated flight for the selected tail from the server's permanent per-airframe log (oldest→newest on
+// the wire). Shown newest first; the DATE header flips the order; long logs render 300 rows at a time.
+const LOG_PAGE = 300;
+
+function updateFlightCount() {
+    const fl = flightLog;
+    document.getElementById('flightCount').textContent =
+        fl && fl.id === selectedId && fl.list ? ` (${fl.list.length.toLocaleString()})` : '';
+}
+
+async function loadFlightLog(id) {
+    flightLog = { id, list: null, error: false, shown: LOG_PAGE, asc: false };
+    updateFlightCount();
+    try {
+        const r = await fetch('/api/aircraft/' + encodeURIComponent(id) + '/flights');
+        if (!r.ok) throw new Error(String(r.status));
+        const j = await r.json();
+        if (flightLog && flightLog.id === id) flightLog.list = j.flights || [];
+    } catch {
+        if (flightLog && flightLog.id === id) flightLog.error = true;
+    }
+    if (flightLog && flightLog.id === id && selectedId === id) {
+        updateFlightCount();
+        if (activeTab === 'flights') detailBody.innerHTML = renderFlightLog();
+    }
+}
+
+function renderFlightLog() {
+    const fl = flightLog;
+    if (!fl || fl.id !== selectedId || (!fl.list && !fl.error)) return '<div class="loading">Loading flight log…</div>';
+    if (fl.error) return '<div class="loading">Flight log unavailable</div>';
+    const total = fl.list.length;
+    if (!total) return '<div class="loading">No flights logged yet</div>';
+    const n = Math.min(fl.shown, total);
+    let h = `<div class="log-summary">${total.toLocaleString()} flight${total === 1 ? '' : 's'} · ${fl.asc ? 'oldest' : 'newest'} first · times UTC</div>`
+        + '<table class="log-table"><thead><tr>'
+        + `<th class="sorted" data-logsort title="Flip the order">DATE ${fl.asc ? '▲' : '▼'}</th><th>DEP</th><th>CALLSIGN</th><th>ROUTE</th>`
+        + '</tr></thead><tbody>';
+    for (let k = 0; k < n; k++) {
+        const e = fl.list[fl.asc ? k : total - 1 - k];
+        const ts = utcText(e.dep || e.first || e.last);
+        h += `<tr><td class="ldate">${ts.slice(0, 10)}</td>`
+            + (e.dep
+                ? `<td class="ltime">${ts.slice(11)}</td>`
+                : `<td class="ltime est" title="No departure time in the feed — time first seen">${ts.slice(11)}</td>`)
+            + `<td class="lcs">${e.cs ? `<a href="/track/${encodeURIComponent(e.cs)}">${esc(e.cs)}</a>` : ''}</td>`
+            + `<td class="lroute">${esc(e.o || '????')} → ${esc(e.d || '????')}</td></tr>`;
+    }
+    h += '</tbody></table>';
+    if (n < total)
+        h += `<button class="export-btn log-more" data-logmore>SHOW ${Math.min(LOG_PAGE, total - n).toLocaleString()} MORE · ${(total - n).toLocaleString()} left</button>`;
+    return h;
+}
+
+detailBody.addEventListener('click', (e) => {
+    if (!flightLog || activeTab !== 'flights') return;
+    if (e.target.closest('[data-logsort]')) {
+        flightLog.asc = !flightLog.asc;
+        flightLog.shown = LOG_PAGE;
+        detailBody.innerHTML = renderFlightLog();
+        detailBody.scrollTop = 0;
+    } else if (e.target.closest('[data-logmore]')) {
+        flightLog.shown += LOG_PAGE;
+        const top = detailBody.scrollTop;
+        detailBody.innerHTML = renderFlightLog();
+        detailBody.scrollTop = top;
+    }
+});
 
 document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -621,6 +706,19 @@ function saveUrl() {
 }
 
 // ── Load ────────────────────────────────────────────────────────────────────
+// Top-bar stats, plus flight-history import progress while the server's one-time backfill runs.
+let statsBase = '', logStatus = '';
+function renderStats() { statsEl.textContent = statsBase + logStatus; }
+async function pollLogStatus() {
+    try {
+        const j = await (await fetch('/api/aircraft/stats')).json();
+        const fl = j.flightLog;
+        logStatus = fl && fl.backfillRunning ? ` · importing flight history ${fl.backfillDone}/${fl.backfillTotal} days` : '';
+        renderStats();
+        if (fl && fl.backfillRunning) setTimeout(pollLogStatus, 30000);
+    } catch {}
+}
+
 async function load(initial) {
     try {
         const r = await fetch('/api/aircraft/all');
@@ -634,7 +732,8 @@ async function load(initial) {
         applyFilters(initial);   // periodic refresh keeps your scroll position
         statusEl.textContent = 'ready';
         statusEl.className = 'status ok';
-        statsEl.textContent = `${master.length.toLocaleString()} airframes · loaded ${utcText(Date.now() / 1000).slice(11)}`;
+        statsBase = `${master.length.toLocaleString()} airframes · loaded ${utcText(Date.now() / 1000).slice(11)}`;
+        renderStats();
     } catch {
         if (initial) { statusEl.textContent = 'load failed'; statusEl.className = 'status'; }
     }
@@ -651,6 +750,7 @@ async function load(initial) {
     }
     const d = p.get('dir'); if (d) sortAsc = d === 'asc';
     renderHeader();
+    pollLogStatus();
 
     load(true).then(() => {
         const m = location.pathname.match(/^\/aircraft\/([^/]+)$/);

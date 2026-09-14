@@ -199,12 +199,13 @@ var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history")
 PersistenceBudget.Watch("flight-history", historyDir, "*.jsonl");
 
 // Aircraft database — a searchable per-airframe rollup (registration / ICAO 24 / SELCAL / type /
-// operator) built from the flights SwimReader sees. Load the saved snapshot; only scan the (large)
-// flight-history archive to seed it on the very first run, on a background task so startup is never
-// blocked. Thereafter the purge path (below) keeps it current.
+// operator) plus a permanent dated flight log per tail, built from the flights SwimReader sees. Load the
+// saved snapshot, then start the flight log: its background thread scans the whole flight-history
+// archive once (resumable across restarts) without blocking startup. The purge path (below) keeps both
+// current thereafter.
 var aircraftDb = new AircraftDb(Directory.GetCurrentDirectory(), historyDir);
 aircraftDb.Load();
-if (aircraftDb.Count == 0) aircraftDb.BackfillAsync(TimeSpan.FromSeconds(60));
+aircraftDb.StartFlightLog();
 
 // FAA LADD (Limiting Aircraft Data Displayed) compliance — load the block list
 // before Solace connects so blocked aircraft are dropped from the first message.

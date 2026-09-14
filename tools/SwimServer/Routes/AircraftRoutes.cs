@@ -9,7 +9,31 @@ static class AircraftRoutes
 {
     public static void Register(WebApplication app, AircraftDb db)
     {
-        app.MapGet("/api/aircraft/stats", () => Results.Json(new { count = db.Count }));
+        app.MapGet("/api/aircraft/stats", () => Results.Json(new
+        {
+            count = db.Count,
+            flightLog = new
+            {
+                backfillDone = db.Log.BackfillDone,
+                backfillTotal = db.Log.BackfillTotal,
+                backfillRunning = db.Log.BackfillRunning,
+            },
+        }));
+
+        // Permanent dated flight log for one tail — oldest first, duplicates across ARTCCs merged.
+        app.MapGet("/api/aircraft/{id}/flights", (HttpContext c, string id) =>
+        {
+            bool reveal = LaddService.Reveal(c);
+            var rec = db.Get(id);
+            if (rec is null || (!reveal && LaddService.IsBlocked(null, rec.Registration, rec.Icao24)))
+                return Results.NotFound();
+            var flights = db.FlightsFor(rec);
+            return Results.Json(new
+            {
+                total = flights.Count,
+                flights = flights.Select(e => new { dep = e.Dep, first = e.First, last = e.Last, cs = e.Cs, o = e.O, d = e.D }),
+            });
+        });
 
         app.MapGet("/api/aircraft/search", (HttpContext c, string? q, int? limit) =>
         {

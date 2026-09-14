@@ -132,9 +132,16 @@ sealed class AircraftFlightLog
         return new Entry(Fix(dep), Fix(first), Fix(last), Clean(cs), Clean(o), Clean(d));
     }
 
+    /// <summary>
+    /// Airport code for comparison. ARTCCs mix the ICAO and FAA forms of the same US airport ("K26N" vs "26N",
+    /// "PHNL" vs "HNL"), so a 4-character K/P code compares as its 3-character LID.
+    /// </summary>
+    public static string AptKey(string a) =>
+        a.Length == 4 && (a[0] == 'K' || a[0] == 'P') ? a.Substring(1) : a;
+
     public static bool SameFlight(in Entry a, in Entry b)
     {
-        if (a.Cs != b.Cs || a.O != b.O || a.D != b.D) return false;
+        if (a.Cs != b.Cs || AptKey(a.O) != AptKey(b.O) || AptKey(a.D) != AptKey(b.D)) return false;
         if (a.Dep > 0 && b.Dep > 0) return Math.Abs(a.Dep - b.Dep) <= SameDepWindow;
         return Math.Abs(a.T - b.T) <= SameTimeWindow;
     }
@@ -166,6 +173,10 @@ sealed class AircraftFlightLog
 
     private void WriteBatch(Dictionary<int, StringBuilder> batch)
     {
+        if (batch.Count == 0) return;
+        // Idempotent and cheap: keeps appends working if the directory was never created (Record/Flush before
+        // Start) or was removed while running, instead of every write failing.
+        try { Directory.CreateDirectory(_dir); } catch { }
         foreach (var (shard, sb) in batch)
         {
             if (sb.Length == 0) continue;
@@ -257,12 +268,12 @@ sealed class AircraftFlightLog
         var latest = new Dictionary<(string, string, string), int>();
         foreach (var e in all)
         {
-            var k = (e.Cs, e.O, e.D);
+            var k = (e.Cs, AptKey(e.O), AptKey(e.D));
             if (latest.TryGetValue(k, out var i) && SameFlight(merged[i], e))
             {
                 var m = merged[i];
                 merged[i] = new Entry(m.Dep > 0 ? m.Dep : e.Dep, MinPositive(m.First, e.First),
-                                      Math.Max(m.Last, e.Last), m.Cs, m.O, m.D);
+                                      Math.Max(m.Last, e.Last), m.Cs, Longer(m.O, e.O), Longer(m.D, e.D));   // keep ICAO form
             }
             else
             {
@@ -270,12 +281,63 @@ sealed class AircraftFlightLog
                 merged.Add(e);
             }
         }
-        // A merge can give an entry placed by first-seen time its actual departure time — re-order.
+        FixSharedDepartures(merged);
+        // Merges and departure fixes change best times — re-order.
         merged.Sort((a, b) => a.T.CompareTo(b.T));
         return merged;
     }
 
     private static long MinPositive(long a, long b) => a <= 0 ? b : b <= 0 ? a : Math.Min(a, b);
+    private static string Longer(string a, string b) => b.Length > a.Length ? b : a;
+    private static long SeenTime(in Entry e) => e.First > 0 ? e.First : e.Last;
+    private const long SharedDepWindow = 120;
+
+    /// <summary>
+    /// One tail can't depart twice within two minutes, yet some flight plans carry the actual departure time of the
+    /// tail's EARLIER leg (NetJets EJA480: KHVN→CYQA and the later CYQA→KPIT both "departed" 12:09Z, the second first
+    /// seen 3½ h later). For legs sharing a departure time, keep it on the leg the feed saw closest to it; a leg on
+    /// the same route under another callsign is the same flight and is folded in; legs on other routes lose the
+    /// borrowed time and fall back to when they were first seen.
+    /// </summary>
+    private static void FixSharedDepartures(List<Entry> list)
+    {
+        var idx = Enumerable.Range(0, list.Count).Where(i => list[i].Dep > 0).OrderBy(i => list[i].Dep).ToList();
+        var remove = new HashSet<int>();
+        for (int s = 0; s < idx.Count;)
+        {
+            int e = s + 1;
+            while (e < idx.Count && list[idx[e]].Dep - list[idx[e - 1]].Dep <= SharedDepWindow) e++;
+            if (e - s > 1)
+            {
+                var cluster = idx.GetRange(s, e - s);
+                int keep = cluster.OrderBy(i => Math.Abs(SeenTime(list[i]) - list[i].Dep)).First();
+                var k = list[keep];
+                foreach (var i in cluster)
+                {
+                    if (i == keep) continue;
+                    var x = list[i];
+                    if (AptKey(x.O) == AptKey(k.O) && AptKey(x.D) == AptKey(k.D))
+                    {
+                        k = new Entry(k.Dep, MinPositive(k.First, x.First), Math.Max(k.Last, x.Last), k.Cs,
+                                      Longer(k.O, x.O), Longer(k.D, x.D));
+                        remove.Add(i);
+                    }
+                    else
+                    {
+                        list[i] = new Entry(0, x.First, x.Last, x.Cs, x.O, x.D);
+                    }
+                }
+                list[keep] = k;
+            }
+            s = e;
+        }
+        if (remove.Count > 0)
+        {
+            var kept = list.Where((_, i) => !remove.Contains(i)).ToList();
+            list.Clear();
+            list.AddRange(kept);
+        }
+    }
 
     // ── Start / backfill ──
 

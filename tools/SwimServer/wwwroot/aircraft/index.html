@@ -11,16 +11,30 @@
 <style>
     /* Flight-table look (shared stylesheet above). One column template drives the header, the
        filter row and every data row, so they always line up. */
-    /* OPR takes the spare width; CALLSIGNS is a fixed, truncated preview (full list in the detail panel). */
-    .flight-list { --cols: 96px 56px minmax(200px, 1fr) 70px 62px 150px 64px 96px; }
+    /* Column widths are user-resizable (drag a header edge, double-click to auto-fit) and remembered per
+       browser; JS sets --cols and --tablew. These are the defaults before JS runs. --tablew lets the
+       grid grow past the window so the table scrolls sideways instead of squeezing columns. */
+    .flight-list { --cols: 96px 56px 100px 70px 62px 180px 64px 96px; --tablew: 790px; overflow-x: auto; }
+    .thead, .col-header, .filter-row, .flight-row { min-width: var(--tablew); }
 
     /* Header + per-column filters are ONE sticky block at the top of the table's own scroll area:
        attached to the table, never offset into the rows. */
     .thead { position: sticky; top: 0; z-index: 3; background: #050505; border-bottom: 1px solid #333; }
     .thead .col-header { position: static; grid-template-columns: var(--cols); border-bottom: none; padding-bottom: 4px; }
     .flight-row { grid-template-columns: var(--cols); }
-    .col-header > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .col-header > span { position: relative; min-width: 0; }
+    .col-header .hl { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .col-header .ar { color: #cccc44; margin-left: 3px; }
+    /* Excel-style resize grip on each header's right edge, straddling the 6px column gap. */
+    .col-header .rsz {
+        position: absolute; top: -6px; bottom: -4px; right: -7px; width: 8px;
+        cursor: col-resize; z-index: 4; touch-action: none;
+    }
+    .col-header .rsz::after {
+        content: ''; position: absolute; top: 5px; bottom: 3px; left: 3px; width: 1px; background: #2a2a2a;
+    }
+    .col-header .rsz:hover::after, .col-header .rsz.active::after { background: #cccc44; }
+    body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none !important; }
     .col-header .num, .flight-row .num { text-align: right; }
 
     .filter-row { display: grid; grid-template-columns: var(--cols); gap: 6px; padding: 0 12px 6px; }
@@ -49,10 +63,6 @@
     .xlink:hover { border-color: #cccc44; }
     .note { font-size: 11px; color: #555; line-height: 1.5; margin-top: 4px; }
 
-    @media (max-width: 768px) {
-        /* Scroll horizontally rather than crush the columns (sum of the template + gaps + padding). */
-        .thead, .filter-row, .col-header, .flight-row { min-width: 880px; }
-    }
 </style>
 </head>
 <body>
@@ -69,6 +79,7 @@
     <div class="filter-sep"></div>
     <span class="result-count" id="resultCount"></span>
     <button class="export-btn clear-btn" id="clearFilters" style="display:none" title="Clear the search and every column filter">CLEAR FILTERS</button>
+    <button class="export-btn clear-btn" id="resetCols" style="display:none" title="Put every column back to its default width">RESET COLUMNS</button>
     <button class="export-btn" id="exportCsv" title="Download the rows currently shown (filters + sort applied) as a CSV file">EXPORT CSV</button>
 </div>
 
@@ -109,15 +120,16 @@ const TEXT_TIP = 'Contains (case-insensitive). * wildcard (N12*), =exact, !exclu
 const NUM_TIP = 'Number: 5, >5, >=5, <3, 2-10';
 const AGE_TIP = 'Age: <2h, >7d, <30m (units m/h/d) — or part of a UTC date/time, e.g. 2026-09-14';
 
+// w = default width in px (user-resizable; see "Column widths" below).
 const COLS = [
-    { key: 'reg',  label: 'REG',       type: 'text', cls: 'cs' },
-    { key: 'type', label: 'TYPE',      type: 'text', cls: '' },
-    { key: 'opr',  label: 'OPR',       type: 'text', cls: 'op' },
-    { key: 'hex',  label: 'ICAO24',    type: 'text', cls: 'hex' },
-    { key: 'sel',  label: 'SELCAL',    type: 'text', cls: 'selcal' },
-    { key: 'cs',   label: 'CALLSIGNS', type: 'list', cls: 'dep' },
-    { key: 'seen', label: 'SEEN',      type: 'num',  cls: 'num dim' },
-    { key: 'last', label: 'LAST SEEN', type: 'age',  cls: 'dim' },
+    { key: 'reg',  label: 'REG',       type: 'text', cls: 'cs',      w: 96  },
+    { key: 'type', label: 'TYPE',      type: 'text', cls: '',        w: 56  },
+    { key: 'opr',  label: 'OPR',       type: 'text', cls: 'op',      w: 100 },
+    { key: 'hex',  label: 'ICAO24',    type: 'text', cls: 'hex',     w: 70  },
+    { key: 'sel',  label: 'SELCAL',    type: 'text', cls: 'selcal',  w: 62  },
+    { key: 'cs',   label: 'CALLSIGNS', type: 'list', cls: 'dep',     w: 180 },
+    { key: 'seen', label: 'SEEN',      type: 'num',  cls: 'num dim', w: 64  },
+    { key: 'last', label: 'LAST SEEN', type: 'age',  cls: 'dim',     w: 96  },
 ];
 const LEGACY_SORT = { lastSeen: 'last', registration: 'reg', operator: 'opr', icao24: 'hex', selcal: 'sel', sightings: 'seen' };
 
@@ -164,7 +176,9 @@ function renderHeader() {
         const on = c.key === sortKey;
         const cls = [c.type === 'num' ? 'num' : '', on ? 'sorted' : ''].filter(Boolean).join(' ');
         const arrow = on ? `<span class="ar">${sortAsc ? '▲' : '▼'}</span>` : '';
-        return `<span data-col="${c.key}"${cls ? ` class="${cls}"` : ''} title="Sort by ${c.label}">${c.label}${arrow}</span>`;
+        return `<span data-col="${c.key}"${cls ? ` class="${cls}"` : ''}>`
+            + `<span class="hl" title="Sort by ${c.label}">${c.label}${arrow}</span>`
+            + `<i class="rsz" data-col="${c.key}" title="Drag to resize · double-click to fit"></i></span>`;
     }).join('');
 }
 
@@ -329,7 +343,113 @@ function renderViewport() {
 }
 
 // ── Events: sort, filters, search ───────────────────────────────────────────
+// ── Column widths (Excel-style) ─────────────────────────────────────────────
+// Drag a header's right edge to resize; double-click it to auto-fit the column to its content.
+// Widths persist per browser. --cols drives the header, filter row and data rows together.
+const COL_GAP = 6, ROW_PAD = 24;         // must match gap / horizontal padding in flight-table.css
+const MIN_W = 28, MAX_W = 900, MAX_FIT = 600;
+const WIDTH_KEY = 'aircraft-col-widths';
+const resetColsBtn = document.getElementById('resetCols');
+const widths = {};
+for (const c of COLS) widths[c.key] = c.w;
+try {
+    const saved = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
+    for (const c of COLS)
+        if (Number.isFinite(saved[c.key])) widths[c.key] = Math.min(MAX_W, Math.max(MIN_W, saved[c.key]));
+} catch {}
+// Swallow only the single click the browser generates at the end of a grip press, so a resize never
+// doubles as a sort. Cleared on the next task (that click is dispatched in the same task as pointerup).
+let suppressClick = false;
+function armClickSuppress() { suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); }
+
+function applyWidths() {
+    const px = COLS.map(c => Math.round(widths[c.key]));
+    listEl.style.setProperty('--cols', px.map(w => w + 'px').join(' '));
+    listEl.style.setProperty('--tablew', (px.reduce((a, b) => a + b, 0) + COL_GAP * (px.length - 1) + ROW_PAD) + 'px');
+    resetColsBtn.style.display = COLS.some(c => Math.round(widths[c.key]) !== c.w) ? '' : 'none';
+}
+function saveWidths() {
+    try { localStorage.setItem(WIDTH_KEY, JSON.stringify(widths)); } catch {}
+}
+
+// Auto-fit measures the widest value in the column across the filtered rows (plus the header label).
+const measureCtx = document.createElement('canvas').getContext('2d');
+function fontOf(el, fallback) {
+    if (!el) return fallback;
+    const s = getComputedStyle(el);
+    return `${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+}
+function textWidth(text, font) { measureCtx.font = font; return measureCtx.measureText(text).width; }
+function cellDisplay(key, r) {
+    switch (key) {
+        case 'reg': return r.reg || '—';
+        case 'seen': return r.seen.toLocaleString();
+        case 'last': return ago(r.last);
+        default: return r[key] || '';
+    }
+}
+function autoFit(key) {
+    const c = COLS.find(x => x.key === key);
+    const cellFont = fontOf(rowsEl.querySelector('.flight-row > span'), '12px Consolas, monospace');
+    const hdr = headEl.querySelector(`span[data-col="${key}"] .hl`);
+    const hdrFont = fontOf(hdr, '10px Consolas, monospace');
+    // Monospace font: the longest string is the widest, so measure just that one.
+    let longest = '';
+    for (const r of view) { const s = cellDisplay(key, r); if (s.length > longest.length) longest = s; }
+    const hdrW = textWidth(c.label + '▲', hdrFont) + c.label.length + 3;   // 1px letter-spacing + arrow gap
+    const want = Math.ceil(Math.max(textWidth(longest, cellFont), hdrW)) + 6;
+    widths[key] = Math.min(MAX_FIT, Math.max(MIN_W, want));
+    applyWidths();
+    saveWidths();
+}
+
+let drag = null, fitPending = false, lastDown = null;
+headEl.addEventListener('pointerdown', (e) => {
+    const grip = e.target.closest('.rsz');
+    if (!grip || e.button !== 0) return;
+    e.preventDefault();                       // no text selection / native drag while resizing
+    const key = grip.dataset.col, now = Date.now();
+    grip.setPointerCapture(e.pointerId);
+    // A second press on the same grip within 400ms is a double-click → auto-fit. Detected here rather
+    // than via 'dblclick', which Chrome doesn't reliably dispatch once pointerdown is preventDefault'ed
+    // (and this way a double-tap works on touch screens too).
+    if (lastDown && lastDown.key === key && now - lastDown.t < 400 && Math.abs(e.clientX - lastDown.x) < 6) {
+        lastDown = null;
+        fitPending = true;
+        autoFit(key);
+        return;
+    }
+    lastDown = { key, t: now, x: e.clientX };
+    drag = { key, grip, startX: e.clientX, startW: widths[key], raf: 0 };
+    grip.classList.add('active');
+    document.body.classList.add('col-resizing');
+});
+headEl.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    widths[drag.key] = Math.min(MAX_W, Math.max(MIN_W, drag.startW + (e.clientX - drag.startX)));
+    if (!drag.raf) drag.raf = requestAnimationFrame(() => { if (drag) drag.raf = 0; applyWidths(); });
+});
+function endDrag() {
+    if (fitPending) { fitPending = false; armClickSuppress(); return; }
+    if (!drag) return;
+    drag.grip.classList.remove('active');
+    document.body.classList.remove('col-resizing');
+    applyWidths();
+    saveWidths();
+    drag = null;
+    armClickSuppress();
+}
+headEl.addEventListener('pointerup', endDrag);
+headEl.addEventListener('pointercancel', endDrag);
+resetColsBtn.addEventListener('click', () => {
+    for (const c of COLS) widths[c.key] = c.w;
+    applyWidths();
+    try { localStorage.removeItem(WIDTH_KEY); } catch {}
+});
+applyWidths();
+
 headEl.addEventListener('click', (e) => {
+    if (suppressClick || e.target.closest('.rsz')) return;   // the click that ends a resize isn't a sort
     const span = e.target.closest('span[data-col]');
     if (!span) return;
     const c = COLS.find(x => x.key === span.dataset.col);

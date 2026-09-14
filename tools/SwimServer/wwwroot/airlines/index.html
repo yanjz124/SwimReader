@@ -66,6 +66,7 @@
     <select class="filter-select" id="cat">
         <option value="">All</option>
         <option value="mainline">Mainline</option>
+        <option value="lowcost">Low-cost / ULCC</option>
         <option value="regional">Regional</option>
         <option value="cargo">Cargo</option>
         <option value="charter">Charter</option>
@@ -91,7 +92,7 @@ const n1 = v => v == null ? '—' : (+v).toLocaleString(undefined, { maximumFrac
 const n2 = v => v == null ? '—' : (+v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const GROUPS = [
-    ['mainline', 'MAINLINE'], ['regional', 'REGIONAL'], ['cargo', 'CARGO'], ['charter', 'CHARTER / ACMI'],
+    ['mainline', 'MAINLINE'], ['lowcost', 'LOW-COST / ULCC'], ['regional', 'REGIONAL'], ['cargo', 'CARGO'], ['charter', 'CHARTER / ACMI'],
     ['other', 'OTHER OPERATORS SEEN — not in the Part 121 catalog'],
 ];
 const COLS = [

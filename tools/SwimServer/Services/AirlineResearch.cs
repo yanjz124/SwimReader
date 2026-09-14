@@ -64,12 +64,23 @@ sealed class AirlineResearch
         public AircraftFlightLog.Entry[]? Merged;
     }
 
-    private sealed class AptAcc { public string Code = ""; public long Dep, Arr, Stops; }
+    private sealed class AptAcc
+    {
+        public string Code = "";
+        public long Dep, Arr, Stops;
+        public readonly Dictionary<string, long[]> ByType = new(StringComparer.Ordinal);   // type → [dep, arr, stops]
+    }
+    private sealed class TypeRoute
+    {
+        public long N, AB, BA, AirMin, Timed;
+        public readonly HashSet<string> Tails = new(StringComparer.Ordinal);
+    }
     private sealed class RouteAcc
     {
         public string A = "", B = "";
         public long AB, BA, AirMin, Timed, Recent, Earlier;
         public readonly HashSet<string> Tails = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, TypeRoute> ByType = new(StringComparer.Ordinal);   // fleet-type breakdown
     }
     private sealed class DayAcc { public long Flights; public readonly HashSet<string> Tails = new(StringComparer.Ordinal); }
     private sealed class TypeAcc { public long Tails, Flights, AirMin, ActiveDays; }
@@ -537,6 +548,12 @@ sealed class AirlineResearch
             else if (code.Length > a.Code.Length) a.Code = code;   // prefer the ICAO spelling
             return a;
         }
+        // Per-fleet-type counters behind the network's type filter; "?" = tail with no known type.
+        static long[] AptType(AptAcc a, string type)
+        {
+            if (!a.ByType.TryGetValue(type, out var v)) a.ByType[type] = v = new long[3];
+            return v;
+        }
         var routes = new Dictionary<(string, string), RouteAcc>();
         var daily = new SortedDictionary<string, DayAcc>(StringComparer.Ordinal);
         var hourly = new long[24];
@@ -565,6 +582,7 @@ sealed class AirlineResearch
                 Type = meta?.Type ?? "",
                 Op = meta?.Operator,
             };
+            string ty = row.Type.Length > 0 ? row.Type : "?";
             var tailDays = new HashSet<string>(StringComparer.Ordinal);
             var active = new HashSet<string>(StringComparer.Ordinal);
             var others = new Dictionary<string, long>(StringComparer.Ordinal);
@@ -603,7 +621,12 @@ sealed class AirlineResearch
                         {
                             row.Stops++;
                             if (gap > row.LongestStop) row.LongestStop = gap;
-                            if (related && prev.D.Length > 0) Apt(prev.D).Stops++;
+                            if (related && prev.D.Length > 0)
+                            {
+                                var sa = Apt(prev.D);
+                                sa.Stops++;
+                                AptType(sa, ty)[2]++;
+                            }
                         }
                     }
                 }
@@ -632,8 +655,8 @@ sealed class AirlineResearch
                 if (!daily.TryGetValue(day, out var da)) daily[day] = da = new DayAcc();
                 da.Flights++;
                 da.Tails.Add(key);
-                if (f.O.Length > 0) Apt(f.O).Dep++;
-                if (f.D.Length > 0) Apt(f.D).Arr++;
+                if (f.O.Length > 0) { var oa = Apt(f.O); oa.Dep++; AptType(oa, ty)[0]++; }
+                if (f.D.Length > 0) { var dApt = Apt(f.D); dApt.Arr++; AptType(dApt, ty)[1]++; }
                 if (f.O.Length > 0 && f.D.Length > 0)
                 {
                     string ka = AircraftFlightLog.AptKey(f.O), kb = AircraftFlightLog.AptKey(f.D);
@@ -644,6 +667,11 @@ sealed class AirlineResearch
                     if (am > 0) { r.AirMin += am; r.Timed++; }
                     r.Tails.Add(key);
                     if (ft >= recentCut) r.Recent++; else r.Earlier++;
+                    if (!r.ByType.TryGetValue(ty, out var tr)) r.ByType[ty] = tr = new TypeRoute();
+                    tr.N++;
+                    if (fwd) tr.AB++; else tr.BA++;
+                    if (am > 0) { tr.AirMin += am; tr.Timed++; }
+                    tr.Tails.Add(key);
                 }
                 if (f.Op.Length > 0)
                 {
@@ -706,6 +734,13 @@ sealed class AirlineResearch
                 perWeek = Math.Round(total * 7 / span, 1),
                 avgMin = r.Timed > 0 ? r.AirMin / r.Timed : (long?)null,
                 nm, tails = r.Tails.Count, recent = r.Recent, earlier = r.Earlier,
+                // type → [flights, a→b, b→a, avg air minutes (−1 = none timed), tails]
+                byType = r.ByType.ToDictionary(kv => kv.Key, kv => new long[]
+                {
+                    kv.Value.N, kv.Value.AB, kv.Value.BA,
+                    kv.Value.Timed > 0 ? kv.Value.AirMin / kv.Value.Timed : -1,
+                    kv.Value.Tails.Count,
+                }),
             });
         }
 
@@ -716,6 +751,7 @@ sealed class AirlineResearch
             {
                 code = a.Code, name = info?.Name, city = info?.City, country = info?.Country,
                 lat = info?.Lat, lon = info?.Lon, dep = a.Dep, arr = a.Arr, stops = a.Stops,
+                byType = a.ByType,   // type → [dep, arr, stops]
             };
         }).ToList();
 

@@ -13,6 +13,7 @@
     [hidden] { display: none !important; }
     .cat { font-size: 9.5px; letter-spacing: 1px; padding: 1px 6px; border-radius: 2px; border: 1px solid #333; }
     .cat.mainline { color: #5588ff; border-color: #243a6a; }
+    .cat.lowcost { color: #88dd66; border-color: #2f5020; }
     .cat.regional { color: #39d2c0; border-color: #1d4a44; }
     .cat.cargo { color: #ff8844; border-color: #5a3018; }
     .cat.charter { color: #cc88ff; border-color: #442a5a; }
@@ -36,8 +37,10 @@
     .netmap { flex: 1; position: relative; min-width: 0; }
     #map { position: absolute; inset: 0; background: #0b0d10; }
     .darktiles { filter: invert(1) hue-rotate(180deg) saturate(0.35) brightness(0.55) contrast(1.1); }
-    .mapctl { position: absolute; top: 8px; right: 8px; z-index: 500; background: rgba(5,5,5,.9); border: 1px solid #333; padding: 6px 10px; font-size: 11px; color: #aaa; width: 230px; }
+    .mapctl { position: absolute; top: 8px; right: 8px; z-index: 500; background: rgba(5,5,5,.9); border: 1px solid #333; padding: 6px 10px; font-size: 11px; color: #aaa; width: 240px; }
     .mapctl input[type=range] { width: 100%; accent-color: #cccc44; }
+    .mapctl select { width: 100%; margin: 3px 0 7px; }
+    .mapctl .lbl { color: #666; font-size: 9.5px; letter-spacing: 1px; }
     .maplegend { position: absolute; bottom: 18px; left: 8px; z-index: 500; background: rgba(5,5,5,.9); border: 1px solid #333; padding: 6px 10px; font-size: 10px; color: #888; line-height: 1.7; }
     .sw { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 5px; }
     .netside { width: 400px; flex-shrink: 0; border-left: 1px solid #333; background: #050505; display: flex; flex-direction: column; min-height: 0; }
@@ -148,6 +151,8 @@
         <div class="netmap">
             <div id="map"></div>
             <div class="mapctl">
+                <div class="lbl">FLEET TYPE</div>
+                <select class="filter-select" id="netType"><option value="">All fleet types</option></select>
                 <div>Min frequency: <b id="minPwLabel" style="color:#cccc44">0</b> flights/week</div>
                 <input type="range" id="minPw" min="0" max="100" step="1" value="0">
                 <div id="routeShown" class="dim"></div>
@@ -218,16 +223,19 @@ const ago = t => {
 const aptKey = c => (c && c.length === 4 && (c[0] === 'K' || c[0] === 'P')) ? c.slice(1) : (c || '');
 const bestT = f => f.dep || f.first || f.last;
 const OSM = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const CAT_LABEL = { mainline: 'MAINLINE', lowcost: 'LOW-COST', regional: 'REGIONAL', cargo: 'CARGO', charter: 'CHARTER', other: 'OTHER' };
 
 const ICAO = decodeURIComponent(location.pathname.split('/')[2] || '').toUpperCase();
 let days = parseInt(new URLSearchParams(location.search).get('days') || '7', 10) || 7;
 let data = null, tab = 'network', loadTimer = null, aptByKey = new Map();
 let openTailKey = null;
+let fType = null;   // fleet-type filter, shared by the NETWORK map and the FLEET table
 
 // ── URL / header / KPIs ─────────────────────────────────────────────────────────
 function saveUrl() {
     const h = new URLSearchParams();
     if (tab !== 'network') h.set('tab', tab);
+    if (fType) h.set('type', fType);
     if (openTailKey) h.set('tail', openTailKey);
     history.replaceState(null, '', `/airlines/${encodeURIComponent(ICAO)}?days=${days}` + (h.toString() ? '#' + h : ''));
 }
@@ -246,7 +254,7 @@ function renderHeader() {
     $('title').textContent = `${ICAO} · ${name}`;
     const cat = c ? c.category : 'other';
     $('cat').className = 'cat ' + cat;
-    $('cat').textContent = cat.toUpperCase();
+    $('cat').textContent = CAT_LABEL[cat] || cat.toUpperCase();
     const partners = c && c.partners && c.partners.length ? 'flies for ' + c.partners.join(' · ') : '';
     $('partners').textContent = [partners, c && c.note].filter(Boolean).join(' — ');
     $('partners').title = c ? [c.note, c.confidence ? 'catalog confidence: ' + c.confidence : ''].filter(Boolean).join(' — ')
@@ -288,7 +296,7 @@ async function load() {
     renderHeader();
     renderKpis();
     renderWindow();
-    setupSlider();
+    renderTypeSelect();
     renderTab();
     $('status').textContent = data.ready ? 'ready' : 'indexing…';
     $('status').className = data.ready ? 'status ok' : 'status';
@@ -311,15 +319,9 @@ function renderTab() {
     document.querySelectorAll('.tabbar2 .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     for (const p of ['network', 'fleet', 'intel']) $('pane-' + p).hidden = p !== tab;
     if (!data) return;
-    const notes = {
-        network: `${n0(data.routes.length)} routes · ${n0(data.airports.length)} airports · last ${days}D (UTC)`,
-        fleet: `${n0(data.tails.length)} tails · estimates from SWIM last-seen times`,
-        intel: 'Patterns and cross-checks',
-    };
-    $('tabnote').textContent = notes[tab];
     if (tab === 'network') renderNetwork();
-    else if (tab === 'fleet') renderFleet();
-    else renderIntel();
+    else if (tab === 'fleet') { renderFleet(); $('tabnote').textContent = `${n0(data.tails.length)} tails · estimates from SWIM last-seen times`; }
+    else { renderIntel(); $('tabnote').textContent = 'Patterns and cross-checks (whole carrier)'; }
 }
 
 // ── Shared table helpers ────────────────────────────────────────────────────────
@@ -339,11 +341,42 @@ function toggleSort(s, k, textKeys) {
     if (s.k === k) s.asc = !s.asc;
     else { s.k = k; s.asc = textKeys.includes(k); }
 }
+const typeLabel = t => t === '?' ? 'Unknown type' : t;
 
 // ── NETWORK ─────────────────────────────────────────────────────────────────────
 let map = null, routeLayer = null, aptLayer = null, netFitted = false;
 let selApt = null, minPw = 0, sideTab = 'routes';
 const rSort = { k: 'perWeek', asc: false }, aSort = { k: 'moves', asc: false };
+
+function renderTypeSelect() {
+    const types = data.types.map(t => t.type);
+    if (data.routes.some(r => r.byType && r.byType['?'])) types.push('?');
+    if (fType && !types.includes(fType)) fType = null;
+    $('netType').innerHTML = '<option value="">All fleet types</option>' + types.map(t => {
+        const info = data.types.find(x => x.type === t);
+        return `<option value="${esc(t)}">${esc(typeLabel(t))}${info ? ` · ${n0(info.tails)} tails` : ''}</option>`;
+    }).join('');
+    $('netType').value = fType || '';
+}
+
+// Routes and airports as the map shows them: the whole carrier, or only the selected fleet type's flights (each route
+// and airport carries a per-type breakdown; frequencies are re-derived from that type's own flights).
+function netView() {
+    if (!fType) return { routes: data.routes, airports: data.airports };
+    const span = data.span || days, routes = [], airports = [];
+    for (const r of data.routes) {
+        const b = r.byType && r.byType[fType];
+        if (!b || !b[0]) continue;
+        routes.push({ ...r, total: b[0], ab: b[1], ba: b[2], avgMin: b[3] >= 0 ? b[3] : undefined, tails: b[4],
+                      perWeek: Math.round(b[0] * 70 / span) / 10 });
+    }
+    for (const a of data.airports) {
+        const b = a.byType && a.byType[fType];
+        if (!b || b[0] + b[1] + b[2] === 0) continue;
+        airports.push({ ...a, dep: b[0], arr: b[1], stops: b[2] });
+    }
+    return { routes, airports };
+}
 
 function ensureMap() {
     if (map) return;
@@ -377,9 +410,10 @@ function gcPoints(a, b, nm) {
 
 function routeColor(pw) { return pw >= 70 ? '#ffdd55' : pw >= 21 ? '#cccc44' : pw >= 7 ? '#9a9a3a' : '#5d6a48'; }
 function touches(r, k) { return aptKey(r.a) === k || aptKey(r.b) === k; }
+const shownRoutes = nv => nv.routes.filter(r => (r.perWeek || 0) >= minPw);
 
-function setupSlider() {
-    const maxPw = Math.max(1, ...data.routes.map(r => r.perWeek || 0));
+function setupSlider(nv) {
+    const maxPw = Math.max(1, ...nv.routes.map(r => r.perWeek || 0));
     const s = $('minPw');
     s.max = Math.ceil(maxPw);
     if (minPw > maxPw) minPw = 0;
@@ -390,10 +424,13 @@ function setupSlider() {
 function renderNetwork() {
     ensureMap();
     setTimeout(() => map.invalidateSize(), 0);
+    const nv = netView();
+    if (selApt && !nv.airports.some(a => aptKey(a.code) === selApt)) selApt = null;
+    setupSlider(nv);
     routeLayer.clearLayers();
     aptLayer.clearLayers();
-    const maxPw = Math.max(1, ...data.routes.map(r => r.perWeek || 0));
-    const shown = data.routes.filter(r => (r.perWeek || 0) >= minPw);
+    const maxPw = Math.max(1, ...nv.routes.map(r => r.perWeek || 0));
+    const shown = shownRoutes(nv);
     const connected = new Set();
     if (selApt) shown.forEach(r => { if (touches(r, selApt)) { connected.add(aptKey(r.a)); connected.add(aptKey(r.b)); } });
 
@@ -406,12 +443,12 @@ function renderNetwork() {
         const line = L.polyline(gcPoints([A.lat, A.lon], [B.lat, B.lon], r.nm), {
             color: routeColor(pw), weight: 0.7 + 3.3 * rel, opacity: on ? 0.45 + 0.5 * rel : 0.05, interactive: on,
         });
-        line.bindTooltip(`<b>${esc(r.a)} ↔ ${esc(r.b)}</b><br>${n1(pw)} flights/week · ${n0(r.total)} in window (${n0(r.ab)} → / ${n0(r.ba)} ←)`
+        line.bindTooltip(`<b>${esc(r.a)} ↔ ${esc(r.b)}</b>${fType ? ' · ' + esc(typeLabel(fType)) : ''}<br>${n1(pw)} flights/week · ${n0(r.total)} in window (${n0(r.ab)} → / ${n0(r.ba)} ←)`
             + `<br>${r.avgMin != null ? 'avg air ' + hm(r.avgMin) + ' · ' : ''}${r.nm != null ? n0(r.nm) + ' nm · ' : ''}${n0(r.tails)} tails`, { sticky: true, className: 'tt' });
         routeLayer.addLayer(line);
     }
-    const maxMv = Math.max(1, ...data.airports.map(a => a.dep + a.arr));
-    for (const a of data.airports) {
+    const maxMv = Math.max(1, ...nv.airports.map(a => a.dep + a.arr));
+    for (const a of nv.airports) {
         if (a.lat == null) continue;
         const k = aptKey(a.code);
         const on = !selApt || k === selApt || connected.has(k);
@@ -430,8 +467,10 @@ function renderNetwork() {
         const pts = data.airports.filter(a => a.lat != null).map(a => [a.lat, a.lon]);
         if (pts.length) { map.fitBounds(pts, { padding: [30, 30], maxZoom: 7 }); netFitted = true; }
     }
-    $('routeShown').textContent = `${n0(shown.length)} of ${n0(data.routes.length)} routes shown`;
-    renderSide(shown);
+    const typeNote = fType ? ` · ${typeLabel(fType)} only` : '';
+    $('routeShown').textContent = `${n0(shown.length)} of ${n0(nv.routes.length)} routes shown${typeNote}`;
+    $('tabnote').textContent = `${n0(nv.routes.length)} routes · ${n0(nv.airports.length)} airports${typeNote} · last ${days}D (UTC)`;
+    renderSide(nv, shown);
 }
 
 function selectAirport(k) {
@@ -443,8 +482,8 @@ function selectAirport(k) {
     }
 }
 
-function renderSide(shown) {
-    const sel = selApt ? aptByKey.get(selApt) : null;
+function renderSide(nv, shown) {
+    const sel = selApt ? nv.airports.find(a => aptKey(a.code) === selApt) : null;
     $('sideHead').innerHTML = sel
         ? `<b>${esc(sel.code)}</b> ${esc(sel.name || '')}${sel.city ? ' · ' + esc(sel.city) : ''}<br>${n0(sel.dep)} departures · ${n0(sel.arr)} arrivals · ${n0(sel.stops)} long stops · <a href="#" id="clearApt">show all</a>`
         : `Click an airport on the map or in the list to isolate its routes.`;
@@ -465,10 +504,10 @@ function renderSide(shown) {
             { k: 'code', l: 'AIRPORT' }, { k: 'city', l: 'CITY' }, { k: 'dep', l: 'DEP', num: 1 }, { k: 'arr', l: 'ARR', num: 1 },
             { k: 'stops', l: 'LONG STOPS', num: 1, tip: 'Ground stops of 5 h or more at this airport' },
         ];
-        let rows = data.airports;
+        let rows = nv.airports;
         if (selApt) {
             const conn = new Set([selApt]);
-            data.routes.forEach(r => { if (touches(r, selApt)) { conn.add(aptKey(r.a)); conn.add(aptKey(r.b)); } });
+            nv.routes.forEach(r => { if (touches(r, selApt)) { conn.add(aptKey(r.a)); conn.add(aptKey(r.b)); } });
             rows = rows.filter(a => conn.has(aptKey(a.code)));
         }
         rows = sortRows(rows, aSort, (a, k) => k === 'moves' ? a.dep + a.arr : a[k]);
@@ -479,6 +518,16 @@ function renderSide(shown) {
     }
 }
 
+function rerenderSide() {
+    const nv = netView();
+    renderSide(nv, shownRoutes(nv));
+}
+
+$('netType').addEventListener('change', () => {
+    fType = $('netType').value || null;
+    saveUrl();
+    renderNetwork();
+});
 $('minPw').addEventListener('input', () => {
     minPw = +$('minPw').value;
     $('minPwLabel').textContent = minPw;
@@ -489,7 +538,7 @@ document.querySelector('.sidetabs').addEventListener('click', e => {
     const t = e.target.closest('[data-side]');
     if (!t) return;
     sideTab = t.dataset.side;
-    renderSide(data.routes.filter(r => (r.perWeek || 0) >= minPw));
+    rerenderSide();
 });
 $('sideHead').addEventListener('click', e => {
     if (e.target.id === 'clearApt') { e.preventDefault(); selectAirport(null); }
@@ -500,7 +549,7 @@ $('sideBody').addEventListener('click', e => {
         const which = th.closest('table').dataset.table;
         if (which === 'routes') toggleSort(rSort, th.dataset.k, ['route']);
         else toggleSort(aSort, th.dataset.k, ['code', 'city']);
-        renderSide(data.routes.filter(r => (r.perWeek || 0) >= minPw));
+        rerenderSide();
         return;
     }
     const rt = e.target.closest('tr[data-route]');
@@ -516,7 +565,6 @@ $('sideBody').addEventListener('click', e => {
 
 // ── FLEET ───────────────────────────────────────────────────────────────────────
 const fSort = { k: 'flights', asc: false };
-let fType = null;
 const FCOLS = [
     { k: 'reg', l: 'REG' }, { k: 'hex', l: 'ICAO24' }, { k: 'type', l: 'TYPE' },
     { k: 'flights', l: 'FLIGHTS', num: 1 },
@@ -544,7 +592,8 @@ function renderFleet() {
         + `<b>${esc(t.type)}</b> ${n0(t.tails)} tails · ${n2(t.hpd)} h/day · ${n2(t.flightsPerDay)} legs/day</span>`).join('')
         || '<span class="dim">No aircraft type data</span>';
     const q = $('fleetQ').value.trim().toUpperCase();
-    let rows = data.tails.filter(t => (!fType || t.type === fType)
+    const matchesType = t => !fType || (fType === '?' ? !t.type : t.type === fType);
+    let rows = data.tails.filter(t => matchesType(t)
         && (!q || [t.reg, t.hex, t.type, t.lastAt, t.lastCs, (t.other || []).join(' ')].some(v => (v || '').toUpperCase().includes(q))));
     const med = median(data.tails.map(t => t.hpd));
     rows = sortRows(rows, fSort, (t, k) => k === 'other' ? (t.other || []).join(',') : t[k]);
@@ -568,13 +617,15 @@ function renderFleet() {
             <td class="dim">${esc((t.other || []).join(' '))}</td>
         </tr>`;
     }).join('') + '</tbody></table>';
-    $('fleetCount').textContent = `${rows.length} of ${data.tails.length} tails · median ${n2(med)} air h/day`;
+    $('fleetCount').textContent = `${rows.length} of ${data.tails.length} tails${fType ? ' · ' + typeLabel(fType) : ''} · median ${n2(med)} air h/day`;
 }
 
 $('types').addEventListener('click', e => {
     const c = e.target.closest('[data-type]');
     if (!c) return;
     fType = fType === c.dataset.type ? null : c.dataset.type;
+    $('netType').value = fType || '';
+    saveUrl();
     renderFleet();
 });
 let fleetTimer;
@@ -787,7 +838,7 @@ function hbars(items, color) {
         + `<span class="hbar"><i style="width:${(100 * x.v / max).toFixed(1)}%;background:${color}"></i></span><span class="hv">${n0(x.v)}</span></div>`).join('');
 }
 
-function mini(headers, rows, keyAttr) {
+function mini(headers, rows) {
     if (!rows.length) return '<div class="loading">None in this window</div>';
     return `<div class="scroll"><table class="mini"><thead><tr>${headers.map(h => `<th class="${h.num ? 'num' : ''}">${h.l}</th>`).join('')}</tr></thead><tbody>`
         + rows.map(r => `<tr${r.key ? ` data-key="${esc(r.key)}"` : ''}>${r.cells.map((c, i) => `<td class="${headers[i].num ? 'num' : ''} ${c.cls || ''}">${c.html ?? esc(c)}</td>`).join('')}</tr>`).join('')
@@ -812,7 +863,7 @@ function renderIntel() {
     out.push(card('FLEET TYPES', 'Utilization by aircraft type',
         mini([{ l: 'TYPE' }, { l: 'TAILS', num: 1 }, { l: 'FLIGHTS', num: 1 }, { l: 'H/TAIL/DAY', num: 1 }, { l: 'LEGS/DAY', num: 1 }],
             data.types.map(t => ({ cells: [t.type, n0(t.tails), n0(t.flights), n2(t.hpd), n2(t.flightsPerDay)] })))));
-    out.push(card('OPERATOR FIELD vs CALLSIGN', s.opMatchPct != null ? `${n1(s.opMatchPct)}% of flights file an operator that resolves to ${esc(ICAO)}` : 'No operator filed',
+    out.push(card('OPERATOR FIELD vs CALLSIGN', s.opMatchPct != null ? `${n1(s.opMatchPct)}% of flights file an operator that resolves to ${esc(ICAO)}` : 'No resolvable operator filed',
         mini([{ l: 'FILED OPERATOR' }, { l: 'FLIGHTS', num: 1 }, { l: 'RESOLVES TO' }, { l: '' }],
             data.ops.map(o => ({ cells: [o.op, n0(o.flights), o.resolved || '—',
                 o.match ? { html: '<span class="good">✓</span>' }
@@ -845,6 +896,8 @@ $('intel').addEventListener('click', e => {
     const ap = e.target.closest('[data-apt]');
     if (ap) {
         tab = 'network';
+        fType = null;   // bases are carrier-wide, so show the whole network around them
+        $('netType').value = '';
         selApt = aptKey(ap.dataset.apt);
         saveUrl();
         renderTab();
@@ -870,6 +923,7 @@ $('win').addEventListener('click', e => {
 (function init() {
     const h = new URLSearchParams(location.hash.slice(1));
     if (['network', 'fleet', 'intel'].includes(h.get('tab'))) tab = h.get('tab');
+    fType = h.get('type') || null;
     openTailKey = h.get('tail');
     if (!/^[A-Z0-9]{2,4}$/.test(ICAO)) { notFound(); return; }
     $('title').textContent = ICAO;

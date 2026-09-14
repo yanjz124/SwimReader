@@ -9,7 +9,9 @@ namespace SwimServer;
 
 /// <summary>
 /// Permanent, dated flight log for every airframe in the aircraft database: one entry per flight with its
-/// departure time, callsign, origin and destination. Kept forever (deliberately not budget-managed).
+/// departure time, callsign, origin and destination. Kept forever (deliberately not budget-managed). Only flights
+/// that actually flew are logged — a position report or an actual departure time; ~45% of purged flight plans have
+/// neither (mostly PROPOSED plans that were refiled, cancelled or never activated) and would show as phantom flights.
 ///
 /// Storage: append-only CSV lines <c>key,dep,first,last,callsign,origin,dest</c> (epoch seconds; dep is 0 when
 /// the feed never gave an actual departure time), sharded by a hash of the airframe key into 1,024 files under
@@ -82,16 +84,19 @@ sealed class AircraftFlightLog
         string.IsNullOrWhiteSpace(reg) ? null : reg.Trim().ToUpperInvariant();
 
     /// <summary>
-    /// Normalized registration, or null when it isn't one. Some operators file the aircraft TYPE in the
-    /// registration field (Cape Air: REG "P212" on every Tecnam P2012, "C402" on its Cessna 402s); keyed as a
-    /// tail, that would merge a whole fleet into one fake airframe. No real registration equals an ICAO type
-    /// designator, so a match means "no registration".
+    /// Normalized registration, or null when it isn't one. Some operators file a type designator or placeholder
+    /// in the registration field — Cape Air sends "P212" on its Tecnam P2012s AND on its Cessna 402 flights —
+    /// and keyed as a tail that merges a whole fleet into one fake airframe. Rejected: a value equal to the
+    /// flight's own type, and any 2–4 character value that isn't a US N-number (real registrations elsewhere are
+    /// 5+ characters once the hyphen is dropped: G-ABCD, C-GABC, PJ-WII, B-1234). Short N-numbers (N1, N12) stay.
     /// </summary>
     public static string? CleanReg(string? reg, string? type)
     {
         var r = NormReg(reg);
-        return r != null && !string.IsNullOrWhiteSpace(type)
-               && string.Equals(r, type.Trim(), StringComparison.OrdinalIgnoreCase) ? null : r;
+        if (r == null) return null;
+        if (!string.IsNullOrWhiteSpace(type) && string.Equals(r, type.Trim(), StringComparison.OrdinalIgnoreCase)) return null;
+        if (r.Replace("-", "").Length <= 4 && r[0] != 'N') return null;
+        return r;
     }
 
     public static string KeyFor(string? hex, string? reg) => hex ?? "REG:" + reg;
@@ -273,11 +278,36 @@ sealed class AircraftFlightLog
     private static long MinPositive(long a, long b) => a <= 0 ? b : b <= 0 ? a : Math.Min(a, b);
 
     // ── Start / backfill ──
+
+    // Log format version. Bump ONLY for a change that makes existing lines wrong: a bump wipes the log and
+    // re-imports it from flight-history, which is budget-capped — once history has rolled past the log's oldest
+    // day, bumping would PERMANENTLY lose those flights.
+    //   v1: every purged flight plan.   v2: only flights that flew (position report or actual departure).
+    private const int LogVersion = 2;
+
+    private void MigrateFormat()
+    {
+        var verFile = Path.Combine(_dir, "format-version.txt");
+        int ver;
+        if (File.Exists(verFile) && int.TryParse(File.ReadAllText(verFile).Trim(), out var v)) ver = v;
+        else ver = Directory.EnumerateFiles(_dir, "*.csv").Any() ? 1 : LogVersion;   // no file: v1 log, or brand new
+
+        if (ver < LogVersion)
+        {
+            int n = 0;
+            foreach (var f in Directory.GetFiles(_dir, "*.csv")) { File.Delete(f); n++; }
+            var done = Path.Combine(_dir, "backfill-done.txt");
+            if (File.Exists(done)) File.Delete(done);
+            Console.WriteLine($"[AIRCRAFT] Flight log format v{ver} → v{LogVersion}: cleared {n} shard(s), rebuilding from flight-history");
+        }
+        if (ver < LogVersion || !File.Exists(verFile)) File.WriteAllText(verFile, LogVersion + "\n");
+    }
     /// <summary>Start the background writer and the one-time, resumable history backfill.</summary>
     public void Start(Action<HistoryRow>? onBackfillRow = null, Action? onBackfillComplete = null)
     {
         if (Interlocked.Exchange(ref _started, 1) == 1) return;
         Directory.CreateDirectory(_dir);
+        MigrateFormat();
         RepairTornTails();
         _ = Task.Run(WriterLoop);
         var t = new Thread(() => Backfill(onBackfillRow, onBackfillComplete))
@@ -364,7 +394,8 @@ sealed class AircraftFlightLog
                         if (burst.ElapsedMilliseconds >= 100) { WriteBatch(batch); Thread.Sleep(100); burst.Restart(); }
                         var h = ParseHistoryLine(line);
                         if (h == null) continue;
-                        onRow?.Invoke(h.Value.Row);
+                        onRow?.Invoke(h.Value.Row);          // the airframe is real even if this plan never flew
+                        if (!h.Value.Flew) continue;          // …but only flights that flew go in the log
                         var e = MakeEntry(h.Value.Dep, h.Value.First, h.Value.Last, h.Value.Row.Cs, h.Value.Row.O, h.Value.Row.D);
                         var key = h.Value.Row.Key;
                         if (e.T <= 0 || key.Contains(',') || SeenRecently(key, e)) continue;
@@ -392,7 +423,7 @@ sealed class AircraftFlightLog
         finally { _backfillRunning = false; }
     }
 
-    private readonly record struct Parsed(HistoryRow Row, long Dep, long First, long Last);
+    private readonly record struct Parsed(HistoryRow Row, long Dep, long First, long Last, bool Flew);
 
     /// <summary>
     /// Pull the needed fields out of one flight-history JSON line without parsing all of it. The airframe/flight
@@ -418,7 +449,10 @@ sealed class AircraftFlightLog
             Field(line, "wakeCategory", 0, end), Field(line, "equipmentQualifier", 0, end),
             Field(line, "callsign", 0, end), Field(line, "origin", 0, end), Field(line, "destination", 0, end),
             DateTimeOffset.FromUnixTimeSeconds(seen).UtcDateTime);
-        return new Parsed(row, dep, first, last);
+        // Flew = an actual departure, or any position report. History is written with nulls omitted, so a
+        // "latitude" key means a position existed ("targetLatitude" can't match: case + the leading quote).
+        bool flew = dep > 0 || line.IndexOf("\"latitude\":", 0, end, StringComparison.Ordinal) >= 0;
+        return new Parsed(row, dep, first, last, flew);
     }
 
     /// <summary>Value of the first <c>"key":"…"</c> string property within [start, end).</summary>

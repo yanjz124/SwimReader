@@ -63,6 +63,10 @@ sealed class AircraftDb
             f.Callsign, f.Origin, f.Destination, seen);
         if (hex == null && reg == null) return;
 
+        // Log only flights that actually flew. ~45% of purged flight plans never got a position or an actual
+        // departure (mostly PROPOSED plans that were refiled, cancelled or never activated).
+        if (!f.Latitude.HasValue && string.IsNullOrEmpty(f.ActualDepartureTime)) return;
+
         var events = f.GetAllEvents();   // chronological — the first is when the feed first saw this GUFI
         long firstSeen = events.Count > 0 ? AircraftFlightLog.ParseEpoch(events[0].Time) : 0;
         _log.Record(KeyFor(hex, reg), AircraftFlightLog.MakeEntry(

@@ -207,6 +207,21 @@ var aircraftDb = new AircraftDb(Directory.GetCurrentDirectory(), historyDir);
 aircraftDb.Load();
 aircraftDb.StartFlightLog();
 
+// Airline research — per-carrier route network, fleet utilization and operating patterns from the flight log.
+// Airport coordinates come from OurAirports (worldwide, cached monthly) with NASR as the US fallback. The index
+// subscribes to the flight log before any flights are purged, then loads its window in the background.
+var airportDir = new AirportDirectory(Path.Combine(Directory.GetCurrentDirectory(), "airport-data"), code =>
+{
+    var nasr = nasrData;
+    var pt = nasr == null ? null : NasrService.LookupAirport(code, nasr);
+    return pt == null ? null : (pt.Lat, pt.Lon);
+});
+airportDir.StartAsync();
+var airlineWindowDays = int.TryParse(Environment.GetEnvironmentVariable("AIRLINE_WINDOW_DAYS"), out var awd) && awd is >= 7 and <= 400 ? awd : 90;
+var airlineResearch = new AirlineResearch(aircraftDb.Log, aircraftDb.TailMeta, airportDir.Find,
+    Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "airlines", "carriers.json"), airlineWindowDays);
+airlineResearch.Start();
+
 // FAA LADD (Limiting Aircraft Data Displayed) compliance — load the block list
 // before Solace connects so blocked aircraft are dropped from the first message.
 LaddService.Init(Directory.GetCurrentDirectory());
@@ -1362,6 +1377,7 @@ var incidentArchive = new SwimServer.IncidentArchive(
 IncidentRoutes.Register(app, incidentArchive);
 replayServer.MapIncidentEndpoints(app, incidentsDir);
 AircraftRoutes.Register(app, aircraftDb);
+AirlineRoutes.Register(app, airlineResearch, airportDir);
 
 await solaceReady.Task;
 

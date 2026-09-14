@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Airline Research</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛫</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/shared/common.css?v=3">
+<link rel="stylesheet" href="/flight-table/flight-table.css?v=7">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
+<style>
+    [hidden] { display: none !important; }
+    .topbar .back { color: #888; text-decoration: none; font-size: 11px; border: 1px solid #333; padding: 2px 8px; border-radius: 2px; }
+    .topbar .back:hover { color: #cccc44; border-color: #cccc44; }
+    .cat { font-size: 9.5px; letter-spacing: 1px; padding: 1px 6px; border-radius: 2px; border: 1px solid #333; }
+    .cat.mainline { color: #5588ff; border-color: #243a6a; }
+    .cat.regional { color: #39d2c0; border-color: #1d4a44; }
+    .cat.cargo { color: #ff8844; border-color: #5a3018; }
+    .cat.charter { color: #cc88ff; border-color: #442a5a; }
+    .cat.other { color: #888; }
+    .partners { font-size: 11px; color: #888; max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .seg { display: inline-flex; border: 1px solid #333; border-radius: 2px; overflow: hidden; }
+    .seg button { background: #111; color: #888; border: 0; border-right: 1px solid #333; font: inherit; font-size: 11px; padding: 3px 9px; cursor: pointer; }
+    .seg button:last-child { border-right: 0; }
+    .seg button.on { background: #2a2a10; color: #cccc44; }
+
+    .kpis { display: flex; flex-wrap: wrap; gap: 1px; background: #1c1c1c; border-bottom: 1px solid #333; flex-shrink: 0; }
+    .kpi { background: #080808; padding: 6px 14px 5px; min-width: 112px; flex: 1; cursor: help; }
+    .kpi .v { color: #fff; font-size: 16px; }
+    .kpi .l { color: #555; font-size: 9px; letter-spacing: 1px; margin-top: 1px; white-space: nowrap; }
+    .tabbar2 { display: flex; align-items: center; border-bottom: 1px solid #333; background: #0a0a0a; flex-shrink: 0; }
+    .tabnote { margin-left: auto; padding-right: 14px; font-size: 10px; color: #555; }
+    .banner { padding: 6px 16px; background: #1a1400; color: #cccc44; font-size: 11px; border-bottom: 1px solid #332a00; flex-shrink: 0; }
+
+    .pane { flex: 1; min-width: 0; min-height: 0; display: flex; }
+    #pane-network { flex-direction: row; }
+    .netmap { flex: 1; position: relative; min-width: 0; }
+    #map { position: absolute; inset: 0; background: #0b0d10; }
+    .darktiles { filter: invert(1) hue-rotate(180deg) saturate(0.35) brightness(0.55) contrast(1.1); }
+    .mapctl { position: absolute; top: 8px; right: 8px; z-index: 500; background: rgba(5,5,5,.9); border: 1px solid #333; padding: 6px 10px; font-size: 11px; color: #aaa; width: 230px; }
+    .mapctl input[type=range] { width: 100%; accent-color: #cccc44; }
+    .maplegend { position: absolute; bottom: 18px; left: 8px; z-index: 500; background: rgba(5,5,5,.9); border: 1px solid #333; padding: 6px 10px; font-size: 10px; color: #888; line-height: 1.7; }
+    .sw { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 5px; }
+    .netside { width: 400px; flex-shrink: 0; border-left: 1px solid #333; background: #050505; display: flex; flex-direction: column; min-height: 0; }
+    .sidehead { padding: 8px 12px; border-bottom: 1px solid #222; font-size: 11px; color: #888; line-height: 1.5; }
+    .sidehead b { color: #fff; font-weight: normal; }
+    .sidehead a { color: #cccc44; }
+    .sidetabs { display: flex; border-bottom: 1px solid #333; }
+    .sidebody { flex: 1; overflow: auto; }
+    .leaflet-tooltip.tt { background: #0a0a0a; color: #ddd; border: 1px solid #444; font-family: Consolas, 'Courier New', monospace; font-size: 11px; box-shadow: none; }
+    .leaflet-tooltip.tt:before { display: none; }
+    .leaflet-container { font-family: Consolas, 'Courier New', monospace; }
+
+    table.mini { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+    table.mini th { position: sticky; top: 0; z-index: 1; background: #050505; color: #555; font-weight: normal; font-size: 9.5px; letter-spacing: 1px; text-align: left; padding: 5px 8px; border-bottom: 1px solid #222; cursor: pointer; white-space: nowrap; user-select: none; }
+    table.mini th.sorted, table.mini th:hover { color: #cccc44; }
+    table.mini td { padding: 3px 8px; border-bottom: 1px solid #0f0f0f; white-space: nowrap; }
+    table.mini tbody tr[data-route], table.mini tbody tr[data-apt], table.mini tbody tr[data-key] { cursor: pointer; }
+    table.mini tr:hover td { background: #0c0c0c; }
+    .num { text-align: right; }
+
+    #pane-fleet { flex-direction: column; }
+    .types { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #222; flex-shrink: 0; }
+    .tchip { border: 1px solid #333; background: #0a0a0a; padding: 4px 10px; font-size: 11px; color: #999; cursor: pointer; }
+    .tchip b { color: #fff; font-weight: normal; }
+    .tchip.on { border-color: #cccc44; color: #cccc44; }
+    .fleetbar { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid #222; flex-shrink: 0; }
+    .list { flex: 1; overflow: auto; }
+    table.grid { border-collapse: collapse; width: 100%; min-width: 1250px; font-size: 12px; }
+    table.grid thead th { position: sticky; top: 0; z-index: 2; background: #050505; color: #555; font-weight: normal; font-size: 10px; letter-spacing: 1px; text-align: left; padding: 7px 9px; border-bottom: 1px solid #333; cursor: pointer; user-select: none; white-space: nowrap; }
+    table.grid thead th:hover, table.grid thead th.sorted { color: #cccc44; }
+    table.grid .num { text-align: right; }
+    table.grid tbody td { padding: 4px 9px; border-bottom: 1px solid #111; white-space: nowrap; }
+    table.grid tbody tr { cursor: pointer; }
+    table.grid tbody tr:hover td { background: #0c0c0c; }
+    table.grid tbody tr.sel td { background: #10140a; }
+    .reg { color: #fff; }
+    .dim { color: #777; }
+    .warn { color: #ff8844; }
+    .good { color: #44aa44; }
+    .cs-mine { color: #cccc44; }
+    .cs-other { color: #5588ff; }
+    .cs-nonrev { color: #ff8844; }
+
+    #pane-intel { overflow: auto; display: block; }
+    .intel { display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr)); gap: 10px; padding: 12px; }
+    .card2 { background: #070707; border: 1px solid #222; padding: 10px 12px; min-width: 0; }
+    .card2.wide { grid-column: 1 / -1; }
+    .card2 h3 { font-size: 10px; letter-spacing: 1px; color: #999; font-weight: normal; margin-bottom: 3px; }
+    .card2 .sub { font-size: 10.5px; color: #555; margin-bottom: 8px; }
+    .card2 .scroll { max-height: 300px; overflow: auto; }
+    .hb { display: grid; grid-template-columns: 170px 1fr 54px; gap: 8px; align-items: center; font-size: 11px; padding: 2px 0; }
+    .hb[data-apt] { cursor: pointer; }
+    .hb:hover .hl { color: #cccc44; }
+    .hb .hl { color: #aaa; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hbar { background: #111; height: 9px; }
+    .hbar i { display: block; height: 100%; }
+    .hv { text-align: right; color: #ccc; }
+    svg text { font-family: Consolas, 'Courier New', monospace; }
+
+    .drawer { width: 580px; flex-shrink: 0; background: #050505; border-left: 1px solid #333; display: flex; flex-direction: column; min-height: 0; }
+    .drawer.collapsed { display: none; }
+    .dhead { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid #333; flex-shrink: 0; }
+    .dhead .dreg { color: #fff; font-size: 16px; letter-spacing: 1px; }
+    .dhead .dtype { color: #888; font-size: 12px; }
+    .dhead a { color: #cccc44; font-size: 11px; text-decoration: none; border: 1px solid #4a4a2a; padding: 1px 7px; }
+    .dclose { margin-left: auto; cursor: pointer; color: #555; font-size: 18px; padding: 0 4px; }
+    .dclose:hover { color: #fff; }
+    .dbody { flex: 1; overflow: auto; padding: 10px 14px; }
+    #tailMap { height: 240px; background: #0b0d10; border: 1px solid #222; margin-bottom: 10px; }
+    .tstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: #222; margin-bottom: 10px; }
+    .tstats div { background: #0a0a0a; padding: 5px 8px; }
+    .tstats .v { color: #fff; font-size: 13px; }
+    .tstats .l { color: #555; font-size: 9px; letter-spacing: 1px; }
+    .dsec { font-size: 10px; letter-spacing: 1px; color: #666; margin: 12px 0 5px; border-bottom: 1px solid #1a1a1a; padding-bottom: 3px; }
+    .loading { color: #555; font-size: 11px; padding: 10px 0; }
+    .empty { padding: 40px; color: #666; font-size: 12px; line-height: 1.7; }
+
+    @media (max-width: 900px) {
+        #pane-network { flex-direction: column; }
+        .netmap { min-height: 52vh; flex: none; }
+        .netside { width: auto; border-left: 0; border-top: 1px solid #333; flex: 1; }
+        .drawer { position: fixed; inset: 0; width: auto; z-index: 1000; }
+        .intel { grid-template-columns: 1fr; }
+        .partners { display: none; }
+    }
+</style>
+</head>
+<body>
+<a class="nav-home" href="/">&larr; HOME</a>
+<div class="topbar" style="padding-left:100px">
+    <a class="back" href="/airlines" id="backLink">&larr; AIRLINES</a>
+    <h1 id="title">AIRLINE</h1>
+    <span class="cat" id="cat"></span>
+    <span class="partners" id="partners"></span>
+    <span class="status" id="status">loading...</span>
+    <div class="stats"><div class="seg" id="win"></div></div>
+</div>
+<div class="kpis" id="kpis"></div>
+<div class="tabbar2">
+    <div class="tab active" data-tab="network">NETWORK</div>
+    <div class="tab" data-tab="fleet">FLEET</div>
+    <div class="tab" data-tab="intel">INTEL</div>
+    <span class="tabnote" id="tabnote"></span>
+</div>
+<div class="banner" id="banner" hidden></div>
+
+<div class="main" id="main">
+    <section class="pane" id="pane-network">
+        <div class="netmap">
+            <div id="map"></div>
+            <div class="mapctl">
+                <div>Min frequency: <b id="minPwLabel" style="color:#cccc44">0</b> flights/week</div>
+                <input type="range" id="minPw" min="0" max="100" step="1" value="0">
+                <div id="routeShown" class="dim"></div>
+            </div>
+            <div class="maplegend">
+                <div><span class="sw" style="background:#ffdd55"></span>10+ /day</div>
+                <div><span class="sw" style="background:#cccc44"></span>3–10 /day</div>
+                <div><span class="sw" style="background:#9a9a3a"></span>1–3 /day</div>
+                <div><span class="sw" style="background:#5d6a48"></span>under 1 /day</div>
+                <div>● size = movements · <span style="color:#ff8844">ring</span> = overnight base</div>
+            </div>
+        </div>
+        <div class="netside">
+            <div class="sidehead" id="sideHead"></div>
+            <div class="sidetabs">
+                <div class="tab active" data-side="routes">ROUTES</div>
+                <div class="tab" data-side="airports">AIRPORTS</div>
+            </div>
+            <div class="sidebody" id="sideBody"></div>
+        </div>
+    </section>
+
+    <section class="pane" id="pane-fleet" hidden>
+        <div class="types" id="types"></div>
+        <div class="fleetbar">
+            <input type="text" class="search-box" id="fleetQ" placeholder="Filter tails — reg, ICAO24, type, last airport, callsign" spellcheck="false" autocomplete="off">
+            <span class="result-count" id="fleetCount"></span>
+        </div>
+        <div class="list" id="fleetList"></div>
+    </section>
+
+    <section class="pane" id="pane-intel" hidden>
+        <div class="intel" id="intel"></div>
+    </section>
+
+    <aside class="drawer collapsed" id="drawer">
+        <div class="dhead">
+            <span class="dreg" id="dReg"></span>
+            <span class="dtype" id="dType"></span>
+            <a id="dLink" href="#" title="Open this airframe in the aircraft database">AIRCRAFT DB</a>
+            <span class="dclose" id="dClose" title="Close (Esc)">&times;</span>
+        </div>
+        <div class="dbody" id="dBody">
+            <div id="tailMap"></div>
+            <div id="tailContent"></div>
+        </div>
+    </aside>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// One carrier's route network, fleet utilization and operating patterns, from /api/airlines/{icao}.
+// Carrier = callsign prefix (regionals are their own carrier); air time ≈ last seen − actual departure;
+// ground time ≈ next departure − last seen; a ground stop of 5 h+ is a "long stop" (overnight / maintenance / spare).
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const n0 = v => v == null ? '—' : Math.round(v).toLocaleString();
+const n1 = v => v == null ? '—' : (+v).toLocaleString(undefined, { maximumFractionDigits: 1 });
+const n2 = v => v == null ? '—' : (+v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const hm = m => m == null ? '—' : m >= 60 ? `${Math.floor(m / 60)}h${String(Math.round(m % 60)).padStart(2, '0')}` : `${Math.round(m)}m`;
+const utc = t => t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : '—';
+const hhmm = t => t ? new Date(t * 1000).toISOString().slice(11, 16) + 'Z' : '—';
+const ago = t => {
+    if (!t) return '—';
+    const d = Date.now() / 1000 - t;
+    return d < 5400 ? Math.max(0, Math.round(d / 60)) + 'm ago' : d < 172800 ? Math.round(d / 3600) + 'h ago' : Math.round(d / 86400) + 'd ago';
+};
+const aptKey = c => (c && c.length === 4 && (c[0] === 'K' || c[0] === 'P')) ? c.slice(1) : (c || '');
+const bestT = f => f.dep || f.first || f.last;
+const OSM = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+const ICAO = decodeURIComponent(location.pathname.split('/')[2] || '').toUpperCase();
+let days = parseInt(new URLSearchParams(location.search).get('days') || '7', 10) || 7;
+let data = null, tab = 'network', loadTimer = null, aptByKey = new Map();
+let openTailKey = null;
+
+// ── URL / header / KPIs ─────────────────────────────────────────────────────────
+function saveUrl() {
+    const h = new URLSearchParams();
+    if (tab !== 'network') h.set('tab', tab);
+    if (openTailKey) h.set('tail', openTailKey);
+    history.replaceState(null, '', `/airlines/${encodeURIComponent(ICAO)}?days=${days}` + (h.toString() ? '#' + h : ''));
+    $('backLink').href = '/airlines' + (days !== 7 ? '?days=' + days : '');
+}
+
+function renderWindow() {
+    const max = data ? data.windowDays : 90;
+    $('win').innerHTML = [1, 7, 30, 90].filter(d => d <= max)
+        .map(d => `<button data-d="${d}" class="${d === days ? 'on' : ''}">${d}D</button>`).join('');
+}
+
+function renderHeader() {
+    const c = data.carrier;
+    const hint = (data.ops || []).find(o => o.op !== ICAO);
+    const name = c ? c.name : (hint ? hint.op : 'Not in the Part 121 catalog');
+    document.title = `${ICAO} · ${c ? c.name : 'Airline research'}`;
+    $('title').textContent = `${ICAO} · ${name}`;
+    const cat = c ? c.category : 'other';
+    $('cat').className = 'cat ' + cat;
+    $('cat').textContent = cat.toUpperCase();
+    const partners = c && c.partners && c.partners.length ? 'flies for ' + c.partners.join(' · ') : '';
+    $('partners').textContent = [partners, c && c.note].filter(Boolean).join(' — ');
+    $('partners').title = c ? [c.note, c.confidence ? 'catalog confidence: ' + c.confidence : ''].filter(Boolean).join(' — ')
+                            : 'Not in the curated Part 121 catalog (/airlines/carriers.json)';
+}
+
+function renderKpis() {
+    const s = data.summary;
+    const k = [
+        ['FLIGHTS / DAY', n1(s.perDay), `${n0(s.flights)} flights over ${n1(data.span)} day(s) of data`],
+        ['ACTIVE TAILS', n0(s.tails), 'Distinct airframes that flew at least one leg under this callsign prefix'],
+        ['AIRPORTS', n0(s.airports), 'Airports served'],
+        ['ROUTES', n0(s.routes), 'City pairs, either direction'],
+        ['AIR HRS / TAIL / DAY', n2(s.hpd), `Estimated air time (last seen − actual departure), per tail per calendar day. ${n0(s.timedPct)}% of flights had a departure time.`],
+        ['LEGS / TAIL / DAY', n2(s.flightsPerTailDay), 'Flights per tail on the days it flew'],
+        ['AVG TURN', hm(s.turnMin), 'Average ground time between legs shorter than 5 h'],
+        ['STAGE LENGTH', s.stageNm != null ? n0(s.stageNm) + ' nm' : '—', 'Average great-circle distance per flight'],
+        ['INTERNATIONAL', s.intlPct != null ? n1(s.intlPct) + '%' : '—', 'Flights with an endpoint outside the US and its territories'],
+        ['OPR MATCH', s.opMatchPct != null ? n1(s.opMatchPct) + '%' : '—', `Filed operator resolves to ${ICAO} on this share of the ${n0(s.opKnown)} flights that filed one`],
+        ['NON-REVENUE LEGS', n0(s.nonRevenue), 'Legs these tails flew under a registration or non-airline callsign (ferry, test, positioning)'],
+    ];
+    $('kpis').innerHTML = k.map(([l, v, tip]) =>
+        `<div class="kpi" title="${esc(tip)}"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+}
+
+// ── Load ────────────────────────────────────────────────────────────────────────
+async function load() {
+    clearTimeout(loadTimer);
+    $('status').textContent = 'loading...';
+    $('status').className = 'status';
+    let r;
+    try { r = await fetch(`/api/airlines/${encodeURIComponent(ICAO)}?days=${days}`); }
+    catch { $('status').textContent = 'load failed'; return; }
+    if (r.status === 404) { notFound(); return; }
+    if (!r.ok) { $('status').textContent = `load failed (${r.status})`; return; }
+    data = await r.json();
+    aptByKey = new Map(data.airports.map(a => [aptKey(a.code), a]));
+    if (selApt && !aptByKey.has(selApt)) selApt = null;
+    renderHeader();
+    renderKpis();
+    renderWindow();
+    setupSlider();
+    renderTab();
+    $('status').textContent = data.ready ? 'ready' : 'indexing…';
+    $('status').className = data.ready ? 'status ok' : 'status';
+    $('banner').hidden = !!data.ready;
+    if (!data.ready) {
+        $('banner').textContent = 'The airline index is still loading from the flight log — numbers are partial and refresh every 15 s.';
+        loadTimer = setTimeout(load, 15000);
+    }
+    if (openTailKey) openTail(openTailKey);
+}
+
+function notFound() {
+    $('status').textContent = 'not found';
+    $('kpis').innerHTML = '';
+    $('main').innerHTML = `<div class="empty">No flights under the <b>${esc(ICAO)}</b> callsign prefix in the last ${days} day(s), and it isn't in the Part 121 catalog.<br><a href="/airlines" style="color:#cccc44">Back to the carrier list</a></div>`;
+}
+
+// ── Tabs ────────────────────────────────────────────────────────────────────────
+function renderTab() {
+    document.querySelectorAll('.tabbar2 .tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    for (const p of ['network', 'fleet', 'intel']) $('pane-' + p).hidden = p !== tab;
+    if (!data) return;
+    const notes = {
+        network: `${n0(data.routes.length)} routes · ${n0(data.airports.length)} airports · last ${days}D (UTC)`,
+        fleet: `${n0(data.tails.length)} tails · estimates from SWIM last-seen times`,
+        intel: 'Patterns and cross-checks',
+    };
+    $('tabnote').textContent = notes[tab];
+    if (tab === 'network') renderNetwork();
+    else if (tab === 'fleet') renderFleet();
+    else renderIntel();
+}
+
+// ── Shared table helpers ────────────────────────────────────────────────────────
+function sortRows(rows, s, val) {
+    return rows.slice().sort((x, y) => {
+        const a = val(x, s.k), b = val(y, s.k);
+        if (a === b) return 0;
+        if (a == null || a === '') return 1;
+        if (b == null || b === '') return -1;
+        return (a < b ? -1 : 1) * (s.asc ? 1 : -1);
+    });
+}
+function headCells(cols, s) {
+    return cols.map(c => `<th data-k="${c.k}" class="${c.num ? 'num' : ''} ${s.k === c.k ? 'sorted' : ''}"${c.tip ? ` title="${esc(c.tip)}"` : ''}>${c.l}${s.k === c.k ? (s.asc ? ' ▲' : ' ▼') : ''}</th>`).join('');
+}
+function toggleSort(s, k, textKeys) {
+    if (s.k === k) s.asc = !s.asc;
+    else { s.k = k; s.asc = textKeys.includes(k); }
+}
+
+// ── NETWORK ─────────────────────────────────────────────────────────────────────
+let map = null, routeLayer = null, aptLayer = null, netFitted = false;
+let selApt = null, minPw = 0, sideTab = 'routes';
+const rSort = { k: 'perWeek', asc: false }, aSort = { k: 'moves', asc: false };
+
+function ensureMap() {
+    if (map) return;
+    map = L.map('map', { preferCanvas: true, worldCopyJump: true }).setView([39, -97], 4);
+    L.tileLayer(OSM, { maxZoom: 12, className: 'darktiles', attribution: '&copy; OpenStreetMap' }).addTo(map);
+    routeLayer = L.layerGroup().addTo(map);
+    aptLayer = L.layerGroup().addTo(map);
+    map.on('click', () => { if (selApt) { selApt = null; renderNetwork(); } });
+}
+
+function gcPoints(a, b, nm) {
+    const R = Math.PI / 180, D = 180 / Math.PI;
+    const p1 = a[0] * R, l1 = a[1] * R, p2 = b[0] * R, l2 = b[1] * R;
+    const d = 2 * Math.asin(Math.sqrt(Math.sin((p2 - p1) / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin((l2 - l1) / 2) ** 2));
+    if (d < 1e-6) return [a, b];
+    const n = Math.max(4, Math.min(48, Math.round((nm || 500) / 80)));
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+        const f = i / n, A = Math.sin((1 - f) * d) / Math.sin(d), B = Math.sin(f * d) / Math.sin(d);
+        const x = A * Math.cos(p1) * Math.cos(l1) + B * Math.cos(p2) * Math.cos(l2);
+        const y = A * Math.cos(p1) * Math.sin(l1) + B * Math.cos(p2) * Math.sin(l2);
+        const z = A * Math.sin(p1) + B * Math.sin(p2);
+        pts.push([Math.atan2(z, Math.sqrt(x * x + y * y)) * D, Math.atan2(y, x) * D]);
+    }
+    for (let i = 1; i < pts.length; i++) {   // keep longitude continuous across the antimeridian
+        while (pts[i][1] - pts[i - 1][1] > 180) pts[i][1] -= 360;
+        while (pts[i][1] - pts[i - 1][1] < -180) pts[i][1] += 360;
+    }
+    return pts;
+}
+
+function routeColor(pw) { return pw >= 70 ? '#ffdd55' : pw >= 21 ? '#cccc44' : pw >= 7 ? '#9a9a3a' : '#5d6a48'; }
+function touches(r, k) { return aptKey(r.a) === k || aptKey(r.b) === k; }
+
+function setupSlider() {
+    const maxPw = Math.max(1, ...data.routes.map(r => r.perWeek || 0));
+    const s = $('minPw');
+    s.max = Math.ceil(maxPw);
+    if (minPw > maxPw) minPw = 0;
+    s.value = minPw;
+    $('minPwLabel').textContent = minPw;
+}
+
+function renderNetwork() {
+    ensureMap();
+    setTimeout(() => map.invalidateSize(), 0);
+    routeLayer.clearLayers();
+    aptLayer.clearLayers();
+    const maxPw = Math.max(1, ...data.routes.map(r => r.perWeek || 0));
+    const shown = data.routes.filter(r => (r.perWeek || 0) >= minPw);
+    const connected = new Set();
+    if (selApt) shown.forEach(r => { if (touches(r, selApt)) { connected.add(aptKey(r.a)); connected.add(aptKey(r.b)); } });
+
+    // Least frequent first so the busiest routes draw on top.
+    for (const r of shown.slice().sort((x, y) => (x.perWeek || 0) - (y.perWeek || 0))) {
+        const A = aptByKey.get(aptKey(r.a)), B = aptByKey.get(aptKey(r.b));
+        if (!A || A.lat == null || !B || B.lat == null) continue;
+        const on = !selApt || touches(r, selApt);
+        const pw = r.perWeek || 0, rel = Math.sqrt(pw / maxPw);
+        const line = L.polyline(gcPoints([A.lat, A.lon], [B.lat, B.lon], r.nm), {
+            color: routeColor(pw), weight: 0.7 + 3.3 * rel, opacity: on ? 0.45 + 0.5 * rel : 0.05, interactive: on,
+        });
+        line.bindTooltip(`<b>${esc(r.a)} ↔ ${esc(r.b)}</b><br>${n1(pw)} flights/week · ${n0(r.total)} in window (${n0(r.ab)} → / ${n0(r.ba)} ←)`
+            + `<br>${r.avgMin != null ? 'avg air ' + hm(r.avgMin) + ' · ' : ''}${r.nm != null ? n0(r.nm) + ' nm · ' : ''}${n0(r.tails)} tails`, { sticky: true, className: 'tt' });
+        routeLayer.addLayer(line);
+    }
+    const maxMv = Math.max(1, ...data.airports.map(a => a.dep + a.arr));
+    for (const a of data.airports) {
+        if (a.lat == null) continue;
+        const k = aptKey(a.code);
+        const on = !selApt || k === selApt || connected.has(k);
+        const base = a.stops >= 3;
+        const m = L.circleMarker([a.lat, a.lon], {
+            radius: 2.5 + 11 * Math.sqrt((a.dep + a.arr) / maxMv),
+            color: base ? '#ff8844' : '#39d2c0', weight: base ? 1.6 : 1, opacity: on ? 0.95 : 0.15,
+            fillColor: '#39d2c0', fillOpacity: k === selApt ? 0.9 : on ? 0.4 : 0.05,
+        });
+        m.bindTooltip(`<b>${esc(a.code)}</b> ${esc(a.name || '')}${a.city ? ' · ' + esc(a.city) : ''}`
+            + `<br>${n0(a.dep)} dep · ${n0(a.arr)} arr${a.stops ? ' · ' + n0(a.stops) + ' long stops' : ''}`, { className: 'tt' });
+        m.on('click', e => { L.DomEvent.stopPropagation(e); selectAirport(k === selApt ? null : k); });
+        aptLayer.addLayer(m);
+    }
+    if (!netFitted) {
+        const pts = data.airports.filter(a => a.lat != null).map(a => [a.lat, a.lon]);
+        if (pts.length) { map.fitBounds(pts, { padding: [30, 30], maxZoom: 7 }); netFitted = true; }
+    }
+    $('routeShown').textContent = `${n0(shown.length)} of ${n0(data.routes.length)} routes shown`;
+    renderSide(shown);
+}
+
+function selectAirport(k) {
+    selApt = k;
+    renderNetwork();
+    if (k) {
+        const a = aptByKey.get(k);
+        if (a && a.lat != null) map.panTo([a.lat, a.lon]);
+    }
+}
+
+function renderSide(shown) {
+    const sel = selApt ? aptByKey.get(selApt) : null;
+    $('sideHead').innerHTML = sel
+        ? `<b>${esc(sel.code)}</b> ${esc(sel.name || '')}${sel.city ? ' · ' + esc(sel.city) : ''}<br>${n0(sel.dep)} departures · ${n0(sel.arr)} arrivals · ${n0(sel.stops)} long stops · <a href="#" id="clearApt">show all</a>`
+        : `Click an airport on the map or in the list to isolate its routes.`;
+    document.querySelectorAll('.sidetabs .tab').forEach(t => t.classList.toggle('active', t.dataset.side === sideTab));
+    if (sideTab === 'routes') {
+        const cols = [
+            { k: 'route', l: 'ROUTE' }, { k: 'perWeek', l: '/WK', num: 1 }, { k: 'total', l: 'FLTS', num: 1 },
+            { k: 'avgMin', l: 'AIR', num: 1 }, { k: 'nm', l: 'NM', num: 1 }, { k: 'tails', l: 'TAILS', num: 1 },
+        ];
+        let rows = shown.filter(r => !selApt || touches(r, selApt));
+        rows = sortRows(rows, rSort, (r, k) => k === 'route' ? r.a + r.b : r[k]).slice(0, 1500);
+        $('sideBody').innerHTML = `<table class="mini" data-table="routes"><thead><tr>${headCells(cols, rSort)}</tr></thead><tbody>` +
+            rows.map(r => `<tr data-route="${esc(r.a)}|${esc(r.b)}"><td>${esc(r.a)} ↔ ${esc(r.b)}</td><td class="num">${n1(r.perWeek)}</td>`
+                + `<td class="num">${n0(r.total)}</td><td class="num">${hm(r.avgMin)}</td><td class="num">${r.nm != null ? n0(r.nm) : '—'}</td>`
+                + `<td class="num">${n0(r.tails)}</td></tr>`).join('') + '</tbody></table>';
+    } else {
+        const cols = [
+            { k: 'code', l: 'AIRPORT' }, { k: 'city', l: 'CITY' }, { k: 'dep', l: 'DEP', num: 1 }, { k: 'arr', l: 'ARR', num: 1 },
+            { k: 'stops', l: 'LONG STOPS', num: 1, tip: 'Ground stops of 5 h or more at this airport' },
+        ];
+        let rows = data.airports;
+        if (selApt) {
+            const conn = new Set([selApt]);
+            data.routes.forEach(r => { if (touches(r, selApt)) { conn.add(aptKey(r.a)); conn.add(aptKey(r.b)); } });
+            rows = rows.filter(a => conn.has(aptKey(a.code)));
+        }
+        rows = sortRows(rows, aSort, (a, k) => k === 'moves' ? a.dep + a.arr : a[k]);
+        $('sideBody').innerHTML = `<table class="mini" data-table="airports"><thead><tr>${headCells(cols, aSort)}</tr></thead><tbody>` +
+            rows.map(a => `<tr data-apt="${esc(a.code)}"><td>${esc(a.code)}${a.lat == null ? ' <span class="dim" title="No coordinates">?</span>' : ''}</td>`
+                + `<td class="dim">${esc(a.city || a.name || '')}</td><td class="num">${n0(a.dep)}</td><td class="num">${n0(a.arr)}</td>`
+                + `<td class="num ${a.stops >= 3 ? 'warn' : ''}">${n0(a.stops)}</td></tr>`).join('') + '</tbody></table>';
+    }
+}
+
+$('minPw').addEventListener('input', () => {
+    minPw = +$('minPw').value;
+    $('minPwLabel').textContent = minPw;
+    clearTimeout($('minPw')._t);
+    $('minPw')._t = setTimeout(renderNetwork, 60);
+});
+document.querySelector('.sidetabs').addEventListener('click', e => {
+    const t = e.target.closest('[data-side]');
+    if (!t) return;
+    sideTab = t.dataset.side;
+    renderSide(data.routes.filter(r => (r.perWeek || 0) >= minPw));
+});
+$('sideHead').addEventListener('click', e => {
+    if (e.target.id === 'clearApt') { e.preventDefault(); selectAirport(null); }
+});
+$('sideBody').addEventListener('click', e => {
+    const th = e.target.closest('th[data-k]');
+    if (th) {
+        const which = th.closest('table').dataset.table;
+        if (which === 'routes') toggleSort(rSort, th.dataset.k, ['route']);
+        else toggleSort(aSort, th.dataset.k, ['code', 'city']);
+        renderSide(data.routes.filter(r => (r.perWeek || 0) >= minPw));
+        return;
+    }
+    const rt = e.target.closest('tr[data-route]');
+    if (rt) {
+        const [a, b] = rt.dataset.route.split('|');
+        const A = aptByKey.get(aptKey(a)), B = aptByKey.get(aptKey(b));
+        if (A && B && A.lat != null && B.lat != null) map.fitBounds([[A.lat, A.lon], [B.lat, B.lon]], { padding: [80, 80], maxZoom: 7 });
+        return;
+    }
+    const ap = e.target.closest('tr[data-apt]');
+    if (ap) selectAirport(aptKey(ap.dataset.apt) === selApt ? null : aptKey(ap.dataset.apt));
+});
+
+// ── FLEET ───────────────────────────────────────────────────────────────────────
+const fSort = { k: 'flights', asc: false };
+let fType = null;
+const FCOLS = [
+    { k: 'reg', l: 'REG' }, { k: 'hex', l: 'ICAO24' }, { k: 'type', l: 'TYPE' },
+    { k: 'flights', l: 'FLIGHTS', num: 1 },
+    { k: 'days', l: 'ACTIVE DAYS', num: 1 },
+    { k: 'hours', l: 'AIR HRS', num: 1 },
+    { k: 'hpd', l: 'HRS/DAY', num: 1, tip: 'Estimated air hours per calendar day in the window' },
+    { k: 'turnMin', l: 'AVG TURN', num: 1, tip: 'Average ground time between legs shorter than 5 h' },
+    { k: 'stops', l: 'LONG STOPS', num: 1, tip: 'Ground stops of 5 h or more — overnights, maintenance, spare time' },
+    { k: 'idle', l: 'IDLE DAYS', num: 1, tip: 'Days between its first and last flight in the window with no flight at all' },
+    { k: 'longestH', l: 'LONGEST STOP', num: 1, tip: 'Longest single ground stop' },
+    { k: 'lastAt', l: 'LAST AT' },
+    { k: 'lastSeen', l: 'LAST FLIGHT', num: 1 },
+    { k: 'share', l: 'SHARE', num: 1, tip: "Share of this tail's flights in the window flown under this callsign prefix" },
+    { k: 'other', l: 'OTHER CALLSIGNS' },
+];
+
+function median(v) {
+    const a = v.filter(x => x != null).sort((x, y) => x - y);
+    return a.length ? a[Math.floor(a.length / 2)] : 0;
+}
+
+function renderFleet() {
+    $('types').innerHTML = data.types.map(t =>
+        `<span class="tchip ${fType === t.type ? 'on' : ''}" data-type="${esc(t.type)}" title="${n0(t.flights)} flights · ${n0(t.hours)} air hours">`
+        + `<b>${esc(t.type)}</b> ${n0(t.tails)} tails · ${n2(t.hpd)} h/day · ${n2(t.flightsPerDay)} legs/day</span>`).join('')
+        || '<span class="dim">No aircraft type data</span>';
+    const q = $('fleetQ').value.trim().toUpperCase();
+    let rows = data.tails.filter(t => (!fType || t.type === fType)
+        && (!q || [t.reg, t.hex, t.type, t.lastAt, t.lastCs, (t.other || []).join(' ')].some(v => (v || '').toUpperCase().includes(q))));
+    const med = median(data.tails.map(t => t.hpd));
+    rows = sortRows(rows, fSort, (t, k) => k === 'other' ? (t.other || []).join(',') : t[k]);
+    $('fleetList').innerHTML = `<table class="grid"><thead><tr>${headCells(FCOLS, fSort)}</tr></thead><tbody>` + rows.map(t => {
+        const lowUse = med > 0 && t.hpd < med * 0.4;
+        return `<tr data-key="${esc(t.key)}" class="${t.key === openTailKey ? 'sel' : ''}">
+            <td class="reg">${esc(t.reg || '—')}</td>
+            <td class="dim">${esc(t.hex || '')}</td>
+            <td>${esc(t.type || '')}</td>
+            <td class="num">${n0(t.flights)}</td>
+            <td class="num">${n0(t.days)}</td>
+            <td class="num">${n1(t.hours)}</td>
+            <td class="num ${lowUse ? 'warn' : ''}" title="${lowUse ? 'Under 40% of the fleet median' : ''}">${n2(t.hpd)}</td>
+            <td class="num">${hm(t.turnMin)}</td>
+            <td class="num">${n0(t.stops)}</td>
+            <td class="num ${t.idle >= 2 ? 'warn' : ''}">${n0(t.idle)}</td>
+            <td class="num">${t.longestH ? n1(t.longestH) + 'h' : '—'}</td>
+            <td>${esc(t.lastAt || '')}</td>
+            <td class="num dim" title="${esc(utc(t.lastSeen))} via ${esc(t.lastCs || '')}">${ago(t.lastSeen)}</td>
+            <td class="num ${t.share < 100 ? '' : 'dim'}">${n0(t.share)}%</td>
+            <td class="dim">${esc((t.other || []).join(' '))}</td>
+        </tr>`;
+    }).join('') + '</tbody></table>';
+    $('fleetCount').textContent = `${rows.length} of ${data.tails.length} tails · median ${n2(med)} air h/day`;
+}
+
+$('types').addEventListener('click', e => {
+    const c = e.target.closest('[data-type]');
+    if (!c) return;
+    fType = fType === c.dataset.type ? null : c.dataset.type;
+    renderFleet();
+});
+let fleetTimer;
+$('fleetQ').addEventListener('input', () => { clearTimeout(fleetTimer); fleetTimer = setTimeout(renderFleet, 120); });
+$('fleetList').addEventListener('click', e => {
+    const th = e.target.closest('th[data-k]');
+    if (th) { toggleSort(fSort, th.dataset.k, ['reg', 'hex', 'type', 'lastAt', 'other']); renderFleet(); return; }
+    const tr = e.target.closest('tr[data-key]');
+    if (tr) openTail(tr.dataset.key);
+});
+
+// ── Tail drawer ─────────────────────────────────────────────────────────────────
+let tailMap = null, tailLayer = null;
+
+async function openTail(key) {
+    openTailKey = key;
+    saveUrl();
+    $('drawer').classList.remove('collapsed');
+    document.querySelectorAll('#fleetList tr.sel').forEach(r => r.classList.remove('sel'));
+    const tr = document.querySelector(`#fleetList tr[data-key="${CSS.escape(key)}"]`);
+    if (tr) tr.classList.add('sel');
+    const row = data && data.tails.find(t => t.key === key);
+    $('dReg').textContent = row && row.reg ? row.reg : key.replace(/^REG:/, '');
+    $('dType').textContent = [row && row.type, row && row.hex].filter(Boolean).join(' · ');
+    $('dLink').href = '/aircraft/' + encodeURIComponent((row && (row.hex || row.reg)) || key.replace(/^REG:/, ''));
+    $('tailContent').innerHTML = '<div class="loading">Loading flights…</div>';
+    setTimeout(() => { if (map) map.invalidateSize(); if (tailMap) tailMap.invalidateSize(); }, 30);
+    let t;
+    try {
+        const r = await fetch(`/api/airlines/tails/${encodeURIComponent(key)}?days=${days}`);
+        if (!r.ok) throw new Error(r.status);
+        t = await r.json();
+    } catch {
+        if (openTailKey === key) $('tailContent').innerHTML = '<div class="loading">Tail unavailable</div>';
+        return;
+    }
+    if (openTailKey !== key) return;
+    if (!row) {
+        $('dReg').textContent = t.reg || key.replace(/^REG:/, '');
+        $('dType').textContent = [t.type, t.hex].filter(Boolean).join(' · ');
+    }
+    renderTail(t);
+}
+
+function closeTail() {
+    openTailKey = null;
+    $('drawer').classList.add('collapsed');
+    document.querySelectorAll('#fleetList tr.sel').forEach(r => r.classList.remove('sel'));
+    saveUrl();
+    setTimeout(() => { if (map) map.invalidateSize(); }, 30);
+}
+
+function csClass(f) { return f.carrier === ICAO ? 'cs-mine' : f.carrier ? 'cs-other' : 'cs-nonrev'; }
+
+function renderTail(t) {
+    const aps = new Map(t.airports.map(a => [a.code, a]));
+    const fl = t.flights.slice().sort((a, b) => bestT(a) - bestT(b));
+    const turns = [], stops = [];
+    for (let i = 1; i < fl.length; i++) {
+        const p = fl[i - 1], f = fl[i];
+        const g = bestT(f) - p.last;
+        if (!(p.last > 0) || g <= 0) continue;
+        p._after = g;
+        if (g < 5 * 3600) turns.push(g); else stops.push({ at: p.d, secs: g, from: p.last });
+    }
+    const daySet = new Set();
+    fl.forEach(f => { daySet.add(Math.floor(bestT(f) / 86400)); if (f.last) daySet.add(Math.floor(f.last / 86400)); });
+    let idle = 0;
+    if (fl.length) {
+        const d0 = Math.floor(bestT(fl[0]) / 86400), d1 = Math.max(...fl.map(f => Math.floor((f.last || bestT(f)) / 86400)));
+        for (let d = d0; d <= d1; d++) if (!daySet.has(d)) idle++;
+    }
+    const air = fl.reduce((s, f) => s + (f.airMin || 0), 0);
+    const mine = fl.filter(f => f.carrier === ICAO).length;
+    const avgTurn = turns.length ? turns.reduce((s, g) => s + g, 0) / turns.length / 60 : null;
+    const longest = stops.reduce((m, s) => Math.max(m, s.secs), 0);
+    const stat = (l, v) => `<div><div class="v">${v}</div><div class="l">${l}</div></div>`;
+
+    let h = `<div class="tstats">
+        ${stat(`LEGS (${esc(ICAO)})`, `${n0(fl.length)} <span class="dim">(${n0(mine)})</span>`)}
+        ${stat('AIR HOURS', n1(air / 60))}
+        ${stat('AVG TURN', hm(avgTurn))}
+        ${stat('LONG STOPS', n0(stops.length))}
+        ${stat('LONGEST STOP', longest ? n1(longest / 3600) + 'h' : '—')}
+        ${stat('IDLE DAYS', n0(idle))}
+        ${stat('FIRST', fl.length ? utc(bestT(fl[0])).slice(5) : '—')}
+        ${stat('LAST', fl.length ? utc(fl[fl.length - 1].last || bestT(fl[fl.length - 1])).slice(5) : '—')}
+    </div>`;
+    h += `<div class="dsec">DAY-BY-DAY (UTC) — <span class="cs-mine">■</span> ${esc(ICAO)} &nbsp;<span class="cs-other">■</span> other airline &nbsp;<span class="cs-nonrev">■</span> non-revenue &nbsp;· gaps are ground time</div>`;
+    h += timelineSvg(fl);
+    if (stops.length) {
+        h += `<div class="dsec">LONG STOPS (5 h+)</div><table class="mini"><thead><tr><th>WHERE</th><th>FROM</th><th class="num">DURATION</th></tr></thead><tbody>`
+            + stops.slice().reverse().map(s => `<tr><td>${esc(s.at || '?')} <span class="dim">${esc((aps.get(s.at) || {}).city || '')}</span></td>`
+                + `<td class="dim">${utc(s.from)}</td><td class="num">${n1(s.secs / 3600)}h</td></tr>`).join('') + '</tbody></table>';
+    }
+    h += `<div class="dsec">LEGS — newest first</div><table class="mini"><thead><tr><th>DATE</th><th>DEP</th><th>LAST SEEN</th><th class="num">AIR</th><th>CALLSIGN</th><th>ROUTE</th><th class="num">GROUND AFTER</th></tr></thead><tbody>`
+        + fl.slice().reverse().map(f => {
+            const s = bestT(f);
+            return `<tr><td class="dim">${utc(s).slice(0, 10)}</td>`
+                + `<td${f.dep ? '' : ' class="dim" title="No departure time — first seen"'}>${hhmm(s)}</td>`
+                + `<td class="dim">${hhmm(f.last)}</td><td class="num">${f.airMin ? hm(f.airMin) : '—'}</td>`
+                + `<td class="${csClass(f)}">${esc(f.cs)}</td><td>${esc(f.o || '?')} → ${esc(f.d || '?')}</td>`
+                + `<td class="num ${f._after >= 5 * 3600 ? 'warn' : 'dim'}">${f._after ? hm(f._after / 60) : ''}</td></tr>`;
+        }).join('') + '</tbody></table>';
+    $('tailContent').innerHTML = h;
+    drawTailMap(fl, aps);
+}
+
+function timelineSvg(fl) {
+    if (!fl.length) return '<div class="loading">No flights in this window</div>';
+    const d0 = Math.floor(bestT(fl[0]) / 86400);
+    const d1 = Math.max(...fl.map(f => Math.floor((f.last || bestT(f)) / 86400)));
+    const rows = d1 - d0 + 1;
+    const LW = 70, W = 480, RH = 12, TOP = 14, H = TOP + rows * RH + 2;
+    const byDay = new Map();
+    for (const f of fl) {
+        const s = bestT(f), e = Math.max(f.last || s, s + 240);
+        for (let a = s; a < e;) {
+            const day = Math.floor(a / 86400), b = Math.min(e, (day + 1) * 86400);
+            if (!byDay.has(day)) byDay.set(day, []);
+            byDay.get(day).push({ x0: (a - day * 86400) / 86400, x1: (b - day * 86400) / 86400, f });
+            a = b;
+        }
+    }
+    let s = `<svg viewBox="0 0 ${LW + W + 4} ${H}" width="100%" style="display:block">`;
+    for (const hr of [0, 6, 12, 18, 24]) {
+        const x = LW + (hr / 24) * W;
+        s += `<line x1="${x}" y1="${TOP - 3}" x2="${x}" y2="${H}" stroke="#1d1d1d"/>`
+            + `<text x="${Math.min(x, LW + W - 12)}" y="10" fill="#555" font-size="8">${String(hr).padStart(2, '0')}</text>`;
+    }
+    for (let i = 0; i < rows; i++) {
+        const day = d0 + i, y = TOP + i * RH;
+        const date = new Date(day * 86400000);
+        const segs = byDay.get(day) || [];
+        const label = date.toISOString().slice(5, 10) + ' ' + 'SMTWTFS'[date.getUTCDay()];
+        s += `<text x="0" y="${y + 9}" fill="${segs.length ? '#777' : '#aa6633'}" font-size="8.5">${label}</text>`;
+        if (i % 2) s += `<rect x="${LW}" y="${y}" width="${W}" height="${RH}" fill="#0b0b0b"/>`;
+        for (const g of segs) {
+            const col = g.f.carrier === ICAO ? '#cccc44' : g.f.carrier ? '#5588ff' : '#ff8844';
+            const title = `${g.f.cs} ${g.f.o || '?'}→${g.f.d || '?'} ${hhmm(bestT(g.f))}–${hhmm(g.f.last)}${g.f.dep ? '' : ' (no departure time)'}`;
+            s += `<rect x="${(LW + g.x0 * W).toFixed(1)}" y="${y + 2}" width="${Math.max(1.5, (g.x1 - g.x0) * W).toFixed(1)}" height="${RH - 4}" fill="${col}" opacity="${g.f.dep ? 0.95 : 0.5}"><title>${esc(title)}</title></rect>`;
+        }
+    }
+    return s + '</svg>';
+}
+
+function drawTailMap(fl, aps) {
+    if (!tailMap) {
+        tailMap = L.map('tailMap', { preferCanvas: true, zoomControl: false, attributionControl: false, worldCopyJump: true });
+        L.tileLayer(OSM, { maxZoom: 10, className: 'darktiles' }).addTo(tailMap);
+        tailLayer = L.layerGroup().addTo(tailMap);
+        tailMap.setView([39, -97], 3);
+    }
+    tailMap.invalidateSize();
+    tailLayer.clearLayers();
+    const pts = [], visits = new Map();
+    fl.forEach((f, i) => {
+        const A = aps.get(f.o), B = aps.get(f.d);
+        if (!A || !B || A.lat == null || B.lat == null) return;
+        const rel = fl.length > 1 ? i / (fl.length - 1) : 1;   // older legs dim, newest bright
+        const col = f.carrier === ICAO ? `rgba(204,204,68,${0.15 + 0.85 * rel})` : f.carrier ? `rgba(85,136,255,${0.2 + 0.8 * rel})` : `rgba(255,136,68,${0.25 + 0.75 * rel})`;
+        tailLayer.addLayer(L.polyline(gcPoints([A.lat, A.lon], [B.lat, B.lon], 500), { color: col, weight: 1 + 1.5 * rel })
+            .bindTooltip(`${esc(f.cs)} ${esc(f.o)} → ${esc(f.d)}<br>${utc(bestT(f))}`, { sticky: true, className: 'tt' }));
+        pts.push([A.lat, A.lon], [B.lat, B.lon]);
+        visits.set(f.o, (visits.get(f.o) || 0) + 1);
+        visits.set(f.d, (visits.get(f.d) || 0) + 1);
+    });
+    for (const [code, n] of visits) {
+        const a = aps.get(code);
+        tailLayer.addLayer(L.circleMarker([a.lat, a.lon], { radius: 2 + Math.min(8, Math.sqrt(n) * 1.5), color: '#39d2c0', weight: 1, fillOpacity: 0.5 })
+            .bindTooltip(`<b>${esc(code)}</b> ${esc(a.city || a.name || '')} · ${n} visits`, { className: 'tt' }));
+    }
+    const last = fl.length ? aps.get(fl[fl.length - 1].d) : null;
+    if (last && last.lat != null)
+        tailLayer.addLayer(L.circleMarker([last.lat, last.lon], { radius: 6, color: '#ffffff', weight: 2, fill: false })
+            .bindTooltip('Last arrival', { className: 'tt' }));
+    if (pts.length) tailMap.fitBounds(pts, { padding: [20, 20], maxZoom: 7 });
+}
+
+$('dClose').addEventListener('click', closeTail);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && openTailKey) closeTail(); });
+
+// ── INTEL ───────────────────────────────────────────────────────────────────────
+function card(title, sub, body, wide) {
+    return `<div class="card2 ${wide ? 'wide' : ''}"><h3>${title}</h3>${sub ? `<div class="sub">${sub}</div>` : ''}${body}</div>`;
+}
+
+function barChart(vals, labels, o = {}) {
+    if (!vals.length) return '<div class="loading">No data</div>';
+    const w = o.w || 430, h = o.h || 140, L0 = 34, R0 = 6, T0 = 8, B0 = 18;
+    const max = Math.max(1, ...vals), n = vals.length, bw = (w - L0 - R0) / n;
+    let s = `<svg viewBox="0 0 ${w} ${h}" width="100%" style="display:block">`;
+    for (const frac of [0, 0.5, 1]) {
+        const y = T0 + (h - T0 - B0) * (1 - frac);
+        s += `<line x1="${L0}" y1="${y}" x2="${w - R0}" y2="${y}" stroke="#1a1a1a"/><text x="${L0 - 4}" y="${y + 3}" fill="#555" font-size="8" text-anchor="end">${n0(max * frac)}</text>`;
+    }
+    const every = Math.max(1, Math.ceil(n / (o.maxLabels || 14)));
+    vals.forEach((v, i) => {
+        const bh = (h - T0 - B0) * v / max, x = L0 + i * bw;
+        s += `<rect x="${(x + 0.5).toFixed(1)}" y="${(T0 + (h - T0 - B0) - bh).toFixed(1)}" width="${Math.max(1, bw - 1).toFixed(1)}" height="${bh.toFixed(1)}" fill="${o.color || '#cccc44'}"><title>${esc(labels[i])}: ${n0(v)}</title></rect>`;
+        if (i % every === 0) s += `<text x="${(x + bw / 2).toFixed(1)}" y="${h - 5}" fill="#666" font-size="8" text-anchor="middle">${esc(labels[i])}</text>`;
+    });
+    return s + '</svg>';
+}
+
+function hbars(items, color) {
+    if (!items.length) return '<div class="loading">None in this window</div>';
+    const max = Math.max(...items.map(x => x.v));
+    return items.map(x => `<div class="hb"${x.apt ? ` data-apt="${esc(x.apt)}" title="Show on the network map"` : ''}><span class="hl">${esc(x.label)}</span>`
+        + `<span class="hbar"><i style="width:${(100 * x.v / max).toFixed(1)}%;background:${color}"></i></span><span class="hv">${n0(x.v)}</span></div>`).join('');
+}
+
+function mini(headers, rows, keyAttr) {
+    if (!rows.length) return '<div class="loading">None in this window</div>';
+    return `<div class="scroll"><table class="mini"><thead><tr>${headers.map(h => `<th class="${h.num ? 'num' : ''}">${h.l}</th>`).join('')}</tr></thead><tbody>`
+        + rows.map(r => `<tr${r.key ? ` data-key="${esc(r.key)}"` : ''}>${r.cells.map((c, i) => `<td class="${headers[i].num ? 'num' : ''} ${c.cls || ''}">${c.html ?? esc(c)}</td>`).join('')}</tr>`).join('')
+        + '</tbody></table></div>';
+}
+
+function renderIntel() {
+    const s = data.summary, it = data.intel;
+    const out = [];
+    const peak = data.daily.reduce((m, d) => d.n > (m ? m.n : -1) ? d : m, null);
+    out.push(card('FLIGHTS PER DAY (UTC)', peak ? `peak ${n0(peak.n)} on ${peak.d} · ${n0(peak.tails)} tails flew that day` : '',
+        barChart(data.daily.map(d => d.n), data.daily.map(d => d.d.slice(5)), { w: 900, h: 150, color: '#cccc44', maxLabels: 20 }), true));
+    out.push(card('DEPARTURES BY HOUR (UTC)', 'Hub banks show up as spikes',
+        barChart(data.hourly, [...Array(24).keys()].map(x => String(x).padStart(2, '0')), { color: '#39d2c0', maxLabels: 12 })));
+    out.push(card('DEPARTURES BY WEEKDAY (UTC)', '',
+        barChart(data.dow, ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'], { color: '#5588ff' })));
+    const bases = data.airports.filter(a => a.stops > 0).sort((a, b) => b.stops - a.stops).slice(0, 15);
+    out.push(card('OVERNIGHT / LONG-STOP BASES', 'Where tails sat 5 h or more — crew and maintenance bases stand out',
+        hbars(bases.map(a => ({ label: `${a.code} ${a.city || a.name || ''}`, v: a.stops, apt: a.code })), '#ff8844')));
+    out.push(card('BUSIEST AIRPORTS', 'Departures + arrivals',
+        hbars(data.airports.slice(0, 15).map(a => ({ label: `${a.code} ${a.city || a.name || ''}`, v: a.dep + a.arr, apt: a.code })), '#39d2c0')));
+    out.push(card('FLEET TYPES', 'Utilization by aircraft type',
+        mini([{ l: 'TYPE' }, { l: 'TAILS', num: 1 }, { l: 'FLIGHTS', num: 1 }, { l: 'H/TAIL/DAY', num: 1 }, { l: 'LEGS/DAY', num: 1 }],
+            data.types.map(t => ({ cells: [t.type, n0(t.tails), n0(t.flights), n2(t.hpd), n2(t.flightsPerDay)] })))));
+    out.push(card('OPERATOR FIELD vs CALLSIGN', s.opMatchPct != null ? `${n1(s.opMatchPct)}% of flights file an operator that resolves to ${esc(ICAO)}` : 'No operator filed',
+        mini([{ l: 'FILED OPERATOR' }, { l: 'FLIGHTS', num: 1 }, { l: 'RESOLVES TO' }, { l: '' }],
+            data.ops.map(o => ({ cells: [o.op, n0(o.flights), o.resolved || '—', o.match ? { html: '<span class="good">✓</span>' } : { html: '<span class="warn">✗</span>' }] })))));
+    const longest = data.routes.filter(r => r.nm != null).sort((a, b) => b.nm - a.nm).slice(0, 12);
+    out.push(card('LONGEST ROUTES', '',
+        mini([{ l: 'ROUTE' }, { l: 'NM', num: 1 }, { l: '/WK', num: 1 }, { l: 'AVG AIR', num: 1 }],
+            longest.map(r => ({ cells: [`${r.a} ↔ ${r.b}`, n0(r.nm), n1(r.perWeek), hm(r.avgMin)] })))));
+    if (it.newRoutes) {
+        out.push(card('NEW ROUTES', 'Flown in the last 7 days, not earlier in the window',
+            mini([{ l: 'ROUTE' }, { l: 'FLIGHTS (7D)', num: 1 }], it.newRoutes.map(r => ({ cells: [`${r.a} ↔ ${r.b}`, n0(r.recent)] })))));
+        out.push(card('DROPPED ROUTES', 'Flown earlier in the window, not in the last 7 days',
+            mini([{ l: 'ROUTE' }, { l: 'EARLIER FLIGHTS', num: 1 }], it.droppedRoutes.map(r => ({ cells: [`${r.a} ↔ ${r.b}`, n0(r.earlier)] })))));
+    } else {
+        out.push(card('NEW / DROPPED ROUTES', 'Needs a 30D or 90D window with at least 14 days of data', ''));
+    }
+    out.push(card('TAILS ALSO FLYING OTHER CALLSIGNS', 'Wet leases, brand swaps, or tails moving between carriers — click to open',
+        mini([{ l: 'REG' }, { l: 'TYPE' }, { l: `${esc(ICAO)} FLTS`, num: 1 }, { l: 'OTHER PREFIXES' }],
+            it.sharedTails.map(t => ({ key: t.key, cells: [t.reg || t.key, t.type, n0(t.flights), (t.other || []).join(' ')] })))));
+    out.push(card('NON-REVENUE LEGS', `${n0(it.nonRevenue.count)} legs under a registration or non-airline callsign (ferry, test, positioning) — click to open`,
+        mini([{ l: 'WHEN' }, { l: 'CALLSIGN' }, { l: 'ROUTE' }, { l: 'TAIL' }],
+            it.nonRevenue.examples.map(x => ({ key: x.key, cells: [utc(x.t), { html: `<span class="cs-nonrev">${esc(x.cs)}</span>` }, `${x.o || '?'} → ${x.d || '?'}`, x.reg] })))));
+    $('intel').innerHTML = out.join('');
+}
+
+$('intel').addEventListener('click', e => {
+    const k = e.target.closest('[data-key]');
+    if (k) { openTail(k.dataset.key); return; }
+    const ap = e.target.closest('[data-apt]');
+    if (ap) {
+        tab = 'network';
+        selApt = aptKey(ap.dataset.apt);
+        saveUrl();
+        renderTab();
+        const a = aptByKey.get(selApt);
+        if (a && a.lat != null) map.setView([a.lat, a.lon], 6);
+    }
+});
+
+// ── Wiring ──────────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tabbar2 .tab').forEach(t => t.addEventListener('click', () => {
+    tab = t.dataset.tab;
+    saveUrl();
+    renderTab();
+}));
+$('win').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    days = +b.dataset.d;
+    saveUrl();
+    load();
+});
+
+(function init() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (['network', 'fleet', 'intel'].includes(h.get('tab'))) tab = h.get('tab');
+    openTailKey = h.get('tail');
+    if (!/^[A-Z0-9]{2,4}$/.test(ICAO)) { notFound(); return; }
+    $('title').textContent = ICAO;
+    renderWindow();
+    renderTab();
+    saveUrl();
+    load();
+})();
+</script>
+<script src="/shared/frame.js?v=4"></script>
+<script src="/shared/disclaimer.js?v=2"></script>
+</body>
+</html>

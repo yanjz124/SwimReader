@@ -9,14 +9,15 @@ namespace SwimServer;
 
 /// <summary>
 /// Permanent, dated flight log for every airframe in the aircraft database: one entry per flight with its
-/// departure time, callsign, origin and destination. Kept forever (deliberately not budget-managed). Only flights
-/// that actually flew are logged — a position report or an actual departure time; ~45% of purged flight plans have
-/// neither (mostly PROPOSED plans that were refiled, cancelled or never activated) and would show as phantom flights.
+/// departure time, callsign, origin, destination and filed operator. Kept forever (deliberately not budget-managed).
+/// Only flights that actually flew are logged — a position report or an actual departure time; ~45% of purged
+/// flight plans have neither (mostly PROPOSED plans that were refiled, cancelled or never activated) and would show
+/// as phantom flights.
 ///
-/// Storage: append-only CSV lines <c>key,dep,first,last,callsign,origin,dest</c> (epoch seconds; dep is 0 when
-/// the feed never gave an actual departure time), sharded by a hash of the airframe key into 1,024 files under
-/// aircraft-db/flights/. Sharding avoids one tiny file per tail (tens of thousands of 4 KB blocks on the SD
-/// card) while keeping a tail lookup to a scan of ~1/1024 of the log.
+/// Storage: append-only CSV lines <c>key,dep,first,last,callsign,origin,dest,operator</c> (epoch seconds; dep is 0
+/// when the feed never gave an actual departure time), sharded by a hash of the airframe key into 1,024 files under
+/// aircraft-db/flights/. Sharding avoids one tiny file per tail (tens of thousands of 4 KB blocks on the SD card)
+/// while keeping a tail lookup to a scan of ~1/1024 of the log.
 ///
 /// Duplicates: one physical flight is purged once per ARTCC that tracked it (~1.6 GUFIs per flight), so the
 /// same flight arrives several times. A small per-tail memory of recent entries drops most duplicates before
@@ -30,7 +31,7 @@ namespace SwimServer;
 /// </summary>
 sealed class AircraftFlightLog
 {
-    public readonly record struct Entry(long Dep, long First, long Last, string Cs, string O, string D)
+    public readonly record struct Entry(long Dep, long First, long Last, string Cs, string O, string D, string Op = "")
     {
         /// <summary>Best time for the flight: actual departure, else first seen, else last seen.</summary>
         public long T => Dep > 0 ? Dep : First > 0 ? First : Last;
@@ -57,6 +58,13 @@ sealed class AircraftFlightLog
     public int BackfillDone => _backfillDone;
     public int BackfillTotal => _backfillTotal;
     public bool BackfillRunning => _backfillRunning;
+
+    /// <summary>
+    /// Raised for every flight accepted into the log (live purges and the history backfill), after duplicate
+    /// filtering and before it reaches disk — lets in-memory indexes (airline research) stay current without
+    /// re-reading the shards.
+    /// </summary>
+    public event Action<string, Entry>? Appended;
 
     public AircraftFlightLog(string dir, string historyDir)
     {
@@ -125,11 +133,11 @@ sealed class AircraftFlightLog
     private static string Clean(string? s) =>
         string.IsNullOrWhiteSpace(s) ? "" : s.Trim().ToUpperInvariant().Replace(',', ' ').Replace('\n', ' ').Replace('\r', ' ');
 
-    public static Entry MakeEntry(long dep, long first, long last, string? cs, string? o, string? d)
+    public static Entry MakeEntry(long dep, long first, long last, string? cs, string? o, string? d, string? op = null)
     {
         long cap = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 300;   // a stray future time never sorts first
         long Fix(long v) => v <= 0 ? 0 : Math.Min(v, cap);
-        return new Entry(Fix(dep), Fix(first), Fix(last), Clean(cs), Clean(o), Clean(d));
+        return new Entry(Fix(dep), Fix(first), Fix(last), Clean(cs), Clean(o), Clean(d), Clean(op));
     }
 
     /// <summary>
@@ -152,6 +160,13 @@ sealed class AircraftFlightLog
     {
         if (e.T <= 0 || key.Contains(',') || SeenRecently(key, e)) return;
         _queue.Writer.TryWrite((key, e));
+        RaiseAppended(key, e);
+    }
+
+    private void RaiseAppended(string key, in Entry e)
+    {
+        try { Appended?.Invoke(key, e); }
+        catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Flight-log subscriber error: {ex.Message}"); }
     }
 
     private bool SeenRecently(string key, in Entry e)
@@ -169,7 +184,7 @@ sealed class AircraftFlightLog
 
     private static void AppendLine(StringBuilder sb, string key, in Entry e) =>
         sb.Append(key).Append(',').Append(e.Dep).Append(',').Append(e.First).Append(',').Append(e.Last)
-          .Append(',').Append(e.Cs).Append(',').Append(e.O).Append(',').Append(e.D).Append('\n');
+          .Append(',').Append(e.Cs).Append(',').Append(e.O).Append(',').Append(e.D).Append(',').Append(e.Op).Append('\n');
 
     private void WriteBatch(Dictionary<int, StringBuilder> batch)
     {
@@ -224,22 +239,40 @@ sealed class AircraftFlightLog
     }
 
     // ── Read ──
+    private static bool TryParseLine(string line, out string key, out Entry e)
+    {
+        key = "";
+        e = default;
+        var p = line.Split(',');
+        // 8 fields since v3 (operator); 7-field lines predate it and read with a blank operator.
+        if ((p.Length != 7 && p.Length != 8)
+            || !long.TryParse(p[1], out var dep) || !long.TryParse(p[2], out var first) || !long.TryParse(p[3], out var last))
+            return false;
+        key = p[0];
+        e = new Entry(dep, first, last, p[4], p[5], p[6], p.Length == 8 ? p[7] : "");
+        return true;
+    }
+
+    private static string? ReadShardText(string path)
+    {
+        if (!File.Exists(path)) return null;
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var sr = new StreamReader(fs);
+            return sr.ReadToEnd();
+        }
+        catch (IOException) { return null; }
+    }
+
     /// <summary>All logged flights for these keys, duplicates merged, oldest first.</summary>
     public List<Entry> Read(IEnumerable<string> keys)
     {
         var all = new List<Entry>();
         foreach (var key in keys.Distinct())
         {
-            var path = ShardPath(ShardOf(key));
-            if (!File.Exists(path)) continue;
-            string text;
-            try
-            {
-                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                using var sr = new StreamReader(fs);
-                text = sr.ReadToEnd();
-            }
-            catch (IOException) { continue; }
+            var text = ReadShardText(ShardPath(ShardOf(key)));
+            if (text == null) continue;
 
             // Only lines terminated by '\n' — anything after the last newline is an append still in progress.
             int limit = text.LastIndexOf('\n');
@@ -248,17 +281,42 @@ sealed class AircraftFlightLog
             {
                 int nl = text.IndexOf('\n', pos);
                 if (nl < 0 || nl > limit) break;
-                if (nl - pos > prefix.Length && string.CompareOrdinal(text, pos, prefix, 0, prefix.Length) == 0)
-                {
-                    var p = text.Substring(pos, nl - pos).Split(',');
-                    if (p.Length == 7 && long.TryParse(p[1], out var dep) && long.TryParse(p[2], out var first)
-                        && long.TryParse(p[3], out var last))
-                        all.Add(new Entry(dep, first, last, p[4], p[5], p[6]));
-                }
+                if (nl - pos > prefix.Length && string.CompareOrdinal(text, pos, prefix, 0, prefix.Length) == 0
+                    && TryParseLine(text.Substring(pos, nl - pos), out _, out var entry))
+                    all.Add(entry);
                 pos = nl + 1;
             }
         }
         return Merge(all);
+    }
+
+    /// <summary>
+    /// Every stored entry whose best time is at or after <paramref name="sinceEpoch"/>, shard by shard — raw (not
+    /// merged), for building an in-memory index at startup. Throttled like the backfill. Returns the count.
+    /// </summary>
+    public long ScanAll(long sinceEpoch, Action<string, Entry> sink)
+    {
+        long n = 0;
+        var burst = Stopwatch.StartNew();
+        for (int shard = 0; shard < Shards; shard++)
+        {
+            var text = ReadShardText(ShardPath(shard));
+            if (text == null) continue;
+            int limit = text.LastIndexOf('\n');
+            for (int pos = 0; pos < limit;)
+            {
+                int nl = text.IndexOf('\n', pos);
+                if (nl < 0 || nl > limit) break;
+                if (TryParseLine(text.Substring(pos, nl - pos), out var key, out var e) && e.T >= sinceEpoch)
+                {
+                    sink(key, e);
+                    n++;
+                }
+                pos = nl + 1;
+            }
+            if (burst.ElapsedMilliseconds >= 100) { Thread.Sleep(50); burst.Restart(); }
+        }
+        return n;
     }
 
     public static List<Entry> Merge(List<Entry> all)
@@ -273,7 +331,8 @@ sealed class AircraftFlightLog
             {
                 var m = merged[i];
                 merged[i] = new Entry(m.Dep > 0 ? m.Dep : e.Dep, MinPositive(m.First, e.First),
-                                      Math.Max(m.Last, e.Last), m.Cs, Longer(m.O, e.O), Longer(m.D, e.D));   // keep ICAO form
+                                      Math.Max(m.Last, e.Last), m.Cs, Longer(m.O, e.O), Longer(m.D, e.D),   // keep ICAO form
+                                      m.Op.Length > 0 ? m.Op : e.Op);
             }
             else
             {
@@ -319,12 +378,12 @@ sealed class AircraftFlightLog
                     if (AptKey(x.O) == AptKey(k.O) && AptKey(x.D) == AptKey(k.D))
                     {
                         k = new Entry(k.Dep, MinPositive(k.First, x.First), Math.Max(k.Last, x.Last), k.Cs,
-                                      Longer(k.O, x.O), Longer(k.D, x.D));
+                                      Longer(k.O, x.O), Longer(k.D, x.D), k.Op.Length > 0 ? k.Op : x.Op);
                         remove.Add(i);
                     }
                     else
                     {
-                        list[i] = new Entry(0, x.First, x.Last, x.Cs, x.O, x.D);
+                        list[i] = new Entry(0, x.First, x.Last, x.Cs, x.O, x.D, x.Op);
                     }
                 }
                 list[keep] = k;
@@ -341,11 +400,12 @@ sealed class AircraftFlightLog
 
     // ── Start / backfill ──
 
-    // Log format version. Bump ONLY for a change that makes existing lines wrong: a bump wipes the log and
-    // re-imports it from flight-history, which is budget-capped — once history has rolled past the log's oldest
+    // Log format version. Bump ONLY for a change that makes existing lines wrong or incomplete: a bump wipes the log
+    // and re-imports it from flight-history, which is budget-capped — once history has rolled past the log's oldest
     // day, bumping would PERMANENTLY lose those flights.
     //   v1: every purged flight plan.   v2: only flights that flew (position report or actual departure).
-    private const int LogVersion = 2;
+    //   v3: + filed operator per flight (for airline research; bumped while the log was still fully rebuildable).
+    private const int LogVersion = 3;
 
     private void MigrateFormat()
     {
@@ -364,6 +424,7 @@ sealed class AircraftFlightLog
         }
         if (ver < LogVersion || !File.Exists(verFile)) File.WriteAllText(verFile, LogVersion + "\n");
     }
+
     /// <summary>Start the background writer and the one-time, resumable history backfill.</summary>
     public void Start(Action<HistoryRow>? onBackfillRow = null, Action? onBackfillComplete = null)
     {
@@ -458,12 +519,14 @@ sealed class AircraftFlightLog
                         if (h == null) continue;
                         onRow?.Invoke(h.Value.Row);          // the airframe is real even if this plan never flew
                         if (!h.Value.Flew) continue;          // …but only flights that flew go in the log
-                        var e = MakeEntry(h.Value.Dep, h.Value.First, h.Value.Last, h.Value.Row.Cs, h.Value.Row.O, h.Value.Row.D);
-                        var key = h.Value.Row.Key;
+                        var row = h.Value.Row;
+                        var e = MakeEntry(h.Value.Dep, h.Value.First, h.Value.Last, row.Cs, row.O, row.D, row.Op);
+                        var key = row.Key;
                         if (e.T <= 0 || key.Contains(',') || SeenRecently(key, e)) continue;
                         int s = ShardOf(key);
                         if (!batch.TryGetValue(s, out var sb)) batch[s] = sb = new StringBuilder();
                         AppendLine(sb, key, e);
+                        RaiseAppended(key, e);
                         logged++;
                     }
                 }

@@ -71,7 +71,7 @@ sealed class AircraftDb
         long firstSeen = events.Count > 0 ? AircraftFlightLog.ParseEpoch(events[0].Time) : 0;
         _log.Record(KeyFor(hex, reg), AircraftFlightLog.MakeEntry(
             AircraftFlightLog.ParseEpoch(f.ActualDepartureTime), firstSeen, AircraftFlightLog.Epoch(seen),
-            f.Callsign, f.Origin, f.Destination));
+            f.Callsign, f.Origin, f.Destination, f.Operator));
     }
 
     private void Upsert(string? hex, string? reg, string? selcal, string? type, string? op,
@@ -391,6 +391,15 @@ sealed class AircraftDb
         if (rec.Icao24 != null) keys.Add(rec.Icao24);
         if (rec.Registration != null) keys.Add("REG:" + rec.Registration);
         return _log.Read(keys);
+    }
+
+    /// <summary>Identity for one flight-log key, for airline research (null when no record exists).</summary>
+    public AirlineResearch.TailMeta? TailMeta(string key)
+    {
+        if (!_byKey.TryGetValue(key, out var r)) return null;
+        string? reg, hex, type, op;
+        lock (r) { reg = r.Registration; hex = r.Icao24; type = r.Type; op = r.Operator; }
+        return new AirlineResearch.TailMeta(key, reg, hex, type, op, LaddService.IsBlocked(null, reg, hex));
     }
 
     // Records the backfill creates get full upserts from every history line; records that already existed only

@@ -91,3 +91,5 @@ tools/SwimServer/ladd/*.csv
 **/LADD_Industry_Filter*
 **/LADD_FAA_Source_Filter*
 **/*CUI_SP_PRVCY*
+# Downloaded OurAirports dataset (refreshed monthly by AirportDirectory)
+tools/SwimServer/airport-data/

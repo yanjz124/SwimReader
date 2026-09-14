@@ -11,7 +11,8 @@
 <style>
     /* Flight-table look (shared stylesheet above). One column template drives the header, the
        filter row and every data row, so they always line up. */
-    .flight-list { --cols: 96px 56px 72px 70px 62px minmax(140px, 1fr) 64px 96px; }
+    /* OPR takes the spare width; CALLSIGNS is a fixed, truncated preview (full list in the detail panel). */
+    .flight-list { --cols: 96px 56px minmax(200px, 1fr) 70px 62px 150px 64px 96px; }
 
     /* Header + per-column filters are ONE sticky block at the top of the table's own scroll area:
        attached to the table, never offset into the rows. */
@@ -49,7 +50,8 @@
     .note { font-size: 11px; color: #555; line-height: 1.5; margin-top: 4px; }
 
     @media (max-width: 768px) {
-        .thead, .filter-row { min-width: 700px; }
+        /* Scroll horizontally rather than crush the columns (sum of the template + gaps + padding). */
+        .thead, .filter-row, .col-header, .flight-row { min-width: 880px; }
     }
 </style>
 </head>
@@ -293,7 +295,7 @@ function renderRow(r, i) {
         + `<span class="op" title="${esc(r.opr)}">${esc(r.opr)}</span>`
         + `<span class="hex">${esc(r.hex)}</span>`
         + `<span class="selcal">${esc(r.sel)}</span>`
-        + `<span class="dep" title="${esc(r.cs)}">${esc(r.cs)}</span>`
+        + `<span class="dep">${esc(r.cs)}</span>`
         + `<span class="num dim">${r.seen.toLocaleString()}</span>`
         + `<span class="dim" title="${utcText(r.last)}">${ago(r.last)}</span>`
         + `</div>`;
@@ -438,6 +440,11 @@ function renderActiveTab() {
                 ['First seen', isoUtc(d.firstSeen)],
                 ['Last seen', d.lastSeen ? `${isoUtc(d.lastSeen)}  (${ago(new Date(d.lastSeen).getTime() / 1000)})` : ''],
             ])
+            // The grid only shows a truncated preview — the full callsign list lives here.
+            + ((d.callsigns || []).length
+                ? `<div class="section"><h3>CALLSIGNS (${d.callsigns.length})</h3><div class="route-text">${
+                    d.callsigns.map(c => `<a href="/track/${encodeURIComponent(c)}">${esc(c)}</a>`).join('   ')}</div></div>`
+                : '')
             + links
             + '<div class="note">Built from flights observed on the FAA SWIM feed in US airspace — not a complete registry.</div>';
     } else {

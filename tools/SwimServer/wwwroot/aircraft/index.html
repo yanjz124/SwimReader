@@ -2,247 +2,538 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#0a0a0a">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Aircraft Database</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛩️</text></svg>">
+<link rel="stylesheet" href="/shared/common.css?v=3">
+<link rel="stylesheet" href="/flight-table/flight-table.css?v=7">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
 <style>
-  :root { --yel:#cccc44; --dim:#8a8a3a; --bg:#0a0a0a; --card:#141414; --line:#333;
-    --accent:#4aa3ff; --ok:#44cc44; --warn:#ff8c00; --white:#eee; --head:#101010; }
-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { margin:0; background:var(--bg); color:var(--yel);
-    font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace; font-size:14px; }
-  body { padding-bottom:40px; }
-  a { color:var(--accent); text-decoration:none; }
-  .wrap { max-width:1100px; margin:0 auto; }
+    /* Flight-table look (shared stylesheet above). One column template drives the header, the
+       filter row and every data row, so they always line up. */
+    .flight-list { --cols: 96px 56px 72px 70px 62px minmax(140px, 1fr) 64px 96px; }
 
-  header { position:sticky; top:0; z-index:10; background:#000; border-bottom:1px solid var(--line);
-    padding:9px 12px; display:flex; gap:8px; align-items:center; }
-  header .home { color:var(--dim); font-size:15px; padding:6px; }
-  header form { flex:1; display:flex; gap:8px; }
-  header input { flex:1; min-width:0; background:#1a1a1a; color:var(--yel); border:1px solid var(--line);
-    border-radius:8px; padding:10px 12px; font:inherit; text-transform:uppercase; letter-spacing:1px; }
-  header input::placeholder { color:#666; text-transform:none; letter-spacing:0; }
-  header button { background:#1e2e1e; color:#bfe6bf; border:1px solid #3a5a3a; border-radius:8px;
-    padding:0 14px; font:inherit; font-weight:bold; cursor:pointer; }
+    /* Header + per-column filters are ONE sticky block at the top of the table's own scroll area:
+       attached to the table, never offset into the rows. */
+    .thead { position: sticky; top: 0; z-index: 3; background: #050505; border-bottom: 1px solid #333; }
+    .thead .col-header { position: static; grid-template-columns: var(--cols); border-bottom: none; padding-bottom: 4px; }
+    .flight-row { grid-template-columns: var(--cols); }
+    .col-header > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .col-header .ar { color: #cccc44; margin-left: 3px; }
+    .col-header .num, .flight-row .num { text-align: right; }
 
-  /* toolbar: count + pagination */
-  .bar { display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:8px 14px; color:var(--dim); font-size:12px; flex-wrap:wrap; }
-  .bar .pg { display:flex; align-items:center; gap:6px; }
-  .bar button { background:#181818; color:var(--yel); border:1px solid var(--line); border-radius:6px;
-    padding:5px 11px; font:inherit; cursor:pointer; }
-  .bar button:disabled { opacity:.35; cursor:default; }
+    .filter-row { display: grid; grid-template-columns: var(--cols); gap: 6px; padding: 0 12px 6px; }
+    .filter-row input {
+        width: 100%; min-width: 0; background: #0d0d0d; border: 1px solid #262626; border-radius: 2px;
+        color: #ccc; font-family: inherit; font-size: 11px; padding: 2px 5px; outline: none;
+    }
+    .filter-row input::placeholder { color: #3a3a3a; }
+    .filter-row input:focus { border-color: #cccc44; }
+    .filter-row input.on { border-color: #6a6a2a; color: #cccc44; }
+    .filter-row input.bad { border-color: #663322; color: #ff8844; }
 
-  /* table */
-  .tablewrap { overflow-x:auto; padding:0 8px; }
-  table { border-collapse:collapse; width:100%; min-width:720px; font-size:13.5px; }
-  thead th { position:sticky; top:53px; background:var(--head); color:var(--dim); text-align:left;
-    font-weight:normal; letter-spacing:.5px; padding:9px 10px; border-bottom:1px solid var(--line);
-    cursor:pointer; white-space:nowrap; user-select:none; }
-  thead th:hover { color:var(--yel); }
-  thead th .ar { color:var(--yel); margin-left:3px; }
-  thead th.num, td.num { text-align:right; }
-  tbody td { padding:8px 10px; border-bottom:1px solid #1e1e1e; white-space:nowrap; }
-  tbody tr { cursor:pointer; }
-  tbody tr:hover td { background:#181808; }
-  td.reg { color:#fff; font-weight:bold; letter-spacing:.5px; }
-  td.hex { color:#8fb0d8; }
-  td.selcal { color:#39ff62; letter-spacing:1px; }
-  td.op, td.type, td.wake { color:var(--yel); }
-  td.dim { color:var(--dim); }
-  .msg { padding:34px 20px; text-align:center; color:var(--dim); line-height:1.6; }
-  .msg b { color:var(--yel); }
+    .flight-row .op { color: #5588ff; }
+    .flight-row .hex { color: #39d2c0; }
+    .flight-row .selcal { color: #cccc44; }
+    .flight-row .dim { color: #888; }
+    .empty { padding: 12px; font-size: 11px; color: #555; }
 
-  /* detail */
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; margin:10px 12px; overflow:hidden; }
-  .card > h2 { margin:0; padding:12px 14px; background:#0d0d0d; border-bottom:1px solid var(--line);
-    display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
-  .card > h2 .reg { font-size:26px; font-weight:bold; color:#fff; letter-spacing:2px; }
-  .card > h2 .type { font-size:15px; color:var(--yel); }
-  .grid { display:grid; grid-template-columns:auto 1fr; gap:5px 14px; padding:12px 14px; font-size:14px; }
-  .grid .k { color:var(--dim); white-space:nowrap; }
-  .grid .v { color:var(--yel); word-break:break-word; }
-  .grid .v.hl { color:#fff; }
-  .grid .v.hex { color:#8fb0d8; letter-spacing:1px; }
-  .grid .v.selcal { color:#39ff62; letter-spacing:2px; font-weight:bold; }
-  .chips { display:flex; flex-wrap:wrap; gap:6px; }
-  .chip { font-size:12px; padding:3px 9px; border-radius:6px; border:1px solid var(--line); color:var(--yel); background:#111; }
-  .chip a { color:var(--yel); }
-  .back { display:inline-block; margin:12px 14px 0; color:var(--dim); cursor:pointer; }
-  .disc { padding:14px; color:var(--dim); font-size:11px; text-align:center; line-height:1.5; }
+    .clear-btn { color: #888; }
+    .route-text a { color: #cccc44; text-decoration: none; }
+    .route-text a:hover { text-decoration: underline; }
+    .xlink {
+        display: inline-block; color: #cccc44; text-decoration: none; font-size: 12px;
+        border: 1px solid #4a4a2a; padding: 2px 9px; border-radius: 3px; margin: 0 6px 6px 0;
+    }
+    .xlink:hover { border-color: #cccc44; }
+    .note { font-size: 11px; color: #555; line-height: 1.5; margin-top: 4px; }
+
+    @media (max-width: 768px) {
+        .thead, .filter-row { min-width: 700px; }
+    }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <a class="home" href="/" title="Home">&larr;</a>
-    <form id="f"><input id="q" placeholder="Filter — registration, ICAO24, SELCAL, callsign, operator, type…"
-      autocomplete="off" autocapitalize="characters" spellcheck="false"><button type="submit">FILTER</button></form>
-  </header>
-  <div id="view"></div>
-  <div class="disc">Built from aircraft observed on the FAA SWIM feed in US airspace — not a complete registry.
-    Blocked (LADD) aircraft are hidden. NOT FOR OPERATIONAL USE.</div>
+<a class="nav-home" href="/">&larr; HOME</a>
+<div class="topbar" style="padding-left:100px">
+    <h1>AIRCRAFT DATABASE</h1>
+    <span class="status" id="status">loading...</span>
+    <div class="stats" id="stats"></div>
 </div>
+
+<div class="filterbar">
+    <input type="text" class="search-box" id="search" placeholder="Search all columns… (wildcards: N12*, multi-word AND)"
+        title="Matches any column. * wildcard, =exact, !exclude; space-separated terms are AND'd. Use the boxes under each header to filter one column.">
+    <div class="filter-sep"></div>
+    <span class="result-count" id="resultCount"></span>
+    <button class="export-btn clear-btn" id="clearFilters" style="display:none" title="Clear the search and every column filter">CLEAR FILTERS</button>
+    <button class="export-btn" id="exportCsv" title="Download the rows currently shown (filters + sort applied) as a CSV file">EXPORT CSV</button>
+</div>
+
+<div class="main">
+    <div class="flight-list" id="flightList">
+        <div class="thead" id="thead">
+            <div class="col-header" id="colHeader"></div>
+            <div class="filter-row" id="filterRow"></div>
+        </div>
+        <div id="rows"></div>
+    </div>
+
+    <div class="detail-panel collapsed" id="detailPanel">
+        <div class="detail-header">
+            <span class="cs-big" id="detailReg"></span>
+            <span class="type-badge" id="detailType"></span>
+            <span class="status-badge historical" id="detailOp"></span>
+            <span class="detail-close" id="detailClose">&times;</span>
+        </div>
+        <div class="tab-bar">
+            <div class="tab active" data-tab="airframe">AIRFRAME</div>
+            <div class="tab" data-tab="flights">FLIGHTS<span class="event-count" id="flightCount"></span></div>
+        </div>
+        <div class="detail-body" id="detailBody"></div>
+    </div>
+</div>
+
 <script>
-const view = document.getElementById('view');
-const qEl = document.getElementById('q');
-const PAGE = 100;
+// ── Whole table in the browser, rendered virtually ─────────────────────────────
+// The full database is fetched once (/api/aircraft/all — compact positional rows, ~17K), sorted
+// and filtered in memory, and drawn like the flight table: fixed 24px rows, only the ~40 rows in
+// the scroll window exist in the DOM. Sorting re-orders the master array once; filtering just walks
+// it with precompiled predicates, so typing in a column filter stays instant.
+const ROW_HEIGHT = 24;   // must match .flight-row { height } in flight-table.css
+const ROW_BUFFER = 8;
+
+const TEXT_TIP = 'Contains (case-insensitive). * wildcard (N12*), =exact, !exclude, ? has a value, !? is empty. Space-separated terms are AND\'d.';
+const NUM_TIP = 'Number: 5, >5, >=5, <3, 2-10';
+const AGE_TIP = 'Age: <2h, >7d, <30m (units m/h/d) — or part of a UTC date/time, e.g. 2026-09-14';
 
 const COLS = [
-  { key:'registration', label:'REG',      cls:'reg' },
-  { key:'type',         label:'TYPE',     cls:'type' },
-  { key:'operator',     label:'OPERATOR', cls:'op' },
-  { key:'icao24',       label:'ICAO24',   cls:'hex' },
-  { key:'selcal',       label:'SELCAL',   cls:'selcal' },
-  { key:'wake',         label:'WAKE',     cls:'wake' },
-  { key:'sightings',    label:'SEEN',     cls:'num dim', num:true },
-  { key:'lastSeen',     label:'LAST SEEN',cls:'dim' },
+    { key: 'reg',  label: 'REG',       type: 'text', cls: 'cs' },
+    { key: 'type', label: 'TYPE',      type: 'text', cls: '' },
+    { key: 'opr',  label: 'OPR',       type: 'text', cls: 'op' },
+    { key: 'hex',  label: 'ICAO24',    type: 'text', cls: 'hex' },
+    { key: 'sel',  label: 'SELCAL',    type: 'text', cls: 'selcal' },
+    { key: 'cs',   label: 'CALLSIGNS', type: 'list', cls: 'dep' },
+    { key: 'seen', label: 'SEEN',      type: 'num',  cls: 'num dim' },
+    { key: 'last', label: 'LAST SEEN', type: 'age',  cls: 'dim' },
 ];
+const LEGACY_SORT = { lastSeen: 'last', registration: 'reg', operator: 'opr', icao24: 'hex', selcal: 'sel', sightings: 'seen' };
 
-// table state (reflected in the URL query string)
-let state = { q:'', sort:'lastSeen', dir:'desc', offset:0, total:0 };
+const listEl = document.getElementById('flightList');
+const theadEl = document.getElementById('thead');
+const headEl = document.getElementById('colHeader');
+const filterRowEl = document.getElementById('filterRow');
+const rowsEl = document.getElementById('rows');
+const countEl = document.getElementById('resultCount');
+const statusEl = document.getElementById('status');
+const statsEl = document.getElementById('stats');
+const searchEl = document.getElementById('search');
+const clearBtn = document.getElementById('clearFilters');
+const detailPanel = document.getElementById('detailPanel');
+const detailBody = document.getElementById('detailBody');
 
-function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function ago(iso){
-  if(!iso) return '';
-  const d = (Date.now() - new Date(iso).getTime())/1000;
-  if (d < 90) return 'just now';
-  if (d < 5400) return Math.round(d/60)+' min ago';
-  if (d < 129600) return Math.round(d/3600)+' h ago';
-  return Math.round(d/86400)+' d ago';
+let master = [];              // every row, in current sort order
+let view = [];                // master after filters
+let sortKey = 'last', sortAsc = false;
+let lastRange = { start: -1, end: -1 };
+let selectedId = null, currentDetail = null, activeTab = 'airframe';
+const INVALID = Symbol('invalid');
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); }
+function utcText(t) { return t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : ''; }
+function isoUtc(iso) { return iso ? utcText(new Date(iso).getTime() / 1000) : ''; }
+function ago(t) {
+    if (!t) return '';
+    const d = Date.now() / 1000 - t;
+    if (d < 90) return 'just now';
+    if (d < 5400) return Math.round(d / 60) + ' min ago';
+    if (d < 129600) return Math.round(d / 3600) + ' h ago';
+    return Math.round(d / 86400) + ' d ago';
 }
 
-function stateToUrl(replace){
-  const p = new URLSearchParams();
-  if (state.q) p.set('q', state.q);
-  if (state.sort !== 'lastSeen') p.set('sort', state.sort);
-  if (state.dir !== 'desc') p.set('dir', state.dir);
-  if (state.offset) p.set('offset', state.offset);
-  const url = '/aircraft' + (p.toString() ? '?'+p.toString() : '');
-  if (replace) history.replaceState({table:true}, '', url); else history.pushState({table:true}, '', url);
+// ── Header + filter row ─────────────────────────────────────────────────────
+function renderHeader() {
+    headEl.innerHTML = COLS.map(c => {
+        const on = c.key === sortKey;
+        const cls = [c.type === 'num' ? 'num' : '', on ? 'sorted' : ''].filter(Boolean).join(' ');
+        const arrow = on ? `<span class="ar">${sortAsc ? '▲' : '▼'}</span>` : '';
+        return `<span data-col="${c.key}"${cls ? ` class="${cls}"` : ''} title="Sort by ${c.label}">${c.label}${arrow}</span>`;
+    }).join('');
 }
 
-async function loadTable(push){
-  stateToUrl(!push);
-  view.innerHTML = '<div class="msg">Loading…</div>';
-  try {
-    const p = new URLSearchParams({ sort:state.sort, dir:state.dir, offset:state.offset, limit:PAGE });
-    if (state.q) p.set('q', state.q);
-    const r = await fetch('/api/aircraft/list?'+p.toString());
-    const j = await r.json();
-    state.total = j.total;
-    view.innerHTML = tableHtml(j);
-    wireTable();
-  } catch (e) { view.innerHTML = '<div class="msg">Load failed. Try again.</div>'; }
+const filterInputs = {};
+filterRowEl.innerHTML = COLS.map(c => {
+    const ph = c.type === 'num' ? '>5 · 2-10' : c.type === 'age' ? '<2h · >7d' : 'filter';
+    const tip = c.type === 'num' ? NUM_TIP : c.type === 'age' ? AGE_TIP : TEXT_TIP;
+    return `<input data-col="${c.key}" spellcheck="false" autocomplete="off" placeholder="${esc(ph)}" title="${esc(tip)}">`;
+}).join('');
+filterRowEl.querySelectorAll('input').forEach(i => { filterInputs[i.dataset.col] = i; });
+
+// ── Filter compilation ──────────────────────────────────────────────────────
+// One term → predicate over an uppercase string. List columns (callsigns) apply exact/wildcard
+// matches per item rather than to the joined string.
+function termPred(term, isList) {
+    let neg = false, t = term;
+    if (t.startsWith('!')) { neg = true; t = t.slice(1); }
+    if (!t) return null;
+    let p;
+    if (t === '?') p = v => v !== '';
+    else if (t.startsWith('=')) {
+        const x = t.slice(1);
+        p = isList ? v => v.split(' ').includes(x) : v => v === x;
+    } else if (t.includes('*')) {
+        const rx = new RegExp('^' + t.split('*').map(escRx).join('.*') + '$');
+        p = isList ? v => v.split(' ').some(x => rx.test(x)) : v => rx.test(v);
+    } else {
+        p = v => v.includes(t);
+    }
+    return neg ? v => !p(v) : p;
 }
 
-function tableHtml(j){
-  const from = j.total ? j.offset+1 : 0;
-  const to = Math.min(j.offset + j.limit, j.total);
-  const hasPrev = j.offset > 0;
-  const hasNext = to < j.total;
-  const label = state.q
-    ? (j.total.toLocaleString()+' match'+(j.total===1?'':'es')+' for “'+esc(state.q)+'”')
-    : (j.total.toLocaleString()+' aircraft');
-  const bar =
-    '<div class="bar"><div>'+label+(j.total? ' · showing '+from+'–'+to : '')+'</div>'
-    + '<div class="pg">'
-      + '<button id="prev"'+(hasPrev?'':' disabled')+'>&larr; Prev</button>'
-      + '<button id="next"'+(hasNext?'':' disabled')+'>Next &rarr;</button>'
-    + '</div></div>';
-  if (!j.results.length)
-    return bar + '<div class="msg">No aircraft'+(state.q?' match <b>'+esc(state.q)+'</b>':'')+'.</div>';
-  const head = '<thead><tr>' + COLS.map(c => {
-    const active = state.sort === c.key;
-    const ar = active ? '<span class="ar">'+(state.dir==='asc'?'▲':'▼')+'</span>' : '';
-    return '<th data-key="'+c.key+'"'+(c.num?' class="num"':'')+'>'+c.label+ar+'</th>';
-  }).join('') + '</tr></thead>';
-  const rows = j.results.map(a => {
-    const id = a.icao24 || a.registration || '';
-    return '<tr data-id="'+esc(id)+'">' + COLS.map(c => {
-      let v = a[c.key];
-      if (c.key === 'lastSeen') v = ago(v);
-      else if (c.key === 'sightings') v = (v||0).toLocaleString();
-      else v = v || '';
-      return '<td class="'+c.cls+'">'+esc(v)+'</td>';
-    }).join('') + '</tr>';
-  }).join('');
-  return bar + '<div class="tablewrap"><table>'+head+'<tbody>'+rows+'</tbody></table></div>';
+function compileColumn(c, raw) {
+    const s = (raw || '').trim();
+    if (!s) return null;
+    const k = c.key;
+    if (c.type === 'num') {
+        const x = s.replace(/\s+/g, '');
+        let m = x.match(/^(\d+)-(\d+)$/);
+        if (m) { const a = +m[1], b = +m[2]; return r => r[k] >= a && r[k] <= b; }
+        m = x.match(/^(>=|<=|>|<|=)?(\d+)$/);
+        if (!m) return INVALID;
+        const op = m[1] || '=', n = +m[2];
+        return op === '>' ? r => r[k] > n : op === '<' ? r => r[k] < n
+             : op === '>=' ? r => r[k] >= n : op === '<=' ? r => r[k] <= n : r => r[k] === n;
+    }
+    if (c.type === 'age') {
+        const m = s.toLowerCase().replace(/\s+/g, '').match(/^(>=|<=|>|<)?(\d+(?:\.\d+)?)(m|h|d)$/);
+        if (m) {
+            const op = m[1] || '<', lim = +m[2] * { m: 60, h: 3600, d: 86400 }[m[3]], now = Date.now() / 1000;
+            return op === '<' ? r => now - r[k] < lim : op === '<=' ? r => now - r[k] <= lim
+                 : op === '>' ? r => now - r[k] > lim : r => now - r[k] >= lim;
+        }
+        const t = s.toUpperCase();
+        return r => (r._u || (r._u = utcText(r[k]))).includes(t);
+    }
+    const preds = s.toUpperCase().split(/\s+/).map(t => termPred(t, c.type === 'list')).filter(Boolean);
+    if (!preds.length) return null;
+    return r => { const v = r[k]; for (const p of preds) if (!p(v)) return false; return true; };
 }
 
-function wireTable(){
-  view.querySelectorAll('thead th').forEach(th => th.addEventListener('click', () => {
-    const k = th.dataset.key;
-    if (state.sort === k) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
-    else { state.sort = k; state.dir = (k==='sightings'||k==='lastSeen'||k==='firstSeen') ? 'desc' : 'asc'; }
-    state.offset = 0;
-    loadTable(true);
-  }));
-  view.querySelectorAll('tbody tr').forEach(tr => tr.addEventListener('click', () => detail(tr.dataset.id)));
-  const prev = view.querySelector('#prev'), next = view.querySelector('#next');
-  if (prev) prev.addEventListener('click', () => { state.offset = Math.max(0, state.offset - PAGE); loadTable(true); });
-  if (next) next.addEventListener('click', () => { state.offset += PAGE; loadTable(true); });
+// Global search: every term must match SOME column (a !term must match none).
+function compileGlobal(raw) {
+    const terms = (raw || '').trim().toUpperCase().split(/\s+/).filter(Boolean);
+    const preds = terms.map(t => {
+        const neg = t.startsWith('!') && t.length > 1;
+        const base = neg ? t.slice(1) : t;
+        const plain = termPred(base, false), list = termPred(base, true);
+        if (!plain) return null;
+        const any = r => plain(r.reg) || plain(r.type) || plain(r.opr) || plain(r.hex) || plain(r.sel) || list(r.cs);
+        return neg ? r => !any(r) : any;
+    }).filter(Boolean);
+    return preds.length ? r => { for (const p of preds) if (!p(r)) return false; return true; } : null;
 }
 
-async function detail(id, push) {
-  if (push !== false) history.pushState({id}, '', '/aircraft/'+encodeURIComponent(id));
-  view.innerHTML = '<div class="msg">Loading…</div>';
-  try {
-    const r = await fetch('/api/aircraft/'+encodeURIComponent(id));
-    if (!r.ok) { view.innerHTML = '<div class="msg">Aircraft not found.</div>'; return; }
-    const a = await r.json();
-    view.innerHTML = detailHtml(a);
-    const b = view.querySelector('.back'); if (b) b.addEventListener('click', () => history.back());
-  } catch { view.innerHTML = '<div class="msg">Load failed.</div>'; }
+// ── Sort / filter / render ──────────────────────────────────────────────────
+function sortMaster() {
+    const c = COLS.find(x => x.key === sortKey) || COLS[COLS.length - 1];
+    const k = c.key, dir = sortAsc ? 1 : -1;
+    if (c.type === 'num' || c.type === 'age') {
+        master.sort((a, b) => (a[k] - b[k]) * dir || b.last - a.last);
+    } else {
+        // Text: blanks always sink to the bottom, whichever direction.
+        master.sort((a, b) => {
+            const va = a[k], vb = b[k];
+            if (va === vb) return b.last - a.last;
+            if (!va) return 1;
+            if (!vb) return -1;
+            return (va < vb ? -1 : 1) * dir;
+        });
+    }
 }
 
-function kv(k,v,cls){ return v ? '<div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+v+'</div>' : ''; }
+function applyFilters(resetScroll) {
+    const preds = [];
+    let active = !!searchEl.value.trim();
+    for (const c of COLS) {
+        const input = filterInputs[c.key];
+        const raw = input.value.trim();
+        const f = compileColumn(c, raw);
+        input.classList.toggle('on', !!raw && f !== INVALID);
+        input.classList.toggle('bad', f === INVALID);
+        if (raw) active = true;
+        if (f && f !== INVALID) preds.push(f);
+    }
+    const g = compileGlobal(searchEl.value);
+    if (g) preds.push(g);
 
-function detailHtml(a) {
-  const cs = (a.callsigns||[]).map(c =>
-    '<span class="chip"><a href="/track/'+encodeURIComponent(c)+'">'+esc(c)+'</a></span>').join('');
-  const rt = (a.routes||[]).map(x => '<span class="chip">'+esc(x)+'</span>').join('');
-  return '<div class="back">&larr; back to table</div>'
-    + '<div class="card"><h2>'
-      + '<span class="reg">'+esc(a.registration||a.icao24||'?')+'</span>'
-      + '<span class="type">'+esc(a.type||'')+'</span></h2>'
-    + '<div class="grid">'
-      + kv('ICAO 24', esc(a.icao24), 'hex')
-      + kv('Registration', esc(a.registration), 'hl')
-      + kv('SELCAL', esc(a.selcal), 'selcal')
-      + kv('Type', esc(a.type))
-      + kv('Operator', esc(a['operator']), 'hl')
-      + kv('Wake', esc(a.wake))
-      + kv('Equipment', esc(a.equipment))
-      + kv('Times seen', esc((a.sightings||0).toLocaleString()))
-      + kv('First seen', a.firstSeen ? esc(new Date(a.firstSeen).toLocaleString())+' UTC' : '')
-      + kv('Last seen', a.lastSeen ? esc(new Date(a.lastSeen).toLocaleString())+' ('+esc(ago(a.lastSeen))+')' : '')
-    + '</div>'
-    + (cs ? '<div class="grid"><div class="k">Callsigns</div><div class="v"><div class="chips">'+cs+'</div></div></div>' : '')
-    + (rt ? '<div class="grid"><div class="k">Routes</div><div class="v"><div class="chips">'+rt+'</div></div></div>' : '')
-    + '</div>';
+    view = preds.length === 0 ? master
+         : master.filter(r => { for (const p of preds) if (!p(r)) return false; return true; });
+
+    countEl.textContent = view.length === master.length
+        ? `${master.length.toLocaleString()} shown`
+        : `${view.length.toLocaleString()} of ${master.length.toLocaleString()} shown`;
+    clearBtn.style.display = active ? '' : 'none';
+    rowsEl.style.height = (view.length * ROW_HEIGHT) + 'px';
+    if (resetScroll) listEl.scrollTop = 0;
+    lastRange = { start: -1, end: -1 };
+    renderViewport();
+    saveUrl();
 }
 
-// Routing: /aircraft/{id} → detail; /aircraft?q=&sort=&dir=&offset= → table.
-function route() {
-  const m = location.pathname.match(/^\/aircraft\/([^/]+)$/);
-  if (m) { detail(decodeURIComponent(m[1]), false); return; }
-  const p = new URLSearchParams(location.search);
-  state.q = (p.get('q') || '').trim();
-  state.sort = p.get('sort') || 'lastSeen';
-  state.dir = p.get('dir') || 'desc';
-  state.offset = Math.max(0, parseInt(p.get('offset')||'0', 10) || 0);
-  qEl.value = state.q;
-  loadTable(false /* replaceState, don't push on plain nav */);
+function renderRow(r, i) {
+    const sel = r.id === selectedId ? ' selected' : '';
+    return `<div class="flight-row${sel}" data-id="${esc(r.id)}" style="top:${i * ROW_HEIGHT}px">`
+        + `<span class="cs" title="${esc(r.reg)}">${esc(r.reg || '—')}</span>`
+        + `<span title="${esc(r.type)}">${esc(r.type)}</span>`
+        + `<span class="op" title="${esc(r.opr)}">${esc(r.opr)}</span>`
+        + `<span class="hex">${esc(r.hex)}</span>`
+        + `<span class="selcal">${esc(r.sel)}</span>`
+        + `<span class="dep" title="${esc(r.cs)}">${esc(r.cs)}</span>`
+        + `<span class="num dim">${r.seen.toLocaleString()}</span>`
+        + `<span class="dim" title="${utcText(r.last)}">${ago(r.last)}</span>`
+        + `</div>`;
 }
-window.addEventListener('popstate', route);
-document.getElementById('f').addEventListener('submit', e => {
-  e.preventDefault(); state.q = qEl.value.trim(); state.offset = 0; loadTable(true);
+
+function renderViewport() {
+    if (view.length === 0) {
+        rowsEl.innerHTML = master.length ? '<div class="empty">No aircraft match these filters.</div>' : '';
+        lastRange = { start: -1, end: -1 };
+        return;
+    }
+    const top = Math.max(0, listEl.scrollTop - theadEl.offsetHeight);
+    const vh = listEl.clientHeight;
+    const start = Math.max(0, Math.floor(top / ROW_HEIGHT) - ROW_BUFFER);
+    const end = Math.min(view.length, Math.ceil((top + vh) / ROW_HEIGHT) + ROW_BUFFER);
+    if (start === lastRange.start && end === lastRange.end) return;
+    lastRange = { start, end };
+    let html = '';
+    for (let i = start; i < end; i++) html += renderRow(view[i], i);
+    rowsEl.innerHTML = html;
+}
+
+{
+    let pending = false;
+    listEl.addEventListener('scroll', () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => { pending = false; renderViewport(); });
+    }, { passive: true });
+    window.addEventListener('resize', () => { lastRange = { start: -1, end: -1 }; renderViewport(); });
+}
+
+// ── Events: sort, filters, search ───────────────────────────────────────────
+headEl.addEventListener('click', (e) => {
+    const span = e.target.closest('span[data-col]');
+    if (!span) return;
+    const c = COLS.find(x => x.key === span.dataset.col);
+    if (sortKey === c.key) sortAsc = !sortAsc;
+    else { sortKey = c.key; sortAsc = !(c.type === 'num' || c.type === 'age'); }   // counts/recency: biggest first
+    renderHeader();
+    sortMaster();
+    applyFilters(true);
 });
 
-route();
+let filterTimer;
+function scheduleFilter() { clearTimeout(filterTimer); filterTimer = setTimeout(() => applyFilters(true), 120); }
+filterRowEl.addEventListener('input', scheduleFilter);
+filterRowEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && e.target.value) { e.target.value = ''; e.stopPropagation(); applyFilters(true); }
+});
+searchEl.addEventListener('input', scheduleFilter);
+clearBtn.addEventListener('click', () => {
+    searchEl.value = '';
+    for (const c of COLS) filterInputs[c.key].value = '';
+    applyFilters(true);
+});
+
+// ── Detail panel ────────────────────────────────────────────────────────────
+rowsEl.addEventListener('click', (e) => {
+    const row = e.target.closest('.flight-row');
+    if (row && row.dataset.id) selectAircraft(row.dataset.id);
+});
+
+function updateSelectionClasses(prev, next) {
+    if (prev) { const el = rowsEl.querySelector(`.flight-row[data-id="${CSS.escape(prev)}"]`); if (el) el.classList.remove('selected'); }
+    if (next) { const el = rowsEl.querySelector(`.flight-row[data-id="${CSS.escape(next)}"]`); if (el) el.classList.add('selected'); }
+}
+
+async function selectAircraft(id) {
+    const prev = selectedId;
+    selectedId = id;
+    detailPanel.classList.remove('collapsed');
+    updateSelectionClasses(prev, id);
+    history.replaceState(null, '', '/aircraft/' + encodeURIComponent(id) + location.hash);
+
+    // Header straight from the loaded row so the panel responds instantly.
+    const local = master.find(r => r.id === id);
+    if (local) renderDetailHeader({ registration: local.reg, icao24: local.hex, type: local.type, operator: local.opr });
+    detailBody.innerHTML = '<div class="loading">Loading…</div>';
+    try {
+        const r = await fetch('/api/aircraft/' + encodeURIComponent(id));
+        if (selectedId !== id) return;               // user clicked another row mid-fetch
+        if (!r.ok) { detailBody.innerHTML = '<div class="loading">Aircraft not found</div>'; return; }
+        currentDetail = await r.json();
+        renderDetailHeader(currentDetail);
+        renderActiveTab();
+    } catch {
+        if (selectedId === id) detailBody.innerHTML = '<div class="loading">Load failed</div>';
+    }
+}
+
+function closeDetail() {
+    const prev = selectedId;
+    selectedId = null;
+    currentDetail = null;
+    detailPanel.classList.add('collapsed');
+    updateSelectionClasses(prev, null);
+    history.replaceState(null, '', '/aircraft' + location.hash);
+}
+
+function renderDetailHeader(d) {
+    document.getElementById('detailReg').textContent = d.registration || d.icao24 || '????';
+    document.getElementById('detailType').textContent = [d.type, d.wake].filter(Boolean).join('/');
+    const op = document.getElementById('detailOp');
+    op.textContent = d.operator || '';
+    op.style.display = d.operator ? '' : 'none';
+    document.getElementById('flightCount').textContent = d.callsigns ? ` (${d.callsigns.length})` : '';
+}
+
+function section(title, fields) {
+    const rows = fields.filter(f => f[1] != null && f[1] !== '');
+    if (rows.length === 0) return '';
+    return `<div class="section"><h3>${title}</h3><div class="field-grid">
+        ${rows.map(([label, value, cls]) =>
+            `<span class="field-label">${label}</span><span class="field-value${cls ? ' ' + cls : ''}">${esc(value)}</span>`
+        ).join('')}
+    </div></div>`;
+}
+
+function renderActiveTab() {
+    const d = currentDetail;
+    if (!d) return;
+    if (activeTab === 'airframe') {
+        const reg = d.registration && d.registration !== 'LADD' ? d.registration : '';
+        const links = reg
+            ? `<div class="section"><a class="xlink" href="/flight-table#q=${encodeURIComponent(reg)}&field=registration&status=historical">▶ Flight history for ${esc(reg)}</a></div>`
+            : '';
+        detailBody.innerHTML =
+            section('IDENTITY', [
+                ['Registration', d.registration, 'hl'],
+                ['ICAO 24', d.icao24, 'accent'],
+                ['SELCAL', d.selcal, 'warn'],
+            ])
+            + section('AIRFRAME', [
+                ['Type', d.type],
+                ['Wake', d.wake],
+                ['Equipment', d.equipment],
+                ['Operator', d.operator],
+            ])
+            + section('OBSERVED', [
+                ['Times seen', (d.sightings || 0).toLocaleString()],
+                ['First seen', isoUtc(d.firstSeen)],
+                ['Last seen', d.lastSeen ? `${isoUtc(d.lastSeen)}  (${ago(new Date(d.lastSeen).getTime() / 1000)})` : ''],
+            ])
+            + links
+            + '<div class="note">Built from flights observed on the FAA SWIM feed in US airspace — not a complete registry.</div>';
+    } else {
+        const cs = (d.callsigns || []).map(c => `<a href="/track/${encodeURIComponent(c)}">${esc(c)}</a>`).join('   ');
+        const rt = (d.routes || []).map(esc).join('\n');
+        detailBody.innerHTML =
+            (cs ? `<div class="section"><h3>CALLSIGNS FLOWN</h3><div class="route-text">${cs}</div></div>` : '')
+            + (rt ? `<div class="section"><h3>ROUTES</h3><div class="route-text">${rt}</div></div>` : '')
+            + (!cs && !rt ? '<div class="loading">No flights recorded</div>' : '');
+    }
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        activeTab = tab.dataset.tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        renderActiveTab();
+    });
+});
+document.getElementById('detailClose').addEventListener('click', closeDetail);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && selectedId) closeDetail(); });
+
+// ── Export (exactly what's shown) ───────────────────────────────────────────
+document.getElementById('exportCsv').addEventListener('click', () => {
+    const q = v => { v = String(v == null ? '' : v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    const lines = ['registration,icao24,selcal,type,operator,callsigns,sightings,first_seen_utc,last_seen_utc'];
+    for (const r of view)
+        lines.push([r.reg, r.hex, r.sel, r.type, r.opr, r.cs, r.seen, utcText(r.first), utcText(r.last)].map(q).join(','));
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `aircraft-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+// ── URL state (hash, like the flight table) ─────────────────────────────────
+let urlTimer;
+function saveUrl() {
+    clearTimeout(urlTimer);
+    urlTimer = setTimeout(() => {
+        const p = new URLSearchParams();
+        const q = searchEl.value.trim();
+        if (q) p.set('q', q);
+        for (const c of COLS) { const v = filterInputs[c.key].value.trim(); if (v) p.set(c.key, v); }
+        if (!(sortKey === 'last' && !sortAsc)) { p.set('sort', sortKey); p.set('dir', sortAsc ? 'asc' : 'desc'); }
+        const s = p.toString();
+        history.replaceState(null, '', location.pathname + (s ? '#' + s : ''));
+    }, 200);
+}
+
+// ── Load ────────────────────────────────────────────────────────────────────
+async function load(initial) {
+    try {
+        const r = await fetch('/api/aircraft/all');
+        if (!r.ok) throw new Error(String(r.status));
+        const j = await r.json();
+        master = j.rows.map(a => ({
+            id: a[0], reg: a[1] || '', hex: a[2] || '', sel: a[3] || '', type: a[4] || '',
+            opr: (a[5] || '').toUpperCase(), cs: a[6] || '', seen: a[7] || 0, first: a[8] || 0, last: a[9] || 0,
+        }));
+        sortMaster();
+        applyFilters(initial);   // periodic refresh keeps your scroll position
+        statusEl.textContent = 'ready';
+        statusEl.className = 'status ok';
+        statsEl.textContent = `${master.length.toLocaleString()} airframes · loaded ${utcText(Date.now() / 1000).slice(11)}`;
+    } catch {
+        if (initial) { statusEl.textContent = 'load failed'; statusEl.className = 'status'; }
+    }
+}
+
+(function init() {
+    const p = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+    const q = p.get('q'); if (q) searchEl.value = q;
+    for (const c of COLS) { const v = p.get(c.key); if (v) filterInputs[c.key].value = v; }
+    const s = p.get('sort');
+    if (s) {
+        const key = LEGACY_SORT[s] || s;
+        if (COLS.some(c => c.key === key)) sortKey = key;
+    }
+    const d = p.get('dir'); if (d) sortAsc = d === 'asc';
+    renderHeader();
+
+    load(true).then(() => {
+        const m = location.pathname.match(/^\/aircraft\/([^/]+)$/);
+        if (m) selectAircraft(decodeURIComponent(m[1]));
+    });
+
+    setInterval(() => { lastRange = { start: -1, end: -1 }; renderViewport(); }, 30000);   // refresh "x min ago"
+    setInterval(() => load(false), 10 * 60 * 1000);                                        // pick up newly seen aircraft
+})();
 </script>
-<script src="/shared/disclaimer.js?v=3"></script>
+<script src="/shared/frame.js?v=4"></script>
+<script src="/shared/disclaimer.js?v=2"></script>
 </body>
 </html>

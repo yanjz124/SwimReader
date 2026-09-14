@@ -87,6 +87,10 @@ sealed class AircraftDb
         string? wake, string? equip, string? callsign, string? origin, string? dest, DateTime seen)
     {
         if (hex == null && reg == null) return;
+        // A few flights carry a LastSeen ahead of now (e.g. plan-only records); never let one sort
+        // to the top of "last seen" as if it were in the future.
+        var nowUtc = DateTime.UtcNow;
+        if (seen > nowUtc) seen = nowUtc;
         var key = KeyFor(hex, reg);
         var rec = _byKey.GetOrAdd(key, k => new AircraftRecord { Key = k, Icao24 = hex, FirstSeenUtc = seen });
         lock (rec)
@@ -154,16 +158,53 @@ sealed class AircraftDb
     /// thousands of rows sorts in a few ms), so the client fetches only the page it shows.
     /// </summary>
     public (int total, List<AircraftRecord> page) Browse(
-        string? q, string sort, bool desc, int offset, int limit, bool reveal)
+        string? q, string? field, string? wake, string sort, bool desc, int offset, int limit, bool reveal)
     {
         IEnumerable<AircraftRecord> items = _byKey.Values;
         if (!reveal) items = items.Where(r => !LaddService.IsBlocked(null, r.Registration, r.Icao24));
-        var qq = (q ?? "").Trim().ToUpperInvariant();
-        if (qq.Length > 0)
-            items = items.Where(r => { bool m; lock (r) m = MatchRank(r, qq) < int.MaxValue; return m; });
+
+        var w = (wake ?? "").Trim().ToUpperInvariant();
+        if (w.Length > 0) items = items.Where(r => r.Wake == w);
+
+        // Same search semantics as the flight table: whitespace-separated terms are AND'd, each matched
+        // against the chosen field ("all" = any field). Plain terms are substring matches; terms with *
+        // are anchored wildcards (N12*, *DN, A3*N).
+        var terms = (q ?? "").ToUpperInvariant().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (terms.Length > 0)
+        {
+            var fld = (field ?? "all").Trim().ToLowerInvariant();
+            var matchers = terms.Select(BuildMatcher).ToArray();
+            items = items.Where(r =>
+            {
+                bool ok;
+                lock (r) ok = matchers.All(m => FieldMatches(r, fld, m));   // Callsigns is mutated under this lock
+                return ok;
+            });
+        }
 
         var list = items.ToList();
         int total = list.Count;
+
+        static Func<string?, bool> BuildMatcher(string term)
+        {
+            if (!term.Contains('*')) return s => s != null && s.Contains(term, StringComparison.Ordinal);
+            var rx = new System.Text.RegularExpressions.Regex(
+                "^" + System.Text.RegularExpressions.Regex.Escape(term).Replace("\\*", ".*") + "$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            return s => s != null && rx.IsMatch(s);
+        }
+
+        static bool FieldMatches(AircraftRecord r, string fld, Func<string?, bool> m) => fld switch
+        {
+            "registration" => m(r.Registration),
+            "icao24"       => m(r.Icao24),
+            "selcal"       => m(r.Selcal),
+            "type"         => m(r.Type),
+            "operator"     => m(r.Operator?.ToUpperInvariant()),
+            "callsign"     => r.Callsigns.Any(c => m(c)),
+            _              => m(r.Registration) || m(r.Icao24) || m(r.Selcal) || m(r.Type)
+                              || m(r.Operator?.ToUpperInvariant()) || r.Callsigns.Any(c => m(c)),
+        };
 
         Func<AircraftRecord, IComparable> key = sort switch
         {
@@ -185,11 +226,78 @@ sealed class AircraftDb
         return (total, page);
     }
 
+    // ── Whole-table payload ─────────────────────────────────────────────────────
+    private static readonly TimeSpan AllCacheTtl = TimeSpan.FromSeconds(60);
+    private readonly object _allLock = new();
+    private byte[]? _all, _allReveal;
+    private DateTime _allAt, _allRevealAt;
+
+    private static long Epoch(DateTime t) =>
+        t == default ? 0 : new DateTimeOffset(DateTime.SpecifyKind(t, DateTimeKind.Utc)).ToUnixTimeSeconds();
+
+    /// <summary>
+    /// Every aircraft in one compact JSON payload for the table page, which sorts and filters in the
+    /// browser. Rows are positional arrays (cols lists the order) with epoch-second timestamps to keep
+    /// it small and fast to parse, and the serialized bytes are cached for a minute so repeated page
+    /// loads don't re-walk the dictionary. LADD-blocked aircraft are omitted unless revealed.
+    /// </summary>
+    public byte[] AllCompactJson(bool reveal)
+    {
+        lock (_allLock)
+        {
+            var now = DateTime.UtcNow;
+            if (reveal && _allReveal != null && now - _allRevealAt < AllCacheTtl) return _allReveal;
+            if (!reveal && _all != null && now - _allAt < AllCacheTtl) return _all;
+
+            using var ms = new MemoryStream();
+            using (var w = new Utf8JsonWriter(ms))
+            {
+                void Str(string? s) { if (s == null) w.WriteNullValue(); else w.WriteStringValue(s); }
+
+                w.WriteStartObject();
+                w.WriteString("generated", now.ToString("o"));
+                w.WriteStartArray("cols");
+                foreach (var col in new[] { "id", "registration", "icao24", "selcal", "type", "operator",
+                                            "callsigns", "sightings", "firstSeen", "lastSeen" })
+                    w.WriteStringValue(col);
+                w.WriteEndArray();
+                w.WriteStartArray("rows");
+                foreach (var r in _byKey.Values)
+                {
+                    if (!reveal && LaddService.IsBlocked(null, r.Registration, r.Icao24)) continue;
+                    string? reg, hex, sel, type, op; string cs; long seen; DateTime first, last;
+                    lock (r)
+                    {
+                        reg = r.Registration; hex = r.Icao24; sel = r.Selcal; type = r.Type; op = r.Operator;
+                        cs = string.Join(' ', r.Callsigns.OrderBy(x => x));
+                        seen = r.Sightings; first = r.FirstSeenUtc; last = r.LastSeenUtc;
+                    }
+                    w.WriteStartArray();
+                    w.WriteStringValue(hex ?? reg ?? r.Key);   // id used for the detail lookup
+                    Str(reg); Str(hex); Str(sel); Str(type); Str(op);
+                    w.WriteStringValue(cs);
+                    w.WriteNumberValue(seen);
+                    w.WriteNumberValue(Epoch(first));
+                    w.WriteNumberValue(Epoch(last));
+                    w.WriteEndArray();
+                }
+                w.WriteEndArray();
+                w.WriteEndObject();
+            }
+            var bytes = ms.ToArray();
+            if (reveal) { _allReveal = bytes; _allRevealAt = now; } else { _all = bytes; _allAt = now; }
+            return bytes;
+        }
+    }
+
     /// <summary>Look up one aircraft by ICAO 24 hex or registration.</summary>
     public AircraftRecord? Get(string id)
     {
         var q = (id ?? "").Trim();
-        var hex = NormHex(q);
+        // Only treat the id as a Mode S code when it IS one (6 hex digits) — otherwise NormHex would
+        // pull the hex-looking characters out of a registration (N850AN → 850A) and could hit the
+        // wrong airframe.
+        var hex = System.Text.RegularExpressions.Regex.IsMatch(q, "^-?[0-9A-Fa-f]{6}$") ? NormHex(q) : null;
         if (hex != null && _byKey.TryGetValue(hex, out var byHex)) return byHex;
         var reg = NormReg(q);
         if (reg != null)
@@ -215,7 +323,14 @@ sealed class AircraftDb
                 try
                 {
                     var rec = JsonSerializer.Deserialize<AircraftRecord>(line, opts);
-                    if (rec != null && !string.IsNullOrEmpty(rec.Key)) { _byKey[rec.Key] = rec; n++; }
+                    if (rec != null && !string.IsNullOrEmpty(rec.Key))
+                    {
+                        // Repair any future-dated rows saved before Upsert clamped them.
+                        var nowUtc = DateTime.UtcNow;
+                        if (rec.LastSeenUtc > nowUtc) rec.LastSeenUtc = nowUtc;
+                        if (rec.FirstSeenUtc > rec.LastSeenUtc) rec.FirstSeenUtc = rec.LastSeenUtc;
+                        _byKey[rec.Key] = rec; n++;
+                    }
                 }
                 catch { }
             }
@@ -302,7 +417,8 @@ sealed class AircraftDb
             return new
             {
                 icao24 = r.Icao24, registration = reg, selcal, type = r.Type, @operator = op,
-                wake = r.Wake, sightings = r.Sightings,
+                wake = r.Wake, sightings = r.Sightings, callsigns,
+                firstSeen = r.FirstSeenUtc.ToString("o"),
                 lastSeen = r.LastSeenUtc.ToString("o"),
             };
         return new

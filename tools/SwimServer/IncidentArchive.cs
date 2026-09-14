@@ -179,11 +179,13 @@ public sealed class IncidentArchive
                             continue;
                     }
                 }
-                if (!TaisFacilityRelevant(facDir, req.StartUtc, req.EndUtc, matchTais)) continue;
                 var fac = Path.GetFileName(facDir);
                 progress?.Invoke($"STARS {fac}");
+                // Single pass: keep the whole terminal picture, but only commit it if some track in
+                // the window intersects the area/callsign (relevanceGate). Replaces the old
+                // decompress-twice (TaisFacilityRelevant pre-scan + slice).
                 var recs = SliceReplay(facDir, Path.Combine(dir, "tais", fac),
-                    req.StartUtc, req.EndUtc, keepSummary: null);   // whole terminal picture
+                    req.StartUtc, req.EndUtc, keepSummary: null, relevanceGate: matchTais);
                 if (recs > 0) taisRecords[fac] = recs;
             }
         }
@@ -362,62 +364,25 @@ public sealed class IncidentArchive
     }
 
     /// <summary>
-    /// True if any batch/snapshot track in this TAIS facility's replay files, within [start,end],
-    /// satisfies <paramref name="match"/> (callsign or in-area). Used to decide whether a terminal
-    /// facility is relevant to the incident before slicing it — pass-through removes don't count.
-    /// Returns on the first match (cheap early-out for the common irrelevant-facility case).
-    /// </summary>
-    private bool TaisFacilityRelevant(string facDir, DateTime start, DateTime end, Func<JsonElement, bool> match)
-    {
-        long startMs = new DateTimeOffset(start, TimeSpan.Zero).ToUnixTimeMilliseconds();
-        long endMs = new DateTimeOffset(end, TimeSpan.Zero).ToUnixTimeMilliseconds();
-        foreach (var file in Directory.GetFiles(facDir, "*.jsonl.gz").OrderBy(f => f, StringComparer.Ordinal))
-        {
-            var stem = Path.GetFileName(file).Replace(".jsonl.gz", "");
-            var hourStr = stem.Length >= 13 ? stem[..13] : stem;
-            if (DateTime.TryParseExact(hourStr, "yyyy-MM-dd'T'HH", CultureInfo.InvariantCulture,
-                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var fileHour))
-                if (fileHour < start.AddHours(-1) || fileHour > end) continue;
-
-            using var fs = File.OpenRead(file);
-            using var gz = new GZipStream(fs, CompressionMode.Decompress);
-            using var sr = new StreamReader(gz);
-            string? line;
-            while ((line = sr.ReadLine()) != null)
-            {
-                if (line.Length == 0) continue;
-                long tf = FastT(line);
-                if (tf < 0) continue;
-                if (tf > endMs) break;
-                if (tf < startMs) continue;
-                JsonDocument doc;
-                try { doc = JsonDocument.Parse(line); } catch { continue; }
-                using (doc)
-                {
-                    var root = doc.RootElement;
-                    if (!root.TryGetProperty("t", out var tEl) || tEl.ValueKind != JsonValueKind.Number) continue;
-                    var kind = root.TryGetProperty("k", out var kEl) ? (kEl.GetString() ?? "B") : "B";
-                    if (kind != "B" && kind != "S") continue;
-                    if (!root.TryGetProperty("d", out var dEl) || dEl.ValueKind != JsonValueKind.Array) continue;
-                    foreach (var s in dEl.EnumerateArray())
-                        if (match(s)) return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    /// <summary>
     /// Copy the {t,k,d} records within [start,end] from srcDir's hourly gz files into dstDir's hourly
     /// gz files. For batch/snapshot records (arrays), keeps only summaries where keepSummary is true
     /// (null = keep the whole record). Removes/holdbars pass through. Returns the record count written.
+    ///
+    /// <paramref name="relevanceGate"/> merges the old "is this facility relevant?" pre-scan into this
+    /// single pass: when supplied (with keepSummary null, i.e. keep-everything), the whole terminal
+    /// picture is written to dstDir, but if NO summary in the window matched the gate the output is
+    /// discarded and 0 returned — so a facility that never intersects the area/callsign leaves nothing
+    /// behind, without decompressing its (large) files a second time. This roughly halves the STARS/TAIS
+    /// stage, which dominates a wide-area incident (each ~130 MB/hr facility file was being read twice).
     /// </summary>
-    private long SliceReplay(string srcDir, string dstDir, DateTime start, DateTime end, Func<JsonElement, bool>? keepSummary)
+    private long SliceReplay(string srcDir, string dstDir, DateTime start, DateTime end,
+        Func<JsonElement, bool>? keepSummary, Func<JsonElement, bool>? relevanceGate = null)
     {
         if (!Directory.Exists(srcDir)) return 0;
         long startMs = new DateTimeOffset(start, TimeSpan.Zero).ToUnixTimeMilliseconds();
         long endMs = new DateTimeOffset(end, TimeSpan.Zero).ToUnixTimeMilliseconds();
         long count = 0;
+        bool relevant = relevanceGate == null;   // no gate → always keep
         var writers = new Dictionary<string, (FileStream fs, GZipStream gz, StreamWriter sw)>();
 
         StreamWriter WriterFor(long t)
@@ -484,6 +449,14 @@ public sealed class IncidentArchive
                         {
                             outLine = "{\"t\":" + t + ",\"k\":\"" + kind + "\",\"d\":" + dEl.GetRawText() + "}";
                         }
+                        // Relevance gate (single-pass replacement for a separate pre-scan): once any
+                        // in-window summary matches, this facility stays; otherwise its output is
+                        // discarded below. Only checked while still unproven, and only on B/S arrays.
+                        if (!relevant && (kind == "B" || kind == "S") && dEl.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var s in dEl.EnumerateArray())
+                                if (relevanceGate!(s)) { relevant = true; break; }
+                        }
                         WriterFor(t).WriteLine(outLine);
                         count++;
                     }
@@ -493,6 +466,14 @@ public sealed class IncidentArchive
         finally
         {
             foreach (var w in writers.Values) { try { w.sw.Flush(); w.gz.Flush(); w.sw.Dispose(); w.gz.Dispose(); w.fs.Dispose(); } catch { } }
+        }
+
+        // Gate failed: nothing in the window matched, so this facility isn't relevant. Drop the
+        // whole-picture output we buffered and report zero, exactly as the old pre-scan would have.
+        if (!relevant)
+        {
+            try { if (Directory.Exists(dstDir)) Directory.Delete(dstDir, recursive: true); } catch { }
+            return 0;
         }
         return count;
     }

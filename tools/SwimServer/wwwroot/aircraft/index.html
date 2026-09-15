@@ -81,6 +81,7 @@
     .log-table .lcs a { color: #cccc44; text-decoration: none; }
     .log-table .lcs a:hover { text-decoration: underline; }
     .log-table .lroute { color: #39d2c0; }
+    .log-table .lroute.gap { color: #e0b34a; border-bottom: 1px dashed #6a5324; cursor: help; }
     .log-more { margin: 10px 0 4px; }
 
 </style>
@@ -180,6 +181,8 @@ function esc(s) {
         .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); }
+// K/P-prefixed 4-char codes compare equal to their 3-char LID (KDCA == DCA), matching the server's AptKey.
+const aptKey = c => (c && c.length === 4 && (c[0] === 'K' || c[0] === 'P')) ? c.slice(1) : (c || '');
 function utcText(t) { return t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : ''; }
 function isoUtc(iso) { return iso ? utcText(new Date(iso).getTime() / 1000) : ''; }
 function ago(t) {
@@ -611,7 +614,14 @@ async function loadFlightLog(id) {
         const r = await fetch('/api/aircraft/' + encodeURIComponent(id) + '/flights');
         if (!r.ok) throw new Error(String(r.status));
         const j = await r.json();
-        if (flightLog && flightLog.id === id) flightLog.list = j.flights || [];
+        const list = j.flights || [];
+        // Flag a flight whose origin doesn't match the previous flight's destination (oldest→newest) —
+        // a leg in between wasn't captured (filtered out, VFR, no SWIM coverage, etc.), not just a normal turn.
+        for (let k = 1; k < list.length; k++) {
+            const p = list[k - 1], f = list[k];
+            if (p.d && f.o && aptKey(p.d) !== aptKey(f.o)) { f.gap = true; f.prevD = p.d; }
+        }
+        if (flightLog && flightLog.id === id) flightLog.list = list;
     } catch {
         if (flightLog && flightLog.id === id) flightLog.error = true;
     }
@@ -628,7 +638,9 @@ function renderFlightLog() {
     const total = fl.list.length;
     if (!total) return '<div class="loading">No flights logged yet</div>';
     const n = Math.min(fl.shown, total);
-    let h = `<div class="log-summary">${total.toLocaleString()} flight${total === 1 ? '' : 's'} · ${fl.asc ? 'oldest' : 'newest'} first · times UTC</div>`
+    const hasGap = fl.list.some(e => e.gap);
+    let h = `<div class="log-summary">${total.toLocaleString()} flight${total === 1 ? '' : 's'} · ${fl.asc ? 'oldest' : 'newest'} first · times UTC`
+        + (hasGap ? ` · <span class="lroute gap" style="border-bottom-style:dashed">route</span> = doesn't connect from the previous flight` : '') + '</div>'
         + '<table class="log-table"><thead><tr>'
         + `<th class="sorted" data-logsort title="Flip the order">DATE ${fl.asc ? '▲' : '▼'}</th><th>DEP</th><th>CALLSIGN</th><th>ROUTE</th>`
         + '</tr></thead><tbody>';
@@ -640,7 +652,7 @@ function renderFlightLog() {
                 ? `<td class="ltime">${ts.slice(11)}</td>`
                 : `<td class="ltime est" title="No departure time in the feed — time first seen">${ts.slice(11)}</td>`)
             + `<td class="lcs">${e.cs ? `<a href="/track/${encodeURIComponent(e.cs)}">${esc(e.cs)}</a>` : ''}</td>`
-            + `<td class="lroute">${esc(e.o || '????')} → ${esc(e.d || '????')}</td></tr>`;
+            + `<td class="lroute${e.gap ? ' gap' : ''}"${e.gap ? ` title="Doesn't connect from the previous flight's arrival (${esc(e.prevD)}) — a leg in between may not have been captured (filtered out, VFR, no SWIM coverage, etc.)"` : ''}>${esc(e.o || '????')} → ${esc(e.d || '????')}</td></tr>`;
     }
     h += '</tbody></table>';
     if (n < total)

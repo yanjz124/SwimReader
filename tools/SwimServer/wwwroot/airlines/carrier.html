@@ -27,6 +27,7 @@
     .kpis { display: flex; flex-wrap: wrap; gap: 1px; background: #1c1c1c; border-bottom: 1px solid #333; flex-shrink: 0; }
     .kpi { background: #080808; padding: 6px 14px 5px; min-width: 112px; flex: 1; cursor: help; }
     .kpi .v { color: #fff; font-size: 16px; }
+    .kpi .v .pct { color: #999; font-size: 12px; }
     .kpi .l { color: #555; font-size: 9px; letter-spacing: 1px; margin-top: 1px; white-space: nowrap; }
     .tabbar2 { display: flex; align-items: center; border-bottom: 1px solid #333; background: #0a0a0a; flex-shrink: 0; }
     .tabnote { margin-left: auto; padding-right: 14px; font-size: 10px; color: #555; }
@@ -100,7 +101,7 @@
     .hv { text-align: right; color: #ccc; }
     svg text { font-family: Consolas, 'Courier New', monospace; }
 
-    .drawer { width: 580px; flex-shrink: 0; background: #050505; border-left: 1px solid #333; display: flex; flex-direction: column; min-height: 0; }
+    .drawer { width: 660px; flex-shrink: 0; background: #050505; border-left: 1px solid #333; display: flex; flex-direction: column; min-height: 0; }
     .drawer.collapsed { display: none; }
     .dhead { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid #333; flex-shrink: 0; }
     .dhead .dreg { color: #fff; font-size: 16px; letter-spacing: 1px; }
@@ -110,10 +111,12 @@
     .dclose:hover { color: #fff; }
     .dbody { flex: 1; overflow: auto; padding: 10px 14px; }
     #tailMap { height: 240px; background: #0b0d10; border: 1px solid #222; margin-bottom: 10px; }
-    .tstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: #222; margin-bottom: 10px; }
-    .tstats div { background: #0a0a0a; padding: 5px 8px; }
-    .tstats .v { color: #fff; font-size: 13px; }
-    .tstats .l { color: #555; font-size: 9px; letter-spacing: 1px; }
+    .tstats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: #222; margin-bottom: 10px; }
+    .tstats div { background: #0a0a0a; padding: 7px 9px; }
+    .tstats .v { color: #fff; font-size: 15px; }
+    .tstats .v .pct { color: #999; font-size: 11px; }
+    .tstats .l { color: #555; font-size: 9px; letter-spacing: 1px; margin-top: 1px; }
+    .gap-route { color: #e0b34a; border-bottom: 1px dashed #6a5324; cursor: help; }
     .dsec { font-size: 10px; letter-spacing: 1px; color: #666; margin: 12px 0 5px; border-bottom: 1px solid #1a1a1a; padding-bottom: 3px; }
     .loading { color: #555; font-size: 11px; padding: 10px 0; }
     .empty { padding: 40px; color: #666; font-size: 12px; line-height: 1.7; }
@@ -268,7 +271,8 @@ function renderKpis() {
         ['ACTIVE TAILS', n0(s.tails), 'Distinct airframes that flew at least one leg under this callsign prefix'],
         ['AIRPORTS', n0(s.airports), 'Airports served'],
         ['ROUTES', n0(s.routes), 'City pairs, either direction'],
-        ['AIR HRS / TAIL / DAY', n2(s.hpd), `Estimated air time (last seen − actual departure), per tail per calendar day. ${n0(s.timedPct)}% of flights had a departure time.`],
+        ['AIR HRS / TAIL / DAY', s.hpd == null ? '—' : `${n2(s.hpd)}h <span class="pct">${n1(s.hpd / 24 * 100)}%</span>`,
+            `Estimated air time (last seen − actual departure), per tail per calendar day — i.e. utilization: the % of a 24h day the average tail spends airborne. ${n0(s.timedPct)}% of flights had a departure time.`],
         ['LEGS / TAIL / DAY', n2(s.flightsPerTailDay), 'Flights per tail on the days it flew'],
         ['AVG TURN', hm(s.turnMin), 'Average ground time between legs shorter than 5 h'],
         ['STAGE LENGTH', s.stageNm != null ? n0(s.stageNm) + ' nm' : '—', 'Average great-circle distance per flight'],
@@ -570,7 +574,7 @@ const FCOLS = [
     { k: 'flights', l: 'FLIGHTS', num: 1 },
     { k: 'days', l: 'ACTIVE DAYS', num: 1 },
     { k: 'hours', l: 'AIR HRS', num: 1 },
-    { k: 'hpd', l: 'HRS/DAY', num: 1, tip: 'Estimated air hours per calendar day in the window' },
+    { k: 'hpd', l: 'HRS/DAY', num: 1, tip: 'Estimated air hours per calendar day in the window — utilization, as a % of 24h, shown alongside' },
     { k: 'turnMin', l: 'AVG TURN', num: 1, tip: 'Average ground time between legs shorter than 5 h' },
     { k: 'stops', l: 'LONG STOPS', num: 1, tip: 'Ground stops of 5 h or more — overnights, maintenance, spare time' },
     { k: 'idle', l: 'IDLE DAYS', num: 1, tip: 'Days between its first and last flight in the window with no flight at all' },
@@ -606,7 +610,7 @@ function renderFleet() {
             <td class="num">${n0(t.flights)}</td>
             <td class="num">${n0(t.days)}</td>
             <td class="num">${n1(t.hours)}</td>
-            <td class="num ${lowUse ? 'warn' : ''}" title="${lowUse ? 'Under 40% of the fleet median' : ''}">${n2(t.hpd)}</td>
+            <td class="num ${lowUse ? 'warn' : ''}" title="${n1(t.hpd / 24 * 100)}% utilization${lowUse ? ' — under 40% of the fleet median' : ''}">${n2(t.hpd)} <span class="dim">${n0(t.hpd / 24 * 100)}%</span></td>
             <td class="num">${hm(t.turnMin)}</td>
             <td class="num">${n0(t.stops)}</td>
             <td class="num ${t.idle >= 2 ? 'warn' : ''}">${n0(t.idle)}</td>
@@ -686,6 +690,9 @@ function renderTail(t) {
     const turns = [], stops = [];
     for (let i = 1; i < fl.length; i++) {
         const p = fl[i - 1], f = fl[i];
+        // Flag a leg whose origin doesn't match the previous leg's destination — a leg in between wasn't
+        // captured (filtered out, flown VFR/no transponder, outside SWIM coverage, etc.), not just a normal turn.
+        if (p.d && f.o && aptKey(p.d) !== aptKey(f.o)) { f._gap = true; f._prevD = p.d; }
         const g = bestT(f) - p.last;
         if (!(p.last > 0) || g <= 0) continue;
         p._after = g;
@@ -693,20 +700,24 @@ function renderTail(t) {
     }
     const daySet = new Set();
     fl.forEach(f => { daySet.add(Math.floor(bestT(f) / 86400)); if (f.last) daySet.add(Math.floor(f.last / 86400)); });
+    const d0 = fl.length ? Math.floor(bestT(fl[0]) / 86400) : 0;
+    const d1 = fl.length ? Math.max(...fl.map(f => Math.floor((f.last || bestT(f)) / 86400))) : 0;
+    const elapsedDays = fl.length ? d1 - d0 + 1 : 0;
     let idle = 0;
-    if (fl.length) {
-        const d0 = Math.floor(bestT(fl[0]) / 86400), d1 = Math.max(...fl.map(f => Math.floor((f.last || bestT(f)) / 86400)));
-        for (let d = d0; d <= d1; d++) if (!daySet.has(d)) idle++;
-    }
+    for (let d = d0; d <= d1; d++) if (!daySet.has(d)) idle++;
     const air = fl.reduce((s, f) => s + (f.airMin || 0), 0);
     const mine = fl.filter(f => f.carrier === ICAO).length;
     const avgTurn = turns.length ? turns.reduce((s, g) => s + g, 0) / turns.length / 60 : null;
     const longest = stops.reduce((m, s) => Math.max(m, s.secs), 0);
+    // Utilization: air hours ÷ hours in the elapsed window — the same "hours/day" metric as the fleet
+    // table's HRS/DAY column, expressed as a % of a 24h day, the way real airline ops metrics report it.
+    const hpd = elapsedDays > 0 ? (air / 60) / elapsedDays : null;
     const stat = (l, v) => `<div><div class="v">${v}</div><div class="l">${l}</div></div>`;
 
     let h = `<div class="tstats">
         ${stat(`LEGS (${esc(ICAO)})`, `${n0(fl.length)} <span class="dim">(${n0(mine)})</span>`)}
         ${stat('AIR HOURS', n1(air / 60))}
+        ${stat('UTILIZATION', hpd == null ? '—' : `${n2(hpd)}h/day <span class="pct">${n1(hpd / 24 * 100)}%</span>`)}
         ${stat('AVG TURN', hm(avgTurn))}
         ${stat('LONG STOPS', n0(stops.length))}
         ${stat('LONGEST STOP', longest ? n1(longest / 3600) + 'h' : '—')}
@@ -714,8 +725,9 @@ function renderTail(t) {
         ${stat('FIRST', fl.length ? utc(bestT(fl[0])).slice(5) : '—')}
         ${stat('LAST', fl.length ? utc(fl[fl.length - 1].last || bestT(fl[fl.length - 1])).slice(5) : '—')}
     </div>`;
-    h += `<div class="dsec">DAY-BY-DAY (UTC) — <span class="cs-mine">■</span> ${esc(ICAO)} &nbsp;<span class="cs-other">■</span> other airline &nbsp;<span class="cs-nonrev">■</span> non-revenue &nbsp;· gaps are ground time</div>`;
-    h += timelineSvg(fl);
+    h += `<div class="dsec">DAY-BY-DAY (UTC) — <span class="cs-mine">■</span> ${esc(ICAO)} &nbsp;<span class="cs-other">■</span> other airline &nbsp;<span class="cs-nonrev">■</span> non-revenue`
+        + ` &nbsp;· gaps between bars are ground time &nbsp;· <span style="border-bottom:2px dashed #e0b34a">dashed border</span> = doesn't connect from the previous flight</div>`;
+    h += timelineSvg(fl, d0, d1);
     if (stops.length) {
         h += `<div class="dsec">LONG STOPS (5 h+)</div><table class="mini"><thead><tr><th>WHERE</th><th>FROM</th><th class="num">DURATION</th></tr></thead><tbody>`
             + stops.slice().reverse().map(s => `<tr><td>${esc(s.at || '?')} <span class="dim">${esc((aps.get(s.at) || {}).city || '')}</span></td>`
@@ -724,22 +736,21 @@ function renderTail(t) {
     h += `<div class="dsec">LEGS — newest first</div><table class="mini"><thead><tr><th>DATE</th><th>DEP</th><th>LAST SEEN</th><th class="num">AIR</th><th>CALLSIGN</th><th>ROUTE</th><th class="num">GROUND AFTER</th></tr></thead><tbody>`
         + fl.slice().reverse().map(f => {
             const s = bestT(f);
+            const routeTip = f._gap ? `title="Doesn't connect from the previous flight's arrival (${esc(f._prevD)}) — a leg in between may not have been captured (filtered out, VFR, no SWIM coverage, etc.)"` : '';
             return `<tr><td class="dim">${utc(s).slice(0, 10)}</td>`
                 + `<td${f.dep ? '' : ' class="dim" title="No departure time — first seen"'}>${hhmm(s)}</td>`
                 + `<td class="dim">${hhmm(f.last)}</td><td class="num">${f.airMin ? hm(f.airMin) : '—'}</td>`
-                + `<td class="${csClass(f)}">${esc(f.cs)}</td><td>${esc(f.o || '?')} → ${esc(f.d || '?')}</td>`
+                + `<td class="${csClass(f)}">${esc(f.cs)}</td><td class="${f._gap ? 'gap-route' : ''}" ${routeTip}>${esc(f.o || '?')} → ${esc(f.d || '?')}</td>`
                 + `<td class="num ${f._after >= 5 * 3600 ? 'warn' : 'dim'}">${f._after ? hm(f._after / 60) : ''}</td></tr>`;
         }).join('') + '</tbody></table>';
     $('tailContent').innerHTML = h;
     drawTailMap(fl, aps);
 }
 
-function timelineSvg(fl) {
+function timelineSvg(fl, d0, d1) {
     if (!fl.length) return '<div class="loading">No flights in this window</div>';
-    const d0 = Math.floor(bestT(fl[0]) / 86400);
-    const d1 = Math.max(...fl.map(f => Math.floor((f.last || bestT(f)) / 86400)));
     const rows = d1 - d0 + 1;
-    const LW = 70, W = 480, RH = 12, TOP = 14, H = TOP + rows * RH + 2;
+    const LW = 76, W = 620, RH = 24, TOP = 16, H = TOP + rows * RH + 3;
     const byDay = new Map();
     for (const f of fl) {
         const s = bestT(f), e = Math.max(f.last || s, s + 240);
@@ -751,22 +762,32 @@ function timelineSvg(fl) {
         }
     }
     let s = `<svg viewBox="0 0 ${LW + W + 4} ${H}" width="100%" style="display:block">`;
-    for (const hr of [0, 6, 12, 18, 24]) {
+    for (const hr of [0, 3, 6, 9, 12, 15, 18, 21, 24]) {
         const x = LW + (hr / 24) * W;
         s += `<line x1="${x}" y1="${TOP - 3}" x2="${x}" y2="${H}" stroke="#1d1d1d"/>`
-            + `<text x="${Math.min(x, LW + W - 12)}" y="10" fill="#555" font-size="8">${String(hr).padStart(2, '0')}</text>`;
+            + `<text x="${Math.min(x, LW + W - 12)}" y="11" fill="#555" font-size="9">${String(hr).padStart(2, '0')}</text>`;
     }
     for (let i = 0; i < rows; i++) {
         const day = d0 + i, y = TOP + i * RH;
         const date = new Date(day * 86400000);
         const segs = byDay.get(day) || [];
         const label = date.toISOString().slice(5, 10) + ' ' + 'SMTWTFS'[date.getUTCDay()];
-        s += `<text x="0" y="${y + 9}" fill="${segs.length ? '#777' : '#aa6633'}" font-size="8.5">${label}</text>`;
+        s += `<text x="0" y="${y + RH / 2 + 3}" fill="${segs.length ? '#888' : '#aa6633'}" font-size="10">${label}</text>`;
         if (i % 2) s += `<rect x="${LW}" y="${y}" width="${W}" height="${RH}" fill="#0b0b0b"/>`;
         for (const g of segs) {
             const col = g.f.carrier === ICAO ? '#cccc44' : g.f.carrier ? '#5588ff' : '#ff8844';
-            const title = `${g.f.cs} ${g.f.o || '?'}→${g.f.d || '?'} ${hhmm(bestT(g.f))}–${hhmm(g.f.last)}${g.f.dep ? '' : ' (no departure time)'}`;
-            s += `<rect x="${(LW + g.x0 * W).toFixed(1)}" y="${y + 2}" width="${Math.max(1.5, (g.x1 - g.x0) * W).toFixed(1)}" height="${RH - 4}" fill="${col}" opacity="${g.f.dep ? 0.95 : 0.5}"><title>${esc(title)}</title></rect>`;
+            const bx = LW + g.x0 * W, bw = Math.max(1.5, (g.x1 - g.x0) * W);
+            const gapNote = g.f._gap ? ` — does not connect from the previous arrival (${esc(g.f._prevD)}); a leg may be missing` : '';
+            const title = `${g.f.cs} ${g.f.o || '?'}→${g.f.d || '?'} ${hhmm(bestT(g.f))}–${hhmm(g.f.last)}${g.f.dep ? '' : ' (no departure time)'}${gapNote}`;
+            const gapStroke = g.f._gap ? ' stroke="#e0b34a" stroke-width="1.5" stroke-dasharray="3,1.5"' : '';
+            s += `<rect x="${bx.toFixed(1)}" y="${y + 2}" width="${bw.toFixed(1)}" height="${RH - 4}" rx="1.5" fill="${col}" opacity="${g.f.dep ? 0.95 : 0.5}"${gapStroke}><title>${esc(title)}</title></rect>`;
+            // The route on the bar itself when there's room; otherwise it's still in the tooltip and the legs table below.
+            const o = g.f.o ? aptKey(g.f.o) : '', d = g.f.d ? aptKey(g.f.d) : '';
+            if (o || d) {
+                const full = `${o || '?'}→${d || '?'}`;
+                const txt = bw >= full.length * 6.4 + 6 ? full : bw >= (o || d).length * 6.4 + 6 ? (o || d) : '';
+                if (txt) s += `<text x="${(bx + 4).toFixed(1)}" y="${(y + RH / 2 + 3).toFixed(1)}" font-size="9.5" fill="#000" opacity="0.82">${esc(txt)}<title>${esc(title)}</title></text>`;
+            }
         }
     }
     return s + '</svg>';

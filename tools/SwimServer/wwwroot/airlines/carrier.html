@@ -120,8 +120,8 @@
     .tl-wrap { position: relative; }
     .tl-tip {
         position: fixed; z-index: 2000; background: #0a0a0a; border: 1px solid #444; padding: 6px 9px;
-        font-size: 11px; line-height: 1.55; color: #ddd; pointer-events: none; max-width: 300px; white-space: nowrap;
-        box-shadow: 0 2px 8px rgba(0,0,0,.6);
+        font-size: 11px; line-height: 1.55; color: #ddd; pointer-events: none; width: max-content; max-width: 260px;
+        overflow-wrap: break-word; box-shadow: 0 2px 8px rgba(0,0,0,.6);
     }
     .tl-tip b { color: #fff; font-weight: normal; }
     .tl-tip .row + .row { border-top: 1px solid #222; margin-top: 4px; padding-top: 4px; }
@@ -836,9 +836,16 @@ function tlHover(e) {
         + `${hhmm(bestT(f))}–${hhmm(f.last)}${f.airMin ? ' · ' + hm(f.airMin) + ' air' : ''}${f.dep ? '' : ' · no departure time'}`
         + (f._gap ? `<div class="gapline">doesn't connect from the previous arrival (${esc(f._prevD)}) — a leg may be missing</div>` : '') + `</div>`).join('');
     tip.hidden = false;
-    const pad = 14;
-    tip.style.left = Math.max(8, Math.min(e.clientX + pad, window.innerWidth - tip.offsetWidth - 8)) + 'px';
-    tip.style.top = Math.max(8, Math.min(e.clientY + pad, window.innerHeight - tip.offsetHeight - 8)) + 'px';
+    // Prefer below-right of the cursor; flip to the other side of the cursor (not just clamp to the
+    // viewport edge) when that would run off-screen, so the box stays next to the pointer instead of
+    // sliding away from it toward the edge.
+    const pad = 14, tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = e.clientX + pad;
+    if (left + tw > window.innerWidth - 8) left = e.clientX - pad - tw;
+    let top = e.clientY + pad;
+    if (top + th > window.innerHeight - 8) top = e.clientY - pad - th;
+    tip.style.left = Math.max(8, left) + 'px';
+    tip.style.top = Math.max(8, top) + 'px';
 }
 document.addEventListener('mousemove', tlHover);
 

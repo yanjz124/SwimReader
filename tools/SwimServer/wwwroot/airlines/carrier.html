@@ -240,7 +240,10 @@ const CAT_LABEL = { mainline: 'MAINLINE', lowcost: 'LOW-COST', regional: 'REGION
 // Per-flight coloring shared by the tail timeline, the LEGS table and the tail map — kept in one place so
 // they always agree. GAP is deliberately a hue none of the three fills use, so it never reads as a fourth
 // category by mistake.
-const FCOL = { MINE: '#cccc44', OTHER: '#4f8fff', NONREV: '#ffa64d', GAP: '#c9a6ff' };
+// Fills, not text. The page's accent gold reads well as small text but turns into a wall of neon when it's
+// filling most of a timeline, so the carrier's own bars use a muted olive-gold; the rarer other-airline and
+// non-revenue legs stay brighter on purpose, so the exceptions are what catches the eye.
+const FCOL = { MINE: '#9a9a3a', OTHER: '#4f8fff', NONREV: '#ffa64d', GAP: '#c9a6ff' };
 const hexToRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
 const flightColor = f => f.carrier === ICAO ? FCOL.MINE : f.carrier ? FCOL.OTHER : FCOL.NONREV;
 
@@ -741,7 +744,8 @@ function renderTail(t) {
         ${stat('FIRST', fl.length ? utc(bestT(fl[0])).slice(5) : '—')}
         ${stat('LAST', fl.length ? utc(fl[fl.length - 1].last || bestT(fl[fl.length - 1])).slice(5) : '—')}
     </div>`;
-    h += `<div class="dsec">DAY-BY-DAY (UTC) — <span class="cs-mine">■</span> ${esc(ICAO)} &nbsp;<span class="cs-other">■</span> other airline &nbsp;<span class="cs-nonrev">■</span> non-revenue`
+    // Swatches take their colour from the bar palette, not the text classes, so the key always matches the chart.
+    h += `<div class="dsec">DAY-BY-DAY (UTC) — <span style="color:${FCOL.MINE}">■</span> ${esc(ICAO)} &nbsp;<span style="color:${FCOL.OTHER}">■</span> other airline &nbsp;<span style="color:${FCOL.NONREV}">■</span> non-revenue`
         + ` &nbsp;· gaps between bars are ground time &nbsp;· <span class="gap-route" style="border-bottom-style:dashed">dashed border</span> = doesn't connect from the previous flight`
         + ` &nbsp;· hover a bar for details</div>`;
     h += timelineSvg(fl, d0, d1);

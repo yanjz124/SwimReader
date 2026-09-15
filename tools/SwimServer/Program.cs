@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using System.Xml.Linq;
+using Microsoft.AspNetCore.ResponseCompression;
 using SolaceSystems.Solclient.Messaging;
 using SwimServer;
 
@@ -318,7 +320,22 @@ builder.WebHost.UseUrls($"http://{bindAddr}:{bindPort}");
 asdex.SetWebRoot(builder.Environment.WebRootPath);
 asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), long.MaxValue, replayDir);
 tais.SetReplayDir(Path.Combine(replayDir, "tais"), long.MaxValue, replayDir);
+// The public deployment sits behind a Cloudflare tunnel over a home internet connection; the
+// aircraft DB and airline-research JSON payloads run into the low hundreds of KB up to several
+// MB. Compressing them at the origin (rather than relying only on whatever Cloudflare's edge
+// does on the client-facing leg) shrinks what has to cross that weakest link — the flakier and
+// more bandwidth-constrained hop is Pi → Cloudflare, not Cloudflare → browser.
+builder.Services.AddResponseCompression(o =>
+{
+    o.EnableForHttps = true;
+    o.Providers.Add<BrotliCompressionProvider>();
+    o.Providers.Add<GzipCompressionProvider>();
+    o.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/json" });
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
 var app = builder.Build();
+app.UseResponseCompression();
 
 // ── Force HTTPS for external traffic ─────────────────────────────────────────
 // Cloudflare terminates TLS and forwards over the tunnel as plain HTTP, tagging the

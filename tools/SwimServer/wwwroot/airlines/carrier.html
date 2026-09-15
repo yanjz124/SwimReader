@@ -82,8 +82,8 @@
     .warn { color: #ff8844; }
     .good { color: #44aa44; }
     .cs-mine { color: #cccc44; }
-    .cs-other { color: #5588ff; }
-    .cs-nonrev { color: #ff8844; }
+    .cs-other { color: #4f8fff; }
+    .cs-nonrev { color: #ffa64d; }
 
     #pane-intel { overflow: auto; display: block; }
     .intel { display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr)); gap: 10px; padding: 12px; }
@@ -116,7 +116,16 @@
     .tstats .v { color: #fff; font-size: 15px; }
     .tstats .v .pct { color: #999; font-size: 11px; }
     .tstats .l { color: #555; font-size: 9px; letter-spacing: 1px; margin-top: 1px; }
-    .gap-route { color: #e0b34a; border-bottom: 1px dashed #6a5324; cursor: help; }
+    .gap-route { color: #c9a6ff; border-bottom: 1px dashed #5d4a80; cursor: help; }
+    .tl-wrap { position: relative; }
+    .tl-tip {
+        position: fixed; z-index: 2000; background: #0a0a0a; border: 1px solid #444; padding: 6px 9px;
+        font-size: 11px; line-height: 1.55; color: #ddd; pointer-events: none; max-width: 300px; white-space: nowrap;
+        box-shadow: 0 2px 8px rgba(0,0,0,.6);
+    }
+    .tl-tip b { color: #fff; font-weight: normal; }
+    .tl-tip .row + .row { border-top: 1px solid #222; margin-top: 4px; padding-top: 4px; }
+    .tl-tip .gapline { color: #c9a6ff; }
     .dsec { font-size: 10px; letter-spacing: 1px; color: #666; margin: 12px 0 5px; border-bottom: 1px solid #1a1a1a; padding-bottom: 3px; }
     .loading { color: #555; font-size: 11px; padding: 10px 0; }
     .empty { padding: 40px; color: #666; font-size: 12px; line-height: 1.7; }
@@ -204,6 +213,7 @@
         </div>
     </aside>
 </div>
+<div class="tl-tip" id="tlTip" hidden></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -227,6 +237,12 @@ const aptKey = c => (c && c.length === 4 && (c[0] === 'K' || c[0] === 'P')) ? c.
 const bestT = f => f.dep || f.first || f.last;
 const OSM = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const CAT_LABEL = { mainline: 'MAINLINE', lowcost: 'LOW-COST', regional: 'REGIONAL', cargo: 'CARGO', charter: 'CHARTER', other: 'OTHER' };
+// Per-flight coloring shared by the tail timeline, the LEGS table and the tail map — kept in one place so
+// they always agree. GAP is deliberately a hue none of the three fills use, so it never reads as a fourth
+// category by mistake.
+const FCOL = { MINE: '#cccc44', OTHER: '#4f8fff', NONREV: '#ffa64d', GAP: '#c9a6ff' };
+const hexToRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const flightColor = f => f.carrier === ICAO ? FCOL.MINE : f.carrier ? FCOL.OTHER : FCOL.NONREV;
 
 const ICAO = decodeURIComponent(location.pathname.split('/')[2] || '').toUpperCase();
 let days = parseInt(new URLSearchParams(location.search).get('days') || '7', 10) || 7;
@@ -726,7 +742,8 @@ function renderTail(t) {
         ${stat('LAST', fl.length ? utc(fl[fl.length - 1].last || bestT(fl[fl.length - 1])).slice(5) : '—')}
     </div>`;
     h += `<div class="dsec">DAY-BY-DAY (UTC) — <span class="cs-mine">■</span> ${esc(ICAO)} &nbsp;<span class="cs-other">■</span> other airline &nbsp;<span class="cs-nonrev">■</span> non-revenue`
-        + ` &nbsp;· gaps between bars are ground time &nbsp;· <span style="border-bottom:2px dashed #e0b34a">dashed border</span> = doesn't connect from the previous flight</div>`;
+        + ` &nbsp;· gaps between bars are ground time &nbsp;· <span class="gap-route" style="border-bottom-style:dashed">dashed border</span> = doesn't connect from the previous flight`
+        + ` &nbsp;· hover a bar for details</div>`;
     h += timelineSvg(fl, d0, d1);
     if (stops.length) {
         h += `<div class="dsec">LONG STOPS (5 h+)</div><table class="mini"><thead><tr><th>WHERE</th><th>FROM</th><th class="num">DURATION</th></tr></thead><tbody>`
@@ -747,10 +764,18 @@ function renderTail(t) {
     drawTailMap(fl, aps);
 }
 
+// Geometry + flight lookup for the timeline's hover tooltip (tlHover below) — rebuilt each time the
+// timeline is drawn. A custom tooltip beats native SVG <title> here: it works no matter how thin a bar
+// gets (a short flight can render down to a 1.5px sliver) and it can list every flight under the cursor
+// when bars are packed close enough to touch, not just whichever one the browser happens to hit-test.
+let tlGeom = null, tlSegs = [];
+
 function timelineSvg(fl, d0, d1) {
     if (!fl.length) return '<div class="loading">No flights in this window</div>';
     const rows = d1 - d0 + 1;
     const LW = 76, W = 620, RH = 24, TOP = 16, H = TOP + rows * RH + 3;
+    tlGeom = { LW, W, RH, TOP, d0, rows };
+    tlSegs = [];
     const byDay = new Map();
     for (const f of fl) {
         const s = bestT(f), e = Math.max(f.last || s, s + 240);
@@ -761,7 +786,7 @@ function timelineSvg(fl, d0, d1) {
             a = b;
         }
     }
-    let s = `<svg viewBox="0 0 ${LW + W + 4} ${H}" width="100%" style="display:block">`;
+    let s = `<svg class="timeline" viewBox="0 0 ${LW + W + 4} ${H}" width="100%" style="display:block">`;
     for (const hr of [0, 3, 6, 9, 12, 15, 18, 21, 24]) {
         const x = LW + (hr / 24) * W;
         s += `<line x1="${x}" y1="${TOP - 3}" x2="${x}" y2="${H}" stroke="#1d1d1d"/>`
@@ -775,23 +800,47 @@ function timelineSvg(fl, d0, d1) {
         s += `<text x="0" y="${y + RH / 2 + 3}" fill="${segs.length ? '#888' : '#aa6633'}" font-size="10">${label}</text>`;
         if (i % 2) s += `<rect x="${LW}" y="${y}" width="${W}" height="${RH}" fill="#0b0b0b"/>`;
         for (const g of segs) {
-            const col = g.f.carrier === ICAO ? '#cccc44' : g.f.carrier ? '#5588ff' : '#ff8844';
+            const col = flightColor(g.f);
             const bx = LW + g.x0 * W, bw = Math.max(1.5, (g.x1 - g.x0) * W);
-            const gapNote = g.f._gap ? ` — does not connect from the previous arrival (${esc(g.f._prevD)}); a leg may be missing` : '';
-            const title = `${g.f.cs} ${g.f.o || '?'}→${g.f.d || '?'} ${hhmm(bestT(g.f))}–${hhmm(g.f.last)}${g.f.dep ? '' : ' (no departure time)'}${gapNote}`;
-            const gapStroke = g.f._gap ? ' stroke="#e0b34a" stroke-width="1.5" stroke-dasharray="3,1.5"' : '';
-            s += `<rect x="${bx.toFixed(1)}" y="${y + 2}" width="${bw.toFixed(1)}" height="${RH - 4}" rx="1.5" fill="${col}" opacity="${g.f.dep ? 0.95 : 0.5}"${gapStroke}><title>${esc(title)}</title></rect>`;
-            // The route on the bar itself when there's room; otherwise it's still in the tooltip and the legs table below.
+            tlSegs.push({ day, bx, bw, y, f: g.f });
+            // A thin dark seam on ordinary bars keeps back-to-back same-colour legs from blending into one
+            // block; a gap leg gets the attention-grabbing dashed outline instead (never both at once).
+            const stroke = g.f._gap ? ` stroke="${FCOL.GAP}" stroke-width="1.5" stroke-dasharray="3,1.5"` : ' stroke="#050505" stroke-width="0.75"';
+            s += `<rect x="${bx.toFixed(1)}" y="${y + 2}" width="${bw.toFixed(1)}" height="${RH - 4}" rx="1.5" fill="${col}" opacity="${g.f.dep ? 0.95 : 0.5}"${stroke}/>`;
+            // The route on the bar itself when there's room; the hover tooltip has the full detail regardless.
             const o = g.f.o ? aptKey(g.f.o) : '', d = g.f.d ? aptKey(g.f.d) : '';
             if (o || d) {
                 const full = `${o || '?'}→${d || '?'}`;
                 const txt = bw >= full.length * 6.4 + 6 ? full : bw >= (o || d).length * 6.4 + 6 ? (o || d) : '';
-                if (txt) s += `<text x="${(bx + 4).toFixed(1)}" y="${(y + RH / 2 + 3).toFixed(1)}" font-size="9.5" fill="#000" opacity="0.82">${esc(txt)}<title>${esc(title)}</title></text>`;
+                if (txt) s += `<text x="${(bx + 4).toFixed(1)}" y="${(y + RH / 2 + 3).toFixed(1)}" font-size="9.5" fill="#000" opacity="0.82" style="pointer-events:none">${esc(txt)}</text>`;
             }
         }
     }
-    return s + '</svg>';
+    return `<div class="tl-wrap">${s}</svg></div>`;
 }
+
+// One mousemove listener for every timeline the page ever draws (tlGeom/tlSegs point at whichever tail's
+// drawer is currently open). Position is computed from the SVG's own viewBox, not pixel hit-testing, so it
+// finds the right flight(s) even for a sliver too thin to reliably point at, and lists every flight at that
+// spot if bars are packed close enough to overlap.
+function tlHover(e) {
+    const svg = e.target.closest('svg.timeline');
+    const tip = $('tlTip');
+    if (!svg || !tlGeom) { tip.hidden = true; return; }
+    const rect = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal;
+    if (!rect.width || !rect.height) { tip.hidden = true; return; }
+    const x = (e.clientX - rect.left) * (vb.width / rect.width), y = (e.clientY - rect.top) * (vb.height / rect.height);
+    const hits = tlSegs.filter(s => x >= s.bx && x <= s.bx + s.bw && y >= s.y && y <= s.y + tlGeom.RH);
+    if (!hits.length) { tip.hidden = true; return; }
+    tip.innerHTML = hits.map(({ f }) => `<div class="row"><b class="${csClass(f)}">${esc(f.cs)}</b> ${esc(f.o || '?')} → ${esc(f.d || '?')}<br>`
+        + `${hhmm(bestT(f))}–${hhmm(f.last)}${f.airMin ? ' · ' + hm(f.airMin) + ' air' : ''}${f.dep ? '' : ' · no departure time'}`
+        + (f._gap ? `<div class="gapline">doesn't connect from the previous arrival (${esc(f._prevD)}) — a leg may be missing</div>` : '') + `</div>`).join('');
+    tip.hidden = false;
+    const pad = 14;
+    tip.style.left = Math.max(8, Math.min(e.clientX + pad, window.innerWidth - tip.offsetWidth - 8)) + 'px';
+    tip.style.top = Math.max(8, Math.min(e.clientY + pad, window.innerHeight - tip.offsetHeight - 8)) + 'px';
+}
+document.addEventListener('mousemove', tlHover);
 
 function drawTailMap(fl, aps) {
     if (!tailMap) {
@@ -807,7 +856,9 @@ function drawTailMap(fl, aps) {
         const A = aps.get(f.o), B = aps.get(f.d);
         if (!A || !B || A.lat == null || B.lat == null) return;
         const rel = fl.length > 1 ? i / (fl.length - 1) : 1;   // older legs dim, newest bright
-        const col = f.carrier === ICAO ? `rgba(204,204,68,${0.15 + 0.85 * rel})` : f.carrier ? `rgba(85,136,255,${0.2 + 0.8 * rel})` : `rgba(255,136,68,${0.25 + 0.75 * rel})`;
+        const base = f.carrier === ICAO ? hexToRgb(FCOL.MINE) : f.carrier ? hexToRgb(FCOL.OTHER) : hexToRgb(FCOL.NONREV);
+        const alphaFloor = f.carrier === ICAO ? 0.15 : f.carrier ? 0.2 : 0.25;
+        const col = `rgba(${base.join(',')},${alphaFloor + (1 - alphaFloor) * rel})`;
         tailLayer.addLayer(L.polyline(gcPoints([A.lat, A.lon], [B.lat, B.lon], 500), { color: col, weight: 1 + 1.5 * rel })
             .bindTooltip(`${esc(f.cs)} ${esc(f.o)} → ${esc(f.d)}<br>${utc(bestT(f))}`, { sticky: true, className: 'tt' }));
         pts.push([A.lat, A.lon], [B.lat, B.lon]);

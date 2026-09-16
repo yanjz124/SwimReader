@@ -131,7 +131,7 @@ public sealed class IncidentArchive
         };
         progress?.Invoke("ERAM en-route");
         eramRecords = SliceReplay(Path.Combine(_replayDir, "eram"), Path.Combine(dir, "eram"),
-            req.StartUtc, req.EndUtc, keepEram);
+            req.StartUtc, req.EndUtc, keepEram).payload;
 
         // ── ASDE-X slice — the FULL surface picture at each airport in the window ─────
         var asdexRecords = new Dictionary<string, long>();
@@ -139,7 +139,7 @@ public sealed class IncidentArchive
         {
             progress?.Invoke($"ASDE-X {ap}");
             var recs = SliceReplay(Path.Combine(_replayDir, "asdex", ap), Path.Combine(dir, "asdex", ap),
-                req.StartUtc, req.EndUtc, keepSummary: null);   // keep every surface track
+                req.StartUtc, req.EndUtc, keepSummary: null).payload;   // keep every surface track
             if (recs > 0) asdexRecords[ap] = recs;
         }
 
@@ -188,7 +188,7 @@ public sealed class IncidentArchive
                 // the window intersects the area/callsign (relevanceGate). Replaces the old
                 // decompress-twice (TaisFacilityRelevant pre-scan + slice).
                 var recs = SliceReplay(facDir, Path.Combine(dir, "tais", fac),
-                    req.StartUtc, req.EndUtc, keepSummary: null, relevanceGate: matchTais);
+                    req.StartUtc, req.EndUtc, keepSummary: null, relevanceGate: matchTais).payload;
                 if (recs > 0) taisRecords[fac] = recs;
             }
         }
@@ -425,13 +425,19 @@ public sealed class IncidentArchive
     /// behind, without decompressing its (large) files a second time. This roughly halves the STARS/TAIS
     /// stage, which dominates a wide-area incident (each ~130 MB/hr facility file was being read twice).
     /// </summary>
-    private long SliceReplay(string srcDir, string dstDir, DateTime start, DateTime end,
+    /// <summary>
+    /// Returns (total records written, payload records written). "Payload" counts only batch/snapshot
+    /// records that carry actual track data — removes/holdbars are excluded, so a slice that matched
+    /// nothing reports 0 payload even though pass-through records exist.
+    /// </summary>
+    private (long total, long payload) SliceReplay(string srcDir, string dstDir, DateTime start, DateTime end,
         Func<JsonElement, bool>? keepSummary, Func<JsonElement, bool>? relevanceGate = null)
     {
-        if (!Directory.Exists(srcDir)) return 0;
+        if (!Directory.Exists(srcDir)) return (0, 0);
         long startMs = new DateTimeOffset(start, TimeSpan.Zero).ToUnixTimeMilliseconds();
         long endMs = new DateTimeOffset(end, TimeSpan.Zero).ToUnixTimeMilliseconds();
-        long count = 0;
+        long count = 0, payload = 0;
+        var keptIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         bool relevant = relevanceGate == null;   // no gate → always keep
         var writers = new Dictionary<string, (FileStream fs, GZipStream gz, StreamWriter sw)>();
 
@@ -492,11 +498,24 @@ public sealed class IncidentArchive
                             var kept = new List<JsonElement>();
                             foreach (var s in dEl.EnumerateArray()) if (keepSummary(s)) kept.Add(s);
                             if (kept.Count == 0) continue;   // nothing relevant in this record
+                            foreach (var s in kept) { var sid = RecordId(s); if (sid != null) keptIds.Add(sid); }
+                            payload++;
                             outLine = "{\"t\":" + t + ",\"k\":\"" + kind + "\",\"d\":["
                                 + string.Join(",", kept.Select(e => e.GetRawText())) + "]}";
                         }
+                        else if (keepSummary != null && (kind == "R" || kind == "H"))
+                        {
+                            // A remove/holdbar only means something for a track we actually kept.
+                            // Without this a filtered slice (e.g. a callsign that never appears in the
+                            // window) still copies thousands of pass-through removes, so the archive
+                            // looks populated while containing no tracks at all — it replays as blank.
+                            var rid = RecordId(dEl);
+                            if (rid == null || !keptIds.Contains(rid)) continue;
+                            outLine = "{\"t\":" + t + ",\"k\":\"" + kind + "\",\"d\":" + dEl.GetRawText() + "}";
+                        }
                         else
                         {
+                            if (kind == "B" || kind == "S") payload++;
                             outLine = "{\"t\":" + t + ",\"k\":\"" + kind + "\",\"d\":" + dEl.GetRawText() + "}";
                         }
                         // Relevance gate (single-pass replacement for a separate pre-scan): once any
@@ -520,12 +539,23 @@ public sealed class IncidentArchive
 
         // Gate failed: nothing in the window matched, so this facility isn't relevant. Drop the
         // whole-picture output we buffered and report zero, exactly as the old pre-scan would have.
-        if (!relevant)
+        // Gate failed, or nothing but pass-through records survived: either way there are no tracks
+        // to replay here, so drop the output rather than leaving a blank-replaying slice behind.
+        if (!relevant || payload == 0)
         {
             try { if (Directory.Exists(dstDir)) Directory.Delete(dstDir, recursive: true); } catch { }
-            return 0;
+            return (0, 0);
         }
-        return count;
+        return (count, payload);
+    }
+
+    /// <summary>Identity of a summary or remove payload — gufi (ERAM), trackId (ASDE-X), trackNum (TAIS).</summary>
+    private static string? RecordId(JsonElement e)
+    {
+        if (e.ValueKind != JsonValueKind.Object) return null;
+        foreach (var k in new[] { "gufi", "trackId", "trackNum" })
+            if (e.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String) return v.GetString();
+        return null;
     }
 
     /// <summary>

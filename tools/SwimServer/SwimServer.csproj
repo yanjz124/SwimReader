@@ -25,6 +25,35 @@
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
   </ItemGroup>
 
+  <!-- Runtime data directories live under the working dir but are NOT build inputs. The Web SDK's
+       default content glob picks up **/*.json, which drags incident archives, the NASR cache, the
+       aircraft DB and the flight cache into every build: hundreds of MB copied to bin/ each time,
+       and a hard build FAILURE (MSB3030 "could not copy ... not found") if any of those files is
+       removed while the build runs — e.g. an operator deleting an incident during a deploy, which
+       silently broke auto-deploy. None of this is source; the app creates and reads it at runtime. -->
+  <ItemGroup>
+    <Content Remove="incidents/**" />
+    <Content Remove="replay/**" />
+    <Content Remove="flight-history/**" />
+    <Content Remove="tdls-history/**" />
+    <Content Remove="nasr-data/**" />
+    <Content Remove="aircraft-db/**" />
+    <Content Remove="flight-cache/**" />
+    <Content Remove="crc-export/**" />
+    <Content Remove="stars-profiles/**" />
+    <Content Remove="ladd/**" />
+    <None Remove="incidents/**" />
+    <None Remove="replay/**" />
+    <None Remove="flight-history/**" />
+    <None Remove="tdls-history/**" />
+    <None Remove="nasr-data/**" />
+    <None Remove="aircraft-db/**" />
+    <None Remove="flight-cache/**" />
+    <None Remove="crc-export/**" />
+    <None Remove="stars-profiles/**" />
+    <None Remove="ladd/**" />
+  </ItemGroup>
+
   <!-- The ERAM scope's KML video maps live at the repo root and are served from
        RepoRoot. In a published/bundled build there is no .git to anchor RepoRoot,
        so copy the KMLs next to the exe (flattened via Link) and resolve them from

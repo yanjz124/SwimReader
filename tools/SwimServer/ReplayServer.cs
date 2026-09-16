@@ -163,9 +163,14 @@ public class ReplayServer
         {
             if (!SafeId(id)) return Results.BadRequest();
             var baseD = Path.Combine(incidentsDir, id);
-            var eram = GetTimeRange(Path.Combine(baseD, "eram"));
-            var asdex = RangesUnder(Path.Combine(baseD, "asdex"));
-            var tais = RangesUnder(Path.Combine(baseD, "tais"));
+            // Clamp every reported range to the incident's own window. Raw file ranges are
+            // hour-aligned (a 15:37-16:37 incident lives in the 15:00 and 16:00 files), so reporting
+            // them unclamped makes the replay scrubber span dead space on both ends — dragging into
+            // it seeks past the archived data, the session ends, and the bar looks "Disconnected".
+            var (winLo, winHi) = ReadIncidentWindow(Path.Combine(baseD, "meta.json"));
+            var eram = GetTimeRange(Path.Combine(baseD, "eram"), winLo, winHi);
+            var asdex = RangesUnder(Path.Combine(baseD, "asdex"), winLo, winHi);
+            var tais = RangesUnder(Path.Combine(baseD, "tais"), winLo, winHi);
             return Results.Json(new { eram, asdex, tais }, _jsonOpts);
         });
 
@@ -191,13 +196,13 @@ public class ReplayServer
     }
 
     /// <summary>Time-range map for every subdirectory under <paramref name="baseDir"/> (name → range).</summary>
-    private Dictionary<string, object> RangesUnder(string baseDir)
+    private Dictionary<string, object> RangesUnder(string baseDir, DateTime? clampLo = null, DateTime? clampHi = null)
     {
         var map = new Dictionary<string, object>();
         if (Directory.Exists(baseDir))
             foreach (var d in Directory.GetDirectories(baseDir))
             {
-                var r = GetTimeRange(d);
+                var r = GetTimeRange(d, clampLo, clampHi);
                 if (r != null) map[Path.GetFileName(d)] = r;
             }
         return map;
@@ -698,7 +703,22 @@ public class ReplayServer
         return files.Count > 0 ? files[0] : null;
     }
 
-    private static object? GetTimeRange(string dir)
+    /// <summary>Read an incident's archived window from meta.json, for clamping reported ranges.</summary>
+    private static (DateTime? lo, DateTime? hi) ReadIncidentWindow(string metaPath)
+    {
+        try
+        {
+            if (!File.Exists(metaPath)) return (null, null);
+            using var doc = JsonDocument.Parse(File.ReadAllText(metaPath));
+            var r = doc.RootElement;
+            DateTime? lo = r.TryGetProperty("startUtc", out var a) && a.TryGetDateTime(out var la) ? la.ToUniversalTime() : null;
+            DateTime? hi = r.TryGetProperty("endUtc", out var b) && b.TryGetDateTime(out var hb) ? hb.ToUniversalTime() : null;
+            return (lo, hi);
+        }
+        catch { return (null, null); }
+    }
+
+    private static object? GetTimeRange(string dir, DateTime? clampLo = null, DateTime? clampHi = null)
     {
         if (!Directory.Exists(dir)) return null;
         var files = Directory.GetFiles(dir, "*.jsonl.gz")
@@ -721,10 +741,16 @@ public class ReplayServer
             System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
             out var end);
 
+        var rangeStart = start;
+        var rangeEnd = end.AddHours(1);
+        if (clampLo is { } cl && cl > rangeStart) rangeStart = cl;
+        if (clampHi is { } ch && ch < rangeEnd) rangeEnd = ch;
+        if (rangeEnd <= rangeStart) { rangeStart = start; rangeEnd = end.AddHours(1); }   // degenerate → unclamped
+
         return new
         {
-            start = start.ToString("o"),
-            end = end.AddHours(1).ToString("o"),
+            start = rangeStart.ToString("o"),
+            end = rangeEnd.ToString("o"),
             hours = files.Count,
             totalSizeMB = Directory.GetFiles(dir, "*.jsonl.gz").Sum(f => new FileInfo(f).Length) / (1024.0 * 1024.0)
         };

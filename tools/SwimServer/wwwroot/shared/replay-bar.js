@@ -29,6 +29,7 @@
   let _vpTimer = null;
   let _saveTimer = null;
   let _gotData = false;       // first streamed data seen → clears the "Buffering…" status (stream mode)
+  let _ended = false;         // server sent replay_end — a normal finish, not a dropped connection
   let _replayStartMs = null;  // the chosen replay start (ms)
   // ── "Load all" client-side buffered playback ────────────────────────────
   // Downloads the whole window (server dumps it with no pacing via preload=huge),
@@ -396,13 +397,15 @@
     const speed = bar.querySelector("#rb-speed").value || "1";
     let url = `${proto}//${location.host}${cfg.wsPath}?start=${encodeURIComponent(startISO)}&speed=${speed}`;
     _gotData = false;
+    _ended = false;
     _replayStartMs = new Date(startISO).getTime();
     const vp = paddedBoundsFromCfg();
     if (vp) url += `&minLat=${vp.minLat}&minLon=${vp.minLon}&maxLat=${vp.maxLat}&maxLon=${vp.maxLon}`;
     ws = new WebSocket(url);
 
     ws.onopen = () => setStatus("Loading…");
-    ws.onclose = () => { if (active) setStatus("Disconnected"); };
+    // A finished replay closes the socket on purpose; only call it a disconnect if it wasn't.
+    ws.onclose = () => { if (active && !_ended) setStatus("Disconnected"); };
     ws.onerror = () => setStatus("WS error", "err");
     ws.onmessage = (evt) => {
       let msg; try { msg = JSON.parse(evt.data); } catch { return; }
@@ -426,7 +429,7 @@
         case "replay_seek":  cfg.onSeek?.(msg);                       setStatus("Seeking…"); break;
         case "replay_start": setStatus("Buffering…"); break;
         case "replay_gap":   setStatus(`Gap: ${(msg.from||"").slice(11,19)}–${(msg.to||"").slice(11,19)}`); break;
-        case "replay_end":   setStatus("End of data", "warn");        break;
+        case "replay_end":   _ended = true; setStatus("End of data", "warn"); break;
         case "replay_error": setStatus(msg.message || "Error", "err"); break;
         default:             cfg.onMessage?.(msg);
       }
@@ -567,15 +570,23 @@
 
   function seek(timeISO) {
     if (_mode === 'buffered') { seekBuffered(new Date(timeISO).getTime()); return; }
-    if (!active || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!active) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      // The session ended (ran off the end of the data) or dropped. Scrubbing must still work, so
+      // open a fresh session at the requested time instead of leaving the bar looking disconnected.
+      startReplay(timeISO);
+      return;
+    }
+    _ended = false;
     ws.send(JSON.stringify({ cmd: "seek", time: timeISO }));
   }
 
   function relSeek(seconds) {
     if (_mode === 'buffered') { seekBuffered((_vt || _bufStartMs) + seconds * 1000); return; }
     if (!currentTime) return;
-    const t = new Date(new Date(currentTime).getTime() + seconds * 1000);
-    seek(t.toISOString());
+    let ms = new Date(currentTime).getTime() + seconds * 1000;
+    if (startMs && endMs && endMs > startMs) ms = Math.max(startMs, Math.min(endMs, ms));
+    seek(new Date(ms).toISOString());
   }
 
   function copyLink() {

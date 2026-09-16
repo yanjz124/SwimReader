@@ -803,7 +803,10 @@ function applyTaisRecord(r) {
   handleTrackUpdate({
     Guid: guid,
     Location: (r.lat != null && r.lon != null) ? { Latitude: r.lat, Longitude: r.lon } : undefined,
-    Altitude: r.altFt != null ? r.altFt : undefined,
+    // DGScope shape: { Value: feet, AltitudeType: 0 Pressure | 1 True | 2 Unknown }. A bare number
+    // leaves t.Altitude?.Value undefined, so buildDataBlock fell through to "RDR" and EVERY aircraft
+    // lost its Mode C readout. TAIS reportedAltitude is a Mode C (pressure) altitude in feet.
+    Altitude: r.altFt != null ? { Value: r.altFt, AltitudeType: 0 } : undefined,
     GroundSpeed: r.gs,
     GroundTrack: r.trk,
     VerticalRate: r.vs,
@@ -811,7 +814,10 @@ function applyTaisRecord(r) {
     Callsign: r.callsign || undefined,
     ModeSCode: r.modeS || undefined,
   });
-  // Attach a flight plan so it renders as an associated (data-blocked) track.
+  // Only tracks that actually carry flight-plan data are ASSOCIATED. TAIS supplies a callsign only
+  // once a track is matched to a flight plan (~6% of recorded records); attaching an empty plan to
+  // every track made unassociated targets render as associated ones with a blank data block.
+  if (!(r.callsign || r.acType || r.owner || r.sp1 || r.sp2 || r.entryFix)) return;
   handleFlightPlanUpdate({
     Guid: guid,
     Callsign: r.callsign, AircraftType: r.acType, WakeCategory: r.wake, FlightRules: r.rules,

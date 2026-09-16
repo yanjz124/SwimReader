@@ -1,5 +1,9 @@
 // State
 // ════════════════════════════════════════════════════════════════════════════
+// Incident replay context: /eram/scope?incident={id}. In this mode the scope must NEVER open the
+// live feed — if the replay can't start, live traffic under an incident URL looks exactly like a
+// working replay (with a live clock), which is badly misleading.
+const INCIDENT_ID = new URLSearchParams(location.search).get('incident') || '';
 const flights = new Map();          // current displayed state — datablock fields updated instantly
 // Position updates applied immediately — history dots use time-based decay for scan simulation
 const flightHistory = new Map();
@@ -3363,7 +3367,13 @@ function connectWs() {
         }
     };
 }
-connectWs();
+if (INCIDENT_ID) {
+    // Wait for the ReplayBar to auto-start from the #replay= hash instead of opening the live feed.
+    const _cs = document.getElementById('connection-status');
+    if (_cs) { _cs.textContent = 'INCIDENT REPLAY'; _cs.style.color = '#ff8c00'; }
+} else {
+    connectWs();
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Facility/sector tracking
@@ -11764,6 +11774,12 @@ function initReplayBar() {
             renderClock();
             if (nexradLevel > 0) refreshNexrad();
             saveSettingsToLocalStorage();
+            if (INCIDENT_ID) {
+                // Incident view: there is no live equivalent to return to.
+                const _cs = document.getElementById('connection-status');
+                if (_cs) { _cs.textContent = 'INCIDENT REPLAY — STOPPED'; _cs.style.color = '#ff8c00'; }
+                return;
+            }
             connectWs();
         },
     });

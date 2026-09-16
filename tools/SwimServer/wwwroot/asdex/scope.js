@@ -204,6 +204,10 @@ document.addEventListener('fullscreenchange', () => {
 // ── Airport from URL ─────────────────────────────────────────────────────────
 const pathParts = window.location.pathname.split('/').filter(Boolean);
 const AIRPORT = (pathParts[pathParts.length - 1] || 'UNKN').toUpperCase();
+// Incident replay context: /asdex/{ap}?incident={id}. In this mode the page must NEVER open the
+// live feed — if the replay can't start, showing live traffic under an incident URL looks exactly
+// like a working replay (with a live clock), which is badly misleading.
+const INCIDENT_ID = new URLSearchParams(location.search).get('incident') || '';
 document.getElementById('airport-id').textContent = AIRPORT;
 document.title = 'ASDE-X ' + AIRPORT;
 
@@ -1238,9 +1242,17 @@ function connect() {
 }
 
 window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; } };
-window.idleOnResume = () => { connect(); };
+window.idleOnResume = () => { if (!INCIDENT_ID) connect(); };
 
-connect();
+if (INCIDENT_ID) {
+    // Wait for the ReplayBar to auto-start from the #replay= hash. If it never does, the status
+    // stays on this message rather than quietly showing live traffic.
+    connEl.textContent = 'INCIDENT REPLAY';
+    connEl.className   = '';
+    connEl.style.color = '#ff8c00';
+} else {
+    connect();
+}
 
 // ── Replay system — delegates to /shared/replay-bar.js ────────────────────
 (function() {
@@ -1292,6 +1304,12 @@ function init() {
         },
         onStop: () => {
             if (window._setReplayClock) window._setReplayClock(null);   // back to live time
+            if (INCIDENT_ID) {
+                // Incident view: there is no live equivalent to return to.
+                connEl.textContent = 'INCIDENT REPLAY — STOPPED';
+                connEl.style.color = '#ff8c00';
+                return;
+            }
             connEl.style.color = '';
             connect();
         },

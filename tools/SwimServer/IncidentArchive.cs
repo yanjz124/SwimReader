@@ -87,8 +87,11 @@ public sealed class IncidentArchive
         progress?.Invoke("starting");
         if (req.EndUtc <= req.StartUtc) throw new ArgumentException("EndUtc must be after StartUtc");
         var callsign = string.IsNullOrWhiteSpace(req.Callsign) ? null : req.Callsign.Trim().ToUpperInvariant();
+        // Normalize to the ICAO ident the ASDE-X recorder uses as its directory name ("JFK" -> "KJFK").
+        // Without this a 3-letter entry silently captures nothing, producing a useless empty archive.
         var airports = (req.Airports ?? Array.Empty<string>())
-            .Select(a => a.Trim().ToUpperInvariant()).Where(a => a.Length > 0).Distinct().ToArray();
+            .Select(a => a.Trim().ToUpperInvariant()).Where(a => a.Length > 0)
+            .Select(NormalizeAirport).Distinct().ToArray();
 
         // Resolve the area bbox: explicit, or a radius (deg) around the given airports.
         var bbox = ResolveBbox(req, airports);
@@ -190,6 +193,19 @@ public sealed class IncidentArchive
             }
         }
 
+        // Nothing replayable — almost always because the requested window already aged out of the
+        // rolling replay buffer. Fail loudly and leave no empty archive behind: an incident with no
+        // replay data would hand the scopes a replay link with no start time, and they would quietly
+        // fall back to showing LIVE traffic at the current clock (which reads as a working replay).
+        if (eramRecords == 0 && asdexRecords.Count == 0 && taisRecords.Count == 0)
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+            throw new ArgumentException(
+                $"No replay data found for {req.StartUtc:yyyy-MM-dd HH:mm}Z-{req.EndUtc:yyyy-MM-dd HH:mm}Z. "
+                + AvailableRangeText()
+                + " Pick a window inside that range - the buffer is rolling, so older data is deleted.");
+        }
+
         // ── Flight plan (live snapshot + persisted history) ──────────────────────────
         bool hasFp = false;
         if (callsign != null)
@@ -248,6 +264,40 @@ public sealed class IncidentArchive
     {
         var f = Path.Combine(IncidentDir(id), "flightplan.json");
         return File.Exists(f) ? f : null;
+    }
+
+    /// <summary>
+    /// Map a user-entered airport ident onto the directory name the ASDE-X recorder actually uses.
+    /// 3-letter idents get their ICAO prefix, preferring whichever of K.../P... exists in the
+    /// recording tree (so ANC resolves to PANC, not KANC). 4-letter idents pass through.
+    /// </summary>
+    private string NormalizeAirport(string a)
+    {
+        if (a.Length != 3) return a;
+        var asdexBase = Path.Combine(_replayDir, "asdex");
+        foreach (var cand in new[] { "K" + a, "P" + a })
+            if (Directory.Exists(Path.Combine(asdexBase, cand))) return cand;
+        return "K" + a;   // default to the CONUS form
+    }
+
+    /// <summary>Human-readable summary of what the rolling replay buffer still holds — used in the
+    /// "nothing captured" error so the user immediately sees which windows are archivable.</summary>
+    private string AvailableRangeText()
+    {
+        try
+        {
+            var dir = Path.Combine(_replayDir, "eram");
+            if (!Directory.Exists(dir)) return "No replay recording is available yet.";
+            var stems = Directory.GetFiles(dir, "*.jsonl.gz")
+                .Select(f => Path.GetFileName(f))
+                .Select(n => n.Length >= 13 ? n[..13] : n)
+                .Where(n => DateTime.TryParseExact(n, "yyyy-MM-dd'T'HH", CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out _))
+                .OrderBy(n => n, StringComparer.Ordinal).ToList();
+            if (stems.Count == 0) return "No replay recording is available yet.";
+            return $"Replay currently covers {stems[0].Replace('T', ' ')}:00Z to {stems[^1].Replace('T', ' ')}:59Z.";
+        }
+        catch { return ""; }
     }
 
     /// <summary>Read a facility's persisted centroid hint (loc.json), or null if absent/unparseable.</summary>

@@ -110,6 +110,16 @@ public sealed class IncidentArchive
         if (callsign == null && bbox == null)
             throw new ArgumentException("Provide a callsign and/or an area (bbox or airports + aroundNm).");
 
+        // Callsign-only request whose callsign left no trace in the en-route replay: there is no area
+        // to fall back on, so nothing can be captured. Bail out NOW — without a bbox the terminal scan
+        // can't be geo-pruned and would decompress all ~140 facilities (minutes) only to find nothing.
+        if (callsign != null && bbox == null && airports.Length == 0)
+            throw new ArgumentException(
+                $"Callsign {callsign} was not found in the en-route replay for "
+                + $"{req.StartUtc:yyyy-MM-dd HH:mm}Z-{req.EndUtc:yyyy-MM-dd HH:mm}Z. "
+                + AvailableRangeText()
+                + " Check the callsign and window, or archive by airport/area instead.");
+
         var id = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Slug(req.Title ?? callsign ?? "incident");
         var dir = IncidentDir(id);
         Directory.CreateDirectory(dir);

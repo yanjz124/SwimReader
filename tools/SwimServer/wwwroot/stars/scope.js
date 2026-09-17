@@ -862,11 +862,21 @@ function handleTrackUpdate(u) {
     const moved = !prev || prev.Latitude !== u.Location.Latitude
                         || prev.Longitude !== u.Location.Longitude;
     t.Location = u.Location;
+    // Store measured position separately so history trail uses real radar data
+    t._lastMeasuredLocation = { Latitude: u.Location.Latitude, Longitude: u.Location.Longitude };
     t.lastPosUpdate = t.lastUpdate;
     if (fresh || moved) t.lastMoveT = t.lastUpdate;
     // C# SetLocation behavior: reset extrapolation state to new location and time
     t._extrapolatedpos = { Latitude: u.Location.Latitude, Longitude: u.Location.Longitude };
     t._lastLocationExtrapolateTime = t.lastUpdate;
+    // Add history point immediately on position update to capture turns without delay.
+    // Skip on first sight (fresh) — initial position is typically old snapshot data.
+    if (!fresh && (!Array.isArray(u.History) || !u.History.length)) {
+      if (!t._history) t._history = [];
+      t._history.unshift({ Latitude: u.Location.Latitude, Longitude: u.Location.Longitude });
+      while (t._history.length > prefSet.HistoryNum) t._history.pop();
+      t._lastHistoryT = Date.now() / 1000;  // reset history timer so next timer-based point is HistoryRate away
+    }
   }
   if (u.Altitude)      t.Altitude = u.Altitude;
   if (u.GroundSpeed != null)  t.GroundSpeed = u.GroundSpeed;
@@ -897,10 +907,12 @@ function handleTrackUpdate(u) {
   // Snapshot-seeded history (server-side cache) — only present on connect.
   // Newest-first {Latitude,Longitude} list; seed so the trail shows instantly
   // instead of taking HistoryRate×N seconds to build. radarSweep continues it.
-  if (Array.isArray(u.History) && u.History.length) {
-    t._history = u.History.map(p => ({ Latitude: p.Latitude, Longitude: p.Longitude }));
-    t._lastHistoryT = Date.now();   // don't immediately re-add the latest point
-  }
+  // Disabled: snapshot history caused timing issues on page load (5sec delay, wrong spacing).
+  // History now builds naturally via position updates + background ticker for consistency.
+  // if (Array.isArray(u.History) && u.History.length) {
+  //   t._history = u.History.map(p => ({ Latitude: p.Latitude, Longitude: p.Longitude }));
+  //   t._lastHistoryT = Date.now();
+  // }
 }
 
 function handleFlightPlanUpdate(u) {
@@ -1026,13 +1038,19 @@ function tickHistory(t, posNow) {
   // multi-radar SweptTimes so we gate on wall-clock instead. Capped at
   // HistoryNum (PrefSet.cs:38 default 10) so a slot >= cap is dropped — same
   // net effect as History.Length in DGScope (a fixed-size array).
+  // NOTE: posNow here is extrapolated. For smooth turns that don't jerk,
+  // we use _measuredHistory (actual radar points) when available. Extrapolation
+  // fills the gaps but doesn't dominate the trail.
   if (!posNow) return;
   if (!t._history) t._history = [];
   if (!t._lastHistoryT) t._lastHistoryT = 0;
   const nowS = Date.now() / 1000;
   if (nowS - t._lastHistoryT < prefSet.HistoryRate) return;
   t._lastHistoryT = nowS;
-  t._history.unshift({ Latitude: posNow.Latitude, Longitude: posNow.Longitude });
+
+  // Use actual measured position if we have it; otherwise use extrapolated
+  const historyPos = t._lastMeasuredLocation || posNow;
+  t._history.unshift({ Latitude: historyPos.Latitude, Longitude: historyPos.Longitude });
   while (t._history.length > prefSet.HistoryNum) t._history.pop();
 }
 
@@ -2468,6 +2486,9 @@ function drawTracks() {
     if (!posNow) continue;
     const sp = geoToScreen(posNow);
     if (sp.x < -50 || sp.x > view.W + 50 || sp.y < -50 || sp.y > view.H + 50) continue;
+    // Record history every frame (not just every 1s background ticker) so turns
+    // are captured at high fidelity using actual measured positions
+    tickHistory(t, posNow);
     drawHistory(t);
     drawPTL(t, posNow);
     drawPosition(t, posNow);

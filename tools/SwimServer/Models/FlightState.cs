@@ -354,6 +354,44 @@ class FlightState
         };
     }
 
+    /// <summary>
+    /// Lean per-batch projection for replay RECORDING (1 Hz). Carries only the volatile fields
+    /// (position/altitude/velocity/handoff/clearance/ownership/status) plus the small data-block
+    /// essentials, and drops the heavy, near-static fields — route, originalRoute, computerIds,
+    /// nav/surveillance capabilities, estimatedElapsedTimes, equipment, registration, times, etc.
+    /// Those are delivered by the full <see cref="ToSummary"/> snapshot every 5 minutes (and the
+    /// incident slicer always includes the preceding snapshot), and the replay client merges
+    /// batches onto that snapshot, so a batch never needs to repeat them every second. Combined
+    /// with the recorder's WhenWritingNull, this shrinks the ERAM replay files ~3x — the difference
+    /// between an incident slice that decompresses on the Pi and one that hangs. Masked like
+    /// ToSummary so replay can never leak a LADD identity.
+    /// </summary>
+    public object ToReplaySummary()
+    {
+        bool _ladd = LaddService.ShouldMask(Callsign, Registration, false, ModeSCode);
+        return new
+        {
+            Gufi,
+            Callsign = _ladd ? LaddService.Label : Callsign,
+            Destination,
+            AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
+            InterimAltitude, ReportedAltitude,
+            Latitude, Longitude, GroundSpeed, Squawk, AssignedSquawk,
+            TrackVelocityX, TrackVelocityY,
+            CoastIndicator = CoastIndicator ? true : (bool?)null,
+            TargetLatitude, TargetLongitude, TargetAltitude,
+            ControllingFacility, ControllingSector,
+            ControlAgeSec = ControlSince.HasValue ? (int)(DateTime.UtcNow - ControlSince.Value).TotalSeconds : (int?)null,
+            ReportingFacility,
+            HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
+            PointoutOriginatingUnit, PointoutReceivingUnit,
+            ClearanceHeading, ClearanceSpeed, ClearanceText,
+            FlightStatus,
+            LastSeen = LastSeen.ToString("HH:mm:ss"),
+            PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
+        };
+    }
+
     private object[] HistoryWithAge()
     {
         var nowTicks = DateTime.UtcNow.Ticks;

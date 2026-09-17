@@ -25,6 +25,9 @@ const pathMatch = location.pathname.match(/^\/stars(?:v2)?\/([^/]+)\/([^/]+)/);
 if (!pathMatch) { location.href = "/stars"; throw new Error("bad path"); }
 const ARTCC = pathMatch[1];
 const FACILITY = pathMatch[2];
+// Incident replay: /stars/{artcc}/{facility}?incident={id} plays this facility's archived TAIS
+// (STARS terminal) slice instead of the live feed. Empty = normal live scope.
+const INCIDENT_ID = new URLSearchParams(location.search).get("incident") || "";
 // The web-DGScope + profile experience (engines, video maps, profile manager) is now THE STARS
 // scope — promoted from the /starsv2 test surface. Always on for both /stars and /starsv2.
 window.STARSV2 = true;
@@ -780,6 +783,81 @@ async function startDstars() {
     // Reconnect with backoff
     await new Promise(res => setTimeout(res, 3000));
   }
+}
+
+// ── Incident replay (archived TAIS/STARS terminal) ──────────────────────────
+// Instead of the live DSTARS stream, drive the same track/flightPlan model from a
+// recorded TAIS slice via the shared ReplayBar. Each recorded TAIS summary
+// (TaisTrack.ToJson) is translated into the DGScope-shaped track + flight-plan
+// updates the renderer already understands, keyed by facility:trackNum.
+let _replayCentered = false;
+let _replayActive = false;   // true while an incident replay is playing (drives the topbar + SSA clock)
+function replayGuid(fac, trackNum) { return `${fac || FACILITY}:${trackNum}`; }
+function clearReplayTracks() {
+  tracks.clear(); flightPlans.clear(); trackToFp.clear();
+  if (typeof claimedTracks?.clear === "function") claimedTracks.clear();
+}
+function applyTaisRecord(r) {
+  if (!r || r.trackNum == null) return;
+  const guid = replayGuid(r.facility, r.trackNum);
+  handleTrackUpdate({
+    Guid: guid,
+    Location: (r.lat != null && r.lon != null) ? { Latitude: r.lat, Longitude: r.lon } : undefined,
+    // DGScope shape: { Value: feet, AltitudeType: 0 Pressure | 1 True | 2 Unknown }. A bare number
+    // leaves t.Altitude?.Value undefined, so buildDataBlock fell through to "RDR" and EVERY aircraft
+    // lost its Mode C readout. TAIS reportedAltitude is a Mode C (pressure) altitude in feet.
+    Altitude: r.altFt != null ? { Value: r.altFt, AltitudeType: 0 } : undefined,
+    GroundSpeed: r.gs,
+    GroundTrack: r.trk,
+    VerticalRate: r.vs,
+    Squawk: r.reportedSqk || r.assignedSqk || undefined,
+    Callsign: r.callsign || undefined,
+    ModeSCode: r.modeS || undefined,
+  });
+  // Only tracks that actually carry flight-plan data are ASSOCIATED. TAIS supplies a callsign only
+  // once a track is matched to a flight plan (~6% of recorded records); attaching an empty plan to
+  // every track made unassociated targets render as associated ones with a blank data block.
+  if (!(r.callsign || r.acType || r.owner || r.sp1 || r.sp2 || r.entryFix)) return;
+  handleFlightPlanUpdate({
+    Guid: guid,
+    Callsign: r.callsign, AircraftType: r.acType, WakeCategory: r.wake, FlightRules: r.rules,
+    Origin: r.origin, Destination: r.dest, EntryFix: r.entryFix, ExitFix: r.exitFix,
+    RequestedAltitude: r.reqAlt, Scratchpad1: r.sp1, Scratchpad2: r.sp2, Runway: r.runway,
+    Owner: r.owner, PendingHandoff: r.handoff, AssignedSquawk: r.assignedSqk,
+    EquipmentSuffix: r.equip, HandoffOcr: r.handoffOcr, AssociatedTrackGuid: guid,
+  });
+}
+// Center on the traffic the first time data arrives, but only if facility config
+// didn't already provide a real center (wrong/absent ARTCC → bootstrap left it at 0,0).
+function replayAutoCenter(list) {
+  if (_replayCentered || (starsState && starsState.facilityLocation)) return;
+  const pts = (list || []).filter(r => r && r.lat != null && r.lon != null);
+  if (!pts.length) return;
+  let la = 0, lo = 0; for (const p of pts) { la += p.lat; lo += p.lon; }
+  la /= pts.length; lo /= pts.length;
+  prefSet.ScreenCenterPoint = { Latitude: la, Longitude: lo };
+  prefSet.RangeRingLocation = { Latitude: la, Longitude: lo };
+  if (starsState) starsState.facilityLocation = { Latitude: la, Longitude: lo };
+  if (typeof recomputeScale === "function") recomputeScale();
+  _replayCentered = true;
+}
+function startTaisReplay() {
+  document.title = `STARS ${FACILITY} — incident replay`;
+  const fac = FACILITY.toUpperCase();
+  if (!window.ReplayBar) { console.error("[STARS] ReplayBar not loaded"); return; }
+  ReplayBar.init({
+    wsPath: `/replay/incident/${encodeURIComponent(INCIDENT_ID)}/tais/ws/${encodeURIComponent(fac)}`,
+    rangeUrl: `/api/incident/${encodeURIComponent(INCIDENT_ID)}/range`,
+    rangeKey: "tais",
+    rangeSubKey: fac,
+    onStart:    ()     => { _replayActive = true; clearReplayTracks(); },
+    onTime:     (iso)  => { if (window.SSA) window.SSA.replayTime = iso; },   // SSA clock → replay time
+    onSnapshot: (list) => { clearReplayTracks(); (list || []).forEach(applyTaisRecord); replayAutoCenter(list); },
+    onBatch:    (list) => { (list || []).forEach(applyTaisRecord); replayAutoCenter(list); },
+    onRemove:   (d)    => { if (d && d.trackNum != null) handleDeletion({ Guid: replayGuid(d.facility, d.trackNum) }); },
+    onStop:     ()     => { _replayActive = false; if (window.SSA) window.SSA.replayTime = null; clearReplayTracks(); },
+  });
+  ReplayBar.open();
 }
 
 function handleUpdate(u) {
@@ -2522,7 +2600,7 @@ function updateTopbar() {
   const el = document.getElementById("dstars-state");
   if (el)
     el.textContent = `DSTARS ${dstarsFacility()} · ${tracks.size}T/${flightPlans.size}FP · ` +
-      (dstarsState.connected ? "LIVE" : (dstarsState.lastError || "off"));
+      (_replayActive ? "REPLAY" : (dstarsState.connected ? "LIVE" : (dstarsState.lastError || "off")));
 }
 
 // Background history ticker — runs even when tab is inactive so history trail
@@ -2718,8 +2796,9 @@ async function bootstrap() {
   if (window.mountPreview) window.mountPreview();
   // Phase 7: mount SSA / status area.
   if (window.mountSsa) window.mountSsa();
-  // Phase 3a: DSTARS streaming connection. Runs independent of facility load.
-  startDstars();
+  // Phase 3a: data connection. Live DSTARS stream, or archived TAIS replay for an incident.
+  if (INCIDENT_ID) startTaisReplay();
+  else startDstars();
 
   // NEXRAD overlay (off by default — user enables via MCA `WX A` / DCB).
   // Run after the screen-centre is known so the nearest-station lookup

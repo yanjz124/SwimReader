@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using System.Xml.Linq;
+using Microsoft.AspNetCore.ResponseCompression;
 using SolaceSystems.Solclient.Messaging;
 using SwimServer;
 
@@ -170,7 +172,7 @@ long GbCap(string envVar, long defaultGb)
     var gb = long.TryParse(Environment.GetEnvironmentVariable(envVar), out var v) && v > 0 ? v : defaultGb;
     return gb * 1024L * 1024 * 1024;
 }
-var replayCapGb = GbCap("REPLAY_CAP_GB", 30);          // binary replay (eram + asdex) — pruned aggressively
+var replayCapGb = GbCap("REPLAY_CAP_GB", 30);          // binary replay (eram + asdex + tais) — pruned aggressively
 var historyCapGb = GbCap("HISTORY_CAP_GB", 25);        // flight-history text — keep long (~1.4 yr at 49 MB/day)
 var tdlsCapGb = GbCap("TDLS_CAP_GB", 5);               // tdls-history text — tiny, effectively unbounded
 PersistenceBudget.DefineBucket("replay", replayCapGb);
@@ -197,6 +199,30 @@ var nexradRefreshTimer = new Timer(async _ => {
 // Flight history directory (declared early so route lambdas can capture it)
 var historyDir = Path.Combine(Directory.GetCurrentDirectory(), "flight-history");
 PersistenceBudget.Watch("flight-history", historyDir, "*.jsonl");
+
+// Aircraft database — a searchable per-airframe rollup (registration / ICAO 24 / SELCAL / type /
+// operator) plus a permanent dated flight log per tail, built from the flights SwimReader sees. Load the
+// saved snapshot, then start the flight log: its background thread scans the whole flight-history
+// archive once (resumable across restarts) without blocking startup. The purge path (below) keeps both
+// current thereafter.
+var aircraftDb = new AircraftDb(Directory.GetCurrentDirectory(), historyDir);
+aircraftDb.Load();
+aircraftDb.StartFlightLog();
+
+// Airline research — per-carrier route network, fleet utilization and operating patterns from the flight log.
+// Airport coordinates come from OurAirports (worldwide, cached monthly) with NASR as the US fallback. The index
+// subscribes to the flight log before any flights are purged, then loads its window in the background.
+var airportDir = new AirportDirectory(Path.Combine(Directory.GetCurrentDirectory(), "airport-data"), code =>
+{
+    var nasr = nasrData;
+    var pt = nasr == null ? null : NasrService.LookupAirport(code, nasr);
+    return pt == null ? null : (pt.Lat, pt.Lon);
+});
+airportDir.StartAsync();
+var airlineWindowDays = int.TryParse(Environment.GetEnvironmentVariable("AIRLINE_WINDOW_DAYS"), out var awd) && awd is >= 7 and <= 400 ? awd : 90;
+var airlineResearch = new AirlineResearch(aircraftDb.Log, aircraftDb.TailMeta, airportDir.Find,
+    Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "airlines", "carriers.json"), airlineWindowDays);
+airlineResearch.Start();
 
 // FAA LADD (Limiting Aircraft Data Displayed) compliance — load the block list
 // before Solace connects so blocked aircraft are dropped from the first message.
@@ -293,7 +319,23 @@ var bindAddr = localMode ? "127.0.0.1" : "0.0.0.0";
 builder.WebHost.UseUrls($"http://{bindAddr}:{bindPort}");
 asdex.SetWebRoot(builder.Environment.WebRootPath);
 asdex.SetReplayDir(Path.Combine(replayDir, "asdex"), long.MaxValue, replayDir);
+tais.SetReplayDir(Path.Combine(replayDir, "tais"), long.MaxValue, replayDir);
+// The public deployment sits behind a Cloudflare tunnel over a home internet connection; the
+// aircraft DB and airline-research JSON payloads run into the low hundreds of KB up to several
+// MB. Compressing them at the origin (rather than relying only on whatever Cloudflare's edge
+// does on the client-facing leg) shrinks what has to cross that weakest link — the flakier and
+// more bandwidth-constrained hop is Pi → Cloudflare, not Cloudflare → browser.
+builder.Services.AddResponseCompression(o =>
+{
+    o.EnableForHttps = true;
+    o.Providers.Add<BrotliCompressionProvider>();
+    o.Providers.Add<GzipCompressionProvider>();
+    o.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/json" });
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
 var app = builder.Build();
+app.UseResponseCompression();
 
 // ── Force HTTPS for external traffic ─────────────────────────────────────────
 // Cloudflare terminates TLS and forwards over the tunnel as plain HTTP, tagging the
@@ -1053,6 +1095,7 @@ var purgeTimer = new Timer(_ =>
             // the route finder searches this history days later, long after TDLS forgets it.
             var histTd = tdls.FindAircraft(f.Origin ?? "", f.Callsign ?? "");
             Task.Run(() => FlightHistoryService.Save(f, historyDir, historyJsonOpts, histTd?.gate, histTd?.runway));
+            aircraftDb.Observe(f);
         }
         // Expire point-out data after 3 minutes (SFDPS doesn't send clear signals)
         // Also clear legacy data with no timestamp (e.g. from cache before this fix)
@@ -1123,6 +1166,7 @@ var purgeTimer = new Timer(_ =>
                 Broadcast(new WsMsg("remove", new { gufi }));
                 var rmTd = tdls.FindAircraft(removed.Origin ?? "", removed.Callsign ?? "");
                 Task.Run(() => FlightHistoryService.Save(removed, historyDir, historyJsonOpts, rmTd?.gate, rmTd?.runway));
+                aircraftDb.Observe(removed);
                 retired++;
             }
         }
@@ -1209,6 +1253,9 @@ var nasrTimer = new Timer(async _ =>
     catch (Exception ex) { Console.WriteLine($"[NASR] Update check error: {ex.Message}"); }
 }, null, TimeSpan.FromHours(24), TimeSpan.FromHours(24));
 
+// Aircraft database — persist accumulated observations every 2 minutes (rewrite only if changed).
+var aircraftSaveTimer = new Timer(_ => aircraftDb.Save(), null, TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(2));
+
 // Batch broadcast timers — flush dirty flights to all connected clients
 var batchTimer = new Timer(_ => FlushDirtyBatch(_dirty), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
@@ -1270,6 +1317,13 @@ var asdexSnapshotTimer = new Timer(_ =>
     catch (Exception ex) { Console.WriteLine($"[REPLAY] ASDE-X snapshot error: {ex.Message}"); }
 }, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2));
 
+// Replay: periodic TAIS (STARS terminal) snapshots for seek support (every 2 minutes)
+var taisSnapshotTimer = new Timer(_ =>
+{
+    try { tais.WriteReplaySnapshots(); }
+    catch (Exception ex) { Console.WriteLine($"[REPLAY] TAIS snapshot error: {ex.Message}"); }
+}, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(2));
+
 // Investigation: flush queued log entries to disk (uncomment with investigation logger vars)
 // var investigationFlushTimer = new Timer(_ =>
 // {
@@ -1298,11 +1352,49 @@ var asdexSnapshotTimer = new Timer(_ =>
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer /*, poFlushTimer, investigationFlushTimer */ };
-app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); itws.SaveHistory(); });
+var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer, aircraftSaveTimer /*, poFlushTimer, investigationFlushTimer */ };
+app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); itws.SaveHistory(); aircraftDb.Save(); });
 
 // Replay endpoints (WebSocket + REST)
 replayServer.MapEndpoints(app);
+
+// ── Incident/accident archive — permanently pin a callsign+area+window's replay + flight plan ──
+// Lives in incidents/ (OUTSIDE the budget-managed replay dir), so archived incidents are never pruned.
+var incidentsDir = Path.Combine(Directory.GetCurrentDirectory(), "incidents");
+var incidentArchive = new SwimServer.IncidentArchive(
+    incidentsDir, replayDir,
+    captureFlightPlan: req =>
+    {
+        var cs = (req.Callsign ?? "").Trim();
+        var live = flights.Values
+            .Where(f => string.Equals(f.Callsign, cs, StringComparison.OrdinalIgnoreCase))
+            .Select(f => f.ToDetail(reveal: true)).ToList();
+        var history = new List<System.Text.Json.JsonElement>();
+        for (var day = req.StartUtc.Date; day <= req.EndUtc.Date; day = day.AddDays(1))
+        {
+            var hf = Path.Combine(historyDir, day.ToString("yyyy-MM-dd") + ".jsonl");
+            if (!File.Exists(hf)) continue;
+            foreach (var line in File.ReadLines(hf))
+            {
+                if (line.IndexOf(cs, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                try { history.Add(System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(line)); } catch { }
+            }
+        }
+        return new { callsign = cs, capturedUtc = DateTime.UtcNow, live, history };
+    },
+    airportLoc: icao =>
+    {
+        var nasr = nasrData;
+        if (nasr == null) return null;
+        var pt = NasrService.LookupAirport(icao, nasr);
+        if (pt == null && icao.Length == 4 && (icao[0] == 'K' || icao[0] == 'P'))
+            pt = NasrService.LookupAirport(icao[1..], nasr);
+        return pt == null ? null : (pt.Lat, pt.Lon);
+    });
+IncidentRoutes.Register(app, incidentArchive);
+replayServer.MapIncidentEndpoints(app, incidentsDir);
+AircraftRoutes.Register(app, aircraftDb);
+AirlineRoutes.Register(app, airlineResearch, airportDir);
 
 await solaceReady.Task;
 
@@ -2244,7 +2336,7 @@ void FlushDirtyBatch(ConcurrentDictionary<string, byte> dirtySet)
 
     // Record for replay (always, regardless of connected clients). Masked, so a
     // replay can never leak a LADD identity that live viewers couldn't see.
-    eramRecorder.RecordBatch(dirtyFlights.Select(f => f.ToSummary()).ToArray(), DateTime.UtcNow);
+    eramRecorder.RecordBatch(dirtyFlights.Select(f => f.ToReplaySummary()).ToArray(), DateTime.UtcNow);
 
     if (!clients.IsEmpty)
         BroadcastFlights("batch", dirtyFlights);

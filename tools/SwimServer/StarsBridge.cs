@@ -134,6 +134,43 @@ class StarsBridge
         return new { artccId, facilities = results };
     }
 
+    // facilityId → artccId reverse index, built lazily by scanning every ARTCC's STARS facilities.
+    private readonly ConcurrentDictionary<string, string> _facilityArtcc = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Find which ARTCC a STARS facility (e.g. "A80", "PCT") belongs to, so a caller with only the
+    /// facility id — like the incident STARS replay — can build the /stars/{artcc}/{facility} URL.
+    /// Cached; scans ARTCCs on a miss. Returns null if no ARTCC publishes a STARS config for it.
+    /// </summary>
+    public async Task<string?> ResolveArtccForFacilityAsync(string facilityId)
+    {
+        if (string.IsNullOrWhiteSpace(facilityId)) return null;
+        if (_facilityArtcc.TryGetValue(facilityId, out var cached)) return cached;
+
+        foreach (var artccId in await GetArtccIdsAsync())
+        {
+            var doc = await GetArtccAsync(artccId);
+            if (doc is null) continue;
+            if (doc.RootElement.TryGetProperty("facility", out var facility))
+                CollectStarsFacilityIds(facility, artccId);
+            if (_facilityArtcc.TryGetValue(facilityId, out var hit)) return hit;
+        }
+        return null;
+    }
+
+    /// <summary>Recursively index every STARS-configured facility id under a facility tree to its ARTCC.</summary>
+    private void CollectStarsFacilityIds(JsonElement facility, string artccId)
+    {
+        if (facility.TryGetProperty("id", out var idEl)
+            && facility.TryGetProperty("starsConfiguration", out var sc) && sc.ValueKind != JsonValueKind.Null
+            && idEl.GetString() is { } id)
+            _facilityArtcc.TryAdd(id, artccId);
+
+        if (facility.TryGetProperty("childFacilities", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectStarsFacilityIds(child, artccId);
+    }
+
     private static void CollectStarsFacilities(JsonElement facility, string? parentId, List<object> results)
     {
         var id = facility.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;

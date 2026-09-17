@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Incident Archive</title>
+<style>
+  :root { --y:#cccc44; --bg:#0c0c0c; --card:#151515; --line:#2a2a2a; --dim:#888; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:#ddd; font:14px/1.45 ui-monospace,"Cascadia Mono",Consolas,monospace; }
+  header { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; }
+  h1 { font-size:18px; color:var(--y); margin:0; letter-spacing:1px; }
+  .sub { color:var(--dim); font-size:12px; }
+  a { color:var(--y); }
+  main { max-width:1000px; margin:0 auto; padding:16px; }
+  .panel { background:var(--card); border:1px solid var(--line); padding:14px; margin-bottom:18px; }
+  .panel h2 { font-size:13px; color:var(--y); margin:0 0 10px; letter-spacing:1px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:6px 0; }
+  label { color:#9ab; min-width:120px; }
+  input { background:#050505; border:1px solid #333; color:#dfe; font:13px ui-monospace,monospace; padding:5px 7px; }
+  input[type=text]{ min-width:150px; }
+  .hint { color:var(--dim); font-size:12px; margin:2px 0 8px; }
+  button { background:#111; border:1px solid #3a3a3a; color:#cde; font:12px ui-monospace,monospace; padding:5px 11px; cursor:pointer; }
+  button:hover { background:#1c1c1c; }
+  button.go { border-color:#6a6; color:#bfb; }
+  button.danger { border-color:#a44; color:#f99; }
+  #status { color:#9d9; font-size:12px; min-height:16px; margin-top:6px; }
+  ul.list { list-style:none; margin:0; padding:0; }
+  .inc { border:1px solid var(--line); background:#101010; padding:12px; margin:8px 0; }
+  .inc .t { color:var(--y); font-size:14px; }
+  .inc .meta { color:var(--dim); font-size:12px; margin:3px 0 8px; }
+  .inc .acts { display:flex; flex-wrap:wrap; gap:6px; }
+  .tag { display:inline-block; border:1px solid #2c5c2c; color:#9d9; padding:0 5px; font-size:11px; margin-right:4px; }
+  .tag.no-data { border-color:#5c3c2c; color:#d9a; }
+  .empty-warn { border:1px solid #5c2c2c; background:#1a0e0e; color:#f99; padding:6px 8px; font-size:11px; margin:6px 0; }
+  pre.fp { white-space:pre-wrap; word-break:break-word; background:#050505; border:1px solid #222; padding:8px; max-height:340px; overflow:auto; font-size:11px; color:#bcd; margin:6px 0 0; }
+  table.fpr { border-collapse:collapse; margin:8px 0 0; width:100%; max-width:560px; }
+  table.fpr td { border:1px solid #222; padding:3px 8px; font-size:12px; color:#cde; vertical-align:top; }
+  table.fpr td.fpr-k { color:#9ab; white-space:nowrap; width:110px; background:#0e0e0e; }
+  .fpr-note { color:var(--dim); font-size:11px; margin:4px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>◼ INCIDENT ARCHIVE</h1>
+  <span class="sub">permanent replay + flight-plan capture for incidents/accidents · <a href="/">home</a></span>
+</header>
+<main>
+  <div class="panel">
+    <h2>NEW INCIDENT</h2>
+    <div class="hint">Pins the replay (ERAM en-route + per-airport ASDE-X surface + STARS/TAIS terminal) and flight plan for a callsign and/or an area over a UTC window — kept forever (outside the ~3-day rolling replay budget). Grab it before it ages out. The area/airport capture keeps the <b>whole picture</b> (every track in the box / on the surface), not just the incident flight. STARS/TAIS is recorded only from when it was enabled onward, so windows before that won't have terminal replay.</div>
+    <div class="row"><label>Title</label><input id="f-title" type="text" placeholder="e.g. Runway incursion — ORD"></div>
+    <div class="row"><label>Callsign</label><input id="f-cs" type="text" placeholder="e.g. AAL123 (optional if area given)"><span class="hint" style="margin:0">sweeps the flight's whole path corridor</span></div>
+    <div class="row"><label>ASDE-X airports</label><input id="f-aps" type="text" placeholder="KORD (comma-separated)"><span class="hint" style="margin:0">full surface capture per airport</span></div>
+    <div class="row"><label>Area radius (NM)</label><input id="f-nm" type="text" value="120" style="width:70px"><span class="hint" style="margin:0">box around the airports/callsign path; captures everything inside</span></div>
+    <div class="row"><label>Start (UTC · 24h)</label><input id="f-date" type="date"><input id="f-time" type="text" inputmode="numeric" maxlength="4" placeholder="HHMM" style="width:66px;text-align:center;font-variant-numeric:tabular-nums"><span class="hint" style="margin:0">Z</span><label style="min-width:auto;margin-left:12px">Duration (min)</label><input id="f-dur" type="number" value="60" min="1" style="width:80px"></div>
+    <div class="hint">Start is UTC (Zulu), 24-hour — pick the date and enter time as <b>HHMM</b> (e.g. 1609 = 16:09Z). No AM/PM. Duration is minutes.</div>
+    <div class="row"><label>Notes</label><input id="f-notes" type="text" placeholder="optional" style="min-width:320px"></div>
+    <div class="row"><button class="go" id="f-create">⤓ ARCHIVE INCIDENT</button><span id="status"></span></div>
+  </div>
+
+  <div class="panel">
+    <h2>ARCHIVED INCIDENTS</h2>
+    <div class="row" style="margin-bottom:8px"><button id="refresh">REFRESH</button><span id="range" class="sub"></span></div>
+    <ul class="list" id="list"><li class="sub">loading…</li></ul>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+// Operator (reveal/backdoor) state — non-secret "sv=1" cookie set on sign-in. Deleting an archive
+// is operator-only; the server enforces it (403 without the key), this just hides the button.
+const REVEALED = /(?:^|;\s*)sv=1(?:;|$)/.test(document.cookie);
+const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const setStatus = (t,ok=true) => { const e=$("#status"); e.textContent=t||""; e.style.color = ok?"#9d9":"#f99"; };
+const zulu = d => d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0")+"T"+String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()||0).padStart(2,"0");
+const fmtWin = (a,b) => { try { const s=new Date(a), e=new Date(b); return s.toISOString().slice(0,16).replace("T"," ")+"Z → "+e.toISOString().slice(11,16)+"Z"; } catch { return a+" → "+b; } };
+const mb = n => n>=1048576 ? (n/1048576).toFixed(1)+" MB" : Math.round((n||0)/1024)+" KB";
+const p2 = n => String(n).padStart(2,"0");
+
+// Build a start ISO from the date + HHMM-Zulu fields, and an end ISO from duration (min).
+function windowFromForm(){
+  const dateV = $("#f-date").value;
+  const timeV = ($("#f-time").value||"").replace(/\D/g,"");
+  const durMin = parseInt($("#f-dur").value,10);
+  const dm = String(dateV).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!dm || timeV.length!==4) return null;
+  const hh=+timeV.slice(0,2), mm=+timeV.slice(2,4);
+  if (hh>23 || mm>59 || !(durMin>0)) return null;
+  const start = new Date(Date.UTC(+dm[1],+dm[2]-1,+dm[3],hh,mm,0));
+  if (isNaN(start)) return null;
+  return { startUtc: start.toISOString(), endUtc: new Date(start.getTime()+durMin*60000).toISOString() };
+}
+
+// default the start to one hour ago, in UTC (24h)
+(function seed(){
+  const ago = new Date(Date.now()-3600000);
+  $("#f-date").value = ago.getUTCFullYear()+"-"+p2(ago.getUTCMonth()+1)+"-"+p2(ago.getUTCDate());
+  $("#f-time").value = p2(ago.getUTCHours())+p2(ago.getUTCMinutes());
+})();
+// keep the time field digits-only
+$("#f-time").addEventListener("input", e => { const c=e.target.value.replace(/\D/g,"").slice(0,4); if(c!==e.target.value) e.target.value=c; });
+
+async function load(){
+  try {
+    const [inc, rng] = await Promise.all([
+      fetch("/api/incidents").then(r=>r.json()),
+      fetch("/api/replay/range").then(r=>r.json()).catch(()=>null),
+    ]);
+    if (rng?.eram?.start) $("#range").textContent = `Live replay available: ${rng.eram.start.slice(0,16).replace("T"," ")}Z → ${rng.eram.end.slice(11,16)}Z (aging out under budget)`;
+    renderList(inc||[]);
+  } catch(e){ $("#list").innerHTML = `<li class="sub">error: ${esc(e)}</li>`; }
+}
+
+function renderList(list){
+  const el = $("#list");
+  if (!list.length){ el.innerHTML = `<li class="sub">(none yet — create one above)</li>`; return; }
+  el.innerHTML = list.map(m => {
+    const aps = (m.airports||[]);
+    const taisFacs = Object.keys(m.taisRecords||{});
+    // Replay buttons come from what was actually CAPTURED, never from what was requested — an
+    // airport with no captured data has no replay to show, and offering it would open the live scope.
+    const asdexAps = Object.keys(m.asdexRecords||{});
+    const missingAps = aps.filter(a => !asdexAps.includes(a));
+    const isEmpty = !(m.eramRecords>0) && !asdexAps.length && !taisFacs.length;
+    const asdexBtns = asdexAps.map(ap => `<button data-replay-asdex="${esc(m.id)}" data-ap="${esc(ap)}">▶ ASDE-X ${esc(ap)}</button>`).join("");
+    const starsBtns = taisFacs.map(f => `<button data-replay-stars="${esc(m.id)}" data-fac="${esc(f)}">▶ STARS ${esc(f)}</button>`).join("");
+    const eramBtn = m.eramRecords>0 ? `<button data-replay-eram="${esc(m.id)}">▶ ERAM replay</button>` : "";
+    const fpBtn = m.hasFlightPlan ? `<button data-fp="${esc(m.id)}">✈ flight plan</button>` : "";
+    return `<li class="inc">
+      <div class="t">${esc(m.title||m.callsign||m.id)}</div>
+      <div class="meta">
+        ${m.callsign?`<span class="tag">${esc(m.callsign)}</span>`:""}${asdexAps.map(a=>`<span class="tag">${esc(a)}</span>`).join("")}${missingAps.map(a=>`<span class="tag no-data" title="requested, but no ASDE-X data was captured for this window">${esc(a)} · no data</span>`).join("")}${taisFacs.map(f=>`<span class="tag" title="STARS/TAIS terminal captured">STARS ${esc(f)}</span>`).join("")}
+        ${esc(fmtWin(m.startUtc,m.endUtc))} · ${esc(m.capturedSources||"—")} · ${mb(m.totalBytes)} · ${m.eramRecords||0} ERAM recs${taisFacs.length?` · ${taisFacs.length} STARS fac`:""}
+        ${m.notes?` · <i>${esc(m.notes)}</i>`:""}
+      </div>
+      ${isEmpty?`<div class="empty-warn">NO REPLAY DATA CAPTURED — the requested window was outside the rolling replay buffer. Nothing to replay; re-archive a window that is still in range.</div>`:""}
+      <div class="acts">${eramBtn}${asdexBtns}${starsBtns}${fpBtn}${REVEALED?`<button class="danger" data-del="${esc(m.id)}">✕ delete</button>`:""}</div>
+      <div class="fpwrap" data-fpwrap="${esc(m.id)}"></div>
+    </li>`;
+  }).join("");
+  el.querySelectorAll("[data-replay-eram]").forEach(b=>b.onclick=()=>openEram(b.dataset.replayEram));
+  el.querySelectorAll("[data-replay-asdex]").forEach(b=>b.onclick=()=>openAsdex(b.dataset.replayAsdex, b.dataset.ap));
+  el.querySelectorAll("[data-replay-stars]").forEach(b=>b.onclick=()=>openStars(b.dataset.replayStars, b.dataset.fac));
+  el.querySelectorAll("[data-fp]").forEach(b=>b.onclick=()=>toggleFp(b.dataset.fp));
+  el.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>del(b.dataset.del));
+}
+
+// Replay opens the real ERAM / ASDE-X scope in incident-replay mode (auto-starts at the window start).
+async function incidentStart(id){
+  try { const r = await fetch(`/api/incident/${encodeURIComponent(id)}/range`).then(r=>r.json()); return r?.eram?.start || null; } catch { return null; }
+}
+async function openEram(id){
+  const start = await incidentStart(id);
+  if (!start){ setStatus("this incident has no archived ERAM replay — not opening (the scope would show LIVE traffic)", false); return; }
+  const h = `#replay=${encodeURIComponent(start)}&rspd=4`;
+  // /eram/scope is the radar scope; /eram (and the legacy /eram.html redirect) is the picker
+  // landing page, which ignores ?incident= — so target the scope directly.
+  window.open(`/eram/scope?incident=${encodeURIComponent(id)}${h}`, "_blank");
+}
+async function openAsdex(id, ap){
+  const r = await fetch(`/api/incident/${encodeURIComponent(id)}/range`).then(r=>r.json()).catch(()=>null);
+  const start = r?.asdex?.[ap]?.start;
+  if (!start){ setStatus(`no archived ASDE-X replay for ${ap} in this incident — not opening (the scope would show LIVE traffic)`, false); return; }
+  const h = `#replay=${encodeURIComponent(start)}&rspd=4`;
+  window.open(`/asdex/${encodeURIComponent(ap.toLowerCase())}?incident=${encodeURIComponent(id)}${h}`, "_blank");
+}
+async function openStars(id, fac){
+  const r = await fetch(`/api/incident/${encodeURIComponent(id)}/range`).then(r=>r.json()).catch(()=>null);
+  const start = r?.tais?.[fac]?.start;
+  if (!start){ setStatus(`no archived STARS replay for ${fac} in this incident — not opening (the scope would show LIVE traffic)`, false); return; }
+  // Resolve the facility's ARTCC so the STARS scope loads its config/video maps + centers correctly.
+  // Fall back to using the facility code as the ARTCC segment — the scope still renders the replay
+  // tracks and auto-centers on them if the config lookup misses.
+  let artcc = fac;
+  try { const rr = await fetch(`/api/stars/resolve/${encodeURIComponent(fac)}`).then(r=>r.ok?r.json():null); if (rr?.artccId) artcc = rr.artccId; } catch {}
+  const h = `#replay=${encodeURIComponent(start)}&rspd=4`;
+  window.open(`/stars/${encodeURIComponent(artcc)}/${encodeURIComponent(fac)}?incident=${encodeURIComponent(id)}${h}`, "_blank");
+}
+async function toggleFp(id){
+  const w = document.querySelector(`[data-fpwrap="${id}"]`);
+  if (w.firstChild){ w.innerHTML=""; return; }
+  try {
+    const fp = await fetch(`/api/incidents/${encodeURIComponent(id)}/flightplan`).then(r=>r.json());
+    w.innerHTML = fpReadable(fp) +
+      `<details style="margin-top:6px"><summary style="cursor:pointer;color:#9ab;font-size:12px">Raw JSON</summary><pre class="fp">${esc(JSON.stringify(fp, null, 2))}</pre></details>`;
+  } catch(e){ w.innerHTML = `<pre class="fp">error: ${esc(e)}</pre>`; }
+}
+
+// Human-readable flight-plan summary, best-effort across the ToDetail/history field
+// shapes (field names vary), with the raw JSON kept below for the full picture.
+function fpReadable(fp){
+  const rec = (fp && fp.live && fp.live[0]) || (fp && fp.history && fp.history[0]) || fp || {};
+  const pick = (o, keys) => { for (const k of keys){ const v=o&&o[k]; if (v!=null && v!=="") return v; } return null; };
+  const origin = pick(rec,["origin","Origin","departureAirport","departure","depApt"]);
+  const dest   = pick(rec,["destination","Destination","arrivalAirport","arrival","arrApt"]);
+  const rows = [];
+  const add = (label,val) => { if (val!=null && val!=="") rows.push([label, val]); };
+  add("Callsign",    (fp&&fp.callsign) || pick(rec,["callsign","Callsign","aircraftId","acid"]));
+  add("Aircraft",    pick(rec,["aircraftType","AircraftType","acType","type"]));
+  add("Route",       (origin||dest) ? `${origin||"?"} → ${dest||"?"}` : null);
+  add("Filed route", pick(rec,["route","Route","nasRouteText","filedRoute"]));
+  add("Altitude",    pick(rec,["assignedAltitude","cruiseAltitude","altitude","Altitude","reqAlt","requestedAltitude"]));
+  add("Speed",       pick(rec,["filedSpeed","cruiseSpeed","groundSpeed","GroundSpeed","gs"]));
+  add("Squawk",      pick(rec,["squawk","Squawk","assignedSquawk","beaconCode"]));
+  add("Rules",       pick(rec,["flightRules","FlightRules","rules"]));
+  add("Equipment",   pick(rec,["equipment","equipmentQualifier","equip","EquipmentSuffix"]));
+  add("Remarks",     pick(rec,["remarks","Remarks"]));
+  const counts = `${(fp&&fp.live&&fp.live.length)||0} live · ${(fp&&fp.history&&fp.history.length)||0} history record(s)`;
+  if (!rows.length) return `<div class="fpr-note">No structured fields recognized — see raw JSON. (${esc(counts)})</div>`;
+  return `<table class="fpr">${rows.map(([k,v])=>`<tr><td class="fpr-k">${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}</table><div class="fpr-note">${esc(counts)}</div>`;
+}
+async function del(id){
+  if (!confirm("Delete this archived incident permanently?")) return;
+  await fetch(`/api/incidents/${encodeURIComponent(id)}`, {method:"DELETE"});
+  load();
+}
+
+// ── Background archive job: POST returns a jobId immediately; the server keeps working even if
+// you leave. We poll for progress and remember the jobId so a refresh resumes the same job.
+const JOB_KEY = "incidents.job";
+let _pollTimer = null;
+function setArchiving(on){
+  $("#f-create").disabled = on;
+  $("#f-create").textContent = on ? "⏳ ARCHIVING…" : "⤓ ARCHIVE INCIDENT";
+  // Guard an accidental refresh/close while a job is in flight. The job is background-safe (it
+  // finishes server-side and a refresh resumes polling), but this avoids surprise mid-submit.
+  window.onbeforeunload = on ? (e)=>{ e.preventDefault(); e.returnValue=""; return ""; } : null;
+}
+function stopPolling(){ if (_pollTimer){ clearInterval(_pollTimer); _pollTimer=null; } }
+async function pollJob(jobId){
+  let j;
+  try {
+    const r = await fetch(`/api/incidents/jobs/${encodeURIComponent(jobId)}`);
+    if (r.status === 404){ stopPolling(); setArchiving(false); localStorage.removeItem(JOB_KEY);
+      setStatus("archive job not found (server may have restarted) — refreshing list", false); load(); return; }
+    j = await r.json();
+  } catch(e){ return; /* transient network — keep polling */ }
+  if (j.status === "running"){
+    setStatus(`archiving… ${esc(j.stage||"")} · ${j.elapsedSec||0}s — safe to leave, the server finishes on its own`);
+    return;
+  }
+  stopPolling(); setArchiving(false); localStorage.removeItem(JOB_KEY);
+  if (j.status === "done"){ const m=j.meta||{}; setStatus(`archived ✓ — ${m.capturedSources||"nothing"} · ${mb(m.totalBytes||0)} · ${j.elapsedSec||0}s`); load(); }
+  else { setStatus("failed: "+(j.error||"unknown error"), false); }
+}
+function startPolling(jobId){
+  stopPolling(); setArchiving(true); localStorage.setItem(JOB_KEY, jobId);
+  pollJob(jobId);
+  _pollTimer = setInterval(()=>pollJob(jobId), 1500);
+}
+
+$("#f-create").onclick = async () => {
+  if (_pollTimer){ return; }   // a job is already in flight — ignore repeat clicks
+  const win = windowFromForm();
+  if (!win){ setStatus("set a valid start date, HHMM time, and duration", false); return; }
+  const body = {
+    title: $("#f-title").value.trim() || null,
+    callsign: $("#f-cs").value.trim() || null,
+    airports: $("#f-aps").value.split(",").map(s=>s.trim()).filter(Boolean),
+    aroundNm: parseFloat($("#f-nm").value) || null,
+    startUtc: win.startUtc,
+    endUtc: win.endUtc,
+    notes: $("#f-notes").value.trim() || null,
+  };
+  if (!body.callsign && !(body.airports.length && body.aroundNm)){ setStatus("provide a callsign and/or airports + area radius", false); return; }
+  setStatus("starting…");
+  try {
+    const r = await fetch("/api/incidents", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body) });
+    if (!r.ok && r.status !== 202){ setStatus("failed: "+(await r.text()).slice(0,200), false); return; }
+    const j = await r.json();
+    if (j.jobId) startPolling(j.jobId);
+    else { setStatus(`archived ✓ — ${j.capturedSources||"nothing"}`); load(); }  // fallback for older server
+  } catch(e){ setStatus("failed: "+e, false); }
+};
+$("#refresh").onclick = load;
+// Resume a job that was still in flight before a refresh/navigation.
+(function resumeJob(){ const jid = localStorage.getItem(JOB_KEY); if (jid) startPolling(jid); })();
+load();
+</script>
+</body>
+</html>

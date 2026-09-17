@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aircraft Database</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛩️</text></svg>">
+<link rel="stylesheet" href="/shared/common.css?v=3">
+<link rel="stylesheet" href="/flight-table/flight-table.css?v=7">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
+<style>
+    /* Flight-table look (shared stylesheet above). One column template drives the header, the
+       filter row and every data row, so they always line up. */
+    /* Column widths are user-resizable (drag a header edge, double-click to auto-fit) and remembered per
+       browser; JS sets --cols and --tablew. These are the defaults before JS runs. --tablew lets the
+       grid grow past the window so the table scrolls sideways instead of squeezing columns. */
+    .flight-list { --cols: 96px 56px 100px 70px 62px 180px 64px 96px; --tablew: 790px; overflow-x: auto; }
+    .thead, .col-header, .filter-row, .flight-row { min-width: var(--tablew); }
+
+    /* Header + per-column filters are ONE sticky block at the top of the table's own scroll area:
+       attached to the table, never offset into the rows. */
+    .thead { position: sticky; top: 0; z-index: 3; background: #050505; border-bottom: 1px solid #333; }
+    .thead .col-header { position: static; grid-template-columns: var(--cols); border-bottom: none; padding-bottom: 4px; }
+    .flight-row { grid-template-columns: var(--cols); }
+    .col-header > span { position: relative; min-width: 0; }
+    .col-header .hl { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .col-header .ar { color: #cccc44; margin-left: 3px; }
+    /* Excel-style resize grip on each header's right edge, straddling the 6px column gap. */
+    .col-header .rsz {
+        position: absolute; top: -6px; bottom: -4px; right: -7px; width: 8px;
+        cursor: col-resize; z-index: 4; touch-action: none;
+    }
+    .col-header .rsz::after {
+        content: ''; position: absolute; top: 5px; bottom: 3px; left: 3px; width: 1px; background: #2a2a2a;
+    }
+    .col-header .rsz:hover::after, .col-header .rsz.active::after { background: #cccc44; }
+    body.col-resizing, body.col-resizing * { cursor: col-resize !important; user-select: none !important; }
+    /* Right-aligned numbers get breathing room so SEEN doesn't run into the left-aligned LAST SEEN text. */
+    .col-header .num, .flight-row .num { text-align: right; padding-right: 10px; }
+
+    .filter-row { display: grid; grid-template-columns: var(--cols); gap: 6px; padding: 0 12px 6px; }
+    .filter-row input {
+        width: 100%; min-width: 0; background: #0d0d0d; border: 1px solid #262626; border-radius: 2px;
+        color: #ccc; font-family: inherit; font-size: 11px; padding: 2px 5px; outline: none;
+    }
+    .filter-row input::placeholder { color: #3a3a3a; }
+    .filter-row input:focus { border-color: #cccc44; }
+    .filter-row input.on { border-color: #6a6a2a; color: #cccc44; }
+    .filter-row input.bad { border-color: #663322; color: #ff8844; }
+
+    .flight-row .op { color: #5588ff; }
+    .flight-row .hex { color: #39d2c0; }
+    .flight-row .selcal { color: #cccc44; }
+    .flight-row .dim { color: #888; }
+    .empty { padding: 12px; font-size: 11px; color: #555; }
+
+    .clear-btn { color: #888; }
+    .route-text a { color: #cccc44; text-decoration: none; }
+    .route-text a:hover { text-decoration: underline; }
+    .xlink {
+        display: inline-block; color: #cccc44; text-decoration: none; font-size: 12px;
+        border: 1px solid #4a4a2a; padding: 2px 9px; border-radius: 3px; margin: 0 6px 6px 0;
+    }
+    .xlink:hover { border-color: #cccc44; }
+    .note { font-size: 11px; color: #555; line-height: 1.5; margin-top: 4px; }
+
+    /* FLIGHTS tab — dated flight log */
+    .log-summary { font-size: 11px; color: #666; margin-bottom: 6px; }
+    .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .log-table th {
+        position: sticky; top: -10px; background: #050505; text-align: left; font-weight: normal;
+        font-size: 10px; letter-spacing: 1px; color: #555; padding: 4px 8px 5px 0; border-bottom: 1px solid #222;
+    }
+    .log-table th[data-logsort] { cursor: pointer; user-select: none; }
+    .log-table th.sorted { color: #cccc44; }
+    .log-table td { padding: 3px 8px 3px 0; border-bottom: 1px solid #0f0f0f; white-space: nowrap; }
+    .log-table tbody tr:hover td { background: #0c0c0c; }
+    .log-table .ldate { color: #ccc; }
+    .log-table .ltime { color: #888; }
+    .log-table .ltime.est { color: #555; font-style: italic; }
+    .log-table .lcs a { color: #cccc44; text-decoration: none; }
+    .log-table .lcs a:hover { text-decoration: underline; }
+    .log-table .lroute { color: #39d2c0; }
+    .log-table .lroute.gap { color: #e0b34a; border-bottom: 1px dashed #6a5324; cursor: help; }
+    .log-more { margin: 10px 0 4px; }
+
+</style>
+</head>
+<body>
+<a class="nav-home" href="/">&larr; HOME</a>
+<div class="topbar" style="padding-left:100px">
+    <h1>AIRCRAFT DATABASE</h1>
+    <span class="status" id="status">loading...</span>
+    <div class="stats" id="stats"></div>
+</div>
+
+<div class="filterbar">
+    <input type="text" class="search-box" id="search" placeholder="Search all columns… (wildcards: N12*, multi-word AND)"
+        title="Matches any column. * wildcard, =exact, !exclude; space-separated terms are AND'd. Use the boxes under each header to filter one column.">
+    <div class="filter-sep"></div>
+    <span class="result-count" id="resultCount"></span>
+    <button class="export-btn clear-btn" id="clearFilters" style="display:none" title="Clear the search and every column filter">CLEAR FILTERS</button>
+    <button class="export-btn clear-btn" id="resetCols" style="display:none" title="Put every column back to its default width">RESET COLUMNS</button>
+    <button class="export-btn" id="exportCsv" title="Download the rows currently shown (filters + sort applied) as a CSV file">EXPORT CSV</button>
+</div>
+
+<div class="main">
+    <div class="flight-list" id="flightList">
+        <div class="thead" id="thead">
+            <div class="col-header" id="colHeader"></div>
+            <div class="filter-row" id="filterRow"></div>
+        </div>
+        <div id="rows"></div>
+    </div>
+
+    <div class="detail-panel collapsed" id="detailPanel">
+        <div class="detail-header">
+            <span class="cs-big" id="detailReg"></span>
+            <span class="type-badge" id="detailType"></span>
+            <span class="status-badge historical" id="detailOp"></span>
+            <span class="detail-close" id="detailClose">&times;</span>
+        </div>
+        <div class="tab-bar">
+            <div class="tab active" data-tab="airframe">AIRFRAME</div>
+            <div class="tab" data-tab="flights">FLIGHTS<span class="event-count" id="flightCount"></span></div>
+        </div>
+        <div class="detail-body" id="detailBody"></div>
+    </div>
+</div>
+
+<script>
+// ── Whole table in the browser, rendered virtually ─────────────────────────────
+// The full database is fetched once (/api/aircraft/all — compact positional rows, ~17K), sorted
+// and filtered in memory, and drawn like the flight table: fixed 24px rows, only the ~40 rows in
+// the scroll window exist in the DOM. Sorting re-orders the master array once; filtering just walks
+// it with precompiled predicates, so typing in a column filter stays instant.
+const ROW_HEIGHT = 24;   // must match .flight-row { height } in flight-table.css
+const ROW_BUFFER = 8;
+
+const TEXT_TIP = 'Contains (case-insensitive). * wildcard (N12*), =exact, !exclude, ? has a value, !? is empty. Space-separated terms are AND\'d.';
+const NUM_TIP = 'Number: 5, >5, >=5, <3, 2-10';
+const AGE_TIP = 'Age: <2h, >7d, <30m (units m/h/d) — or part of a UTC date/time, e.g. 2026-09-14';
+
+// w = default width in px (user-resizable; see "Column widths" below).
+const COLS = [
+    { key: 'reg',  label: 'REG',       type: 'text', cls: 'cs',      w: 96  },
+    { key: 'type', label: 'TYPE',      type: 'text', cls: '',        w: 56  },
+    { key: 'opr',  label: 'OPR',       type: 'text', cls: 'op',      w: 100 },
+    { key: 'hex',  label: 'ICAO24',    type: 'text', cls: 'hex',     w: 70  },
+    { key: 'sel',  label: 'SELCAL',    type: 'text', cls: 'selcal',  w: 62  },
+    { key: 'cs',   label: 'CALLSIGNS', type: 'list', cls: 'dep',     w: 180 },
+    { key: 'seen', label: 'SEEN',      type: 'num',  cls: 'num dim', w: 64  },
+    { key: 'last', label: 'LAST SEEN', type: 'age',  cls: 'dim',     w: 96  },
+];
+const LEGACY_SORT = { lastSeen: 'last', registration: 'reg', operator: 'opr', icao24: 'hex', selcal: 'sel', sightings: 'seen' };
+
+const listEl = document.getElementById('flightList');
+const theadEl = document.getElementById('thead');
+const headEl = document.getElementById('colHeader');
+const filterRowEl = document.getElementById('filterRow');
+const rowsEl = document.getElementById('rows');
+const countEl = document.getElementById('resultCount');
+const statusEl = document.getElementById('status');
+const statsEl = document.getElementById('stats');
+const searchEl = document.getElementById('search');
+const clearBtn = document.getElementById('clearFilters');
+const detailPanel = document.getElementById('detailPanel');
+const detailBody = document.getElementById('detailBody');
+
+let master = [];              // every row, in current sort order
+let view = [];                // master after filters
+let sortKey = 'last', sortAsc = false;
+let lastRange = { start: -1, end: -1 };
+let selectedId = null, currentDetail = null, activeTab = 'airframe';
+let flightLog = null;         // { id, list (oldest→newest) | null, error, shown, asc } for the selected tail
+const INVALID = Symbol('invalid');
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'); }
+// K/P-prefixed 4-char codes compare equal to their 3-char LID (KDCA == DCA), matching the server's AptKey.
+const aptKey = c => (c && c.length === 4 && (c[0] === 'K' || c[0] === 'P')) ? c.slice(1) : (c || '');
+function utcText(t) { return t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') + 'Z' : ''; }
+function isoUtc(iso) { return iso ? utcText(new Date(iso).getTime() / 1000) : ''; }
+function ago(t) {
+    if (!t) return '';
+    const d = Date.now() / 1000 - t;
+    if (d < 90) return 'just now';
+    if (d < 5400) return Math.round(d / 60) + ' min ago';
+    if (d < 129600) return Math.round(d / 3600) + ' h ago';
+    return Math.round(d / 86400) + ' d ago';
+}
+
+// ── Header + filter row ─────────────────────────────────────────────────────
+function renderHeader() {
+    headEl.innerHTML = COLS.map(c => {
+        const on = c.key === sortKey;
+        const cls = [c.type === 'num' ? 'num' : '', on ? 'sorted' : ''].filter(Boolean).join(' ');
+        const arrow = on ? `<span class="ar">${sortAsc ? '▲' : '▼'}</span>` : '';
+        return `<span data-col="${c.key}"${cls ? ` class="${cls}"` : ''}>`
+            + `<span class="hl" title="Sort by ${c.label}">${c.label}${arrow}</span>`
+            + `<i class="rsz" data-col="${c.key}" title="Drag to resize · double-click to fit"></i></span>`;
+    }).join('');
+}
+
+const filterInputs = {};
+filterRowEl.innerHTML = COLS.map(c => {
+    const ph = c.type === 'num' ? '>5 · 2-10' : c.type === 'age' ? '<2h · >7d' : 'filter';
+    const tip = c.type === 'num' ? NUM_TIP : c.type === 'age' ? AGE_TIP : TEXT_TIP;
+    return `<input data-col="${c.key}" spellcheck="false" autocomplete="off" placeholder="${esc(ph)}" title="${esc(tip)}">`;
+}).join('');
+filterRowEl.querySelectorAll('input').forEach(i => { filterInputs[i.dataset.col] = i; });
+
+// ── Filter compilation ──────────────────────────────────────────────────────
+// One term → predicate over an uppercase string. List columns (callsigns) apply exact/wildcard
+// matches per item rather than to the joined string.
+function termPred(term, isList) {
+    let neg = false, t = term;
+    if (t.startsWith('!')) { neg = true; t = t.slice(1); }
+    if (!t) return null;
+    let p;
+    if (t === '?') p = v => v !== '';
+    else if (t.startsWith('=')) {
+        const x = t.slice(1);
+        p = isList ? v => v.split(' ').includes(x) : v => v === x;
+    } else if (t.includes('*')) {
+        const rx = new RegExp('^' + t.split('*').map(escRx).join('.*') + '$');
+        p = isList ? v => v.split(' ').some(x => rx.test(x)) : v => rx.test(v);
+    } else {
+        p = v => v.includes(t);
+    }
+    return neg ? v => !p(v) : p;
+}
+
+function compileColumn(c, raw) {
+    const s = (raw || '').trim();
+    if (!s) return null;
+    const k = c.key;
+    if (c.type === 'num') {
+        const x = s.replace(/\s+/g, '');
+        let m = x.match(/^(\d+)-(\d+)$/);
+        if (m) { const a = +m[1], b = +m[2]; return r => r[k] >= a && r[k] <= b; }
+        m = x.match(/^(>=|<=|>|<|=)?(\d+)$/);
+        if (!m) return INVALID;
+        const op = m[1] || '=', n = +m[2];
+        return op === '>' ? r => r[k] > n : op === '<' ? r => r[k] < n
+             : op === '>=' ? r => r[k] >= n : op === '<=' ? r => r[k] <= n : r => r[k] === n;
+    }
+    if (c.type === 'age') {
+        const m = s.toLowerCase().replace(/\s+/g, '').match(/^(>=|<=|>|<)?(\d+(?:\.\d+)?)(m|h|d)$/);
+        if (m) {
+            const op = m[1] || '<', lim = +m[2] * { m: 60, h: 3600, d: 86400 }[m[3]], now = Date.now() / 1000;
+            return op === '<' ? r => now - r[k] < lim : op === '<=' ? r => now - r[k] <= lim
+                 : op === '>' ? r => now - r[k] > lim : r => now - r[k] >= lim;
+        }
+        const t = s.toUpperCase();
+        return r => (r._u || (r._u = utcText(r[k]))).includes(t);
+    }
+    const preds = s.toUpperCase().split(/\s+/).map(t => termPred(t, c.type === 'list')).filter(Boolean);
+    if (!preds.length) return null;
+    return r => { const v = r[k]; for (const p of preds) if (!p(v)) return false; return true; };
+}
+
+// Global search: every term must match SOME column (a !term must match none).
+function compileGlobal(raw) {
+    const terms = (raw || '').trim().toUpperCase().split(/\s+/).filter(Boolean);
+    const preds = terms.map(t => {
+        const neg = t.startsWith('!') && t.length > 1;
+        const base = neg ? t.slice(1) : t;
+        const plain = termPred(base, false), list = termPred(base, true);
+        if (!plain) return null;
+        const any = r => plain(r.reg) || plain(r.type) || plain(r.opr) || plain(r.hex) || plain(r.sel) || list(r.cs);
+        return neg ? r => !any(r) : any;
+    }).filter(Boolean);
+    return preds.length ? r => { for (const p of preds) if (!p(r)) return false; return true; } : null;
+}
+
+// ── Sort / filter / render ──────────────────────────────────────────────────
+function sortMaster() {
+    const c = COLS.find(x => x.key === sortKey) || COLS[COLS.length - 1];
+    const k = c.key, dir = sortAsc ? 1 : -1;
+    if (c.type === 'num' || c.type === 'age') {
+        master.sort((a, b) => (a[k] - b[k]) * dir || b.last - a.last);
+    } else {
+        // Text: blanks always sink to the bottom, whichever direction.
+        master.sort((a, b) => {
+            const va = a[k], vb = b[k];
+            if (va === vb) return b.last - a.last;
+            if (!va) return 1;
+            if (!vb) return -1;
+            return (va < vb ? -1 : 1) * dir;
+        });
+    }
+}
+
+function applyFilters(resetScroll) {
+    const preds = [];
+    let active = !!searchEl.value.trim();
+    for (const c of COLS) {
+        const input = filterInputs[c.key];
+        const raw = input.value.trim();
+        const f = compileColumn(c, raw);
+        input.classList.toggle('on', !!raw && f !== INVALID);
+        input.classList.toggle('bad', f === INVALID);
+        if (raw) active = true;
+        if (f && f !== INVALID) preds.push(f);
+    }
+    const g = compileGlobal(searchEl.value);
+    if (g) preds.push(g);
+
+    view = preds.length === 0 ? master
+         : master.filter(r => { for (const p of preds) if (!p(r)) return false; return true; });
+
+    countEl.textContent = view.length === master.length
+        ? `${master.length.toLocaleString()} shown`
+        : `${view.length.toLocaleString()} of ${master.length.toLocaleString()} shown`;
+    clearBtn.style.display = active ? '' : 'none';
+    rowsEl.style.height = (view.length * ROW_HEIGHT) + 'px';
+    if (resetScroll) listEl.scrollTop = 0;
+    lastRange = { start: -1, end: -1 };
+    renderViewport();
+    saveUrl();
+}
+
+function renderRow(r, i) {
+    const sel = r.id === selectedId ? ' selected' : '';
+    return `<div class="flight-row${sel}" data-id="${esc(r.id)}" style="top:${i * ROW_HEIGHT}px">`
+        + `<span class="cs" title="${esc(r.reg)}">${esc(r.reg || '—')}</span>`
+        + `<span title="${esc(r.type)}">${esc(r.type)}</span>`
+        + `<span class="op" title="${esc(r.opr)}">${esc(r.opr)}</span>`
+        + `<span class="hex">${esc(r.hex)}</span>`
+        + `<span class="selcal">${esc(r.sel)}</span>`
+        + `<span class="dep">${esc(r.cs)}</span>`
+        + `<span class="num dim">${r.seen.toLocaleString()}</span>`
+        + `<span class="dim" title="${utcText(r.last)}">${ago(r.last)}</span>`
+        + `</div>`;
+}
+
+function renderViewport() {
+    if (view.length === 0) {
+        rowsEl.innerHTML = master.length ? '<div class="empty">No aircraft match these filters.</div>' : '';
+        lastRange = { start: -1, end: -1 };
+        return;
+    }
+    const top = Math.max(0, listEl.scrollTop - theadEl.offsetHeight);
+    const vh = listEl.clientHeight;
+    const start = Math.max(0, Math.floor(top / ROW_HEIGHT) - ROW_BUFFER);
+    const end = Math.min(view.length, Math.ceil((top + vh) / ROW_HEIGHT) + ROW_BUFFER);
+    if (start === lastRange.start && end === lastRange.end) return;
+    lastRange = { start, end };
+    let html = '';
+    for (let i = start; i < end; i++) html += renderRow(view[i], i);
+    rowsEl.innerHTML = html;
+}
+
+{
+    let pending = false;
+    listEl.addEventListener('scroll', () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => { pending = false; renderViewport(); });
+    }, { passive: true });
+    window.addEventListener('resize', () => { lastRange = { start: -1, end: -1 }; renderViewport(); });
+}
+
+// ── Events: sort, filters, search ───────────────────────────────────────────
+// ── Column widths (Excel-style) ─────────────────────────────────────────────
+// Drag a header's right edge to resize; double-click it to auto-fit the column to its content.
+// Widths persist per browser. --cols drives the header, filter row and data rows together.
+const COL_GAP = 6, ROW_PAD = 24;         // must match gap / horizontal padding in flight-table.css
+const MIN_W = 28, MAX_W = 900, MAX_FIT = 600;
+const WIDTH_KEY = 'aircraft-col-widths';
+const resetColsBtn = document.getElementById('resetCols');
+const widths = {};
+for (const c of COLS) widths[c.key] = c.w;
+try {
+    const saved = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
+    for (const c of COLS)
+        if (Number.isFinite(saved[c.key])) widths[c.key] = Math.min(MAX_W, Math.max(MIN_W, saved[c.key]));
+} catch {}
+// Swallow only the single click the browser generates at the end of a grip press, so a resize never
+// doubles as a sort. Cleared on the next task (that click is dispatched in the same task as pointerup).
+let suppressClick = false;
+function armClickSuppress() { suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); }
+
+function applyWidths() {
+    const px = COLS.map(c => Math.round(widths[c.key]));
+    listEl.style.setProperty('--cols', px.map(w => w + 'px').join(' '));
+    listEl.style.setProperty('--tablew', (px.reduce((a, b) => a + b, 0) + COL_GAP * (px.length - 1) + ROW_PAD) + 'px');
+    resetColsBtn.style.display = COLS.some(c => Math.round(widths[c.key]) !== c.w) ? '' : 'none';
+}
+function saveWidths() {
+    try { localStorage.setItem(WIDTH_KEY, JSON.stringify(widths)); } catch {}
+}
+
+// Auto-fit measures the widest value in the column across the filtered rows (plus the header label).
+const measureCtx = document.createElement('canvas').getContext('2d');
+function fontOf(el, fallback) {
+    if (!el) return fallback;
+    const s = getComputedStyle(el);
+    return `${s.fontWeight} ${s.fontSize} ${s.fontFamily}`;
+}
+function textWidth(text, font) { measureCtx.font = font; return measureCtx.measureText(text).width; }
+function cellDisplay(key, r) {
+    switch (key) {
+        case 'reg': return r.reg || '—';
+        case 'seen': return r.seen.toLocaleString();
+        case 'last': return ago(r.last);
+        default: return r[key] || '';
+    }
+}
+function autoFit(key) {
+    const c = COLS.find(x => x.key === key);
+    const cellFont = fontOf(rowsEl.querySelector('.flight-row > span'), '12px Consolas, monospace');
+    const hdr = headEl.querySelector(`span[data-col="${key}"] .hl`);
+    const hdrFont = fontOf(hdr, '10px Consolas, monospace');
+    // Monospace font: the longest string is the widest, so measure just that one.
+    let longest = '';
+    for (const r of view) { const s = cellDisplay(key, r); if (s.length > longest.length) longest = s; }
+    const hdrW = textWidth(c.label + '▲', hdrFont) + c.label.length + 3;   // 1px letter-spacing + arrow gap
+    const want = Math.ceil(Math.max(textWidth(longest, cellFont), hdrW)) + 6;
+    widths[key] = Math.min(MAX_FIT, Math.max(MIN_W, want));
+    applyWidths();
+    saveWidths();
+}
+
+let drag = null, fitPending = false, lastDown = null;
+headEl.addEventListener('pointerdown', (e) => {
+    const grip = e.target.closest('.rsz');
+    if (!grip || e.button !== 0) return;
+    e.preventDefault();                       // no text selection / native drag while resizing
+    const key = grip.dataset.col, now = Date.now();
+    grip.setPointerCapture(e.pointerId);
+    // A second press on the same grip within 400ms is a double-click → auto-fit. Detected here rather
+    // than via 'dblclick', which Chrome doesn't reliably dispatch once pointerdown is preventDefault'ed
+    // (and this way a double-tap works on touch screens too).
+    if (lastDown && lastDown.key === key && now - lastDown.t < 400 && Math.abs(e.clientX - lastDown.x) < 6) {
+        lastDown = null;
+        fitPending = true;
+        autoFit(key);
+        return;
+    }
+    lastDown = { key, t: now, x: e.clientX };
+    drag = { key, grip, startX: e.clientX, startW: widths[key], raf: 0 };
+    grip.classList.add('active');
+    document.body.classList.add('col-resizing');
+});
+headEl.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    widths[drag.key] = Math.min(MAX_W, Math.max(MIN_W, drag.startW + (e.clientX - drag.startX)));
+    if (!drag.raf) drag.raf = requestAnimationFrame(() => { if (drag) drag.raf = 0; applyWidths(); });
+});
+function endDrag() {
+    if (fitPending) { fitPending = false; armClickSuppress(); return; }
+    if (!drag) return;
+    drag.grip.classList.remove('active');
+    document.body.classList.remove('col-resizing');
+    applyWidths();
+    saveWidths();
+    drag = null;
+    armClickSuppress();
+}
+headEl.addEventListener('pointerup', endDrag);
+headEl.addEventListener('pointercancel', endDrag);
+resetColsBtn.addEventListener('click', () => {
+    for (const c of COLS) widths[c.key] = c.w;
+    applyWidths();
+    try { localStorage.removeItem(WIDTH_KEY); } catch {}
+});
+applyWidths();
+
+headEl.addEventListener('click', (e) => {
+    if (suppressClick || e.target.closest('.rsz')) return;   // the click that ends a resize isn't a sort
+    const span = e.target.closest('span[data-col]');
+    if (!span) return;
+    const c = COLS.find(x => x.key === span.dataset.col);
+    if (sortKey === c.key) sortAsc = !sortAsc;
+    else { sortKey = c.key; sortAsc = !(c.type === 'num' || c.type === 'age'); }   // counts/recency: biggest first
+    renderHeader();
+    sortMaster();
+    applyFilters(true);
+});
+
+let filterTimer;
+function scheduleFilter() { clearTimeout(filterTimer); filterTimer = setTimeout(() => applyFilters(true), 120); }
+filterRowEl.addEventListener('input', scheduleFilter);
+filterRowEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && e.target.value) { e.target.value = ''; e.stopPropagation(); applyFilters(true); }
+});
+searchEl.addEventListener('input', scheduleFilter);
+clearBtn.addEventListener('click', () => {
+    searchEl.value = '';
+    for (const c of COLS) filterInputs[c.key].value = '';
+    applyFilters(true);
+});
+
+// ── Detail panel ────────────────────────────────────────────────────────────
+rowsEl.addEventListener('click', (e) => {
+    const row = e.target.closest('.flight-row');
+    if (row && row.dataset.id) selectAircraft(row.dataset.id);
+});
+
+function updateSelectionClasses(prev, next) {
+    if (prev) { const el = rowsEl.querySelector(`.flight-row[data-id="${CSS.escape(prev)}"]`); if (el) el.classList.remove('selected'); }
+    if (next) { const el = rowsEl.querySelector(`.flight-row[data-id="${CSS.escape(next)}"]`); if (el) el.classList.add('selected'); }
+}
+
+async function selectAircraft(id) {
+    const prev = selectedId;
+    selectedId = id;
+    detailPanel.classList.remove('collapsed');
+    updateSelectionClasses(prev, id);
+    history.replaceState(null, '', '/aircraft/' + encodeURIComponent(id) + location.hash);
+
+    // Header straight from the loaded row so the panel responds instantly.
+    const local = master.find(r => r.id === id);
+    if (local) renderDetailHeader({ registration: local.reg, icao24: local.hex, type: local.type, operator: local.opr });
+    detailBody.innerHTML = '<div class="loading">Loading…</div>';
+    loadFlightLog(id);                               // in parallel with the airframe detail
+    try {
+        const r = await fetch('/api/aircraft/' + encodeURIComponent(id));
+        if (selectedId !== id) return;               // user clicked another row mid-fetch
+        if (!r.ok) { detailBody.innerHTML = '<div class="loading">Aircraft not found</div>'; return; }
+        currentDetail = await r.json();
+        renderDetailHeader(currentDetail);
+        renderActiveTab();
+    } catch {
+        if (selectedId === id) detailBody.innerHTML = '<div class="loading">Load failed</div>';
+    }
+}
+
+function closeDetail() {
+    const prev = selectedId;
+    selectedId = null;
+    currentDetail = null;
+    detailPanel.classList.add('collapsed');
+    updateSelectionClasses(prev, null);
+    history.replaceState(null, '', '/aircraft' + location.hash);
+}
+
+function renderDetailHeader(d) {
+    document.getElementById('detailReg').textContent = d.registration || d.icao24 || '????';
+    document.getElementById('detailType').textContent = [d.type, d.wake].filter(Boolean).join('/');
+    const op = document.getElementById('detailOp');
+    op.textContent = d.operator || '';
+    op.style.display = d.operator ? '' : 'none';
+    updateFlightCount();
+}
+
+function section(title, fields) {
+    const rows = fields.filter(f => f[1] != null && f[1] !== '');
+    if (rows.length === 0) return '';
+    return `<div class="section"><h3>${title}</h3><div class="field-grid">
+        ${rows.map(([label, value, cls]) =>
+            `<span class="field-label">${label}</span><span class="field-value${cls ? ' ' + cls : ''}">${esc(value)}</span>`
+        ).join('')}
+    </div></div>`;
+}
+
+function renderActiveTab() {
+    if (activeTab === 'flights') { detailBody.innerHTML = renderFlightLog(); return; }
+    const d = currentDetail;
+    if (!d) return;
+    if (activeTab === 'airframe') {
+        const reg = d.registration && d.registration !== 'LADD' ? d.registration : '';
+        const links = reg
+            ? `<div class="section"><a class="xlink" href="/flight-table#q=${encodeURIComponent(reg)}&field=registration&status=historical">▶ Flight history for ${esc(reg)}</a></div>`
+            : '';
+        detailBody.innerHTML =
+            section('IDENTITY', [
+                ['Registration', d.registration, 'hl'],
+                ['ICAO 24', d.icao24, 'accent'],
+                ['SELCAL', d.selcal, 'warn'],
+            ])
+            + section('AIRFRAME', [
+                ['Type', d.type],
+                ['Wake', d.wake],
+                ['Equipment', d.equipment],
+                ['Operator', d.operator],
+            ])
+            + section('OBSERVED', [
+                ['Times seen', (d.sightings || 0).toLocaleString()],
+                ['First seen', isoUtc(d.firstSeen)],
+                ['Last seen', d.lastSeen ? `${isoUtc(d.lastSeen)}  (${ago(new Date(d.lastSeen).getTime() / 1000)})` : ''],
+            ])
+            // The grid only shows a truncated preview — the full callsign list lives here.
+            + ((d.callsigns || []).length
+                ? `<div class="section"><h3>CALLSIGNS (${d.callsigns.length})</h3><div class="route-text">${
+                    d.callsigns.map(c => `<a href="/track/${encodeURIComponent(c)}">${esc(c)}</a>`).join('   ')}</div></div>`
+                : '')
+            + links
+            + '<div class="note">Built from flights observed on the FAA SWIM feed in US airspace — not a complete registry.</div>';
+    }
+}
+
+// ── Flight log (FLIGHTS tab) ────────────────────────────────────────────────
+// Every dated flight for the selected tail from the server's permanent per-airframe log (oldest→newest on
+// the wire). Shown newest first; the DATE header flips the order; long logs render 300 rows at a time.
+const LOG_PAGE = 300;
+
+function updateFlightCount() {
+    const fl = flightLog;
+    document.getElementById('flightCount').textContent =
+        fl && fl.id === selectedId && fl.list ? ` (${fl.list.length.toLocaleString()})` : '';
+}
+
+async function loadFlightLog(id) {
+    flightLog = { id, list: null, error: false, shown: LOG_PAGE, asc: false };
+    updateFlightCount();
+    try {
+        const r = await fetch('/api/aircraft/' + encodeURIComponent(id) + '/flights');
+        if (!r.ok) throw new Error(String(r.status));
+        const j = await r.json();
+        const list = j.flights || [];
+        // Flag a flight whose origin doesn't match the previous flight's destination (oldest→newest) —
+        // a leg in between wasn't captured (filtered out, VFR, no SWIM coverage, etc.), not just a normal turn.
+        for (let k = 1; k < list.length; k++) {
+            const p = list[k - 1], f = list[k];
+            if (p.d && f.o && aptKey(p.d) !== aptKey(f.o)) { f.gap = true; f.prevD = p.d; }
+        }
+        if (flightLog && flightLog.id === id) flightLog.list = list;
+    } catch {
+        if (flightLog && flightLog.id === id) flightLog.error = true;
+    }
+    if (flightLog && flightLog.id === id && selectedId === id) {
+        updateFlightCount();
+        if (activeTab === 'flights') detailBody.innerHTML = renderFlightLog();
+    }
+}
+
+function renderFlightLog() {
+    const fl = flightLog;
+    if (!fl || fl.id !== selectedId || (!fl.list && !fl.error)) return '<div class="loading">Loading flight log…</div>';
+    if (fl.error) return '<div class="loading">Flight log unavailable</div>';
+    const total = fl.list.length;
+    if (!total) return '<div class="loading">No flights logged yet</div>';
+    const n = Math.min(fl.shown, total);
+    const hasGap = fl.list.some(e => e.gap);
+    let h = `<div class="log-summary">${total.toLocaleString()} flight${total === 1 ? '' : 's'} · ${fl.asc ? 'oldest' : 'newest'} first · times UTC`
+        + (hasGap ? ` · <span class="lroute gap" style="border-bottom-style:dashed">route</span> = doesn't connect from the previous flight` : '') + '</div>'
+        + '<table class="log-table"><thead><tr>'
+        + `<th class="sorted" data-logsort title="Flip the order">DATE ${fl.asc ? '▲' : '▼'}</th><th>DEP</th><th>CALLSIGN</th><th>ROUTE</th>`
+        + '</tr></thead><tbody>';
+    for (let k = 0; k < n; k++) {
+        const e = fl.list[fl.asc ? k : total - 1 - k];
+        const ts = utcText(e.dep || e.first || e.last);
+        h += `<tr><td class="ldate">${ts.slice(0, 10)}</td>`
+            + (e.dep
+                ? `<td class="ltime">${ts.slice(11)}</td>`
+                : `<td class="ltime est" title="No departure time in the feed — time first seen">${ts.slice(11)}</td>`)
+            + `<td class="lcs">${e.cs ? `<a href="/track/${encodeURIComponent(e.cs)}">${esc(e.cs)}</a>` : ''}</td>`
+            + `<td class="lroute${e.gap ? ' gap' : ''}"${e.gap ? ` title="Doesn't connect from the previous flight's arrival (${esc(e.prevD)}) — a leg in between may not have been captured (filtered out, VFR, no SWIM coverage, etc.)"` : ''}>${esc(e.o || '????')} → ${esc(e.d || '????')}</td></tr>`;
+    }
+    h += '</tbody></table>';
+    if (n < total)
+        h += `<button class="export-btn log-more" data-logmore>SHOW ${Math.min(LOG_PAGE, total - n).toLocaleString()} MORE · ${(total - n).toLocaleString()} left</button>`;
+    return h;
+}
+
+detailBody.addEventListener('click', (e) => {
+    if (!flightLog || activeTab !== 'flights') return;
+    if (e.target.closest('[data-logsort]')) {
+        flightLog.asc = !flightLog.asc;
+        flightLog.shown = LOG_PAGE;
+        detailBody.innerHTML = renderFlightLog();
+        detailBody.scrollTop = 0;
+    } else if (e.target.closest('[data-logmore]')) {
+        flightLog.shown += LOG_PAGE;
+        const top = detailBody.scrollTop;
+        detailBody.innerHTML = renderFlightLog();
+        detailBody.scrollTop = top;
+    }
+});
+
+document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        activeTab = tab.dataset.tab;
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        renderActiveTab();
+    });
+});
+document.getElementById('detailClose').addEventListener('click', closeDetail);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && selectedId) closeDetail(); });
+
+// ── Export (exactly what's shown) ───────────────────────────────────────────
+document.getElementById('exportCsv').addEventListener('click', () => {
+    const q = v => { v = String(v == null ? '' : v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    const lines = ['registration,icao24,selcal,type,operator,callsigns,sightings,first_seen_utc,last_seen_utc'];
+    for (const r of view)
+        lines.push([r.reg, r.hex, r.sel, r.type, r.opr, r.cs, r.seen, utcText(r.first), utcText(r.last)].map(q).join(','));
+    const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `aircraft-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+// ── URL state (hash, like the flight table) ─────────────────────────────────
+let urlTimer;
+function saveUrl() {
+    clearTimeout(urlTimer);
+    urlTimer = setTimeout(() => {
+        const p = new URLSearchParams();
+        const q = searchEl.value.trim();
+        if (q) p.set('q', q);
+        for (const c of COLS) { const v = filterInputs[c.key].value.trim(); if (v) p.set(c.key, v); }
+        if (!(sortKey === 'last' && !sortAsc)) { p.set('sort', sortKey); p.set('dir', sortAsc ? 'asc' : 'desc'); }
+        const s = p.toString();
+        history.replaceState(null, '', location.pathname + (s ? '#' + s : ''));
+    }, 200);
+}
+
+// ── Load ────────────────────────────────────────────────────────────────────
+// Top-bar stats, plus flight-history import progress while the server's one-time backfill runs.
+let statsBase = '', logStatus = '';
+function renderStats() { statsEl.textContent = statsBase + logStatus; }
+async function pollLogStatus() {
+    try {
+        const j = await (await fetch('/api/aircraft/stats')).json();
+        const fl = j.flightLog;
+        logStatus = fl && fl.backfillRunning ? ` · importing flight history ${fl.backfillDone}/${fl.backfillTotal} days` : '';
+        renderStats();
+        if (fl && fl.backfillRunning) setTimeout(pollLogStatus, 30000);
+    } catch {}
+}
+
+async function load(initial) {
+    try {
+        const r = await fetch('/api/aircraft/all');
+        if (!r.ok) throw new Error(String(r.status));
+        const j = await r.json();
+        master = j.rows.map(a => ({
+            id: a[0], reg: a[1] || '', hex: a[2] || '', sel: a[3] || '', type: a[4] || '',
+            opr: (a[5] || '').toUpperCase(), cs: a[6] || '', seen: a[7] || 0, first: a[8] || 0, last: a[9] || 0,
+        }));
+        sortMaster();
+        applyFilters(initial);   // periodic refresh keeps your scroll position
+        statusEl.textContent = 'ready';
+        statusEl.className = 'status ok';
+        statsBase = `${master.length.toLocaleString()} airframes · loaded ${utcText(Date.now() / 1000).slice(11)}`;
+        renderStats();
+    } catch {
+        if (initial) { statusEl.textContent = 'load failed'; statusEl.className = 'status'; }
+    }
+}
+
+(function init() {
+    const p = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+    const q = p.get('q'); if (q) searchEl.value = q;
+    for (const c of COLS) { const v = p.get(c.key); if (v) filterInputs[c.key].value = v; }
+    const s = p.get('sort');
+    if (s) {
+        const key = LEGACY_SORT[s] || s;
+        if (COLS.some(c => c.key === key)) sortKey = key;
+    }
+    const d = p.get('dir'); if (d) sortAsc = d === 'asc';
+    renderHeader();
+    pollLogStatus();
+
+    load(true).then(() => {
+        const m = location.pathname.match(/^\/aircraft\/([^/]+)$/);
+        if (m) selectAircraft(decodeURIComponent(m[1]));
+    });
+
+    setInterval(() => { lastRange = { start: -1, end: -1 }; renderViewport(); }, 30000);   // refresh "x min ago"
+    setInterval(() => load(false), 10 * 60 * 1000);                                        // pick up newly seen aircraft
+})();
+</script>
+<script src="/shared/frame.js?v=4"></script>
+<script src="/shared/disclaimer.js?v=2"></script>
+</body>
+</html>

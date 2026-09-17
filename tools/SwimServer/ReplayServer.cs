@@ -151,6 +151,79 @@ public class ReplayServer
         });
     }
 
+    /// <summary>
+    /// Replay endpoints for archived incidents — same engine as live replay, pointed at the incident's
+    /// own sliced ERAM / per-airport ASDE-X gz files. incidentsDir is the permanent archive root.
+    /// </summary>
+    public void MapIncidentEndpoints(WebApplication app, string incidentsDir)
+    {
+        static bool SafeId(string id) => !(id.Contains("..") || id.Contains('/') || id.Contains('\\'));
+
+        app.MapGet("/api/incident/{id}/range", (string id) =>
+        {
+            if (!SafeId(id)) return Results.BadRequest();
+            var baseD = Path.Combine(incidentsDir, id);
+            // Clamp every reported range to the incident's own window. Raw file ranges are
+            // hour-aligned (a 15:37-16:37 incident lives in the 15:00 and 16:00 files), so reporting
+            // them unclamped makes the replay scrubber span dead space on both ends — dragging into
+            // it seeks past the archived data, the session ends, and the bar looks "Disconnected".
+            var (winLo, winHi) = ReadIncidentWindow(Path.Combine(baseD, "meta.json"));
+            var eram = GetTimeRange(Path.Combine(baseD, "eram"), winLo, winHi);
+            var asdex = RangesUnder(Path.Combine(baseD, "asdex"), winLo, winHi);
+            var tais = RangesUnder(Path.Combine(baseD, "tais"), winLo, winHi);
+            return Results.Json(new { eram, asdex, tais }, _jsonOpts);
+        });
+
+        app.Map("/replay/incident/{id}/ws", async (HttpContext ctx, string id) =>
+        {
+            if (!SafeId(id)) { ctx.Response.StatusCode = 400; return; }
+            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "eram"));
+        });
+
+        app.Map("/replay/incident/{id}/asdex/ws/{airport}", async (HttpContext ctx, string id, string airport) =>
+        {
+            if (!SafeId(id)) { ctx.Response.StatusCode = 400; return; }
+            var icao = airport.ToUpperInvariant();
+            if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
+            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "asdex", icao));
+        });
+
+        app.Map("/replay/incident/{id}/tais/ws/{facility}", async (HttpContext ctx, string id, string facility) =>
+        {
+            if (!SafeId(id) || !SafeId(facility)) { ctx.Response.StatusCode = 400; return; }
+            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "tais", facility.ToUpperInvariant()));
+        });
+    }
+
+    /// <summary>Time-range map for every subdirectory under <paramref name="baseDir"/> (name → range).</summary>
+    private Dictionary<string, object> RangesUnder(string baseDir, DateTime? clampLo = null, DateTime? clampHi = null)
+    {
+        var map = new Dictionary<string, object>();
+        if (Directory.Exists(baseDir))
+            foreach (var d in Directory.GetDirectories(baseDir))
+            {
+                var r = GetTimeRange(d, clampLo, clampHi);
+                if (r != null) map[Path.GetFileName(d)] = r;
+            }
+        return map;
+    }
+
+    private async Task IncidentSession(HttpContext ctx, string dir)
+    {
+        if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
+        var startParam = ctx.Request.Query["start"].FirstOrDefault();
+        if (string.IsNullOrEmpty(startParam)
+            || !DateTime.TryParse(startParam, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var startTime))
+        { ctx.Response.StatusCode = 400; return; }
+        if (!Directory.Exists(dir)) { ctx.Response.StatusCode = 404; return; }
+        var speed = 1.0;
+        if (double.TryParse(ctx.Request.Query["speed"].FirstOrDefault(), out var sp) && sp > 0) speed = sp;
+        var bounds = ParseBoundsFromQuery(ctx);
+        double.TryParse(ctx.Request.Query["preload"].FirstOrDefault(), out var preload);
+        using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+        await RunReplaySession(ws, dir, startTime, speed, bounds, preload);
+    }
+
     private async Task RunReplaySession(WebSocket ws, string dataDir, DateTime startTime, double initialSpeed, Bounds? initialBounds = null, double preloadSeconds = 0)
     {
         var speed = initialSpeed;
@@ -630,7 +703,22 @@ public class ReplayServer
         return files.Count > 0 ? files[0] : null;
     }
 
-    private static object? GetTimeRange(string dir)
+    /// <summary>Read an incident's archived window from meta.json, for clamping reported ranges.</summary>
+    private static (DateTime? lo, DateTime? hi) ReadIncidentWindow(string metaPath)
+    {
+        try
+        {
+            if (!File.Exists(metaPath)) return (null, null);
+            using var doc = JsonDocument.Parse(File.ReadAllText(metaPath));
+            var r = doc.RootElement;
+            DateTime? lo = r.TryGetProperty("startUtc", out var a) && a.TryGetDateTime(out var la) ? la.ToUniversalTime() : null;
+            DateTime? hi = r.TryGetProperty("endUtc", out var b) && b.TryGetDateTime(out var hb) ? hb.ToUniversalTime() : null;
+            return (lo, hi);
+        }
+        catch { return (null, null); }
+    }
+
+    private static object? GetTimeRange(string dir, DateTime? clampLo = null, DateTime? clampHi = null)
     {
         if (!Directory.Exists(dir)) return null;
         var files = Directory.GetFiles(dir, "*.jsonl.gz")
@@ -653,10 +741,16 @@ public class ReplayServer
             System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
             out var end);
 
+        var rangeStart = start;
+        var rangeEnd = end.AddHours(1);
+        if (clampLo is { } cl && cl > rangeStart) rangeStart = cl;
+        if (clampHi is { } ch && ch < rangeEnd) rangeEnd = ch;
+        if (rangeEnd <= rangeStart) { rangeStart = start; rangeEnd = end.AddHours(1); }   // degenerate → unclamped
+
         return new
         {
-            start = start.ToString("o"),
-            end = end.AddHours(1).ToString("o"),
+            start = rangeStart.ToString("o"),
+            end = rangeEnd.ToString("o"),
             hours = files.Count,
             totalSizeMB = Directory.GetFiles(dir, "*.jsonl.gz").Sum(f => new FileInfo(f).Length) / (1024.0 * 1024.0)
         };

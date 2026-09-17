@@ -1,5 +1,35 @@
 // State
 // ════════════════════════════════════════════════════════════════════════════
+// Incident replay context: /eram/scope?incident={id}. In this mode the scope must NEVER open the
+// live feed — if the replay can't start, live traffic under an incident URL looks exactly like a
+// working replay (with a live clock), which is badly misleading.
+const INCIDENT_ID = new URLSearchParams(location.search).get('incident') || '';
+// Incident replay keeps its OWN facility/sector selection, stored per incident id. Reviewing an
+// archive must neither inherit the facility+sectors you work live nor overwrite them when you pick
+// something else in the replay. Every other setting (brightness, history, fonts…) stays shared —
+// those are display preferences, not position assignments.
+const ERAM_INCIDENT_SEL_KEY = 'eram-incident-sel';
+let _liveSel = { facility: '', sectors: [] };   // the live selection, held aside while replaying
+function loadIncidentSelection() {
+    try { return (JSON.parse(localStorage.getItem(ERAM_INCIDENT_SEL_KEY) || '{}'))[INCIDENT_ID] || null; }
+    catch (e) { return null; }
+}
+// Swap the live facility/sectors out for this incident's own. Called once after settings load —
+// including the paths where there is no saved blob at all, so it must be idempotent-safe there too.
+function applyIncidentSelection() {
+    if (!INCIDENT_ID) return;
+    _liveSel = { facility: myFacility, sectors: [...mySectors] };   // hold the live picks aside
+    const sel = loadIncidentSelection();
+    myFacility = sel ? (sel.facility || '') : '';                   // first open of this incident → All
+    mySectors = new Set(sel && sel.sectors ? sel.sectors : []);
+}
+function saveIncidentSelection() {
+    try {
+        const all = JSON.parse(localStorage.getItem(ERAM_INCIDENT_SEL_KEY) || '{}');
+        all[INCIDENT_ID] = { facility: myFacility, sectors: [...mySectors] };
+        localStorage.setItem(ERAM_INCIDENT_SEL_KEY, JSON.stringify(all));
+    } catch (e) { /* quota or storage disabled — the pick just won't persist */ }
+}
 const flights = new Map();          // current displayed state — datablock fields updated instantly
 // Position updates applied immediately — history dots use time-based decay for scan simulation
 const flightHistory = new Map();
@@ -3363,7 +3393,13 @@ function connectWs() {
         }
     };
 }
-connectWs();
+if (INCIDENT_ID) {
+    // Wait for the ReplayBar to auto-start from the #replay= hash instead of opening the live feed.
+    const _cs = document.getElementById('connection-status');
+    if (_cs) { _cs.textContent = 'INCIDENT REPLAY'; _cs.style.color = '#ff8c00'; }
+} else {
+    connectWs();
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Facility/sector tracking
@@ -5767,10 +5803,13 @@ function loadSettingsFromLocalStorage() {
 }
 
 function saveSettingsToLocalStorage() {
+    // While replaying an incident the facility/sectors belong to that incident, not to the live
+    // scope — persist them separately and leave the live selection exactly as it was.
+    if (INCIDENT_ID) saveIncidentSelection();
     const settings = {
         settingsVersion: SETTINGS_VERSION,
-        facility: myFacility,
-        sectors: [...mySectors],
+        facility: INCIDENT_ID ? _liveSel.facility : myFacility,
+        sectors: INCIDENT_ID ? [..._liveSel.sectors] : [...mySectors],
         showFdb,
         showHistory,
         MAX_HISTORY,
@@ -9348,6 +9387,20 @@ try {
 // Init
 // ════════════════════════════════════════════════════════════════════════════
 loadSettingsFromLocalStorage();
+applyIncidentSelection();   // incident replay uses its own facility/sectors, not the live ones
+// Deep-link: /eram/scope?facility=ZDC&sectors=32,34[&center=1] pre-selects a facility + sector(s)
+// so a link from Track-a-Flight / Flight Table lands on the scope already working that sector.
+try {
+    const _q = new URLSearchParams(location.search);
+    const _fac = (_q.get('facility') || _q.get('fac') || '').trim().toUpperCase();
+    if (_fac) {
+        myFacility = _fac;
+        const _secs = (_q.get('sectors') || _q.get('sector') || '').split(',').map(s => s.trim()).filter(Boolean);
+        mySectors = new Set(_secs);
+        facilityOnly = false;
+        saveSettingsToLocalStorage();
+    }
+} catch (e) { /* ignore bad deep-link params */ }
 rebuildFacilityDropdown();
 rebuildSectorCheckboxes();
 
@@ -11709,8 +11762,11 @@ function clearReplayState() {
 
 function initReplayBar() {
     if (!window.ReplayBar) { setTimeout(initReplayBar, 50); return; }
+    // Incident replay: ?incident=<id> points the ReplayBar at the archived incident's own ERAM slice.
+    const _incident = new URLSearchParams(location.search).get('incident');
     window.ReplayBar.init({
-        wsPath:   '/replay/ws',
+        wsPath:   _incident ? `/replay/incident/${encodeURIComponent(_incident)}/ws` : '/replay/ws',
+        rangeUrl: _incident ? `/api/incident/${encodeURIComponent(_incident)}/range` : '/api/replay/range',
         rangeKey: 'eram',
         viewport: paddedBounds,
         onStart: () => {
@@ -11748,6 +11804,12 @@ function initReplayBar() {
             renderClock();
             if (nexradLevel > 0) refreshNexrad();
             saveSettingsToLocalStorage();
+            if (INCIDENT_ID) {
+                // Incident view: there is no live equivalent to return to.
+                const _cs = document.getElementById('connection-status');
+                if (_cs) { _cs.textContent = 'INCIDENT REPLAY — STOPPED'; _cs.style.color = '#ff8c00'; }
+                return;
+            }
             connectWs();
         },
     });

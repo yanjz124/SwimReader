@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Airline Research</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛫</text></svg>">
+<link rel="stylesheet" href="/shared/common.css?v=3">
+<link rel="stylesheet" href="/flight-table/flight-table.css?v=7">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
+<style>
+    [hidden] { display: none !important; }
+    .seg { display: inline-flex; border: 1px solid #333; border-radius: 2px; overflow: hidden; }
+    .seg button { background: #111; color: #888; border: 0; border-right: 1px solid #333; font: inherit; font-size: 11px; padding: 3px 9px; cursor: pointer; }
+    .seg button:last-child { border-right: 0; }
+    .seg button:hover { color: #ccc; }
+    .seg button.on { background: #2a2a10; color: #cccc44; }
+    .list { flex: 1; overflow: auto; }
+    table.grid { border-collapse: collapse; width: 100%; min-width: 1180px; font-size: 12px; }
+    table.grid thead th {
+        position: sticky; top: 0; z-index: 2; background: #050505; color: #555; font-weight: normal; font-size: 10px;
+        letter-spacing: 1px; text-align: left; padding: 7px 10px; border-bottom: 1px solid #333; cursor: pointer;
+        user-select: none; white-space: nowrap;
+    }
+    table.grid thead th:hover, table.grid thead th.sorted { color: #cccc44; }
+    table.grid .num { text-align: right; }
+    table.grid tbody td { padding: 5px 10px; border-bottom: 1px solid #111; white-space: nowrap; }
+    table.grid tbody tr.row { cursor: pointer; }
+    table.grid tbody tr.row:hover td { background: #0c0c0c; }
+    table.grid tbody tr.zero td { color: #444; }
+    table.grid tbody tr.zero .icao { color: #666; }
+    tr.group td { background: #0a0a0a; color: #cccc44; font-size: 10px; letter-spacing: 2px; padding: 9px 10px 6px; border-bottom: 1px solid #222; }
+    tr.group td span { color: #555; letter-spacing: 0; margin-left: 8px; }
+    .icao { color: #fff; letter-spacing: 1px; }
+    .name { color: #ccc; }
+    .hint { color: #666; font-style: italic; }
+    .cat { font-size: 9.5px; letter-spacing: 1px; padding: 1px 6px; border-radius: 2px; border: 1px solid #333; }
+    .cat.mainline { color: #5588ff; border-color: #243a6a; }
+    .cat.regional { color: #39d2c0; border-color: #1d4a44; }
+    .cat.cargo { color: #ff8844; border-color: #5a3018; }
+    .cat.charter { color: #cc88ff; border-color: #442a5a; }
+    .cat.other { color: #888; }
+    .conf { font-size: 9.5px; color: #aa8800; margin-left: 6px; border: 1px solid #443a00; padding: 0 4px; border-radius: 2px; }
+    .types { color: #aaa; }
+    .opbad { color: #ff8844; }
+    .notes { color: #777; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+    .banner { padding: 6px 16px; background: #1a1400; color: #cccc44; font-size: 11px; border-bottom: 1px solid #332a00; flex-shrink: 0; }
+    .foot { padding: 12px 16px 24px; font-size: 11px; color: #666; line-height: 1.7; }
+    .foot summary { cursor: pointer; color: #888; letter-spacing: 1px; }
+    .foot b { color: #aaa; font-weight: normal; }
+</style>
+</head>
+<body>
+<a class="nav-home" href="/">&larr; HOME</a>
+<div class="topbar" style="padding-left:100px">
+    <h1>AIRLINE RESEARCH</h1>
+    <span class="status" id="status">loading...</span>
+    <div class="stats" id="stats"></div>
+</div>
+
+<div class="filterbar">
+    <span class="filter-label">WINDOW</span>
+    <div class="seg" id="win"></div>
+    <div class="filter-sep"></div>
+    <span class="filter-label">SHOW</span>
+    <select class="filter-select" id="cat">
+        <option value="">All</option>
+        <option value="mainline">Mainline</option>
+        <option value="lowcost">Low-cost / ULCC</option>
+        <option value="regional">Regional</option>
+        <option value="cargo">Cargo</option>
+        <option value="charter">Charter</option>
+        <option value="other">Other operators seen (not in catalog)</option>
+    </select>
+    <input type="text" class="search-box" id="q" placeholder="Filter — ICAO, name, type, partner…" spellcheck="false" autocomplete="off">
+    <div class="filter-sep"></div>
+    <span class="result-count" id="count"></span>
+</div>
+<div class="banner" id="banner" hidden></div>
+
+<div class="main">
+    <div class="list" id="list"></div>
+</div>
+
+<script>
+// Carriers are grouped by catalog category; the column sort applies inside each group. Numbers come from
+// /api/airlines, computed from the permanent flight log (callsign prefix = carrier, so regionals are separate).
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const n0 = v => v == null ? '—' : Math.round(v).toLocaleString();
+const n1 = v => v == null ? '—' : (+v).toLocaleString(undefined, { maximumFractionDigits: 1 });
+const n2 = v => v == null ? '—' : (+v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const GROUPS = [
+    ['mainline', 'MAINLINE'], ['lowcost', 'LOW-COST / ULCC'], ['regional', 'REGIONAL'], ['cargo', 'CARGO'], ['charter', 'CHARTER / ACMI'],
+    ['other', 'OTHER OPERATORS SEEN — not in the Part 121 catalog'],
+];
+const COLS = [
+    { k: 'icao', l: 'ICAO' },
+    { k: 'name', l: 'NAME' },
+    { k: 'perDay', l: 'FLTS/DAY', num: 1 },
+    { k: 'flights', l: 'FLIGHTS', num: 1 },
+    { k: 'tails', l: 'TAILS', num: 1 },
+    { k: 'airports', l: 'AIRPORTS', num: 1 },
+    { k: 'routes', l: 'ROUTES', num: 1 },
+    { k: 'hpd', l: 'AIR HRS/TAIL/DAY', num: 1, tip: 'Estimated air time per tail per calendar day (last seen − actual departure)' },
+    { k: 'topTypes', l: 'FLEET TYPES' },
+    { k: 'opMatchPct', l: 'OPR MATCH', num: 1, tip: 'Share of flights whose filed operator resolves to this callsign prefix' },
+    { k: 'notes', l: 'FLIES FOR · NOTES' },
+];
+
+const params = new URLSearchParams(location.search);
+let days = parseInt(params.get('days') || '7', 10) || 7;
+let sortKey = 'perDay', sortAsc = false;
+let data = null, timer = null;
+
+function saveUrl() {
+    const p = new URLSearchParams();
+    if (days !== 7) p.set('days', days);
+    if ($('cat').value) p.set('cat', $('cat').value);
+    if ($('q').value.trim()) p.set('q', $('q').value.trim());
+    history.replaceState(null, '', '/airlines' + (p.toString() ? '?' + p : ''));
+}
+
+function renderWindow() {
+    const max = data ? data.windowDays : 90;
+    $('win').innerHTML = [1, 7, 30, 90].filter(d => d <= max)
+        .map(d => `<button data-d="${d}" class="${d === days ? 'on' : ''}">${d}D</button>`).join('');
+}
+
+async function load() {
+    clearTimeout(timer);
+    $('status').textContent = 'loading...';
+    $('status').className = 'status';
+    try {
+        const r = await fetch('/api/airlines?days=' + days);
+        if (!r.ok) throw new Error(r.status);
+        data = await r.json();
+    } catch (e) {
+        $('status').textContent = 'load failed';
+        return;
+    }
+    renderWindow();
+    render();
+    const active = data.carriers.filter(c => c.flights > 0).length;
+    $('stats').textContent = `${active} of ${data.carriers.length} catalog carriers flew · ${n1(data.span)} day(s) of data · catalog ${data.catalogAsOf || '—'}`;
+    $('status').textContent = data.ready ? 'ready' : 'indexing…';
+    $('status').className = data.ready ? 'status ok' : 'status';
+    $('banner').hidden = !!data.ready;
+    if (!data.ready) {
+        $('banner').textContent = `Building the airline index from the flight log (${data.state}) — numbers are partial and refresh every 15 s.`;
+        timer = setTimeout(load, 15000);
+    }
+}
+
+function rowName(c) {
+    if (c.name) return esc(c.name);
+    const hint = (c.opOther || [])[0];
+    return hint ? `<span class="hint" title="Filed operator">${esc(hint)}</span>` : '';
+}
+
+function notes(c) {
+    const parts = [];
+    if (c.partners && c.partners.length) parts.push('for ' + c.partners.join(' · '));
+    if (c.note) parts.push(c.note);
+    return parts.join(' — ');
+}
+
+function sortVal(c, k) {
+    if (k === 'topTypes') return (c.topTypes || []).join(',');
+    if (k === 'notes') return notes(c);
+    if (k === 'name') return (c.name || (c.opOther || [])[0] || '').toUpperCase();
+    return c[k];
+}
+
+function render() {
+    if (!data) return;
+    const cat = $('cat').value;
+    const q = $('q').value.trim().toUpperCase();
+    const all = [...data.carriers, ...data.others];
+    const match = c => {
+        if (cat && c.category !== cat) return false;
+        if (!q) return true;
+        return [c.icao, c.name, c.callsign, notes(c), (c.topTypes || []).join(' '), (c.opOther || []).join(' ')]
+            .some(v => (v || '').toUpperCase().includes(q));
+    };
+    const rows = all.filter(match);
+    const cmp = (a, b) => {
+        const x = sortVal(a, sortKey), y = sortVal(b, sortKey);
+        if (x === y) return (b.perDay || 0) - (a.perDay || 0);
+        if (x == null || x === '') return 1;
+        if (y == null || y === '') return -1;
+        return (x < y ? -1 : 1) * (sortAsc ? 1 : -1);
+    };
+
+    let body = '';
+    for (const [g, label] of GROUPS) {
+        const grp = rows.filter(c => c.category === g).sort(cmp);
+        if (!grp.length) continue;
+        const flying = grp.filter(c => c.flights > 0).length;
+        body += `<tr class="group"><td colspan="${COLS.length}">${label}<span>${flying} flying · ${n0(grp.reduce((s, c) => s + (c.perDay || 0), 0))} flights/day</span></td></tr>`;
+        for (const c of grp) {
+            const opm = c.opMatchPct == null ? '—'
+                : `<span class="${c.opMatchPct < 95 ? 'opbad' : ''}" title="${esc((c.opOther || []).length ? 'Other filed operators: ' + c.opOther.join(', ') : 'All filed operators resolve to ' + c.icao)}">${n1(c.opMatchPct)}%</span>`;
+            const conf = c.confidence && c.confidence !== 'high'
+                ? `<span class="conf" title="${esc(c.note || '')}">${esc(c.confidence)}</span>` : '';
+            body += `<tr class="row ${c.flights ? '' : 'zero'}" data-icao="${esc(c.icao)}">
+                <td class="icao">${esc(c.icao)}</td>
+                <td class="name">${rowName(c)}${conf}</td>
+                <td class="num">${n1(c.perDay)}</td>
+                <td class="num">${n0(c.flights)}</td>
+                <td class="num">${n0(c.tails)}</td>
+                <td class="num">${n0(c.airports)}</td>
+                <td class="num">${n0(c.routes)}</td>
+                <td class="num">${c.hpd == null ? '—' : n2(c.hpd)}</td>
+                <td class="types">${esc((c.topTypes || []).join(' '))}</td>
+                <td class="num">${opm}</td>
+                <td class="notes" title="${esc(notes(c))}">${esc(notes(c))}</td>
+            </tr>`;
+        }
+    }
+    const head = '<thead><tr>' + COLS.map(c =>
+        `<th data-k="${c.k}" class="${c.num ? 'num' : ''} ${sortKey === c.k ? 'sorted' : ''}"${c.tip ? ` title="${esc(c.tip)}"` : ''}>${c.l}${sortKey === c.k ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr></thead>';
+
+    const ceased = (data.ceased || []).map(c =>
+        `<div><b>${esc(c.icao)}</b> ${esc(c.name)} — ceased ${esc(c.ceased)}${c.note ? ' · ' + esc(c.note) : ''}</div>`).join('');
+    $('list').innerHTML = `<table class="grid">${head}<tbody>${body || `<tr><td colspan="${COLS.length}" class="hint">No carriers match.</td></tr>`}</tbody></table>
+        <div class="foot">
+            Carrier = ICAO prefix of the callsign, so regionals (SkyWest, Republic, Envoy…) are counted separately from the brands they fly for;
+            the filed operator field is the cross-check. Air time and ground time are estimates from the SWIM feed (last seen ≈ landing).
+            The Part 121 list is curated in <b>/airlines/carriers.json</b> and may lag certificate changes.
+            ${ceased ? `<details><summary>CEASED SINCE 2020 (${data.ceased.length})</summary>${ceased}</details>` : ''}
+        </div>`;
+    $('count').textContent = `${rows.length} carriers`;
+}
+
+$('win').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    days = +b.dataset.d;
+    saveUrl();
+    load();
+});
+$('list').addEventListener('click', e => {
+    const th = e.target.closest('th[data-k]');
+    if (th) {
+        const k = th.dataset.k;
+        if (sortKey === k) sortAsc = !sortAsc;
+        else { sortKey = k; sortAsc = ['icao', 'name', 'topTypes', 'notes'].includes(k); }
+        render();
+        return;
+    }
+    const tr = e.target.closest('tr.row');
+    if (tr) location.href = `/airlines/${encodeURIComponent(tr.dataset.icao)}?days=${days}`;
+});
+let qTimer;
+$('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(() => { render(); saveUrl(); }, 120); });
+$('cat').addEventListener('change', () => { render(); saveUrl(); });
+
+(function init() {
+    if (params.get('cat')) $('cat').value = params.get('cat');
+    if (params.get('q')) $('q').value = params.get('q');
+    renderWindow();
+    load();
+})();
+</script>
+<script src="/shared/frame.js?v=4"></script>
+<script src="/shared/disclaimer.js?v=2"></script>
+</body>
+</html>

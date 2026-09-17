@@ -5,7 +5,14 @@ body {
     height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    /* height must stay a fixed 100vh, not min-height/auto — with an auto height, this being a flex
+       container means .main's "flex: 1 fills the remaining space" stops meaning anything (there's no
+       definite remaining space to fill without a definite container size), so it collapses to fit its own
+       content instead of the viewport, and the virtualized flight table's giant off-screen row area then
+       drives the whole page's height. With height staying fixed, .main's min-height/overflow below can
+       still make it (and, as a last resort, this overflow) scroll when zoom shrinks the effective viewport
+       enough that the fixed-height chrome above .main no longer fits inside it. */
+    overflow-y: auto;
 }
 
 /* ── Top bar ──────────────────────────────────────────────── */
@@ -66,7 +73,11 @@ body {
 .main {
     display: flex;
     flex: 1;
-    overflow: hidden;
+    /* A floor so this never gets flexed down to nothing when the chrome above it is tall relative to the
+       viewport (zoomed in, a narrow window, etc.) — past this point the panel scrolls itself, and if that
+       still isn't enough room the body (overflow-y: auto above) takes over as the last-resort scrollbar. */
+    min-height: 280px;
+    overflow: auto;
 }
 
 /* ── Flight list (left panel) ────────────────────────────── */

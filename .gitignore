@@ -73,6 +73,10 @@ tools/SwimServer/investigation-*.jsonl
 tools/SwimServer/itws-history/
 tools/SwimServer/pointout-investigation-*.jsonl
 tools/SwimServer/tdls-history/
+# Permanent per-deployment data. Both hold REAL identities (incl. LADD-blocked registrations), so a
+# stray `git add .` must never publish them, and ignoring them also keeps `git clean -fd` away.
+tools/SwimServer/aircraft-db/
+tools/SwimServer/incidents/
 x64/
 x86/
 telegram-subs.json
@@ -87,3 +91,5 @@ tools/SwimServer/ladd/*.csv
 **/LADD_Industry_Filter*
 **/LADD_FAA_Source_Filter*
 **/*CUI_SP_PRVCY*
+# Downloaded OurAirports dataset (refreshed monthly by AirportDirectory)
+tools/SwimServer/airport-data/

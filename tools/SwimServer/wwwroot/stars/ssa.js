@@ -31,6 +31,7 @@ const SSA = {
   altimeter: null,                       // primary station altimeter for header
   // timesync.Synchronized — RadarWindow.cs:2978. Set from /api/time-sync.
   timeSynchronized: true,
+  replayTime: null,                      // ISO string while replaying an incident; null = live clock
 };
 
 // METAR fetcher — populates the SSA altimeter stations from the selected area's
@@ -174,7 +175,10 @@ function refreshSsa() {
   //   CurrentTime.ToString("HHmm/ss") + timesyncind + wx.Altimeter.Value.ToString("00.00")
   // No TCP line, no other prefix lines. DGScope simply does not display a
   // signed-on TCP in the SSA — that earlier addition was invented; removed.
-  const d = new Date();
+  // During incident replay the clock shows the REPLAY time (SSA.replayTime, set from the ReplayBar's
+  // onTime), so it matches the traffic on screen; live otherwise.
+  const _rt = SSA.replayTime ? new Date(SSA.replayTime) : null;
+  const d = (_rt && !isNaN(_rt)) ? _rt : new Date();
   const hhmm = String(d.getUTCHours()).padStart(2, "0") + String(d.getUTCMinutes()).padStart(2, "0");
   const ss = String(d.getUTCSeconds()).padStart(2, "0");
   const syncInd = SSA.timeSynchronized ? " " : "*";

@@ -204,6 +204,10 @@ document.addEventListener('fullscreenchange', () => {
 // ── Airport from URL ─────────────────────────────────────────────────────────
 const pathParts = window.location.pathname.split('/').filter(Boolean);
 const AIRPORT = (pathParts[pathParts.length - 1] || 'UNKN').toUpperCase();
+// Incident replay context: /asdex/{ap}?incident={id}. In this mode the page must NEVER open the
+// live feed — if the replay can't start, showing live traffic under an incident URL looks exactly
+// like a working replay (with a live clock), which is badly misleading.
+const INCIDENT_ID = new URLSearchParams(location.search).get('incident') || '';
 document.getElementById('airport-id').textContent = AIRPORT;
 document.title = 'ASDE-X ' + AIRPORT;
 
@@ -1120,11 +1124,16 @@ function centerOnTracks(tracks) {
 }
 
 // ── Zulu clock ───────────────────────────────────────────────────────────────
+// During replay the clock shows the REPLAY time (fed via the ReplayBar's onTime), not the live
+// wall clock, so it matches the traffic on screen (its color is unchanged — the orange REPLAY
+// indicator already signals the mode). window._setReplayClock(iso) sets it; falsy reverts to live.
+let _replayClockTime = null;
 (function () {
     const el = document.getElementById('zulu-clock');
 
     function tick() {
-        const now = new Date();
+        const src = _replayClockTime ? new Date(_replayClockTime) : new Date();
+        const now = isNaN(src) ? new Date() : src;
         const hh  = String(now.getUTCHours()).padStart(2, '0');
         const mm  = String(now.getUTCMinutes()).padStart(2, '0');
         const ss  = String(now.getUTCSeconds()).padStart(2, '0');
@@ -1132,6 +1141,8 @@ function centerOnTracks(tracks) {
     }
     tick();
     setInterval(tick, 1000);
+    // Setter used by the ReplayBar wiring below.
+    window._setReplayClock = (iso) => { _replayClockTime = iso || null; tick(); };
 
     // Restore saved position (right-anchored default)
     const saved = localStorage.getItem('asdex-clock-pos');
@@ -1231,9 +1242,17 @@ function connect() {
 }
 
 window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; } };
-window.idleOnResume = () => { connect(); };
+window.idleOnResume = () => { if (!INCIDENT_ID) connect(); };
 
-connect();
+if (INCIDENT_ID) {
+    // Wait for the ReplayBar to auto-start from the #replay= hash. If it never does, the status
+    // stays on this message rather than quietly showing live traffic.
+    connEl.textContent = 'INCIDENT REPLAY';
+    connEl.className   = '';
+    connEl.style.color = '#ff8c00';
+} else {
+    connect();
+}
 
 // ── Replay system — delegates to /shared/replay-bar.js ────────────────────
 (function() {
@@ -1245,10 +1264,14 @@ function applyTracks(arr) {
 
 function init() {
     if (!window.ReplayBar) { setTimeout(init, 50); return; }
+    // Incident replay: ?incident=<id> points the ReplayBar at the archived incident's ASDE-X slice.
+    const _incident = new URLSearchParams(location.search).get('incident');
+    const _ap = AIRPORT.toUpperCase();
     window.ReplayBar.init({
-        wsPath:   '/replay/asdex/ws/' + AIRPORT.toUpperCase(),
+        wsPath:   _incident ? `/replay/incident/${encodeURIComponent(_incident)}/asdex/ws/${_ap}` : ('/replay/asdex/ws/' + _ap),
+        rangeUrl: _incident ? `/api/incident/${encodeURIComponent(_incident)}/range` : '/api/replay/range',
         rangeKey: 'asdex',
-        rangeSubKey: AIRPORT.toUpperCase(),
+        rangeSubKey: _ap,
         onStart: () => {
             if (ws) { ws.onclose = null; ws.close(); ws = null; }
             if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
@@ -1258,7 +1281,7 @@ function init() {
             connEl.className = '';
             connEl.style.color = '#ff8c00';
         },
-        onTime: () => {},
+        onTime: (t) => { if (window._setReplayClock) window._setReplayClock(t); },
         onSnapshot: (arr) => {
             for (const tid of Object.keys(markers)) removeTrack(tid);
             applyTracks(arr);
@@ -1280,6 +1303,13 @@ function init() {
             updateCount();
         },
         onStop: () => {
+            if (window._setReplayClock) window._setReplayClock(null);   // back to live time
+            if (INCIDENT_ID) {
+                // Incident view: there is no live equivalent to return to.
+                connEl.textContent = 'INCIDENT REPLAY — STOPPED';
+                connEl.style.color = '#ff8c00';
+                return;
+            }
             connEl.style.color = '';
             connect();
         },

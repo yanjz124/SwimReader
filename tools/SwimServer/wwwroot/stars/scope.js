@@ -1305,7 +1305,10 @@ function buildDataBlock(t, fp) {
   if (fp?.FlightRules && fp.FlightRules[0] !== "I") vfrchar = fp.FlightRules[0];
   // Aircraft.cs:378-381 — Ident overrides vfrchar to "I", catchar to "D".
   if (t.Ident) { vfrchar = "I"; catchar = "D"; }
-  else if (fp?.Category) catchar = fp.Category;
+  // Aircraft.cs:489-491 `catchar = Category`. Our feeds publish the TAIS <category> element as
+  // WakeCategory (TaisBridge.cs:220 -> wake -> FP.WakeCategory), and no source ever sets a
+  // `Category` key, so this read was permanently undefined and the character never rendered.
+  else if (fp?.Category || fp?.WakeCategory) catchar = fp.Category || fp.WakeCategory;
 
   // ── handoffchar — Aircraft.cs:362-364 ───────────────────────────────────
   // Last char of PendingHandoff (or " " when none).
@@ -1881,6 +1884,8 @@ function positionSymbolText(t, fp) {
       }
     }
   }
+  // VFR 1200 — Aircraft.cs:753-754, between isSquawkSelected and PrimaryOnly.
+  if (t.Squawk === "1200") return "V";
   // PrimaryOnly — Aircraft.cs:145-151:
   //   IsNullOrEmpty(Squawk) && ModeSCode == 0 &&
   //   (Altitude == null || Altitude.AltitudeType == AltitudeType.Unknown)
@@ -2558,16 +2563,23 @@ function drawTracks() {
     // gate — RadarWindow.cs InFilter (called from cs:5595). DGScope's
     // InFilter also checks SelectedBeaconCodes / overrides; we apply the
     // pure altitude bracket here, the rest falls out of dataBlockMode.
+    // InFilter — RadarWindow.cs:6395-6400. The bracket gates ONLY the data block (cs:5957) and
+    // history returns (cs:6424); the target return and position symbol always draw. Dropping the
+    // whole track here meant an altitude filter ERASED traffic instead of reducing it to an
+    // untagged return — and took your own owned/quick-looked aircraft with it, which the override
+    // list at cs:5958 exists precisely to prevent.
     const altFt = t.Altitude?.Value;
+    let inFilter = true;
     if (altFt != null) {
-      if (fp) {
-        if (altFt < prefSet.AltitudeFilterAssociatedMin) continue;
-        if (altFt > prefSet.AltitudeFilterAssociatedMax) continue;
-      } else {
-        if (altFt < prefSet.AltitudeFilterUnAssociatedMin) continue;
-        if (altFt > prefSet.AltitudeFilterUnAssociatedMax) continue;
-      }
+      inFilter = fp
+        ? (altFt >= prefSet.AltitudeFilterAssociatedMin && altFt <= prefSet.AltitudeFilterAssociatedMax)
+        : (altFt >= prefSet.AltitudeFilterUnAssociatedMin && altFt <= prefSet.AltitudeFilterUnAssociatedMax);
     }
+    // cs:5958 — these keep the block regardless of the bracket.
+    const _me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
+    const isFdb = dataBlockMode(t, fp) === "FDB";
+    const showBlock = inFilter || isFdb || t._owned || t._quickLook || t.ShowCallsignWithNoSquawk
+      || (!!_me && (fp?.PendingHandoff || "").trim().toUpperCase() === _me);
     // displayPos = SweptLocation equivalent — extrapolated to "now" so the
     // target paints between feed updates. Off-screen cull (cs has no
     // equivalent — canvas is the screen, DGScope's OpenGL viewport culls).
@@ -2578,10 +2590,10 @@ function drawTracks() {
     // Record history every frame (not just every 1s background ticker) so turns
     // are captured at high fidelity using actual measured positions
     tickHistory(t, posNow);
-    drawHistory(t);
+    if (inFilter || isFdb) drawHistory(t);   // cs:6424 — history follows the filter too
     drawPTL(t, posNow);
     drawPosition(t, posNow);
-    drawDataBlockAndLeader(t, fp, posNow);
+    if (showBlock) drawDataBlockAndLeader(t, fp, posNow);
   }
 }
 

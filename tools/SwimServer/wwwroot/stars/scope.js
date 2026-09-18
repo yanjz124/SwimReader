@@ -793,6 +793,12 @@ async function startDstars() {
 let _replayCentered = false;
 let _replayActive = false;   // true while an incident replay is playing (drives the topbar + SSA clock)
 function replayGuid(fac, trackNum) { return `${fac || FACILITY}:${trackNum}`; }
+/// TAIS reports the ICAO 24-bit address as hex ("a40cdf"); DGScope stores it as an int and treats
+/// 0 as "no Mode S". Returns undefined when absent/unparseable so the field is simply not set.
+function modeSInt(hex) {
+  const n = parseInt(hex || "", 16);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
 function clearReplayTracks() {
   tracks.clear(); flightPlans.clear(); trackToFp.clear();
   if (typeof claimedTracks?.clear === "function") claimedTracks.clear();
@@ -810,9 +816,14 @@ function applyTaisRecord(r) {
     GroundSpeed: r.gs,
     GroundTrack: r.trk,
     VerticalRate: r.vs,
-    Squawk: r.reportedSqk || r.assignedSqk || undefined,
+    // Squawk is what the transponder is actually REPLYING (DGScope Aircraft.Squawk drives the LDB
+    // beacon line and the PrimaryOnly test). Falling back to the flight plan's assigned code would
+    // invent a readout for an aircraft that isn't squawking it — the assigned code travels on the
+    // flight plan below as AssignedSquawk instead.
+    Squawk: r.reportedSqk || undefined,
     Callsign: r.callsign || undefined,
-    ModeSCode: r.modeS || undefined,
+    // DGScope ModeSCode is an int (Aircraft.cs:12) tested as `== 0`; TAIS gives a hex string.
+    ModeSCode: modeSInt(r.modeS),
   });
   // Only tracks that actually carry flight-plan data are ASSOCIATED. TAIS supplies a callsign only
   // once a track is matched to a flight plan (~6% of recorded records); attaching an empty plan to

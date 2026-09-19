@@ -117,6 +117,8 @@
     .tstats .v .pct { color: #999; font-size: 11px; }
     .tstats .l { color: #555; font-size: 9px; letter-spacing: 1px; margin-top: 1px; }
     .gap-route { color: #c9a6ff; border-bottom: 1px dashed #5d4a80; cursor: help; }
+    .shared { color: #e0b34a; cursor: help; }
+    .sharednote { background: #1a1400; border: 1px solid #4a3a10; color: #e0b34a; font-size: 11px; padding: 5px 9px; margin-bottom: 8px; line-height: 1.5; }
     .tl-wrap { position: relative; }
     .tl-tip {
         position: fixed; z-index: 2000; background: #0a0a0a; border: 1px solid #444; padding: 6px 9px;
@@ -623,8 +625,8 @@ function renderFleet() {
     $('fleetList').innerHTML = `<table class="grid"><thead><tr>${headCells(FCOLS, fSort)}</tr></thead><tbody>` + rows.map(t => {
         const lowUse = med > 0 && t.hpd < med * 0.4;
         return `<tr data-key="${esc(t.key)}" class="${t.key === openTailKey ? 'sel' : ''}">
-            <td class="reg">${esc(t.reg || '—')}</td>
-            <td class="dim">${esc(t.hex || '')}</td>
+            <td class="reg">${esc(t.reg || '—')}${t.sharedCode ? ' <span class="shared" title="The feed files this Mode S code for more than one airframe, so the two were being counted as one aeroplane. They are split apart here by registration — but only back to when the log started recording it, so this tail&apos;s earlier flights may be missing.">⧉</span>' : ''}</td>
+            <td class="dim${t.sharedCode ? ' shared' : ''}">${esc(t.hex || '')}</td>
             <td>${esc(t.type || '')}</td>
             <td class="num">${n0(t.flights)}</td>
             <td class="num">${n0(t.days)}</td>
@@ -733,7 +735,13 @@ function renderTail(t) {
     const hpd = elapsedDays > 0 ? (air / 60) / elapsedDays : null;
     const stat = (l, v) => `<div><div class="v">${v}</div><div class="l">${l}</div></div>`;
 
-    let h = `<div class="tstats">
+    const row0 = data && data.tails.find(x => x.key === t.key);
+    let h = row0 && row0.sharedCode
+        ? `<div class="sharednote">⧉ The feed files Mode S code <b>${esc(row0.hex || '')}</b> for more than one airframe, so this aircraft and at
+           least one other were being counted as a single impossible tail. They're separated here by the registration filed with each
+           flight — which the log only started recording recently, so this tail's earlier flights aren't shown.</div>`
+        : '';
+    h += `<div class="tstats">
         ${stat(`LEGS (${esc(ICAO)})`, `${n0(fl.length)} <span class="dim">(${n0(mine)})</span>`)}
         ${stat('AIR HOURS', n1(air / 60))}
         ${stat('UTILIZATION', hpd == null ? '—' : `${n2(hpd)}h/day <span class="pct">${n1(hpd / 24 * 100)}%</span>`)}

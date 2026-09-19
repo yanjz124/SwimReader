@@ -601,6 +601,9 @@ sealed class AirlineResearch
         {
             generated = now, days, span = Math.Round(span, 2), windowDays = WindowDays,
             ready = FullyReady, state = StateText(), catalogAsOf = _catalogAsOf,
+            // Mode S codes the feed files for more than one airframe, and the pre-registration rows under them
+            // that can no longer be attributed to either — surfaced so the fleet numbers explain themselves.
+            splitCodes = _conflicted.Count, unplacedFlights = Interlocked.Read(ref _unattributable),
             carriers, others,
             ceased = _ceased.Select(c => new { icao = c.Icao, name = c.Name, ceased = c.Ceased, note = c.Note }).ToList(),
         };
@@ -910,6 +913,9 @@ sealed class AirlineResearch
             tails = tailRows.OrderByDescending(t => t.Flights).Select(t => new
             {
                 key = t.Key, reg = t.Reg, hex = t.Hex, type = t.Type, op = t.Op,
+                // True when the feed files this Mode S code for more than one airframe, so this tail is one
+                // of the aircraft sharing it — its history only goes back as far as the registration column.
+                sharedCode = _conflicted.ContainsKey(HexOfTailId(t.Key)),
                 flights = t.Flights, days = t.Days,
                 hours = Math.Round(t.AirMin / 60.0, 1),
                 hpd = Math.Round(t.AirMin / 60.0 / span, 2),

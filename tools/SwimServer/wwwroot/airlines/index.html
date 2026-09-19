@@ -143,7 +143,16 @@ async function load() {
     renderWindow();
     render();
     const active = data.carriers.filter(c => c.flights > 0).length;
-    $('stats').textContent = `${active} of ${data.carriers.length} catalog carriers flew · ${n1(data.span)} day(s) of data · catalog ${data.catalogAsOf || '—'}`;
+    const stats = $('stats');
+    stats.textContent = `${active} of ${data.carriers.length} catalog carriers flew · ${n1(data.span)} day(s) of data · catalog ${data.catalogAsOf || '—'}`;
+    // Mode S codes the feed files for two different aircraft, split back apart by registration.
+    if (data.splitCodes > 0) {
+        stats.textContent += ` · ${n0(data.splitCodes)} shared Mode S code${data.splitCodes === 1 ? '' : 's'} split`;
+        stats.title = `${n0(data.splitCodes)} Mode S codes turned up against more than one registration — a mis-filed hex fuses two aircraft `
+            + `into one impossible tail, so they're separated by the registration filed with each flight. `
+            + `${n0(data.unplacedFlights)} older flights under those codes predate the registration being logged and can't be `
+            + `attributed to either aircraft, so they're left out of the fleet figures.`;
+    }
     $('status').textContent = data.ready ? 'ready' : 'indexing…';
     $('status').className = data.ready ? 'status ok' : 'status';
     $('banner').hidden = !!data.ready;

@@ -20,6 +20,7 @@ static class AircraftRoutes
                 // One-off pass that recovers registrations for rows written before the log stored them.
                 repair = db.Log.RepairState,
                 repairDetail = db.Log.LastRepair,
+                repairDaysLeft = db.Log.RepairDaysLeft,
             },
         }));
 

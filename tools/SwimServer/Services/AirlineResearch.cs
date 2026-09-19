@@ -200,6 +200,9 @@ sealed class AirlineResearch
         t.Start();
     }
 
+    /// <summary>Mode S codes the feed files for more than one airframe — what the log's repair needs to target.</summary>
+    public IReadOnlyCollection<string> SharedCodes => _conflicted.Keys.ToArray();
+
     /// <summary>
     /// Rebuilds the whole index from the log shards. Used after the registration repair fills in rows that were
     /// unattributable when they were first read — without this they'd stay missing until the next restart. A

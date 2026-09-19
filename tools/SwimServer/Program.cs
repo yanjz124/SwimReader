@@ -224,7 +224,7 @@ var airlineWindowDays = int.TryParse(Environment.GetEnvironmentVariable("AIRLINE
 var airlineResearch = new AirlineResearch(aircraftDb.Log, aircraftDb.TailMeta, airportDir.Find,
     Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "airlines", "carriers.json"), airlineWindowDays);
 airlineResearch.Start();
-aircraftDb.StartFlightLog(onRepaired: airlineResearch.Reindex);
+aircraftDb.StartFlightLog(() => airlineResearch.SharedCodes, airlineResearch.Reindex);
 
 // FAA LADD (Limiting Aircraft Data Displayed) compliance — load the block list
 // before Solace connects so blocked aircraft are dropped from the first message.

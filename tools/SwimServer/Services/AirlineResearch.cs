@@ -200,6 +200,27 @@ sealed class AirlineResearch
         t.Start();
     }
 
+    /// <summary>
+    /// Rebuilds the whole index from the log shards. Used after the registration repair fills in rows that were
+    /// unattributable when they were first read — without this they'd stay missing until the next restart. A
+    /// flight logged live during the rebuild may be counted twice or missed; it's a one-off, and the window
+    /// re-reads itself on the next restart anyway.
+    /// </summary>
+    public void Reindex()
+    {
+        _tails.Clear();
+        _regOfKey.Clear();
+        _conflicted.Clear();
+        Interlocked.Exchange(ref _flights, 0);
+        Interlocked.Exchange(ref _unattributable, 0);
+        Interlocked.Exchange(ref _oldest, long.MaxValue);
+        long n = _log.ScanAll(_now() - WindowDays * 86400L, Add);
+        foreach (var tail in _tails.Values) MergedOf(tail);
+        _cache.Clear();
+        Console.WriteLine($"[AIRLINES] Re-indexed {n:N0} flights after the registration repair: "
+                          + $"{_tails.Count:N0} tails, {_conflicted.Count:N0} shared Mode S code(s)");
+    }
+
     private void Add(string key, AircraftFlightLog.Entry e)
     {
         long t = e.T;

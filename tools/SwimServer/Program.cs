@@ -207,7 +207,8 @@ PersistenceBudget.Watch("flight-history", historyDir, "*.jsonl");
 // current thereafter.
 var aircraftDb = new AircraftDb(Directory.GetCurrentDirectory(), historyDir);
 aircraftDb.Load();
-aircraftDb.StartFlightLog();
+// (started below, once airline research exists — the log's one-off registration repair needs to tell it to
+// rebuild, since rows it recovers were unattributable when the index first read them)
 
 // Airline research — per-carrier route network, fleet utilization and operating patterns from the flight log.
 // Airport coordinates come from OurAirports (worldwide, cached monthly) with NASR as the US fallback. The index
@@ -223,6 +224,7 @@ var airlineWindowDays = int.TryParse(Environment.GetEnvironmentVariable("AIRLINE
 var airlineResearch = new AirlineResearch(aircraftDb.Log, aircraftDb.TailMeta, airportDir.Find,
     Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "airlines", "carriers.json"), airlineWindowDays);
 airlineResearch.Start();
+aircraftDb.StartFlightLog(onRepaired: airlineResearch.Reindex);
 
 // FAA LADD (Limiting Aircraft Data Displayed) compliance — load the block list
 // before Solace connects so blocked aircraft are dropped from the first message.

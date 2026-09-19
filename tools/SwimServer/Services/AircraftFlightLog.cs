@@ -436,14 +436,22 @@ sealed class AircraftFlightLog
     }
 
     /// <summary>Start the background writer and the one-time, resumable history backfill.</summary>
-    public void Start(Action<HistoryRow>? onBackfillRow = null, Action? onBackfillComplete = null)
+    /// <param name="onRepaired">
+    /// Called once if the registration repair actually recovered rows — in-memory indexes built from the log
+    /// (airline research) are stale at that point and need rebuilding to see them.
+    /// </param>
+    public void Start(Action<HistoryRow>? onBackfillRow = null, Action? onBackfillComplete = null, Action? onRepaired = null)
     {
         if (Interlocked.Exchange(ref _started, 1) == 1) return;
         Directory.CreateDirectory(_dir);
         MigrateFormat();
         RepairTornTails();
         _ = Task.Run(WriterLoop);
-        var t = new Thread(() => Backfill(onBackfillRow, onBackfillComplete))
+        var t = new Thread(() =>
+        {
+            Backfill(onBackfillRow, onBackfillComplete);
+            RepairRegistrationsOnce(onRepaired);
+        })
         {
             IsBackground = true,
             Name = "flightlog-backfill",
@@ -486,6 +494,157 @@ sealed class AircraftFlightLog
     }
 
     private static readonly Regex DayFile = new(@"^\d{4}-\d{2}-\d{2}\.jsonl$", RegexOptions.Compiled);
+
+    public readonly record struct RepairResult(int SharedKeys, int RowsFilled, int ShardsRewritten, long HistoryLines);
+
+    // Bump to re-run the repair on an existing log (e.g. after more shared codes have come to light).
+    private const int RepairVersion = 1;
+
+    /// <summary>
+    /// Runs <see cref="RepairRegistrations"/> once per log, after the backfill, recording that it ran so a
+    /// restart doesn't re-scan the whole archive. Costs one pass over the history files, throttled the same way.
+    /// </summary>
+    private void RepairRegistrationsOnce(Action? onRepaired = null)
+    {
+        var marker = Path.Combine(_dir, "registration-repair.txt");
+        try
+        {
+            if (File.Exists(marker) && int.TryParse(File.ReadAllText(marker).Trim(), out var v) && v >= RepairVersion) return;
+            var r = RepairRegistrations();
+            File.WriteAllText(marker, RepairVersion + "\n");
+            if (r.RowsFilled > 0)
+            {
+                Console.WriteLine($"[AIRCRAFT] Registration repair complete: {r.RowsFilled:N0} row(s) recovered under "
+                                  + $"{r.SharedKeys:N0} shared Mode S code(s)");
+                onRepaired?.Invoke();
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Registration repair failed: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Fills in the registration on rows written before the log recorded one, but only under Mode S codes the
+    /// feed files for more than one airframe — those are the rows that can't otherwise be attributed to either
+    /// aircraft, and the ones that make a tail look like two aeroplanes at once. Other reg-less rows are left
+    /// alone: their key is unambiguous, so nothing is gained by touching them.
+    ///
+    /// Safe to re-run (a row that already has a registration is never modified) and safe to run while the log
+    /// is being appended to: each shard is read, rewritten and replaced while holding that shard's lock, which
+    /// is the same lock the writer takes, so a queued append lands either before the read or after the replace.
+    /// </summary>
+    public RepairResult RepairRegistrations(Action<string>? log = null)
+    {
+        log ??= s => Console.WriteLine("[AIRCRAFT] " + s);
+        if (!Directory.Exists(_historyDir) || !Directory.Exists(_dir)) return default;
+        var days = Directory.GetFiles(_historyDir, "*.jsonl")
+            .Select(Path.GetFileName).Where(n => n != null && DayFile.IsMatch(n)).Select(n => n!)
+            .OrderByDescending(n => n, StringComparer.Ordinal).ToList();
+        if (days.Count == 0) return default;
+
+        // Pass 1 — which Mode S codes does the feed file against more than one registration?
+        var firstReg = new Dictionary<string, string>(StringComparer.Ordinal);
+        var shared = new HashSet<string>(StringComparer.Ordinal);
+        long lines = 0;
+        var burst = Stopwatch.StartNew();
+        foreach (var name in days)
+            ReadDay(name, line =>
+            {
+                lines++;
+                var hex = NormHex(Field(line, "modeSCode", 0, line.Length));
+                if (hex == null) return;
+                var reg = NormReg(Field(line, "registration", 0, line.Length));
+                if (reg == null) return;
+                if (!firstReg.TryGetValue(hex, out var seen)) firstReg[hex] = reg;
+                else if (seen != reg) shared.Add(hex);
+            }, burst);
+        if (shared.Count == 0)
+        {
+            log($"Registration repair: no shared Mode S codes in {days.Count} history day(s) ({lines:N0} lines)");
+            return new RepairResult(0, 0, 0, lines);
+        }
+
+        // Pass 2 — collect the flights of those codes, with the registration that flew each one.
+        var byKey = new Dictionary<string, List<(Entry E, string Reg)>>(StringComparer.Ordinal);
+        foreach (var name in days)
+            ReadDay(name, line =>
+            {
+                // Cheap field extraction first: only a handful of codes are shared, so this skips the full
+                // parse for virtually every line.
+                var hex = NormHex(Field(line, "modeSCode", 0, line.Length));
+                if (hex == null || !shared.Contains(hex)) return;
+                var h = ParseHistoryLine(line);
+                if (h == null || !h.Value.Flew) return;
+                var row = h.Value.Row;
+                if (string.IsNullOrEmpty(row.Reg) || !shared.Contains(row.Key)) return;
+                var e = MakeEntry(h.Value.Dep, h.Value.First, h.Value.Last, row.Cs, row.O, row.D, row.Op, row.Reg);
+                if (e.T <= 0) return;
+                if (!byKey.TryGetValue(row.Key, out var list)) byKey[row.Key] = list = new List<(Entry, string)>();
+                list.Add((e, e.Reg));
+            }, burst);
+
+        // Pass 3 — rewrite only the shards holding those codes, filling the blank registration where a history
+        // flight matches the row. Matching is the same rule the log uses for duplicates.
+        int filled = 0, shards = 0;
+        foreach (var shard in byKey.Keys.Select(ShardOf).Distinct())
+        {
+            var path = ShardPath(shard);
+            lock (_shardLocks[shard])
+            {
+                string? text;
+                try { text = File.Exists(path) ? File.ReadAllText(path) : null; }
+                catch (IOException) { continue; }
+                if (string.IsNullOrEmpty(text)) continue;
+                var sb = new StringBuilder(text.Length + 4096);
+                int before = filled;
+                foreach (var line in text.Split('\n'))
+                {
+                    if (line.Length == 0) continue;
+                    if (TryParseLine(line, out var key, out var e) && e.Reg.Length == 0
+                        && byKey.TryGetValue(key, out var candidates))
+                    {
+                        var hit = candidates.FirstOrDefault(c => SameFlight(c.E, e));
+                        if (hit.Reg is { Length: > 0 })
+                        {
+                            AppendLine(sb, key, e with { Reg = hit.Reg });
+                            filled++;
+                            continue;
+                        }
+                    }
+                    sb.Append(line).Append('\n');
+                }
+                if (filled == before) continue;
+                try
+                {
+                    var tmp = path + ".repair";
+                    File.WriteAllText(tmp, sb.ToString());
+                    File.Move(tmp, path, overwrite: true);   // same volume → atomic replace
+                    shards++;
+                }
+                catch (Exception ex) { log($"Registration repair: shard {shard:x3} failed: {ex.Message}"); }
+            }
+            if (burst.ElapsedMilliseconds >= 100) { Thread.Sleep(100); burst.Restart(); }
+        }
+        log($"Registration repair: {shared.Count:N0} shared Mode S code(s); filled {filled:N0} row(s) across {shards:N0} shard(s)");
+        return new RepairResult(shared.Count, filled, shards, lines);
+    }
+
+    /// <summary>Streams one history day through <paramref name="onLine"/>, throttled like the backfill.</summary>
+    private void ReadDay(string name, Action<string> onLine, Stopwatch burst)
+    {
+        try
+        {
+            using var fs = new FileStream(Path.Combine(_historyDir, name), FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 1 << 16);
+            using var sr = new StreamReader(fs);
+            string? line;
+            while ((line = sr.ReadLine()) != null)
+            {
+                if (burst.ElapsedMilliseconds >= 100) { Thread.Sleep(100); burst.Restart(); }
+                onLine(line);
+            }
+        }
+        catch (IOException) { }
+    }
 
     private void Backfill(Action<HistoryRow>? onRow, Action? onComplete)
     {

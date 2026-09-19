@@ -377,11 +377,11 @@ sealed class AircraftDb
     /// scan also creates records for airframes that only appear in older history, so every logged tail is
     /// browsable (this replaces the old 60-second first-run seed).
     /// </summary>
-    public void StartFlightLog() => _log.Start(OnBackfillRow, () =>
+    public void StartFlightLog(Action? onRepaired = null) => _log.Start(OnBackfillRow, () =>
     {
         lock (_backfillCreated) _backfillCreated.Clear();
         Save();
-    });
+    }, onRepaired);
 
     /// <summary>Every dated flight for this airframe, oldest first. Also reads the other key form it may have been
     /// logged under (Mode S hex vs REG:) before its Mode S code was known.</summary>

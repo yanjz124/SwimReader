@@ -14,8 +14,12 @@ namespace SwimServer;
 /// flight plans have neither (mostly PROPOSED plans that were refiled, cancelled or never activated) and would show
 /// as phantom flights.
 ///
-/// Storage: append-only CSV lines <c>key,dep,first,last,callsign,origin,dest,operator</c> (epoch seconds; dep is 0
-/// when the feed never gave an actual departure time), sharded by a hash of the airframe key into 1,024 files under
+/// Storage: append-only CSV lines <c>key,dep,first,last,callsign,origin,dest,operator,registration</c> (epoch seconds;
+/// dep is 0 when the feed never gave an actual departure time). The registration is stored per entry, not just per
+/// key, because the key is normally the Mode S hex and operators do file the wrong one: ~0.7% of hex codes turn up
+/// against two or more registrations (a one-digit typo like N604SK/N606SK, or a placeholder hex shared by a dozen
+/// unrelated airframes), which otherwise fuses two aeroplanes into one impossible tail. With the registration on the
+/// row, a conflicted key can be split back apart. Rows are sharded by a hash of the airframe key into 1,024 files under
 /// aircraft-db/flights/. Sharding avoids one tiny file per tail (tens of thousands of 4 KB blocks on the SD card)
 /// while keeping a tail lookup to a scan of ~1/1024 of the log.
 ///
@@ -31,7 +35,8 @@ namespace SwimServer;
 /// </summary>
 sealed class AircraftFlightLog
 {
-    public readonly record struct Entry(long Dep, long First, long Last, string Cs, string O, string D, string Op = "")
+    public readonly record struct Entry(long Dep, long First, long Last, string Cs, string O, string D, string Op = "",
+        string Reg = "")
     {
         /// <summary>Best time for the flight: actual departure, else first seen, else last seen.</summary>
         public long T => Dep > 0 ? Dep : First > 0 ? First : Last;
@@ -133,11 +138,12 @@ sealed class AircraftFlightLog
     private static string Clean(string? s) =>
         string.IsNullOrWhiteSpace(s) ? "" : s.Trim().ToUpperInvariant().Replace(',', ' ').Replace('\n', ' ').Replace('\r', ' ');
 
-    public static Entry MakeEntry(long dep, long first, long last, string? cs, string? o, string? d, string? op = null)
+    public static Entry MakeEntry(long dep, long first, long last, string? cs, string? o, string? d, string? op = null,
+        string? reg = null)
     {
         long cap = DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 300;   // a stray future time never sorts first
         long Fix(long v) => v <= 0 ? 0 : Math.Min(v, cap);
-        return new Entry(Fix(dep), Fix(first), Fix(last), Clean(cs), Clean(o), Clean(d), Clean(op));
+        return new Entry(Fix(dep), Fix(first), Fix(last), Clean(cs), Clean(o), Clean(d), Clean(op), Clean(reg));
     }
 
     /// <summary>
@@ -184,7 +190,8 @@ sealed class AircraftFlightLog
 
     private static void AppendLine(StringBuilder sb, string key, in Entry e) =>
         sb.Append(key).Append(',').Append(e.Dep).Append(',').Append(e.First).Append(',').Append(e.Last)
-          .Append(',').Append(e.Cs).Append(',').Append(e.O).Append(',').Append(e.D).Append(',').Append(e.Op).Append('\n');
+          .Append(',').Append(e.Cs).Append(',').Append(e.O).Append(',').Append(e.D).Append(',').Append(e.Op)
+          .Append(',').Append(e.Reg).Append('\n');
 
     private void WriteBatch(Dictionary<int, StringBuilder> batch)
     {
@@ -244,12 +251,14 @@ sealed class AircraftFlightLog
         key = "";
         e = default;
         var p = line.Split(',');
-        // 8 fields since v3 (operator); 7-field lines predate it and read with a blank operator.
-        if ((p.Length != 7 && p.Length != 8)
+        // 9 fields now (registration); 8-field lines predate it (v3, operator) and 7-field lines predate that.
+        // Widening the row rather than bumping LogVersion keeps every existing line readable — a bump wipes the
+        // shards and re-imports, which silently loses anything older than the flight-history archive.
+        if ((p.Length < 7 || p.Length > 9)
             || !long.TryParse(p[1], out var dep) || !long.TryParse(p[2], out var first) || !long.TryParse(p[3], out var last))
             return false;
         key = p[0];
-        e = new Entry(dep, first, last, p[4], p[5], p[6], p.Length == 8 ? p[7] : "");
+        e = new Entry(dep, first, last, p[4], p[5], p[6], p.Length >= 8 ? p[7] : "", p.Length >= 9 ? p[8] : "");
         return true;
     }
 
@@ -332,7 +341,7 @@ sealed class AircraftFlightLog
                 var m = merged[i];
                 merged[i] = new Entry(m.Dep > 0 ? m.Dep : e.Dep, MinPositive(m.First, e.First),
                                       Math.Max(m.Last, e.Last), m.Cs, Longer(m.O, e.O), Longer(m.D, e.D),   // keep ICAO form
-                                      m.Op.Length > 0 ? m.Op : e.Op);
+                                      m.Op.Length > 0 ? m.Op : e.Op, m.Reg.Length > 0 ? m.Reg : e.Reg);
             }
             else
             {
@@ -378,12 +387,13 @@ sealed class AircraftFlightLog
                     if (AptKey(x.O) == AptKey(k.O) && AptKey(x.D) == AptKey(k.D))
                     {
                         k = new Entry(k.Dep, MinPositive(k.First, x.First), Math.Max(k.Last, x.Last), k.Cs,
-                                      Longer(k.O, x.O), Longer(k.D, x.D), k.Op.Length > 0 ? k.Op : x.Op);
+                                      Longer(k.O, x.O), Longer(k.D, x.D), k.Op.Length > 0 ? k.Op : x.Op,
+                                      k.Reg.Length > 0 ? k.Reg : x.Reg);
                         remove.Add(i);
                     }
                     else
                     {
-                        list[i] = new Entry(0, x.First, x.Last, x.Cs, x.O, x.D, x.Op);
+                        list[i] = new Entry(0, x.First, x.Last, x.Cs, x.O, x.D, x.Op, x.Reg);
                     }
                 }
                 list[keep] = k;
@@ -520,7 +530,7 @@ sealed class AircraftFlightLog
                         onRow?.Invoke(h.Value.Row);          // the airframe is real even if this plan never flew
                         if (!h.Value.Flew) continue;          // …but only flights that flew go in the log
                         var row = h.Value.Row;
-                        var e = MakeEntry(h.Value.Dep, h.Value.First, h.Value.Last, row.Cs, row.O, row.D, row.Op);
+                        var e = MakeEntry(h.Value.Dep, h.Value.First, h.Value.Last, row.Cs, row.O, row.D, row.Op, row.Reg);
                         var key = row.Key;
                         if (e.T <= 0 || key.Contains(',') || SeenRecently(key, e)) continue;
                         int s = ShardOf(key);

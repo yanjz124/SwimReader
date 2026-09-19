@@ -56,7 +56,7 @@ sealed class AirlineResearch
         public List<CeasedCarrier> CeasedSince2020 { get; set; } = new();
     }
 
-    private readonly record struct Packed(int Dep, int First, int Last, int Cs, int O, int D, int Op);
+    private readonly record struct Packed(int Dep, int First, int Last, int Cs, int O, int D, int Op, int Reg);
 
     private sealed class Tail
     {
@@ -118,6 +118,9 @@ sealed class AirlineResearch
     public int WindowDays { get; }
 
     private readonly ConcurrentDictionary<string, Tail> _tails = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _regOfKey = new(StringComparer.Ordinal);   // key → first registration seen
+    private readonly ConcurrentDictionary<string, byte> _conflicted = new(StringComparer.Ordinal);   // keys covering 2+ airframes
+    private long _unattributable;   // rows under a conflicted key with no registration to place them by
     private readonly object _internLock = new();
     private readonly Dictionary<string, int> _ids = new(StringComparer.Ordinal) { [""] = 0 };
     private volatile string[] _strs = new string[1 << 14];
@@ -201,8 +204,11 @@ sealed class AirlineResearch
     {
         long t = e.T;
         if (t < EpochBase || t < _now() - WindowDays * 86400L) return;
-        var p = new Packed(Pack(e.Dep), Pack(e.First), Pack(e.Last), Intern(e.Cs), Intern(e.O), Intern(e.D), Intern(e.Op));
-        var tail = _tails.GetOrAdd(key, _ => new Tail());
+        var p = new Packed(Pack(e.Dep), Pack(e.First), Pack(e.Last), Intern(e.Cs), Intern(e.O), Intern(e.D),
+                           Intern(e.Op), Intern(e.Reg));
+        var id = TailIdFor(key, e.Reg);
+        if (id == null) { Interlocked.Increment(ref _unattributable); return; }
+        var tail = _tails.GetOrAdd(id, _ => new Tail());
         lock (tail)
         {
             tail.Raw.Add(p);
@@ -211,6 +217,78 @@ sealed class AirlineResearch
         Interlocked.Increment(ref _flights);
         long o;
         while (t < (o = Interlocked.Read(ref _oldest)) && Interlocked.CompareExchange(ref _oldest, t, o) != o) { }
+    }
+
+    // ── Airframe identity ────────────────────────────────────────────────────────
+    // The log key is normally the Mode S hex, but ~0.7% of hex codes are filed by more than one
+    // registration — a one-digit typo (N604SK/N606SK) or a placeholder hex shared by a crowd of unrelated
+    // airframes. Left alone they fuse into one impossible tail: we measured a "CRJ7" flying 311 legs in 30
+    // days at 13.85 air hours a day, with an ORD-based and a DFW-based chain running at the same time, which
+    // is also where most of the "this leg doesn't connect to the last one" markers came from. So the first
+    // registration seen for a hex keeps the plain key, and any other registration gets its own tail.
+    private const char SplitChar = '~';
+    private static string SplitId(string key, string reg) => key + SplitChar + reg;
+    public static string HexOfTailId(string id)
+    {
+        int i = id.IndexOf(SplitChar);
+        return i < 0 ? id : id.Substring(0, i);
+    }
+    public static string? RegOfTailId(string id)
+    {
+        int i = id.IndexOf(SplitChar);
+        return i < 0 ? null : id.Substring(i + 1);
+    }
+
+    /// <summary>
+    /// Which tail this entry belongs to, or null when it can't be attributed — a row with no registration
+    /// under a key we now know carries several. Those predate the registration column; they're dropped from
+    /// the index rather than being credited to whichever airframe happens to hold the key, and they age out
+    /// of the window on their own.
+    /// </summary>
+    private string? TailIdFor(string key, string reg)
+    {
+        if (key.StartsWith("REG:", StringComparison.Ordinal)) return key;      // already a registration
+        if (reg.Length == 0) return _conflicted.ContainsKey(key) ? null : key;
+        var owner = _regOfKey.GetOrAdd(key, reg);
+        if (owner == reg) return key;
+        // Second registration under this key: split it, and move the entries already filed under the plain
+        // key that belong to other airframes (or to nobody) out of it.
+        if (_conflicted.TryAdd(key, 0)) SplitExisting(key, owner);
+        return SplitId(key, reg);
+    }
+
+    /// <summary>Re-files a key's accumulated entries once it turns out to cover more than one airframe.</summary>
+    private void SplitExisting(string key, string owner)
+    {
+        if (!_tails.TryGetValue(key, out var tail)) return;
+        List<Packed> moved;
+        lock (tail)
+        {
+            moved = tail.Raw.Where(p => Str(p.Reg) != owner).ToList();
+            if (moved.Count == 0) return;
+            tail.Raw.RemoveAll(p => Str(p.Reg) != owner);
+            tail.Merged = null;
+        }
+        foreach (var p in moved)
+        {
+            var reg = Str(p.Reg);
+            if (reg.Length == 0) { Interlocked.Increment(ref _unattributable); Interlocked.Decrement(ref _flights); continue; }
+            var t2 = _tails.GetOrAdd(SplitId(key, reg), _ => new Tail());
+            lock (t2) { t2.Raw.Add(p); t2.Merged = null; }
+        }
+    }
+
+    /// <summary>
+    /// Identity for a tail id. A split id ("hex~REG") has no aircraft-DB record of its own — the DB is keyed
+    /// the same way the log is — so prefer a record filed under that registration and otherwise borrow the
+    /// hex's record, correcting the registration to the one this tail actually flew under.
+    /// </summary>
+    private TailMeta? MetaFor(string id)
+    {
+        var reg = RegOfTailId(id);
+        if (reg == null) return _meta(id);
+        var m = _meta("REG:" + reg) ?? _meta(HexOfTailId(id));
+        return m == null ? null : m with { Key = id, Reg = reg, Hex = HexOfTailId(id) };
     }
 
     private static int Pack(long t) => t <= EpochBase ? 0 : (int)(t - EpochBase);
@@ -249,7 +327,7 @@ sealed class AirlineResearch
                 var list = new List<AircraftFlightLog.Entry>(tail.Raw.Count);
                 foreach (var p in tail.Raw)
                     list.Add(new AircraftFlightLog.Entry(Unpack(p.Dep), Unpack(p.First), Unpack(p.Last),
-                                                         Str(p.Cs), Str(p.O), Str(p.D), Str(p.Op)));
+                                                         Str(p.Cs), Str(p.O), Str(p.D), Str(p.Op), Str(p.Reg)));
                 tail.Merged = AircraftFlightLog.Merge(list).ToArray();
             }
             return tail.Merged;
@@ -294,6 +372,10 @@ sealed class AirlineResearch
         tails = _tails.Count,
         carriers = _carriers.Count,
         catalogAsOf = _catalogAsOf,
+        // Mode S codes the feed filed against more than one registration, split back into separate tails,
+        // and the rows too old to carry a registration that therefore can't be placed on either.
+        splitKeys = _conflicted.Count,
+        unplacedFlights = Interlocked.Read(ref _unattributable),
     };
 
     // ── Catalog + operator resolution ───────────────────────────────────────────────
@@ -464,7 +546,7 @@ sealed class AirlineResearch
                 if (p.Length == 0 || f.T > now + 300) continue;
                 if (!metaLoaded)
                 {
-                    meta = _meta(key);
+                    meta = MetaFor(key);
                     metaLoaded = true;
                     if (!reveal && meta?.Blocked == true) break;
                 }
@@ -571,7 +653,7 @@ sealed class AirlineResearch
             bool flies = false;
             for (int i = i0; i < all.Length && !flies; i++) flies = Prefix(all[i].Cs) == icao;
             if (!flies) continue;
-            var meta = _meta(key);
+            var meta = MetaFor(key);
             if (!reveal && meta?.Blocked == true) continue;
 
             var row = new TailRow
@@ -847,7 +929,7 @@ sealed class AirlineResearch
     public byte[]? TailJson(string key, int days, bool reveal)
     {
         if (string.IsNullOrWhiteSpace(key) || !_tails.TryGetValue(key, out var tail)) return null;
-        var meta = _meta(key);
+        var meta = MetaFor(key);
         if (!reveal && meta?.Blocked == true) return null;
         long now = _now(), start = now - days * 86400L;
         var all = MergedOf(tail);

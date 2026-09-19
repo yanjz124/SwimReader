@@ -71,7 +71,7 @@ sealed class AircraftDb
         long firstSeen = events.Count > 0 ? AircraftFlightLog.ParseEpoch(events[0].Time) : 0;
         _log.Record(KeyFor(hex, reg), AircraftFlightLog.MakeEntry(
             AircraftFlightLog.ParseEpoch(f.ActualDepartureTime), firstSeen, AircraftFlightLog.Epoch(seen),
-            f.Callsign, f.Origin, f.Destination, f.Operator));
+            f.Callsign, f.Origin, f.Destination, f.Operator, reg));
     }
 
     private void Upsert(string? hex, string? reg, string? selcal, string? type, string? op,
@@ -390,7 +390,14 @@ sealed class AircraftDb
         var keys = new List<string> { rec.Key };
         if (rec.Icao24 != null) keys.Add(rec.Icao24);
         if (rec.Registration != null) keys.Add("REG:" + rec.Registration);
-        return _log.Read(keys);
+        var all = _log.Read(keys);
+        // A Mode S code the feed files for two different airframes (see AircraftFlightLog) would otherwise
+        // list both aircraft's flights here as if one aeroplane flew them all. When the rows disagree on
+        // registration, show only this airframe's. Rows from before the registration column can't be placed
+        // either way, so they're left out rather than credited to whichever record holds the key.
+        if (rec.Registration != null && all.Select(e => e.Reg).Where(r => r.Length > 0).Distinct().Take(2).Count() > 1)
+            all = all.Where(e => e.Reg == rec.Registration).ToList();
+        return all;
     }
 
     /// <summary>Identity for one flight-log key, for airline research (null when no record exists).</summary>

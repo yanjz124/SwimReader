@@ -1307,7 +1307,6 @@ function drawOverlay() {
             if (!f || f.latitude == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
-            if (isCidRecycled(gufi, f)) continue;
             if (manuallyHidden.has(gufi)) continue;
 
             const isFdb = shouldShowFdb(gufi, classifyTrack(f));
@@ -1340,7 +1339,6 @@ function drawOverlay() {
             if (f.trackVelocityX == null || f.trackVelocityY == null) continue;
             if (!isVisible(f)) continue;
             if (isDedupHidden(gufi, f)) continue;
-            if (isCidRecycled(gufi, f)) continue;
             if (manuallyHidden.has(gufi)) continue;
             if (isCoasting(f)) continue;  // no velocity vector for coast tracks
             if (!showFdb || !shouldShowFdb(gufi, classifyTrack(f))) continue;
@@ -2151,6 +2149,22 @@ function effAgeSec(f) {
     return Math.max(f.posAge != null ? f.posAge : 0, clientAgeSec(f));
 }
 
+// How long a silent ACTIVE track stays on the scope.
+// SFDPS routinely goes quiet on a GUFI for 5+ minutes and then resumes on the SAME GUFI, so dropping
+// every track at 300s made live aircraft blink off and pop back mid-flight. Now 300s only hides a track
+// when a live sibling GUFI is actually carrying the flight (the inter-ARTCC handoff case this guard was
+// written for) — with nothing else to show we keep drawing it, already rendered as a coast track, until
+// the hard drop. The server sends an explicit "remove" when a flight really ends, so we needn't guess.
+const STALE_HIDE_SEC = 300;    // silent, and a live sibling is carrying the flight → hand over to it
+const STALE_DROP_SEC = 1200;   // silent with nothing else to show → give up
+function staleHidden(f) {
+    if (f.flightStatus !== 'ACTIVE' || f.handoffEvent) return false;
+    const age = effAgeSec(f);
+    if (age <= STALE_HIDE_SEC) return false;
+    if (age > STALE_DROP_SEC) return true;
+    return !!(f.callsign && activeCallsignSet.has(f.callsign));
+}
+
 function isVisible(f) {
     if (f.latitude == null || f.longitude == null) return false;
     // Allow DROPPED flights briefly — 1 minute grace for handoff transitions where
@@ -2163,10 +2177,9 @@ function isVisible(f) {
     // selected, so it's hidden even in "All" where the callsign dedup doesn't run).
     if (f.flightStatus === 'DROPPED' && f.callsign && activeCallsignSet.has(f.callsign)) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
-    // Hide stale ACTIVE flights — no position update for >5 min means track is lost
-    // (SFDPS can have gaps during inter-facility handoff transitions). Uses effective age
-    // so a GUFI the server stopped sending (handed off to another ARTCC) ages out too.
-    if (f.flightStatus === 'ACTIVE' && effAgeSec(f) > 300 && !f.handoffEvent) return false;
+    // Hide a silent ACTIVE track only once a live sibling is carrying the flight (or it's been silent
+    // long enough to give up entirely) — see staleHidden().
+    if (staleHidden(f)) return false;
 
     // Altitude filter (reported altitude in feet → FL in hundreds)
     // Exempt: FDB tracks, and any track the user explicitly toggled (fdbOverrides entry)
@@ -2254,9 +2267,14 @@ function getCid(f) {
     let cid;
     if (myFacility) {
         cid = (f.computerIds && f.computerIds[myFacility]) || '';
+        // This facility recycled the CID to a different flight — the number now belongs to that one, so
+        // don't label this track with it, and don't go looking for it on a sibling either. (The track
+        // itself stays on the scope: a recycled CID says nothing about whether THIS aircraft is still
+        // flying, and hiding it outright made live targets vanish mid-flight.)
+        if (f.gufi && isCidRecycled(f.gufi, f)) cid = '';
         // Fallback: the displayed GUFI may not carry this facility's CID (it lives on a sibling
         // GUFI of the same callsign after a handoff) — pull it from the per-callsign union.
-        if (!cid && f.callsign) cid = cidUnionByCallsign.get(f.callsign)?.[myFacility] || '';
+        else if (!cid && f.callsign) cid = cidUnionByCallsign.get(f.callsign)?.[myFacility] || '';
     } else {
         // No facility selected ("All") — show most recent CID from any facility
         cid = f.computerId || '';
@@ -2415,7 +2433,7 @@ function _cidEligible(f) {
     if (f.latitude == null || f.longitude == null) return false;
     if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) return false;
     if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') return false;
-    if (f.flightStatus === 'ACTIVE' && effAgeSec(f) > 300 && !f.handoffEvent) return false;
+    if (staleHidden(f)) return false;
     return true;
 }
 function _buildCidCache() {
@@ -3917,7 +3935,10 @@ function doRender() {
             if (f.latitude == null || f.longitude == null) continue;
             if (f.flightStatus === 'DROPPED' && (f.posAge == null || f.posAge > 60)) continue;
             if (f.flightStatus && f.flightStatus !== 'ACTIVE' && f.flightStatus !== 'DROPPED') continue;
-            if (f.flightStatus === 'ACTIVE' && effAgeSec(f) > 300 && !f.handoffEvent) continue;
+            // Same staleness rule as isVisible(), so a track that's still drawable can still win the
+            // slot — excluding it here would leave the callsign with no winner, which hides every
+            // sibling and takes the aircraft off the scope entirely.
+            if (staleHidden(f)) continue;
             const cs = f.callsign;
             const prev = bestGufiByCallsign.get(cs);
             if (!prev) { bestGufiByCallsign.set(cs, gufi); continue; }
@@ -3952,14 +3973,27 @@ function doRender() {
                 bestGufiByCallsign.set(cs, gufi);
             }
         }
+        // The guards above mirror isVisible()'s status/age checks but not its facility ones, so the
+        // winner can still be a GUFI that isVisible() then rejects (e.g. it just moved to another
+        // centre) — and because every sibling is dedup-hidden behind the winner, that made the whole
+        // aircraft disappear even though a perfectly showable sibling existed. Hand the slot over.
+        for (const [cs, gufi] of bestGufiByCallsign) {
+            const wf = flights.get(gufi);
+            if (wf && isVisible(wf)) continue;
+            for (const [g, f] of flights) {
+                if (f.callsign !== cs || g === gufi || !isVisible(f)) continue;
+                bestGufiByCallsign.set(cs, g);
+                break;
+            }
+        }
     }
 
     for (const [gufi, f] of flights) {
         if (!isVisible(f)) continue;
         // Skip duplicate callsigns — only show the best GUFI per callsign
         if (isDedupHidden(gufi, f)) continue;
-        // Skip flights whose CID has been recycled to another active flight
-        if (isCidRecycled(gufi, f)) continue;
+        // A CID recycled to another flight only means the NUMBER belongs to that one now — the aircraft
+        // is still up there, so it keeps its target and data block (minus the CID; see getCid).
         // Skip manually hidden flights (middle-click cycle or QX command)
         if (manuallyHidden.has(gufi)) continue;
         lastVisibleAt.set(gufi, now);  // stamp for grace period

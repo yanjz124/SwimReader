@@ -17,6 +17,9 @@ static class AircraftRoutes
                 backfillDone = db.Log.BackfillDone,
                 backfillTotal = db.Log.BackfillTotal,
                 backfillRunning = db.Log.BackfillRunning,
+                // One-off pass that recovers registrations for rows written before the log stored them.
+                repair = db.Log.RepairState,
+                repairDetail = db.Log.LastRepair,
             },
         }));
 

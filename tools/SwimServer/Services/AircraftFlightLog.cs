@@ -498,7 +498,12 @@ sealed class AircraftFlightLog
     public readonly record struct RepairResult(int SharedKeys, int RowsFilled, int ShardsRewritten, long HistoryLines);
 
     // Bump to re-run the repair on an existing log (e.g. after more shared codes have come to light).
-    private const int RepairVersion = 1;
+    private const int RepairVersion = 2;
+
+    /// <summary>What the one-off registration repair did, for /api/aircraft/stats — the only way to see it on
+    /// a deployed box without reading the log file.</summary>
+    public string RepairState { get; private set; } = "pending";
+    public RepairResult LastRepair { get; private set; }
 
     /// <summary>
     /// Runs <see cref="RepairRegistrations"/> once per log, after the backfill, recording that it ran so a
@@ -509,17 +514,25 @@ sealed class AircraftFlightLog
         var marker = Path.Combine(_dir, "registration-repair.txt");
         try
         {
-            if (File.Exists(marker) && int.TryParse(File.ReadAllText(marker).Trim(), out var v) && v >= RepairVersion) return;
-            var r = RepairRegistrations();
-            File.WriteAllText(marker, RepairVersion + "\n");
-            if (r.RowsFilled > 0)
+            if (File.Exists(marker) && int.TryParse(File.ReadAllText(marker).Trim(), out var v) && v >= RepairVersion)
             {
-                Console.WriteLine($"[AIRCRAFT] Registration repair complete: {r.RowsFilled:N0} row(s) recovered under "
-                                  + $"{r.SharedKeys:N0} shared Mode S code(s)");
-                onRepaired?.Invoke();
+                RepairState = $"already run (v{v})";
+                return;
             }
+            RepairState = "running";
+            var r = RepairRegistrations();
+            LastRepair = r;
+            File.WriteAllText(marker, RepairVersion + "\n");
+            RepairState = $"done: {r.RowsFilled:N0} row(s) filled under {r.SharedKeys:N0} shared code(s) "
+                          + $"from {r.HistoryLines:N0} history line(s), {r.ShardsRewritten:N0} shard(s) rewritten";
+            Console.WriteLine("[AIRCRAFT] Registration repair " + RepairState);
+            if (r.RowsFilled > 0) onRepaired?.Invoke();
         }
-        catch (Exception ex) { Console.WriteLine($"[AIRCRAFT] Registration repair failed: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            RepairState = "error: " + ex.Message;
+            Console.WriteLine($"[AIRCRAFT] Registration repair failed: {ex}");
+        }
     }
 
     /// <summary>

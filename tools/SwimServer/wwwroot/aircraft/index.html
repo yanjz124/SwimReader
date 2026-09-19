@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Aircraft Database</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛩️</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="/shared/common.css?v=3">
 <link rel="stylesheet" href="/flight-table/flight-table.css?v=7">
 <link rel="stylesheet" href="/shared/frame.css?v=4">
@@ -84,6 +85,15 @@
     .log-table .lroute.gap { color: #e0b34a; border-bottom: 1px dashed #6a5324; cursor: help; }
     .log-more { margin: 10px 0 4px; }
 
+    /* Where the airframe has been — small map pinned above the detail tabs */
+    #tailMapWrap { flex-shrink: 0; border-bottom: 1px solid #222; }
+    #tailMap { height: 190px; background: #0b0d10; }
+    .darktiles { filter: invert(1) hue-rotate(180deg) saturate(0.35) brightness(0.55) contrast(1.1); }
+    .mapnote { font-size: 10px; color: #555; padding: 3px 12px 4px; }
+    .leaflet-tooltip.tt { background: #0a0a0a; color: #ddd; border: 1px solid #444; font-family: inherit; font-size: 11px; box-shadow: none; }
+    .leaflet-tooltip.tt:before { display: none; }
+    .leaflet-container { font-family: inherit; background: #0b0d10; }
+
 </style>
 </head>
 <body>
@@ -120,6 +130,8 @@
             <span class="status-badge historical" id="detailOp"></span>
             <span class="detail-close" id="detailClose">&times;</span>
         </div>
+        <!-- Where this airframe has been, from its logged flights. Sits above the tabs so it's there on both. -->
+        <div id="tailMapWrap" hidden><div id="tailMap"></div><div class="mapnote" id="tailMapNote"></div></div>
         <div class="tab-bar">
             <div class="tab active" data-tab="airframe">AIRFRAME</div>
             <div class="tab" data-tab="flights">FLIGHTS<span class="event-count" id="flightCount"></span></div>
@@ -127,6 +139,7 @@
         <div class="detail-body" id="detailBody"></div>
     </div>
 </div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
 // ── Whole table in the browser, rendered virtually ─────────────────────────────
@@ -537,6 +550,7 @@ function closeDetail() {
     selectedId = null;
     currentDetail = null;
     detailPanel.classList.add('collapsed');
+    document.getElementById('tailMapWrap').hidden = true;
     updateSelectionClasses(prev, null);
     history.replaceState(null, '', '/aircraft' + location.hash);
 }
@@ -596,6 +610,112 @@ function renderActiveTab() {
     }
 }
 
+// ── Where this airframe has been ────────────────────────────────────────────
+// Great-circle line per logged leg, airports sized by how often the tail turned up there. Older legs are
+// dim and newer ones bright, so the recent pattern reads at a glance. Coordinates come from the airport
+// directory (/api/airports/find) — codes it doesn't know are simply left off the map.
+let tailMap = null, tailLayer = null, aptCoords = new Map();
+let tailFitPts = null;        // what the map should frame, until the user moves it themselves
+let tailUserMoved = false;
+const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+
+function gcPoints(a, b) {
+    const R = Math.PI / 180, D = 180 / Math.PI;
+    const p1 = a[0] * R, l1 = a[1] * R, p2 = b[0] * R, l2 = b[1] * R;
+    const d = 2 * Math.asin(Math.sqrt(Math.sin((p2 - p1) / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin((l2 - l1) / 2) ** 2));
+    if (d < 1e-6) return [a, b];
+    const n = 24, pts = [];
+    for (let i = 0; i <= n; i++) {
+        const f = i / n, A = Math.sin((1 - f) * d) / Math.sin(d), B = Math.sin(f * d) / Math.sin(d);
+        const x = A * Math.cos(p1) * Math.cos(l1) + B * Math.cos(p2) * Math.cos(l2);
+        const y = A * Math.cos(p1) * Math.sin(l1) + B * Math.cos(p2) * Math.sin(l2);
+        const z = A * Math.sin(p1) + B * Math.sin(p2);
+        pts.push([Math.atan2(z, Math.sqrt(x * x + y * y)) * D, Math.atan2(y, x) * D]);
+    }
+    for (let i = 1; i < pts.length; i++) {      // keep longitude continuous across the antimeridian
+        while (pts[i][1] - pts[i - 1][1] > 180) pts[i][1] -= 360;
+        while (pts[i][1] - pts[i - 1][1] < -180) pts[i][1] += 360;
+    }
+    return pts;
+}
+
+async function loadAirportCoords(codes) {
+    const missing = codes.filter(c => c && !aptCoords.has(c));
+    if (!missing.length) return;
+    try {
+        const r = await fetch('/api/airports/find?codes=' + encodeURIComponent(missing.join(',')));
+        if (!r.ok) return;
+        for (const a of (await r.json()).airports || [])
+            aptCoords.set(a.code, a.lat == null ? null : a);
+    } catch { /* leave them unmapped */ }
+}
+
+async function drawTailMap(id, list) {
+    const wrap = document.getElementById('tailMapWrap');
+    if (!list || !list.length) { wrap.hidden = true; return; }
+    await loadAirportCoords([...new Set(list.flatMap(f => [f.o, f.d]).filter(Boolean))]);
+    if (selectedId !== id) return;                 // user moved on while we were fetching
+    const legs = list.filter(f => aptCoords.get(f.o) && aptCoords.get(f.d));
+    if (!legs.length) { wrap.hidden = true; return; }
+    wrap.hidden = false;
+    if (!tailMap) {
+        const el = document.getElementById('tailMap');
+        tailMap = L.map(el, { preferCanvas: true, zoomControl: false, attributionControl: false, worldCopyJump: true })
+            .setView([39, -97], 3);
+        L.tileLayer(OSM_TILES, { maxZoom: 10, className: 'darktiles' }).addTo(tailMap);
+        tailLayer = L.layerGroup().addTo(tailMap);
+        // The panel is hidden when the map is built, so Leaflet's first size measurement is wrong and the
+        // frame comes out at the wrong zoom. Re-measure and re-frame whenever the container's size settles —
+        // but stop re-framing once the user has panned or zoomed it themselves.
+        if (window.ResizeObserver) {
+            let lastW = 0, lastH = 0;
+            new ResizeObserver(entries => {
+                const r = entries[entries.length - 1].contentRect;
+                // Ignore mid-layout sizes: framing against a collapsed container locks in a nonsense zoom.
+                if (r.width < 60 || r.height < 60) return;
+                if (Math.abs(r.width - lastW) < 1 && Math.abs(r.height - lastH) < 1) return;
+                lastW = r.width; lastH = r.height;
+                tailMap.invalidateSize();
+                if (tailFitPts && !tailUserMoved) tailMap.fitBounds(tailFitPts, { padding: [16, 16], maxZoom: 7 });
+            }).observe(el);
+        }
+        el.addEventListener('wheel', () => { tailUserMoved = true; }, { passive: true });
+        tailMap.on('dragstart', () => { tailUserMoved = true; });
+    }
+    tailMap.invalidateSize();
+    tailLayer.clearLayers();
+    const pts = [], visits = new Map();
+    legs.forEach((f, i) => {
+        const A = aptCoords.get(f.o), B = aptCoords.get(f.d);
+        const rel = legs.length > 1 ? i / (legs.length - 1) : 1;
+        tailLayer.addLayer(L.polyline(gcPoints([A.lat, A.lon], [B.lat, B.lon]),
+            { color: `rgba(57,210,192,${0.18 + 0.72 * rel})`, weight: 1 + 1.4 * rel })
+            .bindTooltip(`${esc(f.cs || '')} ${esc(f.o)} → ${esc(f.d)}<br>${utcText(f.dep || f.first || f.last)}`,
+                { sticky: true, className: 'tt' }));
+        pts.push([A.lat, A.lon], [B.lat, B.lon]);
+        visits.set(f.o, (visits.get(f.o) || 0) + 1);
+        visits.set(f.d, (visits.get(f.d) || 0) + 1);
+    });
+    for (const [code, n] of visits) {
+        const a = aptCoords.get(code);
+        tailLayer.addLayer(L.circleMarker([a.lat, a.lon],
+            { radius: 2 + Math.min(7, Math.sqrt(n) * 1.4), color: '#39d2c0', weight: 1, fillOpacity: 0.45 })
+            .bindTooltip(`<b>${esc(code)}</b> ${esc(a.city || a.name || '')} · ${n} visit${n === 1 ? '' : 's'}`, { className: 'tt' }));
+    }
+    const last = legs[legs.length - 1];
+    const lastApt = aptCoords.get(last.d);
+    tailLayer.addLayer(L.circleMarker([lastApt.lat, lastApt.lon], { radius: 6, color: '#fff', weight: 2, fill: false })
+        .bindTooltip('Last seen arriving here', { className: 'tt' }));
+    tailFitPts = pts;
+    tailUserMoved = false;
+    tailMap.invalidateSize();
+    tailMap.fitBounds(pts, { padding: [16, 16], maxZoom: 7 });
+    const unmapped = list.length - legs.length;
+    document.getElementById('tailMapNote').textContent =
+        `${visits.size} airports · ${legs.length.toLocaleString()} leg${legs.length === 1 ? '' : 's'} mapped`
+        + (unmapped > 0 ? ` · ${unmapped.toLocaleString()} without coordinates` : '');
+}
+
 // ── Flight log (FLIGHTS tab) ────────────────────────────────────────────────
 // Every dated flight for the selected tail from the server's permanent per-airframe log (oldest→newest on
 // the wire). Shown newest first; the DATE header flips the order; long logs render 300 rows at a time.
@@ -609,6 +729,7 @@ function updateFlightCount() {
 
 async function loadFlightLog(id) {
     flightLog = { id, list: null, error: false, shown: LOG_PAGE, asc: false };
+    document.getElementById('tailMapWrap').hidden = true;   // don't leave the previous tail's map up
     updateFlightCount();
     try {
         const r = await fetch('/api/aircraft/' + encodeURIComponent(id) + '/flights');
@@ -628,6 +749,7 @@ async function loadFlightLog(id) {
     if (flightLog && flightLog.id === id && selectedId === id) {
         updateFlightCount();
         if (activeTab === 'flights') detailBody.innerHTML = renderFlightLog();
+        drawTailMap(id, flightLog.list);
     }
 }
 

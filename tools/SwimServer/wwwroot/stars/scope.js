@@ -755,13 +755,45 @@ function sendFpUpdate(guid, fields) {
 }
 window.sendFpUpdate = sendFpUpdate;
 
+// The feed has no keepalive and fetch has no timeout, so a connection that dies silently — tab
+// backgrounded/frozen, laptop sleep, Wi-Fi change, a proxy dropping a slow reader — leaves
+// reader.read() (or a fresh fetch) pending FOREVER. The retry loop below then never gets another
+// turn and only a page refresh recovers. Every attempt therefore carries an AbortController, and:
+//   • a watchdog aborts it when no bytes have arrived for DSTARS_STALL_MS,
+//   • returning to the tab / the network coming back / a bfcache restore abort it immediately
+//     when the stream has gone quiet, so you reconnect the moment you look at the scope.
+// An abort surfaces as an exception, which drops into the normal reconnect path.
+const DSTARS_STALL_MS = 45000;   // generous: a very quiet facility can idle for a while
+let _dstarsAbort = null;         // AbortController of the in-flight attempt (null while backing off)
+let _dstarsKicked = false;       // reconnect right away instead of the normal 3 s backoff
+function dstarsKick(reason) {
+  if (!_dstarsAbort) return;
+  dstarsState.lastError = reason;
+  _dstarsKicked = true;
+  try { _dstarsAbort.abort(); } catch { /* already settled */ }
+}
+function dstarsQuietFor() { return Date.now() - (dstarsState.lastDataAt || 0); }
+
 async function startDstars() {
   const fac = dstarsFacility();
   const url = `/dstars/${encodeURIComponent(fac)}/updates`;
+  setInterval(() => {
+    if (_dstarsAbort && dstarsQuietFor() > DSTARS_STALL_MS) dstarsKick("stalled - reconnecting");
+  }, 5000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && dstarsQuietFor() > 5000) dstarsKick("resumed - reconnecting");
+  });
+  window.addEventListener("online", () => dstarsKick("network back - reconnecting"));
+  window.addEventListener("pageshow", (e) => { if (e.persisted) dstarsKick("restored - reconnecting"); });
+
   while (true) {
+    const ac = new AbortController();
+    _dstarsAbort = ac;
+    _dstarsKicked = false;
+    dstarsState.lastDataAt = Date.now();   // the watchdog also covers a fetch that never answers
     try {
       dstarsState.lastError = null;
-      const r = await fetch(url, { credentials: "omit" });
+      const r = await fetch(url, { credentials: "omit", signal: ac.signal });
       if (!r.ok) throw new Error("HTTP " + r.status);
       dstarsState.connected = true;
       const reader = r.body.getReader();
@@ -770,6 +802,7 @@ async function startDstars() {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        dstarsState.lastDataAt = Date.now();
         buf += dec.decode(value, { stream: true });
         let nl;
         while ((nl = buf.indexOf("\n")) >= 0) {
@@ -781,11 +814,12 @@ async function startDstars() {
         }
       }
     } catch (e) {
-      dstarsState.lastError = String(e).slice(0, 100);
-      dstarsState.connected = false;
+      if (!_dstarsKicked) dstarsState.lastError = String(e).slice(0, 100);
     }
-    // Reconnect with backoff
-    await new Promise(res => setTimeout(res, 3000));
+    _dstarsAbort = null;
+    dstarsState.connected = false;
+    // Reconnect: immediately after a deliberate kick, otherwise with the normal backoff.
+    await new Promise(res => setTimeout(res, _dstarsKicked ? 250 : 3000));
   }
 }
 

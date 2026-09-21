@@ -204,7 +204,10 @@
     if (ql) {
       const list = [];
       for (const s of ql.querySelectorAll("string")) list.push(s.textContent.trim());
-      window.prefSet.QuickLookedTCPs = list;
+      // DGScope's serializer writes an empty <QuickLookList/> into every saved profile. Only a list
+      // that actually names positions overrides the default (QL ALL); an empty one would silently
+      // turn quick-look off for everyone who loads a profile.
+      if (list.filter(Boolean).length) window.prefSet.QuickLookedTCPs = list;
     }
 
     // <SelectedBeaconCodes><string>...</SelectedBeaconCodes>

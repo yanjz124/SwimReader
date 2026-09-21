@@ -37,6 +37,10 @@ window.STARSV2 = true;
 const prefSet = {
   ScreenCenterPoint: { Latitude: 0, Longitude: 0 },   // set from vNAS facility location
   DisplayedMaps: [],
+  // Quick-look list (RadarWindow.QuickLookList). Defaults to ALL — every associated track shows a
+  // full data block — by user choice; `QALL` toggles it off (and back) for the session. A profile
+  // that actually lists positions overrides it (profile.js); an empty list doesn't.
+  QuickLookedTCPs: ["ALL"],
   RangeRingsDisplayed: true,                          // (WPF defaults via ShowRangeRings field)
   RangeRingLocation: { Latitude: 0, Longitude: 0 },
   RangeRingSpacing: 5,                                // PrefSet.cs line 30
@@ -1435,12 +1439,23 @@ function buildDataBlock(t, fp) {
 // DGScope conflates LDB+PDB into a single beacon-code-on-line-1 render
 // (Aircraft.cs:595-613); we split them so tracked tracks show the
 // callsign instead of the raw squawk, per user-visible STARS behaviour.
+// InFilter — RadarWindow.cs:6395-6400: the associated / unassociated altitude bracket. Shared by
+// the draw loop (which uses it to gate the data block) and the global quick-look gate.
+function inAltFilter(t, fp) {
+  const altFt = t.Altitude?.Value;
+  if (altFt == null) return true;
+  return fp
+    ? (altFt >= prefSet.AltitudeFilterAssociatedMin && altFt <= prefSet.AltitudeFilterAssociatedMax)
+    : (altFt >= prefSet.AltitudeFilterUnAssociatedMin && altFt <= prefSet.AltitudeFilterUnAssociatedMax);
+}
+
 function dataBlockMode(t, fp) {
   // Explicit per-track toggle (Aircraft._fdb when user clicks). This is the
   // "store" the FDB getter writes to; takes priority over the auto-derive.
-  if (t._forcedMode) return t._forcedMode;
-  // Emergency / SPC always promote (Aircraft.cs:158 fdb()).
-  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) return "FDB";
+  // Order follows the Aircraft.FDB getter (Aircraft.cs:119-136): Owned, then QuickLook, then
+  // ForceQuickLook, and only THEN the stored per-track toggle. Checking the toggle first (as this
+  // used to) let a track you'd once clicked down to an LDB stay an LDB after you quick-looked its
+  // position — or after you took ownership of it.
   // ForceQuickLook auto-FDB regardless of association (set by **<pos>).
   if (t._forceQuickLook) return "FDB";
   // Owned (sticky bool) auto-promotes to FDB per Aircraft.cs:119-136 FDB
@@ -1450,6 +1465,11 @@ function dataBlockMode(t, fp) {
   // release (cs:2775-2778). This is what keeps a track FDB after an
   // outbound handoff completes — Owned remains true from the prior frame.
   if (t._owned) return "FDB";
+  // QuickLook — derived once per frame in the drawTracks pre-pass (cs:5719-5742 + cs:6085), which
+  // matches the position from the flight plan OR the TAIS track side, excludes unassociated "*"
+  // tracks, and applies the global-Q filter gate. Recomputing it here from fp.Owner alone missed
+  // tracks whose position arrives only on the track side.
+  if (t._quickLook) return "FDB";
   // QuickLookList promotion — RadarWindow.cs:5685-5711. An aircraft is
   // QuickLook=true if any of:
   //   • QuickLookedTCPs contains its controlling position (or ALL/ALL+)
@@ -1457,11 +1477,10 @@ function dataBlockMode(t, fp) {
   //   • global RadarWindow.QuickLook is true AND track is in altitude filter
   // Associated-only check is done via fp.Owner presence; ALL/ALL+ only apply
   // when the track is associated (cs:5689-5690).
-  const associated = !!fp?.Owner;
-  const ql = prefSet.QuickLookedTCPs || [];
-  if (associated && (ql.includes("ALL") || ql.includes("ALL+"))) return "FDB";
-  if (fp?.Owner && (ql.includes(fp.Owner) || ql.includes(fp.Owner + "+"))) return "FDB";
-  if (prefSet.QuickLookAll) return "FDB";   // bare Key.Q toggle (cs:3308-3310)
+  // Emergency / SPC promote (Aircraft.cs:158 fdb() — port keeps this, see audit note F2).
+  if (t.Emergency || ["7500", "7600", "7700"].includes(t.Squawk)) return "FDB";
+  // Stored per-track toggle (Aircraft._fdb, click-to-toggle) — the getter's last resort.
+  if (t._forcedMode) return t._forcedMode;
   // Everything else → LDB. DGScope's FDB getter (Aircraft.cs:119-136) only
   // returns true for Owned / QuickLook / ForceQuickLook / stored _fdb. The
   // per-aircraft _fdb is toggled by clicking a non-owned track (cs:1438-1450
@@ -2541,6 +2560,12 @@ function drawTracks() {
     } else if (QuickLookList.includes(PositionInd + "+") || qlallplus) {
       t._quickLook     = true;
       t._quickLookPlus = true;
+    } else if (window.prefSet?.QuickLookAll && inAltFilter(t, fp)
+               && now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) <= LOST_TARGET_MS) {
+      // Global quick-look (Ctrl+Q) — RadarWindow.cs:6085-6086 applies it only to tracks inside the
+      // altitude filter that are still reporting.
+      t._quickLookPlus = false;
+      t._quickLook     = true;
     } else {
       t._quickLookPlus = false;
       t._quickLook     = false;
@@ -2568,13 +2593,7 @@ function drawTracks() {
     // whole track here meant an altitude filter ERASED traffic instead of reducing it to an
     // untagged return — and took your own owned/quick-looked aircraft with it, which the override
     // list at cs:5958 exists precisely to prevent.
-    const altFt = t.Altitude?.Value;
-    let inFilter = true;
-    if (altFt != null) {
-      inFilter = fp
-        ? (altFt >= prefSet.AltitudeFilterAssociatedMin && altFt <= prefSet.AltitudeFilterAssociatedMax)
-        : (altFt >= prefSet.AltitudeFilterUnAssociatedMin && altFt <= prefSet.AltitudeFilterUnAssociatedMax);
-    }
+    const inFilter = inAltFilter(t, fp);
     // cs:5958 — these keep the block regardless of the bracket.
     const _me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
     const isFdb = dataBlockMode(t, fp) === "FDB";

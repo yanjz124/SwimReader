@@ -48,6 +48,9 @@ function ssaStations() {
   if (window.starsState?.facilityHomeStation) return [window.starsState.facilityHomeStation];
   return [];
 }
+// Returns { icao, pressure } for a METAR that came back (pressure null when it has no A/Q
+// group), or null when nothing usable was fetched. Does not touch SSA state — pollMetars
+// rebuilds the table from one poll's results, like WeatherService.Metars.
 async function fetchMetar(station) {
   const icao = station.length === 3 ? "K" + station.toUpperCase() : station.toUpperCase();
   try {
@@ -61,10 +64,10 @@ async function fetchMetar(station) {
     let pressure = null;
     if (m)      pressure = parseInt(m[1], 10) / 100;
     else if (q) pressure = parseInt(q[1], 10) * 0.029530;   // hPa → inHg
-    // Only store when we got a real pressure; avoids rendering "00.00" rows
-    // for airports whose METAR is unavailable or unparseable.
-    if (pressure != null) SSA.metars.set(icao, { pressure, raw: text });
-    return pressure;
+    // Only a real METAR counts — a proxy error page / non-METAR text is dropped, matching
+    // WeatherService keeping only IsValid metars (cs:133).
+    if (!/\bMETAR\b|\bSPECI\b/.test(text) && pressure == null) return null;
+    return { icao, pressure, raw: text };
   } catch { return null; }
 }
 async function pollMetars() {
@@ -74,11 +77,22 @@ async function pollMetars() {
   // station pressures, divide by count of pressures that parsed. Default
   // 29.92 when none. Single-station case still goes through the average
   // and just returns that one station's value.
+  //
+  // The table shows ONLY the current AltimeterStations (WeatherService.Metars filters parsed
+  // metars by `AltimeterStations.Contains(ICAO)`, cs:42). Rebuild it from this poll instead of
+  // merging, or stations from an earlier list (area ssaAirports before the profile's
+  // AltimeterStations loaded) linger in the SSA forever. A valid METAR with no altimeter
+  // group still lists its station, as "00.00" (RadarWindow.cs RenderStatus), but is left out
+  // of the header average (cs:61-65 decrements the count).
+  const next = new Map();
   let sum = 0, count = 0;
   for (const s of stations) {
-    const p = await fetchMetar(s);
-    if (p != null && Number.isFinite(p)) { sum += p; count++; }
+    const r = await fetchMetar(s);
+    if (!r) continue;
+    next.set(r.icao, { pressure: r.pressure, raw: r.raw });
+    if (r.pressure != null && Number.isFinite(r.pressure)) { sum += r.pressure; count++; }
   }
+  SSA.metars = next;
   SSA.altimeter = (count > 0) ? (sum / count) : 29.92;
   return true;
 }

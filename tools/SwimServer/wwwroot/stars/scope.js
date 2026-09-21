@@ -73,7 +73,7 @@ const prefSet = {
     DCB: 100, Background: 100,
     MapA: 100, MapB: 100,
     FullDataBlocks: 100, LimitedDataBlocks: 100, OtherFDBs: 100,
-    Lists: 100, Tools: 100, RangeRings: 100, Compass: 100,
+    Lists: 100, Tools: 100, RangeRings: 10, Compass: 100,   // RR 10: user-requested default (a quiet backdrop)
     PositionSymbols: 100, BeaconTargets: 100, PrimaryTargets: 100,
     History: 100, Weather: 100, WeatherContrast: 100,
     // Legacy aliases (KEEP — many call sites still reference these):
@@ -2678,7 +2678,10 @@ cv.addEventListener("mousemove", (e) => {
   ctr.Latitude  += ( dy_px * view.scale) / 60;
   ctr.Longitude -= ( dx_px * view.scale) / (60 * latFactor);
 });
-window.addEventListener("mouseup", () => { panning = false; panButton = -1; downAt = null; });
+window.addEventListener("mouseup", () => {
+  if (panning) _afterPrefChange();   // persist the new screen centre once the drag ends
+  panning = false; panButton = -1; downAt = null;
+});
 
 // Mouse-position helpers used by MCA commands (F D *, F P, F S, *T).
 // Updated on every mousemove over the canvas.
@@ -2809,6 +2812,7 @@ async function bootstrap() {
   // BEFORE applyUrlState (URL params still get the final word for things
   // like deep-link ?r=20).
   loadPrefsFromLocalStorage();
+  restoreFacilityState();   // maps / center / range-ring location you left this facility with
   applyUrlState();
   recomputeScale();  // Recalculate canvas scale after Range is loaded/applied
   loadDCBVisibilityFromSession();  // Load DCB visibility for this session (defaults to true)
@@ -2937,7 +2941,50 @@ function _afterPrefChange() {
 // last for deep-link semantics. Excludes transient SSA / per-track state
 // (which DGScope also doesn't persist beyond the session).
 const STARS_PREFS_KEY = "stars.prefs.v1";
+// ── Per-facility view state (maps, screen center, range-ring location) ─────
+// Like the ERAM scope, the STARS view you left is restored when you come back: which video
+// maps were on, where the scope was centred, and where the range rings sit. These are
+// facility-specific (map ids and coordinates mean nothing at another TRACON), so they are
+// keyed by ARTCC/FACILITY rather than stored in the global stars.prefs snapshot.
+// URL params still win (?maps= is applied at map load and is never overridden here), and an
+// incident replay never reads or writes this — reviewing an archive must not move your live view.
+const STARS_FACILITY_KEY = "stars.facility.v1";
+function facilityStateKey() { return `${ARTCC}/${FACILITY}`.toUpperCase(); }
+function validGeo(g) {
+  return g && Number.isFinite(g.Latitude) && Number.isFinite(g.Longitude)
+    && !(g.Latitude === 0 && g.Longitude === 0);
+}
+function saveFacilityState() {
+  if (INCIDENT_ID) return;
+  try {
+    const all = JSON.parse(localStorage.getItem(STARS_FACILITY_KEY) || "{}");
+    all[facilityStateKey()] = {
+      maps: videoMaps.filter(m => m.visible && m.starsId != null).map(m => m.starsId),
+      center: validGeo(prefSet.ScreenCenterPoint) ? { ...prefSet.ScreenCenterPoint } : undefined,
+      rrLoc: validGeo(prefSet.RangeRingLocation) ? { ...prefSet.RangeRingLocation } : undefined,
+      rrCentered: prefSet.RangeRingsCentered,
+    };
+    localStorage.setItem(STARS_FACILITY_KEY, JSON.stringify(all));
+  } catch (e) { /* quota or storage disabled — skip */ }
+}
+function restoreFacilityState() {
+  if (INCIDENT_ID) return;
+  try {
+    const e = (JSON.parse(localStorage.getItem(STARS_FACILITY_KEY) || "{}"))[facilityStateKey()];
+    if (!e) return;
+    if (Array.isArray(e.maps) && _urlMapIds == null && videoMaps.length) {
+      for (const m of videoMaps) m.visible = m.starsId != null && e.maps.includes(m.starsId);
+      for (const m of videoMaps) if (m.visible && m.lines === null) ensureMapLoaded(m);
+      prefSet.DisplayedMaps = videoMaps.filter(m => m.visible && m.starsId != null).map(m => m.starsId);
+    }
+    if (validGeo(e.center)) prefSet.ScreenCenterPoint = { ...e.center };
+    if (validGeo(e.rrLoc))  prefSet.RangeRingLocation = { ...e.rrLoc };
+    if (typeof e.rrCentered === "boolean") prefSet.RangeRingsCentered = e.rrCentered;
+  } catch (err) { /* corrupt entry — ignore */ }
+}
+
 function savePrefsToLocalStorage() {
+  saveFacilityState();
   try {
     const snap = {
       Range: prefSet.Range,
@@ -3134,6 +3181,7 @@ function handleMapToggle(starsId) {
   m.visible = !m.visible;
   if (m.visible && m.lines === null) ensureMapLoaded(m);
   if (window.pushUrlState) window.pushUrlState();
+  _afterPrefChange();
 }
 
 function handleDcbClick(id) {
@@ -3141,6 +3189,7 @@ function handleDcbClick(id) {
     case "MAPS_CLEAR":
       videoMaps.forEach(m => m.visible = false);
       if (window.pushUrlState) window.pushUrlState();
+      _afterPrefChange();
       break;
     case "DCB_TOP":    prefSet.DCBLocation = "Top"; break;
     case "DCB_LEFT":   prefSet.DCBLocation = "Left"; break;
@@ -3153,6 +3202,7 @@ function handleDcbClick(id) {
     case "OFF_CNTR":
       // Toggle off-center: restore screen center to facility location.
       prefSet.ScreenCenterPoint = { ...starsState.facilityLocation } || prefSet.ScreenCenterPoint;
+      _afterPrefChange();
       break;
     case "PLACE_RR":
       pendingMapAction = "PLACE_RR";
@@ -3175,6 +3225,7 @@ cv.addEventListener("click", (e) => {
     }
     pendingMapAction = null;
     dcb.exitPlaceMode();
+    _afterPrefChange();   // PLACE CNTR / PLACE RR moved the view — remember it
     return;
   }
   // Aircraft hit-test
@@ -3284,7 +3335,7 @@ function _internalPushUrlState() {
   setOrDel("ll", prefSet.LeaderLength, 1);
   setOrDel("ptl", prefSet.PTLLength, 1);
   // Brightness overrides: list only categories that differ from internal default
-  const defaults = { DCB:50, Background:100, RangeRings:20, Compass:30,
+  const defaults = { DCB:50, Background:100, RangeRings:10, Compass:30,
     VideoMapA:75, VideoMapB:25, DataBlock:100, Lists:75, Position:100,
     History:60, Weather:70 };
   const shortFor = { Background:"BKC", VideoMapA:"MPA", VideoMapB:"MPB",

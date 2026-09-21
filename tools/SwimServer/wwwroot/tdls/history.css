@@ -30,6 +30,9 @@ header .sub { font-size: 11px; color: #555; }
 }
 
 .status-bar { margin-left: auto; font-size: 11px; color: #888; display: flex; align-items: center; gap: 8px; }
+/* Only one auto margin per header: .status-bar pushes right, the frame's font control follows
+ * it (two auto margins split the space and float the count into the middle of the bar). */
+header .nav-fontsize { margin-left: 12px; }
 .status-bar .dot { color: #444; }
 .status-bar #count { color: #cccc44; }
 .home-link { color: #888; text-decoration: none; }

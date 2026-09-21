@@ -1,6 +1,9 @@
 body {
     background: #000;
     color: #fff;
+    /* Same monospace as the other TDLS pages — without it the whole page (title, aircraft list,
+     * clearance text) fell back to the browser's default serif. */
+    font-family: 'Consolas', 'Courier New', monospace;
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -40,15 +43,14 @@ header {
     color: #cccc44;
 }
 
+/* Title and "TDLS" tag sit in normal flow after the HOME/UP gutter (frame.css), like every
+ * other menu page. They used to be absolutely centred on the same point — with the label only
+ * nudged 50px right — so the airport code and "TDLS" drew on top of each other, and the status
+ * text landed there too (see the auto-margin note on .nav-fontsize below). */
 .header-label {
-    font-size: 14px;
+    font-size: 11px;
     letter-spacing: 2px;
-    color: #cccc44;
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    margin-left: 50px;
+    color: #888;
 }
 
 header h1 {
@@ -57,11 +59,12 @@ header h1 {
     font-weight: normal;
     letter-spacing: 2px;
     margin: 0;
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
 }
+
+/* frame.js appends the A-/100%/A+ control with margin-left:auto. With .status-bar ALSO
+ * margin-left:auto, the free space is split between the two and the status text parks in the
+ * middle of the header. Let the status bar own the right-push; the font control just follows. */
+header .nav-fontsize { margin-left: 12px; }
 
 .status-bar {
     margin-left: auto;

@@ -3920,6 +3920,16 @@ function doRender() {
         if (f.callsign && f.flightStatus === 'ACTIVE' && f.latitude != null && f.longitude != null && effAgeSec(f) <= 60)
             activeCallsignSet.add(f.callsign);
     }
+    // Build a fast lookup of visible flights by callsign (for validation pass)
+    // Structure: callsign → {set: Set<gufi>, first: gufi} for O(1) lookup and iteration
+    const visibleByCallsign = new Map();  // callsign → {set, first}
+    for (const [gufi, f] of flights) {
+        if (!f.callsign || !isVisible(f)) continue;
+        const cs = f.callsign;
+        if (!visibleByCallsign.has(cs)) visibleByCallsign.set(cs, {set: new Set(), first: gufi});
+        else visibleByCallsign.get(cs).set.add(gufi);
+    }
+
     if (myFacility) {
         for (const [gufi, f] of flights) {
             if (!f.callsign) continue;
@@ -3977,13 +3987,12 @@ function doRender() {
         // winner can still be a GUFI that isVisible() then rejects (e.g. it just moved to another
         // centre) — and because every sibling is dedup-hidden behind the winner, that made the whole
         // aircraft disappear even though a perfectly showable sibling existed. Hand the slot over.
+        // Use the pre-computed visibleByCallsign map to avoid O(n²) rescanning.
         for (const [cs, gufi] of bestGufiByCallsign) {
-            const wf = flights.get(gufi);
-            if (wf && isVisible(wf)) continue;
-            for (const [g, f] of flights) {
-                if (f.callsign !== cs || g === gufi || !isVisible(f)) continue;
-                bestGufiByCallsign.set(cs, g);
-                break;
+            const v = visibleByCallsign.get(cs);
+            if (v && v.set.has(gufi)) continue;
+            if (v) {
+                bestGufiByCallsign.set(cs, v.first);
             }
         }
     }

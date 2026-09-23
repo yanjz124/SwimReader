@@ -6,9 +6,9 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>📡</text></svg>">
 <base href="/stars/" />
 <link rel="stylesheet" href="scope.css?v=3" />
-<!-- Shared floating ReplayBar. Live scope has no terminal replay backend, but
-     ?incident={id} plays an archived TAIS/STARS slice via
-     /replay/incident/{id}/tais/ws/{facility} (see startTaisReplay in scope.js). -->
+<!-- Shared floating ReplayBar. Two recorded sources, same bar (see startTaisReplay in scope.js):
+     ?replay=1 plays this facility's rolling TAIS recording via /replay/tais/ws/{facility}, and
+     ?incident={id} plays an archived incident's slice via /replay/incident/{id}/tais/ws/{facility}. -->
 <link rel="stylesheet" href="/shared/replay-bar.css?v=4" />
 <script defer src="/shared/replay-bar.js?v=6"></script>
 </head>

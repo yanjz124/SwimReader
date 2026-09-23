@@ -28,6 +28,10 @@ const FACILITY = pathMatch[2];
 // Incident replay: /stars/{artcc}/{facility}?incident={id} plays this facility's archived TAIS
 // (STARS terminal) slice instead of the live feed. Empty = normal live scope.
 const INCIDENT_ID = new URLSearchParams(location.search).get("incident") || "";
+// ?replay=1 opens the facility's recorded terminal data instead of the live feed (the STARS menu's
+// REPLAY mode links here). Same rule as an incident: in replay mode the live stream is never opened,
+// because live traffic under a replay URL looks exactly like a working replay.
+const REPLAY_MODE = new URLSearchParams(location.search).has("replay");
 // The web-DGScope + profile experience (engines, video maps, profile manager) is now THE STARS
 // scope — promoted from the /starsv2 test surface. Always on for both /stars and /starsv2.
 window.STARSV2 = true;
@@ -891,12 +895,16 @@ function replayAutoCenter(list) {
   _replayCentered = true;
 }
 function startTaisReplay() {
-  document.title = `STARS ${FACILITY} — incident replay`;
   const fac = FACILITY.toUpperCase();
+  // Two sources, same recordings and same bar: an archived incident's own slice, or the rolling
+  // per-facility recording the server keeps for every facility with a TAIS feed.
+  const inc = INCIDENT_ID ? encodeURIComponent(INCIDENT_ID) : "";
+  document.title = `STARS ${FACILITY} — ${inc ? "incident replay" : "replay"}`;
   if (!window.ReplayBar) { console.error("[STARS] ReplayBar not loaded"); return; }
   ReplayBar.init({
-    wsPath: `/replay/incident/${encodeURIComponent(INCIDENT_ID)}/tais/ws/${encodeURIComponent(fac)}`,
-    rangeUrl: `/api/incident/${encodeURIComponent(INCIDENT_ID)}/range`,
+    wsPath: inc ? `/replay/incident/${inc}/tais/ws/${encodeURIComponent(fac)}`
+                : `/replay/tais/ws/${encodeURIComponent(fac)}`,
+    rangeUrl: inc ? `/api/incident/${inc}/range` : "/api/replay/range",
     rangeKey: "tais",
     rangeSubKey: fac,
     onStart:    ()     => { _replayActive = true; clearReplayTracks(); },
@@ -2876,8 +2884,9 @@ async function bootstrap() {
   if (window.mountPreview) window.mountPreview();
   // Phase 7: mount SSA / status area.
   if (window.mountSsa) window.mountSsa();
-  // Phase 3a: data connection. Live DSTARS stream, or archived TAIS replay for an incident.
-  if (INCIDENT_ID) startTaisReplay();
+  // Phase 3a: data connection. Live DSTARS stream, or recorded TAIS replay (an incident's slice, or
+  // this facility's rolling recording via ?replay=1).
+  if (INCIDENT_ID || REPLAY_MODE) startTaisReplay();
   else startDstars();
 
   // NEXRAD overlay (off by default — user enables via MCA `WX A` / DCB).

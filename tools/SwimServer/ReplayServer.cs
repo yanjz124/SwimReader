@@ -85,7 +85,10 @@ public class ReplayServer
                 }
             }
 
-            return Results.Json(new { eram = eramRange, asdex = asdexRanges }, _jsonOpts);
+            // TAIS (STARS terminal), recorded per facility exactly like ASDE-X is per airport.
+            var taisRanges = RangesUnder(Path.Combine(_replayBaseDir, "tais"));
+
+            return Results.Json(new { eram = eramRange, asdex = asdexRanges, tais = taisRanges }, _jsonOpts);
         });
 
         // ERAM replay WebSocket
@@ -149,6 +152,14 @@ public class ReplayServer
             double.TryParse(ctx.Request.Query["preload"].FirstOrDefault(), out var preloadSeconds);
             await RunReplaySession(ws, dir, startTime, speed, initialBounds, preloadSeconds);
         });
+
+        // STARS terminal (TAIS) replay WebSocket — the continuously recorded counterpart of the
+        // per-incident stream, so a facility can be scrubbed back without archiving an incident first.
+        app.Map("/replay/tais/ws/{facility}", async (HttpContext ctx, string facility) =>
+        {
+            if (facility.Contains("..") || facility.Contains('/') || facility.Contains('\\')) { ctx.Response.StatusCode = 400; return; }
+            await DirSession(ctx, Path.Combine(_replayBaseDir, "tais", facility.ToUpperInvariant()));
+        });
     }
 
     /// <summary>
@@ -177,7 +188,7 @@ public class ReplayServer
         app.Map("/replay/incident/{id}/ws", async (HttpContext ctx, string id) =>
         {
             if (!SafeId(id)) { ctx.Response.StatusCode = 400; return; }
-            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "eram"));
+            await DirSession(ctx, Path.Combine(incidentsDir, id, "eram"));
         });
 
         app.Map("/replay/incident/{id}/asdex/ws/{airport}", async (HttpContext ctx, string id, string airport) =>
@@ -185,13 +196,13 @@ public class ReplayServer
             if (!SafeId(id)) { ctx.Response.StatusCode = 400; return; }
             var icao = airport.ToUpperInvariant();
             if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
-            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "asdex", icao));
+            await DirSession(ctx, Path.Combine(incidentsDir, id, "asdex", icao));
         });
 
         app.Map("/replay/incident/{id}/tais/ws/{facility}", async (HttpContext ctx, string id, string facility) =>
         {
             if (!SafeId(id) || !SafeId(facility)) { ctx.Response.StatusCode = 400; return; }
-            await IncidentSession(ctx, Path.Combine(incidentsDir, id, "tais", facility.ToUpperInvariant()));
+            await DirSession(ctx, Path.Combine(incidentsDir, id, "tais", facility.ToUpperInvariant()));
         });
     }
 
@@ -208,7 +219,11 @@ public class ReplayServer
         return map;
     }
 
-    private async Task IncidentSession(HttpContext ctx, string dir)
+    /// <summary>
+    /// Opens a replay session over one recording directory: start time, speed, viewport and preload all
+    /// come off the query string. Shared by the incident streams and the continuously-recorded ones.
+    /// </summary>
+    private async Task DirSession(HttpContext ctx, string dir)
     {
         if (!ctx.WebSockets.IsWebSocketRequest) { ctx.Response.StatusCode = 400; return; }
         var startParam = ctx.Request.Query["start"].FirstOrDefault();

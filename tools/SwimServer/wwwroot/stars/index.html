@@ -65,6 +65,19 @@
     padding: 0 5px; line-height: 1.6;
   }
   .fac-tcps .tcp-chip b { color: #cccc44; font-weight: normal; margin-left: 3px; }
+
+  /* LIVE / REPLAY launch mode. Replay opens the facility's recorded terminal data instead of the
+     live feed — the scope itself is unchanged either way, it just gets a different source. */
+  .modes { display: inline-flex; border: 1px solid #1a3a1a; border-radius: 2px; overflow: hidden; margin-left: 12px; vertical-align: middle; }
+  .modes button {
+    background: #050505; color: #6f6; border: 0; border-right: 1px solid #1a3a1a;
+    font: inherit; font-size: 11px; letter-spacing: 1px; padding: 2px 10px; cursor: pointer;
+  }
+  .modes button:last-child { border-right: 0; }
+  .modes button.on { background: #0a3a0a; color: #fff; }
+  .modes button.on.replay { background: #3a2a00; color: #ffb300; }
+  .row.norec { opacity: .45; cursor: not-allowed; }
+  .row .rec { color: #ffb300; font-size: 10px; }
 </style>
 <link rel="stylesheet" href="/shared/common.css">
 <link rel="stylesheet" href="/shared/frame.css?v=4">
@@ -75,8 +88,13 @@
   <h1>STARS <span class="wip">WORK IN PROGRESS</span></h1>
 </header>
 <div class="subhead">
-  <div class="sub">Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.</div>
-  <div class="wipnote">Active DGScope port — expect rough edges. Video maps are served from the hosted CRC export (where seeded); live targets stream from the dSTARS feed.</div>
+  <div class="sub">Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.
+    <span class="modes" id="modes">
+      <button id="mode-live" class="on" title="Open the facility on the live terminal feed">LIVE</button>
+      <button id="mode-replay" class="replay" title="Open the facility on its recorded terminal data, with a scrub bar">REPLAY</button>
+    </span>
+  </div>
+  <div class="wipnote" id="wipnote">Active DGScope port — expect rough edges. Video maps are served from the hosted CRC export (where seeded); live targets stream from the dSTARS feed.</div>
 </div>
 <div class="layout">
   <div class="col">
@@ -92,6 +110,39 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let selectedArtcc = null;
+
+// ── Launch mode ────────────────────────────────────────────────────────────
+// LIVE opens the facility on the live terminal feed; REPLAY opens the same scope pointed at that
+// facility's recorded TAIS data (?replay=1), where the shared replay bar takes over. Which
+// facilities have a recording comes from /api/replay/range, so REPLAY can grey out the ones with
+// nothing to play rather than opening a scope that sits empty.
+let replayMode = false;
+let taisRanges = {};         // facility → { start, end }
+const LIVE_NOTE = $("wipnote").textContent;
+
+function setMode(replay) {
+  replayMode = replay;
+  $("mode-live").classList.toggle("on", !replay);
+  $("mode-replay").classList.toggle("on", replay);
+  $("wipnote").textContent = replay
+    ? "REPLAY — picking a facility opens its recorded terminal data with a scrub bar. Facilities with no recording are greyed out."
+    : LIVE_NOTE;
+  if (selectedArtcc) selectArtcc(selectedArtcc);   // re-render rows for the new mode
+}
+$("mode-live").onclick = () => setMode(false);
+$("mode-replay").onclick = () => setMode(true);
+
+async function loadTaisRanges() {
+  try {
+    const r = await fetch("/api/replay/range").then(x => x.json());
+    taisRanges = r.tais || {};
+  } catch { taisRanges = {}; }
+}
+const fmtRange = (r) => {
+  if (!r || !r.start || !r.end) return "";
+  const t = (iso) => new Date(iso).toISOString().slice(5, 16).replace("T", " ") + "Z";
+  return `${t(r.start)} → ${t(r.end)}`;
+};
 
 async function loadArtccs() {
   try {
@@ -144,10 +195,17 @@ async function selectArtcc(id) {
       const tcp = tcpByFac[f.id];
       const posStr = (tcp && tcp.tcpCount) ? ` · ${tcp.tcpCount} pos` : "";
       const caret = multi ? `<span class="caret">▸</span>` : `<span class="caret"></span>`;
+      // In REPLAY mode the row advertises what's on tape instead of what's live, and a facility with
+      // no recording is disabled rather than opening a scope that would just sit empty.
+      const rec = taisRanges[f.id];
+      const norec = replayMode && !rec;
+      const meta = replayMode
+        ? (rec ? `<span class="rec">${fmtRange(rec)}</span>` : "no recording")
+        : `${f.name || ""} · ${f.videoMapCount || 0} maps · ${areas.length} area${areas.length === 1 ? "" : "s"}${cntStr}${posStr}`;
       const head =
-        `<div class="row fac" data-id="${f.id}" data-multi="${multi ? 1 : 0}">
+        `<div class="row fac${norec ? " norec" : ""}" data-id="${f.id}" data-multi="${multi ? 1 : 0}" data-norec="${norec ? 1 : 0}">
           <span class="id">${caret}${f.id}</span>
-          <span class="meta">${f.name || ""} · ${f.videoMapCount || 0} maps · ${areas.length} area${areas.length === 1 ? "" : "s"}${cntStr}${posStr}</span>
+          <span class="meta">${meta}</span>
         </div>`;
       const tcpLine = (tcp && tcp.tcps.length)
         ? `<div class="fac-tcps">${tcp.tcps.map(t => `<span class="tcp-chip">${t.tcp}<b>${t.count}</b></span>`).join("")}</div>`
@@ -180,18 +238,24 @@ async function selectArtcc(id) {
           // Find the facility ID from the profile name prefix: "{FACILITY}_..."
           const pname = el.dataset.profile;
           const facId = (data.facilities.find(f => pname.startsWith(f.id + "_")) || data.facilities[0]).id;
-          location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(facId)}?profile=${encodeURIComponent(pname)}`;
+          location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(facId)}?profile=${encodeURIComponent(pname)}`
+            + (replayMode ? "&replay=1" : "");   // a profile is a display config — it applies to replay too
         };
       }
     }
-    const launch = (facId, areaId) =>
-      location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(facId)}` +
-        (areaId ? `?area=${encodeURIComponent(areaId)}` : "");
+    const launch = (facId, areaId) => {
+      const q = [];
+      if (areaId) q.push(`area=${encodeURIComponent(areaId)}`);
+      if (replayMode) q.push("replay=1");
+      location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(facId)}`
+        + (q.length ? `?${q.join("&")}` : "");
+    };
     // Facility row: multi-area facilities expand their area submenu; single/no
     // area launches straight into the scope.
     for (const el of document.querySelectorAll("#facilities .row.fac")) {
       el.onclick = () => {
         const facId = el.dataset.id;
+        if (el.dataset.norec === "1") return;   // nothing recorded for this facility
         if (el.dataset.multi === "1") {
           const sub = document.querySelector(`#facilities .areas[data-for="${CSS.escape(facId)}"]`);
           const caret = el.querySelector(".caret");
@@ -208,7 +272,7 @@ async function selectArtcc(id) {
   }
 }
 
-loadArtccs();
+loadTaisRanges().then(loadArtccs);
 </script>
 <script src="/shared/frame.js?v=4"></script>
 <script src="/shared/disclaimer.js?v=2"></script>

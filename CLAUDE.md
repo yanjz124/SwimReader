@@ -988,8 +988,19 @@ A mobile-first page that follows one callsign across **every** source at once, f
 ### `/api/track/{callsign}` response
 `{callsign, found, ts, sfdps:[...], freqs:{FAC/SEC→freq}, tfms, edct, handoffHistory:[...], tdls:[...], tais:[...], asdex:[...]}`. `sfdps` is a lean per-GUFI projection (`SfdpsProjection`) with full flight plan, ownership/handoff, position, clearance (HSF), and times. `freqs` maps every sector referenced anywhere (controlling, handoff, point-out, STARS owner, and sectors named in history summaries) to its controller frequency via vNAS/TAIS data; the frontends append it wherever a `FAC/SECTOR` label appears. Sector-frequency lookup tolerates STARS TCP sub-position letters (`PCT/1J`→`PCT/1`) and leading-zero differences (`ZOB/01`↔`ZOB/1`).
 
+### TFMS section — the earliest route
+`tfms` is projected by `TfmsFlight.ToTrackJson()` (not the lean WS `ToJson`): route of flight, SID/STAR +
+transitions, airways, departure/arrival/coordination/boundary fixes, the predicted **route-fix, centre and
+sector crossings**, filed performance, and CDM/gate/runway times. TFMS routinely has a flight — with its
+filed NAS route — hours before it enters US airspace and appears in SFDPS, so for an inbound international
+leg (and for a domestic prefile) this is often the only source carrying a route at all.
+TFMS expresses crossings as **seconds elapsed from ETD**; `ToTrackJson` resolves them to absolute UTC
+(same arithmetic as `GetSectorFlights`) and `TfmsFlight.FirstEntries` collapses runs of the same
+centre/sector name to the first entry (a later re-entry is real and kept). `/track` renders the crossings
+as chip rows with passed entries dimmed and the next one ahead highlighted; `/t` renders the same as text.
+
 ### Page sections (both versions render the same information)
-Hero (callsign, origin▸dest·type/wake·registration, **phase** label, prominent next-frequency handoff banner, center + terminal frequencies, source presence) → Position/Ownership (per GUFI: controlling+freq, CIDs, handoff+freq, point-out, altitude, Line-4 HSF, ground speed, squawk/assigned, position+age, coast, status) → Terminal/STARS (entry▸exit, scratchpad, owner+freq, handoff+freq, alt/gs/squawk) → Handoff/point-out history → EDCT → Flight plan (full ICAO + equipment/capabilities) → TDLS (CPDLC + departure messages) → Surface/ASDE-X → Traffic flow/TFMS.
+Hero (callsign, origin▸dest·type/wake·registration, **phase** label, prominent next-frequency handoff banner, center + terminal frequencies, source presence) → Position/Ownership (per GUFI: controlling+freq, CIDs, handoff+freq, point-out, altitude, Line-4 HSF, ground speed, squawk/assigned, position+age, coast, status) → Terminal/STARS (entry▸exit, scratchpad, owner+freq, handoff+freq, alt/gs/squawk) → Handoff/point-out history → EDCT → Flight plan (full ICAO + equipment/capabilities) → TDLS (CPDLC + departure messages) → Surface/ASDE-X → Traffic flow/TFMS (route, procedures/entry fixes, predicted fix/centre/sector transit, plan, times, position).
 
 **No mock data blocks.** An earlier version rendered simplified ERAM/STARS data-block art in both the full page (`blocksCard`) and the text page (`EramText`). Both were removed as unrealistic — the same data (4th-line/HSF, handoff, STARS entry/exit/scratchpad) lives in the cards/rows below. Don't reintroduce the mock blocks. (`track.js` still contains the now-unused `blocksCard`/`eramBlockHtml`/`starsBlockHtml` helpers, dead but harmless.)
 

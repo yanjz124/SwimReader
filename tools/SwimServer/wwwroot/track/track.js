@@ -3,8 +3,10 @@
   const $ = id => document.getElementById(id);
   const esc = s => (s == null ? '' : String(s)).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const out = $('out'), statusText = $('statusText'), dot = $('dot');
-  let current = '', timer = null, lastData = null, selFac = null, fails = 0, depFilter = null;
-  function goText() { location.replace(current ? '/t/' + encodeURIComponent(current) : '/t'); }
+  const POLL_MS = 4000, SLOW_POLL_MS = 15000;
+  let current = '', timer = null, lastData = null, selFac = null, fails = 0, depFilter = null, pollMs = 0;
+  // Poll cadence, backed off while the connection is failing (see poll()).
+  function setPoll(ms) { if (pollMs === ms) return; pollMs = ms; if (timer) clearInterval(timer); timer = setInterval(poll, ms); }
 
   // ── format helpers ──
   const fl = a => (a == null ? null : String(Math.round(a / 100)).padStart(3, '0'));
@@ -39,18 +41,18 @@
 
   function startTrack(cs) {
     current = cs; selFac = null; lastData = null; fails = 0; depFilter = null;
-    const tl = $('txtlink'); if (tl) tl.href = '/t/' + encodeURIComponent(cs);
-    // Data Saver / 2g connection → go straight to the light text version.
-    try { const c = navigator.connection; if (c && (c.saveData || /2g/.test(c.effectiveType || ''))) { goText(); return; } } catch (e) { }
     if (timer) clearInterval(timer);
+    timer = null; pollMs = 0;
     out.innerHTML = '';
     statusText.textContent = 'Loading ' + cs + '…';
     poll();
-    timer = setInterval(poll, 4000);
+    setPoll(POLL_MS);
   }
+  // Back from a dead connection — poll at once rather than waiting out the 15s backoff.
+  window.addEventListener('online', function () { if (current && !document.hidden) { poll(); setPoll(POLL_MS); } });
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { if (timer) { clearInterval(timer); timer = null; } }
-    else if (current && !timer) { poll(); timer = setInterval(poll, 4000); }
+    if (document.hidden) { if (timer) { clearInterval(timer); timer = null; pollMs = 0; } }
+    else if (current && !timer) { poll(); setPoll(POLL_MS); }
   });
 
   function poll() {
@@ -60,13 +62,15 @@
     fetch('/api/track/' + encodeURIComponent(current), { signal: ctl.signal }).then(function (r) {
       clearTimeout(to);
       if (!r.ok) { dot.className = 'dot'; statusText.textContent = 'Error ' + r.status; return null; }
-      dot.className = 'dot live'; fails = 0; return r.json();
+      dot.className = 'dot live'; fails = 0; setPoll(POLL_MS); return r.json();
     }).then(function (d) { if (d) { try { render(d); } catch (e) { statusText.textContent = 'Render error: ' + e.message; } } })
       .catch(function () {
         clearTimeout(to);
         dot.className = 'dot'; fails++;
         statusText.textContent = 'Slow / offline — retrying (' + fails + ')…';
-        if (fails >= 3) goText();   // auto-fall back to the light text version
+        // Was a bail-out to the /t text page; that page is gone, so just stop hammering
+        // a connection that clearly isn't working. Full rate resumes on the next success.
+        if (fails >= 3) setPoll(SLOW_POLL_MS);
       });
   }
 

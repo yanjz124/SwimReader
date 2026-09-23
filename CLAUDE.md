@@ -79,7 +79,6 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 - **TAIS Directory** (`/tais`) — Facility grid with live track counts, click-through to detail
 - **TAIS Detail** (`/tais/{facility}`) — Terminal radar track table with search, sort, frozen filter, expandable detail
 - **Track a Flight** (`/track`, `/track/{callsign}`) — Mobile-first single-callsign aggregator across every source (SFDPS, TFMS, EDCT, TDLS, TAIS/STARS, ASDE-X); polls `/api/track/{callsign}`
-- **Track a Flight (text)** (`/t`, `/t/{callsign}`) — Ultra-light, no-JS, server-rendered version of the above for slow wifi (auto-refreshes via meta tag)
 - **TFDM Boards** (`/tfdm`, `/tfdm/{airport}`) — Terminal surface/departure boards: per-airport live board (WS) with off-block/TSAT/runway/spot/taxi/sequence/delay, proposed-vs-active state, sortable columns + wildcard filter, and an info strip (config/AAR-ADR/closures/queues/gridlock/demand/TMRs). Directory sorted alphabetically.
 - **Route Finder / Dispatch** (`/dispatch`) — Search persisted flight history by route/airline/aircraft type → real callsign, filed route, cruise, airframe, gate; deep-links each into **SimBrief** (+ copyable VATSIM plan). `/api/dispatch/search`.
 - **Telegram bot** (`TelegramBridge`, `@swimffbot`) — Follow a flight over inflight "free-messaging" wifi: send a callsign for the same cross-source status the Track page shows; `/sub` pushes updates on meaningful state change. Enabled when `TELEGRAM_BOT_TOKEN` is set.
@@ -432,7 +431,7 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/history/dates` | List available history dates with file sizes |
 | `GET /fdio` | FDIO two-panel flight plan viewer (reuses `/ws` WebSocket + `/api/flights/{gufi}` + `/api/event-xml/`) |
 | `GET /api/track/{callsign}` | Combined single-callsign snapshot across all sources — `{callsign, found, sfdps, freqs, tfms, edct, handoffHistory, tdls, tais, asdex}` |
-| `GET /t`, `GET /t/{callsign}` | Server-rendered no-JS text page (see Track a Flight section) |
+| `GET /t`, `GET /t/{callsign}` | **Disabled** — redirects to `/track` / `/track/{callsign}` (see Track a Flight section) |
 
 ### Handoff Detection Logic
 Server-side in `Program.cs` ProcessFlight():
@@ -982,8 +981,8 @@ When flights are purged from memory (>60 min stale), their complete state + all 
 A mobile-first page that follows one callsign across **every** source at once, for pilots/enthusiasts who just want "where is this flight and what frequency is it on." A callsign can appear as several SFDPS GUFIs (one per ARTCC tracking it) plus TFMS/EDCT/TDLS/TAIS/ASDE-X records — the page aggregates them all.
 
 ### Files & routes
-- **`wwwroot/track/index.html` + `track/track.js`** — full JS version at `/track` and `/track/{callsign}`. Polls `GET /api/track/{callsign}` every 4s (backs off / auto-falls-back to `/t` on Data-Saver, 2g, or 3 consecutive fetch failures).
-- **`Routes/TrackRoutes.cs`** — registers `GET /api/track/{callsign}` (combined JSON) and the server-rendered text page (`GET /t`, `GET /t/{callsign}`).
+- **`wwwroot/track/index.html` + `track/track.js`** — the page at `/track` and `/track/{callsign}`. Polls `GET /api/track/{callsign}` every 4s, backing off to 15s after 3 consecutive fetch failures and returning to 4s on the next success.
+- **`Routes/TrackRoutes.cs`** — registers `GET /api/track/{callsign}` (combined JSON).
 
 ### `/api/track/{callsign}` response
 `{callsign, found, ts, sfdps:[...], freqs:{FAC/SEC→freq}, tfms, edct, handoffHistory:[...], tdls:[...], tais:[...], asdex:[...]}`. `sfdps` is a lean per-GUFI projection (`SfdpsProjection`) with full flight plan, ownership/handoff, position, clearance (HSF), and times. `freqs` maps every sector referenced anywhere (controlling, handoff, point-out, STARS owner, and sectors named in history summaries) to its controller frequency via vNAS/TAIS data; the frontends append it wherever a `FAC/SECTOR` label appears. Sector-frequency lookup tolerates STARS TCP sub-position letters (`PCT/1J`→`PCT/1`) and leading-zero differences (`ZOB/01`↔`ZOB/1`).
@@ -997,17 +996,26 @@ leg (and for a domestic prefile) this is often the only source carrying a route 
 TFMS expresses crossings as **seconds elapsed from ETD**; `ToTrackJson` resolves them to absolute UTC
 (same arithmetic as `GetSectorFlights`) and `TfmsFlight.FirstEntries` collapses runs of the same
 centre/sector name to the first entry (a later re-entry is real and kept). `/track` renders the crossings
-as chip rows with passed entries dimmed and the next one ahead highlighted; `/t` renders the same as text.
+as chip rows with passed entries dimmed and the next one ahead highlighted; `/t` is disabled (see below).
 
-### Page sections (both versions render the same information)
+### Page sections
 Hero (callsign, origin▸dest·type/wake·registration, **phase** label, prominent next-frequency handoff banner, center + terminal frequencies, source presence) → Position/Ownership (per GUFI: controlling+freq, CIDs, handoff+freq, point-out, altitude, Line-4 HSF, ground speed, squawk/assigned, position+age, coast, status) → Terminal/STARS (entry▸exit, scratchpad, owner+freq, handoff+freq, alt/gs/squawk) → Handoff/point-out history → EDCT → Flight plan (full ICAO + equipment/capabilities) → TDLS (CPDLC + departure messages) → Surface/ASDE-X → Traffic flow/TFMS (route, procedures/entry fixes, predicted fix/centre/sector transit, plan, times, position).
 
 **No mock data blocks.** An earlier version rendered simplified ERAM/STARS data-block art in both the full page (`blocksCard`) and the text page (`EramText`). Both were removed as unrealistic — the same data (4th-line/HSF, handoff, STARS entry/exit/scratchpad) lives in the cards/rows below. Don't reintroduce the mock blocks. (`track.js` still contains the now-unused `blocksCard`/`eramBlockHtml`/`starsBlockHtml` helpers, dead but harmless.)
 
-### Text page (`/t`) and the inflight-wifi constraint
-`/t` is a ~few-KB, no-JS, `<meta http-equiv=refresh content=30>` page — deliberately light for **slow** connections. `TrackRoutes.TextPage()` renders it directly from the typed bridges via `TaisBridge.TracksByCallsign`, `TdlsBridge.AircraftByCallsign` (+ `TdlsAircraft.MessagesTyped()`), `AsdexBridge.TracksByCallsign`, and `TfmsBridge.FindByCallsign` (added specifically so the server can render their detail without going through the anonymous-`object` `ToJson()` projections).
+### The `/t` text page is disabled (and why)
+`/t` was a ~2 KB, no-JS, `<meta http-equiv=refresh content=30>` page meant for constrained wifi. It is
+**turned off**: `GET /t` and `GET /t/{callsign}` now 302 to `/track`, the TEXT link is gone from the page
+header, and `track.js` no longer redirects there on Data-Saver/2g/repeated failures (it backs off instead).
+`TrackRoutes.TextPage()` and its helpers are still in the file — re-register the two routes to bring it back.
 
-**Important:** `/t` does **not** work on airline "free messaging" wifi. Those captive portals block all HTTP/DNS except a whitelist of messaging endpoints, so no web page — however small — will load; it only helps on real-but-slow internet. Apps like Flighty deliver inflight updates over **APNs push** (the same whitelisted pathway as iMessage), not the web: the server pushes serialized lat/lon/alt/ETA every few minutes into a Live Activity, working even in Airplane Mode. Replicating that for SwimReader would require a whitelisted messaging channel (Telegram/WhatsApp/SMS bot, or native iOS APNs), not a lighter page. See [[track-text-wifi-limitation]].
+It was removed because it never solved its problem, and its link sat next to the back arrow on a phone where
+it was mostly hit by accident. Airline "free messaging" wifi blocks all HTTP/DNS except a whitelist of
+messaging endpoints, so **no** web page — however small — will load; `/t` only helped on real-but-slow
+internet. Apps like Flighty deliver inflight updates over **APNs push** (the same whitelisted pathway as
+iMessage), not the web: the server pushes serialized lat/lon/alt/ETA every few minutes into a Live Activity,
+working even in Airplane Mode. The answer for SwimReader is the Telegram bot (a whitelisted messaging
+channel), not a lighter page. See [[track-text-wifi-limitation]].
 
 ## STDDS Data Pipeline (SwimReader.Server)
 

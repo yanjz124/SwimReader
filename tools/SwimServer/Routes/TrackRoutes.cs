@@ -115,10 +115,18 @@ static class TrackRoutes
             }, ctx.JsonOpts);
         });
 
-        // Ultra-light, no-JS, server-rendered text version for constrained/inflight wifi.
-        // Auto-refreshes via a meta tag; ~2 KB; works with JS disabled.
-        app.MapGet("/t", (HttpContext c) => TextPage(ctx, c.Request.Query["cs"].FirstOrDefault()));
-        app.MapGet("/t/{callsign:regex(^[A-Za-z0-9]+$)}", (string callsign) => TextPage(ctx, callsign));
+        // /t (the ultra-light no-JS text page) is DISABLED — it never solved the problem it was
+        // built for (airline "free messaging" wifi blocks every web page, however small; the
+        // Telegram bot is the answer there), and its link sat next to the back arrow on a phone
+        // where it was mostly hit by accident. Old links redirect to the real page instead of 404ing.
+        // TextPage() below is still here: re-register these two routes to bring it back.
+        app.MapGet("/t", (HttpContext c) =>
+        {
+            var cs = (c.Request.Query["cs"].FirstOrDefault() ?? "").Trim();
+            return Results.Redirect(cs.Length > 0 ? "/track/" + Uri.EscapeDataString(cs) : "/track");
+        });
+        app.MapGet("/t/{callsign:regex(^[A-Za-z0-9]+$)}",
+            (string callsign) => Results.Redirect("/track/" + Uri.EscapeDataString(callsign)));
     }
 
     // SFDPS message sources that represent a handoff or point-out event (for the history timeline).

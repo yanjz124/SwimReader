@@ -1,0 +1,313 @@
+html, body {
+    background: #000;
+    color: #ccc;
+    font-family: 'Consolas', 'Courier New', monospace;
+    margin: 0;
+    font-size: 13px;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+header {
+    background: #000;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.nav-home {
+    color: #cccc44;
+    text-decoration: none;
+    font-size: 11px;
+    transition: color 0.15s;
+    display: flex;
+    align-items: center;
+    transform: translateY(-3px);
+}
+
+.nav-home:hover {
+    color: #ffff66;
+}
+
+.header-label {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: #888;
+}
+
+header h1 {
+    font-size: 14px;
+    color: #cccc44;
+    font-weight: normal;
+    letter-spacing: 2px;
+    margin: 0;
+}
+
+header .nav-fontsize {
+    margin-left: 12px;
+}
+
+.status-bar {
+    margin-left: auto;
+    font-size: 11px;
+    color: #888;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+header .stats {
+    font-size: 11px;
+    color: #888;
+}
+
+#status {
+    font-size: 11px;
+    color: #666;
+}
+
+#status.ok {
+    color: #44aa44;
+}
+
+/* ── Info bar, filters, and table ────────────────────────────── */
+.sub {
+    font-size: 11px;
+    color: #888835;
+}
+
+/* info strip */
+.infobar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    padding: 8px 16px;
+    border-bottom: 1px solid #222;
+    background: #050505;
+    font-size: 12px;
+}
+
+.infobar .k {
+    color: #666;
+}
+
+.infobar .v {
+    color: #cccc44;
+    font-weight: bold;
+}
+
+.infobar .warn {
+    color: #ff8c00;
+}
+
+.qs {
+    color: #9fd47a;
+}
+
+.gl-bad {
+    color: #ff5555;
+}
+
+.tmis {
+    padding: 6px 16px;
+    border-bottom: 1px solid #222;
+    font-size: 11.5px;
+    color: #dcb;
+}
+
+.tmi {
+    display: inline-block;
+    margin: 2px 8px 2px 0;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #2a1e0a;
+    border: 1px solid #5a4010;
+    color: #ffb454;
+}
+
+.tmi.susp {
+    background: #1a1a1a;
+    border-color: #333;
+    color: #888;
+}
+
+/* filters */
+.filters {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 16px;
+    flex-wrap: wrap;
+}
+
+.filters button {
+    background: #111;
+    color: #888835;
+    border: 1px solid #333;
+    border-radius: 5px;
+    padding: 5px 12px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.filters button.on {
+    background: #cccc44;
+    color: #000;
+    border-color: #cccc44;
+    font-weight: bold;
+}
+
+.filters input {
+    background: #111;
+    border: 1px solid #333;
+    color: #ccc;
+    padding: 5px 9px;
+    font: inherit;
+    font-size: 12px;
+    text-transform: uppercase;
+    border-radius: 5px;
+}
+
+.filters .status {
+    margin-left: auto;
+    color: #666;
+    font-size: 11px;
+}
+
+.filters .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #444;
+    vertical-align: middle;
+}
+
+.filters .dot.live {
+    background: #44cc44;
+    box-shadow: 0 0 6px #44cc44;
+}
+
+/* board */
+.wrap {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 820px;
+}
+
+thead th {
+    position: sticky;
+    top: 0;
+    background: #161616;
+    color: #999;
+    font-weight: normal;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 1px solid #333;
+    white-space: nowrap;
+}
+
+tbody td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #141414;
+    white-space: nowrap;
+}
+
+tbody tr:nth-child(even) td {
+    background: #070707;
+}
+
+.cs {
+    color: #fff;
+    font-weight: bold;
+}
+
+.seq {
+    color: #6cc0ff;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.t {
+    color: #6cc0ff;
+    font-variant-numeric: tabular-nums;
+}
+
+.tsat {
+    color: #39ff62;
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+}
+
+.rwy {
+    color: #ffcc66;
+}
+
+.spot {
+    color: #dcdcae;
+}
+
+.muted {
+    color: #777;
+}
+
+.delay {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.delay.pos {
+    color: #ff8c00;
+    font-weight: bold;
+}
+
+.chip {
+    font-size: 10px;
+    padding: 1px 7px;
+    border-radius: 3px;
+    letter-spacing: 0.5px;
+}
+
+.chip.sched {
+    background: #10240f;
+    color: #9fd47a;
+}
+
+.chip.active {
+    background: #0d2233;
+    color: #6cc0ff;
+}
+
+.chip.pend {
+    background: #241a0a;
+    color: #d0a040;
+}
+
+.chip.apreq {
+    background: #2a1a2a;
+    color: #e0a0ff;
+    margin-left: 4px;
+}
+
+.empty {
+    padding: 40px;
+    text-align: center;
+    color: #666;
+}

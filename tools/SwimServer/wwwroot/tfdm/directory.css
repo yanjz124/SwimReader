@@ -1,0 +1,141 @@
+body {
+    background: #000;
+    color: #cccc44;
+    font-family: 'Consolas', 'Courier New', monospace;
+    margin: 0;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+header {
+    background: #000;
+    border-bottom: 1px solid #333;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.nav-home {
+    color: #cccc44;
+    text-decoration: none;
+    font-size: 11px;
+    transition: color 0.15s;
+    display: flex;
+    align-items: center;
+    transform: translateY(-3px);
+}
+
+.nav-home:hover {
+    color: #ffff66;
+}
+
+.header-label {
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: #888;
+    flex-shrink: 0;
+    transform: translateX(60px);
+}
+
+header h1 {
+    font-size: 14px;
+    color: #cccc44;
+    font-weight: normal;
+    letter-spacing: 2px;
+    margin: 0;
+    flex-shrink: 0;
+    transform: translateX(60px);
+}
+
+header .nav-fontsize {
+    margin-left: 12px;
+}
+
+.status-bar {
+    margin-left: auto;
+    font-size: 11px;
+    color: #888;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+header .stats {
+    font-size: 11px;
+    color: #888;
+}
+
+#status {
+    font-size: 11px;
+    color: #666;
+}
+
+/* ── Subtitle and grid ──────────────────────────────────────── */
+.sub {
+    padding: 8px 16px;
+    color: #888835;
+    font-size: 12px;
+    border-bottom: 1px solid #222;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+    padding: 16px;
+}
+
+a.card {
+    display: block;
+    background: #0d0d0d;
+    border: 1px solid #2a2a08;
+    border-radius: 8px;
+    padding: 14px;
+    text-decoration: none;
+    color: inherit;
+}
+
+a.card:hover {
+    background: #161602;
+    border-color: #cccc44;
+}
+
+.icao {
+    font-size: 22px;
+    color: #cccc44;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+.name {
+    font-size: 11px;
+    color: #777;
+    margin-top: 2px;
+    min-height: 13px;
+}
+
+.cnt {
+    font-size: 13px;
+    color: #dede55;
+    margin-top: 8px;
+}
+
+.cnt b {
+    font-size: 20px;
+    color: #fff;
+}
+
+.empty {
+    padding: 40px;
+    text-align: center;
+    color: #666;
+}

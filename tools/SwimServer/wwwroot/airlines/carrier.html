@@ -140,6 +140,28 @@
         .intel { grid-template-columns: 1fr; }
         .partners { display: none; }
     }
+    .nav-up {
+        transform: translateY(0.5px);
+    }
+    /* Dark theme for Leaflet zoom controls */
+    .leaflet-control-zoom {
+        background: rgba(5,5,5,.9) !important;
+        border: 1px solid #333 !important;
+        border-radius: 2px !important;
+    }
+    .leaflet-control-zoom-in, .leaflet-control-zoom-out {
+        background: #050505 !important;
+        color: #aaa !important;
+        border: 1px solid #333 !important;
+        border-radius: 0 !important;
+        width: 26px !important;
+        height: 26px !important;
+        font-size: 12px !important;
+    }
+    .leaflet-control-zoom-in:hover, .leaflet-control-zoom-out:hover {
+        background: #1a1a1a !important;
+        color: #cccc44 !important;
+    }
 </style>
 </head>
 <body>

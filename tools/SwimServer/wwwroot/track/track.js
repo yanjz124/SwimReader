@@ -541,13 +541,95 @@
     </div>`;
   }
 
+  // An ordered crossing list (route fixes / centres / sectors). Times come from the server already
+  // resolved to wall-clock UTC; the first crossing still in the future is highlighted and the ones
+  // behind the aircraft are dimmed, so the list reads as "where it is along the route".
+  function pathRow(items, cls, cap) {
+    if (!items || !items.length) return '';
+    const now = Date.now();
+    let nextIdx = -1;
+    items.forEach(function (x, i) { const d = pd(x.time); if (nextIdx < 0 && d && d.getTime() > now) nextIdx = i; });
+    // When the list is too long for a phone, window it around the next crossing so the part of the
+    // route the aircraft is actually flying stays on screen, and count off what was trimmed.
+    let start = 0;
+    if (cap && items.length > cap) start = nextIdx < 0 ? 0 : Math.max(0, Math.min(items.length - cap, nextIdx - 2));
+    const shown = (cap && items.length > cap) ? items.slice(start, start + cap) : items;
+    const dots = n => `<span class="sep">&#8250;</span><span class="pf more">+${n}</span>`;
+    let html = shown.map(function (x, i) {
+      const d = pd(x.time);
+      const k = (start + i) === nextIdx ? ' next' : ((d && d.getTime() <= now) ? ' past' : '');
+      return `<span class="pf${k}"><b>${esc(x.name)}</b>${d ? `<i>${hhmm(x.time)}</i>` : ''}</span>`;
+    }).join('<span class="sep">&#8250;</span>');
+    if (start > 0) html = `<span class="pf more">+${start}</span><span class="sep">&#8250;</span>` + html;
+    const tail = items.length - (start + shown.length);
+    if (tail > 0) html += dots(tail);
+    return `<div class="path${cls ? ' ' + cls : ''}">${html}</div>`;
+  }
+
+  // Minutes between two ISO times, signed, as "+23 min" / "-4 min" (null when either is missing).
+  function deltaMin(later, earlier) {
+    const a = pd(later), b = pd(earlier);
+    if (!a || !b) return null;
+    const m = Math.round((a.getTime() - b.getTime()) / 60000);
+    return m === 0 ? null : (m > 0 ? '+' : '') + m + ' min';
+  }
+
+  // TFMS carries the filed NAS route plus the predicted centre/sector transit, and it usually has a
+  // flight hours before it reaches US airspace and shows up in SFDPS. For an inbound international
+  // leg this is often the only source with a route at all, so show it in full rather than a summary.
   function tfmsCard(t) {
-    return `<div class="card"><h2>TRAFFIC FLOW (TFMS)</h2>${grid([
-      ['Departure', t.depArpt], ['Arrival', t.arrArpt], ['Status', t.status], ['ETA', hhmm(t.eta)],
-      ['STAR', t.star], ['Type', t.acType || t.acModel],
+    const dp = [t.dpName, t.dpTransitionFix].filter(Boolean).join('.');
+    const star = [t.starTransitionFix, t.star].filter(Boolean).join('.');
+    const delay = deltaMin(t.eta, t.originalArrival);
+    const late = delay && parseInt(delay, 10) >= 15;
+    const routeBlk = t.route
+      ? `<div class="subhdr">ROUTE <span class="tag">filed</span></div><div class="route">${esc(t.route)}</div>` : '';
+    const proc = grid([
+      ['Departure proc', dp + (t.dpType && dp ? '  (' + t.dpType + ')' : '')],
+      ['Arrival proc', star],
+      ['Airways', (t.airways || []).join('  ')],
+      ['Departure fix', t.depFix ? t.depFix + (hhmm(t.departureFixTime) ? '  ' + hhmm(t.departureFixTime) : '') : null],
+      ['Arrival fix', t.arrFix ? t.arrFix + (hhmm(t.arrivalFixTime) ? '  ' + hhmm(t.arrivalFixTime) : '') : null],
+      ['Coordination fix', t.coordinationFix ? t.coordinationFix + (hhmm(t.coordinationTime) ? '  ' + hhmm(t.coordinationTime) : '') : null],
+      ['Boundary fix', t.boundaryFix ? t.boundaryFix
+        + (t.boundaryRadial != null && t.boundaryDistance != null ? '  ' + String(t.boundaryRadial).padStart(3, '0') + '/' + t.boundaryDistance : '')
+        + (hhmm(t.boundaryCrossingTime) ? '  ' + hhmm(t.boundaryCrossingTime) : '') : null],
+    ]);
+    const fixes = (t.fixes || []), centers = (t.centers || []), sectors = (t.sectors || []);
+    const transit =
+      (fixes.length ? `<div class="subhdr">ROUTE FIXES (${fixes.length}) <span class="tag">predicted</span></div>` + pathRow(fixes, 'fix', 28) : '') +
+      (centers.length ? `<div class="subhdr">CENTRES (${centers.length})</div>` + pathRow(centers, 'ctr') : '') +
+      (sectors.length ? `<div class="subhdr">SECTORS (${sectors.length})</div>` + pathRow(sectors, 'sec', 16) : '');
+    const plan = grid([
+      ['Departure', t.depArpt], ['Arrival', t.arrArpt], ['Status', t.status],
+      ['Type', [t.acType || t.acModel, t.equipmentQualifier].filter(Boolean).join('/')],
+      ['Class', [t.category, t.userCategory, t.engineClass].filter(Boolean).join(' · ')],
+      ['Beacon', t.beaconCode],
+      ['Req. Alt', t.requestedAlt ? 'FL' + fl(t.requestedAlt) : null],
+      ['Assigned Alt', t.assignedAlt ? 'FL' + fl(t.assignedAlt) : null],
+      ['Filed speed', [t.filedTas ? t.filedTas + ' kt TAS' : null, t.filedMach ? 'M' + t.filedMach : null].filter(Boolean).join('  ')],
+      ['Facility', [t.facility, t.cid ? 'CID ' + t.cid : null].filter(Boolean).join('  ')],
+      ['Diversion', t.diversion, 'warn'],
+    ]);
+    const times = grid([
+      ['Filed dep (IGTD)', hhmm(t.igtd)], ['ETD', hhmm(t.etd), 'hl'], ['ETA', hhmm(t.eta), 'hl'],
+      ['vs original ETA', delay, late ? 'warn' : ''],
+      ['Gate dep / arr', [hhmm(t.gateDeparture), hhmm(t.gateArrival)].filter(Boolean).join('  →  ')],
+      ['Runway dep / arr', [hhmm(t.runwayDeparture), hhmm(t.runwayArrival)].filter(Boolean).join('  →  ')],
+      ['Airline OUT/OFF', [hhmm(t.airlineOutTime), hhmm(t.airlineOffTime)].filter(Boolean).join('  ')],
+      ['Airline ON/IN', [hhmm(t.airlineOnTime), hhmm(t.airlineInTime)].filter(Boolean).join('  ')],
+    ]);
+    const pos = grid([
+      ['Position', (t.lat != null && t.lon != null) ? t.lat.toFixed(3) + ', ' + t.lon.toFixed(3) : null],
       ['Altitude', t.altitude ? Math.round(t.altitude) + ' ft' : null],
-      ['Speed', t.speed ? Math.round(t.speed) + ' kt' : null],
-    ])}</div>`;
+      ['Speed', [t.speed ? Math.round(t.speed) + ' kt' : null, t.groundSpeed ? t.groundSpeed + ' kt GS' : null].filter(Boolean).join('  ')],
+      ['Reported', t.positionTime ? hhmm(t.positionTime) + '  (' + agoStr(t.positionTime) + ')' : null],
+    ]);
+    return `<div class="card"><h2>TRAFFIC FLOW (TFMS)</h2>${routeBlk}` +
+      (proc ? `<div class="subhdr">PROCEDURES / ENTRY</div>${proc}` : '') + transit +
+      (plan ? `<div class="subhdr">FLIGHT</div>${plan}` : '') +
+      (times ? `<div class="subhdr">TIMES</div>${times}` : '') +
+      (pos ? `<div class="subhdr">TFMS POSITION</div>${pos}` : '') + `</div>`;
   }
 
   // ── boot ──

@@ -940,11 +940,13 @@ class TfmsBridge
     public void RemoveFlightClient(string id) => _flightClients.TryRemove(id, out _);
 
     /// <summary>TFMS flight for a callsign (O(1) via the callsign index), or null.</summary>
-    public object? GetFlightByCallsign(string callsign)
+    /// <summary>Route-rich TFMS snapshot for one callsign — used by Track-a-Flight, which needs the
+    /// filed route and predicted NAS transit, not just the position/ETA of the WS projection.</summary>
+    public object? GetTrackByCallsign(string callsign, bool reveal = false)
     {
         if (_callsignIndex.TryGetValue(callsign, out var key) &&
             _flights.TryGetValue(key, out var f))
-            return f.ToJson();
+            return f.ToTrackJson(reveal);
         return null;
     }
 
@@ -1476,6 +1478,115 @@ class TfmsFlight
         sourceFacility = SourceFacility,
         ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
     };
+
+    /// <summary>
+    /// Collapse runs of the same centre/sector name. TFMS reports every internal boundary crossing,
+    /// so one centre typically appears several times in a row; only the first entry time is useful.
+    /// A later re-entry after the flight has left that centre is a real crossing and is kept.
+    /// </summary>
+    internal static List<TfmsSectorEntry> FirstEntries(IEnumerable<TfmsSectorEntry> src)
+    {
+        var result = new List<TfmsSectorEntry>();
+        foreach (var e in src)
+            if (result.Count == 0 || !string.Equals(result[^1].Name, e.Name, StringComparison.OrdinalIgnoreCase))
+                result.Add(e);
+        return result;
+    }
+
+    /// <summary>
+    /// Route-rich projection for the Track-a-Flight page (/api/track, /t).
+    /// TFMS commonly carries a flight — with its filed NAS route and the predicted centre/sector
+    /// transit — hours before the aircraft reaches US airspace and shows up in SFDPS, so for an
+    /// inbound international leg this is the earliest (and often only) place the route can be read.
+    /// Field names match GetAllFlights so the TFMS payloads stay consistent.
+    /// TFMS gives fix/centre/sector crossings as seconds elapsed from ETD; they are resolved to
+    /// absolute UTC here (same arithmetic as GetSectorFlights) so clients don't repeat it.
+    /// </summary>
+    public object ToTrackJson(bool reveal = false)
+    {
+        string? At(int? elapsed) => (Etd is null || elapsed is null)
+            ? null : Etd.Value.AddSeconds(elapsed.Value).ToString("o");
+        object[]? Entries(IEnumerable<TfmsSectorEntry>? src) => src is null
+            ? null : FirstEntries(src).Select(e => (object)new { name = e.Name, time = At(e.ElapsedEntryTime) }).ToArray();
+        return new
+        {
+            flightRef = FlightRef,
+            callsign = LaddService.MaskCallsign(Callsign, null, reveal),
+            airline = Airline,
+            gufi = Gufi,
+            depArpt = DepArpt,
+            arrArpt = ArrArpt,
+            status = FlightStatus,
+            // Aircraft
+            acType = AircraftType,
+            acModel = AircraftModel,
+            engineClass = AircraftEngineClass,
+            specialQual = SpecialAircraftQualifier,
+            equipmentQualifier = EquipmentQualifier,
+            category = AircraftCategory,
+            userCategory = UserCategory,
+            // Identity / ownership
+            facility = Facility,
+            sourceFacility = SourceFacility,
+            cid = IdNumber,
+            // Route of flight + procedures
+            route = RouteOfFlight,
+            dpName = DpName,
+            dpType = DpType,
+            dpTransitionFix = DpTransitionFix,
+            star = Star,
+            starTransitionFix = StarTransitionFix,
+            airways = Airways,
+            depFix = DepartureFix,
+            departureFixTime = DepartureFixTime?.ToString("o"),
+            arrFix = ArrivalFix,
+            arrivalFixTime = ArrivalFixTime?.ToString("o"),
+            coordinationFix = CoordinationFix,
+            coordinationTime = CoordinationTime?.ToString("o"),
+            boundaryFix = BoundaryFix,
+            boundaryCrossingTime = BoundaryCrossingTime?.ToString("o"),
+            boundaryRadial = BoundaryRadial,
+            boundaryDistance = BoundaryDistance,
+            // Predicted NAS transit (ordered, wall-clock UTC)
+            fixes = Fixes?.OrderBy(f => f.SequenceNumber)
+                .Select(f => new { name = f.Name, seq = f.SequenceNumber, time = At(f.ElapsedTime) }),
+            centers = Entries(Centers),
+            sectors = Entries(Sectors),
+            // Filed / assigned performance
+            assignedAlt = AssignedAltitude,
+            requestedAlt = RequestedAltitude,
+            beaconCode = AssignedBeaconCode,
+            filedTas = FiledTrueAirSpeed,
+            filedMach = FiledMach,
+            // Position
+            lat = Latitude == 0 ? (double?)null : Latitude,
+            lon = Longitude == 0 ? (double?)null : Longitude,
+            altitude = Altitude,
+            reportedAlt = ReportedAltitudeRaw,
+            speed = Speed,
+            groundSpeed = GroundSpeed,
+            positionTime = PositionTime?.ToString("o"),
+            // Times
+            igtd = Igtd?.ToString("o"),
+            etd = Etd?.ToString("o"),
+            eta = Eta?.ToString("o"),
+            originalDeparture = OriginalDeparture?.ToString("o"),
+            originalArrival = OriginalArrival?.ToString("o"),
+            gateDeparture = GateDeparture?.ToString("o"),
+            gateArrival = GateArrival?.ToString("o"),
+            runwayDeparture = RunwayDeparture?.ToString("o"),
+            runwayArrival = RunwayArrival?.ToString("o"),
+            airlineOutTime = AirlineOutTime?.ToString("o"),
+            airlineOffTime = AirlineOffTime?.ToString("o"),
+            airlineOnTime = AirlineOnTime?.ToString("o"),
+            airlineInTime = AirlineInTime?.ToString("o"),
+            // Misc — "NO_DIVERSION" is the normal case, so only surface a real one.
+            diversion = string.Equals(DiversionIndicator, "NO_DIVERSION", StringComparison.OrdinalIgnoreCase)
+                ? null : DiversionIndicator,
+            ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds
+        };
+    }
+
 }
 
 class TfmsRouteFix

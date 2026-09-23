@@ -20,7 +20,8 @@
   header { position:sticky; top:0; z-index:10; background:#000; border-bottom:1px solid var(--line);
     padding:10px 12px; display:flex; gap:8px; align-items:center; }
   header .home { color:var(--dim); text-decoration:none; font-size:13px; padding:6px; }
-  header form { flex:1; display:flex; gap:8px; }
+  /* min-width:0 — without it the form keeps its content width and the header scrolls sideways on a phone. */
+  header form { flex:1; min-width:0; display:flex; gap:8px; }
   header input { flex:1; min-width:0; background:#1a1a1a; color:var(--yel); border:1px solid var(--line);
     border-radius:8px; padding:11px 12px; font:inherit; text-transform:uppercase; letter-spacing:1px; }
   header input::placeholder { color:#666; text-transform:none; letter-spacing:0; }
@@ -89,6 +90,22 @@
   .grid .v.red { color:var(--red); }
   .route { padding:0 14px 12px; font-size:13px; color:#dcdcae; word-break:break-word; line-height:1.5; }
   .subhdr { padding:10px 14px 4px; color:var(--dim); font-size:11px; letter-spacing:1px; border-top:1px solid #222; }
+  /* Ordered crossing list (TFMS route fixes / centres / sectors). Flex-wraps on a phone;
+     already-crossed entries dim out and the next one ahead is called out in white. */
+  .path { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 7px; padding:4px 14px 12px; font-size:13px; }
+  .path .pf { white-space:nowrap; }
+  .path .pf b { font-weight:normal; color:#dcdcae; letter-spacing:.5px; }
+  .path .pf i { font-style:normal; font-size:11px; color:var(--dim); margin-left:4px; }
+  .path .pf.more { color:var(--dim); font-size:11px; }
+  .path .sep { color:#3a3a3a; }
+  .path.ctr .pf b { color:var(--yel); }
+  .path.sec { font-size:12px; }
+  /* State last so it wins over the per-list colours above (same specificity). */
+  .path .pf.past b { color:#6a6a52; }
+  .path .pf.past i { color:#4a4a40; }
+  .path.ctr .pf.past b { color:#6a6a3a; }
+  .path .pf.next b { color:#fff; font-weight:bold; }
+  .path .pf.next i { color:var(--yel); }
 
   /* Data blocks (mock) */
   .blocks { display:flex; gap:12px; flex-wrap:wrap; padding:12px 14px; }
@@ -140,7 +157,7 @@
     background: #0b1424; color: #9db4d8; font-size: 13px; line-height: 1.5; }
   .tgnote a { color: #6cf; } .tgnote code { color: #cf6; background: #10203a; padding: 1px 5px; border-radius: 4px; }
 </style>
-<script src="/track/track.js?v=18"></script>
+<script src="/track/track.js?v=19"></script>
 <script src="/shared/disclaimer.js?v=2"></script>
 </body>
 </html>

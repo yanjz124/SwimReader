@@ -86,7 +86,7 @@ static class TrackRoutes
             var tdls  = ctx.Tdls.FindByCallsign(callsign);
             var tais  = ctx.Tais.FindByCallsign(callsign);
             var asdex = ctx.Asdex.FindByCallsign(callsign);
-            var tfms  = ctx.Tfms.GetFlightByCallsign(callsign);
+            var tfms  = ctx.Tfms.GetTrackByCallsign(callsign, LaddService.Reveal(http));
             // Match TFDM to the current leg (origin/dest) — a reused flight number can carry TFDM
             // data for a previous leg. Prefer the live SFDPS record that has both airports.
             var legF = ctx.Flights.Values
@@ -685,6 +685,17 @@ static class TrackRoutes
 
     private static string HmDt(DateTime? dt) => dt == null ? "" : dt.Value.ToString("HHmm") + "Z";
 
+    /// "SID.TRANS" / "TRANS.STAR" — joins a procedure and its transition fix, skipping blanks.
+    private static string? Dot(string? a, string? b)
+    {
+        var parts = new[] { a, b }.Where(x => !string.IsNullOrEmpty(x)).ToArray();
+        return parts.Length == 0 ? null : string.Join(".", parts);
+    }
+
+    /// "BRDJE 1245Z" — a TFMS fix with its crossing time when one is known.
+    private static string? FixAt(string? fix, DateTime? at) =>
+        string.IsNullOrEmpty(fix) ? null : fix + (at != null ? " " + HmDt(at) : "");
+
     private static IResult TextPage(ServerContext ctx, string? cs)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
@@ -997,13 +1008,59 @@ static class TrackRoutes
         }
 
         // ── TRAFFIC FLOW (TFMS) ──
+        // TFMS carries the filed NAS route and the predicted centre/fix transit, often hours before
+        // the flight reaches US airspace and appears in SFDPS — for an inbound international leg
+        // this is frequently the only source with a route, so the route is worth the bytes here.
         if (tfms != null)
         {
+            var etd = tfms.Etd;
+            // TFMS gives crossings as seconds elapsed from ETD → resolve to wall clock (cf. GetSectorFlights).
+            // Long lists are windowed around the next crossing still ahead, so a flight already halfway
+            // along its route shows the part it is actually flying instead of the first N fixes.
+            string? Cross(IEnumerable<(string Name, int? El)> src, int cap)
+            {
+                var all = src.Select(x => (x.Name,
+                        At: etd != null && x.El != null ? etd.Value.AddSeconds(x.El.Value) : (DateTime?)null))
+                    .ToList();
+                if (all.Count == 0) return null;
+                var next = all.FindIndex(x => x.At != null && x.At > DateTime.UtcNow);
+                int start = all.Count <= cap ? 0
+                    : Math.Max(0, Math.Min(all.Count - cap, next < 0 ? 0 : next - 2));
+                var parts = new List<string>();
+                if (start > 0) parts.Add("+" + start);
+                parts.AddRange(all.Skip(start).Take(cap)
+                    .Select(x => x.Name + (x.At != null ? " " + HmDt(x.At) : "")));
+                var tail = all.Count - start - Math.Min(cap, all.Count - start);
+                if (tail > 0) parts.Add("+" + tail);
+                return string.Join(" > ", parts);
+            }
+
             sb.Append("<h2>TRAFFIC FLOW (TFMS)</h2>");
             Row(sb, "Departure", tfms.DepArpt); Row(sb, "Arrival", tfms.ArrArpt); Row(sb, "Status", tfms.FlightStatus);
-            Row(sb, "ETA", HmDt(tfms.Eta)); Row(sb, "STAR", tfms.Star); Row(sb, "Type", tfms.AircraftType ?? tfms.AircraftModel);
+            Row(sb, "Type", tfms.AircraftType ?? tfms.AircraftModel);
+            Row(sb, "Route", tfms.RouteOfFlight);
+            Row(sb, "Dep proc", Dot(tfms.DpName, tfms.DpTransitionFix));
+            Row(sb, "Arr proc", Dot(tfms.StarTransitionFix, tfms.Star));
+            Row(sb, "Airways", tfms.Airways != null ? string.Join(" ", tfms.Airways) : null);
+            Row(sb, "Dep fix", FixAt(tfms.DepartureFix, tfms.DepartureFixTime));
+            Row(sb, "Arr fix", FixAt(tfms.ArrivalFix, tfms.ArrivalFixTime));
+            Row(sb, "Coord fix", FixAt(tfms.CoordinationFix, tfms.CoordinationTime));
+            Row(sb, "Boundary", FixAt(tfms.BoundaryFix, tfms.BoundaryCrossingTime));
+            if (tfms.Fixes != null)
+                Row(sb, "Fixes", Cross(tfms.Fixes.OrderBy(f => f.SequenceNumber).Select(f => (f.Name, f.ElapsedTime)), 14));
+            if (tfms.Centers != null)
+                Row(sb, "Centres", Cross(TfmsFlight.FirstEntries(tfms.Centers).Select(c => (c.Name, c.ElapsedEntryTime)), 12));
+            Row(sb, "ETD", HmDt(tfms.Etd)); Row(sb, "ETA", HmDt(tfms.Eta));
+            if (tfms.Eta != null && tfms.OriginalArrival != null)
+            {
+                var d = (int)Math.Round((tfms.Eta.Value - tfms.OriginalArrival.Value).TotalMinutes);
+                if (d != 0) Row(sb, "vs orig. ETA", (d > 0 ? "+" : "") + d + " min");
+            }
+            if (tfms.RequestedAltitude != null) Row(sb, "Req. alt", "FL" + (tfms.RequestedAltitude.Value / 100).ToString("000"));
             if (tfms.Altitude != null) Row(sb, "Altitude", tfms.Altitude + " ft");
             if (tfms.Speed != null) Row(sb, "Speed", tfms.Speed + " kt");
+            if (!string.IsNullOrEmpty(tfms.DiversionIndicator) && tfms.DiversionIndicator != "NO_DIVERSION")
+                Row(sb, "Diversion", tfms.DiversionIndicator);
         }
 
         sb.Append("<p class=d style=margin-top:16px>text mode · auto-refresh 30s · ").Append(DateTime.UtcNow.ToString("HHmm")).Append("Z</p></body></html>");

@@ -38,7 +38,7 @@
 <script>
 const AP = location.pathname.split('/').pop().toUpperCase();
 document.getElementById('apt').textContent = AP;
-const NAMES = {KLAS:"Las Vegas",KMDW:"Chicago Midway",KTEB:"Teterboro",KMIA:"Miami",KSEA:"Seattle",KIAD:"Washington Dulles",KOAK:"Oakland",KLGA:"New York LaGuardia",KDFW:"Dallas-Ft Worth",KATL:"Atlanta"};
+const NAMES = {KLAS:"Las Vegas",KMDW:"Chicago Midway",KTEB:"Teterboro",KMIA:"Miami",KSEA:"Seattle",KIAD:"Washington Dulles",KOAK:"Oakland",KLGA:"New York LaGuardia",KDFW:"Dallas-Ft Worth",KATL:"Atlanta",KBNA:"Nashville",KBOI:"Boise",KCLE:"Cleveland",KDAL:"Dallas Love Field",KDAY:"Dayton",KHOU:"Houston Hobby",KHPN:"Westchester",KIND:"Indianapolis",KPHL:"Philadelphia",KRDU:"Raleigh-Durham",KSDF:"Louisville",KSJC:"San Jose",KTPA:"Tampa"};
 document.getElementById('aptName').textContent = NAMES[AP]||'';
 
 let DATA = { flights:[], info:null, tmis:[] };

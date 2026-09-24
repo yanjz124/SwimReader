@@ -2518,6 +2518,38 @@ function dedupByCallsign(now) {
       cur.siblings.push(t.Guid);
     }
   }
+  // ── Departure fold-in ───────────────────────────────────────────────────────────────────
+  // A departure often shows up first as a beacon-only track, then TAIS publishes the TAGGED
+  // track under a NEW track number. Those key differently ("SQ:1234" vs the callsign), so
+  // nothing linked them and the airport grew two tags for the ~30s it took the untagged one to
+  // time out. Fold an untagged track into a co-located tagged one carrying the same code — the
+  // tagged track stays primary, since it holds the fuller picture.
+  const taggedPrimaries = [];
+  for (const v of byKey.values()) {
+    const p = tracks.get(v.primaryGuid);
+    if (!p || !p.Location) continue;
+    const pfp = trackToFp.get(v.primaryGuid);
+    if (!((pfp?.Callsign || p.Callsign || "").trim())) continue;
+    taggedPrimaries.push({ entry: v, track: p, fp: pfp });
+  }
+  if (taggedPrimaries.length) {
+    for (const t of tracks.values()) {
+      if (suppressed.has(t.Guid) || !t.Location || !t.Squawk) continue;
+      if (now - (t.lastUpdate ?? t.lastPosUpdate ?? 0) > LOST_TARGET_MS) continue;
+      if ((trackToFp.get(t.Guid)?.Callsign || t.Callsign || "").trim()) continue;   // already tagged
+      for (const g of taggedPrimaries) {
+        if (g.track.Guid === t.Guid) continue;
+        const sameCode = t.Squawk === g.track.Squawk
+          || (g.fp?.AssignedSquawk && t.Squawk === g.fp.AssignedSquawk);
+        if (!sameCode) continue;
+        if (distanceNM(g.track.Location, t.Location) > DEDUP_MAX_NM) continue;
+        suppressed.add(t.Guid);
+        g.entry.siblings.push(t.Guid);
+        break;
+      }
+    }
+  }
+
   // Build the primary->siblings map for mergedFp() lookups.
   _siblingsByPrimary = new Map();
   for (const v of byKey.values()) {

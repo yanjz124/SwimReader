@@ -499,6 +499,13 @@ class ItwsBridge
 
     // ── WS client management ────────────────────────────────────────────────
 
+    /// <summary>Live WebSocket viewers on both ITWS streams, /itws/ws and /itws/ws/{airport} (the
+    /// home page's server card sums these with the other feeds — see SystemStats.Snapshot).</summary>
+    public int ClientCount
+    {
+        get { var n = _allClients.Count; foreach (var g in _airportClients.Values) n += g.Count; return n; }
+    }
+
     public string AddAllClient(WsClient client)
     {
         var id = Guid.NewGuid().ToString("N");

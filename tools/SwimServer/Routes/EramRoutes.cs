@@ -336,8 +336,23 @@ static class EramRoutes
             return Results.Json(new { facility = fac.ToUpperInvariant(), sector = sec.ToUpperInvariant(), into, outOf }, ctx.JsonOpts);
         });
 
-        // Server performance / health: CPU, memory, GC, threads, uptime, WS clients, disk.
-        app.MapGet("/api/system", () => Results.Json(SystemStats.Snapshot(ctx.Clients.Count, ctx.Flights.Count), ctx.JsonOpts));
+        // Server performance / health: CPU, memory, GC, threads, uptime, live clients, disk.
+        // Every feed that holds live clients gets listed here. ctx.Clients is only the SFDPS /ws
+        // socket (ERAM scope, flight table) — the other feeds keep their own registries, and STARS
+        // rides the proxied DGScope HTTP stream rather than a WebSocket, so it is counted in
+        // DgScopeRoutes. A feed missing from this array silently reads as zero.
+        app.MapGet("/api/system", () => Results.Json(SystemStats.Snapshot(new (string, int)[]
+        {
+            ("SFDPS", ctx.Clients.Count),
+            ("STARS", DgScopeRoutes.ActiveClients),
+            ("ASDE-X", ctx.Asdex.ClientCount),
+            ("TAIS", ctx.Tais.ClientCount),
+            ("TDLS", ctx.Tdls.ClientCount),
+            ("TFDM", ctx.Tfdm.ClientCount),
+            ("TFMS", ctx.Tfms.ClientCount),
+            ("ITWS", ctx.Itws.ClientCount),
+            ("Replay", ctx.ReplayServer.ClientCount),
+        }, ctx.Flights.Count), ctx.JsonOpts));
 
         // Deployed build: current git commit + commit time (so the homepage can show what's live).
         app.MapGet("/api/version", () => Results.Json(VersionInfo.Get(ctx.RepoRoot), ctx.JsonOpts));

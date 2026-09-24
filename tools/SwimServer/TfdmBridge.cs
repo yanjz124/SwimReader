@@ -328,6 +328,13 @@ class TfdmBridge
     }
 
     // ── Clients ──────────────────────────────────────────────────────────────
+    /// <summary>Live WebSocket viewers across every airport (the home page's server card sums
+    /// these with the other feeds — see SystemStats.Snapshot).</summary>
+    public int ClientCount
+    {
+        get { var n = 0; foreach (var g in _clients.Values) n += g.Count; return n; }
+    }
+
     public string AddClient(string airport, WsClient client)
     {
         var id = Guid.NewGuid().ToString("N");

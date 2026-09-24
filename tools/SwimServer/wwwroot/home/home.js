@@ -68,6 +68,16 @@ function fmtData(mb) {
     return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
 }
 
+// Live clients, summed across every feed, with the per-feed split the server sends
+// (SFDPS /ws, the proxied STARS stream, ASDE-X, TAIS, TDLS, TFDM, TFMS, ITWS, replay).
+// One person with two tabs open is two clients — these are connections, not people.
+function clientsText(s) {
+    const n = s.wsClients;
+    if (n == null) return '--';
+    const by = (s.wsByFeed || []).map(f => `${f.feed} ${f.count}`).join('  ·  ');
+    return n === 0 ? '0' : `${n}   (${by})`;
+}
+
 function renderServerDetail() {
     const s = _sys || {};
     const fields = [
@@ -76,7 +86,7 @@ function renderServerDetail() {
         ['Managed heap', fmtMB(s.memManagedMB) + '  /  GC ' + fmtMB(s.gcHeapMB)],
         ['GC gen 0/1/2', `${s.gen0 ?? 0} / ${s.gen1 ?? 0} / ${s.gen2 ?? 0}`],
         ['Threads', s.threads ?? '--'],
-        ['WS clients', s.wsClients ?? '--'],
+        ['Clients', clientsText(s)],
         ['Flights stored', (s.flights ?? 0).toLocaleString()],
         ['Uptime', s.uptime ?? '--'],
         ['Disk free', (s.diskFreeGB ?? '--') + ' / ' + (s.diskTotalGB ?? '--') + ' GB'],

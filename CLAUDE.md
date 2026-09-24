@@ -407,6 +407,7 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/flights/{gufi}` | Full flight detail + all events (with `index` and `hasXml` per event) |
 | `GET /api/event-xml/{index}/{gufi}` | Raw FIXM XML for a specific event (lazy-loaded by FDIO) |
 | `GET /api/stats` | Server stats (total messages, rate, flight count) |
+| `GET /api/system` | Process metrics for the home server card — CPU/mem/GC/threads/uptime/disk, plus `wsClients` and `wsByFeed` (see below) |
 | `GET /api/kml` | List available KML boundary files |
 | `GET /api/kml/{name}` | Serve a specific KML file from repo root |
 | `GET /api/route/{gufi}` | Resolved route waypoints (lat/lon) from NASR data |
@@ -1139,6 +1140,26 @@ Place KML files in the repo root (gitignored, not committed):
 - `AllSectors.kml` — auto-loaded by eram.html via `/api/kml/AllSectors.kml`
 - `AllHighSectors.kml`, `AllLowSectors.kml` — available via API, toggleable in sidebar
 - KML categories parsed from `<name>` tags: UHI (ultra-high), HI (high), LO (low), APP (approach)
+
+## Live Client Count (`/api/system`)
+
+`wsClients` is the **sum across every feed**, with a `wsByFeed: [{feed, count}]` breakdown of the ones
+that currently have someone on them (idle feeds are omitted). The home page's SERVER STATUS card shows
+the total in its collapsed line and `total (SFDPS 1 · STARS 1 · …)` in the Clients row.
+
+The counts come from each feed's own registry — `ctx.Clients` (`/ws`: ERAM scope + flight table),
+`AsdexBridge/TaisBridge/TdlsBridge/TfdmBridge/TfmsBridge/ItwsBridge.ClientCount`,
+`ReplayServer.ClientCount` (all replay sockets funnel through one `RunReplaySession`), and
+`DgScopeRoutes.ActiveClients`. **STARS is not a WebSocket** — the scope streams newline-delimited JSON
+from `/dstars/{facility}/updates`, proxied to SwimReader.Server on :5000, so it is counted around the
+proxy's body copy and nowhere else. Add a feed → add its count to the array in `EramRoutes`
+(`/api/system`), or it silently reads as zero, which is exactly the bug this replaced: the number was
+`ctx.Clients.Count` alone, so a room full of ASDE-X/STARS/TDLS/TAIS/TFDM/ITWS viewers reported **0**.
+
+These are connections, not people — one person with the scope and the flight table open counts as 2.
+`app.UseWebSockets()` runs with the default 2-minute keepalive and the receive loops have no
+application-level idle timeout, so a silently dropped connection can linger in the count for a
+couple of minutes before the ping fails.
 
 ## Important Conventions
 

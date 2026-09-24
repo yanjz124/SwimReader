@@ -13,6 +13,12 @@ namespace SwimServer;
 static class DgScopeRoutes
 {
     static readonly FileExtensionContentTypeProvider ContentTypes = new();
+    static int _active;
+
+    /// <summary>Clients on the proxied DGScope/STARS feed right now — the STARS scope streams over
+    /// HTTP (/dstars/{facility}/updates) rather than a WebSocket, so both transports are counted
+    /// here and nowhere else (the home page's server card sums these with the other feeds).</summary>
+    public static int ActiveClients => Volatile.Read(ref _active);
 
     public static void Register(WebApplication app, ServerContext ctx)
     {
@@ -75,9 +81,12 @@ static class DgScopeRoutes
             c.Response.Headers.Remove("transfer-encoding");
             c.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
 
-            // Stream the response body through (supports HTTP streaming / chunked)
+            // Stream the response body through (supports HTTP streaming / chunked). A feed request
+            // sits here for the life of the scope; a one-shot POST/profile fetch passes through in ms.
             await using var stream = await response.Content.ReadAsStreamAsync(c.RequestAborted);
-            await stream.CopyToAsync(c.Response.Body, c.RequestAborted);
+            Interlocked.Increment(ref _active);
+            try { await stream.CopyToAsync(c.Response.Body, c.RequestAborted); }
+            finally { Interlocked.Decrement(ref _active); }
         });
     }
 
@@ -100,16 +109,20 @@ static class DgScopeRoutes
         }
 
         using var client = await c.WebSockets.AcceptWebSocketAsync();
+        Interlocked.Increment(ref _active);
+        try
+        {
+            // Either direction completing (close or drop) tears down the pair.
+            var clientToUpstream = Pump(client, upstream, c.RequestAborted);
+            var upstreamToClient = Pump(upstream, client, c.RequestAborted);
+            await Task.WhenAny(clientToUpstream, upstreamToClient);
 
-        // Either direction completing (close or drop) tears down the pair.
-        var clientToUpstream = Pump(client, upstream, c.RequestAborted);
-        var upstreamToClient = Pump(upstream, client, c.RequestAborted);
-        await Task.WhenAny(clientToUpstream, upstreamToClient);
-
-        // Best-effort close of both ends so the surviving side doesn't hang.
-        await CloseQuietly(client);
-        await CloseQuietly(upstream);
-        await Task.WhenAll(clientToUpstream, upstreamToClient);
+            // Best-effort close of both ends so the surviving side doesn't hang.
+            await CloseQuietly(client);
+            await CloseQuietly(upstream);
+            await Task.WhenAll(clientToUpstream, upstreamToClient);
+        }
+        finally { Interlocked.Decrement(ref _active); }
     }
 
     static async Task Pump(WebSocket from, WebSocket to, CancellationToken ct)

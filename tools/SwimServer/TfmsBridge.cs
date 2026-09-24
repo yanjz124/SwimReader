@@ -939,7 +939,10 @@ class TfmsBridge
 
     public void RemoveFlightClient(string id) => _flightClients.TryRemove(id, out _);
 
-    /// <summary>TFMS flight for a callsign (O(1) via the callsign index), or null.</summary>
+    /// <summary>Live WebSocket viewers across both TFMS streams (the home page's server card sums
+    /// these with the other feeds — see SystemStats.Snapshot).</summary>
+    public int ClientCount => _flightClients.Count + _tmiClients.Count;
+
     /// <summary>Route-rich TFMS snapshot for one callsign — used by Track-a-Flight, which needs the
     /// filed route and predicted NAS transit, not just the position/ETA of the WS projection.</summary>
     public object? GetTrackByCallsign(string callsign, bool reveal = false)
@@ -1060,7 +1063,7 @@ class TfmsBridge
         fiCount = Interlocked.Read(ref FiCount),
         flightCount = _flights.Count,
         tmiCount = _tmis.Count,
-        clientCount = _flightClients.Count + _tmiClients.Count
+        clientCount = ClientCount
     };
 
     public object[] GetFlights(bool reveal = false) => _flights.Values

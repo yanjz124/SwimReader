@@ -644,6 +644,13 @@ class AsdexBridge
 
     // ── WebSocket client management ──────────────────────────────────────────
 
+    /// <summary>Live WebSocket viewers across every airport (the home page's server card sums
+    /// these with the other feeds — see SystemStats.Snapshot).</summary>
+    public int ClientCount
+    {
+        get { var n = 0; foreach (var g in _clients.Values) n += g.Count; return n; }
+    }
+
     /// <summary>
     /// Registers a new WebSocket client for an airport, sends an immediate snapshot,
     /// and returns the client ID needed for later removal.

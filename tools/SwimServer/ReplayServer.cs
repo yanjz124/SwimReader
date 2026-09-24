@@ -13,6 +13,11 @@ public class ReplayServer
 {
     private readonly string _replayBaseDir;
     private readonly JsonSerializerOptions _jsonOpts;
+    private int _sessions;
+
+    /// <summary>Replay sessions playing right now, across every replay socket — live and incident,
+    /// ERAM, ASDE-X and TAIS (the home page's server card sums these with the other feeds).</summary>
+    public int ClientCount => Volatile.Read(ref _sessions);
 
     public ReplayServer(string replayBaseDir, JsonSerializerOptions jsonOpts)
     {
@@ -240,6 +245,13 @@ public class ReplayServer
     }
 
     private async Task RunReplaySession(WebSocket ws, string dataDir, DateTime startTime, double initialSpeed, Bounds? initialBounds = null, double preloadSeconds = 0)
+    {
+        Interlocked.Increment(ref _sessions);
+        try { await RunReplaySessionCore(ws, dataDir, startTime, initialSpeed, initialBounds, preloadSeconds); }
+        finally { Interlocked.Decrement(ref _sessions); }
+    }
+
+    private async Task RunReplaySessionCore(WebSocket ws, string dataDir, DateTime startTime, double initialSpeed, Bounds? initialBounds = null, double preloadSeconds = 0)
     {
         var speed = initialSpeed;
         var paused = false;

@@ -7,6 +7,12 @@ namespace SwimServer;
 /// threads, uptime, and disk. CPU% is computed as the share of processor time used
 /// between successive calls, so the first call returns 0 (no baseline yet) and later
 /// calls report the average over the polling interval (home dashboard polls ~10s).
+///
+/// The client count is a sum over EVERY live feed, not just SFDPS. SwimServer serves
+/// sixteen WebSocket routes plus the proxied DGScope/STARS HTTP stream, each with its
+/// own client registry; counting only /ws (as this did originally) reported 0 while a
+/// room full of people watched ASDE-X, STARS, TDLS, TAIS, TFDM or ITWS. Callers pass
+/// the per-feed counts and get both the total and the breakdown.
 /// </summary>
 static class SystemStats
 {
@@ -15,8 +21,11 @@ static class SystemStats
     private static DateTime _prevTime;
     private static bool _primed;
 
-    public static object Snapshot(int wsClients, int flights)
+    /// <param name="feeds">(label, live client count) per feed, in display order.</param>
+    public static object Snapshot(IReadOnlyList<(string Label, int Count)> feeds, int flights)
     {
+        var wsClients = 0;
+        foreach (var f in feeds) wsClients += f.Count;
         var proc = Process.GetCurrentProcess();
 
         // CPU%: delta of total processor time over wall-clock, normalized by core count.
@@ -70,6 +79,8 @@ static class SystemStats
             gen2 = GC.CollectionCount(2),
             threads = proc.Threads.Count,
             wsClients,
+            // Only the feeds with someone on them — the card lists these under the total.
+            wsByFeed = feeds.Where(f => f.Count > 0).Select(f => new { feed = f.Label, count = f.Count }).ToArray(),
             flights,
             uptimeSec = (long)up.TotalSeconds,
             uptime = FormatUptime(up),

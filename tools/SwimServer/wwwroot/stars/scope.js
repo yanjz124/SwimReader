@@ -2222,6 +2222,10 @@ let _lastServerCA = 0;
 setInterval(() => { if (Date.now() - _lastServerCA > 4000) scanSTCA(); }, 1000);
 
 // Exact replica of C# Aircraft.ExtrapolatePosition() behavior
+// RadarWindow.cs:5950 — `aircraft.LastMessageTime > CurrentTime.AddSeconds(-LostTargetSeconds)`.
+// Keyed on the last MESSAGE, not the last position CHANGE. Gating on movement (as this used to)
+// made a track that keeps reporting but holds its lat/lon — slow/hovering traffic, a quantised
+// or briefly frozen position — vanish after 30s and pop back the instant it moved again.
 const LOST_TARGET_MS = 30000;   // LostTargetSeconds = 30
 
 function radarSweep() {
@@ -2229,7 +2233,7 @@ function radarSweep() {
 
   for (const t of tracks.values()) {
     if (!t.Location) continue;
-    if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue;
+    if (now - (t.lastUpdate ?? t.lastPosUpdate ?? 0) > LOST_TARGET_MS) continue;
 
     // Exact replica of C# ScanTarget / ExtrapolatePosition flow
     const extrapolatedpos = extrapolatePosition(t, now);
@@ -2465,13 +2469,15 @@ window.starsMinSepClear = () => { minSepPair = null; };
 // has-value with sibling fallback. Without these helpers, the same plane
 // would render as two ghost tracks with split data.
 let _siblingsByPrimary = new Map();   // primary guid -> [sibling guids]
+// Two tracks farther apart than this are never the same plane, however their keys match.
+const DEDUP_MAX_NM = 1.5;
 
 function dedupByCallsign(now) {
   const byKey = new Map();         // dedup key → { primaryGuid, fresh, siblings: [] }
   const suppressed = new Set();
   for (const t of tracks.values()) {
     if (!t.Location) continue;
-    if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue;
+    if (now - (t.lastUpdate ?? t.lastPosUpdate ?? 0) > LOST_TARGET_MS) continue;
     // Dedup by callsign; for callsign-less tracks fall back to the discrete
     // beacon code (unique to one aircraft). VFR 1200 (and 0000) are shared by
     // many aircraft, so never dedup those.
@@ -2490,6 +2496,16 @@ function dedupByCallsign(now) {
     // mergedFp). This replaces the previous suppress-and-discard behaviour
     // that lost real data (Owner, PendingHandoff, scratchpads) whenever
     // TAIS briefly published the same callsign on a transient new trackNum.
+    // Same key, but is it the same AIRCRAFT? A callsign is unique; a beacon code is not —
+    // non-discrete codes (1206, 0221, …) are routinely shared by several aircraft at once. Merging
+    // those suppressed a real target on the other side of the scope, and because the primary flips
+    // whenever one side gets >3s fresher, the two would blink in and out. Only ever merge tracks
+    // that are physically co-located, i.e. genuinely one plane seen by two sensors/track numbers.
+    const incumbent = tracks.get(cur.primaryGuid);
+    if (key.startsWith("SQ:") && incumbent?.Location && t.Location
+        && distanceNM(incumbent.Location, t.Location) > DEDUP_MAX_NM) {
+      continue;   // different aircraft sharing a code — both stay on the scope
+    }
     const gap = fresh - cur.fresh;
     if (gap > 3000) {
       // Demote the old primary, keep its history as a sibling.
@@ -2603,7 +2619,7 @@ function drawTracks() {
       t._quickLook     = true;
       t._quickLookPlus = true;
     } else if (window.prefSet?.QuickLookAll && inAltFilter(t, fp)
-               && now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) <= LOST_TARGET_MS) {
+               && now - (t.lastUpdate ?? t.lastPosUpdate ?? 0) <= LOST_TARGET_MS) {
       // Global quick-look (Ctrl+Q) — RadarWindow.cs:6085-6086 applies it only to tracks inside the
       // altitude filter that are still reporting.
       t._quickLookPlus = false;
@@ -2622,7 +2638,7 @@ function drawTracks() {
     if (suppressed.has(t.Guid)) continue;            // sibling of another GUID (port-only)
     if (t.IsOnGround) continue;                      // Radar.cs Scan skips ground
     // cs:5588 — LastMessageTime > CurrentTime - LostTargetSeconds gate.
-    if (now - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate) > LOST_TARGET_MS) continue;
+    if (now - (t.lastUpdate ?? t.lastPosUpdate ?? 0) > LOST_TARGET_MS) continue;
     // mergedFp — see PORT-ONLY block above. DGScope reads fp fields off the
     // single Aircraft instance; we merge across sibling GUIDs.
     const fp = mergedFp(t.Guid);

@@ -176,7 +176,7 @@ window.addEventListener("resize", resize);
 // RadarWindow.cs applies GL.Rotate(ScreenRotation, 0, 0, 1) to the scope
 // matrix before rendering tracks/maps/rings. We fold the equivalent
 // rotation into the projection so every consumer (drawTracks, drawRBLs,
-// nexrad polygons, video maps) honours it without a separate ctx transform.
+// nexrad polygons, video maps) honors it without a separate ctx transform.
 function geoToScreen(geo) {
   const ctr = prefSet.ScreenCenterPoint;
   const latFactor = Math.cos(ctr.Latitude * Math.PI / 180);
@@ -309,8 +309,8 @@ function drawCompass() {
       const line = i / 10;
       // DGScope offsets labels inward by the label height (cs:4809).
       const lh = 14;
-      // RadarWindow.cs:4791-4803 — special case for i=0: top-centre label
-      // reads "360" not "0", AND the south-centre tick stays "180" (we
+      // RadarWindow.cs:4791-4803 — special case for i=0: top-center label
+      // reads "360" not "0", AND the south-center tick stays "180" (we
       // already emit that via `${i + 180}`). For i>0 the symmetric labels
       // at 180-i (south) and 360-i (north, west side) also render.
       labelAt(line === 0 ? "360" : `${i}`, x1, h1 - lh);
@@ -576,7 +576,7 @@ function drawVideoMapLines() {
   // own brightness multiplier (Brightness.VideoMapA / VideoMapB). Lines color
   // = RGB(140,140,140) for both categories at 100%.
   const prevBlend = ctx.globalCompositeOperation;
-  ctx.globalCompositeOperation = "lighter";   // G11 — additive ≈ max for grey
+  ctx.globalCompositeOperation = "lighter";   // G11 — additive ≈ max for gray
 
   for (const cat of ["A", "B"]) {
     const brightness = (cat === "A")
@@ -1467,7 +1467,7 @@ function buildDataBlock(t, fp) {
 //     else if (QuickLook)      return true   (QL list always FDB)
 //     else if (ForceQuickLook) return true   (**<pos> always FDB)
 //     return _fdb                            (manual toggle persisted)
-//   Aircraft.cs:156-166 fdb() helper used by colour tier:
+//   Aircraft.cs:156-166 fdb() helper used by color tier:
 //     if (Emergency || QuickLook) return true
 //     return _fdb
 //   RadarWindow.cs:1085 Owned bool: PositionInd==me OR PendingHandoff==me
@@ -1480,7 +1480,7 @@ function buildDataBlock(t, fp) {
 //   FDB: associated + owned-or-receiving → full 3-line block
 // DGScope conflates LDB+PDB into a single beacon-code-on-line-1 render
 // (Aircraft.cs:595-613); we split them so tracked tracks show the
-// callsign instead of the raw squawk, per user-visible STARS behaviour.
+// callsign instead of the raw squawk, per user-visible STARS behavior.
 // InFilter — RadarWindow.cs:6395-6400: the associated / unassociated altitude bracket. Shared by
 // the draw loop (which uses it to gate the data block) and the global quick-look gate.
 function inAltFilter(t, fp) {
@@ -1790,7 +1790,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // Aircraft.cs:485-498 for the W/NW/SW direction cases).
   const padLeft = blockX + blockWidth <= screen.x;
 
-  // Data-block colour priority — verbatim from RadarWindow.cs:5436-5468:
+  // Data-block color priority — verbatim from RadarWindow.cs:5436-5468:
   //   5436  if (Emergency)                  → DataBlockEmergencyColor (red)
   //   5442  else if (Marked)                → SelectedColor          (cyan)
   //   5448  else if (ForceQuickLook)        → PointoutColor          (yellow)
@@ -1804,7 +1804,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // bit set at RadarWindow.cs:1086-1087.
   //
   // Pointout (Aircraft.cs:20) is a SEPARATE flag in DGScope, only read at
-  // RadarWindow.cs:2692/2724 (clear-on-click) — it does NOT drive colour.
+  // RadarWindow.cs:2692/2724 (clear-on-click) — it does NOT drive color.
   // The previous port used an invented `_pointoutTarget` here; replaced
   // with `_forceQuickLook` to match the source priority.
   // Source-of-truth predicates from handoff.js. DGScope flash sites:
@@ -1825,7 +1825,7 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // 5s post-accept blink, until the user clicks to acknowledge.
   const ownedSticky = !!t._owned;
   let baseColor = COLORS.DataBlock;
-  // Conflict Alert is NOT a whole-block colour change — CA annotation only
+  // Conflict Alert is NOT a whole-block color change — CA annotation only
   // (CRC STARS § STCA; handled below).
   if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
     baseColor = COLORS.Emerg;
@@ -2013,7 +2013,7 @@ function drawPosition(t, posNow) {
   ctx.lineWidth = 1.5;
   ctx.strokeText(positionSymbolText(t, fp), px, py);
   
-  // Draw text fill in #CCCCCC (light grey)
+  // Draw text fill in #CCCCCC (light gray)
   ctx.fillStyle = adjusted([204, 204, 204], prefSet.Brightness.PositionSymbols);
   ctx.fillText(positionSymbolText(t, fp), px, py);
 }
@@ -2061,12 +2061,12 @@ function drawJRings() {
 
 // ── Cones — P-cones (*P tool) + ATPA required-separation cones ───────────────
 // Ported from RadarWindow.cs DrawPCone: a wedge from the aircraft along a track/bearing,
-// length = miles, widening to a fixed end width, with a centre gap for the mileage label.
+// length = miles, widening to a fixed end width, with a center gap for the mileage label.
 function drawCone(t, bearingDeg, milesNM, color, showSize) {
   const pos = displayPos(t);
   if (!pos || !milesNM) return;
   const c = geoToScreen(pos);
-  // Screen-space direction for the compass bearing (honours ScreenRotation): project 1 NM out.
+  // Screen-space direction for the compass bearing (honors ScreenRotation): project 1 NM out.
   const θ = bearingDeg * Math.PI / 180;
   const latF = Math.cos(pos.Latitude * Math.PI / 180) || 1;
   const ahead = geoToScreen({ Latitude: pos.Latitude + Math.cos(θ) / 60,
@@ -2076,7 +2076,7 @@ function drawCone(t, bearingDeg, milesNM, color, showSize) {
   const len = milesNM / view.scale;              // NM → px (matches J-ring scale)
   if (len < 6) return;
   const endHalf = 5;                             // half of DGScope's TPAConeWidth (~10px) at the far end
-  const gap = showSize ? 14 : 0;                 // centre gap for the label
+  const gap = showSize ? 14 : 0;                 // center gap for the label
   const y1 = Math.max(1, len / 2 - gap / 2), y2 = y1 + gap;
   const h1 = endHalf * (y1 / len), h2 = endHalf * (y2 / len);
   const P = (a, cross) => ({ x: c.x + dx * a + nx * cross, y: c.y + dy * a + ny * cross });
@@ -2493,7 +2493,7 @@ function dedupByCallsign(now) {
     // Tight-race stability: keep the INCUMBENT primary unless the challenger
     // is more than 3s newer. The "loser" GUID is added to siblings[] so its
     // fp/track data can fill in any fields missing on the primary (see
-    // mergedFp). This replaces the previous suppress-and-discard behaviour
+    // mergedFp). This replaces the previous suppress-and-discard behavior
     // that lost real data (Owner, PendingHandoff, scratchpads) whenever
     // TAIS briefly published the same callsign on a transient new trackNum.
     // Same key, but is it the same AIRCRAFT? A callsign is unique; a beacon code is not —
@@ -2788,7 +2788,7 @@ cv.addEventListener("mousemove", (e) => {
   ctr.Longitude -= ( dx_px * view.scale) / (60 * latFactor);
 });
 window.addEventListener("mouseup", () => {
-  if (panning) _afterPrefChange();   // persist the new screen centre once the drag ends
+  if (panning) _afterPrefChange();   // persist the new screen center once the drag ends
   panning = false; panButton = -1; downAt = null;
 });
 
@@ -2938,7 +2938,7 @@ async function bootstrap() {
   else startDstars();
 
   // NEXRAD overlay (off by default — user enables via MCA `WX A` / DCB).
-  // Run after the screen-centre is known so the nearest-station lookup
+  // Run after the screen-center is known so the nearest-station lookup
   // resolves to the right radar.
   if (window.Nexrad?.init) window.Nexrad.init();
 
@@ -3053,7 +3053,7 @@ function _afterPrefChange() {
 const STARS_PREFS_KEY = "stars.prefs.v1";
 // ── Per-facility view state (maps, screen center, range-ring location) ─────
 // Like the ERAM scope, the STARS view you left is restored when you come back: which video
-// maps were on, where the scope was centred, and where the range rings sit. These are
+// maps were on, where the scope was centered, and where the range rings sit. These are
 // facility-specific (map ids and coordinates mean nothing at another TRACON), so they are
 // keyed by ARTCC/FACILITY rather than stored in the global stars.prefs snapshot.
 // URL params still win (?maps= is applied at map load and is never overridden here), and an
@@ -3380,7 +3380,7 @@ window.videoMaps        = videoMaps;
 window.mapButtonAssignments = mapButtonAssignments;
 window.ClockPhase       = ClockPhase;
 // Exposed for the NEXRAD overlay (nexrad.js) which needs to project image
-// corners from radar-centred lat/lon into the current scope view.
+// corners from radar-centered lat/lon into the current scope view.
 window.geoToScreen      = geoToScreen;
 // Exposed so mca.js's KeyCode.WX path can route through the same DCB
 // toggle the WX1-6 buttons use (RadarWindow.cs:3886).

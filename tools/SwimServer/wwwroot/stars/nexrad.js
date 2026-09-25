@@ -153,9 +153,9 @@
     const brightness = Math.max(0, Math.min(100, prefSet.Nexrad.brightness ?? 80)) / 100;
     const patterns   = getPatterns(ctx);
 
-    // First pass: fill MinColor polygons grouped by colour string so we
-    // can batch path operations per colour. Stipple in second pass.
-    // Map colour -> Path2D + stipple kind for that colour.
+    // First pass: fill MinColor polygons grouped by color string so we
+    // can batch path operations per color. Stipple in second pass.
+    // Map color -> Path2D + stipple kind for that color.
     const buckets = new Map();   // key: "r,g,b|stipple" → { path, color, stipple }
     for (let i = 0; i < _radials.numRadials; i++) {
       const r = _radials.radials[i];
@@ -231,7 +231,7 @@
       await new Promise(r => setTimeout(r, 2000));
     }
     if (!_station) {
-      console.warn("[STARS NEXRAD] no station found near scope centre after 60s");
+      console.warn("[STARS NEXRAD] no station found near scope center after 60s");
       return;
     }
     console.log(`[STARS NEXRAD] using ${_station.icao} ${_station.name}, ${_station.state}`);

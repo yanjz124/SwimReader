@@ -1053,7 +1053,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 .tb-btn .tb-tear:hover {
     border-color: #ffffff !important;
 }
-/* Disabled tearoff (grey when active tearoff exists) — color set dynamically in JavaScript */
+/* Disabled tearoff (gray when active tearoff exists) — color set dynamically in JavaScript */
 .tb-btn .tb-tear.tb-tear-disabled {
     background: #C7C7C7 !important;
     cursor: var(--eram-cursor) !important;
@@ -1128,11 +1128,11 @@ body.tb-active #sidebar-wrapper { top: 70px; }
 .tb-btn.tb-toggle-on { background: #0000D4; }
 .tb-btn.tb-toggle-on:hover { background: #0000D4; }
 
-/* Toggle grey (DEST, TYPE, PORTAL FENCE) — off: black, on: light grey */
-.tb-btn.tb-toggle-grey { background: #000000; }
-.tb-btn.tb-toggle-grey:hover { background: #000000; }
-.tb-btn.tb-toggle-grey.tb-toggle-on { background: #C7C7C7; }
-.tb-btn.tb-toggle-grey.tb-toggle-on:hover { background: #C7C7C7; }
+/* Toggle gray (DEST, TYPE, PORTAL FENCE) — off: black, on: light gray */
+.tb-btn.tb-toggle-gray { background: #000000; }
+.tb-btn.tb-toggle-gray:hover { background: #000000; }
+.tb-btn.tb-toggle-gray.tb-toggle-on { background: #C7C7C7; }
+.tb-btn.tb-toggle-gray.tb-toggle-on:hover { background: #C7C7C7; }
 
 /* Menu OPEN — pink/clay */
 .tb-btn.tb-menu-open { background: #DCA09B; }
@@ -1192,7 +1192,7 @@ body.tb-active #sidebar-wrapper { top: 70px; }
     cursor: var(--eram-cursor) !important;
 }
 
-/* Left/right grey bars flanking the button grid */
+/* Left/right gray bars flanking the button grid */
 .tb-side-bar {
     display: flex; flex-direction: column; justify-content: flex-end;
     min-width: 14px; background: #555; flex-shrink: 0;

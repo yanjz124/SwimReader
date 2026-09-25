@@ -4,7 +4,7 @@ namespace SwimServer;
 /// STARS profile XML loader. Serves the user's DGScope profile files
 /// (the same XML format the WPF app reads from
 /// %LOCALAPPDATA%\DGScope Profile Manager\profiles\profiles\{ARTCC}\{FACILITY}.xml)
-/// so the web port honours their per-facility colour/brightness/Nexrad
+/// so the web port honors their per-facility color/brightness/Nexrad
 /// preferences instead of guessing.
 ///
 /// Server scans a per-deploy `stars-profiles/{ARTCC}/{FACILITY}.xml`

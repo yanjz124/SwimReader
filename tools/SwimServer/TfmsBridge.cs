@@ -1483,9 +1483,9 @@ class TfmsFlight
     };
 
     /// <summary>
-    /// Collapse runs of the same centre/sector name. TFMS reports every internal boundary crossing,
-    /// so one centre typically appears several times in a row; only the first entry time is useful.
-    /// A later re-entry after the flight has left that centre is a real crossing and is kept.
+    /// Collapse runs of the same center/sector name. TFMS reports every internal boundary crossing,
+    /// so one center typically appears several times in a row; only the first entry time is useful.
+    /// A later re-entry after the flight has left that center is a real crossing and is kept.
     /// </summary>
     internal static List<TfmsSectorEntry> FirstEntries(IEnumerable<TfmsSectorEntry> src)
     {
@@ -1498,11 +1498,11 @@ class TfmsFlight
 
     /// <summary>
     /// Route-rich projection for the Track-a-Flight page (/api/track, /t).
-    /// TFMS commonly carries a flight — with its filed NAS route and the predicted centre/sector
+    /// TFMS commonly carries a flight — with its filed NAS route and the predicted center/sector
     /// transit — hours before the aircraft reaches US airspace and shows up in SFDPS, so for an
     /// inbound international leg this is the earliest (and often only) place the route can be read.
     /// Field names match GetAllFlights so the TFMS payloads stay consistent.
-    /// TFMS gives fix/centre/sector crossings as seconds elapsed from ETD; they are resolved to
+    /// TFMS gives fix/center/sector crossings as seconds elapsed from ETD; they are resolved to
     /// absolute UTC here (same arithmetic as GetSectorFlights) so clients don't repeat it.
     /// </summary>
     public object ToTrackJson(bool reveal = false)

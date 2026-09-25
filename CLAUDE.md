@@ -244,7 +244,7 @@ Discovered from raw NAS FIXM data analysis (500 messages, ~11 seconds, Feb 2026)
 
 **Point-out behavior (investigated 2026-03-03, 1,467 records / 110 flights):**
 - `<pointout>` has NO attributes (no event/status/acknowledgment data)
-- **HT** = always published by originator's centre; **PT** = always published by receiver's centre
+- **HT** = always published by originator's center; **PT** = always published by receiver's center
 - Inter-facility POs produce both HT + PT within 0-1000ms (dual publication)
 - **SFDPS has no point-out acceptance signal** — `<pointout>` appears ONLY in PT/HT messages; no other source (TH, OH, FH, etc.) ever carries point-out data
 - **Mostly one-shot** (94%); 6% repeat with variable interval (38s to ~3.3 min, not a fixed timer)
@@ -821,7 +821,7 @@ const B757_CODES = ['B752','B753','B757'];
 
 **Data block (`.db` div, NE offset from target center):**
 - Line 1 (`.db-line1`, ERAM yellow): `{callsign || squawk || '????'}  {altFt/100 padded to 3 digits}`
-- Line 2 (`.db-line2`, grey `#aaa`): `{acType}  {spdKts/10 padded to 2 digits}`
+- Line 2 (`.db-line2`, gray `#aaa`): `{acType}  {spdKts/10 padded to 2 digits}`
 - Omitted for `unknown` and `vehicle` targets (only line 1 with callsign/squawk)
 
 **Data block positions (8 compass points):** Leader lines radiate from target center (9,9) to the data block. N/S lines are vertical (lx=9), E/W are horizontal (ly=9), diagonals go to corners. Data block wrap position (`wl`, `wt`) places the text div relative to icon anchor. Default position is NE. Left-click target symbol toggles data block visibility; drag data block to snap to nearest octant.
@@ -966,8 +966,8 @@ The FDIO (Flight Data Input/Output) page provides a two-panel flight data explor
 | LH | orange | Interim altitude |
 | PT/HT | purple | Point-out events |
 | CL | red | Cancellation/clearance |
-| TH/HZ | dim grey | Position updates (grouped in UI) |
-| BA/RE | grey | Beacon code events |
+| TH/HZ | dim gray | Position updates (grouped in UI) |
+| BA/RE | gray | Beacon code events |
 
 ### Flight History Persistence
 When flights are purged from memory (>60 min stale), their complete state + all event summaries are saved to disk:
@@ -990,17 +990,17 @@ A mobile-first page that follows one callsign across **every** source at once, f
 
 ### TFMS section — the earliest route
 `tfms` is projected by `TfmsFlight.ToTrackJson()` (not the lean WS `ToJson`): route of flight, SID/STAR +
-transitions, airways, departure/arrival/coordination/boundary fixes, the predicted **route-fix, centre and
+transitions, airways, departure/arrival/coordination/boundary fixes, the predicted **route-fix, center and
 sector crossings**, filed performance, and CDM/gate/runway times. TFMS routinely has a flight — with its
 filed NAS route — hours before it enters US airspace and appears in SFDPS, so for an inbound international
 leg (and for a domestic prefile) this is often the only source carrying a route at all.
 TFMS expresses crossings as **seconds elapsed from ETD**; `ToTrackJson` resolves them to absolute UTC
 (same arithmetic as `GetSectorFlights`) and `TfmsFlight.FirstEntries` collapses runs of the same
-centre/sector name to the first entry (a later re-entry is real and kept). `/track` renders the crossings
+center/sector name to the first entry (a later re-entry is real and kept). `/track` renders the crossings
 as chip rows with passed entries dimmed and the next one ahead highlighted; `/t` is disabled (see below).
 
 ### Page sections
-Hero (callsign, origin▸dest·type/wake·registration, **phase** label, prominent next-frequency handoff banner, center + terminal frequencies, source presence) → Position/Ownership (per GUFI: controlling+freq, CIDs, handoff+freq, point-out, altitude, Line-4 HSF, ground speed, squawk/assigned, position+age, coast, status) → Terminal/STARS (entry▸exit, scratchpad, owner+freq, handoff+freq, alt/gs/squawk) → Handoff/point-out history → EDCT → Flight plan (full ICAO + equipment/capabilities) → TDLS (CPDLC + departure messages) → Surface/ASDE-X → Traffic flow/TFMS (route, procedures/entry fixes, predicted fix/centre/sector transit, plan, times, position).
+Hero (callsign, origin▸dest·type/wake·registration, **phase** label, prominent next-frequency handoff banner, center + terminal frequencies, source presence) → Position/Ownership (per GUFI: controlling+freq, CIDs, handoff+freq, point-out, altitude, Line-4 HSF, ground speed, squawk/assigned, position+age, coast, status) → Terminal/STARS (entry▸exit, scratchpad, owner+freq, handoff+freq, alt/gs/squawk) → Handoff/point-out history → EDCT → Flight plan (full ICAO + equipment/capabilities) → TDLS (CPDLC + departure messages) → Surface/ASDE-X → Traffic flow/TFMS (route, procedures/entry fixes, predicted fix/center/sector transit, plan, times, position).
 
 **No mock data blocks.** An earlier version rendered simplified ERAM/STARS data-block art in both the full page (`blocksCard`) and the text page (`EramText`). Both were removed as unrealistic — the same data (4th-line/HSF, handoff, STARS entry/exit/scratchpad) lives in the cards/rows below. Don't reintroduce the mock blocks. (`track.js` still contains the now-unused `blocksCard`/`eramBlockHtml`/`starsBlockHtml` helpers, dead but harmless.)
 
@@ -1166,7 +1166,7 @@ couple of minutes before the ping fails.
 - Altitudes in SFDPS/STDDS are in **feet**; displayed as flight levels (FL360 = 36,000 ft)
 - Altitude filter uses FL notation: Low FL 180, High FL 360 = 18,000-36,000 ft
 - ICAO airport codes converted to FAA LIDs (KDCA → DCA) in server adapter
-- Track colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red), `#555555` (boundary grey)
+- Track colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red), `#555555` (boundary gray)
 - SFDPS data rate: ~240 msg/sec, updating ~4000-7000 active flights at any time
 - Each flight updates roughly every 12 seconds
 - CID (Computer ID) is per-facility — each ARTCC assigns its own; stored in `computerIds` map. `getCid()` only returns the selected facility's CID; foreign facility CIDs are never shown (matches real ERAM behavior)

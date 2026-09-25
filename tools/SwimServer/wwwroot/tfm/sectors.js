@@ -50,7 +50,7 @@ function renderGrid() {
     });
 
     // Bucket by ARTCC. Each bucket sums totalTransits + max so the heatmap
-    // colour normalizes against the whole network (not just within a bucket).
+    // color normalizes against the whole network (not just within a bucket).
     const groups = new Map();
     for (const s of filtered) {
         const g = groupOf(s.sector);

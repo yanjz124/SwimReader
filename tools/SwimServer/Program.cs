@@ -349,7 +349,7 @@ app.UseResponseCompression();
 app.Use(async (ctx, next) =>
 {
     // Cloudflare signals the client's original scheme two ways; different zones populate
-    // them differently, so honour both. CF-Visitor is JSON like {"scheme":"http"}.
+    // them differently, so honor both. CF-Visitor is JSON like {"scheme":"http"}.
     var xfp = ctx.Request.Headers["X-Forwarded-Proto"].ToString();
     var cfv = ctx.Request.Headers["CF-Visitor"].ToString();
     var cameOverHttp = xfp.Equals("http", StringComparison.OrdinalIgnoreCase)
@@ -684,7 +684,7 @@ MiscRoutes.Register(app, serverCtx);
 NexradStarsRoutes.Register(app, serverCtx);
 
 // STARS profile XML loader — serves DGScope-format XML to the web port
-// so per-facility colours, brightness, ColorTable, etc. apply.
+// so per-facility colors, brightness, ColorTable, etc. apply.
 StarsProfileRoutes.Register(app, serverCtx);
 
 // (ASDE-X / TDLS / TAIS / TFMS REST endpoints are registered above by their feature routes.)
@@ -1112,7 +1112,7 @@ var purgeTimer = new Timer(_ =>
 
     // Early-retire stale duplicate GUFIs left behind by inter-ARTCC handoffs.
     // When an aircraft crosses an ARTCC boundary it briefly exists as two GUFIs (one per
-    // centre). After the handoff the old centre stops sending its GUFI, which then sits frozen
+    // center). After the handoff the old center stops sending its GUFI, which then sits frozen
     // for the full 60 min above. If a same-callsign sibling with the SAME origin AND destination
     // is still actively updating, drop the stale one now instead of waiting.
     //
@@ -1498,7 +1498,8 @@ void ProcessFlight(XElement flight, string rawXml)
     Interlocked.Increment(ref _procCount);
 
     var source = flight.Attribute("source")?.Value ?? "";
-    var centre = flight.Attribute("centre")?.Value ?? "";
+    // "centre" is FIXM's own attribute spelling — an external contract, not ours.
+    var center = flight.Attribute("centre")?.Value ?? "";
     var timestamp = flight.Attribute("timestamp")?.Value;
     var flightType = flight.Attribute("flightType")?.Value;
 
@@ -1531,7 +1532,7 @@ void ProcessFlight(XElement flight, string rawXml)
         {
             state.ComputerId = cid;
             // Store CID per reporting facility — each ARTCC assigns its own CID
-            if (!string.IsNullOrEmpty(centre)) state.ComputerIds[centre] = cid;
+            if (!string.IsNullOrEmpty(center)) state.ComputerIds[center] = cid;
         }
     }
 
@@ -2135,7 +2136,7 @@ void ProcessFlight(XElement flight, string rawXml)
     {
         Time = timestamp ?? DateTime.UtcNow.ToString("o"),
         Source = source,
-        Centre = centre,
+        Center = center,
         Summary = EventSummaryBuilder.BuildEventSummary(source, flight),
         RawXml = source is not "TH" and not "HZ" ? rawXml : null
     });
@@ -2160,7 +2161,7 @@ void ProcessFlight(XElement flight, string rawXml)
     }
 
     // Track which facility reports on this flight (for "tracked by")
-    if (!string.IsNullOrEmpty(centre)) state.ReportingFacility = centre;
+    if (!string.IsNullOrEmpty(center)) state.ReportingFacility = center;
 
     // Investigation: log all messages for flights with interim or clearance data
     // Uncomment this block + investigation logger vars + before-state vars (prevClrH etc.) to enable.

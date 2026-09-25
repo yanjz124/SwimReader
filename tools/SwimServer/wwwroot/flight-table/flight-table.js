@@ -1252,7 +1252,7 @@ function renderEventLog(d) {
                 <div class="ev-line">
                     <span class="ev-time">${fmtTime(e.time)}</span>
                     <span class="ev-src ${srcLc}">${e.source}</span>
-                    <span class="ev-centre">${e.centre}</span>
+                    <span class="ev-center">${e.center}</span>
                     <span class="ev-summary">${esc(e.summary)}</span>
                     <span class="ev-xml-indicator ${xmlInd}">${e.hasXml ? 'XML' : ''}</span>
                 </div>

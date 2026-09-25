@@ -363,7 +363,7 @@
     return `${st}  ·  ${f.handoffTransferring ? withFreq(f.handoffTransferring) : '?'} ▸ ${recvTxt}`;
   }
   // All ARTCCs that touch this callsign (controlling + reporting + every facility with a CID) —
-  // shown as a stable set instead of a single reportingFacility that flip-flops between centres.
+  // shown as a stable set instead of a single reportingFacility that flip-flops between centers.
   function reportingArtccs(flights) {
     const s = [];
     const add = x => { if (x && s.indexOf(x) < 0) s.push(x); };
@@ -409,7 +409,7 @@
   function handoffHistoryCard(hist) {
     if (!hist || !hist.length) return '';
     const rows = hist.map(function (h) {
-      return `<div class="tmsg"><div class="th"><span class="badge">${esc(h.source)}${h.centre ? ' · ' + esc(h.centre) : ''}</span><span>${esc(hhmm(h.time) || h.time)}</span></div><div class="body">${esc(annotateFreqs(h.summary || ''))}</div></div>`;
+      return `<div class="tmsg"><div class="th"><span class="badge">${esc(h.source)}${h.center ? ' · ' + esc(h.center) : ''}</span><span>${esc(hhmm(h.time) || h.time)}</span></div><div class="body">${esc(annotateFreqs(h.summary || ''))}</div></div>`;
     }).join('');
     return `<div class="card"><h2>HANDOFF / POINT-OUT HISTORY</h2>${rows}</div>`;
   }
@@ -545,7 +545,7 @@
     </div>`;
   }
 
-  // An ordered crossing list (route fixes / centres / sectors). Times come from the server already
+  // An ordered crossing list (route fixes / centers / sectors). Times come from the server already
   // resolved to wall-clock UTC; the first crossing still in the future is highlighted and the ones
   // behind the aircraft are dimmed, so the list reads as "where it is along the route".
   function pathRow(items, cls, cap) {
@@ -578,7 +578,7 @@
     return m === 0 ? null : (m > 0 ? '+' : '') + m + ' min';
   }
 
-  // TFMS carries the filed NAS route plus the predicted centre/sector transit, and it usually has a
+  // TFMS carries the filed NAS route plus the predicted center/sector transit, and it usually has a
   // flight hours before it reaches US airspace and shows up in SFDPS. For an inbound international
   // leg this is often the only source with a route at all, so show it in full rather than a summary.
   function tfmsCard(t) {
@@ -602,7 +602,7 @@
     const fixes = (t.fixes || []), centers = (t.centers || []), sectors = (t.sectors || []);
     const transit =
       (fixes.length ? `<div class="subhdr">ROUTE FIXES (${fixes.length}) <span class="tag">predicted</span></div>` + pathRow(fixes, 'fix', 28) : '') +
-      (centers.length ? `<div class="subhdr">CENTRES (${centers.length})</div>` + pathRow(centers, 'ctr') : '') +
+      (centers.length ? `<div class="subhdr">CENTERS (${centers.length})</div>` + pathRow(centers, 'ctr') : '') +
       (sectors.length ? `<div class="subhdr">SECTORS (${sectors.length})</div>` + pathRow(sectors, 'sec', 16) : '');
     const plan = grid([
       ['Departure', t.depArpt], ['Arrival', t.arrArpt], ['Status', t.status],

@@ -11,7 +11,7 @@ namespace SwimServer;
 /// DGScope (NexradDisplay.cs:60-95 + RecomputeVertices :125-193) downloads
 /// the same tgftp NIDS file but DECODES it with the NexradDecoder library
 /// (RadialPacketDecoder). It then generates one Polygon per radial × bin
-/// where dBZ > 0, looks up colour via WXColorTable, and renders polygons.
+/// where dBZ > 0, looks up color via WXColorTable, and renders polygons.
 ///
 /// We do the same here: server fetches NIDS, decodes radials, and ships
 /// the radial structure to the client as JSON. The client mirrors

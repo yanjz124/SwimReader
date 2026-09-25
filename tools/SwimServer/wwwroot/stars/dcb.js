@@ -197,7 +197,7 @@ function mapsMenu(state) {
       active: !!(m && m.visible),
       mapStarsId: m ? m.starsId : null,
       half: true,
-      disabled: !m,                       // empty slots greyed (Enabled=false)
+      disabled: !m,                       // empty slots grayed (Enabled=false)
     }));
   }
   return list;
@@ -238,7 +238,7 @@ function ldrDirName(v) {
 // Submenu mode: AUX replaces the main menu (SHIFT navigation), but BRITE /
 // MAPS / SITE / CHARSIZE are popouts that float next to their parent
 // button while the main DCB stays visible underneath dimmed. Mirrors CRC's
-// behaviour where most submenus pop out.
+// behavior where most submenus pop out.
 const POPOUT_SUBMENUS = new Set(["BRITE", "MAPS", "SITE", "CHARSIZE"]);
 
 class DCB {
@@ -394,8 +394,8 @@ class DCB {
       //   inactive (raised):
       //     top-left poly  = DarkGray  (cs:71  drawactive=false)
       //     bot-right poly = Black     (cs:81  drawactive=false → drawactive used inverted)
-      //   active (pressed) — colours SWAP, looks recessed.
-      // bordersize is 3 (cs:12). Easiest CSS analog is 4 differently-coloured
+      //   active (pressed) — colors SWAP, looks recessed.
+      // bordersize is 3 (cs:12). Easiest CSS analog is 4 differently-colored
       // borders. AdjustedColor scales DarkGray (128,128,128) by Brightness.DCB.
       const bri = (p.Brightness?.DCB ?? 100) / 100;
       const dark    = `rgb(${(85*bri)|0},${(85*bri)|0},${(85*bri)|0})`;  // Darker gray

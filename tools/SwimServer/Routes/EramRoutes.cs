@@ -225,7 +225,7 @@ static class EramRoutes
             // use (they have the reporting ARTCC for context; the sectors view groups by code alone).
             // TraconIds is keyed "ARTCC/starsId"; build a bare code→id map but resolve ONLY codes that
             // map to a single real id across ARTCCs — a code that means different TRACONs in different
-            // centres (or a pseudo controlling-facility) is ambiguous, so we leave it unresolved.
+            // centers (or a pseudo controlling-facility) is ambiguous, so we leave it unresolved.
             var bareTracon = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
             foreach (var kv in ctx.TraconIds)
             {

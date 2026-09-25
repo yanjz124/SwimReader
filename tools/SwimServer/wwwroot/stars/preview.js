@@ -320,7 +320,7 @@ function findAircraft(token) {
   return null;
 }
 
-// Map keypad digit 1-9 to LeaderDirection, honouring InvertKeyboard.
+// Map keypad digit 1-9 to LeaderDirection, honoring InvertKeyboard.
 // Source: RadarWindow.cs:1505-1593.
 function leaderDirFromDigit(d, invert = false) {
   if (d === "5") return null;   // 5 = clear

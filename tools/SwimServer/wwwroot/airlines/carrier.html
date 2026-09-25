@@ -7,7 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛫</text></svg>">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="/shared/common.css?v=3">
-<link rel="stylesheet" href="/flight-table/flight-table.css?v=7">
+<link rel="stylesheet" href="/flight-table/flight-table.css?v=8">
 <link rel="stylesheet" href="/shared/frame.css?v=4">
 <style>
     [hidden] { display: none !important; }
@@ -774,7 +774,7 @@ function renderTail(t) {
         ${stat('FIRST', fl.length ? utc(bestT(fl[0])).slice(5) : '—')}
         ${stat('LAST', fl.length ? utc(fl[fl.length - 1].last || bestT(fl[fl.length - 1])).slice(5) : '—')}
     </div>`;
-    // Swatches take their colour from the bar palette, not the text classes, so the key always matches the chart.
+    // Swatches take their color from the bar palette, not the text classes, so the key always matches the chart.
     h += `<div class="dsec">DAY-BY-DAY (UTC) — <span style="color:${FCOL.MINE}">■</span> ${esc(ICAO)} &nbsp;<span style="color:${FCOL.OTHER}">■</span> other airline &nbsp;<span style="color:${FCOL.NONREV}">■</span> non-revenue`
         + ` &nbsp;· gaps between bars are ground time &nbsp;· <span class="gap-route" style="border-bottom-style:dashed">dashed border</span> = doesn't connect from the previous flight`
         + ` &nbsp;· hover a bar for details</div>`;
@@ -837,7 +837,7 @@ function timelineSvg(fl, d0, d1) {
             const col = flightColor(g.f);
             const bx = LW + g.x0 * W, bw = Math.max(1.5, (g.x1 - g.x0) * W);
             tlSegs.push({ day, bx, bw, y, f: g.f });
-            // A thin dark seam on ordinary bars keeps back-to-back same-colour legs from blending into one
+            // A thin dark seam on ordinary bars keeps back-to-back same-color legs from blending into one
             // block; a gap leg gets the attention-grabbing dashed outline instead (never both at once).
             const stroke = g.f._gap ? ` stroke="${FCOL.GAP}" stroke-width="1.5" stroke-dasharray="3,1.5"` : ' stroke="#050505" stroke-width="0.75"';
             s += `<rect x="${bx.toFixed(1)}" y="${y + 2}" width="${bw.toFixed(1)}" height="${RH - 4}" rx="1.5" fill="${col}" opacity="${g.f.dep ? 0.95 : 0.5}"${stroke}/>`;

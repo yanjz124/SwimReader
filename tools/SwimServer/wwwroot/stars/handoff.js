@@ -10,7 +10,7 @@
 //   .stars-reference/scope/RadarWindow.cs:2688-2770   ProcessImpliedCommand
 //   .stars-reference/scope/Aircraft.cs:100-110        Owned getter/setter
 //   .stars-reference/scope/Aircraft.cs:34-58          PositionInd / PendingHandoff
-//   .stars-reference/scope/RadarWindow.cs:5436-5468   colour tier (Owned branch)
+//   .stars-reference/scope/RadarWindow.cs:5436-5468   color tier (Owned branch)
 // ─────────────────────────────────────────────────────────────────────────
 
 (function () {

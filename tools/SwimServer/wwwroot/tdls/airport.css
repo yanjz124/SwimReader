@@ -44,7 +44,7 @@ header {
 }
 
 /* Title and "TDLS" tag sit in normal flow after the HOME/UP gutter (frame.css), like every
- * other menu page. They used to be absolutely centred on the same point — with the label only
+ * other menu page. They used to be absolutely centered on the same point — with the label only
  * nudged 50px right — so the airport code and "TDLS" drew on top of each other, and the status
  * text landed there too (see the auto-margin note on .nav-fontsize below). */
 .header-label {

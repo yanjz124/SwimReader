@@ -409,7 +409,7 @@ class FlightState
         {
             allEvents = _allEvents.Select((e, i) => (object)new
             {
-                index = i, e.Time, e.Source, e.Centre, e.Summary,
+                index = i, e.Time, e.Source, e.Center, e.Summary,
                 hasXml = e.RawXml is not null
             }).ToList();
         }
@@ -451,7 +451,7 @@ class FlightEvent
 {
     public string Time { get; set; } = "";
     public string Source { get; set; } = "";
-    public string Centre { get; set; } = "";
+    public string Center { get; set; } = "";
     public string Summary { get; set; } = "";
     [System.Text.Json.Serialization.JsonIgnore]
     public string? RawXml { get; set; }

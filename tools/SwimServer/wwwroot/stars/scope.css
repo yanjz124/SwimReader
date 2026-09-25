@@ -20,7 +20,7 @@
 html, body {
   width: 100%; height: 100%; overflow: hidden; background: #000; color: #ddd;
   /* Subpixel AA enabled — DGScope renders at native resolution via GDI+
-   * with greyscale antialiasing. Earlier `text-rendering: geometricPrecision`
+   * with grayscale antialiasing. Earlier `text-rendering: geometricPrecision`
    * combined with `font-smoothing: none` was painting strokes thicker than
    * the source font on high-DPI displays, contributing to the "everything
    * looks bold" feel. */

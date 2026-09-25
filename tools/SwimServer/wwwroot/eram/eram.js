@@ -49,7 +49,7 @@ let mySectors = new Set();
 let facilityOnly = false;   // when true + facility selected, hide all non-facility aircraft
 
 // ── Auto VCI (aftermarket automation, OFF by default) ────────────────────────
-// Not real ERAM behaviour: real controllers toggle VCI manually as a track checks
+// Not real ERAM behavior: real controllers toggle VCI manually as a track checks
 // in on frequency. As a sim aid, when enabled we auto-add VCI ~2.5 min after our
 // sector takes control of a track, and auto-remove it ~1 min after control
 // transfers away — i.e. after the handoff *completes*, not when it's proposed.
@@ -1117,15 +1117,15 @@ let flashTime = performance.now();
 // Dedup: when a facility is selected, only show one GUFI per callsign (prefer our facility)
 const bestGufiByCallsign = new Map();  // callsign → gufi — rebuilt each render cycle
 // Callsigns that currently have a fresh, live ACTIVE record. Used to suppress a DROPPED sibling —
-// during an inter-ARTCC handoff the losing centre drops its track (RH → DROPPED) while the gaining
-// centre resumes under a *different* GUFI, orphaning the old record at DROPPED with a still-fresh
+// during an inter-ARTCC handoff the losing center drops its track (RH → DROPPED) while the gaining
+// center resumes under a *different* GUFI, orphaning the old record at DROPPED with a still-fresh
 // position for up to 60s. If the same callsign is ACTIVE and moving elsewhere, it's plainly still
 // flying, so the DROPPED orphan should never be shown (or win dedup). Rebuilt each render cycle.
 const activeCallsignSet = new Set();
 // callsign → merged {facility: cid} across all that callsign's GUFIs. Lets getCid() show the
 // selected ARTCC's CID even when the displayed GUFI isn't the one carrying it — e.g. after an
-// inter-ARTCC handoff the old centre's CID lives on the old GUFI, but we still want to show it
-// when viewing from that centre. Rebuilt each render cycle (only when a facility is selected).
+// inter-ARTCC handoff the old center's CID lives on the old GUFI, but we still want to show it
+// when viewing from that center. Rebuilt each render cycle (only when a facility is selected).
 const cidUnionByCallsign = new Map();
 function isDedupHidden(gufi, f) {
     return myFacility && f.callsign && bestGufiByCallsign.get(f.callsign) !== gufi;
@@ -1516,7 +1516,7 @@ map.on('move zoom viewreset resize', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// KML sector boundaries (video maps — grey)
+// KML sector boundaries (video maps — gray)
 // ════════════════════════════════════════════════════════════════════════════
 let kmlSectors = [];
 const boundaryLayers = {};        // keyed by 'ARTCC:category'
@@ -1842,7 +1842,7 @@ let airportOverlayData = null; // cached from /api/nasr/airports
 let centerlineData = null;     // cached from /api/nasr/centerlines
 
 const nasrLoading = {};   // guard against double-click during async fetch
-function nasrColor(brightness) { return bndColor(brightness); }  // same grey ramp as boundaries
+function nasrColor(brightness) { return bndColor(brightness); }  // same gray ramp as boundaries
 
 async function showNasrLayer(layerKey, url, renderer) {
     const br = nasrBrightness[layerKey];
@@ -2019,7 +2019,7 @@ function classifyNwsPixel(r, g, b, a) {
     const max = Math.max(r, g, b), min = Math.min(r, g, b);
     if (max < 30) return 0;
     const delta = max - min;
-    if (delta < 15) return 0;                            // filter greys/unsaturated
+    if (delta < 15) return 0;                            // filter grays/unsaturated
     // Yellow/orange/red/magenta: R is significant and B is low → extreme (35+ dBZ)
     if (r > 80 && b < r * 0.5 && b < g * 0.5) return 3;
     // Blue/cyan dominant: moderate (5-20 dBZ)
@@ -3985,7 +3985,7 @@ function doRender() {
         }
         // The guards above mirror isVisible()'s status/age checks but not its facility ones, so the
         // winner can still be a GUFI that isVisible() then rejects (e.g. it just moved to another
-        // centre) — and because every sibling is dedup-hidden behind the winner, that made the whole
+        // center) — and because every sibling is dedup-hidden behind the winner, that made the whole
         // aircraft disappear even though a perfectly showable sibling existed. Hand the slot over.
         // Use the pre-computed visibleByCallsign map to avoid O(n²) rescanning.
         for (const [cs, gufi] of bestGufiByCallsign) {
@@ -4846,7 +4846,7 @@ function updateToolbarBrightness() {
             'tb-tan': '#DCA09B',
             'tb-teal': '#00C7D1',
             'tb-dark': '#000000',
-            'tb-toggle-grey': '#000000',
+            'tb-toggle-gray': '#000000',
             'tb-nosim': '#000066',
             'tb-toggle-on': '#0000D4',
             'tb-menu-open': '#DCA09B',
@@ -4859,8 +4859,8 @@ function updateToolbarBrightness() {
             css += `.tb-btn.${className} { background: ${interpolated} !important; }\n`;
         }
 
-        // Toggle grey ON state (light gray)
-        css += `.tb-btn.tb-toggle-grey.tb-toggle-on { background: ${interpolateColor('#C7C7C7', buttonFactor)} !important; }\n`;
+        // Toggle gray ON state (light gray)
+        css += `.tb-btn.tb-toggle-gray.tb-toggle-on { background: ${interpolateColor('#C7C7C7', buttonFactor)} !important; }\n`;
 
         // Default button color
         css += `.tb-btn { background: ${interpolateColor('#0000D4', buttonFactor)} !important; }\n`;
@@ -4869,7 +4869,7 @@ function updateToolbarBrightness() {
         const tearoffColor = interpolateColor('#FFFFA1', combinedFactor);
         css += `.tb-btn .tb-tear { background: ${tearoffColor} !important; }\n`;
 
-        // Disabled tearoff strip color (interpolate grey toward black with backlight)
+        // Disabled tearoff strip color (interpolate gray toward black with backlight)
         const disabledTearoffColor = interpolateColor('#C7C7C7', combinedFactor);
         css += `.tb-btn .tb-tear.tb-tear-disabled { background: ${disabledTearoffColor} !important; }\n`;
 
@@ -8040,7 +8040,7 @@ document.addEventListener('keydown', e => {
 let _boxDragging = null;
 let _boxDragOffset = { x: 0, y: 0 };
 
-// Anchor a box to its nearest horizontal + vertical edge (right/bottom when its centre is in
+// Anchor a box to its nearest horizontal + vertical edge (right/bottom when its center is in
 // that half). Right/bottom-anchored boxes hold their edge on window resize (so they don't
 // drift left/up) and grow inward with content — so a wide RA readout never limits how far
 // right you can place it.
@@ -9637,12 +9637,12 @@ const TB_ATC_TOOLS = {
     rows: [
         [
             toggle('CRR FIX', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('SPEED\nADVSRY', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
@@ -9677,17 +9677,17 @@ const TB_WEATHER = {
         ],
         [
             toggle('WX1', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('WX2', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('WX3', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
@@ -9700,7 +9700,7 @@ const TB_VIEWS = {
     rows: [
         [
             toggle('ALTIM\nSET', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => altimeterMenuOpen,
                 onToggle: () => {
                     if (altimeterMenuOpen) {
@@ -9711,17 +9711,17 @@ const TB_VIEWS = {
                 },
             }),
             toggle('AUTO HO\nINHIB', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('CFR', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('CODE', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => beaconMenuOpen,
                 onToggle: () => {
                     if (beaconMenuOpen) {
@@ -9732,27 +9732,27 @@ const TB_VIEWS = {
                 },
             }),
             toggle('CONFLCT\nALERT', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('CPDLC\nADV', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('CPDLC\nHIST', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('CPDLC\nTOC SET', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('CRR', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => crrMenuOpen,
                 onToggle: () => {
                     if (crrMenuOpen) {
@@ -9765,47 +9765,47 @@ const TB_VIEWS = {
         ],
         [
             toggle('DEPT\nLIST', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('FLIGHT\nEVENT', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('GROUP\nSUP', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('HOLD\nLIST', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('INBND\nLIST', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('MRP\nLIST', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('SSA\nFILTER', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('UA', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('WX\nREPORT', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => weatherMenuOpen,
                 onToggle: () => {
                     if (weatherMenuOpen) {
@@ -9824,7 +9824,7 @@ const TB_CHECK_LISTS = {
     rows: [
         [
             toggle('POS\nCHECK', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => document.getElementById('checklist-menu').style.display !== 'none' && document.getElementById('checklist-menu-title-text').textContent === 'POS CHECK',
                 onToggle: () => {
                     const menu = document.getElementById('checklist-menu');
@@ -9839,7 +9839,7 @@ const TB_CHECK_LISTS = {
                 },
             }),
             toggle('EMERG\nCHECK', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => document.getElementById('checklist-menu').style.display !== 'none' && document.getElementById('checklist-menu-title-text').textContent === 'EMERG CHECK',
                 onToggle: () => {
                     const menu = document.getElementById('checklist-menu');
@@ -9891,54 +9891,54 @@ const TB_GEOMAP = {
     rows: [
         [
             toggle('UHI', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getRangeVal('rng-bnd-uhi') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-uhi', on ? 60 : 0),
             }),
             toggle('HI', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getRangeVal('rng-bnd-hi') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-hi', on ? 60 : 0),
             }),
             toggle('LO', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getRangeVal('rng-bnd-lo') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-lo', on ? 60 : 0),
             }),
             toggle('APP', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getRangeVal('rng-bnd-app') > 0,
                 onToggle: (on) => setRangeVal('rng-bnd-app', on ? 60 : 0),
             }),
             toggle('STATE\nBOUND', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => stateBoundShow,
                 onToggle: (on) => toggleStateBound(on),
             }),
         ],
         [
             toggle('HI AWY', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getRangeVal('rng-jroutes') > 0,
                 onToggle: (on) => setRangeVal('rng-jroutes', on ? 60 : 0),
             }),
             toggle('LO AWY', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getRangeVal('rng-vroutes') > 0,
                 onToggle: (on) => setRangeVal('rng-vroutes', on ? 60 : 0),
             }),
             toggle('VORs', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getRangeVal('rng-vors') > 0,
                 onToggle: (on) => setRangeVal('rng-vors', on ? 60 : 0),
             }),
             toggle('APTs', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getRangeVal('rng-airports') > 0,
                 onToggle: (on) => setRangeVal('rng-airports', on ? 60 : 0),
             }),
             toggle('ARTCC\nBOUND', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => artccBoundShow,
                 onToggle: (on) => toggleArtccBound(on),
             }),
@@ -10159,30 +10159,30 @@ const TB_DB_FIELDS = {
     rows: [
         [
             toggle('NON-\nRVSM', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => true,
                 onToggle: () => {},
             }),
             toggle('VRI', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
                 isMomentary: true,
             }),
             toggle('CODE', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
                 isMomentary: true,
             }),
             toggle('SPEED', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
                 isMomentary: true,
             }),
             toggle('DEST', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getSelectVal('sel-line4') === 'DEST',
                 onToggle: (on) => {
                     setSelectVal('sel-line4', on ? 'DEST' : 'OFF');
@@ -10190,7 +10190,7 @@ const TB_DB_FIELDS = {
                 },
             }),
             toggle('TYPE', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => getSelectVal('sel-line4') === 'TYPE',
                 onToggle: (on) => {
                     setSelectVal('sel-line4', on ? 'TYPE' : 'OFF');
@@ -10205,12 +10205,12 @@ const TB_DB_FIELDS = {
                 onInc: () => {},
             }),
             toggle('BCAST\nFLID', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('PORTAL\nFENCE', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => showPortalFence,
                 onToggle: (on) => {
                     showPortalFence = on;
@@ -10228,22 +10228,22 @@ const TB_DB_FIELDS = {
                 onInc: () => {},
             }),
             toggle('NONADSB', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('SAT\nCOMM', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('TFM\nREROUTE', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('CRR\nRDB', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => crrRdbEnabled,
                 onToggle: (on) => {
                     crrRdbEnabled = on;
@@ -10253,17 +10253,17 @@ const TB_DB_FIELDS = {
                 },
             }),
             toggle('STA RDB', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('DELAY\nRDB', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('DELAY\nFORMAT', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
@@ -10276,44 +10276,44 @@ const TB_RADAR_FILTER = {
     rows: [
         [
             toggle('ALL\nLDBS', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('PR LDB', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('UNP\nLDB', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('ALL\nPRIM', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('NON\nMODE C', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
         ],
         [
             toggle('SELECT\nBEACON', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('PERM\nECHO', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
             toggle('STROBE\nLINES', {
-                cls: 'tb-toggle-grey',
+                cls: 'tb-toggle-gray',
                 isOn: () => false,
                 onToggle: () => {},
             }),
@@ -10364,7 +10364,7 @@ function btnKey(panelId, rowIdx, colIdx) {
 }
 
 function updateTearoffColors() {
-    // Update all tearoff strips: tan if no active tearoff, grey if one exists for this button
+    // Update all tearoff strips: tan if no active tearoff, gray if one exists for this button
     for (const [key, entry] of tbElements) {
         const tear = entry.el.querySelector('.tb-tear');
         if (!tear) continue;
@@ -10372,7 +10372,7 @@ function updateTearoffColors() {
         const hasActiveTearoff = activeTearoffs.has(key);
 
         if (hasActiveTearoff) {
-            // Grey (#C7C7C7) + disabled
+            // Gray (#C7C7C7) + disabled
             tear.classList.add('tb-tear-disabled');
             tear.style.cursor = 'default';
             tear.dataset.disabled = 'true';
@@ -10729,7 +10729,7 @@ function setupTearoffDrag(tearEl, spec, btnKey) {
         e.preventDefault();
         e.stopPropagation();
 
-        // Grey tearoff strip (disabled) is non-functional - don't create tearoffs when one already exists
+        // Gray tearoff strip (disabled) is non-functional - don't create tearoffs when one already exists
         if (tearEl.dataset.disabled === 'true') {
             return;
         }
@@ -11613,11 +11613,11 @@ function buildToolbar() {
     tearoffBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // ── Master toolbar container (fixed at top, not draggable) ──
-    // Layout: [left grey bar + arrow] [button grid] [right grey bar]
+    // Layout: [left gray bar + arrow] [button grid] [right gray bar]
     const masterRow = document.createElement('div');
     masterRow.className = 'tb-master-row';
 
-    // Left grey bar with down arrow (toggles sidebar below toolbar)
+    // Left gray bar with down arrow (toggles sidebar below toolbar)
     const leftBar = document.createElement('div');
     leftBar.className = 'tb-side-bar';
     const arrowBtn = document.createElement('div');
@@ -11653,7 +11653,7 @@ function buildToolbar() {
 
     masterRow.appendChild(masterGrid);
 
-    // Right grey bar (extends to window edge)
+    // Right gray bar (extends to window edge)
     const rightBar = document.createElement('div');
     rightBar.className = 'tb-side-bar tb-right';
     masterRow.appendChild(rightBar);

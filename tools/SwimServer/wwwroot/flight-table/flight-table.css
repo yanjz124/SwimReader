@@ -356,7 +356,7 @@ body {
 .event-row .ev-src.ba, .event-row .ev-src.re { color: #888; }
 .event-row .ev-src.pt, .event-row .ev-src.ht { color: #cc44cc; }
 .event-row .ev-src.cl { color: #ff4444; }
-.event-row .ev-centre { color: #444; min-width: 30px; }
+.event-row .ev-center { color: #444; min-width: 30px; }
 .event-row .ev-summary { color: #aaa; flex: 1; }
 .event-row .ev-xml-indicator { color: #333; font-size: 10px; }
 .event-row .ev-xml-indicator.has-xml { color: #555; }

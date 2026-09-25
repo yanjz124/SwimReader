@@ -114,7 +114,7 @@ let selectedArtcc = null;
 // ── Launch mode ────────────────────────────────────────────────────────────
 // LIVE opens the facility on the live terminal feed; REPLAY opens the same scope pointed at that
 // facility's recorded TAIS data (?replay=1), where the shared replay bar takes over. Which
-// facilities have a recording comes from /api/replay/range, so REPLAY can grey out the ones with
+// facilities have a recording comes from /api/replay/range, so REPLAY can gray out the ones with
 // nothing to play rather than opening a scope that sits empty.
 let replayMode = false;
 let taisRanges = {};         // facility → { start, end }
@@ -125,7 +125,7 @@ function setMode(replay) {
   $("mode-live").classList.toggle("on", !replay);
   $("mode-replay").classList.toggle("on", replay);
   $("wipnote").textContent = replay
-    ? "REPLAY — picking a facility opens its recorded terminal data with a scrub bar. Facilities with no recording are greyed out."
+    ? "REPLAY — picking a facility opens its recorded terminal data with a scrub bar. Facilities with no recording are grayed out."
     : LIVE_NOTE;
   if (selectedArtcc) selectArtcc(selectedArtcc);   // re-render rows for the new mode
 }

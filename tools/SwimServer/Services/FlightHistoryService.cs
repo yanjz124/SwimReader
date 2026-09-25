@@ -60,7 +60,7 @@ static class FlightHistoryService
                 f.AlternateAerodrome,
                 gate, runway,   // captured from live TDLS at save time (see param note)
                 LastSeen = f.LastSeen.ToString("o"),
-                Events = f.GetAllEvents().Select(e => new { e.Time, e.Source, e.Centre, e.Summary }).ToArray()
+                Events = f.GetAllEvents().Select(e => new { e.Time, e.Source, e.Center, e.Summary }).ToArray()
             };
             var line = JsonSerializer.Serialize(record, historyJsonOpts);
             var lineBytes = System.Text.Encoding.UTF8.GetBytes(line);

@@ -45,7 +45,7 @@ static class TrackRoutes
             // SFDPS — en-route flight(s). Multiple GUFIs possible (one per ARTCC).
             var sfdps = new List<object>();
             string? edct = null;
-            var hoEvents = new List<(string time, string source, string centre, string summary)>();
+            var hoEvents = new List<(string time, string source, string center, string summary)>();
             foreach (var f in ctx.Flights.Values)
             {
                 if (!string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase)) continue;
@@ -67,7 +67,7 @@ static class TrackRoutes
                 if (edct is null && !string.IsNullOrEmpty(f.EdctTime)) edct = f.EdctTime;
                 foreach (var e in f.GetAllEvents())
                     if (HandoffSources.Contains(e.Source))
-                        hoEvents.Add((e.Time, e.Source, e.Centre, e.Summary));
+                        hoEvents.Add((e.Time, e.Source, e.Center, e.Summary));
             }
             // STARS terminal ownership (TAIS owner-TCP) → position frequency, best-effort.
             foreach (var (fac, owner) in ctx.Tais.OwnersByCallsign(callsign)) AddFreqKey(fac + "/" + owner);
@@ -76,7 +76,7 @@ static class TrackRoutes
                 .GroupBy(x => x.time + "|" + x.source + "|" + x.summary).Select(g => g.First())
                 .OrderByDescending(x => x.time)
                 .Take(30)
-                .Select(x => new { time = x.time, source = x.source, centre = x.centre, summary = x.summary })
+                .Select(x => new { time = x.time, source = x.source, center = x.center, summary = x.summary })
                 .ToList();
             // Frequencies for every sector named in the history summaries too.
             foreach (var h in handoffHistory)
@@ -265,9 +265,9 @@ static class TrackRoutes
     private static bool IsArtcc(string? fac) =>
         !string.IsNullOrEmpty(fac) && fac!.Length == 3 && char.ToUpperInvariant(fac[0]) == 'Z';
 
-    // Name the en-route Centre from SFDPS when a terminal (STARS) handoff only says "C" — TAIS can't.
+    // Name the en-route Center from SFDPS when a terminal (STARS) handoff only says "C" — TAIS can't.
     // Prefers an explicit SFDPS en-route handoff receiver that's an ARTCC; else the current SFDPS
-    // controlling sector when it's a Centre. Returns ("ZAU/47", freq) or null if SFDPS can't say.
+    // controlling sector when it's a Center. Returns ("ZAU/47", freq) or null if SFDPS can't say.
     private static (string label, string? freq)? SfdpsCenter(ServerContext ctx, List<FlightState> flights)
     {
         foreach (var f in flights)
@@ -291,7 +291,8 @@ static class TrackRoutes
         return feet >= 18000 ? "FL" + hundreds.ToString("000") : (hundreds * 100).ToString("#,0") + " ft";
     }
 
-    /// Concise plain-text status for the Telegram bot (same aggregation the /t page uses).
+    /// Concise plain-text status for the Telegram bot — the same cross-source aggregation the
+    /// /track page renders, flattened to lines that fit one chat message.
     /// Kept short so it fits one chat message and works over inflight free-messaging wifi.
     internal static string TelegramSummary(ServerContext ctx, string cs, string? prevRoute = null)
     {
@@ -355,7 +356,7 @@ static class TrackRoutes
         // the position actually working the aircraft and the frequency the pilot is on — over the
         // SFDPS en-route/ERAM controlling sector. An owned terminal track updates every few seconds
         // (purged at 60s), so require a recent LastSeen to be sure it's live terminal control and not
-        // a track lingering after the aircraft climbed back out to the centre.
+        // a track lingering after the aircraft climbed back out to the center.
         var ownedTais = taisTracks
             .Where(t => !string.IsNullOrEmpty(t.Owner) && !string.IsNullOrEmpty(t.Facility)
                         && !IsCenterTcp(t.Owner)   // owner "C" = Center owns it, not the TRACON
@@ -392,9 +393,11 @@ static class TrackRoutes
                 sb.Append("Point-out: ").Append(best.PointoutOriginatingUnit ?? "?").Append(" ▸ ").Append(best.PointoutReceivingUnit ?? "?").Append('\n');
         }
 
-        // Route (SFDPS, else ASDE-X flight-plan route). If it changed since we last pushed, show the
-        // previous route underneath so a follower sees the amendment.
-        var route = best?.Route ?? asd0?.FpRoute;
+        // Route (SFDPS, else ASDE-X flight plan, else TFMS). TFMS carries the filed NAS route hours
+        // before an inbound international leg reaches US airspace and appears in SFDPS, so without that
+        // fallback the bot showed no route at all for exactly the flights worth following early.
+        // If it changed since we last pushed, show the previous route underneath.
+        var route = best?.Route ?? asd0?.FpRoute ?? tfms?.RouteOfFlight;
         if (!string.IsNullOrEmpty(route))
         {
             sb.Append("Route: ").Append(Trunc(route, 200)).Append('\n');
@@ -423,7 +426,7 @@ static class TrackRoutes
         // Terminal (STARS/TAIS) — one line per facility (a flight can be in two TRACONs during a
         // handoff, e.g. SBN then C90, and each carries its own owner/handoff). Owner is the STARS
         // TCP/position ID (e.g. "1Z"), not a facility; handoff state comes from <ocr>. Entry/exit
-        // fixes are labelled so they're never mistaken for the destination airport.
+        // fixes are labeled so they're never mistaken for the destination airport.
         foreach (var t in StarsTracks(taisTracks))
         {
             var tf = FreqOf(ctx, t.Facility + "/" + (t.Owner ?? ""));
@@ -485,6 +488,48 @@ static class TrackRoutes
             if (p.Count > 0) sb.Append("TFDM: ").Append(string.Join(" · ", p)).Append('\n');
         }
 
+        // TFMS — the traffic-flow view of the same flight. Worth its own lines because it is often the
+        // ONLY source for an international arrival before it enters US airspace: status, TFMS's own
+        // ETD/ETA (and how late that is), where it crosses into the NAS, and the centers still ahead.
+        if (tfms != null)
+        {
+            var tp = new List<string>();
+            if (!string.IsNullOrEmpty(tfms.FlightStatus)) tp.Add(tfms.FlightStatus!);
+            if (tfms.Etd != null) tp.Add("ETD " + HmDt(tfms.Etd));
+            // Skip a TFMS ETA that merely echoes the SFDPS one already printed above.
+            var sfdpsEta = ParseUtc(best?.ETA);
+            if (tfms.Eta != null && (sfdpsEta == null || Math.Abs((tfms.Eta.Value - sfdpsEta.Value).TotalMinutes) > 2))
+            {
+                var late = tfms.OriginalArrival != null
+                    ? (int)Math.Round((tfms.Eta.Value - tfms.OriginalArrival.Value).TotalMinutes) : 0;
+                tp.Add("ETA " + HmDt(tfms.Eta) + (late != 0 ? " (" + (late > 0 ? "+" : "") + late + "m)" : ""));
+            }
+            if (tfms.RequestedAltitude is int ra) tp.Add("FL" + (ra / 100).ToString("000"));
+            if (!string.IsNullOrEmpty(tfms.DiversionIndicator) && tfms.DiversionIndicator != "NO_DIVERSION")
+                tp.Add(tfms.DiversionIndicator!);
+            if (tp.Count > 0) sb.Append("TFMS: ").Append(string.Join(" · ", tp)).Append('\n');
+
+            // Where it crosses into US airspace — what an oceanic arrival is really being asked about.
+            // On a domestic leg the same field is only an inter-facility coordination fix, so say that.
+            var entry = FixAt(tfms.CoordinationFix, tfms.CoordinationTime) ?? FixAt(tfms.BoundaryFix, tfms.BoundaryCrossingTime);
+            if (entry != null)
+            {
+                var foreignDep = !string.IsNullOrEmpty(tfms.DepArpt) && tfms.DepArpt![0] != 'K' && tfms.DepArpt[0] != 'P';
+                sb.Append(foreignDep ? "NAS entry: " : "Coord fix: ").Append(entry).Append('\n');
+            }
+
+            // Centers still ahead. TFMS gives crossings as seconds from ETD — resolve to the clock.
+            if (tfms.Centers != null && tfms.Etd != null)
+            {
+                var ahead = TfmsFlight.FirstEntries(tfms.Centers)
+                    .Where(c => c.ElapsedEntryTime != null)
+                    .Select(c => (c.Name, At: tfms.Etd.Value.AddSeconds(c.ElapsedEntryTime!.Value)))
+                    .Where(c => c.At > DateTime.UtcNow).Take(4)
+                    .Select(c => c.Name + " " + HmDt(c.At)).ToList();
+                if (ahead.Count > 0) sb.Append("Ahead: ").Append(string.Join(" ▸ ", ahead)).Append('\n');
+            }
+        }
+
         var edct = flights.Select(f => f.EdctTime).FirstOrDefault(e => !string.IsNullOrEmpty(e));
         if (!string.IsNullOrEmpty(edct)) sb.Append("EDCT: ").Append(Hm(edct)).Append('\n');
 
@@ -506,7 +551,8 @@ static class TrackRoutes
     internal static string? TelegramRoute(ServerContext ctx, string cs)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
-        return BestFlight(Matching(ctx, cs))?.Route ?? ctx.Asdex.TracksByCallsign(cs).FirstOrDefault()?.FpRoute;
+        return BestFlight(Matching(ctx, cs))?.Route ?? ctx.Asdex.TracksByCallsign(cs).FirstOrDefault()?.FpRoute
+               ?? ctx.Tfms.FindByCallsign(cs)?.RouteOfFlight;
     }
 
     /// A signature of only the *meaningful* state — for the Telegram push loop to decide whether
@@ -516,7 +562,7 @@ static class TrackRoutes
     /// (assigned, interim, and reported all move without being "news" for a follower).
     ///
     /// The flight is selected *stably* (by controlling-facility presence then GUFI, never by
-    /// freshest position): when several centres track the same callsign, a position-freshness pick
+    /// freshest position): when several centers track the same callsign, a position-freshness pick
     /// would flip between GUFIs every scan and churn the sector/handoff fields — which read to the
     /// user as spurious "position/altitude" notifications. Stable selection kills that.
     /// Seconds since the freshest position we hold for a callsign across SFDPS / STARS-TAIS / ASDE-X,
@@ -550,6 +596,7 @@ static class TrackRoutes
         var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
         var (legO, legD) = LegOf(flights);
         var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs, legO, legD).FirstOrDefault();
+        var tfms = ctx.Tfms.FindByCallsign(cs);
         var best = flights
             .OrderByDescending(f => string.IsNullOrEmpty(f.ControllingFacility) ? 0 : 1)
             .ThenBy(f => f.Gufi, StringComparer.Ordinal).FirstOrDefault();
@@ -568,8 +615,9 @@ static class TrackRoutes
             sb.Append(best.PointoutOriginatingUnit).Append('>').Append(best.PointoutReceivingUnit).Append('|');
             sb.Append(best.ClearanceHeading).Append(';').Append(best.ClearanceSpeed).Append(';').Append(best.ClearanceText).Append('|');
         }
-        // Route amendment is push-worthy — use the same value the summary displays.
-        sb.Append(BestFlight(flights)?.Route ?? asd0?.FpRoute).Append('|');
+        // Route amendment is push-worthy — use the same value the summary displays (TFMS included,
+        // so an inbound international leg still notifies before SFDPS has it at all).
+        sb.Append(BestFlight(flights)?.Route ?? asd0?.FpRoute ?? tfms?.RouteOfFlight).Append('|');
         // Every STARS facility's owner/handoff (a flight straddling two TRACONs — SBN then C90 — must
         // push when the second facility takes ownership, which a single-track key missed).
         foreach (var t in taisTracks.OrderBy(x => x.Facility, StringComparer.Ordinal))
@@ -583,8 +631,12 @@ static class TrackRoutes
         if (tfdm0 != null)
             sb.Append('|').Append(tfdm0.RunwayAssigned ?? tfdm0.RunwayActual).Append(';')
               .Append(tfdm0.DepSeq).Append(';').Append(tfdm0.ApreqReleaseTime).Append(';').Append(tfdm0.OffBlockTime);
+        // TFMS: only its DISCRETE state — flight status (PLANNED→ACTIVE→COMPLETED) and a diversion.
+        // ETD/ETA/position are re-estimated constantly and would push on every drift.
+        if (tfms != null) sb.Append('|').Append(tfms.FlightStatus).Append(';').Append(tfms.DiversionIndicator);
         sb.Append('|').Append(flights.Count > 0 ? 'S' : '-').Append(taisTracks.Count > 0 ? 'T' : '-')
-          .Append(asdexTracks.Count > 0 ? 'A' : '-').Append(tdlsAc.Count > 0 ? 'D' : '-').Append(tfdm0 != null ? 'F' : '-');
+          .Append(asdexTracks.Count > 0 ? 'A' : '-').Append(tdlsAc.Count > 0 ? 'D' : '-').Append(tfdm0 != null ? 'F' : '-')
+          .Append(tfms != null ? 'M' : '-');
         return sb.ToString();
     }
 
@@ -634,6 +686,12 @@ static class TrackRoutes
         if (string.IsNullOrEmpty(iso)) return "";
         return DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var d) ? d.ToString("HHmm") + "Z" : iso;
     }
+    /// <summary>An ISO timestamp as UTC, or null when absent/unparseable (same parse as Hm).</summary>
+    private static DateTime? ParseUtc(string? iso) =>
+        !string.IsNullOrEmpty(iso)
+        && DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var d)
+            ? d : null;
+
     // ISO-8601 duration (e.g. PT24M, PT1H5M, PT0S) → "24m" / "65m" / "0m". Null-safe.
     private static string? DurMin(string? d)
     {
@@ -1016,7 +1074,7 @@ static class TrackRoutes
         }
 
         // ── TRAFFIC FLOW (TFMS) ──
-        // TFMS carries the filed NAS route and the predicted centre/fix transit, often hours before
+        // TFMS carries the filed NAS route and the predicted center/fix transit, often hours before
         // the flight reaches US airspace and appears in SFDPS — for an inbound international leg
         // this is frequently the only source with a route, so the route is worth the bytes here.
         if (tfms != null)
@@ -1057,7 +1115,7 @@ static class TrackRoutes
             if (tfms.Fixes != null)
                 Row(sb, "Fixes", Cross(tfms.Fixes.OrderBy(f => f.SequenceNumber).Select(f => (f.Name, f.ElapsedTime)), 14));
             if (tfms.Centers != null)
-                Row(sb, "Centres", Cross(TfmsFlight.FirstEntries(tfms.Centers).Select(c => (c.Name, c.ElapsedEntryTime)), 12));
+                Row(sb, "Centers", Cross(TfmsFlight.FirstEntries(tfms.Centers).Select(c => (c.Name, c.ElapsedEntryTime)), 12));
             Row(sb, "ETD", HmDt(tfms.Etd)); Row(sb, "ETA", HmDt(tfms.Eta));
             if (tfms.Eta != null && tfms.OriginalArrival != null)
             {

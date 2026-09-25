@@ -8,6 +8,15 @@ static class DebugRoutes
 {
     public static void Register(WebApplication app, ServerContext ctx)
     {
+        // Exactly what the Telegram bot would send for a callsign, as plain text — so bot output can
+        // be checked without a bot token or a chat. Honors the same LADD masking the bot does.
+        app.MapGet("/api/debug/telegram/{callsign:regex(^[A-Za-z0-9]+$)}", (string callsign) =>
+            Results.Text(string.Join(Environment.NewLine + Environment.NewLine,
+                    TrackRoutes.TelegramSummary(ctx, callsign),
+                    "--- change key ---",
+                    TrackRoutes.TelegramChangeKey(ctx, callsign)),
+                "text/plain; charset=utf-8"));
+
         // Debug: find duplicate CIDs for a facility
         app.MapGet("/api/debug/dupe-cids/{facility}", (string facility) =>
         {

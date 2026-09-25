@@ -81,7 +81,7 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 - **Track a Flight** (`/track`, `/track/{callsign}`) — Mobile-first single-callsign aggregator across every source (SFDPS, TFMS, EDCT, TDLS, TAIS/STARS, ASDE-X); polls `/api/track/{callsign}`
 - **TFDM Boards** (`/tfdm`, `/tfdm/{airport}`) — Terminal surface/departure boards: per-airport live board (WS) with off-block/TSAT/runway/spot/taxi/sequence/delay, proposed-vs-active state, sortable columns + wildcard filter, and an info strip (config/AAR-ADR/closures/queues/gridlock/demand/TMRs). Directory sorted alphabetically.
 - **Route Finder / Dispatch** (`/dispatch`) — Search persisted flight history by route/airline/aircraft type → real callsign, filed route, cruise, airframe, gate; deep-links each into **SimBrief** (+ copyable VATSIM plan). `/api/dispatch/search`.
-- **Telegram bot** (`TelegramBridge`, `@swimffbot`) — Follow a flight over inflight "free-messaging" wifi: send a callsign for the same cross-source status the Track page shows; `/sub` pushes updates on meaningful state change. Enabled when `TELEGRAM_BOT_TOKEN` is set.
+- **Telegram bot** (`TelegramBridge`, `@swimffbot`) — Follow a flight over inflight "free-messaging" wifi: send a callsign for the same cross-source status the Track page shows; `/sub` pushes updates on meaningful state change. Enabled when `TELEGRAM_BOT_TOKEN` is set. Its TFMS lines (route fallback, status/ETD/ETA, NAS entry fix, centers ahead) are what an inbound international leg shows before SFDPS has it at all — see the Track a Flight section. `GET /api/debug/telegram/{callsign}` returns the exact text the bot would send, so it can be checked without a token.
 - Future: strips, etc.
 
 ## Project Structure
@@ -998,6 +998,17 @@ TFMS expresses crossings as **seconds elapsed from ETD**; `ToTrackJson` resolves
 (same arithmetic as `GetSectorFlights`) and `TfmsFlight.FirstEntries` collapses runs of the same
 center/sector name to the first entry (a later re-entry is real and kept). `/track` renders the crossings
 as chip rows with passed entries dimmed and the next one ahead highlighted; `/t` is disabled (see below).
+
+### What the Telegram bot shows for TFMS
+`TelegramSummary` falls back to the TFMS route when SFDPS and ASDE-X have none, then adds up to three
+lines of its own: `TFMS: {status} · ETD · ETA (+Nm vs original) · FL{req}`, a boundary line
+(`NAS entry:` when the departure airport is outside K/P, else `Coord fix:`), and `Ahead:` — the next
+four centers with the time it crosses each. A TFMS ETA within 2 min of an SFDPS ETA already printed is
+skipped. `TelegramRoute` uses the same fallback so a TFMS route amendment still shows "was: …".
+
+`TelegramChangeKey` gains only TFMS's **discrete** state — flight status and diversion indicator, plus a
+presence flag — never ETD/ETA/position, which are re-estimated constantly and would push on every drift
+(the same rule TFDM follows).
 
 ### Page sections
 Hero (callsign, origin▸dest·type/wake·registration, **phase** label, prominent next-frequency handoff banner, center + terminal frequencies, source presence) → Position/Ownership (per GUFI: controlling+freq, CIDs, handoff+freq, point-out, altitude, Line-4 HSF, ground speed, squawk/assigned, position+age, coast, status) → Terminal/STARS (entry▸exit, scratchpad, owner+freq, handoff+freq, alt/gs/squawk) → Handoff/point-out history → EDCT → Flight plan (full ICAO + equipment/capabilities) → TDLS (CPDLC + departure messages) → Surface/ASDE-X → Traffic flow/TFMS (route, procedures/entry fixes, predicted fix/center/sector transit, plan, times, position).

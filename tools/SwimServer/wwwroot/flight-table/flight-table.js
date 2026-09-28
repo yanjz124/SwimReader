@@ -1148,6 +1148,7 @@ function renderFlightPlan(d) {
             ['Registration', d.registration],
             ['Wake Category', d.wakeCategory],
             ['Mode S', d.modeSCode],
+            ['SELCAL', selcalFor(d)],
             ['CID', fmtCids(d)],
             ['GUFI', d.gufi],
         ])}
@@ -1203,7 +1204,6 @@ function renderFlightPlan(d) {
             ['Communication', [d.communicationCode, d.otherCommunicationCapabilities].filter(Boolean).join('  ') || null],
             ['Data Link', [d.dataLinkCode, d.otherDataLink].filter(Boolean).join('  ') || null, d.dataLinkCode?.includes('J') ? 'accent' : ''],
             ['Surveillance', [d.surveillanceCode, d.otherSurveillanceCapabilities].filter(Boolean).join('  ') || null],
-            ['SELCAL', d.selcal],
             ['Performance', d.aircraftPerformance],
         ])}
         ${section('Times', [
@@ -1328,6 +1328,28 @@ function eramScopeLink(d) {
     const lbl = 'Open ERAM ' + fac + (d.controllingSector ? ' sector ' + d.controllingSector : '');
     return `<div class="section"><a href="/eram/scope?facility=${encodeURIComponent(fac)}${sec}&center=1" target="_blank" rel="noopener" title="${esc(lbl)}" style="display:inline-block;color:#cccc44;text-decoration:none;font-size:12px;border:1px solid #4a4a2a;padding:2px 9px;border-radius:3px">▶ Open in ERAM scope · ${esc(tag)}</a></div>`;
 }
+// SELCAL for the Identity section. Most flight plans don't file one, so when this plan didn't,
+// fall back to the airframe's known SELCAL from the aircraft DB (by registration, else Mode S) and
+// say where it came from. Looked up once per airframe; the panel re-renders when it arrives.
+const _dbSelcal = new Map();   // airframe key -> SELCAL string, or null (looked up / in flight / none)
+function selcalFor(d) {
+    if (d.selcal) return d.selcal;
+    const reg = (d.registration || '').toUpperCase();
+    const key = (reg && reg !== 'LADD') ? reg : (d.modeSCode || '').toUpperCase();
+    if (!key) return null;
+    if (_dbSelcal.has(key)) { const v = _dbSelcal.get(key); return v ? v + '  (aircraft DB)' : null; }
+    _dbSelcal.set(key, null);
+    fetch('/api/aircraft/' + encodeURIComponent(key))
+        .then(r => r.ok ? r.json() : null)
+        .then(a => {
+            if (!a || !a.selcal) return;
+            _dbSelcal.set(key, a.selcal);
+            if (currentDetail && activeTab === 'plan') renderActiveTab();
+        })
+        .catch(() => {});
+    return null;
+}
+
 function section(title, fields) {
     const rows = fields.filter(f => f[1] != null && f[1] !== '');
     if (rows.length === 0) return '';

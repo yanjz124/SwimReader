@@ -64,3 +64,21 @@ header h1 { font-size: 15px; letter-spacing: 2px; color: #cccc44; font-weight: n
     line-height: 1.1;
 }
 .empty { color: #444; padding: 20px; font-size: 12px; }
+
+/* LIVE / HISTORY toggle (shared look with the airport page) */
+.hdr-right { display: flex; align-items: center; gap: 12px; }
+.mode-toggle { display: inline-flex; border: 1px solid #444; border-radius: 3px; overflow: hidden; }
+.mode-toggle button { background: #000; color: #888; border: 0; font: inherit; font-size: 11px; letter-spacing: 1.5px;
+    padding: 4px 10px; cursor: pointer; }
+.mode-toggle button + button { border-left: 1px solid #444; }
+.mode-toggle button.on { background: #26260f; color: #cccc44; }
+#dateSel { background: #000; color: #cccc44; border: 1px solid #444; font: inherit; font-size: 11px; padding: 3px 4px; }
+#status.hist { color: #cc9944; }
+.hist-search { padding: 10px 20px 0; }
+.hist-search input { width: 100%; max-width: 420px; background: #000; color: #fff; border: 1px solid #444;
+    font: inherit; font-size: 12px; padding: 6px 8px; text-transform: uppercase; }
+#csResults { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-size: 12px; }
+#csResults a { color: #cccc44; text-decoration: none; border: 1px solid #333; padding: 3px 8px; background: #1a1a1a; }
+#csResults a:hover { border-color: #cccc44; }
+#csResults .muted { color: #666; }
+@media (max-width: 600px) { header { flex-wrap: wrap; gap: 8px; } }

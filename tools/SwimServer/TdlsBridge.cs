@@ -218,10 +218,15 @@ class TdlsBridge
         }
     }
 
-    /// <summary>Called every 60s. Purge aircraft not seen in 24 hours to prevent unbounded memory growth.</summary>
+    /// <summary>How long the LIVE view keeps an aircraft after its last message. Everything older is on
+    /// disk (tdls-history) and shown by the pages' HISTORY mode, so live stays small: every airport
+    /// snapshot sends all of it. 12 h still covers a long-haul flight on the Track page.</summary>
+    public static readonly TimeSpan LiveWindow = TimeSpan.FromHours(12);
+
+    /// <summary>Called every 60s. Drops aircraft idle longer than <see cref="LiveWindow"/>.</summary>
     public void PurgeStale()
     {
-        var cutoff = DateTime.UtcNow.AddDays(-3);
+        var cutoff = DateTime.UtcNow - LiveWindow;
         foreach (var (airport, tracks) in _state)
         {
             foreach (var (id, ac) in tracks)

@@ -1,4 +1,9 @@
 const AIRPORT = location.pathname.split('/').pop().toUpperCase();
+// LIVE = WebSocket over the server's last 12 h; HISTORY = one day of this airport from disk
+// (/api/tdls/history), fetched only when chosen. ?date=YYYY-MM-DD opens in history mode.
+const _params = new URLSearchParams(location.search);
+let mode = _params.get('date') ? 'history' : 'live';
+let histDate = _params.get('date') || '';
 document.getElementById('airport-title').textContent = AIRPORT;
 document.title = `TDLS ${AIRPORT}`;
 
@@ -26,7 +31,7 @@ function connect() {
     ws = new WebSocket(`${proto}//${location.host}/tdls/ws/${AIRPORT.toLowerCase()}`);
 
     ws.onopen = () => {
-        statusEl.textContent = 'LIVE';
+        statusEl.textContent = 'LIVE · last 12 h';
         statusEl.className = 'ok';
     };
 
@@ -40,9 +45,11 @@ function connect() {
     };
 
     ws.onclose = () => {
+        if (mode !== 'live') return;
         statusEl.textContent = 'DISCONNECTED';
         statusEl.className = '';
-        if (!window.idlePaused || !window.idlePaused()) setTimeout(connect, 5000);
+        if (!window.idlePaused || !window.idlePaused()) setTimeout(() => { if (mode === 'live' && !ws) connect(); }, 5000);
+        ws = null;
     };
 
     ws.onerror = () => ws.close();
@@ -131,7 +138,7 @@ function renderAcList(flashIds) {
         const dest = ac.destination ? ` → ${ac.destination.replace(/^K/, '')}` : '';
         const ts = ac.lastSeen ? fmtTime(ac.lastSeen) : '';
         const age = ac.lastSeen ? now - new Date(ac.lastSeen).getTime() : Infinity;
-        const hist = age > HISTORY_MS ? ' historical' : '';
+        const hist = mode === 'live' && age > HISTORY_MS ? ' historical' : '';
         let prefix = '';
         if (hist && !dividerInserted) {
             dividerInserted = true;
@@ -304,7 +311,85 @@ document.addEventListener('keydown', (ev) => {
     }
 });
 
+// ── Live / history mode ────────────────────────────────────────
+const dateSel = document.getElementById('dateSel');
+function closeWs() { if (ws) { ws.onclose = null; ws.close(); ws = null; } }
+
+async function loadDates() {
+    if (dateSel.options.length) return;
+    try {
+        const data = await (await fetch('/api/tdls/history/dates')).json();
+        const dates = (data.dates || []).map(d => d.date);
+        dateSel.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
+        if (!histDate || !dates.includes(histDate)) histDate = dates[0] || '';
+        dateSel.value = histDate;
+    } catch { }
+}
+
+let histSeq = 0;
+async function loadHistory() {
+    const seq = ++histSeq;
+    await loadDates();
+    statusEl.textContent = histDate ? 'loading ' + histDate + '…' : 'no history';
+    statusEl.className = 'hist';
+    state = {}; seenMessages.clear();
+    renderAcList(); renderDetail(null);
+    if (!histDate) return;
+    const u = new URL(location.href); u.searchParams.set('date', histDate); history.replaceState(null, '', u);
+    try {
+        const d = await (await fetch(`/api/tdls/history?date=${histDate}&airport=${AIRPORT}&limit=5000`)).json();
+        if (seq !== histSeq || mode !== 'history') return;
+        // The API returns newest first; build the same per-aircraft state the live snapshot has.
+        const msgs = (d.results || []).slice().reverse();
+        for (const m of msgs) {
+            const id = m.aircraftId;
+            const ac = state[id] ||= { aircraftId: id, messageCount: 0, messages: [] };
+            ac.messages.push(m);
+            ac.messageCount = ac.messages.length;
+            ac.lastSeen = m.time;
+            if (m.acType) ac.acType = m.acType;
+            if (m.destination) ac.destination = m.destination;
+            if (m.beaconCode) ac.beaconCode = m.beaconCode;
+        }
+        statusEl.textContent = `HISTORY · ${histDate}` + ((d.count || 0) >= 5000 ? ' (first 5000)' : '');
+        renderAcList();
+        autoSelectFromQuery();
+    } catch { if (seq === histSeq) statusEl.textContent = 'ERROR'; }
+}
+
+// ?q=CALLSIGN (from the directory's callsign search) prefills the search and opens that aircraft.
+function autoSelectFromQuery() {
+    const q = _params.get('q');
+    if (!q) return;
+    searchEl.value = searchQuery = q; clearEl.style.display = 'flex';
+    renderAcList();
+    const ids = Object.keys(state).filter(id => id.toUpperCase().includes(q.toUpperCase()));
+    if (ids.length === 1) { selectedAc = ids[0]; renderAcList(); renderDetail(selectedAc); }
+    _params.delete('q');
+}
+
+function setMode(m) {
+    mode = m;
+    document.querySelectorAll('#modeToggle button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+    dateSel.hidden = m !== 'history';
+    selectedAc = null;
+    if (m === 'history') { closeWs(); loadHistory(); }
+    else {
+        histSeq++;
+        const u = new URL(location.href); u.searchParams.delete('date'); history.replaceState(null, '', u);
+        state = {}; seenMessages.clear(); renderAcList(); renderDetail(null);
+        statusEl.textContent = 'connecting...'; statusEl.className = '';
+        connect();
+    }
+}
+document.getElementById('modeToggle').addEventListener('click', e => {
+    const b = e.target.closest('button[data-mode]');
+    if (b && b.dataset.mode !== mode) setMode(b.dataset.mode);
+});
+dateSel.addEventListener('change', () => { histDate = dateSel.value; loadHistory(); });
+
 // ── Init ───────────────────────────────────────────────────────
-window.idleOnPause = () => { if (ws) { ws.onclose = null; ws.close(); ws = null; } };
-window.idleOnResume = () => { connect(); };
-connect();
+window.idleOnPause = () => { closeWs(); };
+window.idleOnResume = () => { if (mode === 'live' && !ws) connect(); };
+setMode(mode);
+if (mode === 'live') setTimeout(autoSelectFromQuery, 1500);

@@ -287,3 +287,12 @@ header .stats {
 }
 .depart-timeline .step { color: #888; }
 .depart-timeline .step .t { color: #ff8844; }
+
+/* LIVE / HISTORY toggle (same look as the directory) */
+.mode-toggle { display: inline-flex; border: 1px solid #444; border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+.mode-toggle button { background: #000; color: #888; border: 0; font: inherit; font-size: 11px; letter-spacing: 1.5px;
+    padding: 3px 9px; cursor: pointer; }
+.mode-toggle button + button { border-left: 1px solid #444; }
+.mode-toggle button.on { background: #26260f; color: #cccc44; }
+#dateSel { background: #000; color: #cccc44; border: 1px solid #444; font: inherit; font-size: 11px; padding: 2px 4px; }
+#status.hist { color: #cc9944; }

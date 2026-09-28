@@ -6,7 +6,7 @@
 <title>TDLS AIRPORT</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>📨</text></svg>">
 <link rel="stylesheet" href="/shared/common.css?v=3">
-<link rel="stylesheet" href="/tdls/airport.css?v=4">
+<link rel="stylesheet" href="/tdls/airport.css?v=5">
 <link rel="stylesheet" href="/shared/frame.css?v=4">
 </head>
 <body>
@@ -16,6 +16,11 @@
     </div>
     <h1 id="airport-title">KATL</h1>
     <span class="header-label">TDLS</span>
+    <div class="mode-toggle" id="modeToggle">
+        <button type="button" data-mode="live">LIVE</button>
+        <button type="button" data-mode="history">HISTORY</button>
+    </div>
+    <select id="dateSel" hidden></select>
     <div class="status-bar">
         <div class="stats" id="stats"></div>
         <div id="status">connecting...</div>
@@ -35,7 +40,7 @@
     </div>
 </div>
 
-<script src="/tdls/airport.js?v=3"></script>
+<script src="/tdls/airport.js?v=4"></script>
 <script src="/idle-timer.js?v=3"></script>
 <script src="/shared/frame.js?v=4"></script>
 <script src="/shared/disclaimer.js?v=2"></script>

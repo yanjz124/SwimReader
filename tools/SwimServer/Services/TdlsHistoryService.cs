@@ -39,6 +39,49 @@ static class TdlsHistoryService
         }
     }
 
+    // Per-date airport counts for the directory's HISTORY view. Past days never change, so they're
+    // cached; today's file is re-scanned when it has grown and the cached copy is over a minute old.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (object data, long len, DateTime at)> _airportCache = new();
+
+    /// <summary>Airports in one day's file: [{airport, aircraftCount, messageCount}] — only the airport
+    /// and callsign are pulled from each line (no full JSON parse).</summary>
+    public static object AirportsForDate(string historyDir, string date)
+    {
+        var path = Path.Combine(historyDir, Path.GetFileName(date) + ".jsonl");
+        if (!File.Exists(path)) return Array.Empty<object>();
+        var len = new FileInfo(path).Length;
+        if (_airportCache.TryGetValue(date, out var c) && (c.len == len || DateTime.UtcNow - c.at < TimeSpan.FromMinutes(1)))
+            return c.data;
+        var msgs = new Dictionary<string, int>();
+        var acft = new Dictionary<string, HashSet<string>>();
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        using (var sr = new StreamReader(fs))
+        {
+            string? line;
+            while ((line = sr.ReadLine()) != null)
+            {
+                var ap = Field(line, "\"airport\":\"");
+                if (ap is null) continue;
+                msgs[ap] = msgs.GetValueOrDefault(ap) + 1;
+                if (!acft.TryGetValue(ap, out var set)) acft[ap] = set = new HashSet<string>();
+                if (Field(line, "\"aircraftId\":\"") is { } id) set.Add(id);
+            }
+        }
+        var data = msgs.Select(kv => new { airport = kv.Key, aircraftCount = acft[kv.Key].Count, messageCount = kv.Value })
+            .OrderBy(x => x.airport).ToArray();
+        _airportCache[date] = (data, len, DateTime.UtcNow);
+        return data;
+    }
+
+    private static string? Field(string line, string key)
+    {
+        var i = line.IndexOf(key, StringComparison.Ordinal);
+        if (i < 0) return null;
+        i += key.Length;
+        var j = line.IndexOf('"', i);
+        return j > i ? line[i..j] : null;
+    }
+
     /// <summary>List dates that have history files, plus their sizes.</summary>
     public static object ListDates(string historyDir)
     {
@@ -72,7 +115,7 @@ static class TdlsHistoryService
             if (!Directory.Exists(historyDir))
                 return new { count = 0, results = Array.Empty<object>() };
 
-            var d = date ?? DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var d = Path.GetFileName(date ?? DateTime.UtcNow.ToString("yyyy-MM-dd"));
             var path = Path.Combine(historyDir, $"{d}.jsonl");
             if (!File.Exists(path)) return new { count = 0, results = Array.Empty<object>() };
 
@@ -86,6 +129,8 @@ static class TdlsHistoryService
             {
                 var line = lines[i];
                 if (string.IsNullOrWhiteSpace(line)) continue;
+                // Cheap pre-filter before the JSON parse: an airport-day view skips ~all other lines.
+                if (ap != null && !line.Contains("\"airport\":\"" + ap + "\"", StringComparison.OrdinalIgnoreCase)) continue;
                 JsonDocument doc;
                 try { doc = JsonDocument.Parse(line); } catch { continue; }
                 var root = doc.RootElement.Clone();

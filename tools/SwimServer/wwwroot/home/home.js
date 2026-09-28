@@ -98,6 +98,85 @@ function renderServerDetail() {
     ).join('');
 }
 
+// ── Storage & retention card ─────────────────────────────────────────────
+// /api/storage walks the data directories (cached server-side for a minute), so it's fetched on
+// load and whenever the card is opened, not on the fast stats timer.
+let _storage = null;
+const storageCard   = document.getElementById('storageCard');
+const storageDetail = document.getElementById('storageDetail');
+function fmtBytes(b) {
+    if (b == null) return '--';
+    if (b >= 1e12) return (b / 1e12).toFixed(1) + ' TB';
+    if (b >= 1e9)  return (b / 1e9).toFixed(1) + ' GB';
+    if (b >= 1e6)  return Math.round(b / 1e6) + ' MB';
+    return Math.max(1, Math.round(b / 1e3)) + ' KB';
+}
+function fmtSpan(days) {
+    if (days == null) return '';
+    if (days < 1) return Math.round(days * 24) + ' h';
+    if (days < 60) return (Math.round(days * 10) / 10) + ' days';
+    return Math.round(days / 30.4) + ' months';
+}
+function fmtStamp(iso) {
+    const d = new Date(iso); if (isNaN(d)) return '';
+    const M = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()];
+    return `${d.getUTCDate()} ${M} ${String(d.getUTCHours()).padStart(2,'0')}Z`;
+}
+async function loadStorage() {
+    try {
+        const r = await fetch('/api/storage');
+        if (!r.ok) return;
+        _storage = await r.json();
+        const used = (_storage.datasets || []).reduce((a, d) => a + (d.bytes || 0), 0);
+        const cEl = document.getElementById('storageCount');
+        if (cEl) cEl.textContent = `${fmtBytes(used)} stored` +
+            (_storage.diskFreeBytes != null ? `  ·  ${fmtBytes(_storage.diskFreeBytes)} free` : '');
+        if (storageCard.classList.contains('open')) renderStorageDetail();
+    } catch (e) { /* card just stays blank */ }
+}
+function renderStorageDetail() {
+    const s = _storage;
+    if (!s) { storageDetail.innerHTML = '<span class="lbl">loading…</span><span></span>'; return; }
+    const caps = new Map((s.buckets || []).map(b => [b.bucket, b]));
+    const out = [];
+    let group = null;
+    const shownCap = new Set();
+    for (const d of s.datasets || []) {
+        if (d.group !== group) { group = d.group; out.push(`<span class="grp">${group.toUpperCase()}</span>`); }
+        let v = `<b>${fmtBytes(d.bytes)}</b>`;
+        if (d.key === 'incidents') v += `  ·  ${d.items} archived`;
+        else if (d.oldest && d.spanDays != null && d.group !== 'Reference')
+            v += `  ·  <b>${fmtSpan(d.spanDays)}</b>  (${fmtStamp(d.oldest)} → now)`;
+        out.push(`<span class="lbl" title="${d.note || ''}">${d.name}</span><span class="val">${v}</span>`);
+        // Once per rolling bucket, after its last dataset: used vs cap. The oldest data is trimmed
+        // when a bucket reaches its cap, so this is what decides how far back it can reach.
+        const b = d.bucket && caps.get(d.bucket);
+        const lastOfBucket = b && !(s.datasets || []).slice((s.datasets || []).indexOf(d) + 1).some(x => x.bucket === d.bucket);
+        if (b && b.capBytes && lastOfBucket && !shownCap.has(d.bucket)) {
+            shownCap.add(d.bucket);
+            const pct = Math.min(100, Math.round(100 * b.usedBytes / b.capBytes));
+            out.push(`<span class="lbl">  ↳ ${d.bucket} cap</span><span class="val">${fmtBytes(b.usedBytes)} of ${fmtBytes(b.capBytes)}` +
+                `<span class="bar${pct >= 95 ? ' full' : ''}"><i style="width:${pct}%"></i></span>` +
+                (pct >= 95 ? '  oldest trimmed as new data arrives' : '') + `</span>`);
+        }
+    }
+    if (s.diskTotalBytes)
+        out.push(`<span class="grp">DISK</span><span class="lbl">Free</span><span class="val"><b>${fmtBytes(s.diskFreeBytes)}</b> of ${fmtBytes(s.diskTotalBytes)}</span>`);
+    storageDetail.innerHTML = out.join('');
+}
+function toggleStorage() {
+    const open = storageCard.classList.toggle('open');
+    storageCard.setAttribute('aria-expanded', open ? 'true' : 'false');
+    storageDetail.hidden = !open;
+    if (open) { renderStorageDetail(); loadStorage(); }
+}
+storageCard.addEventListener('click', toggleStorage);
+storageCard.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStorage(); }
+});
+loadStorage();
+setInterval(loadStorage, 5 * 60 * 1000);
+
 // ── Live stats polling ────────────────────────────────────────
 async function refreshStats() {
     try {

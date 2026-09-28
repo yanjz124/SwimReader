@@ -156,6 +156,17 @@ header .sub {
 }
 .server-detail .lbl { color: #555; white-space: nowrap; }
 .server-detail .val { color: #aaa; }
+/* Storage card: dataset rows grouped (rolling replay / history / permanent / reference). */
+/* Too much per row for a single grid cell — when open it takes the whole row. */
+#storageCard.open { grid-column: 1 / -1; }
+.storage-detail:not([hidden]) { grid-template-columns: max-content 1fr; gap: 4px 18px; font-size: 11.5px; }
+.storage-detail .grp { grid-column: 1 / -1; color: #cccc44; letter-spacing: 1.5px; font-size: 10px; margin-top: 6px; }
+.storage-detail .grp:first-child { margin-top: 0; }
+.storage-detail .val b { color: #ddd; font-weight: normal; }
+.storage-detail .bar { display: inline-block; vertical-align: middle; width: 70px; height: 6px; background: #222;
+    border-radius: 3px; overflow: hidden; margin-left: 6px; }
+.storage-detail .bar i { display: block; height: 100%; background: #cccc44; }
+.storage-detail .bar.full i { background: #d9a066; }
 
 /* ── About / contribute ───────────────────────────────────── */
 .about { text-align: center; margin-top: 4px; }

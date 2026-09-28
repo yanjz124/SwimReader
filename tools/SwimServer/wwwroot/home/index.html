@@ -6,7 +6,7 @@
 <title>SWIM Viewer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>✈️</text></svg>">
 <link rel="stylesheet" href="/shared/common.css?v=3">
-<link rel="stylesheet" href="/home/home.css?v=8">
+<link rel="stylesheet" href="/home/home.css?v=10">
 <script defer src="/shared/frame.js?v=4"></script>
 </head>
 <body>
@@ -172,6 +172,12 @@
                 <div class="count" id="throughputCount"></div>
                 <div class="server-detail" id="throughputDetail" hidden></div>
             </div>
+            <div class="card server-card" id="storageCard" role="button" tabindex="0" aria-expanded="false">
+                <div class="title">STORAGE &amp; RETENTION</div>
+                <div class="desc">How far back each replay / history goes and the disk it uses — tap for detail</div>
+                <div class="count" id="storageCount"></div>
+                <div class="server-detail storage-detail" id="storageDetail" hidden></div>
+            </div>
             <div class="card server-card" id="serverCard" role="button" tabindex="0" aria-expanded="false">
                 <div class="title">SERVER STATUS</div>
                 <div class="desc">Performance, memory, uptime — tap for detail</div>
@@ -189,7 +195,7 @@
     <div style="margin-top:4px;color:#b06060;">NOT FOR OPERATIONAL USE — for situational awareness and reference only.</div>
 </footer>
 
-<script src="/home/home.js?v=9"></script>
+<script src="/home/home.js?v=10"></script>
 <script src="/idle-timer.js?v=3"></script>
 <script src="/shared/disclaimer.js?v=3"></script>
 </body>

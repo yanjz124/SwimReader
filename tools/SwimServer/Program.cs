@@ -253,6 +253,7 @@ var asdex = new AsdexBridge(stddsUser, stddsPass, stddsQueue, stddsHost, stddsVp
 
 // TDLS bridge — receives forwarded TDES messages from ASDEX bridge (shared Solace session)
 var tdls = new TdlsBridge(jsonOpts) { HistoryDir = tdlsHistoryDir };
+tdls.LoadRecent();   // before STDDS connects: LIVE shows the last 12 h right after a restart
 // TAIS bridge — receives forwarded TAIS messages from ASDEX bridge (shared Solace session)
 var tais = new TaisBridge(jsonOpts);
 // TFMS bridge — own Solace session for Traffic Flow Management data

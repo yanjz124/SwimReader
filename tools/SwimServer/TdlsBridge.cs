@@ -171,6 +171,56 @@ class TdlsBridge
         if (HistoryDir is not null) TdlsHistoryService.Append(msg, HistoryDir);
     }
 
+    /// <summary>Refill the live state from tdls-history after a restart, so LIVE shows the last
+    /// <see cref="LiveWindow"/> instead of starting empty on every deploy. Nothing is re-appended to
+    /// history or broadcast. LADD-masked lines are skipped (they'd merge under one "LADD" id).</summary>
+    public int LoadRecent()
+    {
+        if (HistoryDir is null || !Directory.Exists(HistoryDir)) return 0;
+        var cutoff = DateTime.UtcNow - LiveWindow;
+        int n = 0;
+        foreach (var day in new[] { cutoff.Date, DateTime.UtcNow.Date }.Distinct())
+        {
+            var path = Path.Combine(HistoryDir, day.ToString("yyyy-MM-dd") + ".jsonl");
+            if (!File.Exists(path)) continue;
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var sr = new StreamReader(fs);
+            string? line;
+            while ((line = sr.ReadLine()) != null)
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(line);
+                    var r = doc.RootElement;
+                    string? S(string k) => r.TryGetProperty(k, out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String ? p.GetString() : null;
+                    var time = ParseIsoTime(S("time"));
+                    var airport = S("airport"); var id = S("aircraftId");
+                    if (time is null || time < cutoff || airport is null || id is null || id == LaddService.Label) continue;
+                    var msg = new TdlsMessage
+                    {
+                        Type = S("type") ?? "", Time = time.Value, Airport = airport, AircraftId = id,
+                        BeaconCode = S("beaconCode"), AircraftType = S("acType"), ComputerId = S("cid"),
+                        Destination = S("destination"), DataHeader = S("dataHeader"), DataBody = S("dataBody"),
+                        Gate = S("gate"), TakeoffRunway = S("runway"), EramGufi = S("eramGufi"),
+                        ClearanceTime = ParseIsoTime(S("clearanceTime")), TaxiTime = ParseIsoTime(S("taxiTime")),
+                        TakeoffTime = ParseIsoTime(S("takeoffTime")),
+                    };
+                    var ac = _state.GetOrAdd(airport, _ => new ConcurrentDictionary<string, TdlsAircraft>())
+                        .GetOrAdd(id, x => new TdlsAircraft { Airport = airport, AircraftId = x });
+                    lock (ac.Messages) ac.Messages.Add(msg);
+                    ac.LastSeen = msg.Time;
+                    if (msg.AircraftType is not null) ac.AircraftType = msg.AircraftType;
+                    if (msg.Destination is not null) ac.Destination = msg.Destination;
+                    if (msg.BeaconCode is not null) ac.BeaconCode = msg.BeaconCode;
+                    n++;
+                }
+                catch { /* torn line */ }
+            }
+        }
+        Console.WriteLine($"[TDLS] Restored {n} messages from the last {LiveWindow.TotalHours:0} h of history");
+        return n;
+    }
+
     // ── XML helpers ────────────────────────────────────────────────────────────
 
     private static string? El(XElement? parent, string localName) =>

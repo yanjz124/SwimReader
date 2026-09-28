@@ -112,6 +112,19 @@
   .btn.copy { background:#1a1420; color:#d8b6ff; border-color:#3a2a5a; }
   .btn:hover { filter:brightness(1.25); }
   .btn.done { color:var(--ok); border-color:#2f5a2f; }
+
+  /* airframe picker — which real tail SimBrief should be pre-filled with */
+  .af { display:grid; grid-template-columns:auto minmax(0,1fr) 150px; gap:6px 8px; align-items:center;
+    margin-top:10px; padding:8px 10px; background:#0e0e0e; border:1px solid #232323; border-radius:8px; }
+  .af > label { font-size:10px; letter-spacing:1.5px; color:var(--dim); }
+  .af select, .af input { background:#1a1a1a; color:var(--yel); border:1px solid #333; border-radius:6px;
+    padding:6px 8px; font:inherit; font-size:12.5px; min-width:0; width:100%; }
+  .af input { text-transform:uppercase; }
+  .af input::placeholder { color:var(--faint); text-transform:none; }
+  .af select:focus, .af input:focus { outline:none; border-color:var(--yel); }
+  .af .afinfo { grid-column:1 / -1; font-size:11.5px; color:var(--dim); line-height:1.5; }
+  .af .afinfo b { color:#ddd; font-weight:normal; }
+  .af .afinfo .warn { color:#d9a066; }
   .fpl { white-space:pre-wrap; font-size:12px; color:#cfe; background:#0b1418; border:1px solid #14343a;
     border-radius:8px; padding:10px 12px; display:none; margin:0; }
 
@@ -127,6 +140,7 @@
     .go { flex:1; }
   }
   @media (max-width: 560px) {
+    .af { grid-template-columns:1fr; }
     .hide-sm { display:none; }
     .rhead { grid-template-columns:48px 1fr; gap:10px; padding:10px 12px; }
     .rcount .n { font-size:18px; }
@@ -232,32 +246,48 @@ const seenMs = f => Date.parse(f.lastSeen) || 0;
 // TDLS reports an unknown gate/runway as a literal "N/A"; treat it as absent rather than a real value.
 const real = v => (v && !/^(N\/?A|UNK|NONE)$/i.test(String(v).trim())) ? v : '';
 
-function simbriefUrl(f){
+// af = the airframe picked in the AIRFRAME selector:
+//   undefined -> not chosen yet (use the flight's own registration, as before)
+//   null      -> "generic": send no tail data and let SimBrief use its default airframe
+//   object    -> an aircraft-DB record {registration, type, selcal, icao24}
+// The tail's own ICAO type drives SimBrief's variant (A21N vs A321, B38M vs B738), so picking the
+// right tail lands on the right variant. Swapping variants inside SimBrief afterwards is what used
+// to wipe the registration / SELCAL / Mode-S typed in there.
+function simbriefUrl(f, af){
   const p = new URLSearchParams();
   if(f.airline) p.set('airline', f.airline);
   if(f.fltnum)  p.set('fltnum', f.fltnum);
   if(f.orig)    p.set('orig', f.orig);
   if(f.dest)    p.set('dest', f.dest);
-  if(f.type)    p.set('type', f.type);
+  const type = (af && af.type) || f.type;
+  if(type)      p.set('type', type);
   const rte = cleanRoute(f.route, f.orig, f.dest);
   if(rte)       p.set('route', rte);
   if(f.altn)    p.set('altn', f.altn);
-  if(f.reg)     p.set('reg', f.reg);
+  const reg = af === undefined ? f.reg : (af && af.registration);
+  if(reg)       p.set('reg', reg);
+  if(af && af.selcal) p.set('selcal', af.selcal);
+  // Mode-S goes in SimBrief's acdata JSON as hexcode (it has no top-level parameter).
+  if(af && af.icao24) p.set('acdata', JSON.stringify({ hexcode: af.icao24 }));
   const fl = cruiseFt(f.cruise); if(fl) p.set('fl', fl);
   if(f.callsign) p.set('callsign', f.callsign);
   return 'https://dispatch.simbrief.com/options/custom?' + p.toString();
 }
 // ICAO-ish block for a manual VATSIM prefile / copy.
-function fplText(f){
+function fplText(f, af){
   const rte = cleanRoute(f.route, f.orig, f.dest) || 'DCT';
+  const type = (af && af.type) || f.type;
+  const reg = af === undefined ? f.reg : (af && af.registration);
   const lines = [
     f.callsign,
-    (f.type||'ZZZZ') + (f.wake?('/'+f.wake):'') + (f.equip?(' /'+f.equip):''),
+    (type||'ZZZZ') + (f.wake?('/'+f.wake):'') + (f.equip?(' /'+f.equip):''),
     (f.orig||'????') + ' -> ' + (f.dest||'????') + (f.cruise!=null? ('  '+flLabel(f.cruise)):''),
     'RTE ' + rte,
   ];
   if(f.altn) lines.push('ALTN ' + f.altn);
-  if(f.reg) lines.push('REG ' + f.reg);
+  if(reg) lines.push('REG ' + reg);
+  if(af && af.selcal) lines.push('SEL ' + af.selcal);
+  if(af && af.icao24) lines.push('CODE ' + af.icao24);     // ICAO field 18 CODE/ = the 24-bit address
   if(f.remarks) lines.push('RMK ' + f.remarks);
   return lines.join('\n');
 }
@@ -338,7 +368,7 @@ function sortedFlights(){
   });
 }
 
-function detailHtml(f){
+function detailHtml(f, fid){
   const rte = cleanRoute(f.route, f.orig, f.dest);
   const kv = [];
   const add=(k,v)=>{ if(v!=null && v!=='') kv.push(`<div class="k">${k}</div><div class="v">${esc(v)}</div>`); };
@@ -352,9 +382,10 @@ function detailHtml(f){
   add('Remarks', f.remarks);
   add('Seen', [ago(f.lastSeen), f.date].filter(Boolean).join('  ·  '));
   add('As filed', f.route);
-  return `<div class="det">
+  return `<div class="det sbwrap" data-fid="${esc(fid)}">
       <div class="rte"><span class="lbl">${esc(f.orig)} ▸ ${esc(f.dest)} · ROUTE</span>${esc(rte||'DCT')}</div>
       <div class="kv">${kv.join('')}</div>
+      ${pickerHtml(f)}
       <div class="actions">
         <a class="btn sb" href="${esc(simbriefUrl(f))}" target="_blank" rel="noopener">Open in SimBrief ▸</a>
         <button class="btn copy" type="button" data-act="route">Copy route</button>
@@ -375,7 +406,7 @@ function routeCardHtml(g, gi){
   return `<div class="rcard" data-g="${gi}">
     <div class="rhead">
       <div class="rcount"><div class="n">${n}</div><div class="l">${n===1?'FLIGHT':'FLIGHTS'}</div></div>
-      <div>
+      <div class="sbwrap" data-fid="gb${gi}">
         <div class="rpair"><b>${esc(g.orig)} ▸ ${esc(g.dest)}</b></div>
         <div class="rtext">${esc(g.rte)}</div>
         <div class="rmeta">
@@ -384,6 +415,7 @@ function routeCardHtml(g, gi){
           ${fl?`<span>usually <b>${esc(fl[0])}</b></span>`:''}
           <span>last flown <b>${esc(ago(g.best.lastSeen)||'—')}</b></span>
         </div>
+        ${pickerHtml(g.best)}
         <div class="ractions">
           <a class="btn sb" href="${esc(simbriefUrl(g.best))}" target="_blank" rel="noopener"
              title="Pre-filled from ${esc(g.best.callsign)}, the most recent flight on this route">Open in SimBrief ▸</a>
@@ -395,6 +427,114 @@ function routeCardHtml(g, gi){
     <div class="rflights"></div>
   </div>`;
 }
+
+// ── airframe picker ──────────────────────────────────────────────────────────
+// Real tails come from the aircraft DB (registration, ICAO 24-bit / Mode-S, SELCAL, type). Lookups
+// are cached for the page, so a list of route cards shares one fleet request per airline + type.
+const tailCache = new Map(), fleetCache = new Map();
+function getTail(reg){
+  reg = (reg||'').trim().toUpperCase();
+  if(!reg) return Promise.resolve(null);
+  if(!tailCache.has(reg)) tailCache.set(reg,
+    fetch('/api/aircraft/' + encodeURIComponent(reg)).then(r => r.ok ? r.json() : null).catch(() => null));
+  return tailCache.get(reg);
+}
+function getFleet(type, op){
+  if(!type || !op) return Promise.resolve([]);
+  const k = type + '|' + op;
+  if(!fleetCache.has(k)) fleetCache.set(k,
+    fetch(`/api/aircraft/list?type=${encodeURIComponent(type)}&operator=${encodeURIComponent(op)}&sort=lastSeen&limit=500`)
+      .then(r => r.ok ? r.json() : { results: [] }).then(d => d.results || []).catch(() => []));
+  return fleetCache.get(k);
+}
+const afLabel = a => `${a.registration}${a.selcal ? '  ·  SEL ' + a.selcal : ''}${a.icao24 ? '  ·  ' + a.icao24 : ''}`;
+
+function pickerHtml(f){
+  const own = f.reg ? `<option value="${esc(f.reg)}" selected>${esc(f.reg)} — this flight</option>` : '';
+  return `<div class="af">
+      <label>AIRFRAME</label>
+      <select class="afsel" title="Which real aircraft to pre-fill SimBrief with">
+        ${own}<option value=""${f.reg ? '' : ' selected'}>Generic — no tail data</option>
+      </select>
+      <input class="afreg" placeholder="any reg, e.g. N107DN" maxlength="8" spellcheck="false" autocomplete="off"
+             title="Type any registration and press Enter">
+      <div class="afinfo">${f.reg ? 'Looking up ' + esc(f.reg) + '…' : 'No registration on this flight — pick a tail from the fleet or type one.'}</div>
+    </div>`;
+}
+
+async function hydratePicker(wrap){
+  if(!wrap || wrap._hydrated) return;
+  wrap._hydrated = true;
+  const f = FLIGHT_BY_ID.get(wrap.dataset.fid); if(!f) return;
+  wrap._recs = wrap._recs || new Map();
+  const [own, fleet] = await Promise.all([getTail(f.reg), getFleet(f.type, f.airline)]);
+  if(!wrap.isConnected) return;
+  if(own) wrap._recs.set(own.registration, own);
+  for(const a of fleet) if(a.registration) wrap._recs.set(a.registration, a);
+  const sel = wrap.querySelector('.afsel');
+  const keep = sel.value;
+  const typed = sel.querySelector('optgroup[data-typed]');      // keep anything typed while loading
+  const others = fleet.filter(a => a.registration && a.registration !== f.reg);
+  let html = '';
+  if(f.reg) html += `<optgroup label="This flight"><option value="${esc(f.reg)}">${esc(own ? afLabel(own) : f.reg + '  ·  not in aircraft DB')}</option></optgroup>`;
+  if(others.length) html += `<optgroup label="${esc(f.airline)} ${esc(f.type)} fleet — ${others.length} tail${others.length===1?'':'s'}">${
+    others.map(a => `<option value="${esc(a.registration)}">${esc(afLabel(a))}</option>`).join('')}</optgroup>`;
+  html += `<option value="">Generic — no tail data</option>`;
+  sel.innerHTML = html;
+  if(typed) sel.insertBefore(typed, sel.firstChild);
+  sel.value = keep;
+  setAirframe(wrap, sel.value);
+}
+
+function setAirframe(wrap, reg){
+  const f = FLIGHT_BY_ID.get(wrap.dataset.fid); if(!f) return;
+  const rec = reg ? (wrap._recs && wrap._recs.get(reg)) : null;
+  // A tail not in the DB still gets its registration sent; SELCAL / Mode-S are simply unknown.
+  const af = reg ? (rec || { registration: reg, type: f.type }) : null;
+  wrap._af = af;
+  const link = wrap.querySelector('a.btn.sb');
+  if(link) link.href = simbriefUrl(f, af);
+  const info = wrap.querySelector('.afinfo');
+  if(!info) return;
+  if(!af){ info.innerHTML = 'Sends no tail data — SimBrief uses its default <b>' + esc(f.type||'') + '</b> airframe.'; return; }
+  const parts = [`REG <b>${esc(af.registration)}</b>`, `type <b>${esc(af.type||f.type||'?')}</b>`];
+  parts.push(af.selcal ? `SELCAL <b>${esc(af.selcal)}</b>` : '<span class="warn">no SELCAL on file</span>');
+  parts.push(af.icao24 ? `Mode-S <b>${esc(af.icao24)}</b>` : '<span class="warn">no Mode-S on file</span>');
+  info.innerHTML = 'SimBrief gets ' + parts.join('  ·  ') + (rec ? '' : '  <span class="warn">(tail not in the aircraft DB)</span>');
+}
+
+$('out').addEventListener('change', e => {
+  const sel = e.target.closest('.afsel'); if(!sel) return;
+  setAirframe(sel.closest('.sbwrap'), sel.value);
+});
+async function pickTypedReg(input){
+  const wrap = input.closest('.sbwrap');
+  const reg = input.value.trim().toUpperCase(); if(!reg || !wrap) return;
+  wrap.querySelector('.afinfo').textContent = 'Looking up ' + reg + '…';
+  const rec = await getTail(reg);
+  const sel = wrap.querySelector('.afsel');
+  wrap._recs = wrap._recs || new Map();
+  if(rec) wrap._recs.set(rec.registration, rec);
+  const val = rec ? rec.registration : reg;
+  if(![...sel.options].some(o => o.value === val)){
+    let grp = sel.querySelector('optgroup[data-typed]');
+    if(!grp){ grp = document.createElement('optgroup'); grp.label = 'Typed'; grp.dataset.typed = '1'; sel.insertBefore(grp, sel.firstChild); }
+    const o = document.createElement('option'); o.value = val;
+    o.textContent = rec ? afLabel(rec) + (rec.type ? '  ·  ' + rec.type : '') : reg + '  ·  not in aircraft DB';
+    grp.appendChild(o);
+  }
+  sel.value = val;
+  setAirframe(wrap, val);
+  input.value = '';
+}
+$('out').addEventListener('keydown', e => {
+  const inp = e.target.closest('.afreg');
+  if(inp && e.key === 'Enter'){ e.preventDefault(); pickTypedReg(inp); }
+});
+$('out').addEventListener('input', e => {
+  const inp = e.target.closest('.afreg'); if(!inp) return;
+  inp.value = inp.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+});
 
 // ── state + wiring ───────────────────────────────────────────────────────────
 let RESULTS = [], GROUPS = [], VIEW = 'routes';
@@ -409,7 +549,9 @@ function render(){
     return;
   }
   if(VIEW === 'routes'){
+    GROUPS.forEach((g,gi)=>FLIGHT_BY_ID.set('gb'+gi, g.best));
     $('out').innerHTML = GROUPS.map(routeCardHtml).join('');
+    $('out').querySelectorAll('.rcard .sbwrap').forEach(hydratePicker);
   } else {
     const list = sortedFlights();
     list.forEach((f,i)=>FLIGHT_BY_ID.set('f'+i, f));
@@ -447,7 +589,8 @@ $('out').addEventListener('click', async (e) => {
     const f = det && FLIGHT_BY_ID.get(det.dataset.for);
     if(f && a==='route'){ copyText(act, cleanRoute(f.route, f.orig, f.dest) || 'DCT', 'Copy route'); return; }
     if(f && a==='plan'){
-      const txt = fplText(f), pre = det.querySelector('.fpl');
+      const wrap = det.querySelector('.sbwrap');
+      const txt = fplText(f, wrap ? wrap._af : undefined), pre = det.querySelector('.fpl');
       pre.textContent = txt; pre.style.display='block';
       copyText(act, txt, 'Copy plan (VATSIM)'); return;
     }
@@ -461,7 +604,11 @@ $('out').addEventListener('click', async (e) => {
     const opening = det.hidden;
     tr.parentElement.querySelectorAll('tr.detail').forEach(d => d.hidden = true);
     tr.parentElement.querySelectorAll('tr.row.open').forEach(r => r.classList.remove('open'));
-    if(opening){ det.firstElementChild.innerHTML = detailHtml(f); det.hidden = false; tr.classList.add('open'); }
+    if(opening){
+      det.firstElementChild.innerHTML = detailHtml(f, tr.dataset.id);
+      det.hidden = false; tr.classList.add('open');
+      hydratePicker(det.querySelector('.sbwrap'));
+    }
   }
 });
 

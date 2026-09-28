@@ -57,15 +57,17 @@ static class AircraftRoutes
         // Browse as a table: filter (optional) + sort + page. total lets the client show "X–Y of Z".
         // Paged/filtered API access. field = all|registration|icao24|selcal|callsign|operator|type;
         // wake = J|H|M|L. (The /aircraft page itself loads /api/aircraft/all and works in the browser.)
+        // Optional type= / operator= are EXACT matches and combine (the Route Finder's airframe
+        // picker asks for "every DAL A321" in one small request).
         app.MapGet("/api/aircraft/list", (HttpContext c, string? q, string? field, string? wake,
-            string? sort, string? dir, int? offset, int? limit) =>
+            string? sort, string? dir, int? offset, int? limit, string? type, string? @operator) =>
         {
             bool reveal = LaddService.Reveal(c);
             int off = Math.Max(0, offset ?? 0);
             int lim = Math.Clamp(limit ?? 100, 1, 500);
             string s = sort ?? "lastSeen";
             bool desc = !string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase);
-            var (total, page) = db.Browse(q, field, wake, s, desc, off, lim, reveal);
+            var (total, page) = db.Browse(q, field, wake, s, desc, off, lim, reveal, type, @operator);
             return Results.Json(new
             {
                 total, offset = off, limit = lim, sort = s, dir = desc ? "desc" : "asc",

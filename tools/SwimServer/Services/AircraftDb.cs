@@ -149,10 +149,17 @@ sealed class AircraftDb
     /// thousands of rows sorts in a few ms), so the client fetches only the page it shows.
     /// </summary>
     public (int total, List<AircraftRecord> page) Browse(
-        string? q, string? field, string? wake, string sort, bool desc, int offset, int limit, bool reveal)
+        string? q, string? field, string? wake, string sort, bool desc, int offset, int limit, bool reveal,
+        string? typeEq = null, string? operatorEq = null)
     {
         IEnumerable<AircraftRecord> items = _byKey.Values;
         if (!reveal) items = items.Where(r => !LaddService.IsBlocked(null, r.Registration, r.Icao24));
+
+        // Exact-match fleet filters (e.g. every DAL A321) — combinable, unlike the single-field q.
+        var te = (typeEq ?? "").Trim().ToUpperInvariant();
+        if (te.Length > 0) items = items.Where(r => string.Equals(r.Type, te, StringComparison.OrdinalIgnoreCase));
+        var oe = (operatorEq ?? "").Trim().ToUpperInvariant();
+        if (oe.Length > 0) items = items.Where(r => string.Equals(r.Operator, oe, StringComparison.OrdinalIgnoreCase));
 
         var w = (wake ?? "").Trim().ToUpperInvariant();
         if (w.Length > 0) items = items.Where(r => r.Wake == w);

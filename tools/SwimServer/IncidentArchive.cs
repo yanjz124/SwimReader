@@ -298,7 +298,7 @@ public sealed class IncidentArchive
         {
             var dir = Path.Combine(_replayDir, "eram");
             if (!Directory.Exists(dir)) return "No replay recording is available yet.";
-            var stems = Directory.GetFiles(dir, "*.jsonl.gz")
+            var stems = ReplayFiles.List(dir)
                 .Select(f => Path.GetFileName(f))
                 .Select(n => n.Length >= 13 ? n[..13] : n)
                 .Where(n => DateTime.TryParseExact(n, "yyyy-MM-dd'T'HH", CultureInfo.InvariantCulture,
@@ -380,16 +380,15 @@ public sealed class IncidentArchive
         double mnLa = double.MaxValue, mnLo = double.MaxValue, mxLa = double.MinValue, mxLo = double.MinValue;
         bool any = false;
 
-        foreach (var file in Directory.GetFiles(eramDir, "*.jsonl.gz").OrderBy(f => f, StringComparer.Ordinal))
+        foreach (var file in ReplayFiles.List(eramDir).OrderBy(f => f, StringComparer.Ordinal))
         {
-            var stem = Path.GetFileName(file).Replace(".jsonl.gz", "");
+            var stem = ReplayFiles.Stem(file);
             var hourStr = stem.Length >= 13 ? stem[..13] : stem;
             if (DateTime.TryParseExact(hourStr, "yyyy-MM-dd'T'HH", CultureInfo.InvariantCulture,
                     DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var fileHour))
                 if (fileHour < start.AddHours(-1) || fileHour > end) continue;
 
-            using var fs = File.OpenRead(file);
-            using var gz = new GZipStream(fs, CompressionMode.Decompress);
+            using var gz = ReplayFiles.OpenRead(file);   // .gz or compacted .zst
             using var sr = new StreamReader(gz);
             string? line;
             while ((line = sr.ReadLine()) != null)
@@ -468,10 +467,10 @@ public sealed class IncidentArchive
 
         try
         {
-            foreach (var file in Directory.GetFiles(srcDir, "*.jsonl.gz").OrderBy(f => f, StringComparer.Ordinal))
+            foreach (var file in ReplayFiles.List(srcDir).OrderBy(f => f, StringComparer.Ordinal))
             {
                 // Skip files whose hour can't overlap the window (allow 1h lead so a seek snapshot is included).
-                var stem = Path.GetFileName(file).Replace(".jsonl.gz", "");
+                var stem = ReplayFiles.Stem(file);
                 var hourStr = stem.Length >= 13 ? stem[..13] : stem;
                 if (DateTime.TryParseExact(hourStr, "yyyy-MM-dd'T'HH", CultureInfo.InvariantCulture,
                         DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var fileHour))
@@ -479,8 +478,7 @@ public sealed class IncidentArchive
                     if (fileHour < start.AddHours(-1) || fileHour > end) continue;
                 }
 
-                using var fs = File.OpenRead(file);
-                using var gz = new GZipStream(fs, CompressionMode.Decompress);
+                using var gz = ReplayFiles.OpenRead(file);   // .gz or compacted .zst
                 using var sr = new StreamReader(gz);
                 string? line;
                 while ((line = sr.ReadLine()) != null)

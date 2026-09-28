@@ -23,6 +23,7 @@
          (DescriptionBlock.ProductSpecific_8 == 1). Matches the version
          DGScope's NexradDecoder library pulls in. -->
     <PackageReference Include="SharpZipLib" Version="1.4.2" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.8" />
   </ItemGroup>
 
   <!-- Runtime data directories live under the working dir but are NOT build inputs. The Web SDK's

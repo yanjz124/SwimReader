@@ -370,7 +370,7 @@ function detailHtml(f, fid){
   add('PBN', f.pbn); add('Nav', f.nav); add('Datalink', f.datalink);
   add('Dep gate / Rwy', [real(f.gate), real(f.runway)].filter(Boolean).join('  ·  '));
   add('Arr gate', real(f.arrGate) ? `${f.arrGate}  (likely — ${f.reg} next departed from it as ${f.arrGateFrom})` : '');
-  // TFMS airline CDM times: actual gate out/in, with the scheduled time alongside.
+  // TFMS airline CDM times: the airline's gate out/in, with the scheduled time alongside.
   const gt = (act, sch) => {
     const a = Date.parse(act), s = Date.parse(sch);
     if(!a && !s) return '';

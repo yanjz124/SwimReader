@@ -1216,7 +1216,7 @@ class TfmsBridge
         return null;
     }
 
-    /// <summary>Airline CDM gate times: actual out/in (OOOI) and the scheduled gate departure/arrival.</summary>
+    /// <summary>Airline CDM gate times: the airline's out/in (estimates that firm up to actuals as the flight moves) and the scheduled gate departure/arrival.</summary>
     public sealed record GateTimes(string? Dep, string? Arr, DateTime? Out, DateTime? In, DateTime? SchedOut, DateTime? SchedIn);
 
     private static GateTimes? ToGateTimes(TfmsFlight f) =>

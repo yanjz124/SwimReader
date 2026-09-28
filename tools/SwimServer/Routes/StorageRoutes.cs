@@ -29,11 +29,11 @@ static class StorageRoutes
         string P(params string[] parts) => Path.Combine(new[] { cwd }.Concat(parts).ToArray());
         var specs = new[]
         {
-            new Spec("eram",   "ERAM replay",       "Rolling replay",  P("replay", "eram"),  "*.jsonl.gz", "replay", true,
+            new Spec("eram",   "ERAM replay",       "Rolling replay",  P("replay", "eram"),  ReplayFiles.Pattern, "replay", true,
                      "En-route scope replay; shares the replay cap"),
-            new Spec("asdex",  "ASDE-X replay",     "Rolling replay",  P("replay", "asdex"), "*.jsonl.gz", "replay", true,
+            new Spec("asdex",  "ASDE-X replay",     "Rolling replay",  P("replay", "asdex"), ReplayFiles.Pattern, "replay", true,
                      "Surface replay, per airport; shares the replay cap"),
-            new Spec("tais",   "STARS / TAIS replay","Rolling replay", P("replay", "tais"),  "*.jsonl.gz", "replay", true,
+            new Spec("tais",   "STARS / TAIS replay","Rolling replay", P("replay", "tais"),  ReplayFiles.Pattern, "replay", true,
                      "Terminal replay, per facility; shares the replay cap"),
             new Spec("history","Flight history",    "Rolling history", P("flight-history"),  "*.jsonl",    "flight-history", false,
                      "Every completed flight plan + events (Route Finder, history search)"),

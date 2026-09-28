@@ -419,8 +419,7 @@ public class ReplayServer
 
         // Read entire file into memory (hourly files are ~50 MB compressed, decompresses to ~500MB max
         // but we stream line by line, not all at once)
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var gz = new GZipStream(fs, CompressionMode.Decompress);
+        using var gz = ReplayFiles.OpenRead(filePath);   // .gz (live/recent hour) or .zst (compacted)
         using var sr = new StreamReader(gz);
 
         var startMillis = new DateTimeOffset(startFrom).ToUnixTimeMilliseconds();
@@ -710,14 +709,14 @@ public class ReplayServer
         var baseName = utcTime.ToString("yyyy-MM-dd'T'HH");
         var files = new List<string>();
 
-        var primary = Path.Combine(dir, baseName + ".jsonl.gz");
-        if (File.Exists(primary)) files.Add(primary);
+        var primary = ReplayFiles.Find(dir, baseName);
+        if (primary != null) files.Add(primary);
 
         // Check for restart suffixes (-1, -2, etc.)
         for (int i = 1; i <= 10; i++)
         {
-            var alt = Path.Combine(dir, $"{baseName}-{i}.jsonl.gz");
-            if (File.Exists(alt)) files.Add(alt);
+            var alt = ReplayFiles.Find(dir, $"{baseName}-{i}");
+            if (alt != null) files.Add(alt);
             else break;
         }
 
@@ -748,8 +747,8 @@ public class ReplayServer
     private static object? GetTimeRange(string dir, DateTime? clampLo = null, DateTime? clampHi = null)
     {
         if (!Directory.Exists(dir)) return null;
-        var files = Directory.GetFiles(dir, "*.jsonl.gz")
-            .Select(f => Path.GetFileName(f).Replace(".jsonl.gz", ""))
+        var files = ReplayFiles.List(dir)
+            .Select(ReplayFiles.Stem)
             .Where(f => DateTime.TryParseExact(f, "yyyy-MM-dd'T'HH",
                 System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
@@ -779,7 +778,7 @@ public class ReplayServer
             start = rangeStart.ToString("o"),
             end = rangeEnd.ToString("o"),
             hours = files.Count,
-            totalSizeMB = Directory.GetFiles(dir, "*.jsonl.gz").Sum(f => new FileInfo(f).Length) / (1024.0 * 1024.0)
+            totalSizeMB = ReplayFiles.List(dir).Sum(f => new FileInfo(f).Length) / (1024.0 * 1024.0)
         };
     }
 }

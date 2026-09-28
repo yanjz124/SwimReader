@@ -149,7 +149,7 @@ static class DispatchRoutes
                         dep = depStr,
                         eta,
                         lastSeen = Str(el, "lastSeen"),
-                        // TFMS airline gate times: actual out/in, and scheduled out/in
+                        // TFMS airline gate times: airline out/in (estimate → actual), and scheduled out/in
                         gateOut = gOut, gateIn = gIn, gateOutSched = gOutS, gateInSched = gInS,
                     });
                 }

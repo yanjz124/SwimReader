@@ -67,12 +67,11 @@ public sealed class ReplayRecorder : IDisposable
         var dir = subDir != null ? Path.Combine(_baseDir, subDir) : _baseDir;
         if (!Directory.Exists(dir)) return new();
 
-        var files = Directory.GetFiles(dir, "*.jsonl.gz", SearchOption.TopDirectoryOnly)
+        var files = ReplayFiles.List(dir)
             .Select(f =>
             {
-                var name = Path.GetFileName(f);
-                // Parse "2026-04-01T14.jsonl.gz" → DateTime
-                var stem = name.Replace(".jsonl.gz", "");
+                // Parse "2026-04-01T14.jsonl.gz" / ".jsonl.zst" → DateTime
+                var stem = ReplayFiles.Stem(f);
                 if (DateTime.TryParseExact(stem, "yyyy-MM-dd'T'HH",
                     System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
@@ -146,13 +145,13 @@ public sealed class ReplayRecorder : IDisposable
                     var fileName = baseName + ".jsonl.gz";
                     currentFilePath = Path.Combine(_baseDir, fileName);
                     // If file already exists (restart within same hour), use a suffix
-                    if (File.Exists(currentFilePath))
+                    if (ReplayFiles.Find(_baseDir, baseName) != null)   // either encoding (compacted .zst too)
                     {
                         for (int i = 1; ; i++)
                         {
                             var altName = $"{baseName}-{i}.jsonl.gz";
                             var altPath = Path.Combine(_baseDir, altName);
-                            if (!File.Exists(altPath)) { currentFilePath = altPath; fileName = altName; break; }
+                            if (ReplayFiles.Find(_baseDir, $"{baseName}-{i}") == null) { currentFilePath = altPath; fileName = altName; break; }
                         }
                     }
                     fs = new FileStream(currentFilePath, FileMode.Create, FileAccess.Write, FileShare.Read);
@@ -205,7 +204,8 @@ public sealed class ReplayRecorder : IDisposable
         {
             // Size-based retention: delete oldest files across ALL sibling recorders (shared budget)
             if (!Directory.Exists(_cleanupDir)) return;
-            var files = Directory.GetFiles(_cleanupDir, "*.jsonl.gz", SearchOption.AllDirectories)
+            var files = Directory.GetFiles(_cleanupDir, ReplayFiles.Pattern, SearchOption.AllDirectories)
+                .Where(ReplayFiles.IsReplayFile)
                 .Select(f => new FileInfo(f))
                 .OrderBy(f => f.Name) // chronological by filename (yyyy-MM-ddTHH)
                 .ToList();

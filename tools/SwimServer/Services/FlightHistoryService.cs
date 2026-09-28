@@ -59,7 +59,7 @@ static class FlightHistoryService
                 f.CoordinationFix, f.CoordinationTime,
                 f.AlternateAerodrome,
                 gate, runway,   // captured from live TDLS at save time (see param note)
-                // TFMS airline CDM times: actual gate out/in and the scheduled ones (captured the same way).
+                // TFMS airline CDM times: airline gate out/in (estimate → actual) and the scheduled ones (captured the same way).
                 GateOut = gateTimes?.Out?.ToString("o"), GateIn = gateTimes?.In?.ToString("o"),
                 GateOutSched = gateTimes?.SchedOut?.ToString("o"), GateInSched = gateTimes?.SchedIn?.ToString("o"),
                 LastSeen = f.LastSeen.ToString("o"),

@@ -181,7 +181,7 @@ PersistenceBudget.DefineBucket("tdls-history", tdlsCapGb);
 Console.WriteLine($"[BUDGET] Per-category caps (GB): replay={replayCapGb >> 30}, flight-history={historyCapGb >> 30}, tdls-history={tdlsCapGb >> 30}");
 
 var replayDir = Path.Combine(Directory.GetCurrentDirectory(), "replay");
-PersistenceBudget.Watch("replay", replayDir, "*.jsonl.gz");
+PersistenceBudget.Watch("replay", replayDir, ReplayFiles.Pattern);   // .jsonl.gz (live) + .jsonl.zst (compacted)
 // Recorders pass long.MaxValue so their internal cleanup never triggers — central enforcer owns it.
 var eramRecorder = new SwimServer.ReplayRecorder(Path.Combine(replayDir, "eram"), long.MaxValue, replayDir);
 var replayServer = new SwimServer.ReplayServer(replayDir, jsonOpts);
@@ -1359,6 +1359,8 @@ var taisSnapshotTimer = new Timer(_ =>
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
 var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer, aircraftSaveTimer /*, poFlushTimer, investigationFlushTimer */ };
+// Re-encode finished replay hours gzip → zstd (~10x smaller) so the replay budget reaches much further back.
+ReplayCompactor.Start(replayDir, app.Lifetime.ApplicationStopping);
 app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); itws.SaveHistory(); aircraftDb.Save(); });
 
 // Replay endpoints (WebSocket + REST)

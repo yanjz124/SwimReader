@@ -37,3 +37,22 @@ html, body {
 
 /* Disable browser native context menu inside scope (G6 in KNOWN-DEVIATIONS). */
 canvas { -webkit-touch-callout: none; }
+
+/* Ctrl+F2 video map selector (DGScope VideoMapSelector) */
+#map-selector { position: fixed; top: 90px; right: 20px; width: 340px; max-height: 70vh; z-index: 2000;
+  display: flex; flex-direction: column; background: #000; border: 1px solid #0a0; color: #0f0;
+  font: 13px "FixedDemiBold", monospace; box-shadow: 0 4px 18px rgba(0,0,0,.7); }
+#map-selector .msel-head { display: flex; align-items: center; gap: 10px; padding: 5px 8px; background: #031; cursor: move;
+  user-select: none; letter-spacing: 1px; }
+#map-selector .msel-count { color: #7c7; margin-left: auto; font-size: 11px; }
+#map-selector button { background: #000; color: #0f0; border: 1px solid #0a0; font: inherit; cursor: pointer; padding: 1px 7px; }
+#map-selector button:hover { background: #042; }
+#map-selector .msel-tools { display: flex; gap: 6px; padding: 6px 8px; border-bottom: 1px solid #052; }
+#map-selector input[type=text] { flex: 1; min-width: 0; background: #000; color: #0f0; border: 1px solid #0a0;
+  font: inherit; padding: 2px 5px; text-transform: uppercase; outline: none; }
+#map-selector .msel-list { overflow-y: auto; padding: 3px 0; }
+#map-selector .msel-row { display: flex; align-items: center; gap: 7px; padding: 2px 8px; cursor: pointer; color: #6a6; }
+#map-selector .msel-row.on { color: #fff; }
+#map-selector .msel-row:hover { background: #021; }
+#map-selector .msel-row input { accent-color: #0c0; margin: 0; }
+#map-selector .msel-empty { padding: 8px; color: #6a6; }

@@ -193,6 +193,9 @@ function onKeyDown(e) {
       if (!action) return;
       if (action === "recenter" && typeof window.recenterScope === "function") {
         window.recenterScope();
+      } else if (action === "open-maps" && window.toggleMapSelector) {
+        // DGScope RadarWindow.cs:3595 — Ctrl+F2 opens VideoMapSelector (every map, not just DCB-bound).
+        window.toggleMapSelector();
       } else if (action === "open-maps" && window.dcb) {
         window.dcb.popout = "MAPS"; window.dcb.popoutAnchorId = "MAPS"; window.dcb.render();
       } else if (action === "open-brite" && window.dcb) {

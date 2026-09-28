@@ -36,38 +36,46 @@ const SSA = {
 
 // METAR fetcher — populates the SSA altimeter stations from the selected area's
 // ssaAirports (e.g. RDU), plus the header altimeter (RadarWindow.cs:2947).
-// /api/metar/{station} proxies aviationweather.gov.
+// /api/metars?ids= batches them into one aviationweather.gov (AWC) request.
 function ssaStations() {
   const override = (new URLSearchParams(location.search)).get("metar");
   if (override) return override.split(",").map(s => s.trim()).filter(Boolean);
+  // scope.js's own state (window.starsScopeState) holds the area + profile stations;
+  // window.starsState is a different object (ATPA, min seps) and never had them.
+  const st = window.starsScopeState || {};
   // STARS v2: the loaded DGScope profile's <AltimeterStations> drive the SSA (DGScope's source).
-  const prof = window.starsState?.profileAltimeters;
+  const prof = st.profileAltimeters;
   if (Array.isArray(prof) && prof.length) return prof;
-  const ap = window.starsState?.area?.ssaAirports;
+  const ap = st.area?.ssaAirports;
   if (Array.isArray(ap) && ap.length) return ap;
-  if (window.starsState?.facilityHomeStation) return [window.starsState.facilityHomeStation];
+  if (st.facilityHomeStation) return [st.facilityHomeStation];
   return [];
 }
-// Returns { icao, pressure } for a METAR that came back (pressure null when it has no A/Q
-// group), or null when nothing usable was fetched. Does not touch SSA state — pollMetars
-// rebuilds the table from one poll's results, like WeatherService.Metars.
-async function fetchMetar(station) {
-  const icao = station.length === 3 ? "K" + station.toUpperCase() : station.toUpperCase();
+const toIcao = s => (s.length === 3 ? "K" + s : s).toUpperCase();
+// Parse one raw METAR line → { icao, pressure } (pressure null when it has no A/Q group).
+function parseMetar(line) {
+  const t = line.trim().replace(/^(METAR|SPECI)\s+/, "");
+  const icao = (t.match(/^([A-Z0-9]{4})\s+\d{6}Z/) || [])[1];
+  if (!icao) return null;                       // not a METAR (error page etc.) — WeatherService IsValid
+  const a = t.match(/\bA(\d{4})\b/), q = t.match(/\bQ(\d{4})\b/);
+  let pressure = null;
+  if (a)      pressure = parseInt(a[1], 10) / 100;          // A2986 = 29.86 inHg
+  else if (q) pressure = parseInt(q[1], 10) * 0.029530;     // hPa → inHg
+  return { icao, pressure, raw: line.trim() };
+}
+// All stations in ONE request: /api/metars batches them into a single aviationweather.gov (AWC)
+// call, cached server-side. Returns null when the fetch failed (keep the previous table).
+async function fetchMetars(stations) {
   try {
-    const r = await fetch(`/api/metar/${encodeURIComponent(icao)}`);
+    const ids = [...new Set(stations.map(s => String(s).toUpperCase()))].join(",");
+    const r = await fetch(`/api/metars?ids=${encodeURIComponent(ids)}`);
     if (!r.ok) return null;
-    const text = (await r.text()).trim();
-    if (!text) return null;
-    // A2986 = 29.86 inHg. Also accept Q#### (hPa, ICAO format) and convert.
-    const m = text.match(/\bA(\d{4})\b/);
-    const q = text.match(/\bQ(\d{4})\b/);
-    let pressure = null;
-    if (m)      pressure = parseInt(m[1], 10) / 100;
-    else if (q) pressure = parseInt(q[1], 10) * 0.029530;   // hPa → inHg
-    // Only a real METAR counts — a proxy error page / non-METAR text is dropped, matching
-    // WeatherService keeping only IsValid metars (cs:133).
-    if (!/\bMETAR\b|\bSPECI\b/.test(text) && pressure == null) return null;
-    return { icao, pressure, raw: text };
+    const out = new Map();
+    for (const line of (await r.text()).split(/\r?\n/)) {
+      const m = parseMetar(line);
+      if (m && !out.has(m.icao)) out.set(m.icao, m);   // AWC lists newest first
+    }
+    return out;
   } catch { return null; }
 }
 async function pollMetars() {
@@ -75,19 +83,20 @@ async function pollMetars() {
   if (!stations.length) return false;          // facility not loaded yet
   // Per WeatherService.Altimeter (WeatherService.cs:51-83): sum all valid
   // station pressures, divide by count of pressures that parsed. Default
-  // 29.92 when none. Single-station case still goes through the average
-  // and just returns that one station's value.
+  // 29.92 when none.
   //
   // The table shows ONLY the current AltimeterStations (WeatherService.Metars filters parsed
-  // metars by `AltimeterStations.Contains(ICAO)`, cs:42). Rebuild it from this poll instead of
-  // merging, or stations from an earlier list (area ssaAirports before the profile's
-  // AltimeterStations loaded) linger in the SSA forever. A valid METAR with no altimeter
-  // group still lists its station, as "00.00" (RadarWindow.cs RenderStatus), but is left out
-  // of the header average (cs:61-65 decrements the count).
+  // metars by `AltimeterStations.Contains(ICAO)`, cs:42), so it's rebuilt from each poll. A valid
+  // METAR with no altimeter group still lists its station, as "00.00" (RadarWindow.cs
+  // RenderStatus), but is left out of the header average (cs:61-65 decrements the count).
+  const got = await fetchMetars(stations);
+  if (!got) return false;
   const next = new Map();
   let sum = 0, count = 0;
   for (const s of stations) {
-    const r = await fetchMetar(s);
+    const id = String(s).toUpperCase();
+    const r = got.get(toIcao(id)) ||
+      (id.length === 3 ? got.get("P" + id) || got.get("PA" + id.slice(1)) || got.get("PH" + id.slice(1)) : null);
     if (!r) continue;
     next.set(r.icao, { pressure: r.pressure, raw: r.raw });
     if (r.pressure != null && Number.isFinite(r.pressure)) { sum += r.pressure; count++; }

@@ -3,11 +3,13 @@ namespace SwimServer;
 /// <summary>
 /// Miscellaneous endpoints that don't fit a feature group:
 ///   - /api/nexrad/tile  (NEXRAD tile proxy through ctx.NexradHttp so canvas pixel manipulation works without CORS)
-///   - /api/metar/{station}  (live METAR fetch from aviationweather.gov)
+///   - /api/metar/{station}, /api/metars?ids=  (live METARs from aviationweather.gov; batch is cached)
 ///   - /api/kml + /api/kml/{name}  (KML overlay file listing/serving from repo root)
 /// </summary>
 static class MiscRoutes
 {
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string text, DateTime at)> MetarCache = new();
+
     public static void Register(WebApplication app, ServerContext ctx)
     {
         // NEXRAD tile proxy — serves IEM tiles from same origin so canvas pixel manipulation works (no CORS)
@@ -45,6 +47,36 @@ static class MiscRoutes
                 return Results.Bytes(bytes, "image/png");
             }
             catch { return Results.StatusCode(502); }
+        });
+
+        // Batched METARs for the STARS SSA altimeter rows: one aviationweather.gov (AWC) request for
+        // every station, raw text one per line. Cached 2 min per station set so many open scopes
+        // don't each hit AWC — METARs only change hourly (plus SPECIs).
+        app.MapGet("/api/metars", async (string? ids) =>
+        {
+            var list = (ids ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => s.ToUpperInvariant())
+                .Where(s => s.Length is >= 3 and <= 4 && s.All(char.IsLetterOrDigit))
+                // 3-letter FAA IDs: CONUS is K+ID, but Alaska/Hawaii are PA/PH+ID — ask for all three;
+                // AWC simply omits ids that don't exist.
+                .SelectMany(s => s.Length == 3 ? new[] { "K" + s, "PA" + s[1..], "PH" + s[1..], "P" + s } : new[] { s })
+                .Where(s => s.Length == 4)
+                .Distinct().OrderBy(s => s).Take(120).ToList();
+            if (list.Count == 0) return Results.BadRequest();
+            var key = string.Join(",", list);
+            if (MetarCache.TryGetValue(key, out var hit) && DateTime.UtcNow - hit.at < TimeSpan.FromMinutes(2))
+                return Results.Text(hit.text);
+            try
+            {
+                var resp = await ctx.NexradHttp.GetAsync($"https://aviationweather.gov/api/data/metar?ids={Uri.EscapeDataString(key)}");
+                if (!resp.IsSuccessStatusCode)
+                    return hit.text != null ? Results.Text(hit.text) : Results.StatusCode((int)resp.StatusCode);
+                var text = (await resp.Content.ReadAsStringAsync()).Trim();
+                if (MetarCache.Count > 500) MetarCache.Clear();
+                MetarCache[key] = (text, DateTime.UtcNow);
+                return Results.Text(text);
+            }
+            catch { return hit.text != null ? Results.Text(hit.text) : Results.StatusCode(502); }
         });
 
         // Live METAR fetch

@@ -3294,6 +3294,92 @@ function handleMapToggle(starsId) {
   _afterPrefChange();
 }
 
+// ── Ctrl+F2 video map selector ─────────────────────────────────────────────
+// DGScope VideoMapSelector.cs: Ctrl+F2 opens a checked list of EVERY loaded map, sorted by number,
+// each check flipping VideoMap.Visible; Ctrl+F2 again closes it. The DCB only reaches maps bound
+// to a button slot, so this is the way to show the rest. Web port: a floating panel with a filter
+// box (facilities carry 100+ maps) and CLEAR ALL.
+let _mapSel = null;
+function mapSelLabel(m) {
+  return (m.starsId != null ? m.starsId + ": " : "") + (m.name || m.shortName || m.id);
+}
+function renderMapSelector() {
+  if (!_mapSel) return;
+  const q = _mapSel.querySelector("input").value.trim().toUpperCase();
+  const list = [...videoMaps]
+    .sort((a, b) => (a.starsId ?? 1e9) - (b.starsId ?? 1e9) || String(a.name).localeCompare(String(b.name)))
+    .filter(m => !q || mapSelLabel(m).toUpperCase().includes(q) || String(m.shortName).toUpperCase().includes(q));
+  const box = _mapSel.querySelector(".msel-list");
+  box.innerHTML = "";
+  for (const m of list) {
+    const row = document.createElement("label");
+    row.className = "msel-row" + (m.visible ? " on" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = !!m.visible;
+    cb.addEventListener("change", () => {
+      m.visible = cb.checked;
+      if (m.visible && m.lines === null) ensureMapLoaded(m);
+      row.classList.toggle("on", m.visible);
+      prefSet.DisplayedMaps = videoMaps.filter(x => x.visible && x.starsId != null).map(x => x.starsId);
+      updateMapSelCount();
+      dcb.render();
+      _afterPrefChange();
+    });
+    const txt = document.createElement("span");
+    txt.textContent = mapSelLabel(m);
+    if (m.shortName && m.shortName !== m.name) txt.title = m.shortName;
+    row.append(cb, txt);
+    box.append(row);
+  }
+  if (!list.length) box.innerHTML = `<div class="msel-empty">${videoMaps.length ? "NO MATCH" : "NO MAPS LOADED"}</div>`;
+  updateMapSelCount();
+}
+function updateMapSelCount() {
+  const el = _mapSel && _mapSel.querySelector(".msel-count");
+  if (el) el.textContent = `${videoMaps.filter(m => m.visible).length}/${videoMaps.length} ON`;
+}
+function closeMapSelector() {
+  if (_mapSel) { _mapSel.remove(); _mapSel = null; }
+}
+function toggleMapSelector() {
+  if (_mapSel) { closeMapSelector(); return; }
+  _mapSel = document.createElement("div");
+  _mapSel.id = "map-selector";
+  _mapSel.innerHTML = `<div class="msel-head"><span>VIDEO MAPS</span><span class="msel-count"></span>
+      <button type="button" class="msel-x" title="Close (Ctrl+F2 / Esc)">X</button></div>
+    <div class="msel-tools"><input type="text" placeholder="FILTER" spellcheck="false" autocomplete="off">
+      <button type="button" class="msel-clear">CLEAR ALL</button></div>
+    <div class="msel-list"></div>`;
+  document.body.append(_mapSel);
+  const input = _mapSel.querySelector("input");
+  input.addEventListener("input", renderMapSelector);
+  // Keys typed here must not reach the preview area; Ctrl+F2 / Esc still close.
+  _mapSel.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" || (e.key === "F2" && e.ctrlKey)) { e.preventDefault(); closeMapSelector(); }
+    e.stopPropagation();
+  });
+  _mapSel.querySelector(".msel-x").addEventListener("click", closeMapSelector);
+  _mapSel.querySelector(".msel-clear").addEventListener("click", () => {
+    handleDcbClick("MAPS_CLEAR"); dcb.render(); renderMapSelector();
+  });
+  // Drag by the title bar.
+  const head = _mapSel.querySelector(".msel-head");
+  head.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button")) return;
+    const r = _mapSel.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+    const move = (ev) => {
+      _mapSel.style.left = Math.max(0, Math.min(innerWidth - 60, ev.clientX - dx)) + "px";
+      _mapSel.style.top  = Math.max(0, Math.min(innerHeight - 30, ev.clientY - dy)) + "px";
+      _mapSel.style.right = "auto";
+    };
+    const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); };
+    addEventListener("pointermove", move); addEventListener("pointerup", up);
+  });
+  renderMapSelector();
+  input.focus();
+}
+window.toggleMapSelector = toggleMapSelector;
+
 function handleDcbClick(id) {
   switch (id) {
     case "MAPS_CLEAR":
@@ -3377,6 +3463,9 @@ window.claimedTracks    = claimedTracks;
 window.flightPlans      = flightPlans;
 window.trackToFp        = trackToFp;
 window.videoMaps        = videoMaps;
+// ssa.js reads the SSA altimeter stations (area ssaAirports / profile AltimeterStations) from here.
+// NOT window.starsState — that is a separate object (ATPA, min seps, …) created above.
+window.starsScopeState  = starsState;
 window.mapButtonAssignments = mapButtonAssignments;
 window.ClockPhase       = ClockPhase;
 // Exposed for the NEXRAD overlay (nexrad.js) which needs to project image

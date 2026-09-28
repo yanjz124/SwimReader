@@ -45,49 +45,40 @@
   .chip { background:#171717; border:1px solid #2e2e2e; border-radius:14px; padding:5px 11px; font:inherit; font-size:11.5px;
     color:var(--yel); cursor:pointer; }
   .chip:hover { border-color:var(--yel); }
+  .chip.on { background:#26260f; border-color:var(--yel); color:#fff; }
+  .chip .n { color:var(--dim); margin-left:3px; }
+  .chip.on .n { color:var(--yel); }
+
+  /* ── result filters ──────────────────────────────────────────────────── */
+  .filters { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-bottom:10px; }
+  .frow { display:grid; grid-template-columns:70px 1fr; gap:10px; align-items:start; padding:4px 0; }
+  .frow + .frow { border-top:1px solid #1d1d1d; }
+  .flbl { font-size:10px; letter-spacing:1.5px; color:var(--dim); padding-top:9px; }
+  .frow .chips { margin-top:2px; }
 
   /* ── summary + view tabs ─────────────────────────────────────────────── */
   .bar { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin:6px 2px 10px; }
   .status { color:var(--dim); font-size:12px; }
   .status b { color:var(--yel); font-weight:normal; }
-  .tabs { display:inline-flex; border:1px solid #333; border-radius:8px; overflow:hidden; }
-  .tabs button { background:none; border:0; color:var(--dim); font:inherit; font-size:11.5px; letter-spacing:1px;
-    padding:6px 12px; cursor:pointer; }
-  .tabs button + button { border-left:1px solid #333; }
-  .tabs button.on { background:#1f1f10; color:var(--yel); }
   .msg { padding:46px 20px; text-align:center; color:var(--dim); line-height:1.8; }
   .msg b { color:var(--yel); font-weight:normal; }
   .spin { display:inline-block; animation:spin 1s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
 
-  /* ── route cards ─────────────────────────────────────────────────────── */
-  .rcard { background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:10px; overflow:hidden; }
-  .rhead { display:grid; grid-template-columns:62px 1fr; gap:12px; padding:12px 14px; }
-  .rcount { text-align:center; border-right:1px solid var(--line); padding-right:10px; }
-  .rcount .n { font-size:22px; color:#fff; line-height:1.1; }
-  .rcount .l { font-size:9.5px; color:var(--dim); letter-spacing:1px; }
-  .rpair { font-size:12px; color:var(--dim); letter-spacing:.5px; margin-bottom:4px; }
-  .rpair b { color:var(--yel); font-weight:normal; letter-spacing:1px; }
-  .rtext { color:var(--route); font-size:13.5px; line-height:1.55; word-break:break-word; }
-  .rmeta { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:8px; font-size:11.5px; color:var(--dim); }
-  .rmeta span b { color:#ddd; font-weight:normal; }
-  .ractions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-  .rflights { border-top:1px solid var(--line); display:none; }
-  .rcard.open .rflights { display:block; }
-
   /* ── table ───────────────────────────────────────────────────────────── */
   .tblwrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--card); }
-  .rflights .tblwrap { border:0; border-radius:0; background:transparent; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   thead th { text-align:left; color:var(--dim); font-size:10px; letter-spacing:1px; font-weight:normal;
     padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; user-select:none; }
-  thead th.sort { cursor:pointer; }
-  thead th.sort:hover { color:var(--yel); }
-  thead th .ar { color:var(--yel); }
   tbody td { padding:9px 10px; border-bottom:1px solid #1c1c1c; vertical-align:top; white-space:nowrap; }
   tbody tr.row { cursor:pointer; }
   tbody tr.row:hover, tbody tr.row.open { background:#15150a; }
   .cs { color:#fff; letter-spacing:.5px; }
+  .tm { color:#fff; font-variant-numeric:tabular-nums; letter-spacing:1px; }
+  .al { color:#ccc; max-width:190px; overflow:hidden; text-overflow:ellipsis; }
+  tr.day td { background:#101008; color:var(--yel); font-size:11px; letter-spacing:2px; padding:7px 10px;
+    border-bottom:1px solid var(--line); }
+  .pop { color:var(--faint); letter-spacing:0; margin-left:8px; text-transform:none; }
   .od .arw { color:var(--dim); margin:0 3px; }
   .type { color:#dcdcae; }
   .gate { color:var(--ok); }
@@ -144,8 +135,9 @@
     .af { grid-template-columns:1fr; }
     .af .afvar { grid-column:auto; }
     .hide-sm { display:none; }
-    .rhead { grid-template-columns:48px 1fr; gap:10px; padding:10px 12px; }
-    .rcount .n { font-size:18px; }
+    .frow { grid-template-columns:1fr; gap:4px; }
+    .flbl { padding-top:0; }
+    .al { max-width:110px; }
   }
 </style>
 <link rel="stylesheet" href="/shared/frame.css?v=4">
@@ -178,21 +170,22 @@
 
   <div class="bar" id="bar" hidden>
     <div class="status" id="status"></div>
-    <div class="tabs" id="tabs">
-      <button type="button" data-view="routes" class="on">BY ROUTE</button>
-      <button type="button" data-view="flights">ALL FLIGHTS</button>
-    </div>
+  </div>
+  <div class="filters" id="filters" hidden>
+    <div class="frow"><span class="flbl">AIRLINE</span><div class="chips" id="fAir"></div></div>
+    <div class="frow"><span class="flbl">TYPE</span><div class="chips" id="fType"></div></div>
   </div>
 
   <div id="out"></div>
 
   <div class="foot">
-    Routes are real filed flight plans from recent SWIM/SFDPS traffic. <b>BY ROUTE</b> groups flights that filed the
-    same routing, most-flown first — the quickest way to find a realistic route. <b>Open in SimBrief</b> pre-fills
-    origin, destination, aircraft, route, cruise and registration; just hit Generate, and SimBrief can prefile straight
-    to <b>VATSIM</b>. <b>Copy plan</b> gives an ICAO-style block for manual prefiling, <b>Copy route</b> just the route
-    string. Gate/runway come from <code>TDLS</code> when the flight was seen recently. Routes are shown as filed — tidy
-    them in SimBrief if a fix has aged out of your nav data.
+    A timetable of real flights from recent SWIM/SFDPS traffic: when each one departed (UTC), who flew it, the type and
+    tail, and the gate when <code>TDLS</code> saw it. Use the <b>AIRLINE</b> and <b>TYPE</b> chips to narrow the list —
+    pick several in a row to include them all, or one in each row to require both. Click a flight for its filed route
+    and how many others filed the same routing. <b>Open in SimBrief</b> pre-fills the route, cruise, tail (reg, SELCAL,
+    Mode-S) and the SimBrief variant you choose; SimBrief can then prefile to <b>VATSIM</b>. <b>Copy plan</b> gives an
+    ICAO-style block for manual prefiling. A few flights have no recorded departure time (shown as —); they're placed by
+    their ETA. Routes are shown as filed — tidy them in SimBrief if a fix has aged out of your nav data.
   </div>
 </div>
 
@@ -304,78 +297,65 @@ function flash(btn, msg, label){
   setTimeout(()=>{ btn.textContent = label; btn.classList.remove('done'); }, 1500);
 }
 
-// ── grouping ─────────────────────────────────────────────────────────────────
-// Flights that filed the same routing (after cleanup) between the same airports form one route.
-function groupRoutes(list){
-  const by = new Map();
-  for(const f of list){
-    const rte = cleanRoute(f.route, f.orig, f.dest) || 'DCT';
-    const key = (f.orig||'') + '|' + (f.dest||'') + '|' + rte;
-    let g = by.get(key);
-    if(!g){ g = { key, orig:f.orig, dest:f.dest, rte, flights:[] }; by.set(key, g); }
-    g.flights.push(f);
-  }
-  const groups = [...by.values()];
-  for(const g of groups){
-    g.flights.sort((a,b)=>seenMs(b)-seenMs(a));
-    g.best = g.flights[0];                                // most recent flight = the SimBrief template
-    g.last = seenMs(g.best);
-  }
-  groups.sort((a,b)=> b.flights.length-a.flights.length || b.last-a.last);
-  return groups;
-}
-function tally(values, n){
+// ── timetable helpers ────────────────────────────────────────────────────────
+function tally(values){
   const c = new Map();
   for(const v of values) if(v) c.set(v, (c.get(v)||0)+1);
-  return [...c.entries()].sort((a,b)=>b[1]-a[1]).slice(0, n);
+  return [...c.entries()].sort((a,b)=>b[1]-a[1] || String(a[0]).localeCompare(String(b[0])));
 }
+// Ordering key: actual departure (SFDPS) when recorded, else ETA, else last seen. Only a real
+// departure time is ever DISPLAYED in the DEP column — the fallbacks just place the flight in order
+// (last seen is near arrival, so showing it as a departure would mislead).
+function depMs(f){ return Date.parse(f.dep) || Date.parse(f.eta) || Date.parse(f.lastSeen) || 0; }
+const hhmm = ms => { const d = new Date(ms); return String(d.getUTCHours()).padStart(2,'0') + String(d.getUTCMinutes()).padStart(2,'0'); };
+const DOW = ['SUN','MON','TUE','WED','THU','FRI','SAT'], MON = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+const dayLabel = ms => { const d = new Date(ms); return `${DOW[d.getUTCDay()]} ${String(d.getUTCDate()).padStart(2,'0')} ${MON[d.getUTCMonth()]}`; };
+const dayKey = ms => new Date(ms).toISOString().slice(0,10);
 
-// ── render: flights table ────────────────────────────────────────────────────
-const COLS = [
-  { k:'callsign', t:'CALLSIGN' },
-  { k:'pair',     t:'ROUTE',  v:f=>(f.orig||'')+(f.dest||'') },
-  { k:'type',     t:'TYPE' },
-  { k:'reg',      t:'REG',    cls:'hide-sm' },
-  { k:'gate',     t:'GATE',   cls:'hide-sm', v:f=>real(f.gate) },
-  { k:'cruise',   t:'CRZ',    v:f=>f.cruise??-1 },
-  { k:'seen',     t:'SEEN',   v:f=>seenMs(f), dir:-1 },
-];
-let sortKey = 'seen', sortDir = -1;
+// Airline names (ICAO -> "Delta Air Lines") from the airline-research catalog; one fetch per
+// session. Carriers it doesn't cover just show their ICAO code.
+let AIRLINE_NAMES = new Map();
+(async function loadAirlineNames(){
+  try {
+    const cached = sessionStorage.getItem('dispatch.airlineNames');
+    if(cached){ AIRLINE_NAMES = new Map(JSON.parse(cached)); return; }
+    const d = await fetch('/api/airlines?days=3').then(r => r.ok ? r.json() : null);
+    const pairs = ((d && d.carriers) || []).filter(c => c.icao && c.name).map(c => [c.icao, c.name]);
+    AIRLINE_NAMES = new Map(pairs);
+    try { sessionStorage.setItem('dispatch.airlineNames', JSON.stringify(pairs)); } catch {}
+    if(RESULTS.length) render();
+  } catch {}
+})();
+const airlineName = code => AIRLINE_NAMES.get(code) || '';
 
+// ── render: timetable ────────────────────────────────────────────────────────
 function rowHtml(f, id){
+  const dep = Date.parse(f.dep);
   const gate = real(f.gate) ? `<span class="gate">${esc(f.gate)}</span>` : '<span class="muted">—</span>';
+  const eta = Date.parse(f.eta) ? hhmm(Date.parse(f.eta)) : '';
+  const name = airlineName(f.airline);
   return `<tr class="row" data-id="${id}">
+      <td class="tm"${dep ? '' : ' title="No departure time recorded for this flight"'}>${dep ? hhmm(dep) : '<span class="muted">—</span>'}</td>
       <td class="cs">${esc(f.callsign)}</td>
+      <td class="al" title="${esc(name || f.airline)}">${esc(name || f.airline || '—')}</td>
       <td class="od">${esc(f.orig)}<span class="arw">▸</span>${esc(f.dest)}</td>
-      <td class="type">${esc(f.type||'—')}${f.wake?`<span class="pill">${esc(f.wake)}</span>`:''}</td>
+      <td class="type">${esc(f.type||'—')}</td>
       <td class="muted hide-sm">${esc(f.reg||'—')}</td>
       <td class="hide-sm">${gate}</td>
-      <td class="muted">${esc(f.cruise!=null?flLabel(f.cruise):'—')}</td>
-      <td class="muted">${esc(ago(f.lastSeen)||'—')}</td>
+      <td class="muted hide-sm">${eta || '—'}</td>
     </tr>
-    <tr class="detail" data-for="${id}" hidden><td colspan="7"></td></tr>`;
-}
-function tableHtml(list, prefix, sortable){
-  const head = COLS.map(c => {
-    const on = sortable && sortKey===c.k;
-    return `<th class="${c.cls||''}${sortable?' sort':''}" data-k="${c.k}">${c.t}${on?` <span class="ar">${sortDir<0?'▼':'▲'}</span>`:''}</th>`;
-  }).join('');
-  return `<div class="tblwrap"><table><thead><tr>${head}</tr></thead><tbody>${
-    list.map((f,i)=>rowHtml(f, prefix+i)).join('')}</tbody></table></div>`;
-}
-function sortedFlights(){
-  const col = COLS.find(c=>c.k===sortKey);
-  const val = col.v || (f=>(f[col.k]||'').toString());
-  return [...RESULTS].sort((a,b)=>{
-    const x=val(a), y=val(b);
-    return (x<y?-1:x>y?1:0) * sortDir;
-  });
+    <tr class="detail" data-for="${id}" hidden><td colspan="8"></td></tr>`;
 }
 
 function detailHtml(f, fid){
   const rte = cleanRoute(f.route, f.orig, f.dest);
+  // How common is this routing among the flights found for the same city pair?
+  const samePair = RESULTS.filter(x => x.orig === f.orig && x.dest === f.dest);
+  const sameRte = samePair.filter(x => cleanRoute(x.route, x.orig, x.dest) === rte).length;
   const kv = [];
   const add=(k,v)=>{ if(v!=null && v!=='') kv.push(`<div class="k">${k}</div><div class="v">${esc(v)}</div>`); };
+  add('Departed', Date.parse(f.dep) ? new Date(f.dep).toISOString().replace('T',' ').slice(0,16) + 'Z' : '');
+  add('ETA', Date.parse(f.eta) ? new Date(f.eta).toISOString().slice(11,16) + 'Z' : '');
   add('Cruise', f.cruise!=null?flLabel(f.cruise):'');
   add('Alternate', f.altn);
   add('Aircraft', [f.type, f.reg].filter(Boolean).join('  ·  '));
@@ -384,10 +364,11 @@ function detailHtml(f, fid){
   add('Gate / Rwy', [real(f.gate), real(f.runway)].filter(Boolean).join('  ·  '));
   add('Rules', f.rules);
   add('Remarks', f.remarks);
-  add('Seen', [ago(f.lastSeen), f.date].filter(Boolean).join('  ·  '));
   add('As filed', f.route);
+  const pop = samePair.length > 1
+    ? `<span class="pop">${sameRte} of the ${samePair.length} ${esc(f.orig)}▸${esc(f.dest)} flights found used this routing</span>` : '';
   return `<div class="det sbwrap" data-fid="${esc(fid)}">
-      <div class="rte"><span class="lbl">${esc(f.orig)} ▸ ${esc(f.dest)} · ROUTE</span>${esc(rte||'DCT')}</div>
+      <div class="rte"><span class="lbl">${esc(f.orig)} ▸ ${esc(f.dest)} · ROUTE ${pop}</span>${esc(rte||'DCT')}</div>
       <div class="kv">${kv.join('')}</div>
       ${pickerHtml(f)}
       <div class="actions">
@@ -398,38 +379,6 @@ function detailHtml(f, fid){
       </div>
       <pre class="fpl"></pre>
     </div>`;
-}
-
-// ── render: route cards ──────────────────────────────────────────────────────
-function routeCardHtml(g, gi){
-  const n = g.flights.length;
-  const air = tally(g.flights.map(f=>f.airline), 6);
-  const typ = tally(g.flights.map(f=>f.type), 6);
-  const fl  = tally(g.flights.map(f=>f.cruise!=null?flLabel(f.cruise):''), 1)[0];
-  const tags = (arr) => arr.map(([k,c])=>`<span class="tag">${esc(k)}${c>1?` ×${c}`:''}</span>`).join('');
-  return `<div class="rcard" data-g="${gi}">
-    <div class="rhead">
-      <div class="rcount"><div class="n">${n}</div><div class="l">${n===1?'FLIGHT':'FLIGHTS'}</div></div>
-      <div class="sbwrap" data-fid="gb${gi}">
-        <div class="rpair"><b>${esc(g.orig)} ▸ ${esc(g.dest)}</b></div>
-        <div class="rtext">${esc(g.rte)}</div>
-        <div class="rmeta">
-          ${air.length?`<span>${tags(air)}</span>`:''}
-          ${typ.length?`<span>${tags(typ)}</span>`:''}
-          ${fl?`<span>usually <b>${esc(fl[0])}</b></span>`:''}
-          <span>last flown <b>${esc(ago(g.best.lastSeen)||'—')}</b></span>
-        </div>
-        ${pickerHtml(g.best)}
-        <div class="ractions">
-          <a class="btn sb" href="${esc(simbriefUrl(g.best))}" target="_blank" rel="noopener"
-             title="Pre-filled from ${esc(g.best.callsign)}, the most recent flight on this route">Open in SimBrief ▸</a>
-          <button class="btn copy" type="button" data-act="groute">Copy route</button>
-          <button class="btn" type="button" data-act="expand">Show ${n} flight${n===1?'':'s'} ▾</button>
-        </div>
-      </div>
-    </div>
-    <div class="rflights"></div>
-  </div>`;
 }
 
 // ── airframe picker ──────────────────────────────────────────────────────────
@@ -604,54 +553,80 @@ $('out').addEventListener('input', e => {
 });
 
 // ── state + wiring ───────────────────────────────────────────────────────────
-let RESULTS = [], GROUPS = [], VIEW = 'routes';
+let RESULTS = [];
 const FLIGHT_BY_ID = new Map();
+// Result filters (on top of the search): chosen airlines and types. Empty set = all. Within a
+// row a flight must match ANY chosen chip; across the two rows it must match BOTH.
+const FILTER = { airline: new Set(), type: new Set() };
+const passes = (f, skip) =>
+  (skip === 'airline' || !FILTER.airline.size || FILTER.airline.has(f.airline || '')) &&
+  (skip === 'type'    || !FILTER.type.size    || FILTER.type.has(f.type || ''));
+
+function chipsHtml(field, counts){
+  const sel = FILTER[field];
+  const all = `<button type="button" class="chip${sel.size ? '' : ' on'}" data-f="${field}" data-v="">ALL</button>`;
+  return all + counts.map(([v, n]) => {
+    const title = field === 'airline' ? (airlineName(v) || v) : v;
+    return `<button type="button" class="chip${sel.has(v) ? ' on' : ''}" data-f="${field}" data-v="${esc(v)}" title="${esc(title)}">${esc(v)} <span class="n">${n}</span></button>`;
+  }).join('');
+}
 
 function render(){
   FLIGHT_BY_ID.clear();
-  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.view===VIEW));
   if(!RESULTS.length){
+    $('filters').hidden = true;
     $('out').innerHTML = `<div class="msg">No matching flights in the last ${$('days').value} day${$('days').value==='1'?'':'s'}.<br>
       <b>Try</b> fewer filters, a longer look-back, or a busier route.</div>`;
     return;
   }
-  if(VIEW === 'routes'){
-    GROUPS.forEach((g,gi)=>FLIGHT_BY_ID.set('gb'+gi, g.best));
-    $('out').innerHTML = GROUPS.map(routeCardHtml).join('');
-    $('out').querySelectorAll('.rcard .sbwrap').forEach(hydratePicker);
-  } else {
-    const list = sortedFlights();
-    list.forEach((f,i)=>FLIGHT_BY_ID.set('f'+i, f));
-    $('out').innerHTML = tableHtml(list, 'f', true);
+  // Faceted counts: each row counts flights that pass the OTHER row's filter, so the numbers
+  // always say what you'd get by clicking.
+  $('fAir').innerHTML  = chipsHtml('airline', tally(RESULTS.filter(f => passes(f, 'airline')).map(f => f.airline || '')));
+  $('fType').innerHTML = chipsHtml('type',    tally(RESULTS.filter(f => passes(f, 'type')).map(f => f.type || '')));
+  $('filters').hidden = false;
+
+  const list = RESULTS.filter(f => passes(f));
+  const shown = list.length === RESULTS.length ? '' : ` · showing <b>${list.length}</b>`;
+  $('status').innerHTML = `<b>${RESULTS.length}</b> flight${RESULTS.length===1?'':'s'}${shown}`
+    + (RESULTS.length >= 200 ? ' · the 200 most recent — narrow the search for more' : '');
+  if(!list.length){
+    $('out').innerHTML = '<div class="msg">No flights match both filters. <b>Clear one</b> to see more.</div>';
+    return;
   }
+  // Timetable: newest day first, and within a day in departure order, like a departures board.
+  const byDay = new Map();
+  for(const f of list){
+    const k = dayKey(depMs(f) || Date.now());
+    if(!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(f);
+  }
+  const days = [...byDay.keys()].sort().reverse();
+  let i = 0, body = '';
+  for(const k of days){
+    const flights = byDay.get(k).sort((a,b) => depMs(a) - depMs(b));
+    body += `<tr class="day"><td colspan="8">${dayLabel(Date.parse(k + 'T12:00:00Z'))}<span class="muted"> · ${flights.length} flight${flights.length===1?'':'s'}</span></td></tr>`;
+    for(const f of flights){ const id = 'f' + (i++); FLIGHT_BY_ID.set(id, f); body += rowHtml(f, id); }
+  }
+  $('out').innerHTML = `<div class="tblwrap"><table><thead><tr>
+      <th>DEP Z</th><th>FLIGHT</th><th>AIRLINE</th><th>ROUTE</th><th>TYPE</th>
+      <th class="hide-sm">REG</th><th class="hide-sm">GATE</th><th class="hide-sm">ETA Z</th>
+    </tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
-// One delegated listener handles every click in the results area.
+$('filters').addEventListener('click', e => {
+  const c = e.target.closest('.chip[data-f]'); if(!c) return;
+  const set = FILTER[c.dataset.f], v = c.dataset.v;
+  if(!v) set.clear();
+  else if(set.has(v)) set.delete(v);
+  else set.add(v);
+  render();
+});
+
+// One delegated listener handles every click in the timetable.
 $('out').addEventListener('click', async (e) => {
-  const th = e.target.closest('th.sort');
-  if(th){
-    const k = th.dataset.k;
-    if(sortKey===k) sortDir = -sortDir;
-    else { sortKey = k; sortDir = (COLS.find(c=>c.k===k).dir) || 1; }
-    render(); return;
-  }
   const act = e.target.closest('[data-act]');
   if(act){
-    const card = act.closest('.rcard');
-    const g = card ? GROUPS[+card.dataset.g] : null;
     const a = act.dataset.act;
-    if(a==='groute' && g){ copyText(act, g.rte, 'Copy route'); return; }
-    if(a==='expand' && g){
-      const open = card.classList.toggle('open');
-      const box = card.querySelector('.rflights');
-      if(open && !box.innerHTML){
-        const pre = 'g'+card.dataset.g+'_';
-        g.flights.forEach((f,i)=>FLIGHT_BY_ID.set(pre+i, f));
-        box.innerHTML = tableHtml(g.flights, pre, false);
-      }
-      act.textContent = open ? 'Hide flights ▴' : `Show ${g.flights.length} flight${g.flights.length===1?'':'s'} ▾`;
-      return;
-    }
     const det = act.closest('tr.detail');
     const f = det && FLIGHT_BY_ID.get(det.dataset.for);
     if(f && a==='route'){ copyText(act, cleanRoute(f.route, f.orig, f.dest) || 'DCT', 'Copy route'); return; }
@@ -679,11 +654,6 @@ $('out').addEventListener('click', async (e) => {
   }
 });
 
-$('tabs').addEventListener('click', e => {
-  const b = e.target.closest('button[data-view]'); if(!b) return;
-  VIEW = b.dataset.view; render();
-});
-
 function formParams(){
   const p = new URLSearchParams();
   for(const k of ['orig','dest','airline','type']){ const v=$(k).value.trim().toUpperCase(); if(v) p.set(k, v); }
@@ -697,12 +667,14 @@ async function search(ev){
   if(ev) ev.preventDefault();
   const p = formParams();
   if(!hasCriteria(p)){
-    showBar('Enter at least one of <b>FROM</b>, <b>TO</b>, <b>AIRLINE</b> or <b>AIRCRAFT</b>.', false);
+    showBar('Enter at least one of <b>FROM</b>, <b>TO</b>, <b>AIRLINE</b> or <b>AIRCRAFT</b>.');
+    $('filters').hidden = true;
     $('out').innerHTML = examplesHtml(); return;
   }
   const seq = ++searchSeq;
   $('go').disabled = true;
-  showBar('<span class="spin">◌</span> Searching…', false);
+  showBar('<span class="spin">◌</span> Searching…');
+  $('filters').hidden = true;
   $('out').innerHTML = '';
   history.replaceState(null, '', '/dispatch?' + p.toString());
   try { localStorage.setItem(LS_KEY, p.toString()); } catch {}
@@ -711,26 +683,20 @@ async function search(ev){
     const r = await fetch('/api/dispatch/search?' + q.toString());
     const data = await r.json();
     if(seq !== searchSeq) return;                       // a newer search superseded this one
-    if(data && data.error){ showBar(esc(data.error), false); return; }
+    if(data && data.error){ showBar(esc(data.error)); return; }
     RESULTS = Array.isArray(data) ? data : [];
-    GROUPS = groupRoutes(RESULTS);
-    // A single city pair is a route question; anything broader reads better as a flight list.
-    // A city pair is a route question; so is any search where routes clearly repeat. A broad search
-    // (a whole airline, a type) where nearly every flight is its own route reads better as a list.
-    VIEW = ((p.has('orig') && p.has('dest')) || GROUPS.length <= RESULTS.length * 0.6) ? 'routes' : 'flights';
-    const capped = RESULTS.length >= 200 ? ' (showing the 200 most recent — narrow the search for more)' : '';
-    showBar(`<b>${RESULTS.length}</b> flight${RESULTS.length===1?'':'s'} · <b>${GROUPS.length}</b> distinct route${GROUPS.length===1?'':'s'}${capped}`, RESULTS.length>0);
+    FILTER.airline.clear(); FILTER.type.clear();
+    showBar('');
     render();
   } catch(err){
-    if(seq === searchSeq) showBar('Search failed: ' + esc(err.message), false);
+    if(seq === searchSeq) showBar('Search failed: ' + esc(err.message));
   } finally {
     if(seq === searchSeq) $('go').disabled = false;
   }
 }
-function showBar(html, withTabs){
+function showBar(html){
   $('bar').hidden = false;
   $('status').innerHTML = html;
-  $('tabs').hidden = !withTabs;
 }
 
 // ── empty state: example searches ────────────────────────────────────────────
@@ -763,7 +729,7 @@ $('swap').addEventListener('click', () => {
 });
 $('clr').addEventListener('click', () => {
   for(const k of ['orig','dest','airline','type']) $(k).value = '';
-  $('bar').hidden = true; RESULTS = []; GROUPS = [];
+  $('bar').hidden = true; $('filters').hidden = true; RESULTS = [];
   $('out').innerHTML = examplesHtml();
   history.replaceState(null, '', '/dispatch');
   try { localStorage.removeItem(LS_KEY); } catch {}

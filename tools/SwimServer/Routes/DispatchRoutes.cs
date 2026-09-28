@@ -122,6 +122,9 @@ static class DispatchRoutes
                         gate,
                         runway,
                         date,
+                        // Timetable times: actual departure (SFDPS, ~9 in 10 flights) and ETA.
+                        dep = Str(el, "actualDepartureTime"),
+                        eta = Str(el, "eta"),
                         lastSeen = Str(el, "lastSeen")
                     });
                 }

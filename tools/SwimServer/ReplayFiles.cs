@@ -87,7 +87,13 @@ static class ReplayFiles
 /// </summary>
 static class ReplayCompactor
 {
-    private static int _level = 6;
+    // Settings measured on real hours (desktop timings):
+    //   STARS F11 hour, 113 MB raw:  L6 2.4 MB · L9 2.2 MB (0.7 s) · L3+LDM 3.5 MB — LDM hurts here
+    //   ERAM 13Z hour, 1.07 GB raw:  L6 110 MB (10.7 s) · L9 69 MB (13 s) · L3+LDM/128MB 70 MB (7.3 s)
+    // ERAM's full snapshots repeat hundreds of MB apart, beyond a normal window; long-distance matching
+    // finds them. Terminal/surface hours are small and repetitive at short range, where plain L9 wins
+    // and keeps the decoder's window (memory per replay session) at a few MB.
+    private static int? _levelOverride;
     private static long _savedBytes, _files;
     // Files that failed to convert (corrupt source, verify mismatch) — not retried until restart.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _skip = new();
@@ -96,7 +102,7 @@ static class ReplayCompactor
 
     public static void Start(string replayDir, CancellationToken ct)
     {
-        if (int.TryParse(Environment.GetEnvironmentVariable("REPLAY_ZSTD_LEVEL"), out var lv)) _level = Math.Clamp(lv, 1, 19);
+        if (int.TryParse(Environment.GetEnvironmentVariable("REPLAY_ZSTD_LEVEL"), out var lv)) _levelOverride = Math.Clamp(lv, 1, 19);
         if (Environment.GetEnvironmentVariable("REPLAY_COMPACT") == "0") { Console.WriteLine("[COMPACT] disabled"); return; }
         var t = new Thread(() => Loop(replayDir, ct)) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "replay-compactor" };
         t.Start();
@@ -151,10 +157,16 @@ static class ReplayCompactor
             var mtime = File.GetLastWriteTimeUtc(gzPath);
             long before = new FileInfo(gzPath).Length;
             long lines = 0;
+            bool eram = string.Equals(Path.GetFileName(dir), "eram", StringComparison.OrdinalIgnoreCase);
             using (var src = ReplayFiles.OpenRead(gzPath))
             using (var outFs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
-            using (var z = new ZstdSharp.CompressionStream(outFs, _level, leaveOpen: false))
+            using (var z = new ZstdSharp.CompressionStream(outFs, _levelOverride ?? (eram ? 3 : 9), leaveOpen: false))
             {
+                if (eram)
+                {
+                    z.SetParameter(ZstdSharp.Unsafe.ZSTD_cParameter.ZSTD_c_enableLongDistanceMatching, 1);
+                    z.SetParameter(ZstdSharp.Unsafe.ZSTD_cParameter.ZSTD_c_windowLog, 27);   // decoders accept ≤ 27 by default
+                }
                 // Copy line-wise-agnostic: bytes are the same JSONL. A gzip file cut short by a crash
                 // throws at the torn end — keep everything before it, like the readers do.
                 var buf = new byte[1 << 16];

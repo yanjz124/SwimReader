@@ -1243,6 +1243,15 @@ journalctl -u swimreader-deploy.service --no-pager -n 30
 /home/JY/SwimReader/deploy/deploy.sh
 ```
 
+### Replay Storage (gzip → zstd)
+Replay hours (`replay/{eram,asdex/<apt>,tais/<fac>}/yyyy-MM-ddTHH[-N].jsonl.*`) are written as `.jsonl.gz`
+(gzip Fastest, flushed so the live hour is readable). `ReplayCompactor` (`ReplayFiles.cs`) re-encodes each
+finished hour to `.jsonl.zst` in the background — ~10× smaller for STARS/ASDE-X, ~3× for ERAM — verifying the
+line count before deleting the `.gz` and keeping its mtime (the budget trims oldest-by-mtime). **Always open /
+list replay files through `ReplayFiles` (`OpenRead`, `List`, `Find`, `Stem`)**, never `*.jsonl.gz` + `GZipStream`
+directly, or compacted hours silently disappear from replay. ERAM uses level 3 + long-distance matching (128 MB
+window — its snapshots repeat far apart); STARS/ASDE-X use plain level 9. `REPLAY_COMPACT=0` disables; `REPLAY_ZSTD_LEVEL` overrides.
+
 ### Flight State Cache
 On shutdown (SIGTERM) and every 5 minutes, all flight data is serialized to `flight-cache/flights.json`. On startup, the cache is loaded before Solace connects, so flights survive restarts with no data loss. Cache older than 60 minutes is discarded (matches purge timer).
 

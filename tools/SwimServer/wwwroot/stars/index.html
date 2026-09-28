@@ -66,6 +66,18 @@
   .areas { border-bottom: 1px solid #1a1a08; }
   .placeholder { padding: 16px; color: #888835; }
   .nostars { color: #888; font-style: italic; padding: 16px; }
+  .spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid #444;
+    border-top-color: #cccc44;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .fac-tcps { padding: 0 16px 7px 30px; display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #1a1a08; }
   .fac-tcps .tcp-chip {
     font-size: 10px; color: #a8a874;
@@ -183,7 +195,7 @@ async function selectArtcc(id) {
   selectedArtcc = id;
   for (const el of document.querySelectorAll("#artccs .row"))
     el.classList.toggle("active", el.dataset.id === id);
-  $("facilities").innerHTML = `<div class="placeholder">Loading ${id}…</div>`;
+  $("facilities").innerHTML = `<div class="placeholder"><span class="spinner"></span>Loading ${id}… (This may take a few seconds)</div>`;
   try {
     const data = await fetch(`/api/stars/artcc/${encodeURIComponent(id)}`).then(r => r.json());
     if (!data.facilities || data.facilities.length === 0) {

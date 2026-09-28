@@ -52,7 +52,7 @@
   .row:hover { background: #1a1a05; }
   .row.active { background: #3a3a0a; color: #fff; }
   .row .id { color: #cccc44; font-weight: bold; }
-  .row .meta { color: #888835; font-size: 11px; }
+  .row .meta { color: #a8a874; font-size: 11px; }
   .row .subtext { color: #666; font-size: 10px; }
   #artccs .row { flex-direction: row; align-items: center; gap: 0; }
   #artccs .row-header { display: flex; flex-direction: column; gap: 2px; flex: 1; }
@@ -71,6 +71,7 @@
     font-size: 10px; color: #a8a874;
     background: #0c0c00; border: 1px solid #3a3a14; border-radius: 2px;
     padding: 0 5px; line-height: 1.6;
+    margin-top: 4px;
   }
   .fac-tcps .tcp-chip b { color: #cccc44; font-weight: normal; margin-left: 3px; }
 
@@ -120,10 +121,10 @@ const $ = (id) => document.getElementById(id);
 
 const ARTCC_NAMES = {
   ZAB: 'Albuquerque', ZAG: 'Atlanta', ZAN: 'Anchorage', ZAU: 'Chicago', ZBW: 'Boston',
-  ZDC: 'Washington', ZDV: 'Denver', ZEG: 'Edmonton', ZFW: 'Fort Worth', ZHU: 'Houston', ZID: 'Indianapolis',
+  ZDC: 'Washington', ZDV: 'Denver', ZEG: 'Edmonton', ZFW: 'Fort Worth', ZHN: 'Honolulu', ZHU: 'Houston', ZID: 'Indianapolis',
   ZJX: 'Jacksonville', ZKC: 'Kansas City', ZLA: 'Los Angeles', ZLC: 'Salt Lake City',
   ZMA: 'Miami', ZME: 'Memphis', ZMP: 'Minneapolis', ZNY: 'New York', ZOA: 'Oakland', ZOB: 'Cleveland',
-  ZQM: '', ZSE: 'Seattle', ZTL: 'Atlanta', ZUL: 'Montreal', ZVR: 'Vancouver', ZWG: 'Winnipeg', ZYZ: 'Toronto', ZZZ: ''
+  ZQM: '', ZSE: 'Seattle', ZSU: 'San Juan', ZTL: 'Atlanta', ZUA: 'Agana', ZUL: 'Montreal', ZVR: 'Vancouver', ZWG: 'Winnipeg', ZYZ: 'Toronto', ZZZ: ''
 };
 
 let selectedArtcc = null;
@@ -135,7 +136,7 @@ let selectedArtcc = null;
 // nothing to play rather than opening a scope that sits empty.
 let replayMode = false;
 let taisRanges = {};         // facility → { start, end }
-const LIVE_NOTE = $("wipnote").textContent;
+const LIVE_NOTE = "Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.";
 
 function setMode(replay) {
   replayMode = replay;

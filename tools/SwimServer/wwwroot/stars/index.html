@@ -8,7 +8,7 @@
   body {
     margin: 0;
     background: #000;
-    color: #00ff00;
+    color: #cccc44;
     font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
     font-size: 13px;
     display: flex; flex-direction: column; height: 100vh; overflow: hidden;
@@ -18,63 +18,71 @@
     border: 1px solid #5a4300; background: #1a1400; border-radius: 2px;
     padding: 1px 5px; vertical-align: middle; margin-left: 8px;
   }
-  .subhead { padding: 6px 20px 8px; border-bottom: 1px solid #1a3a1a; }
-  .subhead .sub { color: #6f6; font-size: 11px; }
+  .subhead { padding: 6px 20px 8px; border-bottom: 1px solid #3a3a14; }
+  .subhead .sub { color: #b8b884; font-size: 11px; }
   .subhead .wipnote { color: #ffb300; font-size: 11px; margin-top: 4px; }
   .layout {
     display: grid;
-    grid-template-columns: 260px 1fr;
+    grid-template-columns: 280px 1fr;
     flex: 1; min-height: 0;
   }
-  .col { overflow-y: auto; border-right: 1px solid #1a3a1a; }
+  .col { overflow-y: auto; border-right: 1px solid #3a3a14; }
   .col:last-child { border-right: none; }
   .col h2 {
     margin: 0;
     padding: 8px 16px;
     font-size: 11px;
     letter-spacing: 1px;
-    color: #6f6;
-    border-bottom: 1px solid #1a3a1a;
+    color: #b8b884;
+    border-bottom: 1px solid #3a3a14;
     background: #050505;
     position: sticky;
     top: 0;
   }
   .row {
     padding: 6px 16px;
-    border-bottom: 1px solid #0a1a0a;
+    border-bottom: 1px solid #1a1a08;
     cursor: pointer;
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
   }
-  .row:hover { background: #052005; }
-  .row.active { background: #0a3a0a; color: #fff; }
-  .row .id { color: #00ff00; font-weight: bold; }
-  .row .meta { color: #6f6; font-size: 11px; }
-  .row .caret { display: inline-block; width: 12px; color: #6f6; }
-  .row.area { padding-left: 34px; background: #030903; }
-  .row.area .id { color: #9c9; font-weight: normal; }
-  .row.area .meta { color: #585; }
-  .areas { border-bottom: 1px solid #0a1a0a; }
-  .placeholder { padding: 16px; color: #6f6; }
+  .row:hover { background: #1a1a05; }
+  .row.active { background: #3a3a0a; color: #fff; }
+  .row .id { color: #cccc44; font-weight: bold; }
+  .row .meta { color: #888835; font-size: 11px; }
+  .row .subtext { color: #666; font-size: 10px; }
+  #artccs .row { flex-direction: row; align-items: center; gap: 0; }
+  #artccs .row-header { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  #artccs .row .meta { margin-left: auto; }
+  #artccs .row .id { display: block; }
+  #artccs .row .subtext { display: block; }
+  .row .caret { display: inline-block; width: 12px; color: #b8b884; }
+  .row.area { padding-left: 34px; background: #050505; }
+  .row.area .id { color: #a8a874; font-weight: normal; }
+  .row.area .meta { color: #685; }
+  .areas { border-bottom: 1px solid #1a1a08; }
+  .placeholder { padding: 16px; color: #888835; }
   .nostars { color: #888; font-style: italic; padding: 16px; }
-  .fac-tcps { padding: 0 16px 7px 30px; display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #0a1a0a; }
+  .fac-tcps { padding: 0 16px 7px 30px; display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #1a1a08; }
   .fac-tcps .tcp-chip {
-    font-size: 10px; color: #9c9;
-    background: #0c160c; border: 1px solid #1a3a1a; border-radius: 2px;
+    font-size: 10px; color: #a8a874;
+    background: #0c0c00; border: 1px solid #3a3a14; border-radius: 2px;
     padding: 0 5px; line-height: 1.6;
   }
   .fac-tcps .tcp-chip b { color: #cccc44; font-weight: normal; margin-left: 3px; }
 
   /* LIVE / REPLAY launch mode. Replay opens the facility's recorded terminal data instead of the
      live feed — the scope itself is unchanged either way, it just gets a different source. */
-  .modes { display: inline-flex; border: 1px solid #1a3a1a; border-radius: 2px; overflow: hidden; margin-left: 12px; vertical-align: middle; }
+  .modes { display: inline-flex; border: 1px solid #3a3a14; border-radius: 2px; overflow: hidden; margin-left: 12px; vertical-align: middle; }
   .modes button {
-    background: #050505; color: #6f6; border: 0; border-right: 1px solid #1a3a1a;
+    background: #050505; color: #b8b884; border: 0; border-right: 1px solid #3a3a14;
     font: inherit; font-size: 11px; letter-spacing: 1px; padding: 2px 10px; cursor: pointer;
   }
   .modes button:last-child { border-right: 0; }
-  .modes button.on { background: #0a3a0a; color: #fff; }
+  .modes button.on { background: #3a3a0a; color: #fff; }
   .modes button.on.replay { background: #3a2a00; color: #ffb300; }
   .row.norec { opacity: .45; cursor: not-allowed; }
   .row .rec { color: #ffb300; font-size: 10px; }
@@ -85,7 +93,8 @@
 <body>
 <a class="nav-home" href="/">&larr; HOME</a>
 <header>
-  <h1>STARS <span class="wip">WORK IN PROGRESS</span></h1>
+  <h1>STARS <span class="wip">WIP</span></h1>
+  <span class="sub" style="margin-left:16px; color:#666; font-size:11px; transform:translateY(1px);">Standard Terminal Automation Replacement System</span>
 </header>
 <div class="subhead">
   <div class="sub">Pick an ARTCC, then pick a facility with a STARS configuration. Profile data sourced from vNAS.
@@ -94,7 +103,6 @@
       <button id="mode-replay" class="replay" title="Open the facility on its recorded terminal data, with a scrub bar">REPLAY</button>
     </span>
   </div>
-  <div class="wipnote" id="wipnote">Active DGScope port — expect rough edges. Video maps are served from the hosted CRC export (where seeded); live targets stream from the dSTARS feed.</div>
 </div>
 <div class="layout">
   <div class="col">
@@ -109,6 +117,15 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+const ARTCC_NAMES = {
+  ZAB: 'Albuquerque', ZAG: 'Atlanta', ZAN: 'Anchorage', ZAU: 'Chicago', ZBW: 'Boston',
+  ZDC: 'Washington', ZDV: 'Denver', ZEG: 'Edmonton', ZFW: 'Fort Worth', ZHU: 'Houston', ZID: 'Indianapolis',
+  ZJX: 'Jacksonville', ZKC: 'Kansas City', ZLA: 'Los Angeles', ZLC: 'Salt Lake City',
+  ZMA: 'Miami', ZME: 'Memphis', ZMP: 'Minneapolis', ZNY: 'New York', ZOA: 'Oakland', ZOB: 'Cleveland',
+  ZQM: '', ZSE: 'Seattle', ZTL: 'Atlanta', ZUL: 'Montreal', ZVR: 'Vancouver', ZWG: 'Winnipeg', ZYZ: 'Toronto', ZZZ: ''
+};
+
 let selectedArtcc = null;
 
 // ── Launch mode ────────────────────────────────────────────────────────────
@@ -148,7 +165,12 @@ async function loadArtccs() {
   try {
     const ids = await fetch("/api/stars/artccs").then(r => r.json());
     $("artccs").innerHTML = ids.map(id =>
-      `<div class="row" data-id="${id}"><span class="id">${id}</span></div>`).join("");
+      `<div class="row" data-id="${id}">
+        <div class="row-header">
+          <span class="id">${id}</span>
+          <span class="subtext">${ARTCC_NAMES[id] || ''}</span>
+        </div>
+      </div>`).join("");
     for (const el of document.querySelectorAll("#artccs .row"))
       el.onclick = () => selectArtcc(el.dataset.id);
   } catch (e) {

@@ -17,7 +17,7 @@
   .subhead .sub { color: #b8b884; font-size: 11px; }
   .layout {
     display: grid;
-    grid-template-columns: 220px 1fr;
+    grid-template-columns: 280px 1fr;
     flex: 1; min-height: 0;
   }
   .col { overflow-y: auto; border-right: 1px solid #3a3a14; }
@@ -39,18 +39,26 @@
     cursor: pointer;
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
   }
   .row:hover { background: #1a1a05; }
   .row.active { background: #3a3a0a; color: #fff; }
   .row .id { color: #cccc44; font-weight: bold; }
   .row .meta { color: #888835; font-size: 11px; }
+  .row .subtext { color: #666; font-size: 10px; }
+  #facilities .row { flex-direction: row; align-items: center; gap: 0; }
+  #facilities .row-header { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  #facilities .row .meta { margin-left: auto; }
+  #facilities .row .id { display: block; }
+  #facilities .row .subtext { display: block; }
   .row .meta .live { color: #cccc44; }
   .placeholder { padding: 16px; color: #888835; }
   .empty { color: #666; font-style: italic; padding: 16px; }
 
   .sectors-pane { padding: 12px 16px; }
-  .sectors-pane .hint { color: #888835; font-size: 11px; margin-bottom: 10px; }
+  .sectors-pane .hint { color: #888835; font-size: 11px; margin-bottom: 10px; padding-top: 6px; }
   .sec-row {
     display: flex; justify-content: space-between; align-items: center;
     padding: 4px 8px;
@@ -60,11 +68,7 @@
     font-size: 12px;
   }
   .sec-row:hover { background: #1c1c00; }
-  /* sectors with live traffic/handoffs — pop brighter so they stand out from idle ones.
-     Placed before .on so a selected sector's styling still wins. */
-  .sec-row[data-active="1"] { border-color: #cccc44; background: #1a1a02; }
-  .sec-row[data-active="1"] .sid { color: #ffff66; text-shadow: 0 0 5px rgba(204,204,68,.55); }
-  .sec-row[data-active="1"] .scnt { color: #dede55; }
+  .sec-row .active-indicator { color: #cccc44; margin-left: 4px; }
   .sec-row.on { background: #3a3a0a; color: #fff; border-color: #6a6a14; }
   .sec-row .sid { font-weight: bold; }
   .sec-row .scnt { color: #888835; font-size: 10px; }
@@ -169,11 +173,11 @@
 <a class="nav-home" href="/">&larr; HOME</a>
 <header>
   <h1>ERAM</h1>
-  <span class="sub" style="margin-left:16px; color:#666; font-size:11px;">En Route Automation Modernization</span>
+  <span class="sub" style="margin-left:16px; color:#666; font-size:11px; transform:translateY(1px);">En Route Automation Modernization</span>
 </header>
 <div class="subhead">
-  <div class="sub">Pick an ARTCC, then pick the sector(s) you're working. Live track counts refresh every 5s from <code>/api/sectors</code>. Click <b>LAUNCH</b> to open the scope, or <b>RESUME</b> to restore your last session unchanged.</div>
-  <div class="sub" style="margin-top:4px; color:#666; font-size:10px;">Sector boundary maps sourced from <a href="https://www.weather.gov/zse" target="_blank" rel="noopener" style="color:#888835;">weather.gov/zse</a> — a map layer on the CWSU (Center Weather Service Unit) site.</div>
+  <div class="sub">Select an ARTCC and sectors. Live track counts update every 5 seconds. Click <b>LAUNCH</b> to start or <b>RESUME</b> your last session.</div>
+  <div class="sub" style="margin-top:4px; color:#666; font-size:10px;">Sector boundary maps sourced from <a href="https://www.weather.gov" target="_blank" rel="noopener" style="color:#888835;">weather.gov</a></div>
 </div>
 <div class="layout">
   <div class="col">
@@ -249,6 +253,14 @@ const $ = (id) => document.getElementById(id);
 const SETTINGS_VERSION = 3;
 const STORAGE_KEY = 'eram-settings';
 
+const ARTCC_NAMES = {
+  ZAB: 'Albuquerque', ZAG: 'Atlanta', ZAN: 'Anchorage', ZAU: 'Chicago', ZBW: 'Boston',
+  ZDC: 'Washington', ZDV: 'Denver', ZEG: 'Edmonton', ZFW: 'Fort Worth', ZHU: 'Houston', ZID: 'Indianapolis',
+  ZJX: 'Jacksonville', ZKC: 'Kansas City', ZLA: 'Los Angeles', ZLC: 'Salt Lake City',
+  ZMA: 'Miami', ZME: 'Memphis', ZMP: 'Minneapolis', ZNY: 'New York', ZOA: 'Oakland', ZOB: 'Cleveland',
+  ZQM: '', ZSE: 'Seattle', ZTL: 'Atlanta', ZUL: 'Montreal', ZVR: 'Vancouver', ZWG: 'Winnipeg', ZYZ: 'Toronto', ZZZ: ''
+};
+
 let selectedFacility = null;
 let selectedSectors = new Set();
 let allFacilities = [];
@@ -310,9 +322,10 @@ function renderSectors(fac) {
     const handoffs = (s.handoffsIn || 0) + (s.handoffsOut || 0);
     const ho = handoffs > 0 ? ` · ${handoffs}H` : "";
     const active = (s.tracks > 0) || (handoffs > 0);
+    const indicator = active ? '<span class="active-indicator">●</span>' : '';
     return `<div class="sec-row" data-sec="${s.id}" data-active="${active ? 1 : 0}">
       <span class="sid">${s.id}</span>
-      <span class="scnt">${s.tracks}T${ho}</span>
+      <span class="scnt">${s.tracks}T${ho}${indicator}</span>
     </div>`;
   }).join("");
   for (const el of document.querySelectorAll(".sec-row")) {
@@ -336,7 +349,10 @@ async function loadFacilities() {
     for (const f of allFacilities) facilityById.set(f.facility, f);
     $("facilities").innerHTML = allFacilities.map(f =>
       `<div class="row" data-id="${f.facility}">
-        <span class="id">${f.facility}</span>
+        <div class="row-header">
+          <span class="id">${f.facility}</span>
+          <span class="subtext">${ARTCC_NAMES[f.facility] || ''}</span>
+        </div>
         <span class="meta"><span class="live">${f.totalTracks}T</span> · ${f.sectorCount} sec</span>
       </div>`).join("");
     for (const el of document.querySelectorAll("#facilities .row"))

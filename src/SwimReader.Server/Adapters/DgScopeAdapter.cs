@@ -71,6 +71,14 @@ public sealed class DgScopeAdapter : BackgroundService
 
     // ── MSAW — DGScope's engine, driven by profile volumes (UT=5 → JS "LA") ───────
     private readonly Msaw.MSAW _msaw = new();
+
+    // Track guid → (flight rules, last time an OWNED flight plan named it). A track is ASSOCIATED only
+    // while it has track ownership — a TAIS plan with an owner keeps pointing at it (TAIS re-sends every
+    // plan each ~5 s batch, so 30 s of silence = dropped). Per vSTARS/DGScope, LA and CA need an associated track: an
+    // uncorrelated target (e.g. a 1200 VFR with no plan) never raises LA, and only takes part in a
+    // conflict as the MCI partner of an owned associated track — never two unassociated targets.
+    private readonly ConcurrentDictionary<Guid, (string? rules, DateTime at)> _caAssoc = new();
+    private static readonly TimeSpan AssocTtl = TimeSpan.FromSeconds(30);
     // ── ATPA — DGScope's engine, driven by profile volumes (UT=6 → JS line-3 mileage) ──
     private readonly Atpa.Atpa _atpa = new();
     private readonly Profile.ProfileStore _profiles;
@@ -368,12 +376,29 @@ public sealed class DgScopeAdapter : BackgroundService
         a.GroundSpeed = u.GroundSpeed ?? a.GroundSpeed;
         a.GroundTrack = u.GroundTrack ?? a.GroundTrack;
         if (u.IsOnGround is not null) a.IsOnGround = u.IsOnGround.Value;   // MSAW skips surface tracks
-        // The DGScope feed carries no sector ownership, so every correlated (non-pseudo,
-        // Mode-C) track is a CA candidate; the engine's valid/altitude filter gates the rest.
+        // The DGScope feed carries no sector ownership, so every ASSOCIATED track is treated as
+        // owned (a CA candidate); unassociated targets only ever appear as a conflict partner.
         a.Owned = true;
-        a.Associated = true;
+        ApplyAssociation(a);
         a.Deleted = false;
         a.LastSeen = DateTime.UtcNow;
+    }
+
+    /// <summary>Associated = an owned flight plan named this track within <see cref="AssocTtl"/>. A VFR plan
+    /// gets DGScope's automatic MSAW inhibit (Aircraft.IsMSAWInhibited: FlightRules starts with 'V').</summary>
+    private void ApplyAssociation(Ca.Aircraft a)
+    {
+        if (_caAssoc.TryGetValue(a.Guid, out var s) && DateTime.UtcNow - s.at < AssocTtl)
+        {
+            a.Associated = true;
+            a.IsMSAWInhibited = !string.IsNullOrEmpty(s.rules) && char.ToUpperInvariant(s.rules[0]) == 'V';
+        }
+        else
+        {
+            a.Associated = false;
+            a.IsMSAWInhibited = false;
+            if (s.at != default) _caAssoc.TryRemove(a.Guid, out _);
+        }
     }
 
     // Run DGScope's Conflict Alert engine once per second per viewed facility and broadcast the
@@ -395,6 +420,7 @@ public sealed class DgScopeAdapter : BackgroundService
                     if (!_clients.HasClients(facility)) continue;   // no viewer — skip the O(n²) pass
 
                     var list = facTracks.Values.ToList();
+                    foreach (var a in list) ApplyAssociation(a);   // plans can lapse between position updates
                     var profile = _profiles.Get(facility);
 
                     // ── Conflict Alert ──────────────────────────────────────────
@@ -417,8 +443,20 @@ public sealed class DgScopeAdapter : BackgroundService
                     _ca.SuppressionVolumes = suppression;
                     _ca.Calculate(list, _caRadar);
                     var caGuids = list.Where(a => a.ConflictAlert).Select(a => a.Guid.ToString()).ToArray();
+                    // Pairs let the scope's LA/CA/MCI list label each conflict: CA when both tracks are
+                    // associated, MCI when one is an unassociated intruder (vSTARS Controller's Guide).
+                    var pairs = new List<string[]>();
+                    var seenPair = new HashSet<string>();
+                    foreach (var a in list.Where(x => x.ConflictAlert))
+                        foreach (var b in a.ConflictingTracks)
+                        {
+                            var ids = new[] { a.Guid.ToString(), b.Guid.ToString() };
+                            Array.Sort(ids, StringComparer.Ordinal);
+                            if (seenPair.Add(ids[0] + "|" + ids[1]))
+                                pairs.Add(new[] { a.Guid.ToString(), b.Guid.ToString(), a.Associated && b.Associated ? "CA" : "MCI" });
+                        }
                     _clients.Broadcast(
-                        JsonSerializer.Serialize(new { UpdateType = 4, Guids = caGuids }, JsonOptions), facility);
+                        JsonSerializer.Serialize(new { UpdateType = 4, Guids = caGuids, Pairs = pairs }, JsonOptions), facility);
 
                     // ── MSAW ────────────────────────────────────────────────────
                     // Only runs where the facility profile defines MSAW volumes (terrain/airspace
@@ -586,6 +624,14 @@ public sealed class DgScopeAdapter : BackgroundService
         // Layer any controller command edits over the feed so they persist across TAIS batches.
         if (_overrides.Get(guid) is { } ov)
             update = ov.Apply(update);
+
+        // Association for CA/MSAW = the track is OWNED (someone is tracking it). A plan with no owner
+        // (untracked/unowned) leaves the target unassociated, like an uncorrelated 1200.
+        if (trackGuid is { } atg && atg != Guid.Empty)
+        {
+            if (!string.IsNullOrEmpty(update.Owner)) _caAssoc[atg] = (update.FlightRules, DateTime.UtcNow);
+            else _caAssoc.TryRemove(atg, out _);
+        }
 
         // Feed ATPA-relevant identity onto the CA/ATPA aircraft snapshot (keyed by the track guid).
         if (fp.Facility is not null && trackGuid is { } tg && tg != Guid.Empty

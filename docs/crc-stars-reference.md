@@ -83,6 +83,18 @@ rest of the block keeps its normal color; it is NOT a whole-block multi-color fl
 Alert, or **Mode C Intruder (MCI)** status. MCI = an unassociated track in conflict-alert status;
 it shows its **beacon code** instead of a callsign.
 
+**Who can alert (vSTARS Controller's Guide / Command Reference, DGScope `MSAW.cs` + `ConflictAlertSystem.cs`
+— CRC doesn't document MSAW/LA):**
+- **Associated vs unassociated here = owned vs unowned** — a track someone has in track control vs one
+  nobody owns (an uncorrelated 1200, or a plan with no owner).
+- **LA (MSAW)** — only associated tracks. An unassociated target **never** raises LA. VFR plans are
+  auto-MSAW-inhibited (shown with `*` after the ID); `<MULTIFUNC>V/Q <SLEW>` inhibits/toggles per track,
+  `VMI`/`VME` inhibit/enable system-wide. MSAW suppression volumes (e.g. approach paths) inhibit by area.
+- **CA** — at least one of the pair must be an owned associated track. Associated + associated = **CA**;
+  associated + unassociated = **MCI** in the list (the intruder shows its beacon code); two unassociated
+  targets never alert. Tone sounds only if you track either target (vSTARS). `<CA>K <SLEW>` toggles CA for
+  a track; `<CA>AI`/`AE` inhibit/enable. CA suppression volumes cover localizers/patterns.
+
 ## Handoffs
 
 - **Outgoing:** data block changes to indicate pending handoff. When accepted, the receiving

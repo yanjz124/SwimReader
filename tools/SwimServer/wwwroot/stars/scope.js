@@ -970,6 +970,9 @@ function handleMSAW(u) {
 // replacing the local scanSTCA reimplementation. Real DGScope clients ignore UT=4.
 function handleCA(u) {
   _lastServerCA = Date.now();
+  // [guidA, guidB, "CA"|"MCI"] — MCI when one of the pair is an unowned (unassociated) target.
+  // Feeds the LA/CA/MCI list in ssa.js (DGScope RenderLACAMCIList).
+  window.caPairs = Array.isArray(u.Pairs) ? u.Pairs : [];
   const set = new Set((u.Guids || []).map(String));
   for (const [guid, t] of tracks) {
     const on = set.has(String(guid));

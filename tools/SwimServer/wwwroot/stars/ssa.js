@@ -266,17 +266,63 @@ function refreshSsa() {
   el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
   el.style.fontSize = (prefSet.CharSize?.Lists ?? 12) + "px";
 
+  const below = renderLaCaMciList(el);
+
   // Keep the preview (MCA) pinned just below the SSA so it follows when the SSA
   // grows/shrinks (e.g. signing on adds a TCP line) — otherwise the SSA grows
   // down OVER the preview and the typed text disappears. Stops tracking once the
   // user drags it (userMoved) or sets PreviewLocation by command.
   const mca = document.getElementById("mca");
   if (mca && !mca.dataset.userMoved && !prefSet.PreviewLocation) {
-    const r = el.getBoundingClientRect();
+    const r = (below || el).getBoundingClientRect();
     mca.style.top = (r.bottom + 8) + "px";
     mca.style.left = r.left + "px";
     mca.style.bottom = "auto";
   }
+}
+
+// LA/CA/MCI list — DGScope RenderLACAMCIList (RadarWindow.cs:3269-3312) / vSTARS Controller's Guide:
+// "LA <id> <alt in hundreds>" per track in MSAW alert, then one line per conflict pair — "CA" when
+// both tracks are associated (owned), "MCI" when one is an unowned intruder, whose reported beacon
+// code stands in for the callsign. Hidden when nothing is in alert. Sits under the SSA.
+function lacamciId(t) {
+  const fp = window.trackToFp && window.trackToFp.get(t.Guid);
+  if (fp && fp.Callsign) return fp.Callsign;
+  return t.Squawk ? String(t.Squawk).padStart(4, "0") : "----";
+}
+function renderLaCaMciList(ssaEl) {
+  let el = document.getElementById("lacamci");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "lacamci";
+    el.style.cssText = "position:fixed;background:transparent;font-family:FixedDemiBold, ui-monospace, monospace;" +
+      "white-space:pre;line-height:1.3;padding:4px 8px;z-index:17;pointer-events:none;";
+    document.body.appendChild(el);
+  }
+  const tracks = window.tracks;
+  const lines = [];
+  if (tracks && prefSet.ShowLACAMCIList !== false) {
+    for (const t of tracks.values()) {
+      if (!t._msaw || t._msawInhibited || window.starsState?.MSAWActive === false) continue;
+      const alt = t.Altitude?.Value;
+      lines.push(`LA ${lacamciId(t)} ${alt != null ? String(Math.trunc(alt / 100)).padStart(3, "0") : "---"}`);
+    }
+    for (const [a, b, kind] of (window.caPairs || [])) {
+      const ta = tracks.get(a) || tracks.get(String(a)), tb = tracks.get(b) || tracks.get(String(b));
+      if (!ta || !tb) continue;
+      lines.push(`${kind === "MCI" ? "MCI" : "CA"} ${lacamciId(ta)} ${lacamciId(tb)}`);
+    }
+  }
+  if (!lines.length) { el.style.display = "none"; return null; }
+  el.style.display = "";
+  el.innerHTML = ["LA/CA/MCI", ...lines].map(escapeHtml).join("<br>");
+  const b = prefSet.Brightness.Lists / 100;
+  el.style.color = `rgb(0, ${(255 * b) | 0}, 0)`;
+  el.style.fontSize = (prefSet.CharSize?.Lists ?? 12) + "px";
+  const r = ssaEl.getBoundingClientRect();
+  el.style.left = r.left + "px";
+  el.style.top = (r.bottom + 4) + "px";
+  return el;
 }
 
 function fa(altFt) {

@@ -4,109 +4,186 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0a0a0a">
-<title>Route Finder — Dispatch</title>
+<title>Route Finder</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🗺️</text></svg>">
+<link rel="stylesheet" href="/shared/common.css?v=3">
 <style>
-  :root { --yel:#cccc44; --dim:#888; --bg:#0a0a0a; --card:#141414; --line:#333;
-          --accent:#4aa3ff; --ok:#44cc44; --warn:#ff8c00; --sb:#00b3b3; }
+  :root { --yel:#cccc44; --dim:#888; --faint:#555; --bg:#0a0a0a; --card:#121212; --line:#2a2a2a;
+          --accent:#4aa3ff; --ok:#44cc44; --route:#dcdcae; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  /* The `hidden` attribute must win over the display rules below (.bar is flex, .tabs inline-flex). */
+  [hidden] { display:none !important; }
   html,body { margin:0; background:var(--bg); color:var(--yel);
     font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace; font-size:14px; }
-  body { padding-bottom:60px; }
+  body { padding-bottom:40px; }
   a { color:var(--accent); }
-  .wrap { max-width:1000px; margin:0 auto; padding:0 12px; }
+  .wrap { max-width:1080px; margin:0 auto; padding:0 14px; }
+  header .sub { color:var(--dim); font-size:11px; letter-spacing:.5px; }
 
-  header { position:sticky; top:0; z-index:10; background:var(--card); border-bottom:1px solid var(--line);
-    padding:10px 16px; display:flex; gap:12px; align-items:baseline; }
-  header a.home { color:var(--dim); text-decoration:none; padding:2px 6px; border:1px solid var(--line); border-radius:3px; font-size:11px; }
-  header a.home:hover { color:var(--yel); border-color:var(--yel); }
-  header h1 { font-size:18px; margin:0; letter-spacing:1px; color:var(--yel); font-weight:bold; transform:translateY(2px); }
-  header .sub { color:var(--dim); font-size:11px; letter-spacing:0.5px; }
-
-  form.search { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px;
-    padding:14px 12px; align-items:end; }
-  .fld { display:flex; flex-direction:column; gap:4px; }
+  /* ── search ───────────────────────────────────────────────────────────── */
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin:14px 0 10px; }
+  form.search { display:grid; grid-template-columns: 1fr auto 1fr 1fr 1fr 90px auto; gap:10px; align-items:end; }
+  .fld { display:flex; flex-direction:column; gap:5px; min-width:0; }
   .fld label { font-size:10px; letter-spacing:1.5px; color:var(--dim); }
-  .fld input, .fld select { background:#1a1a1a; color:var(--yel); border:1px solid var(--line);
+  .fld input, .fld select { width:100%; background:#1a1a1a; color:var(--yel); border:1px solid #333;
     border-radius:7px; padding:9px 10px; font:inherit; text-transform:uppercase; }
-  .fld input::placeholder { color:#555; text-transform:none; }
+  .fld input:focus, .fld select:focus { outline:none; border-color:var(--yel); }
+  .fld input::placeholder { color:var(--faint); text-transform:none; }
+  .swap { height:38px; width:34px; background:#1a1a1a; border:1px solid #333; border-radius:7px; color:var(--dim);
+    font:inherit; font-size:15px; cursor:pointer; }
+  .swap:hover { color:var(--yel); border-color:var(--yel); }
+  .btns { display:flex; gap:6px; }
   .go { background:#1e2e1e; color:#bfe6bf; border:1px solid #3a5a3a; border-radius:7px;
-    padding:10px 14px; font:inherit; font-weight:bold; cursor:pointer; height:38px; }
+    padding:0 18px; font:inherit; font-weight:bold; cursor:pointer; height:38px; letter-spacing:1px; }
+  .go:hover { filter:brightness(1.2); }
   .go:disabled { opacity:.5; cursor:default; }
+  .clr { background:none; border:1px solid #333; color:var(--dim); border-radius:7px; height:38px; padding:0 10px;
+    font:inherit; font-size:12px; cursor:pointer; }
+  .clr:hover { color:var(--yel); border-color:#555; }
+  .hint { color:var(--faint); font-size:11px; margin-top:10px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip { background:#171717; border:1px solid #2e2e2e; border-radius:14px; padding:5px 11px; font:inherit; font-size:11.5px;
+    color:var(--yel); cursor:pointer; }
+  .chip:hover { border-color:var(--yel); }
 
-  .status { padding:4px 14px 10px; color:var(--dim); font-size:12px; }
-  .msg { padding:40px 20px; text-align:center; color:var(--dim); line-height:1.7; }
-  .msg b { color:var(--yel); }
+  /* ── summary + view tabs ─────────────────────────────────────────────── */
+  .bar { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin:6px 2px 10px; }
+  .status { color:var(--dim); font-size:12px; }
+  .status b { color:var(--yel); font-weight:normal; }
+  .tabs { display:inline-flex; border:1px solid #333; border-radius:8px; overflow:hidden; }
+  .tabs button { background:none; border:0; color:var(--dim); font:inherit; font-size:11.5px; letter-spacing:1px;
+    padding:6px 12px; cursor:pointer; }
+  .tabs button + button { border-left:1px solid #333; }
+  .tabs button.on { background:#1f1f10; color:var(--yel); }
+  .msg { padding:46px 20px; text-align:center; color:var(--dim); line-height:1.8; }
+  .msg b { color:var(--yel); font-weight:normal; }
+  .spin { display:inline-block; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
 
+  /* ── route cards ─────────────────────────────────────────────────────── */
+  .rcard { background:var(--card); border:1px solid var(--line); border-radius:10px; margin-bottom:10px; overflow:hidden; }
+  .rhead { display:grid; grid-template-columns:62px 1fr; gap:12px; padding:12px 14px; }
+  .rcount { text-align:center; border-right:1px solid var(--line); padding-right:10px; }
+  .rcount .n { font-size:22px; color:#fff; line-height:1.1; }
+  .rcount .l { font-size:9.5px; color:var(--dim); letter-spacing:1px; }
+  .rpair { font-size:12px; color:var(--dim); letter-spacing:.5px; margin-bottom:4px; }
+  .rpair b { color:var(--yel); font-weight:normal; letter-spacing:1px; }
+  .rtext { color:var(--route); font-size:13.5px; line-height:1.55; word-break:break-word; }
+  .rmeta { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:8px; font-size:11.5px; color:var(--dim); }
+  .rmeta span b { color:#ddd; font-weight:normal; }
+  .ractions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .rflights { border-top:1px solid var(--line); display:none; }
+  .rcard.open .rflights { display:block; }
+
+  /* ── table ───────────────────────────────────────────────────────────── */
+  .tblwrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--card); }
+  .rflights .tblwrap { border:0; border-radius:0; background:transparent; }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   thead th { text-align:left; color:var(--dim); font-size:10px; letter-spacing:1px; font-weight:normal;
-    padding:6px 8px; border-bottom:1px solid var(--line); position:sticky; top:52px; background:#0a0a0a; }
-  tbody td { padding:8px; border-bottom:1px solid #1e1e1e; vertical-align:top; }
+    padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; user-select:none; }
+  thead th.sort { cursor:pointer; }
+  thead th.sort:hover { color:var(--yel); }
+  thead th .ar { color:var(--yel); }
+  tbody td { padding:9px 10px; border-bottom:1px solid #1c1c1c; vertical-align:top; white-space:nowrap; }
   tbody tr.row { cursor:pointer; }
-  tbody tr.row:hover { background:#141400; }
-  .cs { color:#fff; font-weight:bold; letter-spacing:.5px; }
-  .od { color:var(--yel); } .od .arw { color:var(--dim); margin:0 3px; }
+  tbody tr.row:hover, tbody tr.row.open { background:#15150a; }
+  .cs { color:#fff; letter-spacing:.5px; }
+  .od .arw { color:var(--dim); margin:0 3px; }
   .type { color:#dcdcae; }
   .gate { color:var(--ok); }
   .muted { color:var(--dim); }
   .pill { display:inline-block; font-size:10px; padding:1px 6px; border-radius:10px; background:#20202a;
     color:var(--dim); margin-left:4px; }
+  .tag { display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; background:#1b1b12;
+    border:1px solid #33331a; color:var(--yel); margin:0 3px 3px 0; }
 
-  /* expanded detail row */
-  tr.detail td { background:#0d0d0d; padding:0; }
-  .det { padding:12px 14px; display:grid; grid-template-columns:1fr; gap:10px; }
-  .det .rte { font-size:13px; color:#dcdcae; word-break:break-word; line-height:1.55;
+  /* ── detail ──────────────────────────────────────────────────────────── */
+  tr.detail td { background:#0d0d0d; padding:0; white-space:normal; }
+  .det { padding:12px 14px 14px; display:grid; gap:10px; }
+  .det .rte { font-size:13px; color:var(--route); word-break:break-word; line-height:1.55;
     background:#111; border:1px solid #222; border-radius:8px; padding:10px 12px; }
-  .det .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; font-size:12.5px; }
+  .det .rte .lbl { color:var(--dim); font-size:10px; letter-spacing:1px; display:block; margin-bottom:3px; }
+  .det .kv { display:grid; grid-template-columns:auto 1fr; gap:3px 14px; font-size:12.5px; }
   .det .kv .k { color:var(--dim); white-space:nowrap; } .det .kv .v { color:var(--yel); word-break:break-word; }
-  .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:2px; }
-  .btn { border:1px solid var(--line); border-radius:8px; padding:8px 12px; font:inherit; font-size:12px;
-    cursor:pointer; background:#151515; color:var(--yel); text-decoration:none; display:inline-block; }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; }
+  .btn { border:1px solid #333; border-radius:8px; padding:8px 12px; font:inherit; font-size:12px;
+    cursor:pointer; background:#151515; color:var(--yel); text-decoration:none; display:inline-block; white-space:nowrap; }
   .btn.sb { background:#04333a; color:#8fe9ef; border-color:#0a5a63; font-weight:bold; }
   .btn.copy { background:#1a1420; color:#d8b6ff; border-color:#3a2a5a; }
   .btn:hover { filter:brightness(1.25); }
+  .btn.done { color:var(--ok); border-color:#2f5a2f; }
   .fpl { white-space:pre-wrap; font-size:12px; color:#cfe; background:#0b1418; border:1px solid #14343a;
-    border-radius:8px; padding:10px 12px; display:none; }
+    border-radius:8px; padding:10px 12px; display:none; margin:0; }
 
-  .foot { color:var(--dim); font-size:11.5px; line-height:1.6; padding:18px 14px; border-top:1px solid #1e1e1e;
-    margin-top:20px; }
+  .foot { color:var(--dim); font-size:11.5px; line-height:1.7; padding:18px 4px; border-top:1px solid #1e1e1e; margin-top:22px; }
+  .foot b { color:#bbb; font-weight:normal; }
   .foot code { color:#cf6; background:#161608; padding:1px 5px; border-radius:4px; }
+
+  /* ── small screens ───────────────────────────────────────────────────── */
+  @media (max-width: 820px) {
+    form.search { grid-template-columns: 1fr auto 1fr; }
+    form.search .fld.wide { grid-column: span 3; }
+    .btns { grid-column: span 3; }
+    .go { flex:1; }
+  }
+  @media (max-width: 560px) {
+    .hide-sm { display:none; }
+    .rhead { grid-template-columns:48px 1fr; gap:10px; padding:10px 12px; }
+    .rcount .n { font-size:18px; }
+  }
 </style>
+<link rel="stylesheet" href="/shared/frame.css?v=4">
 </head>
 <body>
+<a class="nav-home" href="/">&larr; HOME</a>
 <header>
-  <a class="home" href="/">&larr; HOME</a>
   <h1>ROUTE FINDER</h1>
-  <span class="sub">real filed flights → SimBrief / VATSIM</span>
+  <span class="sub">real filed routes → SimBrief / VATSIM</span>
 </header>
 
 <div class="wrap">
-  <form class="search" id="f">
-    <div class="fld"><label>FROM</label><input id="orig" placeholder="KORD / ORD" autocomplete="off" spellcheck="false"></div>
-    <div class="fld"><label>TO</label><input id="dest" placeholder="KLGA / LGA" autocomplete="off" spellcheck="false"></div>
-    <div class="fld"><label>AIRLINE (ICAO)</label><input id="airline" placeholder="AAL UAL DAL" autocomplete="off" spellcheck="false"></div>
-    <div class="fld"><label>AIRCRAFT</label><input id="type" placeholder="B738 A320" autocomplete="off" spellcheck="false"></div>
-    <div class="fld"><label>DAYS</label>
-      <select id="days"><option value="1">1</option><option value="3" selected>3</option><option value="7">7</option></select>
+  <div class="panel">
+    <form class="search" id="f" autocomplete="off">
+      <div class="fld"><label for="orig">FROM</label><input id="orig" placeholder="KORD" spellcheck="false" maxlength="4"></div>
+      <button class="swap" id="swap" type="button" title="Swap FROM and TO" aria-label="Swap FROM and TO">⇄</button>
+      <div class="fld"><label for="dest">TO</label><input id="dest" placeholder="KLGA" spellcheck="false" maxlength="4"></div>
+      <div class="fld wide"><label for="airline">AIRLINE</label><input id="airline" placeholder="ICAO, e.g. DAL" spellcheck="false" maxlength="3"></div>
+      <div class="fld wide"><label for="type">AIRCRAFT</label><input id="type" placeholder="e.g. B738" spellcheck="false" maxlength="4"></div>
+      <div class="fld wide"><label for="days">LOOK BACK</label>
+        <select id="days"><option value="1">1 day</option><option value="3" selected>3 days</option><option value="7">7 days</option></select>
+      </div>
+      <div class="btns">
+        <button class="go" id="go" type="submit">SEARCH</button>
+        <button class="clr" id="clr" type="button" title="Clear the form">CLEAR</button>
+      </div>
+    </form>
+    <div class="hint">Any combination works — a city pair, an airline, an aircraft type, or all three. 3-letter airports (ORD) are fine.</div>
+  </div>
+
+  <div class="bar" id="bar" hidden>
+    <div class="status" id="status"></div>
+    <div class="tabs" id="tabs">
+      <button type="button" data-view="routes" class="on">BY ROUTE</button>
+      <button type="button" data-view="flights">ALL FLIGHTS</button>
     </div>
-    <button class="go" id="go" type="submit">SEARCH</button>
-  </form>
-  <div class="status" id="status">Search by any combination of route, airline, or aircraft type.</div>
+  </div>
 
   <div id="out"></div>
 
   <div class="foot">
-    Data is real filed flight plans pulled from SWIM/SFDPS history (the last few days of traffic). Each result
-    opens in <b>SimBrief</b> with the origin, destination, aircraft, route, cruise, and registration pre-filled —
-    just hit Generate. SimBrief can then prefile straight to <b>VATSIM</b>. <b>Copy plan</b> gives you an ICAO-style
-    block for manual VATSIM prefiling. Gate/runway come from live <code>TDLS</code> when the flight was seen recently.
-    Routes are shown as filed; tidy them in SimBrief if a fix has aged out of the nav data.
+    Routes are real filed flight plans from recent SWIM/SFDPS traffic. <b>BY ROUTE</b> groups flights that filed the
+    same routing, most-flown first — the quickest way to find a realistic route. <b>Open in SimBrief</b> pre-fills
+    origin, destination, aircraft, route, cruise and registration; just hit Generate, and SimBrief can prefile straight
+    to <b>VATSIM</b>. <b>Copy plan</b> gives an ICAO-style block for manual prefiling, <b>Copy route</b> just the route
+    string. Gate/runway come from <code>TDLS</code> when the flight was seen recently. Routes are shown as filed — tidy
+    them in SimBrief if a fix has aged out of your nav data.
   </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const LS_KEY = 'dispatch.last';
 
 // ── airport / route helpers ──────────────────────────────────────────────────
 function sameApt(a, b){
@@ -143,6 +220,17 @@ function cleanRoute(route, orig, dest){
 }
 function cruiseFt(c){ if(c==null) return ''; const n=Math.round(c); return n>=1000? String(n) : String(n*100); }
 function flLabel(c){ if(c==null) return ''; const n=Math.round(c); return 'FL'+String(Math.round((n>=1000?n:n*100)/100)).padStart(3,'0'); }
+function ago(iso){
+  if(!iso) return '';
+  const t = Date.parse(iso); if(isNaN(t)) return '';
+  const m = Math.max(0, Math.round((Date.now()-t)/60000));
+  if(m < 60) return m + 'm ago';
+  const h = Math.round(m/60); if(h < 48) return h + 'h ago';
+  return Math.round(h/24) + 'd ago';
+}
+const seenMs = f => Date.parse(f.lastSeen) || 0;
+// TDLS reports an unknown gate/runway as a literal "N/A"; treat it as absent rather than a real value.
+const real = v => (v && !/^(N\/?A|UNK|NONE)$/i.test(String(v).trim())) ? v : '';
 
 function simbriefUrl(f){
   const p = new URLSearchParams();
@@ -173,115 +261,322 @@ function fplText(f){
   if(f.remarks) lines.push('RMK ' + f.remarks);
   return lines.join('\n');
 }
+async function copyText(btn, text, label){
+  try { await navigator.clipboard.writeText(text); flash(btn, 'Copied ✓', label); return true; }
+  catch { flash(btn, 'Copy failed', label); return false; }
+}
+function flash(btn, msg, label){
+  btn.textContent = msg; btn.classList.add('done');
+  setTimeout(()=>{ btn.textContent = label; btn.classList.remove('done'); }, 1500);
+}
 
-// ── render ────────────────────────────────────────────────────────────────────
-function rowHtml(f, i){
-  const gate = f.gate ? `<span class="gate">${esc(f.gate)}</span>` : '<span class="muted">—</span>';
-  return `<tr class="row" data-i="${i}">
+// ── grouping ─────────────────────────────────────────────────────────────────
+// Flights that filed the same routing (after cleanup) between the same airports form one route.
+function groupRoutes(list){
+  const by = new Map();
+  for(const f of list){
+    const rte = cleanRoute(f.route, f.orig, f.dest) || 'DCT';
+    const key = (f.orig||'') + '|' + (f.dest||'') + '|' + rte;
+    let g = by.get(key);
+    if(!g){ g = { key, orig:f.orig, dest:f.dest, rte, flights:[] }; by.set(key, g); }
+    g.flights.push(f);
+  }
+  const groups = [...by.values()];
+  for(const g of groups){
+    g.flights.sort((a,b)=>seenMs(b)-seenMs(a));
+    g.best = g.flights[0];                                // most recent flight = the SimBrief template
+    g.last = seenMs(g.best);
+  }
+  groups.sort((a,b)=> b.flights.length-a.flights.length || b.last-a.last);
+  return groups;
+}
+function tally(values, n){
+  const c = new Map();
+  for(const v of values) if(v) c.set(v, (c.get(v)||0)+1);
+  return [...c.entries()].sort((a,b)=>b[1]-a[1]).slice(0, n);
+}
+
+// ── render: flights table ────────────────────────────────────────────────────
+const COLS = [
+  { k:'callsign', t:'CALLSIGN' },
+  { k:'pair',     t:'ROUTE',  v:f=>(f.orig||'')+(f.dest||'') },
+  { k:'type',     t:'TYPE' },
+  { k:'reg',      t:'REG',    cls:'hide-sm' },
+  { k:'gate',     t:'GATE',   cls:'hide-sm', v:f=>real(f.gate) },
+  { k:'cruise',   t:'CRZ',    v:f=>f.cruise??-1 },
+  { k:'seen',     t:'SEEN',   v:f=>seenMs(f), dir:-1 },
+];
+let sortKey = 'seen', sortDir = -1;
+
+function rowHtml(f, id){
+  const gate = real(f.gate) ? `<span class="gate">${esc(f.gate)}</span>` : '<span class="muted">—</span>';
+  return `<tr class="row" data-id="${id}">
       <td class="cs">${esc(f.callsign)}</td>
       <td class="od">${esc(f.orig)}<span class="arw">▸</span>${esc(f.dest)}</td>
       <td class="type">${esc(f.type||'—')}${f.wake?`<span class="pill">${esc(f.wake)}</span>`:''}</td>
-      <td class="muted">${esc(f.reg||'—')}</td>
-      <td>${gate}</td>
+      <td class="muted hide-sm">${esc(f.reg||'—')}</td>
+      <td class="hide-sm">${gate}</td>
       <td class="muted">${esc(f.cruise!=null?flLabel(f.cruise):'—')}</td>
+      <td class="muted">${esc(ago(f.lastSeen)||'—')}</td>
     </tr>
-    <tr class="detail" id="det-${i}" style="display:none"><td colspan="6"></td></tr>`;
+    <tr class="detail" data-for="${id}" hidden><td colspan="7"></td></tr>`;
+}
+function tableHtml(list, prefix, sortable){
+  const head = COLS.map(c => {
+    const on = sortable && sortKey===c.k;
+    return `<th class="${c.cls||''}${sortable?' sort':''}" data-k="${c.k}">${c.t}${on?` <span class="ar">${sortDir<0?'▼':'▲'}</span>`:''}</th>`;
+  }).join('');
+  return `<div class="tblwrap"><table><thead><tr>${head}</tr></thead><tbody>${
+    list.map((f,i)=>rowHtml(f, prefix+i)).join('')}</tbody></table></div>`;
+}
+function sortedFlights(){
+  const col = COLS.find(c=>c.k===sortKey);
+  const val = col.v || (f=>(f[col.k]||'').toString());
+  return [...RESULTS].sort((a,b)=>{
+    const x=val(a), y=val(b);
+    return (x<y?-1:x>y?1:0) * sortDir;
+  });
 }
 
 function detailHtml(f){
   const rte = cleanRoute(f.route, f.orig, f.dest);
   const kv = [];
   const add=(k,v)=>{ if(v!=null && v!=='') kv.push(`<div class="k">${k}</div><div class="v">${esc(v)}</div>`); };
-  add('Filed', f.route);
   add('Cruise', f.cruise!=null?flLabel(f.cruise):'');
   add('Alternate', f.altn);
-  add('STAR', f.star);
-  add('Rules', f.rules);
-  add('Equip', f.equip?('/'+f.equip):'');
+  add('Aircraft', [f.type, f.reg].filter(Boolean).join('  ·  '));
+  add('Equipment', f.equip?('/'+f.equip):'');
   add('PBN', f.pbn); add('Nav', f.nav); add('Datalink', f.datalink);
-  add('Runway', f.runway);
+  add('Gate / Rwy', [real(f.gate), real(f.runway)].filter(Boolean).join('  ·  '));
+  add('Rules', f.rules);
   add('Remarks', f.remarks);
-  add('Seen', (f.date||'') + (f.lastSeen?(' '+f.lastSeen):''));
+  add('Seen', [ago(f.lastSeen), f.date].filter(Boolean).join('  ·  '));
+  add('As filed', f.route);
   return `<div class="det">
-      <div class="rte"><b>${esc(f.orig)} ▸ ${esc(f.dest)}</b> &nbsp; ${esc(rte||'DCT')}</div>
+      <div class="rte"><span class="lbl">${esc(f.orig)} ▸ ${esc(f.dest)} · ROUTE</span>${esc(rte||'DCT')}</div>
       <div class="kv">${kv.join('')}</div>
       <div class="actions">
         <a class="btn sb" href="${esc(simbriefUrl(f))}" target="_blank" rel="noopener">Open in SimBrief ▸</a>
-        <button class="btn copy" data-act="copy">Copy plan (VATSIM)</button>
+        <button class="btn copy" type="button" data-act="route">Copy route</button>
+        <button class="btn copy" type="button" data-act="plan">Copy plan (VATSIM)</button>
         <a class="btn" href="/track/${encodeURIComponent(f.callsign)}" target="_blank" rel="noopener">Track live ▸</a>
       </div>
       <pre class="fpl"></pre>
     </div>`;
 }
 
-let RESULTS = [];
-function render(list){
-  RESULTS = list;
-  if(!list.length){ $('out').innerHTML = '<div class="msg">No matching flights in the searched days.<br><b>Try</b> fewer filters, more days, or a busier route.</div>'; return; }
-  $('out').innerHTML = `<table><thead><tr>
-      <th>CALLSIGN</th><th>ROUTE</th><th>TYPE</th><th>REG</th><th>GATE</th><th>CRZ</th>
-    </tr></thead><tbody>${list.map(rowHtml).join('')}</tbody></table>`;
-  document.querySelectorAll('tr.row').forEach(tr => {
-    tr.addEventListener('click', () => toggle(+tr.dataset.i));
-  });
+// ── render: route cards ──────────────────────────────────────────────────────
+function routeCardHtml(g, gi){
+  const n = g.flights.length;
+  const air = tally(g.flights.map(f=>f.airline), 6);
+  const typ = tally(g.flights.map(f=>f.type), 6);
+  const fl  = tally(g.flights.map(f=>f.cruise!=null?flLabel(f.cruise):''), 1)[0];
+  const tags = (arr) => arr.map(([k,c])=>`<span class="tag">${esc(k)}${c>1?` ×${c}`:''}</span>`).join('');
+  return `<div class="rcard" data-g="${gi}">
+    <div class="rhead">
+      <div class="rcount"><div class="n">${n}</div><div class="l">${n===1?'FLIGHT':'FLIGHTS'}</div></div>
+      <div>
+        <div class="rpair"><b>${esc(g.orig)} ▸ ${esc(g.dest)}</b></div>
+        <div class="rtext">${esc(g.rte)}</div>
+        <div class="rmeta">
+          ${air.length?`<span>${tags(air)}</span>`:''}
+          ${typ.length?`<span>${tags(typ)}</span>`:''}
+          ${fl?`<span>usually <b>${esc(fl[0])}</b></span>`:''}
+          <span>last flown <b>${esc(ago(g.best.lastSeen)||'—')}</b></span>
+        </div>
+        <div class="ractions">
+          <a class="btn sb" href="${esc(simbriefUrl(g.best))}" target="_blank" rel="noopener"
+             title="Pre-filled from ${esc(g.best.callsign)}, the most recent flight on this route">Open in SimBrief ▸</a>
+          <button class="btn copy" type="button" data-act="groute">Copy route</button>
+          <button class="btn" type="button" data-act="expand">Show ${n} flight${n===1?'':'s'} ▾</button>
+        </div>
+      </div>
+    </div>
+    <div class="rflights"></div>
+  </div>`;
 }
 
-let openRow = -1;
-function toggle(i){
-  const det = $('det-'+i);
-  if(!det) return;
-  if(openRow===i){ det.style.display='none'; openRow=-1; return; }
-  if(openRow>=0){ const p=$('det-'+openRow); if(p) p.style.display='none'; }
-  det.firstElementChild.innerHTML = detailHtml(RESULTS[i]);
-  det.style.display='';
-  openRow=i;
-  const copyBtn = det.querySelector('[data-act="copy"]');
-  const pre = det.querySelector('.fpl');
-  copyBtn.addEventListener('click', async () => {
-    const txt = fplText(RESULTS[i]);
-    pre.textContent = txt; pre.style.display='block';
-    try { await navigator.clipboard.writeText(txt); copyBtn.textContent='Copied ✓';
-          setTimeout(()=>copyBtn.textContent='Copy plan (VATSIM)',1500); }
-    catch { copyBtn.textContent='Select & copy below'; }
-  });
+// ── state + wiring ───────────────────────────────────────────────────────────
+let RESULTS = [], GROUPS = [], VIEW = 'routes';
+const FLIGHT_BY_ID = new Map();
+
+function render(){
+  FLIGHT_BY_ID.clear();
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.view===VIEW));
+  if(!RESULTS.length){
+    $('out').innerHTML = `<div class="msg">No matching flights in the last ${$('days').value} day${$('days').value==='1'?'':'s'}.<br>
+      <b>Try</b> fewer filters, a longer look-back, or a busier route.</div>`;
+    return;
+  }
+  if(VIEW === 'routes'){
+    $('out').innerHTML = GROUPS.map(routeCardHtml).join('');
+  } else {
+    const list = sortedFlights();
+    list.forEach((f,i)=>FLIGHT_BY_ID.set('f'+i, f));
+    $('out').innerHTML = tableHtml(list, 'f', true);
+  }
 }
 
+// One delegated listener handles every click in the results area.
+$('out').addEventListener('click', async (e) => {
+  const th = e.target.closest('th.sort');
+  if(th){
+    const k = th.dataset.k;
+    if(sortKey===k) sortDir = -sortDir;
+    else { sortKey = k; sortDir = (COLS.find(c=>c.k===k).dir) || 1; }
+    render(); return;
+  }
+  const act = e.target.closest('[data-act]');
+  if(act){
+    const card = act.closest('.rcard');
+    const g = card ? GROUPS[+card.dataset.g] : null;
+    const a = act.dataset.act;
+    if(a==='groute' && g){ copyText(act, g.rte, 'Copy route'); return; }
+    if(a==='expand' && g){
+      const open = card.classList.toggle('open');
+      const box = card.querySelector('.rflights');
+      if(open && !box.innerHTML){
+        const pre = 'g'+card.dataset.g+'_';
+        g.flights.forEach((f,i)=>FLIGHT_BY_ID.set(pre+i, f));
+        box.innerHTML = tableHtml(g.flights, pre, false);
+      }
+      act.textContent = open ? 'Hide flights ▴' : `Show ${g.flights.length} flight${g.flights.length===1?'':'s'} ▾`;
+      return;
+    }
+    const det = act.closest('tr.detail');
+    const f = det && FLIGHT_BY_ID.get(det.dataset.for);
+    if(f && a==='route'){ copyText(act, cleanRoute(f.route, f.orig, f.dest) || 'DCT', 'Copy route'); return; }
+    if(f && a==='plan'){
+      const txt = fplText(f), pre = det.querySelector('.fpl');
+      pre.textContent = txt; pre.style.display='block';
+      copyText(act, txt, 'Copy plan (VATSIM)'); return;
+    }
+    return;
+  }
+  const tr = e.target.closest('tr.row');
+  if(tr && !e.target.closest('a')){
+    const det = tr.parentElement.querySelector(`tr.detail[data-for="${tr.dataset.id}"]`);
+    const f = FLIGHT_BY_ID.get(tr.dataset.id);
+    if(!det || !f) return;
+    const opening = det.hidden;
+    tr.parentElement.querySelectorAll('tr.detail').forEach(d => d.hidden = true);
+    tr.parentElement.querySelectorAll('tr.row.open').forEach(r => r.classList.remove('open'));
+    if(opening){ det.firstElementChild.innerHTML = detailHtml(f); det.hidden = false; tr.classList.add('open'); }
+  }
+});
+
+$('tabs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-view]'); if(!b) return;
+  VIEW = b.dataset.view; render();
+});
+
+function formParams(){
+  const p = new URLSearchParams();
+  for(const k of ['orig','dest','airline','type']){ const v=$(k).value.trim().toUpperCase(); if(v) p.set(k, v); }
+  p.set('days', $('days').value);
+  return p;
+}
+const hasCriteria = p => ['orig','dest','airline','type'].some(k=>p.has(k));
+
+let searchSeq = 0;
 async function search(ev){
   if(ev) ev.preventDefault();
-  const p = new URLSearchParams();
-  const orig=$('orig').value.trim(), dest=$('dest').value.trim(),
-        airline=$('airline').value.trim(), type=$('type').value.trim();
-  if(orig) p.set('orig',orig); if(dest) p.set('dest',dest);
-  if(airline) p.set('airline',airline); if(type) p.set('type',type);
-  p.set('days', $('days').value);
-  if(![...p.keys()].some(k=>['orig','dest','airline','type'].includes(k))){
-    $('status').textContent='Enter at least one of route, airline, or aircraft type.'; return;
+  const p = formParams();
+  if(!hasCriteria(p)){
+    showBar('Enter at least one of <b>FROM</b>, <b>TO</b>, <b>AIRLINE</b> or <b>AIRCRAFT</b>.', false);
+    $('out').innerHTML = examplesHtml(); return;
   }
-  $('go').disabled=true; $('status').textContent='Searching…'; $('out').innerHTML='';
-  // reflect in URL so a search is shareable
-  history.replaceState(null,'', '/dispatch?'+p.toString());
+  const seq = ++searchSeq;
+  $('go').disabled = true;
+  showBar('<span class="spin">◌</span> Searching…', false);
+  $('out').innerHTML = '';
+  history.replaceState(null, '', '/dispatch?' + p.toString());
+  try { localStorage.setItem(LS_KEY, p.toString()); } catch {}
   try {
-    const r = await fetch('/api/dispatch/search?'+p.toString());
+    const q = new URLSearchParams(p); q.set('limit', '200');
+    const r = await fetch('/api/dispatch/search?' + q.toString());
     const data = await r.json();
-    if(data && data.error){ $('status').textContent=data.error; $('go').disabled=false; return; }
-    $('status').textContent = `${data.length} flight${data.length===1?'':'s'} found`;
-    render(data);
-  } catch(e){ $('status').textContent='Search failed: '+e.message; }
-  $('go').disabled=false;
+    if(seq !== searchSeq) return;                       // a newer search superseded this one
+    if(data && data.error){ showBar(esc(data.error), false); return; }
+    RESULTS = Array.isArray(data) ? data : [];
+    GROUPS = groupRoutes(RESULTS);
+    // A single city pair is a route question; anything broader reads better as a flight list.
+    // A city pair is a route question; so is any search where routes clearly repeat. A broad search
+    // (a whole airline, a type) where nearly every flight is its own route reads better as a list.
+    VIEW = ((p.has('orig') && p.has('dest')) || GROUPS.length <= RESULTS.length * 0.6) ? 'routes' : 'flights';
+    const capped = RESULTS.length >= 200 ? ' (showing the 200 most recent — narrow the search for more)' : '';
+    showBar(`<b>${RESULTS.length}</b> flight${RESULTS.length===1?'':'s'} · <b>${GROUPS.length}</b> distinct route${GROUPS.length===1?'':'s'}${capped}`, RESULTS.length>0);
+    render();
+  } catch(err){
+    if(seq === searchSeq) showBar('Search failed: ' + esc(err.message), false);
+  } finally {
+    if(seq === searchSeq) $('go').disabled = false;
+  }
 }
-$('f').addEventListener('submit', search);
+function showBar(html, withTabs){
+  $('bar').hidden = false;
+  $('status').innerHTML = html;
+  $('tabs').hidden = !withTabs;
+}
 
-// hydrate from URL params (shareable searches)
+// ── empty state: example searches ────────────────────────────────────────────
+const EXAMPLES = [
+  { label:'KATL ▸ KLGA', q:{orig:'KATL', dest:'KLGA'} },
+  { label:'KORD ▸ KDCA', q:{orig:'KORD', dest:'KDCA'} },
+  { label:'KJFK ▸ KLAX', q:{orig:'KJFK', dest:'KLAX'} },
+  { label:'KSFO ▸ KSEA', q:{orig:'KSFO', dest:'KSEA'} },
+  { label:'Southwest 737 MAX', q:{airline:'SWA', type:'B38M'} },
+  { label:'Everything out of KDEN', q:{orig:'KDEN'} },
+];
+function examplesHtml(){
+  return `<div class="msg">Find a real route to fly.<br>Pick an example or fill in the form above:
+    <div class="chips" style="justify-content:center;margin-top:14px">${
+      EXAMPLES.map((x,i)=>`<button type="button" class="chip" data-ex="${i}">${esc(x.label)}</button>`).join('')
+    }</div></div>`;
+}
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-ex]'); if(!c) return;
+  const x = EXAMPLES[+c.dataset.ex];
+  for(const k of ['orig','dest','airline','type']) $(k).value = x.q[k] || '';
+  search();
+});
+
+// ── form conveniences ────────────────────────────────────────────────────────
+$('f').addEventListener('submit', search);
+$('swap').addEventListener('click', () => {
+  const o = $('orig').value; $('orig').value = $('dest').value; $('dest').value = o;
+  if(hasCriteria(formParams())) search();
+});
+$('clr').addEventListener('click', () => {
+  for(const k of ['orig','dest','airline','type']) $(k).value = '';
+  $('bar').hidden = true; RESULTS = []; GROUPS = [];
+  $('out').innerHTML = examplesHtml();
+  history.replaceState(null, '', '/dispatch');
+  try { localStorage.removeItem(LS_KEY); } catch {}
+  $('orig').focus();
+});
+// Type in upper case as you go (the API is case-insensitive, this is just for readability).
+for(const k of ['orig','dest','airline','type']){
+  $(k).addEventListener('input', e => {
+    const el = e.target, pos = el.selectionStart;
+    el.value = el.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    try { el.setSelectionRange(pos, pos); } catch {}
+  });
+}
+
+// ── start: URL params win (shareable), else the last search, else examples ──
 (function(){
-  const q=new URLSearchParams(location.search);
-  if(q.get('orig')) $('orig').value=q.get('orig');
-  if(q.get('dest')) $('dest').value=q.get('dest');
-  if(q.get('airline')) $('airline').value=q.get('airline');
-  if(q.get('type')) $('type').value=q.get('type');
-  if(q.get('days')) $('days').value=q.get('days');
-  if([...q.keys()].some(k=>['orig','dest','airline','type'].includes(k))) search();
+  const url = new URLSearchParams(location.search);
+  let q = url;
+  if(!hasCriteria(url)){
+    try { const last = localStorage.getItem(LS_KEY); if(last) q = new URLSearchParams(last); } catch {}
+  }
+  for(const k of ['orig','dest','airline','type']) if(q.get(k)) $(k).value = q.get(k);
+  if(q.get('days')) $('days').value = q.get('days');
+  if(hasCriteria(q)) search(); else $('out').innerHTML = examplesHtml();
 })();
 </script>
+<script src="/shared/frame.js?v=4"></script>
 <script src="/shared/disclaimer.js?v=2"></script>
 </body>
 </html>

@@ -694,7 +694,8 @@ HistoryRoutes.Register(app, serverCtx);
 
 // Flight-sim route finder (dispatch) — real flights by route/airline/type
 DispatchRoutes.Register(app, serverCtx);
-SimbriefRoutes.Register(app, serverCtx);   // SimBrief shared-variant list for the Route Finder
+SimbriefRoutes.Register(app, serverCtx);
+StorageRoutes.Register(app);   // per-dataset retention + disk use (home page STORAGE card)   // SimBrief shared-variant list for the Route Finder
 
 // History symbol: matches client getSymbolChar() logic
 static char GetHistSym(FlightState f)

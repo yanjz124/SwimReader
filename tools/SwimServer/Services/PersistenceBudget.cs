@@ -52,6 +52,13 @@ static class PersistenceBudget
         lock (_lock) GetOrAdd(bucket).Dirs.Add(new DirSpec(path, pattern));
     }
 
+    /// <summary>A bucket's cap in bytes, or null if it has none (or doesn't exist).</summary>
+    public static long? CapBytes(string bucket)
+    {
+        lock (_lock)
+            return _buckets.TryGetValue(bucket, out var b) && b.MaxBytes != long.MaxValue ? b.MaxBytes : null;
+    }
+
     /// <summary>Combined size of one bucket's watched directories, in bytes.</summary>
     public static long CurrentBytes(string bucket)
     {

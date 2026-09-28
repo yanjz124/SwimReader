@@ -26,8 +26,14 @@ static class TdlsHistoryService
                 : msg.Time.ToString("yyyy-MM-dd");
             var filePath = Path.Combine(historyDir, $"{datePart}.jsonl");
 
-            // Same shape as TdlsMessage.ToJson() — already a stable contract used by the live API.
-            var json = JsonSerializer.Serialize(msg.ToJson(), _jsonOpts);
+            // Same shape as TdlsMessage.ToJson(), but the TRUE identity (reveal) plus a "ladd" flag
+            // when the aircraft is on the LADD list at write time. Readers mask on output (Search,
+            // LoadRecent via the live ToJson), like flight-history — so the signed-in reveal can still
+            // see it, and a later list change can't un-hide something that was blocked when recorded.
+            // Lines written before this change are already masked ("LADD") and stay that way.
+            var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(msg.ToJson(reveal: true), _jsonOpts))!.AsObject();
+            if (LaddService.IsBlocked(msg.AircraftId, null)) node["ladd"] = true;
+            var json = node.ToJsonString(_jsonOpts);
             lock (_lock)
             {
                 File.AppendAllText(filePath, json + "\n");
@@ -107,7 +113,8 @@ static class TdlsHistoryService
     /// query (case-insensitive substring on callsign/airport/destination/dataBody),
     /// type ("CPDLC"|"DEPART"|null), airport. Caps results at maxResults.
     /// </summary>
-    public static object Search(string historyDir, string? date, string? query, string? type, string? airport, int maxResults = 500)
+    public static object Search(string historyDir, string? date, string? query, string? type, string? airport,
+        int maxResults = 500, bool reveal = false)
     {
         var results = new List<JsonElement>();
         try
@@ -135,6 +142,8 @@ static class TdlsHistoryService
                 try { doc = JsonDocument.Parse(line); } catch { continue; }
                 var root = doc.RootElement.Clone();
                 doc.Dispose();
+                // Mask BEFORE filtering, so a callsign search can't find a hidden flight by its real id.
+                if (!reveal && IsLadd(root)) root = Masked(root);
 
                 if (t != null && Get(root, "type")?.ToUpperInvariant() != t) continue;
                 if (ap != null && Get(root, "airport")?.ToUpperInvariant() != ap) continue;
@@ -156,6 +165,21 @@ static class TdlsHistoryService
         {
             return new { error = ex.Message, count = 0, results = Array.Empty<object>() };
         }
+    }
+
+    /// <summary>Flagged when written, or on the current list (catches additions since).</summary>
+    public static bool IsLadd(JsonElement r) =>
+        (r.TryGetProperty("ladd", out var f) && f.ValueKind == JsonValueKind.True) ||
+        LaddService.IsBlocked(Get(r, "aircraftId"), null);
+
+    /// <summary>The public view of a LADD record: id → "LADD", CID and the CPDLC text (which embeds
+    /// the call sign) blanked — the same fields TdlsMessage.ToJson masks live.</summary>
+    private static JsonElement Masked(JsonElement r)
+    {
+        var o = System.Text.Json.Nodes.JsonObject.Create(r)!;
+        o["aircraftId"] = LaddService.Label;
+        o.Remove("cid"); o.Remove("dataHeader"); o.Remove("dataBody"); o.Remove("ladd");
+        return JsonSerializer.SerializeToElement(o);
     }
 
     private static string? Get(JsonElement el, string prop) =>

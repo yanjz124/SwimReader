@@ -23,9 +23,12 @@ static class TdlsRoutes
         // History API: list dates and search
         app.MapGet("/api/tdls/history/dates", () =>
             Results.Json(TdlsHistoryService.ListDates(ctx.TdlsHistoryDir), ctx.JsonOpts));
-        app.MapGet("/api/tdls/history", (string? date, string? q, string? type, string? airport, int? limit) =>
-            Results.Json(TdlsHistoryService.Search(ctx.TdlsHistoryDir, date, q, type, airport,
-                Math.Clamp(limit ?? 500, 1, 5000)), ctx.JsonOpts));
+        app.MapGet("/api/tdls/history", (string? date, string? q, string? type, string? airport, int? limit, HttpContext http) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";   // reveal-sensitive (see /api/history)
+            return Results.Json(TdlsHistoryService.Search(ctx.TdlsHistoryDir, date, q, type, airport,
+                Math.Clamp(limit ?? 500, 1, 5000), LaddService.Reveal(http)), ctx.JsonOpts);
+        });
         app.MapGet("/api/tdls/history/airports", (string? date) =>
             Results.Json(TdlsHistoryService.AirportsForDate(ctx.TdlsHistoryDir,
                 date ?? DateTime.UtcNow.ToString("yyyy-MM-dd")), ctx.JsonOpts));

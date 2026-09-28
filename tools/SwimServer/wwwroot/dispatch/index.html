@@ -122,6 +122,7 @@
   .af input { text-transform:uppercase; }
   .af input::placeholder { color:var(--faint); text-transform:none; }
   .af select:focus, .af input:focus { outline:none; border-color:var(--yel); }
+  .af .afvar { grid-column:2 / -1; }
   .af .afinfo { grid-column:1 / -1; font-size:11.5px; color:var(--dim); line-height:1.5; }
   .af .afinfo b { color:#ddd; font-weight:normal; }
   .af .afinfo .warn { color:#d9a066; }
@@ -141,6 +142,7 @@
   }
   @media (max-width: 560px) {
     .af { grid-template-columns:1fr; }
+    .af .afvar { grid-column:auto; }
     .hide-sm { display:none; }
     .rhead { grid-template-columns:48px 1fr; gap:10px; padding:10px 12px; }
     .rcount .n { font-size:18px; }
@@ -253,13 +255,15 @@ const real = v => (v && !/^(N\/?A|UNK|NONE)$/i.test(String(v).trim())) ? v : '';
 // The tail's own ICAO type drives SimBrief's variant (A21N vs A321, B38M vs B738), so picking the
 // right tail lands on the right variant. Swapping variants inside SimBrief afterwards is what used
 // to wipe the registration / SELCAL / Mode-S typed in there.
-function simbriefUrl(f, af){
+function simbriefUrl(f, af, variant){
   const p = new URLSearchParams();
   if(f.airline) p.set('airline', f.airline);
   if(f.fltnum)  p.set('fltnum', f.fltnum);
   if(f.orig)    p.set('orig', f.orig);
   if(f.dest)    p.set('dest', f.dest);
-  const type = (af && af.type) || f.type;
+  // variant = a SimBrief "Variant or Airframe" id (bare ICAO for Default, "pilot_airframe" for a
+  // shared one such as Fenix A321 CFM). Passing it as `type` opens SimBrief on that variant.
+  const type = variant || (af && af.type) || f.type;
   if(type)      p.set('type', type);
   const rte = cleanRoute(f.route, f.orig, f.dest);
   if(rte)       p.set('route', rte);
@@ -458,6 +462,10 @@ function pickerHtml(f){
       </select>
       <input class="afreg" placeholder="any reg, e.g. N107DN" maxlength="8" spellcheck="false" autocomplete="off"
              title="Type any registration and press Enter">
+      <label>VARIANT</label>
+      <select class="afvar" title="SimBrief's Variant or Airframe — chosen here so SimBrief opens on it and keeps the tail data">
+        <option value="">SimBrief default</option>
+      </select>
       <div class="afinfo">${f.reg ? 'Looking up ' + esc(f.reg) + '…' : 'No registration on this flight — pick a tail from the fleet or type one.'}</div>
     </div>`;
 }
@@ -492,20 +500,79 @@ function setAirframe(wrap, reg){
   // A tail not in the DB still gets its registration sent; SELCAL / Mode-S are simply unknown.
   const af = reg ? (rec || { registration: reg, type: f.type }) : null;
   wrap._af = af;
+  wrap._afInDb = !!rec;
+  relink(wrap);
+  loadVariants(wrap, (af && af.type) || f.type);   // the tail's type decides which variants apply
+}
+
+// Recompute the SimBrief link and the "what gets sent" line from the current tail + variant.
+function relink(wrap){
+  const f = FLIGHT_BY_ID.get(wrap.dataset.fid); if(!f) return;
+  const af = wrap._af, variant = wrap._variant || '';
   const link = wrap.querySelector('a.btn.sb');
-  if(link) link.href = simbriefUrl(f, af);
+  if(link) link.href = simbriefUrl(f, af, variant);
   const info = wrap.querySelector('.afinfo');
   if(!info) return;
-  if(!af){ info.innerHTML = 'Sends no tail data — SimBrief uses its default <b>' + esc(f.type||'') + '</b> airframe.'; return; }
+  const vsel = wrap.querySelector('.afvar');
+  const vlabel = variant && vsel && vsel.selectedOptions[0] ? vsel.selectedOptions[0].textContent : '';
+  const vpart = vlabel ? `  ·  variant <b>${esc(vlabel)}</b>` : '';
+  if(!af){ info.innerHTML = 'Sends no tail data' + vpart + (vlabel ? '' : ' — SimBrief uses its default <b>' + esc(f.type||'') + '</b> airframe.'); return; }
   const parts = [`REG <b>${esc(af.registration)}</b>`, `type <b>${esc(af.type||f.type||'?')}</b>`];
   parts.push(af.selcal ? `SELCAL <b>${esc(af.selcal)}</b>` : '<span class="warn">no SELCAL on file</span>');
   parts.push(af.icao24 ? `Mode-S <b>${esc(af.icao24)}</b>` : '<span class="warn">no Mode-S on file</span>');
-  info.innerHTML = 'SimBrief gets ' + parts.join('  ·  ') + (rec ? '' : '  <span class="warn">(tail not in the aircraft DB)</span>');
+  info.innerHTML = 'SimBrief gets ' + parts.join('  ·  ') + vpart
+    + (wrap._afInDb ? '' : '  <span class="warn">(tail not in the aircraft DB)</span>');
+}
+
+// ── SimBrief variants ("Variant or Airframe") ────────────────────────────────
+// Served per type by /api/simbrief/airframes/{type} (SimBrief's shared list, cached server-side).
+// The last variant picked for a type is remembered, so choosing "Fenix A321 CFM" once sticks.
+const variantCache = new Map();
+const VAR_KEY = t => 'dispatch.sbVariant.' + t;
+function getVariants(type){
+  type = (type||'').toUpperCase();
+  if(!type) return Promise.resolve([]);
+  if(!variantCache.has(type)) variantCache.set(type,
+    fetch('/api/simbrief/airframes/' + encodeURIComponent(type)).then(r => r.ok ? r.json() : []).catch(() => []));
+  return variantCache.get(type);
+}
+async function loadVariants(wrap, type){
+  type = (type||'').toUpperCase();
+  if(wrap._varType === type) return;
+  wrap._varType = type;
+  const list = await getVariants(type);
+  if(wrap._varType !== type || !wrap.isConnected) return;    // tail changed again meanwhile
+  const sel = wrap.querySelector('.afvar'); if(!sel) return;
+  if(!list.length){
+    sel.innerHTML = `<option value="">No SimBrief variants for ${esc(type||'this type')} — default</option>`;
+    wrap._variant = ''; relink(wrap); return;
+  }
+  sel.innerHTML = list.map(v =>
+    `<option value="${esc(v.id)}">${esc(v.label)}${v.engines && !v.isDefault ? '  ·  ' + esc(v.engines) : ''}</option>`).join('');
+  let pick = '';
+  try { pick = localStorage.getItem(VAR_KEY(type)) || ''; } catch {}
+  if(!list.some(v => v.id === pick)) pick = (list.find(v => v.isDefault) || list[0]).id;
+  sel.value = pick;
+  wrap._variant = pick;
+  relink(wrap);
 }
 
 $('out').addEventListener('change', e => {
-  const sel = e.target.closest('.afsel'); if(!sel) return;
-  setAirframe(sel.closest('.sbwrap'), sel.value);
+  const sel = e.target.closest('.afsel');
+  if(sel){ setAirframe(sel.closest('.sbwrap'), sel.value); return; }
+  const v = e.target.closest('.afvar');
+  if(v){
+    const wrap = v.closest('.sbwrap');
+    wrap._variant = v.value;
+    try { if(wrap._varType) localStorage.setItem(VAR_KEY(wrap._varType), v.value); } catch {}
+    // Apply the same choice to every other picker showing this type, so one pick covers the page.
+    $('out').querySelectorAll('.sbwrap').forEach(w => {
+      if(w === wrap || w._varType !== wrap._varType) return;
+      const s2 = w.querySelector('.afvar');
+      if(s2 && [...s2.options].some(o => o.value === v.value)){ s2.value = v.value; w._variant = v.value; relink(w); }
+    });
+    relink(wrap);
+  }
 });
 async function pickTypedReg(input){
   const wrap = input.closest('.sbwrap');

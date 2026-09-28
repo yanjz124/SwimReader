@@ -291,6 +291,37 @@ class TdlsBridge
         return (ac.Destination, gate, runway);
     }
 
+    /// <summary>The TDLS departure event for this callsign at this airport closest to <paramref name="near"/>
+    /// (within <paramref name="window"/>). Unlike FindAircraft this won't hand back a different day's gate
+    /// for a callsign that flies every day. Airport may be ICAO or FAA (KATL / ATL).</summary>
+    public (string? gate, string? runway, DateTime time)? FindDepartureNear(string airport, string callsign,
+        DateTime near, TimeSpan window)
+    {
+        if (string.IsNullOrEmpty(airport) || string.IsNullOrEmpty(callsign)) return null;
+        var apt = airport.ToUpperInvariant();
+        ConcurrentDictionary<string, TdlsAircraft>? aircraft = null;
+        foreach (var k in new[] { apt, "K" + apt, apt.Length == 4 ? apt[1..] : apt })
+            if (_state.TryGetValue(k, out aircraft)) break;
+        if (aircraft is null) return null;
+        if (!aircraft.TryGetValue(callsign, out var ac))
+        {
+            var key = aircraft.Keys.FirstOrDefault(k => string.Equals(k, callsign, StringComparison.OrdinalIgnoreCase));
+            if (key is null || !aircraft.TryGetValue(key, out ac)) return null;
+        }
+        TdlsMessage? best = null; double bestGap = double.MaxValue;
+        lock (ac.Messages)
+        {
+            foreach (var m in ac.Messages)
+            {
+                if (m.Type != "DEPART" || string.IsNullOrEmpty(m.Gate)) continue;
+                var t = m.TakeoffTime ?? m.TaxiTime ?? m.Time;
+                var gap = Math.Abs((t - near).TotalMinutes);
+                if (gap <= window.TotalMinutes && gap < bestGap) { best = m; bestGap = gap; }
+            }
+        }
+        return best is null ? null : (best.Gate, best.TakeoffRunway, best.TakeoffTime ?? best.TaxiTime ?? best.Time);
+    }
+
     // ── REST helpers ───────────────────────────────────────────────────────────
 
     /// <summary>Airport directory: [{airport, aircraftCount, messageCount}]</summary>

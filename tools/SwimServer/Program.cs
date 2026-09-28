@@ -1098,7 +1098,8 @@ var purgeTimer = new Timer(_ =>
             // Persist to daily history file before discarding. Grab the live TDLS gate now —
             // the route finder searches this history days later, long after TDLS forgets it.
             var histTd = tdls.FindAircraft(f.Origin ?? "", f.Callsign ?? "");
-            Task.Run(() => FlightHistoryService.Save(f, historyDir, historyJsonOpts, histTd?.gate, histTd?.runway));
+            var histGt = tfms.GateTimesFor(f.Callsign ?? "", f.Origin);
+            Task.Run(() => FlightHistoryService.Save(f, historyDir, historyJsonOpts, histTd?.gate, histTd?.runway, histGt));
             aircraftDb.Observe(f);
         }
         // Expire point-out data after 3 minutes (SFDPS doesn't send clear signals)
@@ -1169,7 +1170,8 @@ var purgeTimer = new Timer(_ =>
                 eramRecorder.RecordRemove(new { gufi }, nowUtc);
                 Broadcast(new WsMsg("remove", new { gufi }));
                 var rmTd = tdls.FindAircraft(removed.Origin ?? "", removed.Callsign ?? "");
-                Task.Run(() => FlightHistoryService.Save(removed, historyDir, historyJsonOpts, rmTd?.gate, rmTd?.runway));
+                var rmGt = tfms.GateTimesFor(removed.Callsign ?? "", removed.Origin);
+                Task.Run(() => FlightHistoryService.Save(removed, historyDir, historyJsonOpts, rmTd?.gate, rmTd?.runway, rmGt));
                 aircraftDb.Observe(removed);
                 retired++;
             }

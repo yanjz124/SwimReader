@@ -47,6 +47,7 @@ static class DispatchRoutes
 
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // callsign dedup
             var results = new List<object>();
+            var pending = new List<(int idx, string reg, string callsign, string dest, string date, DateTime? arr)>();
 
             foreach (var date in dates)
             {
@@ -83,18 +84,38 @@ static class DispatchRoutes
 
                     var origin = Str(el, "origin");
                     var destination = Str(el, "destination");
-                    // Gate/runway: prefer what was captured into history at save time (works for
-                    // old flights); fall back to live TDLS for flights still in the current session.
-                    string? gate = Str(el, "gate") is { Length: > 0 } sg ? sg : null;
-                    string? runway = Str(el, "runway") is { Length: > 0 } sr ? sr : null;
-                    if (gate is null)
+                    var depStr = Str(el, "actualDepartureTime");
+                    DateTime? depT = Time(depStr);
+                    // Gate/runway: the TDLS departure event nearest this flight's departure, from the
+                    // persisted TDLS history (live TDLS forgets everything on restart); else what was
+                    // captured into history at save time; else live TDLS.
+                    string? gate = null, runway = null;
+                    var near = depT ?? Time(Str(el, "lastSeen"));
+                    if (near is { } n0 && TdlsGateIndex.Find(ctx.TdlsHistoryDir, origin, callsign, n0,
+                            TimeSpan.FromHours(depT is null ? 10 : 3)) is { } tg)
+                    { gate = tg.Gate; runway = tg.Runway; }
+                    gate ??= Str(el, "gate") is { Length: > 0 } sg ? sg : null;
+                    runway ??= Str(el, "runway") is { Length: > 0 } sr ? sr : null;
+                    if (gate is null && near is { } n1 &&
+                        ctx.Tdls.FindDepartureNear(origin, callsign, n1, TimeSpan.FromHours(3)) is { } lt)
+                    { gate = lt.gate; runway ??= lt.runway; }
+
+                    // Airline CDM gate times (TFMS): captured into history at save time, or live.
+                    string gOut = Str(el, "gateOut"), gIn = Str(el, "gateIn"),
+                           gOutS = Str(el, "gateOutSched"), gInS = Str(el, "gateInSched");
+                    if (gOut.Length + gIn.Length + gOutS.Length + gInS.Length == 0 &&
+                        ctx.Tfms.GateTimesFor(callsign, origin) is { } gt &&
+                        (depT is null || gt.SchedOut is null || Math.Abs((gt.SchedOut.Value - depT.Value).TotalHours) < 12))
                     {
-                        var td = ctx.Tdls.FindAircraft(origin, callsign);
-                        if (td is { } t) { gate = t.gate; runway ??= t.runway; }
+                        gOut = Iso(gt.Out); gIn = Iso(gt.In); gOutS = Iso(gt.SchedOut); gInS = Iso(gt.SchedIn);
                     }
 
                     seen.Add(callsign);
                     var (airl, fltnum) = ladd ? ("", "") : SplitCallsign(callsign);
+                    var eta = Str(el, "eta");
+                    if (!ladd && registration.Length > 0 && destination.Length > 0)
+                        pending.Add((results.Count, registration, callsign, destination, date!,
+                            Time(gIn) ?? Time(eta) ?? depT ?? near));
                     results.Add(new
                     {
                         callsign = ladd ? LaddService.Label : callsign,
@@ -121,18 +142,109 @@ static class DispatchRoutes
                         datalink = Str(el, "dataLinkCode"),
                         gate,
                         runway,
+                        arrGate = (string?)null,     // filled below (inferred from the next leg)
+                        arrGateFrom = (string?)null,
                         date,
                         // Timetable times: actual departure (SFDPS, ~9 in 10 flights) and ETA.
-                        dep = Str(el, "actualDepartureTime"),
-                        eta = Str(el, "eta"),
-                        lastSeen = Str(el, "lastSeen")
+                        dep = depStr,
+                        eta,
+                        lastSeen = Str(el, "lastSeen"),
+                        // TFMS airline gate times: actual out/in, and scheduled out/in
+                        gateOut = gOut, gateIn = gIn, gateOutSched = gOutS, gateInSched = gInS,
                     });
                 }
             }
 
-            return Results.Json(results, ctx.JsonOpts);
+            // Arrival gate. No feed publishes arrival gates, so infer it from the airframe's NEXT
+            // departure from the destination (the turn): same tail, leaving that airport within 12 h of
+            // arriving — its TDLS departure gate is very likely where it parked. Only returned when the
+            // next leg's gate is actually known.
+            var rows = results.Cast<object>().ToList();
+            if (pending.Count > 0)
+            {
+                var inferred = InferArrivalGates(ctx, dir, pending);
+                foreach (var (idx, g, via) in inferred)
+                    rows[idx] = WithArrGate(results[idx], g, via, ctx.JsonOpts);
+            }
+
+            return Results.Json(rows, ctx.JsonOpts);
         });
     }
+
+    private static object WithArrGate(object row, string gate, string via, JsonSerializerOptions opts)
+    {
+        // Anonymous types are immutable — round-trip through a JSON node to set two fields.
+        var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(row, opts))!.AsObject();
+        node["arrGate"] = gate; node["arrGateFrom"] = via;
+        return node;
+    }
+
+    private static List<(int idx, string gate, string via)> InferArrivalGates(ServerContext ctx, string dir,
+        List<(int idx, string reg, string callsign, string dest, string date, DateTime? arr)> pending)
+    {
+        var outp = new List<(int, string, string)>();
+        var regs = pending.Select(p => p.reg).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Next legs still live (not yet purged into history): the flight plan is on file, and TDLS may
+        // already have its departure gate.
+        var live = ctx.Flights.Values
+            .Where(f => f.Registration is { Length: > 0 } r && regs.Contains(r) && !string.IsNullOrEmpty(f.Callsign))
+            .Select(f => (reg: f.Registration!, cs: f.Callsign!, orig: f.Origin ?? "",
+                          t: Time(f.ActualDepartureTime) ?? (DateTime?)null))
+            .ToList();
+
+        // Next legs already in history: that day's file and the next one.
+        var dates = pending.SelectMany(p => new[] { p.date, NextDate(p.date) }).Distinct().ToList();
+        var hist = new List<(string reg, string cs, string orig, DateTime? t, string gate)>();
+        foreach (var date in dates)
+        {
+            if (!File.Exists(Path.Combine(dir, date + ".jsonl"))) continue;
+            var idx = FlightHistoryIndex.GetOrBuild(dir, date);
+            var cand = idx.Where(e => e.Registration.Length > 0 && regs.Contains(e.Registration)).Take(2000).ToList();
+            if (cand.Count == 0) continue;
+            foreach (var el in FlightHistoryIndex.ReadMatching(dir, date, cand, 2000))
+                hist.Add((Str(el, "registration"), Str(el, "callsign"), Str(el, "origin"),
+                          Time(Str(el, "actualDepartureTime")) ?? Time(Str(el, "lastSeen")), Str(el, "gate")));
+        }
+
+        foreach (var p in pending)
+        {
+            if (p.arr is not { } arr) continue;
+            var lo = arr.AddMinutes(-20); var hi = arr.AddHours(12);
+            // Earliest departure of this tail from the destination after it arrived.
+            var nexts = hist.Where(h => h.reg.Equals(p.reg, StringComparison.OrdinalIgnoreCase) && AirportMatch(h.orig, p.dest)
+                                        && h.t is { } t && t > lo && t < hi)
+                            .Select(h => (h.cs, t: h.t!.Value, h.gate))
+                .Concat(live.Where(l => l.reg.Equals(p.reg, StringComparison.OrdinalIgnoreCase) && AirportMatch(l.orig, p.dest)
+                                        && (l.t is null ? DateTime.UtcNow < hi : l.t > lo && l.t < hi))
+                            .Select(l => (l.cs, t: l.t ?? DateTime.UtcNow, gate: "")))
+                .OrderBy(x => x.t)
+                .ToList();
+            foreach (var nx in nexts)
+            {
+                var g = TdlsGateIndex.Find(ctx.TdlsHistoryDir, p.dest, nx.cs, nx.t, TimeSpan.FromHours(4))?.Gate
+                        ?? ctx.Tdls.FindDepartureNear(p.dest, nx.cs, nx.t, TimeSpan.FromHours(4))?.gate
+                        ?? (nx.gate.Length > 0 ? nx.gate : null);
+                if (g is { Length: > 0 } && !g.Equals("N/A", StringComparison.OrdinalIgnoreCase))
+                {
+                    outp.Add((p.idx, g, nx.cs));
+                    break;
+                }
+                // The very next leg had no gate — don't reach past it to a later turn.
+                break;
+            }
+        }
+        return outp;
+    }
+
+    private static string NextDate(string date) =>
+        DateTime.TryParse(date, out var d) ? d.AddDays(1).ToString("yyyy-MM-dd") : date;
+
+    private static DateTime? Time(string? s) =>
+        !string.IsNullOrEmpty(s) && DateTime.TryParse(s, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var t)
+            ? t : null;
+
+    private static string Iso(DateTime? t) => t?.ToString("o") ?? "";
 
     // ── helpers ──────────────────────────────────────────────────────────────
 

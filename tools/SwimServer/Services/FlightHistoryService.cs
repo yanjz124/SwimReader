@@ -30,7 +30,7 @@ static class FlightHistoryService
     // TDLS when SFDPS purges it, but won't be days later when the route finder searches
     // history, so we bake it in now (SFDPS itself carries no gate).
     public static void Save(FlightState f, string historyDir, JsonSerializerOptions historyJsonOpts,
-        string? gate = null, string? runway = null)
+        string? gate = null, string? runway = null, TfmsBridge.GateTimes? gateTimes = null)
     {
         try
         {
@@ -59,6 +59,9 @@ static class FlightHistoryService
                 f.CoordinationFix, f.CoordinationTime,
                 f.AlternateAerodrome,
                 gate, runway,   // captured from live TDLS at save time (see param note)
+                // TFMS airline CDM times: actual gate out/in and the scheduled ones (captured the same way).
+                GateOut = gateTimes?.Out?.ToString("o"), GateIn = gateTimes?.In?.ToString("o"),
+                GateOutSched = gateTimes?.SchedOut?.ToString("o"), GateInSched = gateTimes?.SchedIn?.ToString("o"),
                 LastSeen = f.LastSeen.ToString("o"),
                 Events = f.GetAllEvents().Select(e => new { e.Time, e.Source, e.Center, e.Summary }).ToArray()
             };

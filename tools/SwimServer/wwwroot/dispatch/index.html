@@ -82,6 +82,8 @@
   .od .arw { color:var(--dim); margin:0 3px; }
   .type { color:#dcdcae; }
   .gate { color:var(--ok); }
+  .gate.inf { color:#8fbf8f; }
+  .gate.inf::after { content:'*'; color:var(--dim); margin-left:1px; }
   .muted { color:var(--dim); }
   .pill { display:inline-block; font-size:10px; padding:1px 6px; border-radius:10px; background:#20202a;
     color:var(--dim); margin-left:4px; }
@@ -180,7 +182,7 @@
 
   <div class="foot">
     A timetable of real flights from recent SWIM/SFDPS traffic: when each one departed (UTC), who flew it, the type and
-    tail, and the gate when <code>TDLS</code> saw it. Use the <b>AIRLINE</b> and <b>TYPE</b> chips to narrow the list —
+    tail, and the gates: departure gate from <code>TDLS</code>, and an arrival gate marked <b>*</b> inferred from where the same airframe next departed (no feed publishes arrival gates). Gate out/in times come from <code>TFMS</code> airline data. Use the <b>AIRLINE</b> and <b>TYPE</b> chips to narrow the list —
     pick several in a row to include them all, or one in each row to require both. Click a flight for its filed route
     and how many others filed the same routing. <b>Open in SimBrief</b> pre-fills the route, cruise, tail (reg, SELCAL,
     Mode-S) and the SimBrief variant you choose; SimBrief can then prefile to <b>VATSIM</b>. <b>Copy plan</b> gives an
@@ -332,6 +334,10 @@ const airlineName = code => AIRLINE_NAMES.get(code) || '';
 function rowHtml(f, id){
   const dep = Date.parse(f.dep);
   const gate = real(f.gate) ? `<span class="gate">${esc(f.gate)}</span>` : '<span class="muted">—</span>';
+  // Arrival gate is inferred from the tail's next departure (see detail), so it's marked with *.
+  const agate = real(f.arrGate)
+    ? `<span class="gate inf" title="Likely — ${esc(f.reg)} next departed this gate as ${esc(f.arrGateFrom)}">${esc(f.arrGate)}</span>`
+    : '<span class="muted">—</span>';
   const eta = Date.parse(f.eta) ? hhmm(Date.parse(f.eta)) : '';
   const name = airlineName(f.airline);
   return `<tr class="row" data-id="${id}">
@@ -342,9 +348,10 @@ function rowHtml(f, id){
       <td class="type">${esc(f.type||'—')}</td>
       <td class="muted hide-sm">${esc(f.reg||'—')}</td>
       <td class="hide-sm">${gate}</td>
+      <td class="hide-sm">${agate}</td>
       <td class="muted hide-sm">${eta || '—'}</td>
     </tr>
-    <tr class="detail" data-for="${id}" hidden><td colspan="8"></td></tr>`;
+    <tr class="detail" data-for="${id}" hidden><td colspan="9"></td></tr>`;
 }
 
 function detailHtml(f, fid){
@@ -361,7 +368,16 @@ function detailHtml(f, fid){
   add('Aircraft', [f.type, f.reg].filter(Boolean).join('  ·  '));
   add('Equipment', f.equip?('/'+f.equip):'');
   add('PBN', f.pbn); add('Nav', f.nav); add('Datalink', f.datalink);
-  add('Gate / Rwy', [real(f.gate), real(f.runway)].filter(Boolean).join('  ·  '));
+  add('Dep gate / Rwy', [real(f.gate), real(f.runway)].filter(Boolean).join('  ·  '));
+  add('Arr gate', real(f.arrGate) ? `${f.arrGate}  (likely — ${f.reg} next departed from it as ${f.arrGateFrom})` : '');
+  // TFMS airline CDM times: actual gate out/in, with the scheduled time alongside.
+  const gt = (act, sch) => {
+    const a = Date.parse(act), s = Date.parse(sch);
+    if(!a && !s) return '';
+    return a ? hhmm(a) + 'Z' + (s ? `  (sched ${hhmm(s)}Z)` : '') : `sched ${hhmm(s)}Z`;
+  };
+  add('Gate out', gt(f.gateOut, f.gateOutSched));
+  add('Gate in', gt(f.gateIn, f.gateInSched));
   add('Rules', f.rules);
   add('Remarks', f.remarks);
   add('As filed', f.route);
@@ -604,12 +620,12 @@ function render(){
   let i = 0, body = '';
   for(const k of days){
     const flights = byDay.get(k).sort((a,b) => depMs(a) - depMs(b));
-    body += `<tr class="day"><td colspan="8">${dayLabel(Date.parse(k + 'T12:00:00Z'))}<span class="muted"> · ${flights.length} flight${flights.length===1?'':'s'}</span></td></tr>`;
+    body += `<tr class="day"><td colspan="9">${dayLabel(Date.parse(k + 'T12:00:00Z'))}<span class="muted"> · ${flights.length} flight${flights.length===1?'':'s'}</span></td></tr>`;
     for(const f of flights){ const id = 'f' + (i++); FLIGHT_BY_ID.set(id, f); body += rowHtml(f, id); }
   }
   $('out').innerHTML = `<div class="tblwrap"><table><thead><tr>
       <th>DEP Z</th><th>FLIGHT</th><th>AIRLINE</th><th>ROUTE</th><th>TYPE</th>
-      <th class="hide-sm">REG</th><th class="hide-sm">GATE</th><th class="hide-sm">ETA Z</th>
+      <th class="hide-sm">REG</th><th class="hide-sm">DEP GATE</th><th class="hide-sm" title="Inferred from the airframe's next departure">ARR GATE</th><th class="hide-sm">ETA Z</th>
     </tr></thead><tbody>${body}</tbody></table></div>`;
 }
 

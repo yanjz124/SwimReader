@@ -28,6 +28,10 @@ class TfmsBridge
     private readonly ConcurrentDictionary<string, TfmsTmi> _tmis = new();
     // callsign → flightRef key (for O(1) lookup by callsign)
     private readonly ConcurrentDictionary<string, string> _callsignIndex = new(StringComparer.OrdinalIgnoreCase);
+    // CDM gate times of flights purged in the last few hours. TFMS drops a flight 30 min after its last
+    // message but SFDPS keeps it 60 min, so when the flight is written to history (with its gate times,
+    // for the Route Finder) the TFMS record is already gone — this holds its times long enough.
+    private readonly ConcurrentDictionary<string, (GateTimes t, DateTime at)> _recentGateTimes = new(StringComparer.OrdinalIgnoreCase);
     // flights modified since last flush
     private readonly ConcurrentDictionary<string, byte> _dirtyFlights = new();
     // TMIs modified since last flush
@@ -1033,6 +1037,8 @@ class TfmsBridge
             if (f.LastSeen < cutoff)
             {
                 _flights.TryRemove(key, out _);
+                if (f.Callsign is not null && ToGateTimes(f) is { } gt)
+                    _recentGateTimes[f.Callsign] = (gt, DateTime.UtcNow);
                 // Only remove the callsign index entry if it still points to THIS flight.
                 // Another flight may have reused the callsign and rebound the index.
                 if (f.Callsign is not null
@@ -1043,6 +1049,10 @@ class TfmsBridge
                 }
             }
         }
+
+        var gtCutoff = DateTime.UtcNow.AddHours(-3);
+        foreach (var (cs, v) in _recentGateTimes)
+            if (v.at < gtCutoff) _recentGateTimes.TryRemove(cs, out _);
 
         // Purge TMIs not updated in 24 hours
         var tmiCutoff = DateTime.UtcNow.AddHours(-24);
@@ -1204,6 +1214,33 @@ class TfmsBridge
         if (_callsignIndex.TryGetValue(callsign, out var key) && _flights.TryGetValue(key, out var f))
             return f;
         return null;
+    }
+
+    /// <summary>Airline CDM gate times: actual out/in (OOOI) and the scheduled gate departure/arrival.</summary>
+    public sealed record GateTimes(string? Dep, string? Arr, DateTime? Out, DateTime? In, DateTime? SchedOut, DateTime? SchedIn);
+
+    private static GateTimes? ToGateTimes(TfmsFlight f) =>
+        f.AirlineOutTime is null && f.AirlineInTime is null && f.GateDeparture is null && f.GateArrival is null
+            ? null
+            : new GateTimes(f.DepArpt, f.ArrArpt, f.AirlineOutTime, f.AirlineInTime, f.GateDeparture, f.GateArrival);
+
+    /// <summary>Gate times for a flight by callsign + departure airport — live TFMS first, then flights
+    /// purged in the last 3 h. Null when TFMS has none or the record is for another origin.</summary>
+    public GateTimes? GateTimesFor(string callsign, string? origin)
+    {
+        if (string.IsNullOrEmpty(callsign)) return null;
+        GateTimes? gt = null;
+        if (FindByCallsign(callsign, origin ?? "") is { } f) gt = ToGateTimes(f);
+        else if (_recentGateTimes.TryGetValue(callsign, out var v)) gt = v.t;
+        if (gt is null) return null;
+        if (!string.IsNullOrEmpty(origin) && gt.Dep is { Length: > 0 } d && !SameAirport(d, origin)) return null;
+        return gt;
+    }
+
+    private static bool SameAirport(string a, string b)
+    {
+        static string S(string x) => x.Length == 4 && (x[0] == 'K' || x[0] == 'P') ? x[1..] : x;
+        return S(a.ToUpperInvariant()) == S(b.ToUpperInvariant());
     }
 
     /// <summary>Find TFMS flight by callsign, preferring one whose origin or destination

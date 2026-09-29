@@ -348,6 +348,234 @@ function setWrap(wrap, pos, forceVisible) {
 const dbPositions = {};  // trackId → 'N'|'NE'|..., default NE
 const hiddenDbs = new Set();  // trackIds with hidden data blocks
 
+// ── Auto offset (optional, OFF by default) ──────────────────────────────────
+// Not an ASDE-X feature — real controllers place blocks by hand. Same idea as the
+// ERAM scope's auto offset: when a data block would sit on top of another block or
+// another target, move it to a different compass point. Two rules keep it calm:
+//   1. Least movement — a block only moves when it is actually in conflict, then
+//      takes the first free slot in preference order and is held there for
+//      AUTO_OFF_HOLD_MS before it may move again.
+//   2. Prefer abeam — candidates are ranked by how close they are to abeam the
+//      aircraft's own heading (its left/right, not the screen's), which reads much
+//      better than blocks scattered ahead of and behind the target.
+// Unlike ERAM this DOES place stationary targets (using a fixed fallback order).
+// On the surface most traffic is parked, and a gate apron is exactly where blocks
+// pile up worst, so skipping them would miss the main thing this is for.
+let autoOffset = localStorage.getItem('asdex-auto-offset') === 'on';
+const autoDbPositions = {};   // trackId → auto-assigned compass point
+const autoDbMovedAt   = {};   // trackId → ms of last auto move (thrash guard)
+const AUTO_OFF_HOLD_MS = 10000;  // min time a block stays put once placed
+const AUTO_OFF_PAD     = 2;      // px of clearance required around a block
+const AUTO_OFF_MAX     = 300;    // give up above this many targets on screen
+// Order used when a target has no usable heading (parked, or heading not reported).
+const AUTO_OFF_NO_HDG = ['NE', 'SE', 'NW', 'SW', 'E', 'W', 'N', 'S'];
+// Unit vector per compass point in icon space (x right, y down).
+const DIR_VEC = {
+    N: [0, -1], NE: [0.707, -0.707], E: [1, 0], SE: [0.707, 0.707],
+    S: [0, 1], SW: [-0.707, 0.707], W: [-1, 0], NW: [-0.707, -0.707],
+};
+// Fraction of the block's OWN size that each DB_POS transform shifts it by, so a
+// candidate's rectangle can be computed without touching the DOM.
+const DB_ANCHOR = {
+    N: [-0.5, -1], NE: [0, -1], E: [0, -0.5], SE: [0, 0],
+    S: [-0.5, 0], SW: [-1, 0], W: [-1, -0.5], NW: [-1, -1],
+};
+
+// The position a block is actually drawn at: a hand-placed one always wins, then
+// the auto choice, then the NE default.
+function effDbPos(tid) {
+    return dbPositions[tid] || autoDbPositions[tid] || 'NE';
+}
+
+// Container-space rect a block would occupy at `dir`. `pt` is the target's
+// container point; the icon's anchor is (9,9), so the icon's origin is pt-(9,9).
+function dbRectFor(dir, pt, w, h) {
+    const p = DB_POS[dir], a = DB_ANCHOR[dir];
+    return { x: pt.x - 9 + p.wl + a[0] * w, y: pt.y - 9 + p.wt + a[1] * h, w, h };
+}
+
+function rectsOverlap(a, b) {
+    return a.x - AUTO_OFF_PAD < b.x + b.w && a.x + a.w + AUTO_OFF_PAD > b.x &&
+           a.y - AUTO_OFF_PAD < b.y + b.h && a.y + a.h + AUTO_OFF_PAD > b.y;
+}
+
+// Overlapping area in px², same padding convention as rectsOverlap (`a` inflated).
+// Only used to rank slots once the screen is saturated and nothing is free.
+function overlapArea(a, b) {
+    const w = Math.min(a.x + a.w + AUTO_OFF_PAD, b.x + b.w) - Math.max(a.x - AUTO_OFF_PAD, b.x);
+    const h = Math.min(a.y + a.h + AUTO_OFF_PAD, b.y + b.h) - Math.max(a.y - AUTO_OFF_PAD, b.y);
+    return (w > 0 && h > 0) ? w * h : 0;
+}
+
+// Compass points ranked by how close they are to abeam the target's heading, ties
+// breaking to its right. Null when it isn't moving — heading is meaningless then.
+// Headings are true/map-relative and the icon rotates with the map, so map rotation
+// needs no correction here.
+function autoOffsetCandidates(t) {
+    if (t.hdg == null || !(t.spdKts > 3)) return null;
+    const rad = t.hdg * Math.PI / 180;
+    const dx = Math.sin(rad), dy = -Math.cos(rad);   // icon space: north is -y
+    const rx = -dy, ry = dx;                         // rotate +90° → right of track
+    return DB_ORDERS
+        .map(d => {
+            const v = DIR_VEC[d];
+            const dot = v[0] * rx + v[1] * ry;
+            return { d, abeam: Math.abs(dot), right: dot > 0 ? 1 : 0 };
+        })
+        .sort((a, b) => (b.abeam - a.abeam) || (b.right - a.right))
+        .map(c => c.d);
+}
+
+// Move one block in the DOM without rebuilding the whole icon (setIcon would drop
+// the halo and cost a full re-render). Mirrors what the drag handler does.
+function applyDbPos(tid, dir) {
+    const el = markers[tid] && markers[tid].getElement();
+    if (!el) return;
+    const pos = DB_POS[dir];
+    const wrap = el.querySelector('.db-wrap');
+    if (wrap) setWrap(wrap, pos, false);
+    const line = el.querySelector('.ldr line');
+    if (line) { line.setAttribute('x2', pos.lx); line.setAttribute('y2', pos.ly); }
+}
+
+// One placement pass over every visible data block. Reads the DOM first and writes
+// after, so the whole pass costs one reflow rather than one per block.
+function autoOffsetPass() {
+    if (!autoOffset) return;
+    const ids = Object.keys(markers);
+    if (!ids.length || ids.length > AUTO_OFF_MAX) return;   // CPU guard, not a display policy
+    const now = performance.now();
+
+    // ── measure ──
+    const movable = [], fixed = [];
+    for (const tid of ids) {
+        const t = trackData[tid];
+        if (!t || t.lat == null) continue;
+        const pt = map.latLngToContainerPoint([t.lat, t.lon]);
+        // Every target symbol is an obstacle, block or not — an offset block should
+        // never be parked on top of another return.
+        fixed.push({ x: pt.x - 9, y: pt.y - 9, w: 18, h: 18 });
+        if (hiddenDbs.has(tid)) continue;
+        const el = markers[tid].getElement();
+        const db = el && el.querySelector('.db');
+        if (!db) continue;                       // unknown target / no callsign → no block
+        const w = db.offsetWidth, h = db.offsetHeight;
+        if (!w || !h) continue;                  // not laid out yet
+        // A block the controller placed by hand is immovable; auto blocks work
+        // around it, never the other way round.
+        if (dbPositions[tid]) fixed.push(dbRectFor(dbPositions[tid], pt, w, h));
+        else movable.push({ tid, t, pt, w, h });
+    }
+    if (!movable.length) return;
+
+    // ── place ──
+    // Deterministic order, so who yields to whom doesn't change as tracks come and go.
+    movable.sort((a, b) => (a.tid < b.tid ? -1 : a.tid > b.tid ? 1 : 0));
+    const placed = fixed.slice();
+    const moved = [];
+
+    const firstFree = (e, order) => {
+        for (const dir of order) {
+            const r = dbRectFor(dir, e.pt, e.w, e.h);
+            if (!placed.some(o => rectsOverlap(r, o))) return { dir, r };
+        }
+        return null;
+    };
+    // Saturation fallback: when nothing is free (zoomed out, heavy traffic — overlap
+    // is then unavoidable), take the slot that overlaps least instead of dumping the
+    // block on its preferred side regardless. Ties keep the earlier, more-abeam slot.
+    const leastOverlap = (e, order) => {
+        let best = null;
+        for (const dir of order) {
+            const r = dbRectFor(dir, e.pt, e.w, e.h);
+            let area = 0;
+            for (const o of placed) area += overlapArea(r, o);
+            if (!best || area < best.area) best = { dir, r, area };
+        }
+        return best;
+    };
+    const areaAt = (rect) => {
+        let area = 0;
+        for (const o of placed) area += overlapArea(rect, o);
+        return area;
+    };
+
+    for (const e of movable) {
+        const cands = autoOffsetCandidates(e.t);
+        const order = cands || AUTO_OFF_NO_HDG;
+        const cur = autoDbPositions[e.tid];
+
+        // First sight: park it straight away rather than leaving it stacked at the
+        // NE default until something happens to collide with it.
+        if (!cur) {
+            const pick = firstFree(e, order) || leastOverlap(e, order);
+            autoDbPositions[e.tid] = pick.dir;
+            autoDbMovedAt[e.tid] = now;
+            placed.push(pick.r);
+            moved.push([e.tid, pick.dir]);
+            continue;
+        }
+
+        const curRect = dbRectFor(cur, e.pt, e.w, e.h);
+        if (!placed.some(r => rectsOverlap(curRect, r))) {
+            placed.push(curRect);               // still clear — leave it exactly where it is
+            continue;
+        }
+        // In conflict, but hold anything placed recently so blocks don't chase each
+        // other around the target on every update.
+        if (now - (autoDbMovedAt[e.tid] || 0) < AUTO_OFF_HOLD_MS) {
+            placed.push(curRect);
+            continue;
+        }
+        let best = firstFree(e, order);
+        if (!best) {
+            // Saturated: only worth relocating if it measurably reduces the overlap.
+            // Swapping one bad slot for an equally bad one is pure churn.
+            const alt = leastOverlap(e, order);
+            if (!alt || alt.area >= areaAt(curRect)) { placed.push(curRect); continue; }
+            best = alt;
+        }
+        if (best.dir !== cur) {
+            autoDbMovedAt[e.tid] = now;
+            moved.push([e.tid, best.dir]);
+        }
+        autoDbPositions[e.tid] = best.dir;
+        placed.push(best.r);
+    }
+
+    // ── write ──
+    for (const [tid, dir] of moved) applyDbPos(tid, dir);
+}
+
+// Coalesce to one pass per frame — batches, map moves and zooms can all land together.
+let autoOffsetRaf = 0;
+function scheduleAutoOffset() {
+    if (!autoOffset || autoOffsetRaf) return;
+    autoOffsetRaf = requestAnimationFrame(() => { autoOffsetRaf = 0; autoOffsetPass(); });
+}
+
+// Drop every auto choice and put the blocks back where they would sit without it.
+function clearAutoOffset() {
+    const tids = Object.keys(autoDbPositions);
+    for (const tid of tids) { delete autoDbPositions[tid]; delete autoDbMovedAt[tid]; }
+    for (const tid of tids) applyDbPos(tid, effDbPos(tid));
+}
+
+// OFFSET (auto offset) toggle — see the auto-offset block above.
+const aoBtn = document.getElementById('ao-toggle');
+if (aoBtn) {
+    if (autoOffset) aoBtn.classList.add('on');
+    aoBtn.addEventListener('click', () => {
+        autoOffset = !autoOffset;
+        aoBtn.classList.toggle('on', autoOffset);
+        localStorage.setItem('asdex-auto-offset', autoOffset ? 'on' : 'off');
+        if (autoOffset) autoOffsetPass();
+        else clearAutoOffset();
+    });
+}
+// A pan or zoom changes which blocks collide without any track having moved.
+map.on('moveend zoomend', scheduleAutoOffset);
+
 // ── LDR DIR (numpad data block positioning) ─────────────────────────────────
 // Numpad digit → compass direction (same layout as ERAM)
 const NUMPAD_TO_DIR = { 1:'SW', 2:'S', 3:'SE', 4:'W', 5:'NE', 6:'E', 7:'NW', 8:'N', 9:'NE' };
@@ -1051,7 +1279,7 @@ function makeIcon(t) {
         }
     }
 
-    const posKey = dbPositions[t.trackId] || 'NE';
+    const posKey = effDbPos(t.trackId);
     const pos = DB_POS[posKey];
     const hideStyle = hiddenDbs.has(t.trackId) ? ';display:none' : '';
     const showLdr = cs && cat !== 'unknown';
@@ -1107,6 +1335,8 @@ function removeTrack(trackId) {
     if (markers[trackId]) { map.removeLayer(markers[trackId]); delete markers[trackId]; }
     delete hashes[trackId];
     delete trackData[trackId];
+    delete autoDbPositions[trackId];
+    delete autoDbMovedAt[trackId];
 }
 
 function updateCount() {
@@ -1213,6 +1443,7 @@ function connect() {
             for (const t of (msg.data.tracks || [])) applyTrack(t);
             centerOnTracks(msg.data.tracks || []);
             updateCount();
+            scheduleAutoOffset();
 
         } else if (msg.type === 'batch') {
             // Batch contains ALL current (deduped) tracks — remove any not present
@@ -1222,6 +1453,7 @@ function connect() {
             }
             for (const t of (msg.data || [])) applyTrack(t);
             updateCount();
+            scheduleAutoOffset();
 
         } else if (msg.type === 'remove') {
             removeTrack(msg.data.trackId);
@@ -1260,6 +1492,7 @@ const rpBtn = document.getElementById('replay-btn');
 
 function applyTracks(arr) {
     for (const t of (arr || [])) applyTrack(t);
+    scheduleAutoOffset();
 }
 
 function init() {

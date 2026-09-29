@@ -72,7 +72,7 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 - **Flight Table** (`index.html`) — Tabular real-time flight explorer with filtering, pinning, detail panel
 - **DGScope Server** (`/dstars/{facility}/updates`) — HTTP streaming + WebSocket for DGScope radar clients
 - **ASDE-X Directory** (`/asdex`) — Airport grid with live track counts, click-through to scope
-- **ASDE-X Scope** (`/asdex/{airport}`) — Leaflet map with live surface targets, data blocks, 1s updates
+- **ASDE-X Scope** (`/asdex/{airport}`) — Leaflet map with live surface targets, data blocks, 1s updates; `OFFSET` in the status bar auto-places data blocks so they stop overlapping (see Auto Offset below)
 - **TDLS Directory** (`/tdls`) — Airport grid with CPDLC clearance/departure message counts
 - **TDLS Detail** (`/tdls/{airport}`) — Aircraft list + CPDLC message history with timestamps
 - **FDIO** (`/fdio`) — Two-panel flight plan viewer: left table + right detail panel with Flight Plan and Events tabs, raw XML viewing
@@ -833,6 +833,34 @@ const B757_CODES = ['B752','B753','B757'];
 **Change detection:** `trackHash(t)` hashes `lat, lon, callsign, altFt, spdKts, hdg, tgtType, acType, wake`. Only calls `setIcon()` (expensive) when hash changes; otherwise just `setLatLng()`.
 
 **Auto-center:** On first snapshot, map centers on centroid of all tracks. Subsequent updates do not reposition the map.
+
+### Auto Offset (`OFFSET` button, optional, OFF by default)
+
+Not an ASDE-X feature — real controllers place blocks by hand. Same idea as the ERAM scope's auto
+offset, in `autoOffsetPass()` in `asdex/scope.js`, toggled by `#ao-toggle` in the status bar and
+persisted in `localStorage['asdex-auto-offset']`.
+
+- Candidate compass points are ranked by how close they are to **abeam the target's own heading**
+  (from `t.hdg`, so its left/right, not the screen's), ties going right. Headings are map-relative and
+  the icon rotates with the map, so map rotation needs no correction.
+- **Unlike ERAM, stationary targets are placed too**, using a fixed fallback order
+  (`AUTO_OFF_NO_HDG`). ERAM leaves vectorless tracks alone, but on the surface most traffic is parked
+  and a gate apron is exactly where blocks pile up worst — skipping them would miss the point.
+- **Sticky**: a placed block only moves when its current position is actually in conflict, then it is
+  held for `AUTO_OFF_HOLD_MS` (10s). It does not re-orient as the aircraft turns.
+- Hand-placed blocks (`dbPositions`, set by drag/touch/numpad) are immovable obstacles; auto choices
+  live in `autoDbPositions` and `effDbPos()` resolves manual → auto → NE default.
+- Every **target symbol** is an obstacle, tagged or not, so a block is never parked on another return.
+- **Saturation**: when no slot is free, `leastOverlap()` picks the smallest total overlap, and an
+  already-placed block only relocates if that is *strictly* better — otherwise it stays, since
+  swapping one bad slot for an equally bad one is pure churn.
+- Runs on a rAF-coalesced `scheduleAutoOffset()` after each WS batch/snapshot and on map
+  `moveend`/`zoomend` (a pan or zoom changes which blocks collide with no track having moved).
+  Skipped above `AUTO_OFF_MAX` (300) targets — a CPU guard, not a display policy.
+- Moves are written straight to the DOM by `applyDbPos()` rather than through `setIcon()`, which would
+  drop the hover halo and cost a full icon rebuild.
+
+Measured at KORD with live traffic: overlapping block pairs 17 → 3, blocks sitting on a target 17 → 9.
 
 ### Directory Page (`asdex.html`)
 

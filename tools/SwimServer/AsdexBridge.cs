@@ -124,6 +124,7 @@ class AsdexBridge
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
+                        using var _h = FeedHealth.Track("STDDS", m);
                         var topic = m.Destination?.Name ?? "";
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
                         if (topic.StartsWith("SMES/", StringComparison.OrdinalIgnoreCase))

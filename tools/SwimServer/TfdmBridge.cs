@@ -86,6 +86,7 @@ class TfdmBridge
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
+                        using var _h = FeedHealth.Track("TFDM", m);
                         try
                         {
                             string? body = null;

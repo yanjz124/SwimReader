@@ -354,6 +354,17 @@ static class EramRoutes
             ("Replay", ctx.ReplayServer.ClientCount),
         }, ctx.Flights.Count), ctx.JsonOpts));
 
+        // Feed health: per-feed throughput, how hard the parse thread is working, and any
+        // broker-side discards (see FeedHealth — a non-zero discardEvents is confirmed data loss).
+        app.MapGet("/api/feed", () => Results.Json(new
+        {
+            liveFeed = FeedGuard.LiveFeed,
+            feedBlocked = FeedGuard.BlockedReason,
+            feedHost = FeedGuard.FeedHost,
+            host = Environment.MachineName,
+            feeds = FeedHealth.Snapshot(),
+        }, ctx.JsonOpts));
+
         // Deployed build: current git commit + commit time (so the homepage can show what's live).
         app.MapGet("/api/version", () => Results.Json(VersionInfo.Get(ctx.RepoRoot), ctx.JsonOpts));
 

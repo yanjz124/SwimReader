@@ -217,6 +217,33 @@ exactly as before. `SWIM_ALLOW_SHARED_QUEUE=1` overrides for a deliberate live s
 - Visible in `GET /api/stats` as `liveFeed` / `feedBlocked`, and the home page shows **FEED OFF**
   (with the reason on hover) instead of a misleading "OFFLINE".
 
+## Feed Health (`GET /api/feed`)
+
+"Are we receiving everything SWIM sends?" is answerable rather than guessed. Per feed
+(SFDPS/STDDS/TFMS/ITWS/TFDM), `FeedHealth` reports:
+
+| field | meaning |
+|---|---|
+| `msgsPerSec` | throughput over the last 10s sample |
+| `busyPct` | share of that feed's **single Solace callback thread** spent parsing |
+| `discardEvents` | messages the broker flagged `DiscardIndication` — **confirmed data loss** |
+| `lastDiscard` | when that last happened |
+
+**`discardEvents > 0` is authoritative, not an estimate**: Solace sets that flag on the next message
+it delivers after it has thrown some away. It is logged loudly the first time and every 100th after.
+
+**`busyPct` is the early warning.** Every feed parses inline on its callback thread, which is
+deliberately lossless — if parsing is slower than arrival the flow window fills and the broker
+*spools* for us instead of dropping. But a queue that spools long enough hits its quota and then the
+broker discards. So sustained high `busyPct` means the only thing keeping us lossless is the spool.
+Do not "fix" that by putting a drop-oldest buffer in front of the parser: that converts back-pressure
+(safe) into silent loss (not).
+
+The other silent loss path is inside our own process: the STDDS service's bounded channels use
+`DropOldest`, which discards when a consumer falls behind. Both now count what they drop via the
+`itemDropped` callback and log it — `ChannelEventBus` per subscriber, and `ScdsHostedService`
+(`InboundDropped`) for the raw inbound buffer.
+
 ## SFDPS Data Pipeline (SwimServer)
 
 ### Message Flow
@@ -443,6 +470,7 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/flights/{gufi}` | Full flight detail + all events (with `index` and `hasXml` per event) |
 | `GET /api/event-xml/{index}/{gufi}` | Raw FIXM XML for a specific event (lazy-loaded by FDIO) |
 | `GET /api/stats` | Server stats (total messages, rate, flight count) |
+| `GET /api/feed` | Per-feed throughput, parse-thread load, and broker discard counts (see Feed Health) |
 | `GET /api/system` | Process metrics for the home server card — CPU/mem/GC/threads/uptime/disk, plus `wsClients` and `wsByFeed` (see below) |
 | `GET /api/kml` | List available KML boundary files |
 | `GET /api/kml/{name}` | Serve a specific KML file from repo root |

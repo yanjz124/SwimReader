@@ -760,7 +760,12 @@ var solaceThread = new Thread(() =>
                 var solQueue = ContextFactory.Instance.CreateQueue(queue);
                 using var flow = session.CreateFlow(
                     new FlowProperties { AckMode = MessageAckMode.AutoAck }, solQueue, null,
-                    (_, msgArgs) => { using var m = msgArgs.Message; ProcessMessage(m); },
+                    (_, msgArgs) =>
+                    {
+                        using var m = msgArgs.Message;
+                        using var _h = FeedHealth.Track("SFDPS", m);
+                        ProcessMessage(m);
+                    },
                     (_, flowArgs) => Console.WriteLine($"[Flow] {flowArgs.Event} - {flowArgs.Info}"));
 
                 flow.Start();
@@ -847,6 +852,7 @@ lifetime.ApplicationStopping.Register(() =>
 // Only the host that owns the SWIM queues may consume them — a second consumer
 // silently splits the feed rather than duplicating it (see FeedGuard).
 FeedGuard.Evaluate();
+FeedHealth.Start();
 if (FeedGuard.LiveFeed)
 {
     // Background so a Solace receiver hung inside the SDK can't keep the process

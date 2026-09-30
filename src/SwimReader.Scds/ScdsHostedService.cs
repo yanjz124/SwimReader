@@ -28,12 +28,28 @@ public sealed class ScdsHostedService : BackgroundService
     /// Internal buffer for raw messages extracted from Solace callbacks.
     /// The callback writes (topic, body) tuples; the processing loop reads them.
     /// </summary>
-    private readonly Channel<(string topic, string body)> _inbound =
+    /// <summary>Raw messages dropped because the parse loop fell behind — real data loss.</summary>
+    private long _inboundDropped;
+
+    private readonly Channel<(string topic, string body)> _inbound;
+
+    /// <summary>Count of inbound messages discarded by the buffer since start.</summary>
+    public long InboundDropped => Interlocked.Read(ref _inboundDropped);
+
+    private Channel<(string topic, string body)> BuildInbound() =>
+        // DropOldest stops a slow parse loop from blocking the Solace callback thread, but it
+        // silently throws messages away. Count them so "the feed looks thin" is answerable.
         Channel.CreateBounded<(string, string)>(new BoundedChannelOptions(50_000)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
             SingleWriter = false
+        }, _ =>
+        {
+            var n = Interlocked.Increment(ref _inboundDropped);
+            if (n == 1 || n % 10_000 == 0)
+                _logger.LogError("SCDS inbound buffer overflow: {Dropped} raw messages dropped — " +
+                                 "the parse loop is not keeping up, data is being lost", n);
         });
 
     public ScdsHostedService(
@@ -46,6 +62,7 @@ public sealed class ScdsHostedService : BackgroundService
         _eventBus = eventBus;
         _options = options.Value;
         _logger = logger;
+        _inbound = BuildInbound();   // after _logger: the drop callback reports through it
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

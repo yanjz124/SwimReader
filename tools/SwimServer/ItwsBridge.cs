@@ -147,6 +147,7 @@ class ItwsBridge
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
+                        using var _h = FeedHealth.Track("ITWS", m);
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
                         ProcessMessage(m);
                     },

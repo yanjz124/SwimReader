@@ -51,11 +51,21 @@ public sealed class ChannelEventBus : IEventBus
         string subscriberName,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        // DropOldest keeps a slow subscriber from stalling the whole bus, but it throws data
+        // away to do it. Count what it drops (and say so) — otherwise a subscriber that can't
+        // keep up looks exactly like a quiet feed.
+        var dropped = 0L;
         var channel = Channel.CreateBounded<ISwimEvent>(new BoundedChannelOptions(_capacity)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
             SingleWriter = false
+        }, _ =>
+        {
+            var n = Interlocked.Increment(ref dropped);
+            if (n == 1 || n % 10_000 == 0)
+                Console.Error.WriteLine($"[BUS] subscriber '{subscriberName}' is behind — dropped {n} events " +
+                                        $"(capacity {_capacity}). Events are being lost, not delayed.");
         });
 
         var subscriber = new Subscriber(subscriberName, channel);

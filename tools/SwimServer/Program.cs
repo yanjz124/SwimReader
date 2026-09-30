@@ -844,14 +844,26 @@ lifetime.ApplicationStopping.Register(() =>
     // Console.WriteLine($"[PO] Shutdown — {Interlocked.Read(ref poLogCount) + poRemaining.Count} entries → {poLogPath}");
 });
 
-// Background so a Solace receiver hung inside the SDK can't keep the process
-// alive and block the watchdog's graceful restart (observed: feed dead for hours).
-solaceThread.IsBackground = true;
-solaceThread.Start();
-asdex.Start();
-tfms.Start();
-tfdm.Start();
-itws.Start();
+// Only the host that owns the SWIM queues may consume them — a second consumer
+// silently splits the feed rather than duplicating it (see FeedGuard).
+FeedGuard.Evaluate();
+if (FeedGuard.LiveFeed)
+{
+    // Background so a Solace receiver hung inside the SDK can't keep the process
+    // alive and block the watchdog's graceful restart (observed: feed dead for hours).
+    solaceThread.IsBackground = true;
+    solaceThread.Start();
+    asdex.Start();
+    tfms.Start();
+    tfdm.Start();
+    itws.Start();
+}
+else
+{
+    // Nothing will signal this, and startup waits on it further down.
+    solaceReady.TrySetResult();
+}
+// vNAS/STARS adaptation is an HTTPS poll, not a SWIM queue — always safe to run.
 stars.Start();
 
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───

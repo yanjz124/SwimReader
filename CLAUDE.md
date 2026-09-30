@@ -166,6 +166,8 @@ dotnet run
 | `SFDPS_USER` | SWIM subscription username | (required) |
 | `SFDPS_PASS` | SWIM subscription password | (required) |
 | `SFDPS_QUEUE` | Solace queue name | (required) |
+| `SWIM_FEED_HOST` | Host that may consume the live SWIM queues (see below) | (unset = no guard) |
+| `SWIM_ALLOW_SHARED_QUEUE` | `1` overrides the guard for a deliberate local live session | (unset) |
 
 ### STDDS (SwimReader.Server AND SwimServer)
 Both services read these variables. SwimReader.Server also accepts them via `appsettings.json` section `ScdsConnection`.
@@ -180,6 +182,40 @@ Both services read these variables. SwimReader.Server also accepts them via `app
 **Note:** SwimServer uses `SCDSCONNECTION__*` vars for its `AsdexBridge` STDDS connection (separate Solace session from the FDPS session). If `SCDSCONNECTION__USERNAME` is empty, ASDE-X is silently disabled.
 
 All services search upward for a `.env` file, so a single `.env` at the repo root covers everything. See `.env.example`.
+
+## Only One Instance May Consume The Feed (`SWIM_FEED_HOST`)
+
+**SCDS delivers over Solace queues, which are point-to-point: each message goes to exactly ONE
+consumer.** Two instances bound to the same queue therefore *split* the stream rather than each
+receiving all of it, and nothing reports an error — the deployed site just looks starved while the
+laptop looks perfect. This bit us: a dev instance left running on a laptop halved the Pi's feed.
+
+Measured on the Pi, 90-second windows, with and without a laptop instance on the same queue:
+
+| | laptop off | laptop on | off again |
+|---|---|---|---|
+| position updates | 255.6/s | **146.8/s** | 247.5/s |
+| refresh per flight | 9.6s | **16.1s** | 9.5s |
+| median position age | 5s | **12s** | 7s |
+| tracks past the scope's 26s coast threshold | 13.4% | **31.0%** | 14.2% |
+
+At 16.1s the refresh is past the 12s radar cycle, so scans get missed: history dots go sparse and
+tracks flip to coast. (The 13–14% baseline is not real coasting — those are flights still flagged
+ACTIVE inside the 60-minute retention window, median age 33 min. Genuinely-just-quiet tracks are
+~0.4%.)
+
+**The guard:** `SWIM_FEED_HOST` names the host that owns the feed. Anywhere else the Solace
+consumers don't start — pages, APIs, the flight cache and replay all still work, which is what local
+UI work needs. It is fail-safe: unset means no guard, so a deployment that never sets it behaves
+exactly as before. `SWIM_ALLOW_SHARED_QUEUE=1` overrides for a deliberate live session.
+
+- `tools/SwimServer/Services/FeedGuard.cs` — canonical implementation and rationale; gates the SFDPS
+  thread plus the ASDE-X/TFMS/TFDM/ITWS bridges. `stars.Start()` stays outside it: vNAS adaptation is
+  an HTTPS poll, not a queue.
+- `src/SwimReader.Scds/ScdsHostedService.cs` — same rule and env vars for the STDDS queue, so the
+  DGScope/STARS service can't do it either.
+- Visible in `GET /api/stats` as `liveFeed` / `feedBlocked`, and the home page shows **FEED OFF**
+  (with the reason on hover) instead of a misleading "OFFLINE".
 
 ## SFDPS Data Pipeline (SwimServer)
 

@@ -202,8 +202,17 @@ async function refreshStats() {
             document.getElementById('eramCount').textContent =
                 `${(s.flights || 0).toLocaleString()} flights`;
             const connEl = document.getElementById('connStat');
-            connEl.className = s.connected ? 'stat live' : 'stat';
-            connEl.textContent = s.connected ? 'LIVE' : 'OFFLINE';
+            // liveFeed false = this host deliberately isn't consuming the SWIM queues
+            // (FeedGuard), which is a very different thing from a broken connection.
+            if (s.liveFeed === false) {
+                connEl.className = 'stat';
+                connEl.textContent = 'FEED OFF';
+                connEl.title = 'Live SWIM feed disabled on this host — ' + (s.feedBlocked || '');
+            } else {
+                connEl.className = s.connected ? 'stat live' : 'stat';
+                connEl.textContent = s.connected ? 'LIVE' : 'OFFLINE';
+                connEl.title = '';
+            }
             // THROUGHPUT card
             _thr.flights = s.flights || 0;
             _thr.rate = s.rate || 0;

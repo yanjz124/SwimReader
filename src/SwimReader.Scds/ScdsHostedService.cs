@@ -50,6 +50,26 @@ public sealed class ScdsHostedService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Only the host named by SWIM_FEED_HOST may bind the shared SCDS queue. A Solace queue
+        // delivers each message to ONE consumer, so a second instance splits the deployed
+        // server's feed instead of duplicating it — measured on the Pi, per-flight refresh went
+        // 9.6s to 16.1s and coasting tracks 13% to 31%. Same rule and same env vars as
+        // tools/SwimServer/Services/FeedGuard.cs, which carries the full rationale.
+        // Unset = no guard (old behavior); SWIM_ALLOW_SHARED_QUEUE=1 overrides.
+        var feedHost = (Environment.GetEnvironmentVariable("SWIM_FEED_HOST") ?? "").Trim();
+        var allowShared = (Environment.GetEnvironmentVariable("SWIM_ALLOW_SHARED_QUEUE") ?? "").Trim();
+        if (feedHost.Length > 0
+            && !string.Equals(feedHost, Environment.MachineName, StringComparison.OrdinalIgnoreCase)
+            && allowShared is not ("1" or "true" or "TRUE" or "yes"))
+        {
+            _logger.LogWarning(
+                "SCDS feed NOT started: this host is '{Here}' but the SWIM feed belongs to '{Owner}'. " +
+                "Binding the same queue here would split the deployed server's feed. " +
+                "Set SWIM_ALLOW_SHARED_QUEUE=1 to override.",
+                Environment.MachineName, feedHost);
+            return;
+        }
+
         _logger.LogInformation("SCDS hosted service starting");
 
         // Start the processing loop that drains the inbound channel

@@ -17,7 +17,11 @@ class GlobalStats
             Total = _total,
             Rate = elapsed > 0 ? Math.Round(_total / elapsed, 1) : 0,
             Elapsed = (DateTime.UtcNow - _startTime).ToString(@"hh\:mm\:ss"),
-            Flights = flightCount
+            Flights = flightCount,
+            // Off when this host doesn't own the SWIM queues, so a dev box doesn't look
+            // like a broken server (see FeedGuard).
+            LiveFeed = FeedGuard.LiveFeed,
+            FeedBlocked = FeedGuard.BlockedReason
         };
     }
 }

@@ -430,7 +430,7 @@ class AsdexBridge
 
         // Count active bits
         var activeBitCount = CountBits(status);
-        Console.WriteLine($"[HOLDBAR] {airport} ctrl={state.Control} bits={activeBitCount} status={status}");
+        Trace.Write("HOLDBAR", $"{airport} ctrl={state.Control} bits={activeBitCount} status={status}");
 
         // Record holdbar state for replay
         GetRecorder(airport)?.RecordHoldbar(state.ToJson(), DateTime.UtcNow);

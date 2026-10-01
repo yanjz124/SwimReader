@@ -1344,6 +1344,24 @@ list replay files through `ReplayFiles` (`OpenRead`, `List`, `Find`, `Stem`)**, 
 directly, or compacted hours silently disappear from replay. ERAM uses level 3 + long-distance matching (128 MB
 window — its snapshots repeat far apart); STARS/ASDE-X use plain level 9. `REPLAY_COMPACT=0` disables; `REPLAY_ZSTD_LEVEL` overrides.
 
+### Logging volume (don't let it eat the journal)
+
+The Pi's journal is capped at 500 MB. Left unchecked the two services were writing **~340 lines/s**
+between them (`swimreader-stdds` ~400/s on its own), which rotated the journal away every **~33
+minutes** — so after any incident, reboot or feed anomaly there was no history left to diagnose it,
+and the SD card was taking constant writes.
+
+Two causes, both fixed:
+- `src/SwimReader.Server/appsettings.json` had `"SwimReader": "Debug"`, so production ran at debug
+  level (TrackStateManager / ParserPipeline / CallsignEnrichmentService per-message lines). It is now
+  `Information`, with `Debug` moved to `appsettings.Development.json` where it belongs.
+- SwimServer's `[CLR]`, `[INTERIM]` and `[HOLDBAR]` per-message traces — investigation output from
+  working out how SFDPS signals clearance/interim changes — now go through `Trace.Write` and are
+  **opt-in**: `SWIM_TRACE=CLR,INTERIM,HOLDBAR` (or `all`).
+
+If you need that detail back on the Pi, set `SWIM_TRACE` in the unit file briefly rather than
+re-enabling it permanently.
+
 ### Flight State Cache
 On shutdown (SIGTERM) and every 5 minutes, all flight data is serialized to `flight-cache/flights.json`. On startup, the cache is loaded before Solace connects, so flights survive restarts with no data loss. Cache older than 60 minutes is discarded (matches purge timer).
 

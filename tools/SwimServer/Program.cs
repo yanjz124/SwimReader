@@ -1727,7 +1727,7 @@ void ProcessFlight(XElement flight, string rawXml)
             var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} ctrl={state.ControllingFacility}/{state.ControllingSector} INTERIM: {prevIA?.ToString() ?? "null"} → {state.InterimAltitude?.ToString() ?? "CLEARED(nil)"} RAW_XML: {ia.ToString().Replace("\n", " ")}";
             altitudeLog.Enqueue(logEntry);
             while (altitudeLog.Count > MaxAltitudeLogEntries) altitudeLog.TryDequeue(out _);
-            Console.WriteLine($"[INTERIM] {source} {state.Callsign}/{state.Gufi?[..8]} {prevIA?.ToString() ?? "null"} → {state.InterimAltitude?.ToString() ?? "CLEARED"}");
+            Trace.Write("INTERIM", $"{source} {state.Callsign}/{state.Gufi?[..8]} {prevIA?.ToString() ?? "null"} → {state.InterimAltitude?.ToString() ?? "CLEARED"}");
         }
     }
     // Clear interim when absent in full-state-snapshot sources:
@@ -1745,7 +1745,7 @@ void ProcessFlight(XElement flight, string rawXml)
             var logEntry = $"[{DateTime.UtcNow:HH:mm:ss}] {source} {state.Callsign ?? "?"}/{state.Gufi?[..8] ?? "?"} ctrl={state.ControllingFacility}/{state.ControllingSector} INTERIM: {prevIA} → CLEARED(absent in {source})";
             altitudeLog.Enqueue(logEntry);
             while (altitudeLog.Count > MaxAltitudeLogEntries) altitudeLog.TryDequeue(out _);
-            Console.WriteLine($"[INTERIM] {source} {state.Callsign}/{state.Gufi?[..8]} {prevIA} → CLEARED(absent)");
+            Trace.Write("INTERIM", $"{source} {state.Callsign}/{state.Gufi?[..8]} {prevIA} → CLEARED(absent)");
         }
     }
 
@@ -1937,7 +1937,7 @@ void ProcessFlight(XElement flight, string rawXml)
             state.ClearanceSpeed = string.IsNullOrEmpty(clrSpd) ? null : clrSpd;
             state.ClearanceText = string.IsNullOrEmpty(clrTxt) ? null : clrTxt;
             if (state.ClearanceHeading != prevH || state.ClearanceSpeed != prevS || state.ClearanceText != prevT)
-                Console.WriteLine($"[CLR] {source} {state.Callsign}/{state.Gufi?[..8]} H:{prevH ?? "-"}→{state.ClearanceHeading ?? "-"} S:{prevS ?? "-"}→{state.ClearanceSpeed ?? "-"} T:{prevT ?? "-"}→{state.ClearanceText ?? "-"}");
+                Trace.Write("CLR", $"{source} {state.Callsign}/{state.Gufi?[..8]} H:{prevH ?? "-"}→{state.ClearanceHeading ?? "-"} S:{prevS ?? "-"}→{state.ClearanceSpeed ?? "-"} T:{prevT ?? "-"}→{state.ClearanceText ?? "-"}");
         }
         else if (hadClearance)
         {
@@ -1954,7 +1954,7 @@ void ProcessFlight(XElement flight, string rawXml)
                     $"FH had enRoute but no <cleared> element";
                 clearanceLog.Enqueue(logEntry);
                 while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
-                Console.WriteLine($"[CLR] {source} {state.Callsign}/{state.Gufi?[..8]} WIPED H:{prevH ?? "-"} S:{prevS ?? "-"} T:{prevT ?? "-"}");
+                Trace.Write("CLR", $"{source} {state.Callsign}/{state.Gufi?[..8]} WIPED H:{prevH ?? "-"} S:{prevS ?? "-"} T:{prevT ?? "-"}");
             }
             else
             {
@@ -2007,7 +2007,7 @@ void ProcessFlight(XElement flight, string rawXml)
                 $"HF had no <enRoute> element (clearance removal signal)";
             clearanceLog.Enqueue(logEntry);
             while (clearanceLog.Count > MaxClearanceLogEntries) clearanceLog.TryDequeue(out _);
-            Console.WriteLine($"[CLR] {source} {state.Callsign}/{state.Gufi?[..8]} WIPED(no-enRoute) H:{prevH ?? "-"} S:{prevS ?? "-"} T:{prevT ?? "-"}");
+            Trace.Write("CLR", $"{source} {state.Callsign}/{state.Gufi?[..8]} WIPED(no-enRoute) H:{prevH ?? "-"} S:{prevS ?? "-"} T:{prevT ?? "-"}");
         }
     }
 

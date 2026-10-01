@@ -314,6 +314,12 @@ asdex.OnOtherMessage = (topic, body) =>
 // ── ASP.NET Core setup ──────────────────────────────────────────────────────
 
 var builder = WebApplication.CreateBuilder(args);
+// ASP.NET logs four Information lines per HTTP request ("Request starting", "Executing
+// endpoint", "Writing value of type", "Request finished"). With the dashboards polling a
+// handful of endpoints every few seconds that was most of this service's log volume, which
+// on the Pi rotates the 500 MB journal away before anything can be diagnosed. Warnings and
+// errors still come through, and "Now listening on" is Hosting.Lifetime, not this category.
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
 // Port is configurable via SWIM_PORT (set through /setup in local mode); default 5001.
 // Local mode binds to localhost only; the public deployment binds all interfaces so the
 // Cloudflare tunnel / reverse proxy can reach it.

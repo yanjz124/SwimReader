@@ -20,13 +20,15 @@ CHANGED=$(git diff --name-only "$PREV_HEAD" "$NEW_HEAD")
 SFDPS_RESTART=false
 STDDS_RESTART=false
 
-# SwimServer backend: any .cs or .csproj under tools/SwimServer/
-if echo "$CHANGED" | grep -qE '^tools/SwimServer/.*\.(cs|csproj)$'; then
+# SwimServer backend: any .cs/.csproj/appsettings under tools/SwimServer/
+# (appsettings counts — a config-only change still needs a restart to take effect,
+#  which is how a production Debug log level once survived a deploy unnoticed)
+if echo "$CHANGED" | grep -qE '^tools/SwimServer/.*(\.(cs|csproj)|appsettings.*\.json)$'; then
     SFDPS_RESTART=true
 fi
 
-# SwimReader.Server backend: any .cs or .csproj under src/
-if echo "$CHANGED" | grep -qE '^src/.*\.(cs|csproj)$'; then
+# SwimReader.Server backend: any .cs/.csproj/appsettings under src/
+if echo "$CHANGED" | grep -qE '^src/.*(\.(cs|csproj)|appsettings.*\.json)$'; then
     STDDS_RESTART=true
 fi
 

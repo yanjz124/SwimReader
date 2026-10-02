@@ -99,29 +99,43 @@ async function loadHistory() {
         statusEl.textContent = 'HISTORY · ' + histDate;
         renderGrid(airports, icao => `/tdls/${icao.toLowerCase()}?date=${histDate}`);
     } catch { statusEl.textContent = 'ERROR'; }
-    if (csInput.value.trim()) findCallsign();
 }
 
-// Cross-airport callsign search on the chosen day (what the old separate history page was for).
+// Cross-airport, cross-DAY callsign search. Searching one day was useless — you rarely know which
+// day a flight was on. The server resolves a callsign through its index, so this costs a couple of
+// files rather than a scan of the whole archive.
 let csSeq = 0;
 async function findCallsign() {
     const q = csInput.value.trim().toUpperCase();
     const seq = ++csSeq;
     if (q.length < 3) { csOut.innerHTML = ''; return; }
-    csOut.innerHTML = '<span class="muted">searching…</span>';
+    csOut.innerHTML = '<span class="muted">searching all days…</span>';
     try {
-        const d = await (await fetch(`/api/tdls/history?date=${histDate}&q=${encodeURIComponent(q)}&limit=500`)).json();
+        const d = await (await fetch(`/api/tdls/history?q=${encodeURIComponent(q)}&limit=500`)).json();
         if (seq !== csSeq) return;
+        // Group by day + airport + callsign, so the same flight number on different days stays apart.
         const byKey = new Map();
         for (const m of d.results || []) {
             if (!String(m.aircraftId || '').toUpperCase().includes(q)) continue;
-            const k = m.airport + '|' + m.aircraftId;
+            const day = String(m.time || '').slice(0, 10);
+            const k = day + '|' + m.airport + '|' + m.aircraftId;
             byKey.set(k, (byKey.get(k) || 0) + 1);
         }
-        csOut.innerHTML = byKey.size
-            ? [...byKey].map(([k, n]) => { const [ap, cs] = k.split('|');
-                return `<a href="/tdls/${ap.toLowerCase()}?date=${histDate}&q=${encodeURIComponent(cs)}">${esc(ap)} · ${esc(cs)} <span class="muted">${n} msg</span></a>`; }).join('')
-            : '<span class="muted">No callsign matches on this day.</span>';
+        if (!byKey.size) {
+            csOut.innerHTML = d.indexState === 'Building'
+                ? '<span class="muted">No matches yet — still indexing history, try again shortly.</span>'
+                : '<span class="muted">No callsign matches in recorded history.</span>';
+            return;
+        }
+        // Newest day first.
+        const rows = [...byKey].sort((a, b) => a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0);
+        csOut.innerHTML = rows.map(([k, n]) => {
+            const [day, ap, cs] = k.split('|');
+            return `<a href="/tdls/${ap.toLowerCase()}?date=${day}&q=${encodeURIComponent(cs)}">` +
+                   `<span class="muted">${esc(day)}</span> ${esc(ap)} · ${esc(cs)} ` +
+                   `<span class="muted">${n} msg</span></a>`;
+        }).join('') + (d.truncated
+            ? '<span class="muted">· partial (hit the search limit)</span>' : '');
     } catch { csOut.innerHTML = '<span class="muted">search failed</span>'; }
 }
 let csTimer = null;

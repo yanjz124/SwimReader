@@ -38,6 +38,9 @@ static class TdlsHistoryService
             {
                 File.AppendAllText(filePath, json + "\n");
             }
+            // Keep the callsign index current — otherwise an all-days search would miss
+            // today's messages until the next rebuild.
+            TdlsCallsignIndex.Note(msg.AircraftId, datePart);
         }
         catch (Exception ex)
         {
@@ -109,63 +112,147 @@ static class TdlsHistoryService
     }
 
     /// <summary>
-    /// Search TDLS history. Filters: date (YYYY-MM-DD or null=today),
-    /// query (case-insensitive substring on callsign/airport/destination/dataBody),
-    /// type ("CPDLC"|"DEPART"|null), airport. Caps results at maxResults.
+    /// Search TDLS history. <paramref name="date"/> null or "all" searches EVERY recorded day,
+    /// newest first; a specific YYYY-MM-DD searches just that file.
+    ///
+    /// The archive is ~1.5 GB over 128 days, so an all-days search cannot simply read it:
+    ///  - A callsign query is resolved through <see cref="TdlsCallsignIndex"/> to the handful of days
+    ///    that callsign appears in, usually one or two files instead of 128.
+    ///  - Every candidate line is pre-filtered by raw substring BEFORE the JSON parse, which is what
+    ///    makes a whole-file scan cheap: parsing is reserved for lines that can possibly match.
+    ///  - Files are streamed, never ReadAllLines, and only the newest <paramref name="maxResults"/>
+    ///    matches are held, so memory is bounded by the result cap rather than by file size.
+    ///  - Anything the index can't answer (free text, or the index still building) is scanned
+    ///    newest-first under a wall-clock budget and reported as truncated rather than hanging.
     /// </summary>
     public static object Search(string historyDir, string? date, string? query, string? type, string? airport,
-        int maxResults = 500, bool reveal = false)
+        int maxResults = 500, bool reveal = false, int budgetMs = 4000)
     {
-        var results = new List<JsonElement>();
         try
         {
             if (!Directory.Exists(historyDir))
-                return new { count = 0, results = Array.Empty<object>() };
-
-            var d = Path.GetFileName(date ?? DateTime.UtcNow.ToString("yyyy-MM-dd"));
-            var path = Path.Combine(historyDir, $"{d}.jsonl");
-            if (!File.Exists(path)) return new { count = 0, results = Array.Empty<object>() };
+                return new { count = 0, results = Array.Empty<object>(), truncated = false };
 
             var q = query?.Trim().ToUpperInvariant();
+            if (q?.Length == 0) q = null;
             var ap = airport?.Trim().ToUpperInvariant();
             var t = type?.Trim().ToUpperInvariant();
+            var allDays = string.IsNullOrEmpty(date) || date.Equals("all", StringComparison.OrdinalIgnoreCase);
 
-            // Reverse order — newest first per file
-            var lines = File.ReadAllLines(path);
-            for (int i = lines.Length - 1; i >= 0 && results.Count < maxResults; i--)
+            // Which day files to look at, newest first.
+            List<string> dates;
+            var indexed = false;
+            if (!allDays)
             {
-                var line = lines[i];
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                // Cheap pre-filter before the JSON parse: an airport-day view skips ~all other lines.
-                if (ap != null && !line.Contains("\"airport\":\"" + ap + "\"", StringComparison.OrdinalIgnoreCase)) continue;
-                JsonDocument doc;
-                try { doc = JsonDocument.Parse(line); } catch { continue; }
-                var root = doc.RootElement.Clone();
-                doc.Dispose();
-                // Mask BEFORE filtering, so a callsign search can't find a hidden flight by its real id.
-                if (!reveal && IsLadd(root)) root = Masked(root);
-
-                if (t != null && Get(root, "type")?.ToUpperInvariant() != t) continue;
-                if (ap != null && Get(root, "airport")?.ToUpperInvariant() != ap) continue;
-                if (q != null)
-                {
-                    var hay = string.Join(' ', new[]
-                    {
-                        Get(root, "aircraftId"), Get(root, "airport"), Get(root, "destination"),
-                        Get(root, "dataBody"), Get(root, "dataHeader"), Get(root, "runway"),
-                        Get(root, "gate"), Get(root, "beaconCode")
-                    }.Where(s => s != null)).ToUpperInvariant();
-                    if (!hay.Contains(q)) continue;
-                }
-                results.Add(root);
+                dates = new List<string> { Path.GetFileName(date!) };
             }
-            return new { count = results.Count, results };
+            else
+            {
+                TdlsCallsignIndex.EnsureBuilt(historyDir);
+                // A callsign-shaped query can skip straight to the days it occurs on. An EMPTY hit is
+                // treated as a miss, not as "no results": the index only knows aircraftId, while the
+                // search also matches gate, runway and clearance text, so a token the index doesn't
+                // recognise ("RNAV") still has to be scanned for.
+                //
+                // The converse is a deliberate trade: when the index DOES know the callsign we scan
+                // only its days, so another day's clearance text that happens to mention it is not
+                // returned. This is a callsign lookup, and paying a 1.5 GB scan to catch that would
+                // defeat the point.
+                IReadOnlyList<string>? hit = (q != null && LooksLikeCallsign(q)) ? TdlsCallsignIndex.DatesFor(q) : null;
+                if (hit is { Count: > 0 })
+                {
+                    dates = hit.ToList();
+                    indexed = true;
+                }
+                else
+                {
+                    dates = Directory.GetFiles(historyDir, "*.jsonl")
+                        .Select(Path.GetFileNameWithoutExtension)
+                        .Where(x => !string.IsNullOrEmpty(x))
+                        .OrderByDescending(x => x, StringComparer.Ordinal)
+                        .ToList()!;
+                }
+            }
+
+            var results = new List<JsonElement>();
+            var truncated = false;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var scannedDays = 0;
+
+            foreach (var d in dates)
+            {
+                if (results.Count >= maxResults) { truncated = true; break; }
+                // Only an unindexed sweep can run long; an index hit is already a short list.
+                if (!indexed && allDays && sw.ElapsedMilliseconds > budgetMs) { truncated = true; break; }
+
+                var path = Path.Combine(historyDir, $"{d}.jsonl");
+                if (!File.Exists(path)) continue;
+                scannedDays++;
+
+                // Keep only the newest (maxResults - found) matches from this file. Streaming forward
+                // with a rolling window costs one pass and bounded memory either way.
+                var want = maxResults - results.Count;
+                var window = new Queue<JsonElement>(want);
+                foreach (var line in File.ReadLines(path))
+                {
+                    if (line.Length == 0) continue;
+                    // Raw-line gates, cheapest first. These can only reject — every survivor is still
+                    // fully checked after parsing, so masking rules below stay authoritative.
+                    if (ap != null && !line.Contains("\"airport\":\"" + ap + "\"", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (q != null && !q.Equals("LADD", StringComparison.Ordinal)
+                        && line.IndexOf(q, StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+                    JsonDocument doc;
+                    try { doc = JsonDocument.Parse(line); } catch { continue; }
+                    var root = doc.RootElement.Clone();
+                    doc.Dispose();
+                    // Mask BEFORE filtering, so a callsign search can't find a hidden flight by its real id.
+                    if (!reveal && IsLadd(root)) root = Masked(root);
+
+                    if (t != null && Get(root, "type")?.ToUpperInvariant() != t) continue;
+                    if (ap != null && Get(root, "airport")?.ToUpperInvariant() != ap) continue;
+                    if (q != null)
+                    {
+                        var hay = string.Join(' ', new[]
+                        {
+                            Get(root, "aircraftId"), Get(root, "airport"), Get(root, "destination"),
+                            Get(root, "dataBody"), Get(root, "dataHeader"), Get(root, "runway"),
+                            Get(root, "gate"), Get(root, "beaconCode")
+                        }.Where(x => x != null)).ToUpperInvariant();
+                        if (!hay.Contains(q)) continue;
+                    }
+
+                    window.Enqueue(root);
+                    if (window.Count > want) window.Dequeue();     // keep the newest `want`
+                }
+                // Newest first within the file.
+                results.AddRange(window.Reverse());
+            }
+
+            if (results.Count > maxResults) results.RemoveRange(maxResults, results.Count - maxResults);
+            return new
+            {
+                count = results.Count,
+                results,
+                truncated,
+                scannedDays,
+                // So the UI can say "searching all days" honestly while the index is still warming.
+                indexed,
+                indexState = allDays ? TdlsCallsignIndex.State.ToString() : null,
+            };
         }
         catch (Exception ex)
         {
-            return new { error = ex.Message, count = 0, results = Array.Empty<object>() };
+            return new { error = ex.Message, count = 0, results = Array.Empty<object>(), truncated = false };
         }
     }
+
+    /// <summary>
+    /// Callsign shape (2-8 alphanumerics, at least one letter) — the queries the index can answer.
+    /// Anything else (gate, runway, free text in a clearance) falls back to a scan.
+    /// </summary>
+    private static bool LooksLikeCallsign(string q) =>
+        q.Length is >= 2 and <= 8 && q.All(char.IsLetterOrDigit) && q.Any(char.IsLetter);
 
     /// <summary>Flagged when written, or on the current list (catches additions since).</summary>
     public static bool IsLadd(JsonElement r) =>

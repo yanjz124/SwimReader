@@ -1023,6 +1023,36 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 | `FlushDirty` | 1s | Send new messages to WebSocket clients |
 | `PurgeStale` | 60s | No-op — all aircraft and messages retained indefinitely |
 
+## TDLS History Search (all days, by callsign)
+
+`GET /api/tdls/history?q={callsign}` searches **every recorded day**, newest first — `date` is
+optional and only narrows to one day. Searching a single day was useless in practice: you rarely know
+which day a flight was on.
+
+The archive makes this non-trivial: ~6.5 MB/day over 128 days (**1.5 GB, ~2.4M lines**) and growing.
+A blind all-days scan is ~30 s of SD-card reads on the Pi. Four things keep it interactive:
+
+1. **`TdlsCallsignIndex`** maps callsign → the days it appears in, so a callsign search reads the one
+   or two files that actually contain it instead of 128. Built in the background on first use (never
+   blocking a request), persisted to `tdls-history/.callsign-index`, and kept live by `Note()` on
+   every append. On restart only files whose size changed are re-scanned — a reload is ~85 ms.
+2. **Raw-line pre-filter before the JSON parse.** Parsing is reserved for lines that could match,
+   which is what makes scanning a whole file cheap.
+3. **Streaming + bounded memory.** Files are read with `ReadLines`, never `ReadAllLines`, and only the
+   newest `limit` matches are held, so memory tracks the result cap, not file size.
+4. **A wall-clock budget** on anything the index can't answer (free text, or the index still warming),
+   reported back as `truncated` rather than hanging.
+
+An **empty** index hit is treated as a miss, not as "no results" — the index only knows `aircraftId`
+while the search also matches gate, runway and clearance text, so an unrecognised token still gets
+scanned. The deliberate converse: when the index *does* know the callsign, only its days are read, so
+another day's clearance text that merely mentions it won't be returned. This is a callsign lookup;
+paying a 1.5 GB scan to catch that would defeat the point.
+
+Response carries `truncated`, `scannedDays`, `indexed` and `indexState` so the UI can distinguish "no
+matches" from "still indexing". LADD masking still happens **before** filtering, so a callsign search
+can never find a hidden flight by its real id.
+
 ## FDIO Display (SwimServer)
 
 The FDIO (Flight Data Input/Output) page provides a two-panel flight data explorer. Left panel: sortable, filterable flight table. Right panel: detail view with two tabs (Flight Plan and Events). Reuses the existing SFDPS WebSocket and REST infrastructure.

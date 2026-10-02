@@ -257,14 +257,25 @@ static class TdlsHistoryService
         string? openPath = null;
         FileStream? fs = null;
         var days = new HashSet<string>(StringComparer.Ordinal);
+        // Offsets arrive ascending within a day (sequential reads); flip each file's rows on the way
+        // out so the overall order stays newest-first.
+        var perFile = new List<JsonElement>();
+        void FlushFile()
+        {
+            if (perFile.Count == 0) return;
+            perFile.Reverse();
+            results.AddRange(perFile);
+            perFile.Clear();
+        }
         try
         {
             foreach (var h in hits)
             {
-                if (results.Count >= maxResults) { truncated = true; break; }
+                if (results.Count + perFile.Count >= maxResults) { truncated = true; break; }
                 var path = Path.Combine(historyDir, $"{h.Date}.jsonl");
                 if (path != openPath)
                 {
+                    FlushFile();                     // previous file's rows: newest line first
                     fs?.Dispose();
                     if (!File.Exists(path)) { fs = null; openPath = null; continue; }
                     fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 15);
@@ -286,8 +297,9 @@ static class TdlsHistoryService
                 if ((Get(root, "aircraftId") ?? "").ToUpperInvariant().Contains(q) == false) continue;
                 if (t != null && Get(root, "type")?.ToUpperInvariant() != t) continue;
                 if (ap != null && Get(root, "airport")?.ToUpperInvariant() != ap) continue;
-                results.Add(root);
+                perFile.Add(root);
             }
+            FlushFile();
         }
         finally { fs?.Dispose(); }
 

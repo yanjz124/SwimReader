@@ -90,8 +90,11 @@ static class TdlsCallsignIndex
                 var d = (int)(p >> OffsetBits);
                 if (d >= 0 && d < _dates.Count) outp.Add(new Hit(_dates[d], p & OffsetMask));
             }
-        // Newest day first, and within a day the latest line first.
-        outp.Sort((a, b) => string.CompareOrdinal(b.Date, a.Date) is var c && c != 0 ? c : b.Offset.CompareTo(a.Offset));
+        // Newest day first, but ASCENDING by offset inside a day: the reader opens each file once and
+        // walks it forwards, which lets the OS read ahead. Seeking backwards through a 6.5 MB file on
+        // the Pi's SD card is markedly slower. The reader reverses each file's results afterwards so
+        // the output is still newest-first.
+        outp.Sort((a, b) => string.CompareOrdinal(b.Date, a.Date) is var c && c != 0 ? c : a.Offset.CompareTo(b.Offset));
         return outp;
     }
 

@@ -34,13 +34,17 @@ static class TdlsHistoryService
             var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(msg.ToJson(reveal: true), _jsonOpts))!.AsObject();
             if (LaddService.IsBlocked(msg.AircraftId, null)) node["ladd"] = true;
             var json = node.ToJsonString(_jsonOpts);
+            long offset;
             lock (_lock)
             {
+                // The index stores byte offsets, so capture where this line starts.
+                var fi = new FileInfo(filePath);
+                offset = fi.Exists ? fi.Length : 0;
                 File.AppendAllText(filePath, json + "\n");
             }
             // Keep the callsign index current — otherwise an all-days search would miss
             // today's messages until the next rebuild.
-            TdlsCallsignIndex.Note(msg.AircraftId, datePart);
+            TdlsCallsignIndex.Note(msg.AircraftId, datePart, offset);
         }
         catch (Exception ex)
         {
@@ -149,29 +153,23 @@ static class TdlsHistoryService
             else
             {
                 TdlsCallsignIndex.EnsureBuilt(historyDir);
-                // A callsign-shaped query can skip straight to the days it occurs on. An EMPTY hit is
-                // treated as a miss, not as "no results": the index only knows aircraftId, while the
-                // search also matches gate, runway and clearance text, so a token the index doesn't
-                // recognise ("RNAV") still has to be scanned for.
+                // Index hit: read exactly this callsign's lines by offset and we're done. Cost tracks
+                // the number of matches, not the size of history — which matters because a scheduled
+                // flight number recurs almost daily (UAL1862 is on 110 of 128 days), so narrowing to
+                // "days containing it" saved nothing and still read ~715 MB.
                 //
-                // The converse is a deliberate trade: when the index DOES know the callsign we scan
-                // only its days, so another day's clearance text that happens to mention it is not
-                // returned. This is a callsign lookup, and paying a 1.5 GB scan to catch that would
-                // defeat the point.
-                IReadOnlyList<string>? hit = (q != null && LooksLikeCallsign(q)) ? TdlsCallsignIndex.DatesFor(q) : null;
-                if (hit is { Count: > 0 })
-                {
-                    dates = hit.ToList();
-                    indexed = true;
-                }
-                else
-                {
-                    dates = Directory.GetFiles(historyDir, "*.jsonl")
-                        .Select(Path.GetFileNameWithoutExtension)
-                        .Where(x => !string.IsNullOrEmpty(x))
-                        .OrderByDescending(x => x, StringComparer.Ordinal)
-                        .ToList()!;
-                }
+                // An EMPTY hit is a miss, not "no results": the index only knows aircraftId while the
+                // search also matches gate, runway and clearance text, so an unrecognised token
+                // ("RNAV") still has to be scanned for.
+                var hits = (q != null && LooksLikeCallsign(q)) ? TdlsCallsignIndex.Find(q) : null;
+                if (hits is { Count: > 0 })
+                    return ByOffset(historyDir, hits, q!, t, ap, maxResults, reveal);
+                dates = Directory.GetFiles(historyDir, "*.jsonl")
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Where(x => !string.IsNullOrEmpty(x))
+                    .OrderByDescending(x => x, StringComparer.Ordinal)
+                    .ToList()!;
+
             }
 
             var results = new List<JsonElement>();
@@ -245,6 +243,84 @@ static class TdlsHistoryService
         {
             return new { error = ex.Message, count = 0, results = Array.Empty<object>(), truncated = false };
         }
+    }
+
+    /// <summary>
+    /// Read just the lines the index located, newest first. One seek + one line per occurrence, so a
+    /// callsign spanning 110 day-files costs ~110 file opens instead of ~715 MB of reading.
+    /// </summary>
+    private static object ByOffset(string historyDir, IReadOnlyList<TdlsCallsignIndex.Hit> hits,
+        string q, string? t, string? ap, int maxResults, bool reveal)
+    {
+        var results = new List<JsonElement>(Math.Min(maxResults, hits.Count));
+        var truncated = false;
+        string? openPath = null;
+        FileStream? fs = null;
+        var days = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            foreach (var h in hits)
+            {
+                if (results.Count >= maxResults) { truncated = true; break; }
+                var path = Path.Combine(historyDir, $"{h.Date}.jsonl");
+                if (path != openPath)
+                {
+                    fs?.Dispose();
+                    if (!File.Exists(path)) { fs = null; openPath = null; continue; }
+                    fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 15);
+                    openPath = path;
+                }
+                if (fs == null) continue;
+                var line = ReadLineAt(fs, h.Offset);
+                if (line == null) continue;          // file rewritten/trimmed since indexing
+                days.Add(h.Date);
+
+                JsonDocument doc;
+                try { doc = JsonDocument.Parse(line); } catch { continue; }
+                var root = doc.RootElement.Clone();
+                doc.Dispose();
+                if (!reveal && IsLadd(root)) root = Masked(root);
+
+                // The offset was recorded against the raw id; re-check everything after masking so a
+                // hidden flight can't be reached by its real callsign.
+                if ((Get(root, "aircraftId") ?? "").ToUpperInvariant().Contains(q) == false) continue;
+                if (t != null && Get(root, "type")?.ToUpperInvariant() != t) continue;
+                if (ap != null && Get(root, "airport")?.ToUpperInvariant() != ap) continue;
+                results.Add(root);
+            }
+        }
+        finally { fs?.Dispose(); }
+
+        return new
+        {
+            count = results.Count,
+            results,
+            truncated,
+            scannedDays = days.Count,
+            indexed = true,
+            indexState = TdlsCallsignIndex.State.ToString(),
+        };
+    }
+
+    /// <summary>One line starting at a byte offset, or null if the offset no longer looks like one.</summary>
+    private static string? ReadLineAt(FileStream fs, long offset)
+    {
+        if (offset < 0 || offset >= fs.Length) return null;
+        fs.Position = offset;
+        var buf = new byte[4096];
+        var acc = new List<byte>(1024);
+        int n;
+        while ((n = fs.Read(buf, 0, buf.Length)) > 0)
+        {
+            var span = buf.AsSpan(0, n);
+            var nl = span.IndexOf((byte)'\n');
+            if (nl >= 0) { acc.AddRange(span[..nl].ToArray()); break; }
+            acc.AddRange(span.ToArray());
+            if (acc.Count > 1 << 20) return null;     // runaway: not a line boundary
+        }
+        if (acc.Count == 0) return null;
+        var s = System.Text.Encoding.UTF8.GetString(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(acc));
+        return s.Length > 0 && s[0] == '{' ? s : null;
     }
 
     /// <summary>

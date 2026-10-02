@@ -1032,10 +1032,16 @@ which day a flight was on.
 The archive makes this non-trivial: ~6.5 MB/day over 128 days (**1.5 GB, ~2.4M lines**) and growing.
 A blind all-days scan is ~30 s of SD-card reads on the Pi. Four things keep it interactive:
 
-1. **`TdlsCallsignIndex`** maps callsign → the days it appears in, so a callsign search reads the one
-   or two files that actually contain it instead of 128. Built in the background on first use (never
-   blocking a request), persisted to `tdls-history/.callsign-index`, and kept live by `Note()` on
-   every append. On restart only files whose size changed are re-scanned — a reload is ~85 ms.
+1. **`TdlsCallsignIndex`** maps callsign → the **byte offsets of its lines**, so a lookup reads one
+   line per occurrence and its cost tracks the number of matches, not the size of history. Built in
+   the background on first use (never blocking a request), persisted to `tdls-history/.callsign-index`
+   (binary), and kept live by `Note()` on every append. On restart only files whose size changed are
+   re-scanned.
+
+   > A first version indexed callsign → **days**, assuming a callsign occupies a day or two. True of
+   > GA tails, false of what people actually search: a scheduled flight number flies daily, so
+   > UAL1862 hit **110 of 128 days** and the "narrowed" search still read ~715 MB and took **4-5 s**
+   > on the Pi. Offsets took the same query to **~6 ms**. Don't go back to day granularity.
 2. **Raw-line pre-filter before the JSON parse.** Parsing is reserved for lines that could match,
    which is what makes scanning a whole file cheap.
 3. **Streaming + bounded memory.** Files are read with `ReadLines`, never `ReadAllLines`, and only the

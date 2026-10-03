@@ -343,6 +343,10 @@ async function loadOccurrences(q) {
                        `<span>${escHtml(o.date)} ${escHtml(o.airport)}</span><span class="n">${o.count}</span></a>`;
             }).join('') + `</div>`;
         occEl.hidden = false;
+        // Entries are newest-first across every airport, so with a daily flight (139 rows for
+        // UAL1862) the airport you're actually on can start well below the fold.
+        const here = occEl.querySelector('a.occ.here');
+        if (here) here.scrollIntoView({ block: 'nearest' });
     } catch (e) { occEl.hidden = true; console.error('[tdls] occurrences:', e); }
 }
 

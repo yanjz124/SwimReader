@@ -2,7 +2,7 @@ const AIRPORT = location.pathname.split('/').pop().toUpperCase();
 // LIVE = WebSocket over the server's last 12 h; HISTORY = one day of this airport from disk
 // (/api/tdls/history), fetched only when chosen. ?date=YYYY-MM-DD opens in history mode.
 const _params = new URLSearchParams(location.search);
-let mode = _params.get('date') ? 'history' : 'live';
+let mode = (_params.get('date') || _params.get('mode') === 'history') ? 'history' : 'live';
 let histDate = _params.get('date') || '';
 document.getElementById('airport-title').textContent = AIRPORT;
 document.title = `TDLS ${AIRPORT}`;
@@ -288,10 +288,16 @@ function escHtml(s) {
 }
 
 // ── Search ────────────────────────────────────────────────────
+let searchTimer = null;
 searchEl.addEventListener('input', (ev) => {
     searchQuery = ev.target.value;
     clearEl.style.display = searchQuery ? 'flex' : 'none';
-    renderAcList();
+    renderAcList();                       // instant feedback on what's already loaded
+    // In history mode the answer may be on a day we haven't loaded, so ask the server.
+    if (mode === 'history') {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(loadHistory, 400);
+    }
 });
 
 clearEl.addEventListener('click', () => {
@@ -300,6 +306,7 @@ clearEl.addEventListener('click', () => {
     clearEl.style.display = 'none';
     renderAcList();
     searchEl.focus();
+    if (mode === 'history') loadHistory();     // back to the airport's recent traffic
 });
 
 // ── Keyboard shortcuts ─────────────────────────────────────────
@@ -320,8 +327,11 @@ async function loadDates() {
     try {
         const data = await (await fetch('/api/tdls/history/dates')).json();
         const dates = (data.dates || []).map(d => d.date);
-        dateSel.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
-        if (!histDate || !dates.includes(histDate)) histDate = dates[0] || '';
+        // "All days" first and selected by default — picking a day was the thing that made this
+        // view useless, since you rarely know which day a flight was on.
+        dateSel.innerHTML = '<option value="">All days</option>'
+            + dates.map(d => `<option value="${d}">${d}</option>`).join('');
+        if (histDate && !dates.includes(histDate)) histDate = '';
         dateSel.value = histDate;
     } catch { }
 }
@@ -330,14 +340,23 @@ let histSeq = 0;
 async function loadHistory() {
     const seq = ++histSeq;
     await loadDates();
-    statusEl.textContent = histDate ? 'loading ' + histDate + '…' : 'no history';
+    // With a callsign the server searches EVERY day via its callsign index, so the day box is only
+    // a narrowing option. Without one, "All days" shows the airport's most recent traffic (the
+    // server scans newest-first and stops at the limit) rather than loading all 128 days.
+    const q = searchQuery.trim();
+    const useQuery = q.length >= 3;
+    statusEl.textContent = 'loading ' + (histDate || 'all days') + (useQuery ? ' · ' + q.toUpperCase() : '') + '…';
     statusEl.className = 'hist';
     state = {}; seenMessages.clear();
     renderAcList(); renderDetail(null);
-    if (!histDate) return;
-    const u = new URL(location.href); u.searchParams.set('date', histDate); history.replaceState(null, '', u);
+    const u = new URL(location.href);
+    if (histDate) u.searchParams.set('date', histDate); else u.searchParams.delete('date');
+    history.replaceState(null, '', u);
     try {
-        const d = await (await fetch(`/api/tdls/history?date=${histDate}&airport=${AIRPORT}&limit=5000`)).json();
+        const qs = new URLSearchParams({ airport: AIRPORT, limit: useQuery ? '2000' : '500' });
+        if (histDate) qs.set('date', histDate);
+        if (useQuery) qs.set('q', q);
+        const d = await (await fetch('/api/tdls/history?' + qs)).json();
         if (seq !== histSeq || mode !== 'history') return;
         // The API returns newest first; build the same per-aircraft state the live snapshot has.
         const msgs = (d.results || []).slice().reverse();
@@ -351,7 +370,9 @@ async function loadHistory() {
             if (m.destination) ac.destination = m.destination;
             if (m.beaconCode) ac.beaconCode = m.beaconCode;
         }
-        statusEl.textContent = `HISTORY · ${histDate}` + ((d.count || 0) >= 5000 ? ' (first 5000)' : '');
+        statusEl.textContent = 'HISTORY · ' + (histDate || 'all days')
+            + (useQuery ? ' · ' + q.toUpperCase() : '')
+            + (d.truncated ? ' (partial)' : '');
         renderAcList();
         autoSelectFromQuery();
     } catch { if (seq === histSeq) statusEl.textContent = 'ERROR'; }

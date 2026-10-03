@@ -80,7 +80,9 @@ async function loadDates() {
     try {
         const data = await (await fetch('/api/tdls/history/dates')).json();
         const dates = (data.dates || []).map(d => d.date);
-        dateSel.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
+        // This box only picks which day's AIRPORT GRID is shown — the callsign search below
+        // always covers every recorded day.
+        dateSel.innerHTML = dates.map(d => `<option value="${d}">grid: ${d}</option>`).join('');
         if (!histDate || !dates.includes(histDate)) histDate = dates[0] || '';
         dateSel.value = histDate;
     } catch { }

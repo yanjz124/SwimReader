@@ -1029,6 +1029,13 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 optional and only narrows to one day. Searching a single day was useless in practice: you rarely know
 which day a flight was on.
 
+Neither page requires a day any more. The **airport page** opens its history on *All days*: with no
+callsign it shows that airport's most recent traffic (the scan runs newest-first and stops at the
+limit), and typing a callsign re-queries the server across all days instead of filtering the one day
+already loaded. The **directory's** day box only chooses which day's airport *grid* is drawn — its
+labels read `grid: YYYY-MM-DD` to make that obvious — while the callsign search beside it always
+covers everything.
+
 The archive makes this non-trivial: ~6.5 MB/day over 128 days (**1.5 GB, ~2.4M lines**) and growing.
 A blind all-days scan is ~30 s of SD-card reads on the Pi. Four things keep it interactive:
 

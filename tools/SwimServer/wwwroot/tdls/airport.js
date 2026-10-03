@@ -3,7 +3,7 @@ const AIRPORT = location.pathname.split('/').pop().toUpperCase();
 // (/api/tdls/history), fetched only when chosen. ?date=YYYY-MM-DD opens in history mode.
 const _params = new URLSearchParams(location.search);
 let mode = (_params.get('date') || _params.get('mode') === 'history') ? 'history' : 'live';
-let histDate = _params.get('date') || '';
+// No date filter: history is every recorded day, narrowed by the callsign box instead.
 document.getElementById('airport-title').textContent = AIRPORT;
 document.title = `TDLS ${AIRPORT}`;
 
@@ -319,42 +319,28 @@ document.addEventListener('keydown', (ev) => {
 });
 
 // ── Live / history mode ────────────────────────────────────────
-const dateSel = document.getElementById('dateSel');
 function closeWs() { if (ws) { ws.onclose = null; ws.close(); ws = null; } }
-
-async function loadDates() {
-    if (dateSel.options.length) return;
-    try {
-        const data = await (await fetch('/api/tdls/history/dates')).json();
-        const dates = (data.dates || []).map(d => d.date);
-        // "All days" first and selected by default — picking a day was the thing that made this
-        // view useless, since you rarely know which day a flight was on.
-        dateSel.innerHTML = '<option value="">All days</option>'
-            + dates.map(d => `<option value="${d}">${d}</option>`).join('');
-        if (histDate && !dates.includes(histDate)) histDate = '';
-        dateSel.value = histDate;
-    } catch { }
-}
 
 let histSeq = 0;
 async function loadHistory() {
     const seq = ++histSeq;
-    await loadDates();
     // With a callsign the server searches EVERY day via its callsign index, so the day box is only
     // a narrowing option. Without one, "All days" shows the airport's most recent traffic (the
     // server scans newest-first and stops at the limit) rather than loading all 128 days.
     const q = searchQuery.trim();
     const useQuery = q.length >= 3;
-    statusEl.textContent = 'loading ' + (histDate || 'all days') + (useQuery ? ' · ' + q.toUpperCase() : '') + '…';
+    statusEl.textContent = 'loading history' + (useQuery ? ' · ' + q.toUpperCase() : '') + '…';
     statusEl.className = 'hist';
     state = {}; seenMessages.clear();
     renderAcList(); renderDetail(null);
     const u = new URL(location.href);
-    if (histDate) u.searchParams.set('date', histDate); else u.searchParams.delete('date');
+    u.searchParams.delete('date');
+    u.searchParams.set('mode', 'history');
     history.replaceState(null, '', u);
     try {
+        // Always all days. With a callsign the server resolves it through the callsign index;
+        // without one it returns this airport's most recent traffic.
         const qs = new URLSearchParams({ airport: AIRPORT, limit: useQuery ? '2000' : '500' });
-        if (histDate) qs.set('date', histDate);
         if (useQuery) qs.set('q', q);
         const d = await (await fetch('/api/tdls/history?' + qs)).json();
         if (seq !== histSeq || mode !== 'history') return;
@@ -370,8 +356,8 @@ async function loadHistory() {
             if (m.destination) ac.destination = m.destination;
             if (m.beaconCode) ac.beaconCode = m.beaconCode;
         }
-        statusEl.textContent = 'HISTORY · ' + (histDate || 'all days')
-            + (useQuery ? ' · ' + q.toUpperCase() : '')
+        statusEl.textContent = 'HISTORY · all days'
+            + (useQuery ? ' · ' + q.toUpperCase() : ' · most recent')
             + (d.truncated ? ' (partial)' : '');
         renderAcList();
         autoSelectFromQuery();
@@ -392,12 +378,12 @@ function autoSelectFromQuery() {
 function setMode(m) {
     mode = m;
     document.querySelectorAll('#modeToggle button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
-    dateSel.hidden = m !== 'history';
     selectedAc = null;
     if (m === 'history') { closeWs(); loadHistory(); }
     else {
         histSeq++;
-        const u = new URL(location.href); u.searchParams.delete('date'); history.replaceState(null, '', u);
+        const u = new URL(location.href); u.searchParams.delete('date'); u.searchParams.delete('mode');
+        history.replaceState(null, '', u);
         state = {}; seenMessages.clear(); renderAcList(); renderDetail(null);
         statusEl.textContent = 'connecting...'; statusEl.className = '';
         connect();
@@ -407,7 +393,6 @@ document.getElementById('modeToggle').addEventListener('click', e => {
     const b = e.target.closest('button[data-mode]');
     if (b && b.dataset.mode !== mode) setMode(b.dataset.mode);
 });
-dateSel.addEventListener('change', () => { histDate = dateSel.value; loadHistory(); });
 
 // ── Init ───────────────────────────────────────────────────────
 window.idleOnPause = () => { closeWs(); };

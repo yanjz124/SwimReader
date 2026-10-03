@@ -1029,12 +1029,15 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 optional and only narrows to one day. Searching a single day was useless in practice: you rarely know
 which day a flight was on.
 
-Neither page requires a day any more. The **airport page** opens its history on *All days*: with no
-callsign it shows that airport's most recent traffic (the scan runs newest-first and stops at the
-limit), and typing a callsign re-queries the server across all days instead of filtering the one day
-already loaded. The **directory's** day box only chooses which day's airport *grid* is drawn — its
-labels read `grid: YYYY-MM-DD` to make that obvious — while the callsign search beside it always
-covers everything.
+**There is no date filter in the TDLS history UI at all.** Both pages dropped it: having a day
+selector beside an all-days search was just confusing, and a day is never what you know. The
+**airport page** shows that airport's most recent traffic, and typing a callsign re-queries the
+server across every day. The **directory's** history grid totals every airport across the whole
+archive — `GET /api/tdls/history/airports` with no `date` answers from the callsign index without
+reading a file, which is what made dropping the picker possible. `date` still works on the API.
+
+The flight table's **TDLS HISTORY** button links to `/tdls?mode=history&q={callsign}`, which prefills
+and runs the search — useful for a historical flight, where live TDLS has nothing left to show.
 
 The archive makes this non-trivial: ~6.5 MB/day over 128 days (**1.5 GB, ~2.4M lines**) and growing.
 A blind all-days scan is ~30 s of SD-card reads on the Pi. Four things keep it interactive:

@@ -69,9 +69,22 @@ static class TdlsRoutes
                 days = TdlsCallsignIndex.DayCount,
             }, ctx.JsonOpts);
         });
+        // Airports in history. With no date this is the WHOLE archive, answered from the callsign
+        // index without reading a file — which is what let the date picker go away entirely.
         app.MapGet("/api/tdls/history/airports", (string? date) =>
-            Results.Json(TdlsHistoryService.AirportsForDate(ctx.TdlsHistoryDir,
-                date ?? DateTime.UtcNow.ToString("yyyy-MM-dd")), ctx.JsonOpts));
+        {
+            if (!string.IsNullOrEmpty(date))
+                return Results.Json(TdlsHistoryService.AirportsForDate(ctx.TdlsHistoryDir, date), ctx.JsonOpts);
+            TdlsCallsignIndex.EnsureBuilt(ctx.TdlsHistoryDir);
+            var totals = TdlsCallsignIndex.AirportTotals();
+            if (totals == null)   // index still warming — fall back to today so the grid isn't empty
+                return Results.Json(TdlsHistoryService.AirportsForDate(ctx.TdlsHistoryDir,
+                    DateTime.UtcNow.ToString("yyyy-MM-dd")), ctx.JsonOpts);
+            return Results.Json(totals.Select(t => new
+            {
+                airport = t.Airport, aircraftCount = t.Aircraft, messageCount = t.Messages
+            }).ToArray(), ctx.JsonOpts);
+        });
 
         // /tdls/ws/{airport} BEFORE /tdls/{airport} so the literal segment wins
         app.Map("/tdls/ws/{airport:regex(^[A-Za-z0-9]+$)}", async (HttpContext c, string airport) =>

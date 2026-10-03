@@ -21,7 +21,8 @@ const AIRPORT_NAMES = {
 const statusEl = document.getElementById('status');
 const countBar = document.getElementById('count-bar');
 const grid     = document.getElementById('grid');
-const dateSel  = document.getElementById('dateSel');
+// No date box: history covers every recorded day. Searching one day was useless (you rarely
+// know which day a flight was on) and having it beside an all-days search was just confusing.
 const histBox  = document.getElementById('histSearch');
 const csInput  = document.getElementById('csInput');
 const csOut    = document.getElementById('csResults');
@@ -29,8 +30,7 @@ const csOut    = document.getElementById('csResults');
 // LIVE = the last 12 h the server keeps in memory (polled). HISTORY = one day read from disk
 // (tdls-history), only when asked for — so neither view ever loads more than it shows.
 const params = new URLSearchParams(location.search);
-let mode = (params.get('date') || params.get('mode') === 'history') ? 'history' : 'live';
-let histDate = params.get('date') || '';
+let mode = params.get('mode') === 'history' ? 'history' : 'live';
 
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
@@ -75,31 +75,18 @@ async function refresh() {
     }
 }
 
-async function loadDates() {
-    if (dateSel.options.length) return;
-    try {
-        const data = await (await fetch('/api/tdls/history/dates')).json();
-        const dates = (data.dates || []).map(d => d.date);
-        // This box only picks which day's AIRPORT GRID is shown — the callsign search below
-        // always covers every recorded day.
-        dateSel.innerHTML = dates.map(d => `<option value="${d}">grid: ${d}</option>`).join('');
-        if (!histDate || !dates.includes(histDate)) histDate = dates[0] || '';
-        dateSel.value = histDate;
-    } catch { }
-}
-
 async function loadHistory() {
-    await loadDates();
-    if (!histDate) { grid.innerHTML = '<div class="empty">No TDLS history recorded yet.</div>'; return; }
-    const u = new URL(location.href); u.searchParams.set('date', histDate); history.replaceState(null, '', u);
-    statusEl.textContent = 'loading ' + histDate + '…';
+    const u = new URL(location.href); u.searchParams.delete('date'); history.replaceState(null, '', u);
+    statusEl.textContent = 'loading history…';
     statusEl.className = 'hist';
     grid.innerHTML = '';
     try {
-        const airports = await (await fetch('/api/tdls/history/airports?date=' + histDate)).json();
+        // No date: the server totals the whole archive from the callsign index, no files read.
+        const airports = await (await fetch('/api/tdls/history/airports')).json();
         if (mode !== 'history') return;
-        statusEl.textContent = 'HISTORY · ' + histDate;
-        renderGrid(airports, icao => `/tdls/${icao.toLowerCase()}?date=${histDate}`);
+        statusEl.textContent = 'HISTORY · all recorded days';
+        if (!airports.length) { grid.innerHTML = '<div class="empty">No TDLS history recorded yet.</div>'; return; }
+        renderGrid(airports, icao => `/tdls/${icao.toLowerCase()}?mode=history`);
     } catch { statusEl.textContent = 'ERROR'; }
 }
 
@@ -123,12 +110,20 @@ async function findCallsign() {
             return;
         }
         csOut.innerHTML = occ.map(o =>
-            `<a href="/tdls/${String(o.airport || '').toLowerCase()}?date=${o.date}&q=${encodeURIComponent(d.callsign)}">` +
+            `<a href="/tdls/${String(o.airport || '').toLowerCase()}?mode=history&q=${encodeURIComponent(d.callsign)}">` +
             `<span class="muted">${esc(o.date)}</span> ${esc(o.airport)} · ${esc(d.callsign)} ` +
             `<span class="muted">${o.count} msg</span></a>`).join('')
             + `<span class="muted">· ${d.total} message${d.total === 1 ? '' : 's'} over ${occ.length} day/airport</span>`;
     } catch { csOut.innerHTML = '<span class="muted">search failed</span>'; }
 }
+// ?q=CALLSIGN (e.g. the flight table's TDLS HISTORY button) opens history with that search run.
+(function () {
+    const q = params.get('q');
+    if (!q) return;
+    csInput.value = q.toUpperCase();
+    if (mode !== 'history') mode = 'history';
+})();
+
 let csTimer = null;
 csInput.addEventListener('input', () => { clearTimeout(csTimer); csTimer = setTimeout(findCallsign, 350); });
 
@@ -136,20 +131,21 @@ let _pollTimer = null;
 function setMode(m) {
     mode = m;
     document.querySelectorAll('#modeToggle button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
-    dateSel.hidden = histBox.hidden = m !== 'history';
+    histBox.hidden = m !== 'history';
     clearInterval(_pollTimer); _pollTimer = null;
     const url = new URL(location.href);
-    url.searchParams.delete('mode');
-    if (m === 'history') { if (histDate) url.searchParams.set('date', histDate); loadHistory(); }
-    else { url.searchParams.delete('date'); refresh(); _pollTimer = setInterval(refresh, 5000); }
+    url.searchParams.delete('date');
+    if (m === 'history') { url.searchParams.set('mode', 'history'); loadHistory(); }
+    else { url.searchParams.delete('mode'); refresh(); _pollTimer = setInterval(refresh, 5000); }
     history.replaceState(null, '', url);
 }
 document.getElementById('modeToggle').addEventListener('click', e => {
     const b = e.target.closest('button[data-mode]');
     if (b && b.dataset.mode !== mode) setMode(b.dataset.mode);
 });
-dateSel.addEventListener('change', () => { histDate = dateSel.value; setMode('history'); });
 
 setMode(mode);
+// Run the prefilled search once the mode is set up (the box is filled above from ?q=).
+if (csInput.value.trim().length >= 3) findCallsign();
 window.idleOnPause = () => { clearInterval(_pollTimer); _pollTimer = null; };
 window.idleOnResume = () => { if (mode === 'live') { refresh(); _pollTimer = setInterval(refresh, 5000); } };

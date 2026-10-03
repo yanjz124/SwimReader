@@ -91,6 +91,45 @@ static class TdlsCallsignIndex
         lock (list) list.Add(Pack(airportIdx, dayIdx, offset));
     }
 
+    /// <summary>Airport totals across ALL recorded history, from memory — the directory's history
+    /// grid used to need a day because counting meant reading a day file. The index already knows
+    /// every occurrence's airport, so the whole archive can be summarised without touching disk.
+    /// Cached briefly: it walks every occurrence (~2.4M) and the answer barely moves.</summary>
+    public static IReadOnlyList<(string Airport, int Aircraft, int Messages)>? AirportTotals()
+    {
+        if (_state != BuildState.Ready) return null;
+        lock (_totalsGate)
+        {
+            if (_totals != null && DateTime.UtcNow - _totalsAt < TimeSpan.FromMinutes(2)) return _totals;
+            var msgs = new Dictionary<int, int>();
+            var acft = new Dictionary<int, HashSet<string>>();
+            foreach (var (cs, list) in _hits)
+            {
+                long[] packed;
+                lock (list) packed = list.ToArray();
+                foreach (var p in packed)
+                {
+                    var a = UnpackAirport(p);
+                    msgs[a] = msgs.GetValueOrDefault(a) + 1;
+                    if (!acft.TryGetValue(a, out var set)) acft[a] = set = new HashSet<string>(StringComparer.Ordinal);
+                    set.Add(cs);
+                }
+            }
+            var outp = new List<(string, int, int)>(msgs.Count);
+            lock (_gate)
+                foreach (var (a, n) in msgs)
+                    if (a < _airports.Count && _airports[a].Length > 0)
+                        outp.Add((_airports[a], acft[a].Count, n));
+            outp.Sort((x, y) => y.Item3.CompareTo(x.Item3));
+            _totals = outp;
+            _totalsAt = DateTime.UtcNow;
+            return _totals;
+        }
+    }
+    private static readonly object _totalsGate = new();
+    private static IReadOnlyList<(string, int, int)>? _totals;
+    private static DateTime _totalsAt;
+
     /// <summary>True when the index holds this callsign — lets a caller tell "no hits here" from
     /// "I can't answer", so a known callsign filtered to the wrong airport doesn't trigger a scan.</summary>
     public static bool Knows(string callsign) => _state == BuildState.Ready && _hits.ContainsKey(callsign);

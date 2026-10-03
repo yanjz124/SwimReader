@@ -335,15 +335,15 @@ async function loadOccurrences(q) {
         if (!occ.length) { occEl.hidden = true; occEl.innerHTML = ''; return; }
         const back = `<a href="/tdls?mode=history&q=${encodeURIComponent(d.callsign)}" title="Back to the search results">&#9666; SEARCH</a>`;
         occEl.innerHTML =
-            `<div class="occ-hd"><span>${esc(d.callsign)} · ${d.total} MSG · ${occ.length} DAY/APT</span>${back}</div>` +
+            `<div class="occ-hd"><span>${escHtml(d.callsign)} · ${d.total} MSG · ${occ.length} DAY/APT</span>${back}</div>` +
             `<div class="occ-list">` + occ.map(o => {
                 const here = String(o.airport || '').toUpperCase() === AIRPORT.toUpperCase();
                 return `<a class="occ${here ? ' here' : ''}" href="/tdls/${String(o.airport || '').toLowerCase()}?mode=history&q=${encodeURIComponent(d.callsign)}"` +
                        `${here ? ' title="You are here"' : ''}>` +
-                       `<span>${esc(o.date)} ${esc(o.airport)}</span><span class="n">${o.count}</span></a>`;
+                       `<span>${escHtml(o.date)} ${escHtml(o.airport)}</span><span class="n">${o.count}</span></a>`;
             }).join('') + `</div>`;
         occEl.hidden = false;
-    } catch { occEl.hidden = true; }
+    } catch (e) { occEl.hidden = true; console.error('[tdls] occurrences:', e); }
 }
 
 let histSeq = 0;

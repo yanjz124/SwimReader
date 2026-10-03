@@ -296,3 +296,17 @@ header .stats {
 .mode-toggle button.on { background: #26260f; color: #cccc44; }
 #dateSel { background: #000; color: #cccc44; border: 1px solid #444; font: inherit; font-size: 11px; padding: 2px 4px; }
 #status.hist { color: #cc9944; }
+
+/* "Where else this callsign appears" strip. Answered from the callsign index, so it costs nothing
+   to show, and it saves bouncing back to the directory to reach another day or airport. */
+.ac-occ { border-bottom: 1px solid #333; padding: 6px 8px; font-size: 10px; background: #101010; }
+.ac-occ .occ-hd { color: #666; letter-spacing: 1px; margin-bottom: 5px; display: flex;
+                  justify-content: space-between; align-items: baseline; gap: 6px; }
+.ac-occ .occ-hd a { color: #cccc44; text-decoration: none; white-space: nowrap; }
+.ac-occ .occ-hd a:hover { text-decoration: underline; }
+.ac-occ .occ-list { display: flex; flex-direction: column; gap: 3px; max-height: 148px; overflow-y: auto; }
+.ac-occ a.occ { display: flex; justify-content: space-between; gap: 6px; text-decoration: none;
+                color: #bbb; padding: 3px 5px; border: 1px solid #262626; border-radius: 4px; }
+.ac-occ a.occ:hover { border-color: #cccc44; color: #fff; }
+.ac-occ a.occ.here { border-color: #3a5a3a; background: #0e1a0e; color: #bfe6bf; }
+.ac-occ a.occ .n { color: #666; }

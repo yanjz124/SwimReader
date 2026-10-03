@@ -321,6 +321,31 @@ document.addEventListener('keydown', (ev) => {
 // ── Live / history mode ────────────────────────────────────────
 function closeWs() { if (ws) { ws.onclose = null; ws.close(); ws = null; } }
 
+// Everywhere else this callsign appears, from the callsign index (no files read). Lets you hop
+// straight to another day or airport, and back to the search, without retracing through /tdls.
+const occEl = document.getElementById('ac-occ');
+let occSeq = 0;
+async function loadOccurrences(q) {
+    const seq = ++occSeq;
+    if (!q || q.length < 3) { occEl.hidden = true; occEl.innerHTML = ''; return; }
+    try {
+        const d = await (await fetch('/api/tdls/history/callsign?q=' + encodeURIComponent(q))).json();
+        if (seq !== occSeq || mode !== 'history') return;
+        const occ = d.occurrences || [];
+        if (!occ.length) { occEl.hidden = true; occEl.innerHTML = ''; return; }
+        const back = `<a href="/tdls?mode=history&q=${encodeURIComponent(d.callsign)}" title="Back to the search results">&#9666; SEARCH</a>`;
+        occEl.innerHTML =
+            `<div class="occ-hd"><span>${esc(d.callsign)} · ${d.total} MSG · ${occ.length} DAY/APT</span>${back}</div>` +
+            `<div class="occ-list">` + occ.map(o => {
+                const here = String(o.airport || '').toUpperCase() === AIRPORT.toUpperCase();
+                return `<a class="occ${here ? ' here' : ''}" href="/tdls/${String(o.airport || '').toLowerCase()}?mode=history&q=${encodeURIComponent(d.callsign)}"` +
+                       `${here ? ' title="You are here"' : ''}>` +
+                       `<span>${esc(o.date)} ${esc(o.airport)}</span><span class="n">${o.count}</span></a>`;
+            }).join('') + `</div>`;
+        occEl.hidden = false;
+    } catch { occEl.hidden = true; }
+}
+
 let histSeq = 0;
 async function loadHistory() {
     const seq = ++histSeq;
@@ -342,6 +367,7 @@ async function loadHistory() {
         // without one it returns this airport's most recent traffic.
         const qs = new URLSearchParams({ airport: AIRPORT, limit: useQuery ? '2000' : '500' });
         if (useQuery) qs.set('q', q);
+        loadOccurrences(useQuery ? q.toUpperCase() : '');
         const d = await (await fetch('/api/tdls/history?' + qs)).json();
         if (seq !== histSeq || mode !== 'history') return;
         // The API returns newest first; build the same per-aircraft state the live snapshot has.
@@ -379,6 +405,7 @@ function setMode(m) {
     mode = m;
     document.querySelectorAll('#modeToggle button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
     selectedAc = null;
+    if (m !== 'history') { occEl.hidden = true; occEl.innerHTML = ''; }
     if (m === 'history') { closeWs(); loadHistory(); }
     else {
         histSeq++;
@@ -397,5 +424,14 @@ document.getElementById('modeToggle').addEventListener('click', e => {
 // ── Init ───────────────────────────────────────────────────────
 window.idleOnPause = () => { closeWs(); };
 window.idleOnResume = () => { if (mode === 'live' && !ws) connect(); };
+// Seed the search from ?q= BEFORE the first history load, or that load would ask the server for the
+// airport's recent traffic instead of this callsign — and arriving from the directory would only
+// find the flight if it happened to be in the newest few hundred messages.
+(function () {
+    const q = _params.get('q');
+    if (!q || mode !== 'history') return;
+    searchEl.value = searchQuery = q.toUpperCase();
+    clearEl.style.display = 'flex';
+})();
 setMode(mode);
 if (mode === 'live') setTimeout(autoSelectFromQuery, 1500);

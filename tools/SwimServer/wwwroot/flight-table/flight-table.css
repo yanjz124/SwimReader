@@ -438,3 +438,7 @@ body {
 .af .afinfo { grid-column:1 / -1; font-size:11.5px; color:#888; line-height:1.5; }
 .af .afinfo b { color:#ddd; font-weight:normal; }
 .af .afinfo .warn { color:#d9a066; }
+.af .sb-dispatch { grid-column:1 / -1; justify-self:start; margin-top:2px; text-decoration:none;
+    background:#0a300a; color:#bfe6bf; border:1px solid #3a5a3a; border-radius:6px;
+    padding:6px 14px; font-size:11px; letter-spacing:1px; }
+.af .sb-dispatch:hover { background:#0f4a0f; color:#fff; border-color:#5a8a5a; }

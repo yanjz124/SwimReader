@@ -10,6 +10,7 @@ let sortCol = 'callsign', sortAsc = true;
 let searchTerm = '';
 let ws = null;
 let showIcao = false;
+let showSb = false;      // SimBrief panel: picker + DISPATCH, revealed by the SIMBRIEF button
 let lastIcaoText = '';
 
 // Aircraft type → FAA legacy wake class (J/H/L/S+/S) — fallback when SFDPS doesn't
@@ -684,7 +685,7 @@ function renderActiveTab() {
     if (!currentDetail) return;
     if (activeTab === 'plan') {
         detailBody.innerHTML = renderFlightPlan(currentDetail);
-        sbHydrate(currentDetail);
+        if (showSb) sbHydrate(currentDetail);
     } else {
         // Historical flights have events from /api/history (no XML expansion);
         // _purged means the live flight was 404'd with nothing in our local cache.
@@ -1039,6 +1040,13 @@ function toggleIcaoFpl() {
     renderActiveTab();
 }
 
+// SIMBRIEF opens the panel rather than jumping straight out, so the airframe and variant can be
+// set before dispatching. Nothing about the flight is fetched until it's opened.
+function toggleSimbrief() {
+    showSb = !showSb;
+    renderActiveTab();
+}
+
 // Robust clipboard copy. On mobile / iOS Safari navigator.clipboard is often
 // unavailable or rejects silently (no secure-context gesture, permissions policy,
 // not-focused) — the old code had no .catch/fallback so the button did nothing.
@@ -1151,9 +1159,7 @@ function renderFlightPlan(d) {
         ? `<div class="icao-block"><button class="icao-copy" onclick="copyIcaoFpl(event)">COPY</button>${esc(lastIcaoText).replace(/\n/g, '<br>')}</div>`
         : '';
     const icaoBtn = `<button class="icao-btn" onclick="toggleIcaoFpl()">${showIcao ? 'HIDE ICAO FPL' : 'ICAO FPL'}</button>`;
-    const choice = sbChoice.get(d.gufi);
-    const sbUrl = buildSimBriefUrl(d, choice);
-    const sbBtn = `<a class="icao-btn simbrief-btn" href="${esc(sbUrl)}" target="_blank" rel="noopener">SIMBRIEF</a>`;
+    const sbBtn = `<button class="icao-btn" onclick="toggleSimbrief()">${showSb ? 'HIDE SIMBRIEF' : 'SIMBRIEF'}</button>`;
     const vatUrl = 'https://my.vatsim.net/pilots/flightplan?raw=' + encodeURIComponent(buildVatsimRaw(d, lastIcaoText));
     const vatBtn = `<a class="icao-btn simbrief-btn" href="${esc(vatUrl)}" target="_blank" rel="noopener">VATSIM</a>`;
     // TDLS history for this callsign — every CPDLC clearance and departure event it has on record,
@@ -1163,7 +1169,7 @@ function renderFlightPlan(d) {
         ? `<a class="icao-btn simbrief-btn" href="/tdls?mode=history&q=${encodeURIComponent(d.callsign)}" target="_blank" rel="noopener" title="CPDLC clearances and departure events recorded for ${esc(d.callsign)}">TDLS HISTORY</a>`
         : '';
 
-    return `${purgeBanner}${icaoBtn}${sbBtn}${vatBtn}${tdlsBtn}${sbPickerHtml(d)}${icaoHtml}
+    return `${purgeBanner}${icaoBtn}${sbBtn}${vatBtn}${tdlsBtn}${showSb ? sbPickerHtml(d) : ''}${icaoHtml}
         ${section('Identity', [
             ['Callsign', d.callsign],
             ['Aircraft Type', d.aircraftType],
@@ -1401,6 +1407,8 @@ function sbPickerHtml(d) {
             <option value="">SimBrief default</option>
         </select>
         <div class="afinfo">${own ? 'Looking up ' + esc(own) + '…' : 'No registration filed — pick a tail or leave generic.'}</div>
+        <a class="sb-dispatch" href="${esc(buildSimBriefUrl(d, sbChoice.get(d.gufi)))}" target="_blank" rel="noopener"
+           title="Open SimBrief with this route, tail and variant">DISPATCH &#8599;</a>
     </div>`;
 }
 
@@ -1449,7 +1457,7 @@ function sbSetAirframe(d, reg, keepDefault) {
 
 function sbRelink(d) {
     const st = sbChoice.get(d.gufi) || {};
-    const link = detailBody.querySelector('a.simbrief-btn');
+    const link = detailBody.querySelector('a.sb-dispatch');
     if (link) link.href = buildSimBriefUrl(d, st);
     const wrap = detailBody.querySelector('.af[data-gufi]');
     const info = wrap && wrap.querySelector('.afinfo');

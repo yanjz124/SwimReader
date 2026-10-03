@@ -859,6 +859,10 @@ lifetime.ApplicationStopping.Register(() =>
 // silently splits the feed rather than duplicating it (see FeedGuard).
 FeedGuard.Evaluate();
 FeedHealth.Start();
+// Warm the TDLS callsign index now rather than on the first search. Building it on demand meant the
+// first all-days query after every restart fell back to a full scan (~5 s) while it loaded, and
+// raced the index rebuild's own disk writes. It builds on a background thread either way.
+TdlsCallsignIndex.EnsureBuilt(tdlsHistoryDir);
 if (FeedGuard.LiveFeed)
 {
     // Background so a Solace receiver hung inside the SDK can't keep the process

@@ -32,6 +32,32 @@ static class TdlsRoutes
                 Math.Clamp(limit ?? 500, 1, 5000), LaddService.Reveal(http)), ctx.JsonOpts);
         });
 
+        // Where a callsign has been, grouped by day + airport, answered straight from the index with
+        // NO file reads. The directory's search only renders day/airport/count, and reading the
+        // messages for a daily flight number means opening ~110 day files — 54s cold on the Pi.
+        app.MapGet("/api/tdls/history/callsign", (string? q, HttpContext http) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            var cs = (q ?? "").Trim().ToUpperInvariant();
+            TdlsCallsignIndex.EnsureBuilt(ctx.TdlsHistoryDir);
+            if (cs.Length < 3)
+                return Results.Json(new { callsign = cs, occurrences = Array.Empty<object>(), total = 0,
+                    indexState = TdlsCallsignIndex.State.ToString() }, ctx.JsonOpts);
+            // LADD: never confirm a blocked aircraft exists, exactly as the message search doesn't.
+            if (LaddService.ShouldMask(cs, null, LaddService.Reveal(http)))
+                return Results.Json(new { callsign = cs, occurrences = Array.Empty<object>(), total = 0,
+                    ladd = true, indexState = TdlsCallsignIndex.State.ToString() }, ctx.JsonOpts);
+            var occ = TdlsCallsignIndex.Occurrences(cs);
+            return Results.Json(new
+            {
+                callsign = cs,
+                occurrences = occ?.Select(o => new { date = o.Date, airport = o.Airport, count = o.Count }).ToArray()
+                              ?? Array.Empty<object>(),
+                total = occ?.Sum(o => o.Count) ?? 0,
+                indexState = TdlsCallsignIndex.State.ToString(),
+            }, ctx.JsonOpts);
+        });
+
         // Index status, so the UI can tell "no matches" from "still warming up".
         app.MapGet("/api/tdls/history/index", () =>
         {

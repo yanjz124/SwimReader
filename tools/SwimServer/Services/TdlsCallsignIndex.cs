@@ -28,9 +28,14 @@ namespace SwimServer;
 static class TdlsCallsignIndex
 {
     private const string FileName = ".callsign-index";
-    private static readonly byte[] Magic = "TDLSIDX2"u8.ToArray();
-    private const int OffsetBits = 40;
-    private const long OffsetMask = (1L << OffsetBits) - 1;
+    private static readonly byte[] Magic = "TDLSIDX3"u8.ToArray();
+    // One occurrence per long: airport(16) | day(16) | offset(32). 4 GB files, 65k days, 65k
+    // airports — all far beyond anything this will see.
+    private const long OffsetMask = 0xFFFFFFFFL;
+    private static long Pack(int airportId, int dayIdx, long offset) =>
+        ((long)(ushort)airportId << 48) | ((long)(ushort)dayIdx << 32) | (offset & OffsetMask);
+    private static int UnpackAirport(long p) => (int)((p >> 48) & 0xFFFF);
+    private static int UnpackDay(long p) => (int)((p >> 32) & 0xFFFF);
 
     public enum BuildState { NotStarted, Building, Ready, Failed }
 
@@ -39,11 +44,25 @@ static class TdlsCallsignIndex
     private static readonly List<string> _dates = new();                 // day index → date
     private static readonly Dictionary<string, int> _dateIdx = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, long> _scanned = new(StringComparer.Ordinal);  // date → size when scanned
+    private static readonly List<string> _airports = new();                 // airport index → ICAO
+    private static readonly Dictionary<string, int> _airportIdx = new(StringComparer.OrdinalIgnoreCase);
     private static volatile BuildState _state = BuildState.NotStarted;
 
     public static BuildState State => _state;
     public static int CallsignCount => _hits.Count;
     public static int DayCount { get { lock (_gate) return _scanned.Count; } }
+
+    private static int AirportIndex(string airport)
+    {
+        lock (_gate)
+        {
+            if (_airportIdx.TryGetValue(airport, out var i)) return i;
+            i = _airports.Count;
+            _airports.Add(airport);
+            _airportIdx[airport] = i;
+            return i;
+        }
+    }
 
     private static int DayIndex(string date)
     {
@@ -58,26 +77,68 @@ static class TdlsCallsignIndex
     }
 
     /// <summary>Record one occurrence. Called on append with the offset the line was written at.</summary>
-    public static void Note(string? callsign, string date, long offset)
+    public static void Note(string? callsign, string date, string? airport, long offset)
     {
         if (string.IsNullOrEmpty(callsign) || _state == BuildState.NotStarted) return;
-        Add(callsign, DayIndex(date), offset);
+        if (LaddService.IsBlocked(callsign, null)) return;      // see the note in Emit
+
+        Add(callsign, DayIndex(date), AirportIndex(airport ?? ""), offset);
     }
 
-    private static void Add(string callsign, int dayIdx, long offset)
+    private static void Add(string callsign, int dayIdx, int airportIdx, long offset)
     {
         var list = _hits.GetOrAdd(callsign, _ => new List<long>(4));
-        lock (list) list.Add(((long)dayIdx << OffsetBits) | (offset & OffsetMask));
+        lock (list) list.Add(Pack(airportIdx, dayIdx, offset));
     }
 
-    /// <summary>One located message: which day file, and the byte offset of its line.</summary>
-    public readonly record struct Hit(string Date, long Offset);
+    /// <summary>True when the index holds this callsign — lets a caller tell "no hits here" from
+    /// "I can't answer", so a known callsign filtered to the wrong airport doesn't trigger a scan.</summary>
+    public static bool Knows(string callsign) => _state == BuildState.Ready && _hits.ContainsKey(callsign);
+
+    /// <summary>One located message: day file, airport, and the byte offset of its line.</summary>
+    public readonly record struct Hit(string Date, string Airport, long Offset);
+
+    /// <summary>Where a callsign appears, grouped — answered entirely from memory, no file reads.</summary>
+    public readonly record struct Occurrence(string Date, string Airport, int Count);
+
+    /// <summary>
+    /// The grouped "where has this callsign been" answer, straight out of the index.
+    ///
+    /// This exists because reading the messages is the expensive part: a daily flight number spans
+    /// ~110 day files, and opening 110 cold files on the Pi's contended SD card measured 54 s (vs
+    /// milliseconds once cached). The directory's search only ever renders day + airport + count,
+    /// so it never needed the messages at all.
+    /// </summary>
+    public static IReadOnlyList<Occurrence>? Occurrences(string callsign)
+    {
+        if (_state != BuildState.Ready) return null;
+        if (!_hits.TryGetValue(callsign, out var list)) return Array.Empty<Occurrence>();
+        long[] packed;
+        lock (list) packed = list.ToArray();
+        var counts = new Dictionary<(int d, int a), int>();
+        foreach (var p in packed)
+        {
+            var k = (UnpackDay(p), UnpackAirport(p));
+            counts[k] = counts.TryGetValue(k, out var n) ? n + 1 : 1;
+        }
+        var outp = new List<Occurrence>(counts.Count);
+        lock (_gate)
+            foreach (var ((d, a), n) in counts)
+                if (d < _dates.Count && a < _airports.Count)
+                    outp.Add(new Occurrence(_dates[d], _airports[a], n));
+        outp.Sort((x, y) => string.CompareOrdinal(y.Date, x.Date) is var c && c != 0
+            ? c : string.CompareOrdinal(x.Airport, y.Airport));
+        return outp;
+    }
 
     /// <summary>
     /// Every recorded occurrence of a callsign, newest first, or null when the index can't answer
     /// yet (still building, or failed) — the caller then falls back to scanning.
     /// </summary>
-    public static IReadOnlyList<Hit>? Find(string callsign)
+    /// <param name="airport">When given, hits at other airports are dropped BEFORE any file is
+    /// opened — which is the whole point: the airport page would otherwise open all 110 of a daily
+    /// flight's day files only to discard most of what it read.</param>
+    public static IReadOnlyList<Hit>? Find(string callsign, string? airport = null)
     {
         if (_state != BuildState.Ready) return null;
         if (!_hits.TryGetValue(callsign, out var list)) return Array.Empty<Hit>();
@@ -85,11 +146,19 @@ static class TdlsCallsignIndex
         lock (list) packed = list.ToArray();
         var outp = new List<Hit>(packed.Length);
         lock (_gate)
+        {
+            int wantAirport = -1;
+            if (!string.IsNullOrEmpty(airport) && !_airportIdx.TryGetValue(airport, out wantAirport))
+                return Array.Empty<Hit>();                   // airport never seen → no hits
             foreach (var p in packed)
             {
-                var d = (int)(p >> OffsetBits);
-                if (d >= 0 && d < _dates.Count) outp.Add(new Hit(_dates[d], p & OffsetMask));
+                var d = UnpackDay(p);
+                var a = UnpackAirport(p);
+                if (wantAirport >= 0 && a != wantAirport) continue;
+                if (d < _dates.Count && a < _airports.Count)
+                    outp.Add(new Hit(_dates[d], _airports[a], p & OffsetMask));
             }
+        }
         // Newest day first, but ASCENDING by offset inside a day: the reader opens each file once and
         // walks it forwards, which lets the OS read ahead. Seeking backwards through a 6.5 MB file on
         // the Pi's SD card is markedly slower. The reader reverses each file's results afterwards so
@@ -154,7 +223,7 @@ static class TdlsCallsignIndex
         int idx;
         lock (_gate) { if (!_dateIdx.TryGetValue(date, out idx)) return; }
         foreach (var list in _hits.Values)
-            lock (list) list.RemoveAll(p => (int)(p >> OffsetBits) == idx);
+            lock (list) list.RemoveAll(p => UnpackDay(p) == idx);
     }
 
     /// <summary>
@@ -210,7 +279,23 @@ static class TdlsCallsignIndex
         var rest = line[i..];
         var j = rest.IndexOf((byte)'"');
         if (j <= 0) return;
-        Add(Encoding.UTF8.GetString(rest[..j]), dayIdx, offset);
+        // Skip anything flagged LADD at write time. That flag outlives the live list (which is why
+        // the reader masks on it), so indexing these would let the summary endpoint confirm a
+        // blocked aircraft's movements even after the list stopped covering it.
+        if (line.IndexOf("\"ladd\":true"u8) >= 0) return;
+        var cs = Encoding.UTF8.GetString(rest[..j]);
+        Add(cs, dayIdx, AirportIndex(ReadField(line, "\"airport\":\""u8) ?? ""), offset);
+    }
+
+    /// <summary>Pull one string field out of a raw JSON line by substring; null when absent.</summary>
+    private static string? ReadField(ReadOnlySpan<byte> line, ReadOnlySpan<byte> key)
+    {
+        var i = line.IndexOf(key);
+        if (i < 0) return null;
+        i += key.Length;
+        var rest = line[i..];
+        var j = rest.IndexOf((byte)'"');
+        return j <= 0 ? null : Encoding.UTF8.GetString(rest[..j]);
     }
 
     // ── persistence (binary: 2.4M offsets would be clumsy as text) ────────────
@@ -233,6 +318,8 @@ static class TdlsCallsignIndex
                 DayIndex(date);
                 lock (_gate) _scanned[date] = size;
             }
+            var apN = br.ReadInt32();
+            for (int i = 0; i < apN; i++) AirportIndex(br.ReadString());
             var csN = br.ReadInt32();
             for (int i = 0; i < csN; i++)
             {
@@ -270,6 +357,10 @@ static class TdlsCallsignIndex
                 }
                 bw.Write(dates.Length);
                 for (int i = 0; i < dates.Length; i++) { bw.Write(dates[i]); bw.Write(sizes[i]); }
+                string[] aps;
+                lock (_gate) aps = _airports.ToArray();
+                bw.Write(aps.Length);
+                foreach (var a in aps) bw.Write(a);
                 bw.Write(_hits.Count);
                 foreach (var (cs, list) in _hits)
                 {

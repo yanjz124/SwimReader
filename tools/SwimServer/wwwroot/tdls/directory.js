@@ -103,9 +103,9 @@ async function loadHistory() {
     } catch { statusEl.textContent = 'ERROR'; }
 }
 
-// Cross-airport, cross-DAY callsign search. Searching one day was useless — you rarely know which
-// day a flight was on. The server resolves a callsign through its index, so this costs a couple of
-// files rather than a scan of the whole archive.
+// Cross-airport, cross-DAY callsign search. Answered from the server's callsign index, which
+// returns day + airport + count without reading any history file — reading the messages for a
+// daily flight number means opening ~110 day files, which measured 54s cold on the Pi.
 let csSeq = 0;
 async function findCallsign() {
     const q = csInput.value.trim().toUpperCase();
@@ -113,31 +113,20 @@ async function findCallsign() {
     if (q.length < 3) { csOut.innerHTML = ''; return; }
     csOut.innerHTML = '<span class="muted">searching all days…</span>';
     try {
-        const d = await (await fetch(`/api/tdls/history?q=${encodeURIComponent(q)}&limit=500`)).json();
+        const d = await (await fetch(`/api/tdls/history/callsign?q=${encodeURIComponent(q)}`)).json();
         if (seq !== csSeq) return;
-        // Group by day + airport + callsign, so the same flight number on different days stays apart.
-        const byKey = new Map();
-        for (const m of d.results || []) {
-            if (!String(m.aircraftId || '').toUpperCase().includes(q)) continue;
-            const day = String(m.time || '').slice(0, 10);
-            const k = day + '|' + m.airport + '|' + m.aircraftId;
-            byKey.set(k, (byKey.get(k) || 0) + 1);
-        }
-        if (!byKey.size) {
+        const occ = d.occurrences || [];
+        if (!occ.length) {
             csOut.innerHTML = d.indexState === 'Building'
-                ? '<span class="muted">No matches yet — still indexing history, try again shortly.</span>'
+                ? '<span class="muted">Still indexing history — try again shortly.</span>'
                 : '<span class="muted">No callsign matches in recorded history.</span>';
             return;
         }
-        // Newest day first.
-        const rows = [...byKey].sort((a, b) => a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0);
-        csOut.innerHTML = rows.map(([k, n]) => {
-            const [day, ap, cs] = k.split('|');
-            return `<a href="/tdls/${ap.toLowerCase()}?date=${day}&q=${encodeURIComponent(cs)}">` +
-                   `<span class="muted">${esc(day)}</span> ${esc(ap)} · ${esc(cs)} ` +
-                   `<span class="muted">${n} msg</span></a>`;
-        }).join('') + (d.truncated
-            ? '<span class="muted">· partial (hit the search limit)</span>' : '');
+        csOut.innerHTML = occ.map(o =>
+            `<a href="/tdls/${String(o.airport || '').toLowerCase()}?date=${o.date}&q=${encodeURIComponent(d.callsign)}">` +
+            `<span class="muted">${esc(o.date)}</span> ${esc(o.airport)} · ${esc(d.callsign)} ` +
+            `<span class="muted">${o.count} msg</span></a>`).join('')
+            + `<span class="muted">· ${d.total} message${d.total === 1 ? '' : 's'} over ${occ.length} day/airport</span>`;
     } catch { csOut.innerHTML = '<span class="muted">search failed</span>'; }
 }
 let csTimer = null;

@@ -1062,6 +1062,21 @@ scanned. The deliberate converse: when the index *does* know the callsign, only 
 another day's clearance text that merely mentions it won't be returned. This is a callsign lookup;
 paying a 1.5 GB scan to catch that would defeat the point.
 
+**`GET /api/tdls/history/callsign?q=` answers from the index alone — no file reads.** It returns
+day + airport + count, which is all the directory's search renders. This matters because *reading*
+the messages is the expensive part: a daily flight number spans ~110 day files, and opening 110 cold
+files on the Pi's contended SD card measured **54 s** (vs milliseconds once cached). Offsets fixed
+the warm case; not touching files at all fixes the cold one.
+
+Each occurrence also carries its **airport**, so the airport page's search drops hits at other
+airports *before* opening anything, and a known callsign filtered to an airport it never visited
+returns empty without a scan.
+
+**LADD records are never indexed.** The `"ladd":true` flag is stamped at write time and outlives the
+live list (which is why the message reader masks on it) — indexing those would let the summary
+endpoint confirm a blocked aircraft's movements even after the list stopped covering it. They fall
+back to a scan, which masks correctly.
+
 Response carries `truncated`, `scannedDays`, `indexed` and `indexState` so the UI can distinguish "no
 matches" from "still indexing". LADD masking still happens **before** filtering, so a callsign search
 can never find a hidden flight by its real id.

@@ -44,7 +44,7 @@ static class TdlsHistoryService
             }
             // Keep the callsign index current — otherwise an all-days search would miss
             // today's messages until the next rebuild.
-            TdlsCallsignIndex.Note(msg.AircraftId, datePart, offset);
+            TdlsCallsignIndex.Note(msg.AircraftId, datePart, msg.Airport, offset);
         }
         catch (Exception ex)
         {
@@ -161,9 +161,14 @@ static class TdlsHistoryService
                 // An EMPTY hit is a miss, not "no results": the index only knows aircraftId while the
                 // search also matches gate, runway and clearance text, so an unrecognised token
                 // ("RNAV") still has to be scanned for.
-                var hits = (q != null && LooksLikeCallsign(q)) ? TdlsCallsignIndex.Find(q) : null;
+                var hits = (q != null && LooksLikeCallsign(q)) ? TdlsCallsignIndex.Find(q, ap) : null;
                 if (hits is { Count: > 0 })
                     return ByOffset(historyDir, hits, q!, t, ap, maxResults, reveal);
+                // Empty but the index knows the callsign: it genuinely has nothing matching (e.g. the
+                // airport filter excluded it). That's an answer — don't scan 128 files to repeat it.
+                if (hits != null && q != null && TdlsCallsignIndex.Knows(q))
+                    return new { count = 0, results = Array.Empty<object>(), truncated = false,
+                        scannedDays = 0, indexed = true, indexState = TdlsCallsignIndex.State.ToString() };
                 dates = Directory.GetFiles(historyDir, "*.jsonl")
                     .Select(Path.GetFileNameWithoutExtension)
                     .Where(x => !string.IsNullOrEmpty(x))

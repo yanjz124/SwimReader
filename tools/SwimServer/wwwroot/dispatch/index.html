@@ -102,6 +102,7 @@
   .btn { border:1px solid #333; border-radius:8px; padding:8px 12px; font:inherit; font-size:12px;
     cursor:pointer; background:#151515; color:var(--yel); text-decoration:none; display:inline-block; white-space:nowrap; }
   .btn.sb { background:#04333a; color:#8fe9ef; border-color:#0a5a63; font-weight:bold; }
+  .btn.vat { background:#1a2340; color:#9fb6ef; border-color:#2d3c6b; font-weight:bold; }
   .btn.copy { background:#1a1420; color:#d8b6ff; border-color:#3a2a5a; }
   .btn:hover { filter:brightness(1.25); }
   .btn.done { color:var(--ok); border-color:#2f5a2f; }
@@ -119,8 +120,6 @@
   .af .afinfo { grid-column:1 / -1; font-size:11.5px; color:var(--dim); line-height:1.5; }
   .af .afinfo b { color:#ddd; font-weight:normal; }
   .af .afinfo .warn { color:#d9a066; }
-  .fpl { white-space:pre-wrap; font-size:12px; color:#cfe; background:#0b1418; border:1px solid #14343a;
-    border-radius:8px; padding:10px 12px; display:none; margin:0; }
 
   .foot { color:var(--dim); font-size:11.5px; line-height:1.7; padding:18px 4px; border-top:1px solid #1e1e1e; margin-top:22px; }
   .foot b { color:#bbb; font-weight:normal; }
@@ -185,8 +184,8 @@
     tail, and the gates: departure gate from <code>TDLS</code>, and an arrival gate marked <b>*</b> inferred from where the same airframe next departed (no feed publishes arrival gates). Gate out/in times come from <code>TFMS</code> airline data. Use the <b>AIRLINE</b> and <b>TYPE</b> chips to narrow the list —
     pick several in a row to include them all, or one in each row to require both. Click a flight for its filed route
     and how many others filed the same routing. <b>Open in SimBrief</b> pre-fills the route, cruise, tail (reg, SELCAL,
-    Mode-S) and the SimBrief variant you choose; SimBrief can then prefile to <b>VATSIM</b>. <b>Copy plan</b> gives an
-    ICAO-style block for manual prefiling. A few flights have no recorded departure time (shown as —); they're placed by
+    Mode-S) and the SimBrief variant you choose; SimBrief can then prefile to <b>VATSIM</b>.
+    <b>Prefile on VATSIM</b> skips SimBrief and opens VATSIM's prefile page with a complete ICAO plan already loaded. A few flights have no recorded departure time (shown as —); they're placed by
     their ETA. Routes are shown as filed — tidy them in SimBrief if a fix has aged out of your nav data.
   </div>
 </div>
@@ -272,24 +271,61 @@ function simbriefUrl(f, af, variant){
   if(f.callsign) p.set('callsign', f.callsign);
   return 'https://dispatch.simbrief.com/options/custom?' + p.toString();
 }
-// ICAO-ish block for a manual VATSIM prefile / copy.
-function fplText(f, af){
+// A real ICAO 2012 flight plan, so VATSIM's prefile page can import it directly. The old version
+// produced a human-readable block you had to retype field by field, which is no use to anyone.
+// Same field layout as the flight table's builder, from the fields the dispatch record carries.
+function icaoFpl(f, af){
+  const reg  = af === undefined ? f.reg : (af && af.registration);
+  const type = (af && af.type) || f.type || 'ZZZZ';
+
+  // 8: flight rules + type of flight. An airline callsign is scheduled, anything else isn't.
+  const rules = (f.rules ? String(f.rules).charAt(0).toUpperCase() : 'I');
+  const f8 = rules + (f.airline && f.fltnum ? 'S' : 'N');
+
+  // 10: equipment / surveillance. S (standard) is always present for an IFR flight.
+  let eq = '';
+  if(f.nav) eq += String(f.nav).replace(/\s+/g,'');
+  if(f.datalink) for(const j of (String(f.datalink).match(/J\d/g)||[])) if(!eq.includes(j)) eq += j;
+  if(!eq) eq = f.equip || 'S';
+  if(!eq.includes('S')) eq = 'S' + eq;
+  const surv = (f.surv ? String(f.surv).replace(/\s+/g,'') : 'N');
+
+  // 15: speed is not in the dispatch record (it is a filed-route index, not a full plan) — N0000 is
+  // the ICAO placeholder and VATSIM lets you fill it in. Level comes from the FILED cruise.
+  let level = 'F000';
+  if(f.cruise != null){
+    const ft = Math.round(f.cruise) >= 1000 ? Math.round(f.cruise) : Math.round(f.cruise) * 100;
+    level = (ft >= 18000 ? 'F' : 'A') + String(Math.round(ft/100)).padStart(3,'0');
+  }
   const rte = cleanRoute(f.route, f.orig, f.dest) || 'DCT';
-  const type = (af && af.type) || f.type;
-  const reg = af === undefined ? f.reg : (af && af.registration);
-  const lines = [
-    f.callsign,
-    (type||'ZZZZ') + (f.wake?('/'+f.wake):'') + (f.equip?(' /'+f.equip):''),
-    (f.orig||'????') + ' -> ' + (f.dest||'????') + (f.cruise!=null? ('  '+flLabel(f.cruise)):''),
-    'RTE ' + rte,
-  ];
-  if(f.altn) lines.push('ALTN ' + f.altn);
-  if(reg) lines.push('REG ' + reg);
-  if(af && af.selcal) lines.push('SEL ' + af.selcal);
-  if(af && af.icao24) lines.push('CODE ' + af.icao24);     // ICAO field 18 CODE/ = the 24-bit address
-  if(f.remarks) lines.push('RMK ' + f.remarks);
-  return lines.join('\n');
+
+  // 18: the bits that make the plan worth pre-filling — PBN, and the tail's identity.
+  const f18 = [];
+  if(f.pbn) f18.push('PBN/' + String(f.pbn).replace(/\s+/g,''));
+  if(reg) f18.push('REG/' + reg);
+  if(af && af.selcal) f18.push('SEL/' + af.selcal);
+  if(af && af.icao24) f18.push('CODE/' + af.icao24);
+  const rmk = stripRmk(f.remarks);
+  if(rmk) f18.push('RMK/' + rmk);
+
+  return `(FPL-${f.callsign||'ZZZZ'}-${f8}\n`
+       + `-${type}/${f.wake||'M'}-${eq}/${surv}\n`
+       + `-${f.orig||'ZZZZ'}0000\n`
+       + `-N0000${level} ${rte}\n`
+       + `-${f.dest||'ZZZZ'}0000${f.altn ? ' ' + f.altn : ''}\n`
+       + `-${f18.join(' ') || '0'})`;
 }
+
+// VATSIM's raw importer mishandles the ICAO "A###" (below-transition) level, leaving the altitude
+// blank and dumping field 15 into the route — same quirk the flight table works around. Rewrite it
+// to F### for the link only.
+function vatsimUrl(f, af){
+  const raw = icaoFpl(f, af).replace(/(\n-N\d{4})A(\d{3})\b/, '$1F$2');
+  return 'https://my.vatsim.net/pilots/flightplan?raw=' + encodeURIComponent(raw);
+}
+
+// Remarks arrive with SWIM's pipe separators; flatten them for field 18.
+function stripRmk(s){ return s ? String(s).replace(/\|/g,' ').replace(/\s+/g,' ').trim() : ''; }
 async function copyText(btn, text, label){
   try { await navigator.clipboard.writeText(text); flash(btn, 'Copied ✓', label); return true; }
   catch { flash(btn, 'Copy failed', label); return false; }
@@ -390,10 +426,10 @@ function detailHtml(f, fid){
       <div class="actions">
         <a class="btn sb" href="${esc(simbriefUrl(f))}" target="_blank" rel="noopener">Open in SimBrief ▸</a>
         <button class="btn copy" type="button" data-act="route">Copy route</button>
-        <button class="btn copy" type="button" data-act="plan">Copy plan (VATSIM)</button>
+        <a class="btn vat" href="${esc(vatsimUrl(f))}" target="_blank" rel="noopener"
+           title="Open VATSIM's prefile page with this plan loaded">Prefile on VATSIM ▸</a>
         <a class="btn" href="/track/${encodeURIComponent(f.callsign)}" target="_blank" rel="noopener">Track live ▸</a>
       </div>
-      <pre class="fpl"></pre>
     </div>`;
 }
 
@@ -476,6 +512,8 @@ function relink(wrap){
   const af = wrap._af, variant = wrap._variant || '';
   const link = wrap.querySelector('a.btn.sb');
   if(link) link.href = simbriefUrl(f, af, variant);
+  const vat = wrap.querySelector('a.btn.vat');
+  if(vat) vat.href = vatsimUrl(f, af);
   const info = wrap.querySelector('.afinfo');
   if(!info) return;
   const vsel = wrap.querySelector('.afvar');
@@ -646,12 +684,6 @@ $('out').addEventListener('click', async (e) => {
     const det = act.closest('tr.detail');
     const f = det && FLIGHT_BY_ID.get(det.dataset.for);
     if(f && a==='route'){ copyText(act, cleanRoute(f.route, f.orig, f.dest) || 'DCT', 'Copy route'); return; }
-    if(f && a==='plan'){
-      const wrap = det.querySelector('.sbwrap');
-      const txt = fplText(f, wrap ? wrap._af : undefined), pre = det.querySelector('.fpl');
-      pre.textContent = txt; pre.style.display='block';
-      copyText(act, txt, 'Copy plan (VATSIM)'); return;
-    }
     return;
   }
   const tr = e.target.closest('tr.row');

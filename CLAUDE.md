@@ -69,7 +69,7 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 
 ### Frontends / API Services
 - **ERAM Scope** (`eram.html`) — Leaflet + Canvas radar display with ERAM-style data blocks
-- **Flight Table** (`index.html`) — Tabular real-time flight explorer with filtering, pinning, detail panel
+- **Flight Table** (`/flight-table`) — Tabular real-time flight explorer with filtering, pinning, detail panel; the panel carries ICAO FPL, SimBrief (with an airframe/variant picker), VATSIM prefile and TDLS history
 - **DGScope Server** (`/dstars/{facility}/updates`) — HTTP streaming + WebSocket for DGScope radar clients
 - **ASDE-X Directory** (`/asdex`) — Airport grid with live track counts, click-through to scope
 - **ASDE-X Scope** (`/asdex/{airport}`) — Leaflet map with live surface targets, data blocks, 1s updates; `OFFSET` in the status bar auto-places data blocks so they stop overlapping (see Auto Offset below)
@@ -80,7 +80,7 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 - **TAIS Detail** (`/tais/{facility}`) — Terminal radar track table with search, sort, frozen filter, expandable detail
 - **Track a Flight** (`/track`, `/track/{callsign}`) — Mobile-first single-callsign aggregator across every source (SFDPS, TFMS, EDCT, TDLS, TAIS/STARS, ASDE-X); polls `/api/track/{callsign}`
 - **TFDM Boards** (`/tfdm`, `/tfdm/{airport}`) — Terminal surface/departure boards: per-airport live board (WS) with off-block/TSAT/runway/spot/taxi/sequence/delay, proposed-vs-active state, sortable columns + wildcard filter, and an info strip (config/AAR-ADR/closures/queues/gridlock/demand/TMRs). Directory sorted alphabetically.
-- **Route Finder / Dispatch** (`/dispatch`) — Search persisted flight history by route/airline/aircraft type → real callsign, filed route, cruise, airframe, gate; deep-links each into **SimBrief** (+ copyable VATSIM plan). `/api/dispatch/search`.
+- **Route Finder / Dispatch** (`/dispatch`) — Search persisted flight history by route/airline/aircraft type → real callsign, filed route, cruise, airframe, gate; deep-links each into **SimBrief** or straight to **VATSIM prefile**. `/api/dispatch/search`.
 - **Telegram bot** (`TelegramBridge`, `@swimffbot`) — Follow a flight over inflight "free-messaging" wifi: send a callsign for the same cross-source status the Track page shows; `/sub` pushes updates on meaningful state change. Enabled when `TELEGRAM_BOT_TOKEN` is set. Its TFMS lines (route fallback, status/ETD/ETA, NAS entry fix, centers ahead) are what an inbound international leg shows before SFDPS has it at all — see the Track a Flight section. `GET /api/debug/telegram/{callsign}` returns the exact text the bot would send, so it can be checked without a token.
 - Future: strips, etc.
 
@@ -1023,6 +1023,33 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 | `FlushDirty` | 1s | Send new messages to WebSocket clients |
 | `PurgeStale` | 60s | No-op — all aircraft and messages retained indefinitely |
 
+## Handing a flight to SimBrief / VATSIM
+
+Both `/dispatch` and the flight table's detail panel do this, with the same conventions.
+
+**SimBrief** — `dispatch.simbrief.com/options/custom?…`. Two selectors drive it:
+- **AIRFRAME**: which real tail to pre-fill with — the flight's own (resolved to its aircraft-DB
+  record so SELCAL and Mode-S come along), any tail from the operator's fleet of that type, or
+  *generic* (no tail data). A tail not in the DB still sends its registration.
+- **VARIANT**: SimBrief's own "Variant or Airframe", passed as `type`. **Pick it here, not in
+  SimBrief** — changing it inside SimBrief wipes the registration/SELCAL/Mode-S that were
+  pre-filled. The choice is remembered per aircraft type under `dispatch.sbVariant.<TYPE>`, shared
+  by both pages.
+
+On the flight table the **SIMBRIEF** button opens this panel (with a **DISPATCH** button that
+actually leaves); nothing is fetched for a flight until it's opened.
+
+**VATSIM** — `my.vatsim.net/pilots/flightplan?raw=<ICAO FPL>`. Both pages build a real ICAO 2012
+plan and hand it over; dispatch used to produce a human-readable block to retype, which was useless.
+One quirk worth keeping: VATSIM's importer mishandles the ICAO `A###` below-transition level,
+leaving the altitude blank and dumping field 15 into the route — so the level is rewritten `A###` →
+`F###` **for the link only**, never for the displayed/copied plan.
+
+Note on engine data: SWIM can't help pick a variant. TFMS publishes only a class (JET/TURBO/PISTON),
+and the variant lists are mostly "which add-on do you own" (30 A321 variants, all CFM56-5B3) rather
+than engine choices, so even the FAA registry's per-tail engine model would only disambiguate a
+handful of types (A20N LEAP vs PW, A320 CFM vs IAE).
+
 ## TDLS History Search (all days, by callsign)
 
 `GET /api/tdls/history?q={callsign}` searches **every recorded day**, newest first — `date` is
@@ -1038,6 +1065,13 @@ reading a file, which is what made dropping the picker possible. `date` still wo
 
 The flight table's **TDLS HISTORY** button links to `/tdls?mode=history&q={callsign}`, which prefills
 and runs the search — useful for a historical flight, where live TDLS has nothing left to show.
+
+Landing on an airport's history from a callsign search is not a dead end: the page shows a strip of
+every day/airport that callsign appears at (current one marked and scrolled into view), each a direct
+link, plus a **SEARCH** link back to the results. It comes from the callsign index, so it costs
+nothing and reads no history file. The `?q=` is applied **before** the first history fetch — applying
+it after meant the server returned the airport's recent traffic and the flight only appeared if it
+happened to be in the newest few hundred messages.
 
 The archive makes this non-trivial: ~6.5 MB/day over 128 days (**1.5 GB, ~2.4M lines**) and growing.
 A blind all-days scan is ~30 s of SD-card reads on the Pi. Four things keep it interactive:

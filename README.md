@@ -26,12 +26,12 @@ Five FAA SCDS feeds, each on its own Solace session:
   trails, velocity vectors, NEXRAD, sector boundaries and an MCA command line
 - **STARS scope** — terminal radar display (DGScope-compatible), with video maps and a DCB
 - **ASDE-X** — airport surface movement, per-airport, with data blocks and safety-logic hold bars
-- **TDLS** — CPDLC clearances and tower departure events, live and searchable across history
+- **TDLS** — CPDLC clearances and tower departure events, live and searchable by callsign across all recorded history
 - **TAIS / FDIO / flight table** — terminal track tables and flight-plan explorers
 - **TFDM boards** — per-airport surface and departure boards
 - **Track a Flight** — one callsign aggregated across every source at once
 - **Aircraft & airline databases** — per-tail flight logs, fleet and route analysis
-- **Dispatch / route finder** — search real filed routes, deep-link into SimBrief
+- **Dispatch / route finder** — search real filed routes, deep-link into SimBrief or prefile to VATSIM
 - **Replay** — scrub back through recorded ERAM, ASDE-X and STARS data
 - **Telegram bot** — follow a flight from a chat window
 

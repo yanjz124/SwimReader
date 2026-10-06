@@ -1,5 +1,10 @@
 @font-face { font-family: 'ERAM'; src: url('/ERAMv110.ttf') format('truetype'); }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* Phones (iOS Safari especially) enlarge small text when the page is wider than the screen — the
+ * scope is, its toolbar alone is ~820px. That inflates the data-block glyphs but not the portal fence,
+ * which is positioned in ch/em beside them, so the fence drifted into the block on mobile. Scope text
+ * sizes are deliberate (FONT setting), so opt out of the browser's resizing entirely. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { background: #000000; color: #cccc44; font-family: 'ERAM', 'Consolas', 'Courier New', monospace; overflow: hidden; height: 100vh; }
 
 /* ── Layout ── */

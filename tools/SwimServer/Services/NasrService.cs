@@ -672,6 +672,16 @@ static class NasrService
         {
             var token = tokens[i].ToUpperInvariant();
 
+            // Latitude/longitude fix — must be checked BEFORE the slash strip below, which would cut
+            // the NAS form "2641N/08722W" down to "2641N" and silently drop the point.
+            if (TryParseLatLon(token) is { } ll)
+            {
+                var llPt = new NavPoint(token, ll.lat, ll.lon);
+                waypoints.Add(new[] { llPt.Lat, llPt.Lon });
+                lastPt = llPt;
+                continue;
+            }
+
             // Strip speed/altitude annotations (e.g., FIX/N0450F350)
             var slash = token.IndexOf('/');
             if (slash > 0) token = token[..slash];
@@ -886,6 +896,39 @@ static class NasrService
     }
 
     // Project a point from lat/lon along a bearing for a given distance (great circle)
+    // Lat/long route points, in the forms flight plans use:
+    //   NAS     2641N/08722W   ddmmN/dddmmW (also ddN/dddW, ddmmssN/dddmmssW)
+    //   ICAO    2641N08722W    26N087W    264130N0872200W   (same fields, no slash)
+    //   NAS     4000/07500     ddmm/dddmm with no letters = north / west (US adaptation)
+    static readonly Regex LatLonLettered = new(
+        @"^(\d{2})(\d{2})?(\d{2})?([NS])/?(\d{3})(\d{2})?(\d{2})?([EW])$", RegexOptions.Compiled);
+    static readonly Regex LatLonBare = new(@"^(\d{2})(\d{2})/(\d{3})(\d{2})$", RegexOptions.Compiled);
+
+    internal static (double lat, double lon)? TryParseLatLon(string token)
+    {
+        static double Dms(string d, string m, string s) =>
+            int.Parse(d) + (m.Length > 0 ? int.Parse(m) / 60.0 : 0) + (s.Length > 0 ? int.Parse(s) / 3600.0 : 0);
+
+        var m = LatLonLettered.Match(token);
+        if (m.Success)
+        {
+            // Minutes/seconds must come in matching precision on both halves (2641N/087W is not a point).
+            if (m.Groups[2].Value.Length != m.Groups[6].Value.Length || m.Groups[3].Value.Length != m.Groups[7].Value.Length)
+                return null;
+            var lat = Dms(m.Groups[1].Value, m.Groups[2].Value, m.Groups[3].Value) * (m.Groups[4].Value == "S" ? -1 : 1);
+            var lon = Dms(m.Groups[5].Value, m.Groups[6].Value, m.Groups[7].Value) * (m.Groups[8].Value == "W" ? -1 : 1);
+            return lat <= 90 && Math.Abs(lon) <= 180 ? (lat, lon) : null;
+        }
+        m = LatLonBare.Match(token);
+        if (m.Success)
+        {
+            var lat = Dms(m.Groups[1].Value, m.Groups[2].Value, "");
+            var lon = -Dms(m.Groups[3].Value, m.Groups[4].Value, "");
+            return lat <= 90 && lon >= -180 ? (lat, lon) : null;
+        }
+        return null;
+    }
+
     static (double Lat, double Lon) ProjectPoint(double lat, double lon, double bearingDeg, double distNm)
     {
         const double R = 3440.065; // Earth radius in nm

@@ -1045,6 +1045,15 @@ One quirk worth keeping: VATSIM's importer mishandles the ICAO `A###` below-tran
 leaving the altitude blank and dumping field 15 into the route — so the level is rewritten `A###` →
 `F###` **for the link only**, never for the displayed/copied plan.
 
+**Type families.** Some ICAO types share one airframe in SimBrief, and `SimbriefRoutes.Families`
+merges them. The E-Jet forced it: SimBrief lists five airframes under `E170` and **none at all**
+under `E75L`/`E75S`/`E75X`, so an E175 — most of the regional fleet — offered no variants and
+couldn't reach the add-on it would actually fly. A merged list keeps the **filed type's own
+default** (so "SimBrief default" never silently refiles the aircraft as a different ICAO), drops
+other members' defaults, and tags borrowed entries with where they came from
+(`… · E170`). Each variant carries the family head as `fam`, which both pickers use as the
+localStorage key so one choice covers the whole family.
+
 Note on engine data: SWIM can't help pick a variant. TFMS publishes only a class (JET/TURBO/PISTON),
 and the variant lists are mostly "which add-on do you own" (30 A321 variants, all CFM56-5B3) rather
 than engine choices, so even the FAA registry's per-tail engine model would only disambiguate a

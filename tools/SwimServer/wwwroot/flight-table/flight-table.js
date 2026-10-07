@@ -1497,8 +1497,12 @@ async function sbLoadVariants(d, type) {
     }
     sel.innerHTML = list.map(v =>
         `<option value="${esc(v.id)}">${esc(v.label)}${v.engines && !v.isDefault ? '  ·  ' + esc(v.engines) : ''}</option>`).join('');
+    // Variants can be shared across a family (E170/E75L/E75S/E75X); the server reports the
+    // family head, so one pick covers all of them.
+    const key = (list[0] && list[0].fam) || type;
+    st.varKey = key;
     let pick = '';
-    try { pick = localStorage.getItem(SB_VAR_KEY(type)) || ''; } catch { }
+    try { pick = localStorage.getItem(SB_VAR_KEY(key)) || ''; } catch { }
     if (!list.some(v => v.id === pick)) pick = (list.find(v => v.isDefault) || list[0]).id;
     sel.value = pick;
     st.variant = pick;
@@ -1513,7 +1517,7 @@ detailBody.addEventListener('change', e => {
     if (v) {
         const st = sbChoice.get(d.gufi); if (!st) return;
         st.variant = v.value;
-        try { if (st.varType) localStorage.setItem(SB_VAR_KEY(st.varType), v.value); } catch { }
+        try { if (st.varKey) localStorage.setItem(SB_VAR_KEY(st.varKey), v.value); } catch { }
         sbRelink(d);
     }
 });

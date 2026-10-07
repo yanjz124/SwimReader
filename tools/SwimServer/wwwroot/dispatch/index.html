@@ -552,8 +552,12 @@ async function loadVariants(wrap, type){
   }
   sel.innerHTML = list.map(v =>
     `<option value="${esc(v.id)}">${esc(v.label)}${v.engines && !v.isDefault ? '  ·  ' + esc(v.engines) : ''}</option>`).join('');
+  // Variants can be shared across a family (E170/E75L/E75S/E75X), and the server reports the
+  // family head — remember the choice against that so one pick covers all of them.
+  const key = (list[0] && list[0].fam) || type;
+  wrap._varKey = key;
   let pick = '';
-  try { pick = localStorage.getItem(VAR_KEY(type)) || ''; } catch {}
+  try { pick = localStorage.getItem(VAR_KEY(key)) || ''; } catch {}
   if(!list.some(v => v.id === pick)) pick = (list.find(v => v.isDefault) || list[0]).id;
   sel.value = pick;
   wrap._variant = pick;
@@ -567,7 +571,7 @@ $('out').addEventListener('change', e => {
   if(v){
     const wrap = v.closest('.sbwrap');
     wrap._variant = v.value;
-    try { if(wrap._varType) localStorage.setItem(VAR_KEY(wrap._varType), v.value); } catch {}
+    try { if(wrap._varKey) localStorage.setItem(VAR_KEY(wrap._varKey), v.value); } catch {}
     // Apply the same choice to every other picker showing this type, so one pick covers the page.
     $('out').querySelectorAll('.sbwrap').forEach(w => {
       if(w === wrap || w._varType !== wrap._varType) return;

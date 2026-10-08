@@ -15,13 +15,23 @@ static class TrackRoutes
     {
         app.MapGet("/api/track/{callsign}", (string callsign, HttpContext http) =>
         {
-            callsign = (callsign ?? "").Trim().ToUpperInvariant();
-            if (callsign.Length == 0) return Results.BadRequest(new { error = "empty callsign" });
+            var typed = (callsign ?? "").Trim().ToUpperInvariant();
+            if (typed.Length == 0) return Results.BadRequest(new { error = "empty callsign" });
+            var reveal = LaddService.Reveal(http);
 
-            // LADD: a direct lookup of a blocked call sign is itself identifying — don't
-            // confirm the flight exists or return any of its data (unless the bypass is present).
-            if (LaddService.ShouldMask(callsign, null, LaddService.Reveal(http)))
-                return Results.Json(new { callsign, found = false, ladd = true }, ctx.JsonOpts);
+            // LADD: a direct lookup of a blocked aircraft is itself identifying — don't confirm it
+            // exists or return any of its data (unless the bypass is present). The typed text is
+            // checked as BOTH a callsign and a registration, since either can be the blocked id.
+            if (LaddService.ShouldMask(typed, typed, reveal))
+                return Results.Json(new { callsign = typed, found = false, ladd = true }, ctx.JsonOpts);
+
+            // A tail number resolves to whatever that aircraft is flying as now.
+            callsign = Resolve(ctx, typed);
+            var resolvedFrom = callsign == typed ? null : typed;
+            // Re-check against the resolved callsign — the tail itself may be unblocked while the
+            // flight it is operating is not.
+            if (resolvedFrom != null && LaddService.ShouldMask(callsign, typed, reveal))
+                return Results.Json(new { callsign = typed, found = false, ladd = true }, ctx.JsonOpts);
 
             // Frequency lookup for any "FAC/SECTOR": exact match, else (STARS TCPs like
             // "3B") retry with the trailing sub-position letter stripped → "FAC/3".
@@ -101,6 +111,8 @@ static class TrackRoutes
             return Results.Json(new
             {
                 callsign,
+                // Set when a tail number was typed, so the page can say which flight it landed on.
+                resolvedFrom,
                 found,
                 ts = DateTime.UtcNow.ToString("o"),
                 sfdps,
@@ -224,6 +236,39 @@ static class TrackRoutes
             m => { var f = FreqOf(ctx, m.Value); return f != null ? m.Value + " [" + f + "]" : m.Value; });
 
     // ── Text-only version (/t) ────────────────────────────────────────────────
+    /// <summary>
+    /// What a tail number is flying as right now, or null.
+    ///
+    /// People look a flight up by the aircraft as often as by the trip — "where is N827JB" — and the
+    /// search box only understood callsigns. Registration is published by SFDPS and nothing else, so
+    /// that's what gets searched; the result is the callsign everything else is then keyed on.
+    ///
+    /// Only consulted when the input matched no callsign, so a registration that happens to look
+    /// like a callsign can never shadow a real flight.
+    /// </summary>
+    internal static string? CallsignForRegistration(ServerContext ctx, string reg)
+    {
+        if (reg.Length < 3) return null;
+        FlightState? best = null;
+        var bestScore = long.MinValue;
+        foreach (var f in ctx.Flights.Values)
+        {
+            if (!string.Equals(f.Registration, reg, StringComparison.OrdinalIgnoreCase)) continue;
+            if (f.FlightStatus == "CANCELLED" || string.IsNullOrEmpty(f.Callsign)) continue;
+            // A tail flies several legs a day and old records linger for an hour, so prefer the one
+            // that is actually moving, then the most recently heard from.
+            var score = (f.Latitude != null ? 1L << 62 : 0)
+                      + (f.FlightStatus == "ACTIVE" ? 1L << 61 : 0)
+                      + Math.Max(f.LastPositionTime.Ticks, f.LastSeen.Ticks);
+            if (score > bestScore) { bestScore = score; best = f; }
+        }
+        return best?.Callsign;
+    }
+
+    /// <summary>The typed text resolved to a callsign: itself, or the tail's current flight.</summary>
+    internal static string Resolve(ServerContext ctx, string typed) =>
+        Matching(ctx, typed).Count > 0 ? typed : (CallsignForRegistration(ctx, typed) ?? typed);
+
     private static List<FlightState> Matching(ServerContext ctx, string cs) =>
         ctx.Flights.Values.Where(f => string.Equals(f.Callsign, cs, StringComparison.OrdinalIgnoreCase) && f.FlightStatus != "CANCELLED").ToList();
 
@@ -296,10 +341,14 @@ static class TrackRoutes
     /// Kept short so it fits one chat message and works over inflight free-messaging wifi.
     internal static string TelegramSummary(ServerContext ctx, string cs, string? prevRoute = null)
     {
-        cs = (cs ?? "").Trim().ToUpperInvariant();
-        // LADD: never surface a blocked aircraft over the bot (no per-message bypass).
-        if (LaddService.IsBlocked(cs, null)) return $"{cs}: no data available.";
-        if (cs.Length == 0) return "Send a callsign, e.g. AAL123";
+        var typedCs = (cs ?? "").Trim().ToUpperInvariant();
+        // LADD: never surface a blocked aircraft over the bot (no per-message bypass). Checked as
+        // both a callsign and a registration, since either can be the blocked identifier.
+        if (LaddService.IsBlocked(typedCs, typedCs)) return $"{typedCs}: no data available.";
+        if (typedCs.Length == 0) return "Send a callsign or tail, e.g. AAL123 or N827JB";
+        // A tail number resolves to whatever it is flying as now.
+        cs = Resolve(ctx, typedCs);
+        if (cs != typedCs && LaddService.IsBlocked(cs, typedCs)) return $"{typedCs}: no data available.";
         var flights = Matching(ctx, cs);
         var tdlsAc = ctx.Tdls.AircraftByCallsign(cs);
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
@@ -315,7 +364,9 @@ static class TrackRoutes
         var asd0 = asdexTracks.FirstOrDefault();
 
         var sb = new StringBuilder(256);
-        sb.Append("✈ ").Append(cs).Append('\n');
+        sb.Append("✈ ").Append(cs);
+        if (cs != typedCs) sb.Append("   (").Append(typedCs).Append(')');
+        sb.Append('\n');
         var org = best?.Origin ?? tais0?.Origin ?? asd0?.FpOrigin ?? tfms?.DepArpt;
         var dst = best?.Destination ?? tais0?.Destination ?? asd0?.FpDestination ?? tfms?.ArrArpt;
         var type = best?.AircraftType ?? tais0?.AircraftType ?? asd0?.AircraftType ?? tfms?.AircraftType;
@@ -551,6 +602,7 @@ static class TrackRoutes
     internal static string? TelegramRoute(ServerContext ctx, string cs)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
+        cs = Resolve(ctx, cs);   // a subscription may be a tail number
         return BestFlight(Matching(ctx, cs))?.Route ?? ctx.Asdex.TracksByCallsign(cs).FirstOrDefault()?.FpRoute
                ?? ctx.Tfms.FindByCallsign(cs)?.RouteOfFlight;
     }
@@ -573,6 +625,7 @@ static class TrackRoutes
     internal static int? TelegramPositionAgeSec(ServerContext ctx, string cs)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
+        cs = Resolve(ctx, cs);   // a subscription may be a tail number
         int? best = null;
         void Consider(DateTime t)
         {
@@ -590,6 +643,7 @@ static class TrackRoutes
     internal static string TelegramChangeKey(ServerContext ctx, string cs)
     {
         cs = (cs ?? "").Trim().ToUpperInvariant();
+        cs = Resolve(ctx, cs);   // a subscription may be a tail number
         var flights = Matching(ctx, cs);
         var taisTracks = ctx.Tais.TracksByCallsign(cs);
         var asdexTracks = ctx.Asdex.TracksByCallsign(cs);

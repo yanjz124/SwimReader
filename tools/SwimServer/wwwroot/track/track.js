@@ -115,10 +115,11 @@
     FREQS = d.freqs || {};
     if (!d.found) {
       statusText.textContent = 'No live data for ' + d.callsign;
-      out.innerHTML = `<div class="msg">Nothing is tracking <b>${esc(d.callsign)}</b> right now.<br>It may not be airborne or filed yet. Use the exact callsign (e.g. AAL123, not AA123).</div>`;
+      out.innerHTML = `<div class="msg">Nothing is tracking <b>${esc(d.callsign)}</b> right now.<br>It may not be airborne or filed yet. Use the exact callsign (e.g. AAL123, not AA123) or the tail number.</div>`;
       return;
     }
-    statusText.textContent = `Tracking ${d.callsign} · updated ${agoStr(d.ts) || 'now'}`;
+    statusText.textContent = (d.resolvedFrom ? `${d.resolvedFrom} is flying as ${d.callsign}` : `Tracking ${d.callsign}`)
+      + ` · updated ${agoStr(d.ts) || 'now'}`;
     const flightsAll = (d.sfdps || []).slice().sort(function (a, b) {
       const ap = a.lat != null ? 0 : 1, bp = b.lat != null ? 0 : 1;
       return ap !== bp ? ap - bp : (a.posAgeSec == null ? 9999 : a.posAgeSec) - (b.posAgeSec == null ? 9999 : b.posAgeSec);

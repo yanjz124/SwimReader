@@ -85,6 +85,16 @@ let dbShowVel  = true;   // Field I: Velocity
 let dbShowUnk  = true;   // Show unknown targets (no callsign/squawk)
 let dbToggleVer = 0;     // bumped on any toggle change to invalidate hashes
 
+// Shared view link (?view=...): write its snapshot to localStorage before the restores
+// below read it, and set the DOM controls now. The map view and day/night are applied
+// once the surface map has loaded (see the fetch below).
+const SHARED_VIEW = window.ViewLink ? ViewLink.takeFromUrl() : null;
+if (SHARED_VIEW) {
+    ViewLink.restoreLocal(SHARED_VIEW.ls);
+    if (SHARED_VIEW.font) { fontInput.value = SHARED_VIEW.font; dbFontSize = parseInt(SHARED_VIEW.font) || 15; }
+    if (SHARED_VIEW.rot)  { rotInput.value = SHARED_VIEW.rot; applyRotation(parseInt(SHARED_VIEW.rot) || 360); }
+}
+
 // Restore from localStorage
 try {
     const saved = JSON.parse(localStorage.getItem('asdex-db-toggles') || '{}');
@@ -197,6 +207,22 @@ fsBtn.addEventListener('click', () => {
         document.exitFullscreen();
     }
 });
+
+// ── Share view: copy a link that reproduces this map view and its settings ─────
+document.getElementById('share-view').addEventListener('click', async function () {
+    const c = map.getCenter();
+    const copied = await ViewLink.copy({
+        ls: ViewLink.collectLocal(['asdex-']),
+        view: { lat: +c.lat.toFixed(6), lng: +c.lng.toFixed(6), zoom: map.getZoom() },
+        font: fontInput.value,
+        rot: rotInput.value,
+        night: isNightMode,
+    });
+    if (copied) {
+        this.textContent = 'COPIED';
+        setTimeout(() => { this.textContent = 'SHARE'; }, 1500);
+    }
+});
 document.addEventListener('fullscreenchange', () => {
     fsBtn.textContent = document.fullscreenElement ? 'EXIT' : 'FULL';
 });
@@ -297,7 +323,8 @@ fetch(`/asdex/maps/${AIRPORT}.geojson`)
             },
             interactive: false
         }).addTo(map);
-        map.fitBounds(surfaceLayer.getBounds(), { padding: [20, 20] });
+        if (SHARED_VIEW?.view) map.setView([SHARED_VIEW.view.lat, SHARED_VIEW.view.lng], SHARED_VIEW.view.zoom, { animate: false });
+        else map.fitBounds(surfaceLayer.getBounds(), { padding: [20, 20] });
         surfaceLoaded = true;
         centeredOnce = true;
     })
@@ -306,7 +333,11 @@ fetch(`/asdex/maps/${AIRPORT}.geojson`)
         L.tileLayer('/basemap/dark_all/{z}/{x}/{y}{r}.png', {
             subdomains: 'abcd', maxZoom: 20
         }).addTo(map);
+        if (SHARED_VIEW?.view) { map.setView([SHARED_VIEW.view.lat, SHARED_VIEW.view.lng], SHARED_VIEW.view.zoom, { animate: false }); centeredOnce = true; }
     });
+// A shared link's day/night wins over the hour-of-day default. Clicking the toggle
+// restyles the surface and sets the map background, so it's done after the map is up.
+if (SHARED_VIEW && SHARED_VIEW.night !== undefined && SHARED_VIEW.night !== isNightMode) dnBtn.click();
 
 // ── State ────────────────────────────────────────────────────────────────────
 const markers  = {};   // trackId → L.marker

@@ -4585,6 +4585,18 @@ if (chkTime) {
 //     saveSettingsToLocalStorage();
 // });
 
+// Share view: copy a link that reproduces this scope (facility, settings, map view, menu positions).
+document.getElementById('btn-share-view').addEventListener('click', async function () {
+    saveSettingsToLocalStorage();   // make sure eram-settings reflects the current view
+    const copied = await ViewLink.copy({
+        ls: ViewLink.collectLocal(['eram-settings', 'boxPos_', 'checklist-pos-']),
+    });
+    if (copied) {
+        this.textContent = 'Copied';
+        setTimeout(() => { this.textContent = 'Copy view link'; }, 1500);
+    }
+});
+
 document.getElementById('btn-fullscreen').addEventListener('click', function () {
     if (!document.fullscreenElement) {
         document.documentElement.requestFullscreen().catch(() => {});
@@ -9412,6 +9424,11 @@ const tbState = {
     // Cursor sub-menu
     cursorSize: 1,
 };
+
+// Shared view link (?view=...): write its localStorage snapshot before the restores below
+// and loadSettingsFromLocalStorage() read it back.
+const _sharedView = window.ViewLink ? ViewLink.takeFromUrl() : null;
+if (_sharedView) ViewLink.restoreLocal(_sharedView.ls);
 
 // Restore toolbar brightness state from localStorage (must be AFTER tbState is defined)
 try {

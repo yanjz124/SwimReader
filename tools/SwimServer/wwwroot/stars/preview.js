@@ -180,6 +180,11 @@ function onKeyDown(e) {
   // Ignore typing inside text inputs (none currently, but defensive).
   if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
 
+  // F11 is the browser's fullscreen toggle. Don't preventDefault it: the browser
+  // only honours F11 if the page leaves the keydown alone. STARS maps no preview
+  // prefix to F11 (see the table above), so nothing is lost by passing it through.
+  if (e.key === "F11") return;
+
   // STARS F-key handling per CRC docs / RadarWindow.cs Window_KeyDown.
   if (e.key && /^F\d+$/.test(e.key)) {
     e.preventDefault();

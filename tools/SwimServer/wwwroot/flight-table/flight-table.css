@@ -442,3 +442,6 @@ body {
     background:#0a300a; color:#bfe6bf; border:1px solid #3a5a3a; border-radius:6px;
     padding:6px 14px; font-size:11px; letter-spacing:1px; }
 .af .sb-dispatch:hover { background:#0f4a0f; color:#fff; border-color:#5a8a5a; }
+.af .aftype { background:#1a1a1a; color:#cccc44; border:1px solid #333; border-radius:6px;
+    padding:5px 7px; font:inherit; font-size:12px; text-transform:uppercase; max-width:90px; }
+.af .aftype:focus { outline:none; border-color:#cccc44; }

@@ -975,8 +975,10 @@ function buildSimBriefUrl(d, choice) {
         p.set('fltnum', cs);
     }
     if (cs) p.set('callsign', cs);
-    // Aircraft — the chosen variant wins, then the chosen tail's type, then the filed type.
-    const sbType = variant || (af && af.type) || d.aircraftType;
+    // Precedence: the chosen variant's airframe id, then an explicitly chosen TYPE, then the
+    // tail's type, then what was filed. The type is choosable because the filed ICAO often has no
+    // SimBrief airframe (E75L), or isn't what you want to fly (B738 filed, B38M add-on).
+    const sbType = variant || (choice && choice.type) || (af && af.type) || d.aircraftType;
     if (sbType) p.set('type', sbType);
     // Airports (already ICAO in SFDPS)
     if (d.origin) p.set('orig', d.origin);
@@ -1165,11 +1167,16 @@ function renderFlightPlan(d) {
     // TDLS history for this callsign — every CPDLC clearance and departure event it has on record,
     // across every day and airport. Useful for a historical flight, where the live TDLS view has
     // nothing left to show.
+    // FlightAware for this flight. /live/flight/ takes the ident, which is the callsign (a GA
+    // flight's callsign is its tail), and lands on the current leg or the most recent one.
+    const faBtn = d.callsign
+        ? `<a class="icao-btn simbrief-btn" href="https://www.flightaware.com/live/flight/${encodeURIComponent(d.callsign)}" target="_blank" rel="noopener">FLIGHTAWARE</a>`
+        : '';
     const tdlsBtn = d.callsign
         ? `<a class="icao-btn simbrief-btn" href="/tdls?mode=history&q=${encodeURIComponent(d.callsign)}" target="_blank" rel="noopener" title="CPDLC clearances and departure events recorded for ${esc(d.callsign)}">TDLS HISTORY</a>`
         : '';
 
-    return `${purgeBanner}${icaoBtn}${sbBtn}${vatBtn}${tdlsBtn}${showSb ? sbPickerHtml(d) : ''}${icaoHtml}
+    return `${purgeBanner}${icaoBtn}${sbBtn}${vatBtn}${faBtn}${tdlsBtn}${showSb ? sbPickerHtml(d) : ''}${icaoHtml}
         ${section('Identity', [
             ['Callsign', d.callsign],
             ['Aircraft Type', d.aircraftType],
@@ -1366,6 +1373,18 @@ const _dbSelcal = new Map();   // airframe key -> SELCAL string, or null (looked
 // key dispatch uses, so picking "Fenix A321 CFM" once applies on both pages.
 const sbChoice = new Map();          // gufi -> { af, variant, recs, varType, hydrated }
 const sbTailCache = new Map(), sbFleetCache = new Map(), sbVariantCache = new Map();
+// Every ICAO type SimBrief has an airframe for; fills the TYPE box's datalist.
+let _sbTypes = null;
+function sbLoadTypes() {
+    if (_sbTypes) return _sbTypes;
+    _sbTypes = fetch('/api/simbrief/types').then(r => r.ok ? r.json() : []).catch(() => []);
+    _sbTypes.then(list => {
+        const dl = document.getElementById('sbtypes');
+        if (dl && !dl.options.length)
+            dl.innerHTML = list.map(t => `<option value="${esc(t.type)}">${esc(t.name)}</option>`).join('');
+    });
+    return _sbTypes;
+}
 const SB_VAR_KEY = t => 'dispatch.sbVariant.' + t;
 
 function sbGetTail(reg) {
@@ -1402,6 +1421,10 @@ function sbPickerHtml(d) {
             ${own ? `<option value="${esc(own)}" selected>${esc(own)} — this flight</option>` : ''}
             <option value=""${own ? '' : ' selected'}>Generic — no tail data</option>
         </select>
+        <label>TYPE</label>
+        <input class="aftype" list="sbtypes" maxlength="4" spellcheck="false" autocomplete="off"
+               value="${esc(d.aircraftType || '')}"
+               title="ICAO type SimBrief should use — change it when the filed type has no airframe, or you fly a different variant of the same aircraft">
         <label>VARIANT</label>
         <select class="afvar" title="SimBrief's Variant or Airframe — picked here so SimBrief opens on it and keeps the tail data">
             <option value="">SimBrief default</option>
@@ -1409,6 +1432,7 @@ function sbPickerHtml(d) {
         <div class="afinfo">${own ? 'Looking up ' + esc(own) + '…' : 'No registration filed — pick a tail or leave generic.'}</div>
         <a class="sb-dispatch" href="${esc(buildSimBriefUrl(d, sbChoice.get(d.gufi)))}" target="_blank" rel="noopener"
            title="Open SimBrief with this route, tail and variant">DISPATCH &#8599;</a>
+        <datalist id="sbtypes"></datalist>
     </div>`;
 }
 
@@ -1419,6 +1443,9 @@ async function sbHydrate(d) {
     if (!wrap || !d) return;
     const st = sbChoice.get(d.gufi) || { af: undefined, variant: '', recs: new Map() };
     sbChoice.set(d.gufi, st);
+    sbLoadTypes();
+    const tbox = detailBody.querySelector('.af[data-gufi] .aftype');
+    if (tbox && st.type) tbox.value = st.type;
     // The plan tab re-renders (local data, then the /api/flights response), so the VARIANT <select>
     // here is a fresh empty element. Forget which type we loaded or loadVariants would early-return
     // and leave it empty.
@@ -1452,7 +1479,7 @@ function sbSetAirframe(d, reg, keepDefault) {
     st.af = keepDefault ? undefined : (reg ? (rec || { registration: reg, type: d.aircraftType }) : null);
     st.afInDb = !!rec;
     sbRelink(d);
-    sbLoadVariants(d, (st.af && st.af.type) || d.aircraftType);
+    sbLoadVariants(d, st.type || (st.af && st.af.type) || d.aircraftType);
 }
 
 function sbRelink(d) {
@@ -1511,6 +1538,13 @@ async function sbLoadVariants(d, type) {
 
 detailBody.addEventListener('change', e => {
     const d = currentDetail; if (!d) return;
+    const t = e.target.closest('.aftype');
+    if (t) {
+        const st = sbChoice.get(d.gufi); if (!st) return;
+        st.type = t.value.trim().toUpperCase();
+        sbLoadVariants(d, st.type || (st.af && st.af.type) || d.aircraftType);
+        return;
+    }
     const a = e.target.closest('.afsel');
     if (a) { sbSetAirframe(d, a.value, false); return; }
     const v = e.target.closest('.afvar');

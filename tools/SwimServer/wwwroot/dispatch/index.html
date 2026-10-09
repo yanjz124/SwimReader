@@ -117,6 +117,8 @@
   .af input::placeholder { color:var(--faint); text-transform:none; }
   .af select:focus, .af input:focus { outline:none; border-color:var(--yel); }
   .af .afvar { grid-column:2 / -1; }
+  .af .aftype { text-transform:uppercase; max-width:90px; }
+  .btn.fa { background:#2a1f12; color:#e8b583; border-color:#5a4126; }
   .af .afinfo { grid-column:1 / -1; font-size:11.5px; color:var(--dim); line-height:1.5; }
   .af .afinfo b { color:#ddd; font-weight:normal; }
   .af .afinfo .warn { color:#d9a066; }
@@ -249,7 +251,7 @@ const real = v => (v && !/^(N\/?A|UNK|NONE)$/i.test(String(v).trim())) ? v : '';
 // The tail's own ICAO type drives SimBrief's variant (A21N vs A321, B38M vs B738), so picking the
 // right tail lands on the right variant. Swapping variants inside SimBrief afterwards is what used
 // to wipe the registration / SELCAL / Mode-S typed in there.
-function simbriefUrl(f, af, variant){
+function simbriefUrl(f, af, variant, sbType){
   const p = new URLSearchParams();
   if(f.airline) p.set('airline', f.airline);
   if(f.fltnum)  p.set('fltnum', f.fltnum);
@@ -257,7 +259,10 @@ function simbriefUrl(f, af, variant){
   if(f.dest)    p.set('dest', f.dest);
   // variant = a SimBrief "Variant or Airframe" id (bare ICAO for Default, "pilot_airframe" for a
   // shared one such as Fenix A321 CFM). Passing it as `type` opens SimBrief on that variant.
-  const type = variant || (af && af.type) || f.type;
+  // Precedence: the chosen variant's airframe id, then an explicitly chosen TYPE, then the tail's
+  // type, then what was filed. The type is choosable because the filed ICAO often has no SimBrief
+  // airframe (E75L), or isn't what you want to fly (B738 filed, B38M add-on).
+  const type = variant || sbType || (af && af.type) || f.type;
   if(type)      p.set('type', type);
   const rte = cleanRoute(f.route, f.orig, f.dest);
   if(rte)       p.set('route', rte);
@@ -429,6 +434,7 @@ function detailHtml(f, fid){
         <a class="btn vat" href="${esc(vatsimUrl(f))}" target="_blank" rel="noopener"
            title="Open VATSIM's prefile page with this plan loaded">Prefile on VATSIM ▸</a>
         <a class="btn" href="/track/${encodeURIComponent(f.callsign)}" target="_blank" rel="noopener">Track live ▸</a>
+        <a class="btn fa" href="${esc(flightAwareUrl(f.callsign))}" target="_blank" rel="noopener">FlightAware ▸</a>
       </div>
     </div>`;
 }
@@ -463,6 +469,9 @@ function pickerHtml(f){
       </select>
       <input class="afreg" placeholder="any reg, e.g. N107DN" maxlength="8" spellcheck="false" autocomplete="off"
              title="Type any registration and press Enter">
+      <label>TYPE</label>
+      <input class="aftype" list="sbtypes" maxlength="4" spellcheck="false" autocomplete="off"
+             title="ICAO type SimBrief should use — change it when the filed type has no airframe, or you fly a different variant of the same aircraft">
       <label>VARIANT</label>
       <select class="afvar" title="SimBrief's Variant or Airframe — chosen here so SimBrief opens on it and keeps the tail data">
         <option value="">SimBrief default</option>
@@ -475,6 +484,9 @@ async function hydratePicker(wrap){
   if(!wrap || wrap._hydrated) return;
   wrap._hydrated = true;
   const f = FLIGHT_BY_ID.get(wrap.dataset.fid); if(!f) return;
+  loadSbTypes();
+  const tin = wrap.querySelector('.aftype');
+  if(tin && !tin.value) tin.value = f.type || '';
   wrap._recs = wrap._recs || new Map();
   const [own, fleet] = await Promise.all([getTail(f.reg), getFleet(f.type, f.airline)]);
   if(!wrap.isConnected) return;
@@ -503,7 +515,7 @@ function setAirframe(wrap, reg){
   wrap._af = af;
   wrap._afInDb = !!rec;
   relink(wrap);
-  loadVariants(wrap, (af && af.type) || f.type);   // the tail's type decides which variants apply
+  loadVariants(wrap, wrap._sbType || (af && af.type) || f.type);
 }
 
 // Recompute the SimBrief link and the "what gets sent" line from the current tail + variant.
@@ -511,7 +523,7 @@ function relink(wrap){
   const f = FLIGHT_BY_ID.get(wrap.dataset.fid); if(!f) return;
   const af = wrap._af, variant = wrap._variant || '';
   const link = wrap.querySelector('a.btn.sb');
-  if(link) link.href = simbriefUrl(f, af, variant);
+  if(link) link.href = simbriefUrl(f, af, variant, wrap._sbType);
   const vat = wrap.querySelector('a.btn.vat');
   if(vat) vat.href = vatsimUrl(f, af);
   const info = wrap.querySelector('.afinfo');
@@ -525,6 +537,25 @@ function relink(wrap){
   parts.push(af.icao24 ? `Mode-S <b>${esc(af.icao24)}</b>` : '<span class="warn">no Mode-S on file</span>');
   info.innerHTML = 'SimBrief gets ' + parts.join('  ·  ') + vpart
     + (wrap._afInDb ? '' : '  <span class="warn">(tail not in the aircraft DB)</span>');
+}
+
+// FlightAware for one flight. The ident is the callsign (a GA flight's callsign IS its tail), which
+// is what /live/flight/ takes; it lands on the current leg, or the most recent one if it has landed.
+function flightAwareUrl(ident){
+  return 'https://www.flightaware.com/live/flight/' + encodeURIComponent(String(ident||'').trim().toUpperCase());
+}
+
+// Every ICAO type SimBrief has an airframe for, fetched once and shared by every picker on the page.
+let _sbTypes = null;
+function loadSbTypes(){
+  if(_sbTypes) return _sbTypes;
+  _sbTypes = fetch('/api/simbrief/types').then(r => r.ok ? r.json() : []).catch(() => []).then(list => {
+    const dl = document.getElementById('sbtypes');
+    if(dl && !dl.options.length)
+      dl.innerHTML = list.map(t => `<option value="${esc(t.type)}">${esc(t.name)}</option>`).join('');
+    return list;
+  });
+  return _sbTypes;
 }
 
 // ── SimBrief variants ("Variant or Airframe") ────────────────────────────────
@@ -565,6 +596,13 @@ async function loadVariants(wrap, type){
 }
 
 $('out').addEventListener('change', e => {
+  const ti = e.target.closest('.aftype');
+  if(ti){
+    const wrap = ti.closest('.sbwrap');
+    wrap._sbType = ti.value.trim().toUpperCase();
+    loadVariants(wrap, wrap._sbType || (wrap._af && wrap._af.type) || FLIGHT_BY_ID.get(wrap.dataset.fid).type);
+    return;
+  }
   const sel = e.target.closest('.afsel');
   if(sel){ setAirframe(sel.closest('.sbwrap'), sel.value); return; }
   const v = e.target.closest('.afvar');
@@ -810,5 +848,6 @@ for(const k of ['orig','dest','airline','type']){
 </script>
 <script src="/shared/frame.js?v=4"></script>
 <script src="/shared/disclaimer.js?v=2"></script>
+<datalist id="sbtypes"></datalist>
 </body>
 </html>

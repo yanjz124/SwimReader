@@ -31,18 +31,32 @@ static class SimbriefRoutes
     /// ICAO types that share one airframe in SimBrief, so a flight filed as any of them can use the
     /// whole family's variants.
     ///
-    /// The E-Jet is the case that forced this: SimBrief lists five airframes under E170 and
-    /// <b>none at all</b> under E75L / E75S / E75X, so an E175 flight — which is most of the regional
-    /// fleet — got "No SimBrief variants" and could not reach the add-on it would actually fly.
-    /// They're the same aeroplane to every add-on that models them.
+    /// The E-Jet forced this: SimBrief has airframes under E170 and E175, but <b>none at all</b>
+    /// under the FAA codes E75L / E75S / E75X that SFDPS actually files for an E175 — most of the
+    /// regional fleet — so those flights got "No SimBrief variants" and could not reach the add-on
+    /// they would fly. E175 heads the family because that is what an E75x IS (an earlier version of
+    /// this pointed them at E170, a different and shorter aeroplane); E170 rides along because the
+    /// same add-ons model both and users treat them as interchangeable.
+    ///
+    /// A table like this only covers the cases someone thought of, which is why the picker also lets
+    /// the type itself be changed — see /api/simbrief/types.
     /// </summary>
     private static readonly string[][] Families =
     {
-        new[] { "E170", "E75L", "E75S", "E75X" },
+        new[] { "E175", "E75L", "E75S", "E75X", "E170" },
     };
 
     public static void Register(WebApplication app, ServerContext ctx)
     {
+        // GET /api/simbrief/types → [{ type, name }] — every type SimBrief knows an airframe for.
+        app.MapGet("/api/simbrief/types", async () =>
+        {
+            var map = await GetMap();
+            return map is null
+                ? Results.Problem("SimBrief airframe list unavailable", statusCode: 502)
+                : Results.Json(TypeList(map), ctx.JsonOpts);
+        });
+
         // GET /api/simbrief/airframes/{type} → [{ id, label, name, engines, isDefault }]
         //   id is what SimBrief's `type` parameter takes: the plain ICAO for the default variant,
         //   the airframe internal ID ("pilot_airframe") for a shared one. Unknown type → [].
@@ -92,6 +106,17 @@ static class SimbriefRoutes
         }
         return outp;
     }
+
+    /// <summary>
+    /// Every ICAO type SimBrief has airframes for, so the picker can offer a type the user actually
+    /// wants to fly rather than only the one that was filed. A hardcoded family table (below) can
+    /// only ever cover the cases someone thought of; letting the type be chosen covers the rest —
+    /// a filed B738 flown on the B38M add-on, a C172 filed as C72R, and so on.
+    /// </summary>
+    private static object[] TypeList(Dictionary<string, List<Variant>> map) => map
+        .Select(kv => new { type = kv.Key, name = kv.Value.FirstOrDefault(v => v.IsDefault)?.Name ?? kv.Key })
+        .OrderBy(x => x.type, StringComparer.Ordinal)
+        .ToArray<object>();
 
     private static async Task<Dictionary<string, List<Variant>>?> GetMap()
     {

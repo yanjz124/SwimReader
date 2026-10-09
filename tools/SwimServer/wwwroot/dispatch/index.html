@@ -598,9 +598,10 @@ async function loadVariants(wrap, type){
 $('out').addEventListener('change', e => {
   const ti = e.target.closest('.aftype');
   if(ti){
-    const wrap = ti.closest('.sbwrap');
+    const wrap = ti.closest('.sbwrap'); if(!wrap) return;
+    const fl = FLIGHT_BY_ID.get(wrap.dataset.fid);
     wrap._sbType = ti.value.trim().toUpperCase();
-    loadVariants(wrap, wrap._sbType || (wrap._af && wrap._af.type) || FLIGHT_BY_ID.get(wrap.dataset.fid).type);
+    loadVariants(wrap, wrap._sbType || (wrap._af && wrap._af.type) || (fl && fl.type));
     return;
   }
   const sel = e.target.closest('.afsel');

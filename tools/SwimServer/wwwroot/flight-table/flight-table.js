@@ -1373,14 +1373,14 @@ const _dbSelcal = new Map();   // airframe key -> SELCAL string, or null (looked
 // key dispatch uses, so picking "Fenix A321 CFM" once applies on both pages.
 const sbChoice = new Map();          // gufi -> { af, variant, recs, varType, hydrated }
 const sbTailCache = new Map(), sbFleetCache = new Map(), sbVariantCache = new Map();
-// Every ICAO type SimBrief has an airframe for; fills the TYPE box's datalist.
+// Every ICAO type SimBrief has an airframe for; fills the TYPE box's datalist. Fetched once, but
+// refilled on every call — the picker (and with it the <datalist>) is rebuilt per selected flight.
 let _sbTypes = null;
 function sbLoadTypes() {
-    if (_sbTypes) return _sbTypes;
-    _sbTypes = fetch('/api/simbrief/types').then(r => r.ok ? r.json() : []).catch(() => []);
+    if (!_sbTypes) _sbTypes = fetch('/api/simbrief/types').then(r => r.ok ? r.json() : []).catch(() => []);
     _sbTypes.then(list => {
         const dl = document.getElementById('sbtypes');
-        if (dl && !dl.options.length)
+        if (dl && dl.options.length !== list.length)
             dl.innerHTML = list.map(t => `<option value="${esc(t.type)}">${esc(t.name)}</option>`).join('');
     });
     return _sbTypes;

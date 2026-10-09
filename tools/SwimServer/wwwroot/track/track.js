@@ -249,6 +249,9 @@
       ${starsStripHtml(tais)}
       <div class="phase" style="background:#111;color:${ph[1]};border-color:${ph[1]}66">${ph[0]}</div>
       <div class="chips">${chips}</div>
+      <div class="exlinks">
+        <a href="https://www.flightaware.com/live/flight/${encodeURIComponent(d.callsign)}" target="_blank" rel="noopener">FlightAware &#8599;</a>
+      </div>
     </div>`;
   }
 

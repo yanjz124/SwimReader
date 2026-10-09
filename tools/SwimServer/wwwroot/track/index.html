@@ -45,6 +45,11 @@
   .chip { font-size:11px; letter-spacing:.5px; padding:3px 9px; border-radius:20px; border:1px solid var(--line);
     color:var(--dim); background:#111; }
   .chip.on { color:#000; background:var(--yel); border-color:var(--yel); font-weight:bold; }
+  /* Where this flight can be followed outside SwimReader. */
+  .exlinks { display:flex; gap:8px; margin-top:10px; }
+  .exlinks a { font-size:11px; letter-spacing:.5px; padding:3px 9px; border-radius:20px;
+      border:1px solid var(--line); color:var(--dim); text-decoration:none; }
+  .exlinks a:active { color:var(--yel); border-color:var(--yel); }
   .deps { display:flex; flex-wrap:wrap; gap:8px; }
   .depchip { font-size:14px; letter-spacing:.5px; padding:6px 14px; border-radius:8px; border:1px solid var(--line);
     color:var(--yel); background:#111; cursor:pointer; -webkit-tap-highlight-color:transparent; }
@@ -156,7 +161,7 @@
     background: #0b1424; color: #9db4d8; font-size: 13px; line-height: 1.5; }
   .tgnote a { color: #6cf; } .tgnote code { color: #cf6; background: #10203a; padding: 1px 5px; border-radius: 4px; }
 </style>
-<script src="/track/track.js?v=22"></script>
+<script src="/track/track.js?v=23"></script>
 <script src="/shared/disclaimer.js?v=2"></script>
 </body>
 </html>

@@ -1391,7 +1391,31 @@ couple of minutes before the ping fails.
 - Track colors: `#cccc44` (ERAM yellow), `#ff4444` (emergency red), `#555555` (boundary gray)
 - SFDPS data rate: ~240 msg/sec, updating ~4000-7000 active flights at any time
 - Each flight updates roughly every 12 seconds
-- CID (Computer ID) is per-facility — each ARTCC assigns its own; stored in `computerIds` map. `getCid()` only returns the selected facility's CID; foreign facility CIDs are never shown (matches real ERAM behavior)
+- CID (Computer ID) is per-facility — each ARTCC assigns its own; stored in `computerIds` map, keyed
+  by the publishing center (the `centre` attribute on `<flight>`). `getCid()` only returns the selected
+  facility's CID; foreign facility CIDs are never shown (matches real ERAM behavior)
+
+### CIDs collide, and presence breaks the tie
+`computerIds` is a permanent per-flight **history**: an entry is kept for the life of the record
+(60 min), so a flight that crossed ZDC an hour ago still carries ZDC's number long after ERAM
+recycled it to someone else. At ~6K flights × up to 7 ARTCC CIDs there are **50-77 colliding CIDs per
+center** at any instant — not an anomaly, the steady state.
+
+So when two records claim one CID, `_buildCidCache()` gives it to whoever **this ARTCC is working**
+(`controllingFacility`) or **still publishing** (`reportingFacility`); a record that has moved on
+can't take the number off one that is here. Ties (two at-facility records, i.e. a stale sibling) fall
+back to freshest `posAge`, and `_cidEligible()` keeps ghost records — cancelled, position-less, long
+stale — from claiming anything at all.
+
+**Don't arbitrate this by freshness.** `posAge` was the original rule and it cannot work: both records
+are getting position updates every few seconds from their *current* centers, so the winner is
+arbitrary and the loser's CID is blanked — which is exactly how live, in-facility targets ended up
+with no CID (4-31 per center, ~153 total across 8 centers; 0 after the change).
+
+A leftover entry nobody at the facility holds is left on display — it is simply this ARTCC's last CID
+for that aircraft, in use by no one. The per-callsign union fallback (which rescues a CID living on a
+sibling GUFI after a handoff) spans the same history, so `_cidHeldByOther()` vets it: a sibling GUFI
+of the same callsign is the same aeroplane and still a legitimate rescue, a different aircraft is not.
 - All frontend rendering is single-file HTML (JS + CSS inlined), no build step or framework
 
 ## Building

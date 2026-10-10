@@ -2273,8 +2273,13 @@ function getCid(f) {
         // flying, and hiding it outright made live targets vanish mid-flight.)
         if (f.gufi && isCidRecycled(f.gufi, f)) cid = '';
         // Fallback: the displayed GUFI may not carry this facility's CID (it lives on a sibling
-        // GUFI of the same callsign after a handoff) — pull it from the per-callsign union.
-        else if (!cid && f.callsign) cid = cidUnionByCallsign.get(f.callsign)?.[myFacility] || '';
+        // GUFI of the same callsign after a handoff) — pull it from the per-callsign union. The
+        // union spans the aircraft's whole history here too, so a number this ARTCC has since
+        // given to a different aircraft must not be borrowed back.
+        else if (!cid && f.callsign) {
+            cid = cidUnionByCallsign.get(f.callsign)?.[myFacility] || '';
+            if (cid && _cidHeldByOther(cid, f.callsign)) cid = '';
+        }
     } else {
         // No facility selected ("All") — show most recent CID from any facility
         cid = f.computerId || '';
@@ -2419,7 +2424,7 @@ function displayPosition(f) {
 
 // Check if this flight's CID has been recycled to a different, fresher flight.
 // Built lazily on first call per render frame, then cached.
-const _cidOwnerCache = new Map();  // "facility/cid" → gufi of freshest owner
+const _cidOwnerCache = new Map();  // cid → { gufi, claim, age } of the record that holds it now
 let _cidCacheFrame = 0;
 // Treat a candidate as eligible to "claim" a CID only if it would actually
 // render — otherwise CANCELLED/COMPLETED/no-position/stale records (which
@@ -2436,6 +2441,26 @@ function _cidEligible(f) {
     if (staleHidden(f)) return false;
     return true;
 }
+// Who may hold this facility's CID. `computerIds` is a permanent per-flight history: once ZDC
+// assigns a flight a CID the entry is kept for the life of the record (60 min), so a flight that
+// crossed ZDC an hour ago still carries ZDC's number long after ERAM recycled it to someone else.
+// With ~6K flights carrying up to 7 ARTCC CIDs each, collisions are constant — measured 50-77
+// colliding CIDs per center at any moment.
+//
+// Freshness cannot arbitrate that: both records are getting position updates every few seconds
+// from their *current* centers, so `posAge` picked an essentially arbitrary winner and blanked the
+// loser — including when the loser was the one actually in this ARTCC's airspace. That's what made
+// CIDs go missing on live, in-facility targets (3-10% of the scope).
+//
+// Presence decides instead: the number belongs to whoever this ARTCC is working or publishing now.
+// Checked against live traffic, this resolves every collision — either exactly one record is at the
+// facility, or none is (both have moved on, so neither is on this controller's scope and there is
+// nothing to arbitrate).
+function _cidClaim(f) {
+    if (f.controllingFacility === myFacility) return 3;   // this ARTCC is working it
+    if (f.reportingFacility === myFacility) return 2;     // still being published by this ARTCC
+    return 0;                                             // gone — its CID entry is a leftover
+}
 function _buildCidCache() {
     _cidOwnerCache.clear();
     if (!myFacility) return;
@@ -2443,16 +2468,30 @@ function _buildCidCache() {
         const cid = f.computerIds?.[myFacility];
         if (!cid) continue;
         if (!_cidEligible(f)) continue;   // ghost records can't claim a CID
-        const prev = _cidOwnerCache.get(cid);
-        if (!prev) { _cidOwnerCache.set(cid, gufi); continue; }
-        const prevF = flights.get(prev);
+        const claim = _cidClaim(f);
+        if (!claim) continue;             // left the facility — can't take the number off someone here
         // Use a high default so "no posAge" loses to any concrete posAge,
         // rather than the previous `?? 0` which made unknown look freshest.
-        const a = f.posAge ?? Number.POSITIVE_INFINITY;
-        const b = prevF?.posAge ?? Number.POSITIVE_INFINITY;
-        if (a < b) _cidOwnerCache.set(cid, gufi);
+        const age = f.posAge ?? Number.POSITIVE_INFINITY;
+        const prev = _cidOwnerCache.get(cid);
+        if (!prev || claim > prev.claim || (claim === prev.claim && age < prev.age))
+            _cidOwnerCache.set(cid, { gufi, claim, age });
     }
 }
+// Is this CID currently held at this facility by a *different* aircraft? (A sibling GUFI of the
+// same callsign is the same aeroplane, so that doesn't count.) Used to vet a CID borrowed from the
+// per-callsign union, which `isCidRecycled` can't see — it reads the record's own entry.
+function _cidHeldByOther(cid, callsign) {
+    if (!myFacility) return false;
+    if (_cidCacheFrame !== renderFrameCount) {
+        _cidCacheFrame = renderFrameCount;
+        _buildCidCache();
+    }
+    const owner = _cidOwnerCache.get(cid);
+    if (!owner) return false;
+    return flights.get(owner.gufi)?.callsign !== callsign;
+}
+
 function isCidRecycled(gufi, f) {
     if (!myFacility) return false;
     const cid = f.computerIds?.[myFacility];
@@ -2463,7 +2502,9 @@ function isCidRecycled(gufi, f) {
         _buildCidCache();
     }
     const owner = _cidOwnerCache.get(cid);
-    return owner != null && owner !== gufi;
+    // No owner means nobody at this facility holds the number — then a leftover entry is simply
+    // this ARTCC's last CID for the aircraft, in use by no one, so it's left on display.
+    return owner != null && owner.gufi !== gufi;
 }
 
 function getSymbolClass(f) {

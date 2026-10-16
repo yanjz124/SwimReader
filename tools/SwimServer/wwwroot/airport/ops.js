@@ -14,6 +14,32 @@ const QUICK = ['KDCA', 'KIAD', 'KBWI', 'KJFK', 'KEWR', 'KLGA', 'KBOS', 'KPHL', '
 
 let timer = null;
 
+// ── theme ───────────────────────────────────────────────────────────────────
+// Two palettes: "day", modelled on the ASOS/tower boards this page copies (pale blue field, white
+// panels, navy labels, cream value boxes), and "night" for a dim room. Both live entirely in CSS
+// custom properties — including every colour in the SVG rose and trend, which is why the drawing
+// code below sets classes rather than fill/stroke attributes. Switching themes restyles what is
+// already on screen; nothing is redrawn.
+const THEME_KEY = 'airport.theme';
+function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    const b = document.getElementById('themeBtn');
+    if (b) {
+        b.textContent = t === 'day' ? '\u25D1 DAY' : '\u25D0 NIGHT';
+        b.title = t === 'day' ? 'Switch to the night palette' : 'Switch to the day palette';
+    }
+    try { localStorage.setItem(THEME_KEY, t); } catch { }
+}
+function initTheme() {
+    let t = null;
+    try { t = localStorage.getItem(THEME_KEY); } catch { }
+    if (t !== 'day' && t !== 'night') {
+        // No choice stored: follow the OS, which is what someone opening this at 2am expects.
+        t = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'day' : 'night';
+    }
+    applyTheme(t);
+}
+
 // ── entry ───────────────────────────────────────────────────────────────────
 function idFromPath() {
     const m = location.pathname.match(/^\/airport\/([A-Za-z0-9]{3,4})\/?$/);
@@ -21,6 +47,10 @@ function idFromPath() {
 }
 
 function boot() {
+    initTheme();
+    const tb = $('themeBtn');
+    if (tb) tb.addEventListener('click', () =>
+        applyTheme(document.documentElement.getAttribute('data-theme') === 'day' ? 'night' : 'day'));
     $('quick').innerHTML = QUICK.map(a => `<a href="/airport/${a}">${a}</a>`).join('');
     $('pickForm').addEventListener('submit', (e) => {
         e.preventDefault();
@@ -163,24 +193,21 @@ function drawRose(d) {
     const svg = $('rose');
     svg.innerHTML = '';
 
-    svg.appendChild(el('circle', { cx: CX, cy: CY, r: R, fill: 'none', stroke: '#2e2e2e', 'stroke-width': 1 }));
-    svg.appendChild(el('circle', { cx: CX, cy: CY, r: R - 26, fill: 'none', stroke: '#222', 'stroke-width': 1 }));
+    svg.appendChild(el('circle', { cx: CX, cy: CY, r: R, class: 'rose-face' }));
+    svg.appendChild(el('circle', { cx: CX, cy: CY, r: R, class: 'rose-ring' }));
+    svg.appendChild(el('circle', { cx: CX, cy: CY, r: R - 26, class: 'rose-ring inner' }));
 
     for (let b = 0; b < 360; b += 5) {
         const major = b % 30 === 0, mid = b % 10 === 0;
         const [x1, y1] = pt(b, R);
         const [x2, y2] = pt(b, R - (major ? 22 : mid ? 14 : 8));
-        svg.appendChild(el('line', {
-            x1, y1, x2, y2, stroke: major ? '#cccc44' : '#3a3a3a',
-            'stroke-width': major ? 2 : 1,
-        }));
+        svg.appendChild(el('line', { x1, y1, x2, y2, class: 'tick' + (major ? ' major' : '') }));
         if (major) {
             const [tx, ty] = pt(b, R - 40);
             const lbl = b === 0 ? 'N' : b === 90 ? 'E' : b === 180 ? 'S' : b === 270 ? 'W' : String(b / 10);
             svg.appendChild(el('text', {
-                x: tx, y: ty + 5, fill: b % 90 === 0 ? '#cccc44' : '#7a7a3a',
+                x: tx, y: ty + 5, class: 'rose-lbl' + (b % 90 === 0 ? ' cardinal' : ''),
                 'font-size': b % 90 === 0 ? 20 : 15, 'text-anchor': 'middle',
-                'font-family': 'Consolas, monospace',
             }, lbl));
         }
     }
@@ -235,16 +262,16 @@ function drawRunways(d) {
         const wPx = Math.max(6, Math.min(14, (rw.widthFt || 150) * 0.3048 * scale));
         g.appendChild(el('line', {
             x1: a[0], y1: a[1], x2: b[0], y2: b[1],
-            stroke: '#6b7076', 'stroke-width': wPx + 3, 'stroke-linecap': 'butt',
+            class: 'rwy-edge', 'stroke-width': wPx + 3, 'stroke-linecap': 'butt',
         }));
         g.appendChild(el('line', {
             x1: a[0], y1: a[1], x2: b[0], y2: b[1],
-            stroke: '#9aa0a6', 'stroke-width': wPx, 'stroke-linecap': 'butt',
+            class: 'rwy-pave', 'stroke-width': wPx, 'stroke-linecap': 'butt',
         }));
         // Centreline stripes
         g.appendChild(el('line', {
             x1: a[0], y1: a[1], x2: b[0], y2: b[1],
-            stroke: '#e8e8e8', 'stroke-width': 1.2, 'stroke-dasharray': '7 7', opacity: 0.8,
+            class: 'rwy-center', 'stroke-width': 1.2, 'stroke-dasharray': '7 7',
         }));
 
         // End numbers go just beyond each threshold, pushed sideways off the centreline so they
@@ -259,9 +286,8 @@ function drawRunways(d) {
             const lx = p[0] + ux * 19 - uy * 11;      // along the runway, then abeam it
             const ly = p[1] + uy * 19 + ux * 11;
             g.appendChild(el('text', {
-                x: lx, y: ly + 5, fill: '#f0f0f0', 'font-size': 15, 'text-anchor': 'middle',
-                'font-family': 'Consolas, monospace', stroke: '#0b0b0b', 'stroke-width': 3.5,
-                'paint-order': 'stroke', 'stroke-linejoin': 'round',
+                x: lx, y: ly + 5, class: 'rwy-id', 'font-size': 15, 'text-anchor': 'middle',
+                'stroke-width': 3.5, 'paint-order': 'stroke', 'stroke-linejoin': 'round',
             }, e.id));
         }
     }
@@ -270,17 +296,16 @@ function drawRunways(d) {
     // Meteorological: an arrow drawn FROM the reported direction, pointing at the field.
     const hist = (d.history || []).filter(h => h.speedKt > 0 && h.dirDeg != null).slice(-5);
     hist.forEach((h, i) => windArrow(svg, h.dirDeg, h.speedKt, {
-        colour: '#2a6b2a', width: 3, label: '', opacity: 0.35 + 0.1 * i,
+        cls: 'wind-prev', width: 3, label: '', opacity: 0.35 + 0.1 * i,
     }));
     if (m && m.windSpeedKt > 0 && m.windDirDeg != null && !m.windVariable) {
         windArrow(svg, m.windDirDeg, m.windSpeedKt, {
-            colour: '#44cc44', width: 7, opacity: 1,
+            cls: 'wind-cur', width: 7, opacity: 1,
             label: `${Math.round(m.windSpeedKt)}${m.windGustKt ? 'G' + Math.round(m.windGustKt) : ''} kt`,
         });
     } else {
         svg.appendChild(el('text', {
-            x: CX, y: CY - 6, fill: '#cccc44', 'font-size': 20, 'text-anchor': 'middle',
-            'font-family': 'Consolas, monospace',
+            x: CX, y: CY - 6, class: 'rose-lbl cardinal', 'font-size': 20, 'text-anchor': 'middle',
         }, m?.windVariable ? 'VRB' : m?.windSpeedKt === 0 ? 'CALM' : ''));
     }
 }
@@ -289,22 +314,21 @@ function windArrow(svg, fromDeg, kt, opt) {
     const tail = R - 8, head = R - 74;          // points inward, toward the field
     const [x1, y1] = pt(fromDeg, tail);
     const [x2, y2] = pt(fromDeg, head);
-    const g = el('g', { opacity: opt.opacity });
+    const g = el('g', { opacity: opt.opacity, class: opt.cls });
     g.appendChild(el('line', {
-        x1, y1, x2, y2, stroke: opt.colour, 'stroke-width': opt.width, 'stroke-linecap': 'round',
+        x1, y1, x2, y2, class: 'arrow-stem', 'stroke-width': opt.width, 'stroke-linecap': 'round',
     }));
     // arrowhead
     const back = 18, spread = 7.5;
     const [bx, by] = pt(fromDeg, head + back);
     const [lx, ly] = pt(fromDeg - spread, head + back + 4);
     const [rx, ry] = pt(fromDeg + spread, head + back + 4);
-    g.appendChild(el('polygon', { points: `${x2},${y2} ${lx},${ly} ${bx},${by} ${rx},${ry}`, fill: opt.colour }));
+    g.appendChild(el('polygon', { points: `${x2},${y2} ${lx},${ly} ${bx},${by} ${rx},${ry}`, class: 'arrow-head' }));
     if (opt.label) {
         const [tx, ty] = pt(fromDeg, tail - 34);
         g.appendChild(el('text', {
-            x: tx, y: ty + 4, fill: '#eaeaea', 'font-size': 15, 'text-anchor': 'middle',
-            'font-family': 'Consolas, monospace', stroke: '#000', 'stroke-width': 3.5,
-            'paint-order': 'stroke',
+            x: tx, y: ty + 4, class: 'wind-lbl', 'font-size': 15, 'text-anchor': 'middle',
+            'stroke-width': 3.5, 'paint-order': 'stroke', 'stroke-linejoin': 'round',
         }, opt.label));
     }
     svg.appendChild(g);
@@ -359,8 +383,7 @@ function drawTrend(hist) {
     const pts = hist.filter(h => h.speedKt != null);
     if (pts.length < 2) {
         svg.appendChild(el('text', {
-            x: 160, y: 75, fill: '#8a8a3a', 'font-size': 11, 'text-anchor': 'middle',
-            'font-family': 'Consolas, monospace',
+            x: 160, y: 75, class: 't-lbl', 'font-size': 11, 'text-anchor': 'middle',
         }, 'not enough history yet'));
         return;
     }
@@ -374,8 +397,8 @@ function drawTrend(hist) {
     const tMin = temps.length ? Math.min(...temps) - 1 : 0, tMax = temps.length ? Math.max(...temps) + 1 : 1;
     const ysT = (v) => H - 22 - (H - 44) * ((v - tMin) / Math.max(0.1, tMax - tMin));
 
-    svg.appendChild(el('line', { x1: PAD, y1: H - 22, x2: W - 6, y2: H - 22, stroke: '#333' }));
-    svg.appendChild(el('text', { x: 2, y: ysKt(maxKt) + 4, fill: '#8a8a3a', 'font-size': 9, 'font-family': 'Consolas, monospace' }, maxKt + 'kt'));
+    svg.appendChild(el('line', { x1: PAD, y1: H - 22, x2: W - 6, y2: H - 22, class: 't-axis' }));
+    svg.appendChild(el('text', { x: 2, y: ysKt(maxKt) + 4, class: 't-lbl', 'font-size': 9 }, maxKt + 'kt'));
 
     const path = (sel, scale) => pts.map((p, i) => {
         const v = sel(p);
@@ -383,17 +406,16 @@ function drawTrend(hist) {
         return `${i === 0 ? 'M' : 'L'} ${xs(p.time).toFixed(1)} ${scale(v).toFixed(1)}`;
     }).filter(Boolean).join(' ');
 
-    if (temps.length) svg.appendChild(el('path', { d: path(p => p.tempC, ysT), fill: 'none', stroke: '#4aa3ff', 'stroke-width': 1.5, opacity: 0.85 }));
-    svg.appendChild(el('path', { d: path(p => p.gustKt, ysKt), fill: 'none', stroke: '#ff8c00', 'stroke-width': 1.5 }));
-    svg.appendChild(el('path', { d: path(p => p.speedKt, ysKt), fill: 'none', stroke: '#cccc44', 'stroke-width': 2 }));
+    if (temps.length) svg.appendChild(el('path', { d: path(p => p.tempC, ysT), class: 't-temp', 'stroke-width': 1.5 }));
+    svg.appendChild(el('path', { d: path(p => p.gustKt, ysKt), class: 't-gust', 'stroke-width': 1.5 }));
+    svg.appendChild(el('path', { d: path(p => p.speedKt, ysKt), class: 't-wind', 'stroke-width': 2 }));
 
     // Hour ticks
     for (const p of pts) {
         const d2 = new Date(p.time);
         if (d2.getUTCMinutes() > 5) continue;
         svg.appendChild(el('text', {
-            x: xs(p.time), y: H - 8, fill: '#8a8a3a', 'font-size': 9, 'text-anchor': 'middle',
-            'font-family': 'Consolas, monospace',
+            x: xs(p.time), y: H - 8, class: 't-lbl', 'font-size': 9, 'text-anchor': 'middle',
         }, String(d2.getUTCHours()).padStart(2, '0') + 'Z'));
     }
 }

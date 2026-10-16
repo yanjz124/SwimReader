@@ -315,8 +315,10 @@ static class NasrService
 
             string Col(int i) => i >= 0 && i < f.Count ? f[i].Trim() : "";
             double? elevFt = double.TryParse(Col(iElev), out var ev) ? ev : null;
-            // MAG_VARN is unsigned with the hemisphere in its own column. Store west as negative so
-            // callers can always do magnetic = true + variation without re-deriving the convention.
+            // MAG_VARN is unsigned with the hemisphere in its own column. Store it as signed
+            // magnetic DECLINATION (east positive, west negative) — the standard convention — so
+            // callers convert with magnetic = true - declination. (Checked against IAD: true 001
+            // with 10W gives magnetic 011, i.e. the runway actually painted 01.)
             double? magVar = null;
             if (double.TryParse(Col(iMagV), out var mv))
                 magVar = Col(iMagH).Equals("W", StringComparison.OrdinalIgnoreCase) ? -mv : mv;

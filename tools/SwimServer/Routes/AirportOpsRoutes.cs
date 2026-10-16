@@ -122,9 +122,11 @@ static class AirportOpsRoutes
                     {
                         id = e.Id,
                         trueAlignDeg = e.TrueAlign,
-                        // What the runway is painted with / what a controller says.
+                        // What the runway is painted with, and what a controller says. Magnetic =
+                        // true - declination (east positive). Getting this backwards is obvious in
+                        // the output: a runway numbered 01 would come out at 351 degrees.
                         magAlignDeg = e.TrueAlign is double ta && info?.MagVarDeg is double mvar
-                            ? Norm360(ta + mvar) : (double?)null,
+                            ? Norm360(ta - mvar) : (double?)null,
                         lat = e.Lat,
                         lon = e.Lon,
                         elevFt = e.ElevFt,

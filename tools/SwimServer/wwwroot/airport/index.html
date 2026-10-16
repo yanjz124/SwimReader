@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Airport Operations</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🛫</text></svg>">
+<link rel="stylesheet" href="/shared/common.css?v=3">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
+<link rel="stylesheet" href="/airport/ops.css?v=1">
+<script defer src="/shared/frame.js?v=4"></script>
+</head>
+<body>
+
+<div class="wrap" id="wrap">
+
+  <!-- ── Picker (shown until an airport is chosen) ───────────────────────── -->
+  <section class="picker" id="picker">
+    <h1>AIRPORT OPERATIONS</h1>
+    <p class="lede">Field weather over the runways: current wind on a compass rose with the runways
+      drawn to scale from NASR, the head/crosswind split for every runway end, and the pressure and
+      density state of the field. Enter any US airport.</p>
+    <form class="pick-form" id="pickForm" autocomplete="off">
+      <input id="pickInput" maxlength="4" spellcheck="false" placeholder="KDCA" aria-label="airport identifier">
+      <button type="submit">OPEN</button>
+    </form>
+    <div class="quick" id="quick"></div>
+  </section>
+
+  <!-- ── Board ───────────────────────────────────────────────────────────── -->
+  <section class="board" id="board" hidden>
+    <header class="bhead">
+      <div class="ident">
+        <div class="id" id="hId">----</div>
+        <div class="names">
+          <div class="name" id="hName"></div>
+          <div class="sub" id="hSub"></div>
+        </div>
+      </div>
+      <div class="clocks">
+        <div class="cat" id="hCat"></div>
+        <div class="clk"><b id="hZulu">--:--</b><span>UTC</span></div>
+        <div class="clk"><b id="hLocal">--:--</b><span id="hLocalLbl">local</span></div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- left: the numbers -->
+      <div class="col readouts">
+        <div class="field wind"><label>WIND</label><div class="v" id="fWind">---</div></div>
+        <div class="field"><label>ALTIMETER</label><div class="v" id="fAltim">--.--</div></div>
+        <div class="field"><label>DENSITY ALT</label><div class="v" id="fDensAlt">----</div></div>
+        <div class="field"><label>PRESSURE ALT</label><div class="v" id="fPressAlt">----</div></div>
+        <div class="field"><label>FIELD ELEV</label><div class="v" id="fElev">----</div></div>
+        <div class="field"><label>TEMP</label><div class="v" id="fTemp">--</div></div>
+        <div class="field"><label>DEWPOINT</label><div class="v" id="fDewp">--</div></div>
+        <div class="field" id="fHiWrap" hidden><label id="fHiLabel">HEAT INDEX</label><div class="v" id="fHi">--</div></div>
+        <div class="field"><label>REL HUMIDITY</label><div class="v" id="fRh">--</div></div>
+        <div class="field"><label>CEILING</label><div class="v" id="fCeil">--</div></div>
+        <div class="field"><label>VISIBILITY</label><div class="v" id="fVis">--</div></div>
+        <div class="field wide"><label>WEATHER</label><div class="v sm" id="fWx">--</div></div>
+        <div class="field wide"><label>REMARKS</label><div class="v sm" id="fRmk">--</div></div>
+      </div>
+
+      <!-- centre: compass rose + runways -->
+      <div class="col rose-col">
+        <div class="rose-box"><svg id="rose" viewBox="0 0 600 600" aria-label="compass rose with runways"></svg></div>
+        <div class="rose-legend">
+          <span><i class="k cur"></i>current wind</span>
+          <span><i class="k prev"></i>preceding (6 h of METARs)</span>
+          <span><i class="k rwy"></i>runway, to scale</span>
+          <span class="dim">north up &middot; directions TRUE</span>
+        </div>
+      </div>
+
+      <!-- right: per-runway components + trend -->
+      <div class="col side">
+        <div class="panel">
+          <h3>RUNWAY COMPONENTS</h3>
+          <div id="rwyList" class="rwy-list"><div class="dim">—</div></div>
+        </div>
+        <div class="panel">
+          <h3>6-HOUR TREND</h3>
+          <svg id="trend" viewBox="0 0 320 150" class="trend"></svg>
+          <div class="trend-legend"><span><i class="k spd"></i>wind kt</span><span><i class="k gust"></i>gust</span><span><i class="k tmp"></i>temp °F</span></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="metar">
+      <div class="mlabel">METAR</div>
+      <div class="mtext" id="mRaw">—</div>
+      <div class="mage" id="mAge"></div>
+    </footer>
+    <div class="note" id="note"></div>
+  </section>
+</div>
+
+<script src="/airport/ops.js?v=1"></script>
+<script src="/idle-timer.js?v=3"></script>
+<script src="/shared/disclaimer.js?v=3"></script>
+</body>
+</html>

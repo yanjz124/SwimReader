@@ -1,4 +1,4 @@
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Text.RegularExpressions;
 
 namespace SwimServer;
@@ -45,10 +45,13 @@ static class NasrService
             return null;
         }
 
-        // Check for cached CSVs (re-download if new files like ILS_BASE.csv are missing)
+        // Check for cached CSVs (re-download if new files like ILS_BASE.csv are missing).
+        // Add every newly-needed file to this check too, or a cycle cached before that file was
+        // introduced never picks it up — the runway CSVs arrived exactly this way.
         var navFile = Path.Combine(cycleDir, "NAV_BASE.csv");
         var ilsFile = Path.Combine(cycleDir, "ILS_BASE.csv");
-        if (!File.Exists(navFile) || !File.Exists(ilsFile))
+        var rwyFile = Path.Combine(cycleDir, "APT_RWY_END.csv");
+        if (!File.Exists(navFile) || !File.Exists(ilsFile) || !File.Exists(rwyFile))
         {
             Console.WriteLine($"[NASR] Downloading cycle {dateStr}...");
             await DownloadNasr(effectiveDate, cycleDir);
@@ -69,8 +72,18 @@ static class NasrService
         data.Fixes = ParseFixBase(Path.Combine(cycleDir, "FIX_BASE.csv"));
         Console.WriteLine($"[NASR]   Fixes: {data.Fixes.Count} identifiers");
 
-        (data.Airports, data.AirportsIcao, data.AirportOverlay) = ParseAptBase(Path.Combine(cycleDir, "APT_BASE.csv"));
+        (data.Airports, data.AirportsIcao, data.AirportOverlay, data.AirportInfo, data.AirportInfoIcao)
+            = ParseAptBase(Path.Combine(cycleDir, "APT_BASE.csv"));
         Console.WriteLine($"[NASR]   Airports: {data.Airports.Count} FAA LIDs, {data.AirportsIcao.Count} ICAO, {data.AirportOverlay.Count} overlay (B/C/D/E)");
+
+        // Runways (optional — a cycle cached before these CSVs were added won't have the files)
+        try
+        {
+            data.Runways = ParseRunways(Path.Combine(cycleDir, "APT_RWY.csv"),
+                                        Path.Combine(cycleDir, "APT_RWY_END.csv"));
+            Console.WriteLine($"[NASR]   Runways: {data.Runways.Count} airports, {data.Runways.Sum(kv => kv.Value.Count)} runways");
+        }
+        catch (Exception ex) { Console.WriteLine($"[NASR]   Runway parse skipped: {ex.Message}"); }
 
         data.Airways = ParseAwyBase(Path.Combine(cycleDir, "AWY_BASE.csv"));
         Console.WriteLine($"[NASR]   Airways: {data.Airways.Count} routes");
@@ -163,7 +176,8 @@ static class NasrService
         } // outerZip closed here — safe to delete
 
         // Extract the CSV files we need from the inner zip
-        var needed = new[] { "NAV_BASE.csv", "FIX_BASE.csv", "AWY_BASE.csv", "APT_BASE.csv", "ILS_BASE.csv" };
+        var needed = new[] { "NAV_BASE.csv", "FIX_BASE.csv", "AWY_BASE.csv", "APT_BASE.csv", "ILS_BASE.csv",
+                             "APT_RWY.csv", "APT_RWY_END.csv" };
         // Also extract STAR, DP, and ILS procedure files
         using (var innerZip = ZipFile.OpenRead(innerZipPath))
         {
@@ -261,11 +275,15 @@ static class NasrService
         return result;
     }
 
-    static (Dictionary<string, NavPoint> byLid, Dictionary<string, NavPoint> byIcao, List<AirportOverlayPoint> overlay) ParseAptBase(string path)
+    static (Dictionary<string, NavPoint> byLid, Dictionary<string, NavPoint> byIcao,
+            List<AirportOverlayPoint> overlay, Dictionary<string, AirportInfo> info,
+            Dictionary<string, AirportInfo> infoIcao) ParseAptBase(string path)
     {
         var byLid = new Dictionary<string, NavPoint>(StringComparer.OrdinalIgnoreCase);
         var byIcao = new Dictionary<string, NavPoint>(StringComparer.OrdinalIgnoreCase);
         var overlay = new List<AirportOverlayPoint>();
+        var info = new Dictionary<string, AirportInfo>(StringComparer.OrdinalIgnoreCase);
+        var infoIcao = new Dictionary<string, AirportInfo>(StringComparer.OrdinalIgnoreCase);
         using var reader = new StreamReader(path);
         var headers = ParseCsvLine(reader.ReadLine()!);
         int iId = ColIdx(headers, "ARPT_ID"), iIcao = ColIdx(headers, "ICAO_ID");
@@ -273,7 +291,11 @@ static class NasrService
         int iSiteType = ColIdx(headers, "SITE_TYPE_CODE"), iUse = ColIdx(headers, "FACILITY_USE_CODE");
         int iStatus = ColIdx(headers, "ARPT_STATUS"), iTwr = ColIdx(headers, "TWR_TYPE_CODE");
         int iFar139 = ColIdx(headers, "FAR_139_TYPE_CODE");
-        if (iId < 0 || iLat < 0 || iLon < 0) return (byLid, byIcao, overlay);
+        int iName = ColIdx(headers, "ARPT_NAME"), iCity = ColIdx(headers, "CITY");
+        int iStateC = ColIdx(headers, "STATE_CODE"), iElev = ColIdx(headers, "ELEV");
+        int iMagV = ColIdx(headers, "MAG_VARN"), iMagH = ColIdx(headers, "MAG_HEMIS");
+        int iArtcc = ColIdx(headers, "RESP_ARTCC_ID");
+        if (iId < 0 || iLat < 0 || iLon < 0) return (byLid, byIcao, overlay, info, infoIcao);
 
         while (reader.ReadLine() is { } line)
         {
@@ -290,6 +312,18 @@ static class NasrService
                 icao = f[iIcao].Trim();
                 if (!string.IsNullOrEmpty(icao)) byIcao.TryAdd(icao, pt);
             }
+
+            string Col(int i) => i >= 0 && i < f.Count ? f[i].Trim() : "";
+            double? elevFt = double.TryParse(Col(iElev), out var ev) ? ev : null;
+            // MAG_VARN is unsigned with the hemisphere in its own column. Store west as negative so
+            // callers can always do magnetic = true + variation without re-deriving the convention.
+            double? magVar = null;
+            if (double.TryParse(Col(iMagV), out var mv))
+                magVar = Col(iMagH).Equals("W", StringComparison.OrdinalIgnoreCase) ? -mv : mv;
+            var ai = new AirportInfo(lid, icao, Col(iName), Col(iCity), Col(iStateC),
+                lat, lon, elevFt, magVar, Col(iArtcc), Col(iTwr));
+            info.TryAdd(lid, ai);
+            if (!string.IsNullOrEmpty(icao)) infoIcao.TryAdd(icao, ai);
 
             // Build airport overlay: public-use operational airports only
             var siteType = iSiteType >= 0 && iSiteType < f.Count ? f[iSiteType].Trim() : "";
@@ -319,7 +353,64 @@ static class NasrService
                 overlay.Add(new AirportOverlayPoint(lid, icao, lat, lon, cls));
             }
         }
-        return (byLid, byIcao, overlay);
+        return (byLid, byIcao, overlay, info, infoIcao);
+    }
+
+    /// <summary>
+    /// Runways from APT_RWY (dimensions/surface) joined to APT_RWY_END (one row per end, carrying
+    /// TRUE_ALIGNMENT and the threshold lat/lon). Keyed by FAA LID, as APT_BASE is.
+    /// </summary>
+    static Dictionary<string, List<RunwayDef>> ParseRunways(string rwyPath, string endPath)
+    {
+        var ends = new Dictionary<(string apt, string rwy), List<RunwayEnd>>();
+        if (File.Exists(endPath))
+        {
+            using var er = new StreamReader(endPath);
+            var h = ParseCsvLine(er.ReadLine()!);
+            int iApt = ColIdx(h, "ARPT_ID"), iRwy = ColIdx(h, "RWY_ID"), iEnd = ColIdx(h, "RWY_END_ID");
+            int iAlign = ColIdx(h, "TRUE_ALIGNMENT"), iLat = ColIdx(h, "LAT_DECIMAL"), iLon = ColIdx(h, "LONG_DECIMAL");
+            int iElev = ColIdx(h, "RWY_END_ELEV"), iIls = ColIdx(h, "ILS_TYPE"), iDisp = ColIdx(h, "DISPLACED_THR_LEN");
+            while (er.ReadLine() is { } line)
+            {
+                var f = ParseCsvLine(line);
+                string C(int i) => i >= 0 && i < f.Count ? f[i].Trim() : "";
+                var apt = C(iApt); var rwy = C(iRwy); var end = C(iEnd);
+                if (apt.Length == 0 || rwy.Length == 0 || end.Length == 0) continue;
+                var key = (apt, rwy);
+                if (!ends.TryGetValue(key, out var list)) ends[key] = list = new List<RunwayEnd>();
+                list.Add(new RunwayEnd(end,
+                    double.TryParse(C(iAlign), out var al) ? al : null,
+                    double.TryParse(C(iLat), out var la) ? la : null,
+                    double.TryParse(C(iLon), out var lo) ? lo : null,
+                    double.TryParse(C(iElev), out var el) ? el : null,
+                    C(iIls),
+                    int.TryParse(C(iDisp), out var dt) ? dt : null));
+            }
+        }
+
+        var result = new Dictionary<string, List<RunwayDef>>(StringComparer.OrdinalIgnoreCase);
+        using var rr = new StreamReader(rwyPath);
+        var rh = ParseCsvLine(rr.ReadLine()!);
+        int jApt = ColIdx(rh, "ARPT_ID"), jRwy = ColIdx(rh, "RWY_ID"), jLen = ColIdx(rh, "RWY_LEN");
+        int jWid = ColIdx(rh, "RWY_WIDTH"), jSurf = ColIdx(rh, "SURFACE_TYPE_CODE"), jLgt = ColIdx(rh, "RWY_LGT_CODE");
+        while (rr.ReadLine() is { } line)
+        {
+            var f = ParseCsvLine(line);
+            string C(int i) => i >= 0 && i < f.Count ? f[i].Trim() : "";
+            var apt = C(jApt); var rwy = C(jRwy);
+            if (apt.Length == 0 || rwy.Length == 0) continue;
+            ends.TryGetValue((apt, rwy), out var e);
+            var def = new RunwayDef(rwy,
+                int.TryParse(C(jLen), out var ln) ? ln : null,
+                int.TryParse(C(jWid), out var wd) ? wd : null,
+                C(jSurf), C(jLgt),
+                e ?? new List<RunwayEnd>());
+            if (!result.TryGetValue(apt, out var rl)) result[apt] = rl = new List<RunwayDef>();
+            rl.Add(def);
+        }
+        // Longest first — the order a tower display lists them, and a sane default "primary runway".
+        foreach (var rl in result.Values) rl.Sort((a, b) => (b.LenFt ?? 0).CompareTo(a.LenFt ?? 0));
+        return result;
     }
 
     // Great-circle destination point from a given lat/lon, bearing (degrees), and distance (NM)

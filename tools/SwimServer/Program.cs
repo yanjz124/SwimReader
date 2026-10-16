@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
@@ -686,6 +686,9 @@ DebugRoutes.Register(app, serverCtx);
 
 // NEXRAD tile proxy + METAR fetch + KML files
 MiscRoutes.Register(app, serverCtx);
+
+// Airport Operations board (/airport) — NASR runways + METAR, see AirportOpsRoutes
+AirportOpsRoutes.Register(app, serverCtx);
 
 // STARS NEXRAD single-radar product proxy (per-station GIF from NWS).
 NexradStarsRoutes.Register(app, serverCtx);

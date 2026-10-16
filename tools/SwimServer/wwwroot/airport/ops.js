@@ -400,11 +400,18 @@ function drawTrend(hist) {
     svg.appendChild(el('line', { x1: PAD, y1: H - 22, x2: W - 6, y2: H - 22, class: 't-axis' }));
     svg.appendChild(el('text', { x: 2, y: ysKt(maxKt) + 4, class: 't-lbl', 'font-size': 9 }, maxKt + 'kt'));
 
-    const path = (sel, scale) => pts.map((p, i) => {
-        const v = sel(p);
-        if (v == null) return '';
-        return `${i === 0 ? 'M' : 'L'} ${xs(p.time).toFixed(1)} ${scale(v).toFixed(1)}`;
-    }).filter(Boolean).join(' ');
+    // 'M' goes on the first point we actually emit, not on index 0 — gust is usually absent from
+    // the oldest observation, and starting a path with 'L' makes the browser reject the whole d.
+    const path = (sel, scale) => {
+        let started = false;
+        return pts.map((p) => {
+            const v = sel(p);
+            if (v == null) return '';
+            const cmd = started ? 'L' : 'M';
+            started = true;
+            return `${cmd} ${xs(p.time).toFixed(1)} ${scale(v).toFixed(1)}`;
+        }).filter(Boolean).join(' ');
+    };
 
     if (temps.length) svg.appendChild(el('path', { d: path(p => p.tempC, ysT), class: 't-temp', 'stroke-width': 1.5 }));
     svg.appendChild(el('path', { d: path(p => p.gustKt, ysKt), class: 't-gust', 'stroke-width': 1.5 }));

@@ -653,6 +653,55 @@ async function fetchHistory(airport) {
 }
 
 // ───────── Rendering ─────────────────────────────────
+// What this site actually publishes, said once at the top, so empty cards below read as
+// "not subscribed / nothing happening" rather than "the page is broken".
+//
+// Our SCDS queue is subscribed asymmetrically: the bulk products (precip, SM SEP, forecast,
+// graphics, AP/ITWS status) arrive for ~33 sites, but every *alerting* product — Configured
+// Alerts above all, which alone feeds Surface Wind, Per-Runway Winds, Alerts and Ribbon —
+// arrives for PHL only. At RDU that is four empty cards at the top of an otherwise full
+// dashboard, which is exactly what gets reported as "no data".
+const DASH_PRODUCTS = [
+  ["Configured Alerts Product", "surface wind, per-runway winds, alerts, ribbon"],
+  ["Hazard Text TRACON Product", "hazard text"],
+  ["Microburst ATIS Product", "microburst"],
+  ["Wind Shear ATIS Product", "wind shear"],
+  ["Gust Front TRACON Map Product", "gust front"],
+  ["Wind Profile Product", "wind profile"],
+  ["Terminal Weather Graphics Product", "terminal weather text"],
+  ["AP Status", "radar feeds"],
+  ["ITWS Status Information", "system status"],
+  ["Forecast Accuracy Product", "forecast"],
+  ["Precipitation TRACON Product", "weather map, precip grid"],
+  ["SM SEP TRACON Product", "storm cells"],
+];
+function renderSiteBanner(airport, byType, sm, precip) {
+  const has = (p) => byType.has(p);
+  const missing = DASH_PRODUCTS.filter(([p]) => !has(p));
+  const got = DASH_PRODUCTS.length - missing.length;
+  const total = (state.airports.find(a => a.airport === airport) || {}).products?.length ?? byType.size;
+
+  // Separate "we aren't sent it" from "we are sent it and the sky is quiet" — they look
+  // identical on screen and have completely different answers.
+  const quiet = [];
+  if (sm && (sm.numStorms ?? 0) === 0) quiet.push("no storm cells");
+  if (precip && (precip.maxLevel ?? 0) === 0) quiet.push("no precipitation in the TRACON");
+
+  const missHtml = missing.length
+    ? `<div style="margin-top:6px">Not in this queue's subscription:
+         ${missing.map(([p, cards]) => `<b>${p.replace(/ Product$/, "")}</b> <span style="color:var(--dim)">(${cards})</span>`).join(" &middot; ")}
+         <div style="color:var(--dim);margin-top:4px;font-size:11px">Those cards stay empty until the product is added to the ITWS queue in the FAA SCDS portal — PHL is currently the only site subscribed to the alerting products.</div>
+       </div>`
+    : `<div style="margin-top:6px;color:var(--good)">Every dashboard product is subscribed for this site.</div>`;
+
+  return `<div class="card span12">
+    <h3>${airport} &middot; ${got}/${DASH_PRODUCTS.length} dashboard products
+      <span class="ago">${total} products seen</span></h3>
+    ${quiet.length ? `<div style="color:var(--good)">Live and quiet: ${quiet.join(" &middot; ")}.</div>` : ""}
+    ${missHtml}
+  </div>`;
+}
+
 function cardEmpty(title, msg, span) {
   return `<div class="card span${span || 4}"><h3>${title}</h3>
     <div style="color: var(--dim); padding: 6px 0;">${msg}</div></div>`;
@@ -1410,6 +1459,7 @@ async function loadAirport(airport) {
 
   $("dashContent").innerHTML = `
     <div class="grid">
+      ${renderSiteBanner(airport, byType, sm, precip)}
       ${renderWindCard(alerts)}
       ${renderWindHistoryCard()}
       ${renderRunwayWindsCard(alerts)}

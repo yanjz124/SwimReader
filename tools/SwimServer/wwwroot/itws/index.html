@@ -675,7 +675,7 @@ const DASH_PRODUCTS = [
   ["Precipitation TRACON Product", "weather map, precip grid"],
   ["SM SEP TRACON Product", "storm cells"],
 ];
-function renderSiteBanner(airport, byType, sm, precip) {
+function renderSiteBanner(airport, byType, sm, precip, metar) {
   const has = (p) => byType.has(p);
   const missing = DASH_PRODUCTS.filter(([p]) => !has(p));
   const got = DASH_PRODUCTS.length - missing.length;
@@ -690,7 +690,12 @@ function renderSiteBanner(airport, byType, sm, precip) {
   const missHtml = missing.length
     ? `<div style="margin-top:6px">Not in this queue's subscription:
          ${missing.map(([p, cards]) => `<b>${p.replace(/ Product$/, "")}</b> <span style="color:var(--dim)">(${cards})</span>`).join(" &middot; ")}
-         <div style="color:var(--dim);margin-top:4px;font-size:11px">Those cards stay empty until the product is added to the ITWS queue in the FAA SCDS portal — PHL is currently the only site subscribed to the alerting products.</div>
+         <div style="color:var(--dim);margin-top:4px;font-size:11px">Those cards stay empty until the product is added to the ITWS queue in the FAA SCDS portal — PHL is currently the only site subscribed to the alerting products.${
+           !byType.has("Configured Alerts Product")
+             ? (parseMetarWind(metar)
+                 ? " Surface wind below is the airport's <b>METAR</b> instead — a real observation, but hourly rather than every 30s."
+                 : " No METAR for this site either, so there is no surface wind to show at all.")
+             : ""}</div>
        </div>`
     : `<div style="margin-top:6px;color:var(--good)">Every dashboard product is subscribed for this site.</div>`;
 
@@ -719,6 +724,87 @@ function renderCompassTicks() {
     labels.push(`<div class="lbl" style="left:${L.x}%; top:${L.y}%">${L.l}</div>`);
   }
   return ticks.join("") + labels.join("");
+}
+
+// ── Surface wind when ITWS doesn't carry it ──────────────────────────────────
+// 89 of the 90 sites get no Configured Alerts product on this queue, so the ITWS wind card
+// is a dead "not subscribed" message almost everywhere — and ITWS publishes no wind in any
+// *other* product we receive (checked every product at RDU and ATL: not one wind field).
+// METAR is the honest fallback: a real observation for the same airport, already proxied and
+// cached server-side. It is labelled as METAR and only used when Configured Alerts is absent;
+// ITWS centrefield wind updates every ~30s, a METAR is hourly plus SPECIs.
+async // This page has no shared escaper; the METAR text is server-proxied, but it still goes
+// through here rather than straight into innerHTML.
+function escText(v) {
+  return String(v == null ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function fetchMetar(airport) {
+  // TRACON site ids (C90, N90, PCT, D01 …) aren't airports and just 404 — that's the
+  // fallback declining itself, which is why this returns null rather than throwing.
+  try {
+    const r = await fetch(`/api/metar/${encodeURIComponent(airport)}`);
+    if (!r.ok) return null;
+    const t = (await r.text()).trim();
+    return t || null;
+  } catch { return null; }
+}
+
+// `09007KT`, `12015G25KT`, `VRB03KT`, `00000KT` — and the `160151Z` observation stamp.
+function parseMetarWind(metar) {
+  if (!metar) return null;
+  const w = metar.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?KT\b/);
+  if (!w) return null;
+  const z = metar.match(/\b(\d{2})(\d{2})(\d{2})Z\b/);
+  let when = null;
+  if (z) {
+    // Day-of-month + HHMM zulu. Roll back a month when the day is ahead of today (month turn).
+    const now = new Date();
+    when = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(),
+      +z[1], +z[2], +z[3]));
+    if (when.getTime() - now.getTime() > 12 * 3600e3) when.setUTCMonth(when.getUTCMonth() - 1);
+  }
+  return {
+    vrb: w[1] === "VRB",
+    dir: w[1] === "VRB" ? null : +w[1],
+    speed: +w[2],
+    gust: w[3] ? +w[3] : 0,
+    time: when,
+    station: (metar.match(/\b([A-Z]{4})\b/) || [])[1] || "",
+    raw: metar,
+  };
+}
+
+function renderMetarWindCard(airport, metar) {
+  const m = parseMetarWind(metar);
+  if (!m) return cardEmpty("Surface Wind",
+    "No Configured Alerts product for this site, and no METAR available either (TRACON site ids aren't airports).", 5);
+  const calm = m.speed === 0;
+  return `
+    <div class="card span5">
+      <h3>SURFACE WIND <span class="ago">METAR ${escText(m.station)}${m.time ? " &middot; " + ago(m.time) : ""}</span></h3>
+      <div class="wind">
+        <div class="compass">
+          ${renderCompassTicks()}
+          <div class="needle" style="transform: translate(-50%, -100%) rotate(${m.vrb ? 0 : m.dir}deg)"></div>
+          <div class="ctr"></div>
+        </div>
+        <div class="vals">
+          <div class="row1"><span class="big">${m.speed}</span><span class="unit">kt</span></div>
+          ${calm ? `<div class="vrb">Calm</div>`
+            : m.vrb ? `<div class="vrb">Variable direction</div>`
+            : `<div class="dir">${fmtDir(m.dir)}<span class="compass-l">${compass(m.dir) || ""}</span></div>`}
+          <div class="gust">${m.gust > 0 ? `Gusting ${m.gust} kt` : ""}</div>
+        </div>
+      </div>
+      <div class="wind-meta">
+        <span style="color:var(--dim)">METAR, not ITWS &mdash; hourly, not 30s</span>
+        <span class="fresh">${m.time ? fmtTime(m.time) : ""}</span>
+      </div>
+      <div style="color:var(--dim);font-size:11px;margin-top:4px;font-family:ui-monospace,monospace;word-break:break-all">${escText(m.raw)}</div>
+    </div>`;
 }
 
 function renderWindCard(alerts) {
@@ -1455,12 +1541,16 @@ async function loadAirport(airport) {
   })();
 
   // History (24h trends) is captured server-side. Fetch in parallel with re-render.
-  await fetchHistory(airport);
+  // The METAR is only wanted when ITWS isn't sending wind for this site.
+  const [, metar] = await Promise.all([
+    fetchHistory(airport),
+    alerts ? Promise.resolve(null) : fetchMetar(airport),
+  ]);
 
   $("dashContent").innerHTML = `
     <div class="grid">
-      ${renderSiteBanner(airport, byType, sm, precip)}
-      ${renderWindCard(alerts)}
+      ${renderSiteBanner(airport, byType, sm, precip, metar)}
+      ${alerts ? renderWindCard(alerts) : renderMetarWindCard(airport, metar)}
       ${renderWindHistoryCard()}
       ${renderRunwayWindsCard(alerts)}
       ${renderStatusCard(alerts, ap, itws)}

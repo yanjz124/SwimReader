@@ -251,8 +251,10 @@ async function refreshStats() {
         if (tr.ok) {
             const facilities = await tr.json();
             const totalTracks = facilities.reduce((s, f) => s + f.trackCount, 0);
-            document.getElementById('taisCount').textContent =
-                `${facilities.length} facilities  ${totalTracks} tracks`;
+            // No TAIS card on this page today — guard it, or this throws and takes the
+            // rest of the block with it (every other write here is guarded for the same reason).
+            const taisEl = document.getElementById('taisCount');
+            if (taisEl) taisEl.textContent = `${facilities.length} facilities  ${totalTracks} tracks`;
         }
     } catch {}
 
@@ -288,6 +290,29 @@ async function refreshStats() {
             const ed = await er.json();
             const el = document.getElementById('edctCount');
             if (el) el.textContent = (ed.count || 0) + ' EDCTs';
+        }
+    } catch {}
+
+    try {
+        const fr = await fetch('/api/tfdm');
+        if (fr.ok) {
+            const airports = await fr.json();
+            const total = airports.reduce((a, x) => a + (x.count || 0), 0);
+            const el = document.getElementById('tfdmCount');
+            if (el) el.textContent = `${airports.length} airports  ${total.toLocaleString()} flights`;
+        }
+    } catch {}
+
+    // ITWS counts sites and product types, not flights — a terminal area publishes ~20
+    // products and `connected` is what distinguishes "calm weather" from "feed is down".
+    try {
+        const ir = await fetch('/api/itws/stats');
+        if (ir.ok) {
+            const it = await ir.json();
+            const el = document.getElementById('itwsCount');
+            if (el) el.textContent = it.connected
+                ? `${it.siteCount || 0} sites  ${it.productTypeCount || 0} products`
+                : 'disconnected';
         }
     } catch {}
 }

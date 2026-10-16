@@ -1363,6 +1363,40 @@ Place KML files in the repo root (gitignored, not committed):
 - `AllHighSectors.kml`, `AllLowSectors.kml` — available via API, toggleable in sidebar
 - KML categories parsed from `<name>` tags: UHI (ultra-high), HI (high), LO (low), APP (approach)
 
+## ITWS: only PHL has the alerting products (queue subscription, not a bug)
+
+"ITWS isn't showing anything" is usually this. The feed is healthy (~11 msg/s, no discards) and the
+page parses fine; what varies is **which products our SCDS queue is subscribed to per site**.
+
+Measured from `/api/itws/topics` (topic shape `ITWS/{productMsgId}/{itwsSite}/{airport}`):
+
+| product | id | sites delivered |
+|---|---|---|
+| AP Status, AP Indicated Precip, Precipitation TRACON, SM SEP TRACON, ITWS Status, Forecast Accuracy/Contour/Image, Terminal Weather Graphics, Long Range precip + SM SEP | 9847/9848/9850/9912/9897/9902/9903/9901/9843/9905/9906 | **32-34** |
+| Precipitation 5nm, SM SEP 5nm | 9849/9911 | 14 |
+| Terminal Weather Text Normal | 9844 | 7 |
+| **Configured Alerts** | **9840** | **1 (PHL)** |
+| Hazard Text TRACON, Microburst ATIS, Wind Shear ATIS, Gust Front TRACON/ETI, Wind Profile, Tornado Alert | 9858/9893/9894/9833/9834/9837 | **1 (PHL)** |
+
+`Configured Alerts Product` alone feeds the **Surface Wind, Runway Winds, Runway Alerts and Ribbon**
+cards — the top of the dashboard — so at the other 89 sites those four are empty by construction and
+say so ("No Configured Alerts product (this airport may not be in the alert subscription)"). PHL
+carries 20 products; the next best are SDF/OKC/IND at 10.
+
+Widening it is a change to the **queue's subscription in the FAA SCDS portal**, not to this code:
+`ItwsBridge` adds no topic subscriptions of its own, it just binds the queue and takes what arrives.
+
+Two more reasons a site can look blank, both legitimate:
+- **Calm weather.** `SM SEP` reports `cells=0` and `prcp_grid_max_precip_level` is 0 when there is
+  nothing to draw, so the storm, precip and weather-map cards are correctly empty.
+- **Sub-sites.** `/api/itws/airports` lists ~90 entries but only ~34 get real products; the rest
+  (PRC, PDK, STT, SUS, STP, VGT, MHT, CPS, JAN, BED, PVD, PWK, …) appear only because a topic named
+  them as a sub-site (`ITWS/9844/MIA/DJT`), and have 1 product each. Clicking them shows nothing much.
+
+A real bug did hide behind this: the **home page's ITWS card** had a `.count` slot that nothing in
+`home.js` ever wrote to, so it was blank regardless of feed health (as were TFDM and SECTORS). Any
+new card needs its count wired there explicitly.
+
 ## Live Client Count (`/api/system`)
 
 `wsClients` is the **sum across every feed**, with a `wsByFeed: [{feed, count}]` breakdown of the ones

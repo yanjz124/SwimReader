@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace SwimServer;
 
@@ -37,7 +37,10 @@ static class AirportOpsRoutes
             c.Response.ContentType = "text/html";
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "airport", "index.html"));
         });
-        app.MapGet("/airport/{id:regex(^[A-Za-z0-9]{3,4}$)}", async (HttpContext c, string id) =>
+        // Route constraint, not a regex: in a route pattern a regex's {3,4} has to be written {{3,4}},
+        // and getting that wrong throws at startup rather than at request time — it took the server
+        // down in a restart loop. length(3,4) says the same thing with nothing to escape.
+        app.MapGet("/airport/{id:length(3,4)}", async (HttpContext c, string id) =>
         {
             c.Response.ContentType = "text/html";
             await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "airport", "index.html"));

@@ -81,8 +81,12 @@ html, body {
 .field.wind .v { font-size: 25px; }
 
 /* ── rose ── */
-.rose-box { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
-#rose { width: 100%; height: auto; display: block; }
+.rose-box {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px;
+  display: flex; justify-content: center;
+}
+/* Square, so width alone would push the bottom of the compass below the fold on a wide screen. */
+#rose { width: 100%; max-width: min(100%, 72vh); height: auto; display: block; }
 .rose-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; font-size: 11px; color: var(--dim); }
 .rose-legend i.k { display: inline-block; width: 11px; height: 11px; vertical-align: -1px; margin-right: 5px; border-radius: 2px; }
 i.k.cur { background: var(--cur); }

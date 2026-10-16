@@ -247,16 +247,21 @@ function drawRunways(d) {
             stroke: '#e8e8e8', 'stroke-width': 1.2, 'stroke-dasharray': '7 7', opacity: 0.8,
         }));
 
-        // End numbers, just outside each threshold, upright.
+        // End numbers go just beyond each threshold, pushed sideways off the centreline so they
+        // don't land on another runway's pavement (PANC's 33 threshold sits right on the 07/25
+        // pair), with a dark halo so they stay readable wherever they end up. Always upright.
         const ends2 = [[ends[0], a, b], [ends[1], b, a]];
         for (const [e, p, other] of ends2) {
             if (!e) continue;
             const dx = p[0] - other[0], dy = p[1] - other[1];
             const len = Math.hypot(dx, dy) || 1;
-            const lx = p[0] + (dx / len) * 16, ly = p[1] + (dy / len) * 16;
+            const ux = dx / len, uy = dy / len;
+            const lx = p[0] + ux * 19 - uy * 11;      // along the runway, then abeam it
+            const ly = p[1] + uy * 19 + ux * 11;
             g.appendChild(el('text', {
-                x: lx, y: ly + 5, fill: '#e8e8e8', 'font-size': 15, 'text-anchor': 'middle',
-                'font-family': 'Consolas, monospace',
+                x: lx, y: ly + 5, fill: '#f0f0f0', 'font-size': 15, 'text-anchor': 'middle',
+                'font-family': 'Consolas, monospace', stroke: '#0b0b0b', 'stroke-width': 3.5,
+                'paint-order': 'stroke', 'stroke-linejoin': 'round',
             }, e.id));
         }
     }

@@ -733,7 +733,7 @@ function renderCompassTicks() {
 // METAR is the honest fallback: a real observation for the same airport, already proxied and
 // cached server-side. It is labelled as METAR and only used when Configured Alerts is absent;
 // ITWS centrefield wind updates every ~30s, a METAR is hourly plus SPECIs.
-async // This page has no shared escaper; the METAR text is server-proxied, but it still goes
+// This page has no shared escaper; the METAR text is server-proxied, but it still goes
 // through here rather than straight into innerHTML.
 function escText(v) {
   return String(v == null ? "" : v)

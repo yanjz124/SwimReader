@@ -289,32 +289,40 @@ static class HistoryRoutes
     /// a raw-substring pre-filter so JSON is only parsed for lines that could match, and a
     /// wall-clock budget so a pathological query degrades to partial results instead of hanging.
     /// </summary>
+    // The flight table fires one request per date as you type, so an un-gated scan means ~7
+    // concurrent passes over 300 MB files. CPU is the scarce resource on the Pi and the SWIM
+    // parse threads must not be starved, so only a couple of scans run at a time; the rest wait
+    // briefly and then give up rather than queueing behind a search nobody is waiting for.
+    private static readonly SemaphoreSlim ScanGate = new(2, 2);
+
     private static List<object> ScanDay(string filePath, List<SearchClause> clauses, bool reveal, int limit)
     {
         var results = new List<object>();
-        // A literal (no-wildcard) pattern must appear verbatim in the line, whatever field it is
-        // meant for. Cheap and safe: it can only skip lines that could not have matched.
-        var literals = clauses
-            .Select(c => c.Pattern)
-            .Where(p => !string.IsNullOrEmpty(p) && p.IndexOf('*') < 0 && p.Length >= 3)
-            .ToList();
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var budget = TimeSpan.FromSeconds(8);
-
+        if (!ScanGate.Wait(TimeSpan.FromSeconds(6))) return results;
         try
         {
+            // A literal (no-wildcard) pattern must appear verbatim somewhere in the line, whatever
+            // field it is meant for. Cheap and safe: it can only skip lines that could not match.
+            var literals = clauses
+                .Select(c => c.Pattern)
+                .Where(p => !string.IsNullOrEmpty(p) && p.IndexOf('*') < 0 && p.Length >= 3)
+                .ToList();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var budget = TimeSpan.FromSeconds(8);
+
             foreach (var line in File.ReadLines(filePath))
             {
                 if (sw.Elapsed > budget) break;
                 if (line.Length < 10) continue;
+
                 bool possible = true;
                 foreach (var lit in literals)
                     if (line.IndexOf(lit, StringComparison.OrdinalIgnoreCase) < 0) { possible = false; break; }
                 if (!possible) continue;
 
                 JsonElement el;
-                // Clone detaches the element so the document can be released on each line —
-                // without the dispose this holds a parsed document per match until GC.
+                // Clone detaches the element so each document is released as we go; without the
+                // dispose this holds a parsed document per match until GC.
                 try { using var doc = JsonDocument.Parse(line); el = doc.RootElement.Clone(); }
                 catch { continue; }
 
@@ -327,11 +335,12 @@ static class HistoryRoutes
                 TryStr(el, "registration", out var hreg);
                 results.Add(LaddService.ShouldMask(hcs, hreg, reveal) ? MaskRecord(el) : el);
                 // Records are appended as flights are purged, so the tail of the file is the most
-                // recent. Keep the newest `limit` rather than the first ones found.
+                // recent; keep the newest `limit` rather than the first ones found.
                 if (results.Count > limit) results.RemoveAt(0);
             }
         }
         catch (Exception ex) { Console.Error.WriteLine($"[History] Scan {filePath}: {ex.Message}"); }
+        finally { ScanGate.Release(); }
         return results;
     }
 

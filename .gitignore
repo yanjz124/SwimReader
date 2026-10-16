@@ -93,3 +93,6 @@ tools/SwimServer/ladd/*.csv
 **/*CUI_SP_PRVCY*
 # Downloaded OurAirports dataset (refreshed monthly by AirportDirectory)
 tools/SwimServer/airport-data/
+
+# vNAS adaptation cache — regenerated at runtime, per host
+tools/SwimServer/vnas-cache.json

@@ -80,6 +80,7 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 - **TAIS Detail** (`/tais/{facility}`) — Terminal radar track table with search, sort, frozen filter, expandable detail
 - **Track a Flight** (`/track`, `/track/{callsign}`) — Mobile-first single-callsign aggregator across every source (SFDPS, TFMS, EDCT, TDLS, TAIS/STARS, ASDE-X); polls `/api/track/{callsign}`
 - **TFDM Boards** (`/tfdm`, `/tfdm/{airport}`) — Terminal surface/departure boards: per-airport live board (WS) with off-block/TSAT/runway/spot/taxi/sequence/delay, proposed-vs-active state, sortable columns + wildcard filter, and an info strip (config/AAR-ADR/closures/queues/gridlock/demand/TMRs). Directory sorted alphabetically.
+- **Airport Operations** (`/airport`, `/airport/{id}`) — Tower-style field board: wind on a compass rose with NASR runways to scale, head/crosswind per runway end, altimeter/density altitude/RH/ceiling/visibility, 6-hour trend, raw METAR
 - **Route Finder / Dispatch** (`/dispatch`) — Search persisted flight history by route/airline/aircraft type → real callsign, filed route, cruise, airframe, gate; deep-links each into **SimBrief** (airframe/type/variant picker), **VATSIM prefile** and **FlightAware**. `/api/dispatch/search`.
 - **Telegram bot** (`TelegramBridge`, `@swimffbot`) — Follow a flight over inflight "free-messaging" wifi: send a callsign for the same cross-source status the Track page shows; `/sub` pushes updates on meaningful state change. Enabled when `TELEGRAM_BOT_TOKEN` is set. Its TFMS lines (route fallback, status/ETD/ETA, NAS entry fix, centers ahead) are what an inbound international leg shows before SFDPS has it at all — see the Track a Flight section. `GET /api/debug/telegram/{callsign}` returns the exact text the bot would send, so it can be checked without a token.
 - Future: strips, etc.
@@ -472,6 +473,7 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/stats` | Server stats (total messages, rate, flight count) |
 | `GET /api/feed` | Per-feed throughput, parse-thread load, and broker discard counts (see Feed Health) |
 | `GET /api/system` | Process metrics for the home server card — CPU/mem/GC/threads/uptime/disk, plus `wsClients` and `wsByFeed` (see below) |
+| `GET /api/airport/{id}` | Airport ops: NASR airport + runways (with TRUE/magnetic alignment and per-end wind components), current METAR, derived weather, 6 h history |
 | `GET /api/kml` | List available KML boundary files |
 | `GET /api/kml/{name}` | Serve a specific KML file from repo root |
 | `GET /api/route/{gufi}` | Resolved route waypoints (lat/lon) from NASR data |
@@ -1396,6 +1398,57 @@ Two more reasons a site can look blank, both legitimate:
 A real bug did hide behind this: the **home page's ITWS card** had a `.count` slot that nothing in
 `home.js` ever wrote to, so it was blank regardless of feed health (as were TFDM and SECTORS). Any
 new card needs its count wired there explicitly.
+
+## Airport Operations board (`/airport/{id}`)
+
+A tower-style ASOS board: current wind on a north-up compass rose with that airport's runways drawn
+**to scale and in their real relative positions**, the head/crosswind split for every runway end, and
+the field's pressure/temperature state over the raw METAR. `AirportOpsRoutes` + `wwwroot/airport/`.
+
+**Two sources, both of which were already here.**
+- **NASR** gives the runways. `APT_RWY.csv` has dimensions/surface/lighting; `APT_RWY_END.csv` has
+  one row per end with `TRUE_ALIGNMENT` and the threshold lat/lon — which is what makes a real
+  diagram possible rather than a sketch. ~23k runways over ~19k airports. `APT_BASE` now also keeps
+  field elevation, magnetic variation, name, city/state and ARTCC (`NasrData.AirportInfo`).
+- **METAR** comes from `aviationweather.gov/api/data/metar?format=json&hours=6`, not the raw-text
+  endpoint in `MiscRoutes`. The JSON form returns the observation already parsed (wind, temp,
+  dewpoint, altimeter, cloud layers, flight category) *plus* history, which feeds the preceding-wind
+  arrows and the 6-hour trend. Writing our own METAR parser would be a liability for no gain.
+
+**Everything derived is computed server-side** — RH (Magnus), pressure and density altitude, heat
+index (NWS Rothfusz) or wind chill, and the per-end head/crosswind — so every client reads the same
+numbers and they can be checked with `curl`.
+
+### True vs magnetic — the thing to never get backwards
+A raw METAR's wind and NASR's `TRUE_ALIGNMENT` are **both TRUE**, so head/crosswind needs no
+variation applied. A runway's *number* is magnetic, and `magnetic = true - declination` with
+declination **east-positive** (`MAG_VARN` is unsigned with the hemisphere in its own column, stored
+signed by `ParseAptBase`). The first version added it instead and IAD's runway 01C came out at 351°.
+
+**The runway numbers are a free regression test**: each end's magnetic alignment must round to its
+own painted number. Over 168 ends at 18 major airports, 22 "fail" — and all 22 are the FAA's
+>3-parallels rule, where an extra pair is numbered one off from its actual heading (DEN 16s vs 17s,
+LAX 06s vs 07s, ATL 08s vs 09s/10s, MCO 17s vs 18s, PHX 07s vs 08s). Zero unexplained. Re-run that
+check after touching anything here.
+
+### Deliberately missing
+No lightning/thunderstorm panel like the displays this is modelled on. ITWS publishes lightning but
+it is **not on our SCDS queue** (26 product types, none of them lightning), and a panel that can only
+ever say "0 strikes" is worse than no panel.
+
+### Route patterns, not regexes
+`/airport/{id:length(3,4)}`. A regex constraint's own braces must be doubled in a route pattern —
+`{id:regex(^[A-Za-z0-9]{3,4}$)}` throws `RoutePatternException` **while mapping endpoints at
+startup**, so the process aborts and systemd restart-loops: the whole site goes down, not just the
+new page. Prefer `length()`/`minlength()`/`maxlength()` where they say the same thing.
+
+### Screenshotting a page for review
+`--dump-dom` includes the `<script>` source, so a regex for card markup happily matches unevaluated
+template literals and looks like success; and plain `--screenshot` can't get past the first-launch
+disclaimer, which is gated on a `swimAck` cookie. Drive headless Chromium over DevTools instead:
+set the cookie with `Network.setCookie`, navigate, settle, `Page.captureScreenshot`, and collect
+`Runtime.exceptionThrown` / `Log.entryAdded` so console errors are visible. (`chromium` and
+`websocket-client` are both already on the Pi; pass `--remote-allow-origins=*`.)
 
 ## Live Client Count (`/api/system`)
 

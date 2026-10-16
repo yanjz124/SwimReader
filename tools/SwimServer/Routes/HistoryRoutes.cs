@@ -103,11 +103,14 @@ static class HistoryRoutes
             foreach (var c in indexClauses)
                 candidates = candidates.Where(e => MatchEntry(e, c));
 
-            // With no indexed clause there is nothing to narrow by, so taking the first N index
-            // entries would answer from the first page of the day and silently drop the rest —
-            // which is what made `type:B752` return 1 of 844. Scan the file for those.
-            if (indexClauses.Count == 0 && residualClauses.Count > 0)
-                return Results.Json(ScanDay(filePath, residualClauses, reveal, 100), ctx.JsonOpts);
+            // Any query with a non-indexed clause goes to the file scan. The index path reads at
+            // most 200 candidate records and filters those, so it answers from an arbitrary slice
+            // of the day — that is what made `type:B752` return 1 of 844, and `op:FDX type:B763`
+            // is capped the same way. A scan with the literal pre-filter measures ~1s on a 300 MB
+            // day, which is worth paying to get a complete answer. All clauses are re-checked on
+            // the JSON (ClauseMatches handles indexed fields too), so nothing is skipped.
+            if (residualClauses.Count > 0)
+                return Results.Json(ScanDay(filePath, clauses, reveal, 100), ctx.JsonOpts);
 
             // Cap at 200 candidates pre-residual (after residual filter we trim to 100)
             var matches = candidates.Take(residualClauses.Count > 0 ? 500 : 200).ToList();

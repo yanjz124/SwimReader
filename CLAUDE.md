@@ -494,7 +494,7 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/tais` | TAIS directory — `[{facility, trackCount}]` sorted alphabetically |
 | `GET /api/tais/{facility}` | Full TAIS snapshot — `{facility, tracks:[...]}` |
 | `WS /tais/ws/{facility}` | WebSocket — sends `snapshot`, `batch`, `remove` messages |
-| `GET /api/history?q=&date=` | Search flight history JSONL files by callsign/origin/dest (max 100 results) |
+| `GET /api/history?q=&date=` | Search flight history JSONL by callsign/CID/origin/dest/registration/aircraftType (indexed) or any other field (full-day scan); max 100 results |
 | `GET /api/history/dates` | List available history dates with file sizes |
 | `GET /fdio` | FDIO two-panel flight plan viewer (reuses `/ws` WebSocket + `/api/flights/{gufi}` + `/api/event-xml/`) |
 | `GET /api/track/{callsign}` | Combined single-callsign snapshot across all sources — `{callsign, found, sfdps, freqs, tfms, edct, handoffHistory, tdls, tais, asdex}` |
@@ -1398,6 +1398,37 @@ Two more reasons a site can look blank, both legitimate:
 A real bug did hide behind this: the **home page's ITWS card** had a `.count` slot that nothing in
 `home.js` ever wrote to, so it was blank regardless of feed health (as were TFDM and SECTORS). Any
 new card needs its count wired there explicitly.
+
+## Flight history search — what's indexed decides what's findable
+
+`GET /api/history?q=&date=` searches one day of `flight-history/{date}.jsonl`; the flight table
+fires one request per date across the `HIST_MAX_DATES` (7) most recent days as you type, and merges
+the hits in beside the live flights.
+
+**The per-day `.idx` carries callsign, computerId, origin, destination, registration and
+aircraftType** — plus the byte offset/length of the record. A clause on an indexed field filters the
+index (instant) and only those records are read. Anything else is *residual*.
+
+**Residual clauses used to be answered from the first page of the day.** The old path took the
+first 500 index entries, read 200 of them and filtered those — so `type:B752` returned **1** result
+on a day whose file holds **844** B752 records, and the same was true of `route:`, `rmk:`,
+`op:`, and of mixed queries like `op:FDX type:B763`. It looked like a thin day, not a bug.
+
+Now any query with a residual clause goes to `ScanDay`, which streams the whole file:
+- a **literal pre-filter** — every no-wildcard pattern ≥3 chars must appear verbatim in the raw
+  line before the JSON is parsed, which is what keeps a 300 MB day at ~1-2 s;
+- an **8 s budget**, so a pathological query degrades to partial results instead of hanging;
+- a **`SemaphoreSlim(2)` gate**, because the table fires ~7 of these at once while you type and the
+  SWIM parse threads must not lose CPU to a search on a 4-core Pi;
+- the newest `limit` matches are kept (records are appended as flights purge, so the tail is recent).
+
+**A bare token matches aircraftType too**, matching `DEFAULT_FIELDS_ALL` in the live table. The
+asymmetry was the original report: typing `b752` found the two live B752s and nothing historical.
+
+**Adding a searchable field means adding it to the index**, or it silently takes the scan path. The
+`.idx` is versioned with a leading `#fhidx\tv2` line; an older file is deleted and rebuilt from the
+`.jsonl` rather than read with the new column missing, which would make those searches quietly
+empty. Bump `IdxVersion` whenever the column layout changes.
 
 ## Airport Operations board (`/airport/{id}`)
 

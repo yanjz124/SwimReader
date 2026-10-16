@@ -325,7 +325,11 @@ function windArrow(svg, fromDeg, kt, opt) {
     const [rx, ry] = pt(fromDeg + spread, head + back + 4);
     g.appendChild(el('polygon', { points: `${x2},${y2} ${lx},${ly} ${bx},${by} ${rx},${ry}`, class: 'arrow-head' }));
     if (opt.label) {
-        const [tx, ty] = pt(fromDeg, tail - 34);
+        // Offset abeam the arrow as well as along it, or the text lands on its own stem.
+        const [ax, ay] = pt(fromDeg, tail - 30);
+        const [px, py] = pt(fromDeg + 90, 1);
+        const ux = px - CX, uy = py - CY;          // unit vector perpendicular to the arrow
+        const tx = ax + ux * 26, ty = ay + uy * 26;
         g.appendChild(el('text', {
             x: tx, y: ty + 4, class: 'wind-lbl', 'font-size': 15, 'text-anchor': 'middle',
             'stroke-width': 3.5, 'paint-order': 'stroke', 'stroke-linejoin': 'round',

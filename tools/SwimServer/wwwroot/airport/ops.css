@@ -115,6 +115,9 @@ html, body {
 .quick a:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ── header ── */
+/* /shared/frame.css styles the bare <header> dark with a 100px left pad for the floating HOME
+   button. Keep the pad, drop the background — the board supplies its own palette. */
+header.bhead { background: transparent; border-bottom: 1px solid var(--line); padding: 10px 18px 10px 100px; }
 .bhead {
   display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
   border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 14px; flex-wrap: wrap;

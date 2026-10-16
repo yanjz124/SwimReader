@@ -1415,6 +1415,15 @@ the field's pressure/temperature state over the raw METAR. `AirportOpsRoutes` + 
   dewpoint, altimeter, cloud layers, flight category) *plus* history, which feeds the preceding-wind
   arrows and the 6-hour trend. Writing our own METAR parser would be a liability for no gain.
 
+### Two palettes, not the site-wide yellow
+`data-theme` on `<html>` selects **day** (the pale blue field / white panels / navy labels / cream
+readout boxes the real ASOS boards use — colour carries meaning there: blue is a heading, cream is an
+instrument value) or **night**, remembered in `localStorage` and defaulting to the OS preference.
+Every colour on the page, including the SVG rose, runways and trend, is a CSS custom property and
+the drawing code sets *classes*, never `fill`/`stroke` — so switching themes restyles what is
+already on screen and redraws nothing. Note `/shared/frame.css` styles the bare `<header>` dark, so
+the board overrides that while keeping its 100px left pad for the floating HOME button.
+
 **Everything derived is computed server-side** — RH (Magnus), pressure and density altitude, heat
 index (NWS Rothfusz) or wind chill, and the per-end head/crosswind — so every client reads the same
 numbers and they can be checked with `curl`.

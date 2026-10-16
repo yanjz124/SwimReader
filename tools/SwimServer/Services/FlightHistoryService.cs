@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace SwimServer;
 
@@ -79,7 +79,7 @@ static class FlightHistoryService
             FlightHistoryIndex.AppendEntry(historyDir, datePart,
                 f.Callsign ?? "", f.ComputerId ?? "",
                 f.Origin ?? "", f.Destination ?? "", f.Registration ?? "",
-                offset, lineBytes.Length);
+                f.AircraftType ?? "", offset, lineBytes.Length);
         }
         catch (Exception ex)
         {

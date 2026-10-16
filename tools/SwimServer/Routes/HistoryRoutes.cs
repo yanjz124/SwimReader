@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace SwimServer;
 
@@ -59,7 +59,11 @@ static class HistoryRoutes
                 || string.Equals(c.Field, "to", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(c.Field, "arr", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(c.Field, "reg", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(c.Field, "registration", StringComparison.OrdinalIgnoreCase);
+                || string.Equals(c.Field, "registration", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "type", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "actype", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "aircrafttype", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(c.Field, "ac", StringComparison.OrdinalIgnoreCase);
 
             bool MatchEntry(FlightHistoryIndex.IndexEntry e, SearchClause c)
             {
@@ -70,6 +74,7 @@ static class HistoryRoutes
                         || (e.Origin.Length > 0 && WildcardMatch(e.Origin, c.Pattern, MatchStyle.Airport))
                         || (e.Destination.Length > 0 && WildcardMatch(e.Destination, c.Pattern, MatchStyle.Airport))
                         || (e.Registration.Length > 0 && WildcardMatch(e.Registration, c.Pattern, MatchStyle.StartsWith))
+                        || (e.AircraftType.Length > 0 && WildcardMatch(e.AircraftType, c.Pattern, MatchStyle.Exact))
                         || (e.ComputerId.Length > 0 && WildcardMatch(e.ComputerId, c.Pattern, MatchStyle.Exact));
                 }
                 var f = c.Field.ToLowerInvariant();
@@ -80,6 +85,7 @@ static class HistoryRoutes
                     "org" or "origin" or "from" or "dep" => e.Origin,
                     "dest" or "destination" or "to" or "arr" => e.Destination,
                     "reg" or "registration" => e.Registration,
+                    "type" or "actype" or "aircrafttype" or "ac" => e.AircraftType,
                     _ => ""
                 };
                 MatchStyle style = (f is "org" or "origin" or "from" or "dep"
@@ -96,6 +102,12 @@ static class HistoryRoutes
             IEnumerable<FlightHistoryIndex.IndexEntry> candidates = index;
             foreach (var c in indexClauses)
                 candidates = candidates.Where(e => MatchEntry(e, c));
+
+            // With no indexed clause there is nothing to narrow by, so taking the first N index
+            // entries would answer from the first page of the day and silently drop the rest —
+            // which is what made `type:B752` return 1 of 844. Scan the file for those.
+            if (indexClauses.Count == 0 && residualClauses.Count > 0)
+                return Results.Json(ScanDay(filePath, residualClauses, reveal, 100), ctx.JsonOpts);
 
             // Cap at 200 candidates pre-residual (after residual filter we trim to 100)
             var matches = candidates.Take(residualClauses.Count > 0 ? 500 : 200).ToList();
@@ -265,6 +277,61 @@ static class HistoryRoutes
 
     /// <summary>Tokenize query into clauses. Whitespace-separated; quoted strings
     /// preserved as a single token (e.g. remarks:"new pilot" is one clause).</summary>
+    /// <summary>
+    /// Stream a day's .jsonl and return the newest <paramref name="limit"/> records matching every
+    /// clause. Used when no clause hits the index (route:, remarks:, operator: …), where filtering a
+    /// prefix of the index would answer from an arbitrary slice of the day.
+    ///
+    /// Two things keep a ~300-600 MB file interactive, both borrowed from the TDLS history reader:
+    /// a raw-substring pre-filter so JSON is only parsed for lines that could match, and a
+    /// wall-clock budget so a pathological query degrades to partial results instead of hanging.
+    /// </summary>
+    private static List<object> ScanDay(string filePath, List<SearchClause> clauses, bool reveal, int limit)
+    {
+        var results = new List<object>();
+        // A literal (no-wildcard) pattern must appear verbatim in the line, whatever field it is
+        // meant for. Cheap and safe: it can only skip lines that could not have matched.
+        var literals = clauses
+            .Select(c => c.Pattern)
+            .Where(p => !string.IsNullOrEmpty(p) && p.IndexOf('*') < 0 && p.Length >= 3)
+            .ToList();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var budget = TimeSpan.FromSeconds(8);
+
+        try
+        {
+            foreach (var line in File.ReadLines(filePath))
+            {
+                if (sw.Elapsed > budget) break;
+                if (line.Length < 10) continue;
+                bool possible = true;
+                foreach (var lit in literals)
+                    if (line.IndexOf(lit, StringComparison.OrdinalIgnoreCase) < 0) { possible = false; break; }
+                if (!possible) continue;
+
+                JsonElement el;
+                // Clone detaches the element so the document can be released on each line —
+                // without the dispose this holds a parsed document per match until GC.
+                try { using var doc = JsonDocument.Parse(line); el = doc.RootElement.Clone(); }
+                catch { continue; }
+
+                bool ok = true;
+                foreach (var c in clauses)
+                    if (!ClauseMatches(el, c)) { ok = false; break; }
+                if (!ok) continue;
+
+                TryStr(el, "callsign", out var hcs);
+                TryStr(el, "registration", out var hreg);
+                results.Add(LaddService.ShouldMask(hcs, hreg, reveal) ? MaskRecord(el) : el);
+                // Records are appended as flights are purged, so the tail of the file is the most
+                // recent. Keep the newest `limit` rather than the first ones found.
+                if (results.Count > limit) results.RemoveAt(0);
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[History] Scan {filePath}: {ex.Message}"); }
+        return results;
+    }
+
     private static List<SearchClause> ParseQuery(string raw)
     {
         var tokens = new List<string>();

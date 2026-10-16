@@ -1,12 +1,14 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text;
 
 namespace SwimServer;
 
 /// <summary>
 /// Per-day index for flight-history/{date}.jsonl. Records callsign / computerId
-/// / origin / destination / registration plus a byte offset into the data file.
-/// Stored alongside the .jsonl as {date}.idx (one tab-separated line per record).
+/// / origin / destination / registration / aircraftType plus a byte offset into the data file.
+/// Stored alongside the .jsonl as {date}.idx (one tab-separated line per record), led by a
+/// version line. Anything a search can filter on needs to be HERE: a field the index doesn't
+/// carry falls back to a residual scan that only ever examined the first page of the day.
 ///
 /// Search becomes O(records-per-day) over a ~7MB index instead of scanning a
 /// ~700MB JSONL file every time.
@@ -20,9 +22,14 @@ static class FlightHistoryIndex
         public string Origin = "";
         public string Destination = "";
         public string Registration = "";
+        public string AircraftType = "";
         public long Offset;       // byte offset into {date}.jsonl where the record line starts
         public int Length;        // length of the record line in bytes (without newline)
     }
+
+    // Bump when the column layout changes — an older .idx is deleted and rebuilt from the .jsonl
+    // rather than read with missing fields, which would make searches quietly incomplete.
+    private const string IdxVersion = "#fhidx\tv2";
 
     // date → entries (lazily loaded). Cached in memory after first build.
     private static readonly Dictionary<string, List<IndexEntry>> _cache = new();
@@ -75,14 +82,29 @@ static class FlightHistoryIndex
         if (!File.Exists(idx)) return;
         try
         {
+            // A pre-v2 index has no version line. Drop it and let the catch-up scan rebuild from
+            // offset 0 — cheaper than carrying a second parse path forever, and it happens once.
+            using (var probe = new StreamReader(idx))
+            {
+                var first = probe.ReadLine();
+                if (first is null || !first.StartsWith("#fhidx", StringComparison.Ordinal) || first != IdxVersion)
+                {
+                    probe.Dispose();
+                    Console.WriteLine($"[HistIdx] {date}: index predates aircraftType, rebuilding");
+                    File.Delete(idx);
+                    File.AppendAllText(idx, IdxVersion + "\n");
+                    return;
+                }
+            }
+
             long maxOffset = 0;
             foreach (var line in File.ReadLines(idx))
             {
-                if (line.Length == 0) continue;
+                if (line.Length == 0 || line[0] == '#') continue;
                 var parts = line.Split('\t');
-                if (parts.Length < 7) continue;
-                if (!long.TryParse(parts[5], out var off)) continue;
-                if (!int.TryParse(parts[6], out var len)) continue;
+                if (parts.Length < 8) continue;
+                if (!long.TryParse(parts[6], out var off)) continue;
+                if (!int.TryParse(parts[7], out var len)) continue;
                 entries.Add(new IndexEntry
                 {
                     Callsign = parts[0],
@@ -90,6 +112,7 @@ static class FlightHistoryIndex
                     Origin = parts[2],
                     Destination = parts[3],
                     Registration = parts[4],
+                    AircraftType = parts[5],
                     Offset = off,
                     Length = len
                 });
@@ -160,6 +183,8 @@ static class FlightHistoryIndex
 
             if (added > 0 && idxAppend.Length > 0)
             {
+                if (!File.Exists(idx) || new FileInfo(idx).Length == 0)
+                    File.AppendAllText(idx, IdxVersion + "\n");
                 File.AppendAllText(idx, idxAppend.ToString());
             }
             sw.Stop();
@@ -183,6 +208,7 @@ static class FlightHistoryIndex
             Origin = ExtractField(line, "\"origin\":\"") ?? "",
             Destination = ExtractField(line, "\"destination\":\"") ?? "",
             Registration = ExtractField(line, "\"registration\":\"") ?? "",
+            AircraftType = ExtractField(line, "\"aircraftType\":\"") ?? "",
             Offset = lineOffset,
             Length = len
         };
@@ -192,6 +218,7 @@ static class FlightHistoryIndex
                  .Append(entry.Origin).Append('\t')
                  .Append(entry.Destination).Append('\t')
                  .Append(entry.Registration).Append('\t')
+                 .Append(entry.AircraftType).Append('\t')
                  .Append(entry.Offset).Append('\t')
                  .Append(entry.Length).Append('\n');
         added++;
@@ -209,7 +236,7 @@ static class FlightHistoryIndex
 
     /// <summary>Append an index entry for a record just written by FlightHistoryService.</summary>
     public static void AppendEntry(string historyDir, string date, string callsign, string computerId,
-        string origin, string destination, string registration, long offset, int length)
+        string origin, string destination, string registration, string aircraftType, long offset, int length)
     {
         lock (_lock)
         {
@@ -223,17 +250,22 @@ static class FlightHistoryIndex
             {
                 Callsign = callsign ?? "", ComputerId = computerId ?? "",
                 Origin = origin ?? "", Destination = destination ?? "",
-                Registration = registration ?? "", Offset = offset, Length = length
+                Registration = registration ?? "", AircraftType = aircraftType ?? "",
+                Offset = offset, Length = length
             };
             entries.Add(entry);
             try
             {
-                using var sw = File.AppendText(IdxPath(historyDir, date));
+                var idxPath = IdxPath(historyDir, date);
+                if (!File.Exists(idxPath) || new FileInfo(idxPath).Length == 0)
+                    File.AppendAllText(idxPath, IdxVersion + "\n");
+                using var sw = File.AppendText(idxPath);
                 sw.Write(entry.Callsign); sw.Write('\t');
                 sw.Write(entry.ComputerId); sw.Write('\t');
                 sw.Write(entry.Origin); sw.Write('\t');
                 sw.Write(entry.Destination); sw.Write('\t');
                 sw.Write(entry.Registration); sw.Write('\t');
+                sw.Write(entry.AircraftType); sw.Write('\t');
                 sw.Write(entry.Offset); sw.Write('\t');
                 sw.Write(entry.Length); sw.Write('\n');
             }

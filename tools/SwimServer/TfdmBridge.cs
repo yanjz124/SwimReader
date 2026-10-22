@@ -45,12 +45,26 @@ class TfdmBridge
 
     public void Start()
     {
-        var t = new Thread(Run) { IsBackground = true, Name = "TfdmReceiver" };
-        t.Start();
+        var receivers = SolaceTuning.Receivers("TFDM_FLOWS", 1);
+        for (int i = 0; i < receivers; i++)
+        {
+            var idx = i;
+            new Thread(() => Run(idx)) { IsBackground = true, Name = $"TfdmReceiver{idx}" }.Start();
+        }
+        if (receivers > 1) Console.WriteLine($"[TFDM] {receivers} receivers on the queue");
     }
 
     // ── Solace receive loop ──────────────────────────────────────────────────
-    private void Run()
+    /// <summary>
+    /// One receiver: its own context (hence its own dispatch thread), session and flow, bound to
+    /// the shared queue. Several of these drain the queue in parallel — see SolaceTuning and the
+    /// CLAUDE.md note on the per-session ceiling.
+    /// </summary>
+    // Receivers run in parallel for the transport only; message processing stays serialised so
+    // the per-track/per-flight state updates keep the single-threaded world they were written for.
+    private readonly object _processGate = new();
+
+    private void Run(int receiverIndex)
     {
         if (string.IsNullOrEmpty(_user))
         {
@@ -91,12 +105,15 @@ class TfdmBridge
                         using var _h = FeedHealth.Track("TFDM", m);
                         try
                         {
+                            lock (_processGate)
+                            {
                             string? body = null;
                             if (m.BinaryAttachment is { Length: > 0 } ba)
                                 body = System.Text.Encoding.UTF8.GetString(ba);
                             else if (m.XmlContent is { Length: > 0 } xc)
                                 body = System.Text.Encoding.UTF8.GetString(xc);
                             if (!string.IsNullOrWhiteSpace(body)) Process(body!);
+                        }
                         }
                         catch (Exception ex) { Console.Error.WriteLine("[TFDM] parse: " + ex.Message); }
                     },

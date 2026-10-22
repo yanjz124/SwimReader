@@ -104,13 +104,27 @@ class ItwsBridge
         }
         Console.WriteLine($"[ITWS] Parse workers: {workers}");
 
-        var t = new Thread(Run) { IsBackground = true, Name = "ItwsReceiver" };
-        t.Start();
+        var receivers = SolaceTuning.Receivers("ITWS_FLOWS", 1);
+        for (int i = 0; i < receivers; i++)
+        {
+            var idx = i;
+            new Thread(() => Run(idx)) { IsBackground = true, Name = $"ItwsReceiver{idx}" }.Start();
+        }
+        if (receivers > 1) Console.WriteLine($"[ITWS] {receivers} receivers on the queue");
     }
 
     // ── Solace receive loop ──────────────────────────────────────────────────
 
-    private void Run()
+    /// <summary>
+    /// One receiver: its own context (hence its own dispatch thread), session and flow, bound to
+    /// the shared queue. Several of these drain the queue in parallel — see SolaceTuning and the
+    /// CLAUDE.md note on the per-session ceiling.
+    /// </summary>
+    // Receivers run in parallel for the transport only; message processing stays serialised so
+    // the per-track/per-flight state updates keep the single-threaded world they were written for.
+    private readonly object _processGate = new();
+
+    private void Run(int receiverIndex)
     {
         while (true)
         {
@@ -151,7 +165,7 @@ class ItwsBridge
                         using var m = msgArgs.Message;
                         using var _h = FeedHealth.Track("ITWS", m);
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
-                        ProcessMessage(m);
+                        lock (_processGate) ProcessMessage(m);
                     },
                     (_, flowArgs) => Console.WriteLine($"[ITWS Flow] {flowArgs.Event} - {flowArgs.Info}"));
 

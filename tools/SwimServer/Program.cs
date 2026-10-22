@@ -856,26 +856,10 @@ FlightPinService.Initialize(historyDir, historyJsonOpts);
 
 // (Per-service cleanup removed — PersistenceBudget enforces a single shared cap.)
 
-// Save flight cache on graceful shutdown (SIGTERM from systemd)
+// Shutdown work is registered once, in priority order, further down — see GracefulShutdown.
+// Every second spent stopping is a second nothing is bound to the SCDS queues, and they hold
+// well under a second of traffic.
 var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
-lifetime.ApplicationStopping.Register(() =>
-{
-    Console.WriteLine("[Cache] Shutdown — saving flight state...");
-    FlightCacheService.Save(flights, cacheDir, cacheJsonOpts);
-    sectorTracker.Save(cacheDir);
-    airspaceBridge.Save(cacheDir);
-
-    // Investigation: flush remaining log entries (uncomment with investigation logger)
-    // var remaining = new List<string>();
-    // while (investigationQueue.TryDequeue(out var entry)) remaining.Add(entry);
-    // if (remaining.Count > 0) { try { File.AppendAllLines(investigationLogPath, remaining); } catch { } }
-    // Console.WriteLine($"[INVESTIGATION] Shutdown — {Interlocked.Read(ref investigationEntryCount) + remaining.Count} total entries → {investigationLogPath}");
-
-    // var poRemaining = new List<string>();
-    // while (poLogQueue.TryDequeue(out var poEntry)) poRemaining.Add(poEntry);
-    // if (poRemaining.Count > 0) { try { File.AppendAllLines(poLogPath, poRemaining); } catch { } }
-    // Console.WriteLine($"[PO] Shutdown — {Interlocked.Read(ref poLogCount) + poRemaining.Count} entries → {poLogPath}");
-});
 
 // Only the host that owns the SWIM queues may consume them — a second consumer
 // silently splits the feed rather than duplicating it (see FeedGuard).
@@ -1417,7 +1401,18 @@ var taisSnapshotTimer = new Timer(_ =>
 var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer, aircraftSaveTimer /*, poFlushTimer, investigationFlushTimer */ };
 // Re-encode finished replay hours gzip → zstd (~10x smaller) so the replay budget reaches much further back.
 ReplayCompactor.Start(replayDir, app.Lifetime.ApplicationStopping);
-app.Lifetime.ApplicationStopping.Register(() => { foreach (var t in allTimers) t.Dispose(); eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); itws.SaveHistory(); aircraftDb.Save(); });
+// Ordered, budgeted shutdown. Cheapest-and-irreplaceable first, the flight cache last: it is by
+// far the most expensive (BackfillFromEvents re-parses stored XML for every flight) and the least
+// valuable, since the live feed refills it within seconds of restart. The per-step timings go to
+// the log so the next slow shutdown names its own culprit instead of needing a bisect.
+app.Lifetime.ApplicationStopping.Register(() => GracefulShutdown.Run(
+    TimeSpan.FromSeconds(8),
+    ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); }),
+    ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }),
+    ("aircraft db", () => aircraftDb.Save()),
+    ("itws history", () => itws.SaveHistory()),
+    ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }),
+    ("flight cache", () => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts))));
 
 // Replay endpoints (WebSocket + REST)
 replayServer.MapEndpoints(app);

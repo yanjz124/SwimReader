@@ -1,4 +1,4 @@
-using SolaceSystems.Solclient.Messaging;
+﻿using SolaceSystems.Solclient.Messaging;
 
 namespace SwimServer;
 
@@ -52,6 +52,13 @@ static class SolaceTuning
     /// GC pause or a disk stall has the dispatch thread suspended.
     /// </summary>
     public static int ReceiveBufferBytes => EnvInt("SWIM_RCV_BUF_BYTES", 4 * 1024 * 1024, 1024, 64 * 1024 * 1024);
+
+    /// <summary>
+    /// How many parallel receivers to bind to one feed's queue. One Solace session has a hard
+    /// transport ceiling (SFDPS sat at ~35 msg/s against ~85 msg/s of ingress until it got
+    /// three); a queue is competing-consumers, so N flows drain N x faster with no duplication.
+    /// </summary>
+    public static int Receivers(string envName, int fallback) => EnvInt(envName, fallback, 1, 8);
 
     static int EnvInt(string name, int fallback, int min, int max)
     {

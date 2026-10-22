@@ -76,13 +76,27 @@ class AsdexBridge
 
     public void Start()
     {
-        var t = new Thread(Run) { IsBackground = true, Name = "StddsReceiver" };
-        t.Start();
+        var receivers = SolaceTuning.Receivers("STDDS_FLOWS", 1);
+        for (int i = 0; i < receivers; i++)
+        {
+            var idx = i;
+            new Thread(() => Run(idx)) { IsBackground = true, Name = $"StddsReceiver{idx}" }.Start();
+        }
+        if (receivers > 1) Console.WriteLine($"[STDDS] {receivers} receivers on the queue");
     }
 
     // ── Solace receive loop ──────────────────────────────────────────────────
 
-    private void Run()
+    /// <summary>
+    /// One receiver: its own context (hence its own dispatch thread), session and flow, bound to
+    /// the shared queue. Several of these drain the queue in parallel — see SolaceTuning and the
+    /// CLAUDE.md note on the per-session ceiling.
+    /// </summary>
+    // Receivers run in parallel for the transport only; message processing stays serialised so
+    // the per-track/per-flight state updates keep the single-threaded world they were written for.
+    private readonly object _processGate = new();
+
+    private void Run(int receiverIndex)
     {
         if (string.IsNullOrEmpty(_user))
         {
@@ -129,6 +143,7 @@ class AsdexBridge
                         using var _h = FeedHealth.Track("STDDS", m);
                         var topic = m.Destination?.Name ?? "";
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
+                        lock (_processGate)
                         if (topic.StartsWith("SMES/", StringComparison.OrdinalIgnoreCase))
                         {
                             ProcessSmes(m);

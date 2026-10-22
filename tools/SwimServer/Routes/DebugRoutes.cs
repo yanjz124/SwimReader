@@ -1,4 +1,4 @@
-namespace SwimServer;
+﻿namespace SwimServer;
 
 /// <summary>
 /// Debug / introspection endpoints under /api/debug/*.
@@ -87,6 +87,36 @@ static class DebugRoutes
         });
 
         // Debug: all unique nameValue keys seen in supplementalData
+        // Retained-memory breakdown. GC counters say how much is held, never by whom; a gcdump on
+        // a multi-GB heap on this box risks swapping it to death, so count the SFDPS structures
+        // (the only ones that scale with traffic rather than with the airport/airframe catalogs)
+        // and compare against the heap. Cheap enough to hit while the server is live.
+        app.MapGet("/api/debug/memory", () =>
+        {
+            var flights = ctx.Flights;
+            long events = 0, withPos = 0;
+            foreach (var f in flights.Values)
+            {
+                events += f.AllEventCount;
+                if (f.Latitude is not null) withPos++;
+            }
+            var gc = GC.GetGCMemoryInfo();
+            return Results.Json(new
+            {
+                workingSetMB = Environment.WorkingSet / 1048576,
+                gcHeapMB = GC.GetTotalMemory(false) / 1048576,
+                heapCommittedMB = gc.TotalCommittedBytes / 1048576,
+                // Heap we hold but cannot allocate into — what RetainVM trades away.
+                fragmentedMB = gc.FragmentedBytes / 1048576,
+                pauseTimePct = Math.Round(gc.PauseTimePercentage, 2),
+                gen2Collections = GC.CollectionCount(2),
+                sfdpsFlights = flights.Count,
+                sfdpsWithPosition = withPos,
+                sfdpsEvents = events,
+                sfdpsAvgEventsPerFlight = flights.Count > 0 ? events / flights.Count : 0,
+            }, ctx.JsonOpts);
+        });
+
         app.MapGet("/api/debug/namevalue-keys", () =>
         {
             var keys = ctx.NameValueKeys.ToArray()

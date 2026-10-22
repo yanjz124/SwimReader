@@ -317,9 +317,31 @@ The second half: the working set grew 465 MB in that test and **never came back*
 53% fragmentation on a box that had started swapping to the SD card (16-24% iowait, flush worker
 permanently in D state) it was not. It is off now. **Working set 5.0 GB -> 2.4 GB.**
 
-Still true and unfixed: the box runs 22-29% iowait with ~31 GB of replay on an SD card, and the
-feed fix means ~3x the SFDPS volume now being recorded. That is the next thing if the box feels
-slow, not the feed.
+### The biggest writer on the box was not SwimServer
+An I/O audit (per-process `write_bytes` deltas + per-directory growth over 60 s) found the top
+writer was **swimreader-stdds at 70 MB/min**, against SwimServer's 25 and the unrelated vncrcc
+app's 43 — and it held no data file open, which is the signature of short-lived writes.
+
+It was `dstars-cache/state.json`: **69 MB, rewritten whole every 60 s, ~100 GB/day onto the SD
+card.** Two causes, both fixed without changing what the cache does:
+- `Save` exported *every* target the adapter had cached plus its per-target track/flight-plan JSON
+  and history, and `Load` then discarded anything older than `TargetTimeout` (45 s) — most of each
+  write existed to be thrown away on the way back in. `ExportCaches` now takes the set being
+  persisted; targets are filtered to a 3-minute window on the way out.
+- The periodic save ran every 60 s, but a snapshot is only useful if it is younger than 45 s when
+  loaded, so the periodic copy was already stale on most restarts. What seeds a normal restart is
+  the `StopAsync` save on SIGTERM. Now every 10 minutes.
+
+**69 MB/min -> 3.1 MB/min (95% less); load average 11.8 -> 3.7, iowait mostly 0-1%.**
+
+### Memory is still not solved
+Two real leaks were found and fixed (the history-index cache, RetainVM) and the working set
+dropped 5.0 -> 2.4 GB — but it climbs again, and faster now, because the feed fix means 3x the
+SFDPS volume to allocate for. Measured 70 minutes after a restart: working set 4.9 GB, heap
+3.2 GB, **1.2 GB fragmented**, 117 gen2 collections, with ~864k flight events (61 per flight, at
+the 100 cap). Events alone cannot account for it. Whatever else accumulates has not been
+identified; `GET /api/debug/memory` plus a gcdump taken shortly after a restart (when the heap is
+small enough to dump safely) is the way in.
 
 ## Feed Health (`GET /api/feed`)
 

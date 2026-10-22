@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -7,14 +7,18 @@
     <!-- Pi: RAM is ample (8 GB) but CPU is the scarce resource (shared with other services).
          Server GC (the ASP.NET Core default) keeps a heap per core and spends more CPU on
          parallel collections; Workstation GC keeps a single heap and is the right fit for
-         ~240 msg/s of SFDPS throughput. RetainVM is on — with the airline-research index now
-         keeping a multi-hundred-MB long-lived heap, letting the GC decommit/recommit segments
-         every collection (the default) was costing real CPU in mmap/munmap and fragmentation
-         for no memory benefit we need; keeping reclaimed segments reserved (not returned to the
-         OS) trades a bit more steady-state RSS — which we have room for — for fewer syscalls. -->
+         ~240 msg/s of SFDPS throughput.
+
+         RetainVM was on for a while, on the reasoning that RAM was ample and keeping reclaimed
+         segments reserved saved mmap/munmap churn. That stopped being true: the process reached
+         5.0 GB RSS with a 4.4 GB heap and 53% fragmentation on an 8 GB box shared with other
+         services, and started swapping to the SD card — measured 16-24% iowait with the flush
+         worker permanently in D state. A history search alone grew the working set by 465 MB
+         that was never returned. Give the segments back; the syscall cost is cheap next to
+         swapping a multi-GB heap onto an SD card. -->
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
-    <RetainVMGarbageCollection>true</RetainVMGarbageCollection>
+    <RetainVMGarbageCollection>false</RetainVMGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>

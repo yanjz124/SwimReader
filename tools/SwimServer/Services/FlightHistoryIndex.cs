@@ -31,8 +31,16 @@ static class FlightHistoryIndex
     // rather than read with missing fields, which would make searches quietly incomplete.
     private const string IdxVersion = "#fhidx\tv2";
 
+    // How many day indexes to keep resident. Each is ~50k entries of six strings — roughly 8 MB
+    // of permanently-retained heap per day — and the flight table searches the 7 most recent days
+    // as you type, so an un-evicted cache quietly pinned hundreds of MB across 48 days of history.
+    // Dropping one costs a re-read of its .idx, which is a few MB of sequential I/O.
+    private const int MaxCachedDates = 3;
+
     // date → entries (lazily loaded). Cached in memory after first build.
     private static readonly Dictionary<string, List<IndexEntry>> _cache = new();
+    // date → when it was last searched, for eviction.
+    private static readonly Dictionary<string, DateTime> _lastUsed = new();
     // date → bytes of .jsonl already indexed (so EnsureBuilt can resume)
     private static readonly Dictionary<string, long> _builtUpTo = new();
     private static readonly object _lock = new();
@@ -72,8 +80,34 @@ static class FlightHistoryIndex
                 ScanFromOffset(historyDir, date, alreadyIndexed, entries);
                 _builtUpTo[date] = fi.Length;
             }
+            _lastUsed[date] = DateTime.UtcNow;
+            EvictStale(keep: date);
             return entries;
         }
+    }
+
+    /// <summary>
+    /// Drop the least-recently-searched day indexes beyond <see cref="MaxCachedDates"/>. Today is
+    /// never evicted: it is appended to on every flight purge, so dropping it would mean reloading
+    /// it seconds later.
+    /// </summary>
+    private static void EvictStale(string keep)
+    {
+        if (_cache.Count <= MaxCachedDates) return;
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var victims = _cache.Keys
+            .Where(d => d != keep && d != today)
+            .OrderBy(d => _lastUsed.TryGetValue(d, out var t) ? t : DateTime.MinValue)
+            .Take(_cache.Count - MaxCachedDates)
+            .ToList();
+        foreach (var d in victims)
+        {
+            _cache.Remove(d);
+            _builtUpTo.Remove(d);
+            _lastUsed.Remove(d);
+        }
+        if (victims.Count > 0)
+            Console.WriteLine($"[HistIdx] evicted {victims.Count} day index(es) from memory: {string.Join(", ", victims)}");
     }
 
     private static void LoadFromIdx(string historyDir, string date, List<IndexEntry> entries)

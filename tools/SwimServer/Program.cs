@@ -1540,6 +1540,13 @@ void ProcessFlight(XElement flight, string rawXml)
     var center = flight.Attribute("centre")?.Value ?? "";
     var timestamp = flight.Attribute("timestamp")?.Value;
     var flightType = flight.Attribute("flightType")?.Value;
+    // End-to-end lag: how far behind the publisher we are. SFDPS puts its own stamp on every
+    // flight element, so this costs one parse of a string we already read.
+    if (timestamp is not null &&
+        DateTime.TryParse(timestamp, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var publishedUtc))
+        FeedHealth.NoteLag("SFDPS", publishedUtc);
 
     // XML element discovery: walk the flight element tree (first 10K messages only to minimize overhead)
     if (Interlocked.Read(ref _procCount) < 10_000)
@@ -1848,6 +1855,14 @@ void ProcessFlight(XElement flight, string rawXml)
                     state.Latitude = lat;
                     state.Longitude = lon;
                     state.LastPositionTime = DateTime.UtcNow;
+                    // When the radar actually saw it, as opposed to when we got told. Kept
+                    // separately so display logic (coast, extrapolation) is unaffected.
+                    var ptAttr = pos.Attribute("positionTime")?.Value;
+                    if (ptAttr is not null &&
+                        DateTime.TryParse(ptAttr, System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                            out var fixUtc))
+                        state.PositionFixTime = fixUtc;
                 }
             }
             var altEl = pos.Elements().FirstOrDefault(e => e.Name.LocalName == "altitude");

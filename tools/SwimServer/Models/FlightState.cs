@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 
 namespace SwimServer;
 
@@ -115,6 +115,13 @@ class FlightState
     // Meta
     public DateTime LastSeen { get; set; }
     public DateTime LastPositionTime { get; set; }
+    /// <summary>
+    /// The radar fix time from <c>&lt;position positionTime="..."&gt;</c> — when the aircraft was
+    /// actually seen, as opposed to <see cref="LastPositionTime"/>, which is when WE received it.
+    /// The two diverge by however far behind the feed is, which is exactly what receipt-based
+    /// ages cannot show.
+    /// </summary>
+    public DateTime PositionFixTime { get; set; }
     public string? LastMsgSource { get; set; }
 
     // Position history (server-side, survives client refresh)
@@ -350,6 +357,9 @@ class FlightState
         LastMsgSource,
         LastSeen = LastSeen.ToString("HH:mm:ss"),
         PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
+        // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
+        // runs off PosAge so that coast/extrapolation behaviour is unchanged by this field.
+        FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
         History = includeHistory ? HistoryWithAge() : null
         };
     }
@@ -389,6 +399,9 @@ class FlightState
             FlightStatus,
             LastSeen = LastSeen.ToString("HH:mm:ss"),
             PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
+        // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
+        // runs off PosAge so that coast/extrapolation behaviour is unchanged by this field.
+        FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
         };
     }
 

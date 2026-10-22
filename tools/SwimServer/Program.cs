@@ -1411,11 +1411,15 @@ app.Lifetime.ApplicationStopping.Register(() => GracefulShutdown.Run(
     // since both survive being cut short.
     TimeSpan.FromSeconds(7),
     ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); }),
-    ("aircraft db", () => aircraftDb.Save()),
-    ("itws history", () => itws.SaveHistory()),
-    ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }),
-    ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }),
-    ("flight cache", () => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts))));
+    ("itws history", () => itws.SaveHistory()),                                   //   65ms
+    ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }), // 57ms
+    ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }), // 1.9s
+    ("flight cache", () => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts)),
+    // Last on purpose: measured at 5.0s, by far the most expensive step, and it already runs on
+    // a 2-minute timer and no-ops when clean. Skipping it costs at most two minutes of last-seen
+    // timestamps for tails the live feed will show again; paying for it costs ~1000 queued
+    // messages that expire at the broker and never come back.
+    ("aircraft db", () => aircraftDb.Save())));
 
 // Replay endpoints (WebSocket + REST)
 replayServer.MapEndpoints(app);

@@ -1121,7 +1121,10 @@ asdex.OnEnrich = (track) =>
 // Save flight cache periodically (every 5 minutes)
 // Every 15 min (was 5): the cache is a ~78 MB write burst each time — less often = less SD-card
 // I/O pressure. Shutdown still saves the cache, so the worst-case loss window is just longer.
-var cacheTimer = new Timer(_ => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts), null, TimeSpan.FromMinutes(15), TimeSpan.FromMinutes(15));
+// Every 5 minutes, not 15: the shutdown save is usually abandoned at the budget (serialising
+// ~12k flights takes longer than the queue can afford to go unbound), so the periodic save is
+// what the cache actually is. Five minutes of lost flight state is refilled by the live feed.
+var cacheTimer = new Timer(_ => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 
 // Purge stale flights every 60 seconds
 var purgeTimer = new Timer(_ =>

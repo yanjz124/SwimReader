@@ -1406,12 +1406,15 @@ ReplayCompactor.Start(replayDir, app.Lifetime.ApplicationStopping);
 // valuable, since the live feed refills it within seconds of restart. The per-step timings go to
 // the log so the next slow shutdown names its own culprit instead of needing a bisect.
 app.Lifetime.ApplicationStopping.Register(() => GracefulShutdown.Run(
-    TimeSpan.FromSeconds(8),
+    // 7s total, comfortably inside systemd's TimeoutStopSec=10 so we are never SIGKILLed
+    // half-way through. Irreplaceable state first; replay tails and the flight cache last,
+    // since both survive being cut short.
+    TimeSpan.FromSeconds(7),
     ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); }),
-    ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }),
     ("aircraft db", () => aircraftDb.Save()),
     ("itws history", () => itws.SaveHistory()),
     ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }),
+    ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }),
     ("flight cache", () => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts))));
 
 // Replay endpoints (WebSocket + REST)

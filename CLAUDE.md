@@ -250,8 +250,10 @@ mutation logic was written against. Only the transport is parallel, because only
 the bottleneck. Each receiver also runs its own silence watchdog, so one dead flow is detected and
 reconnected while its siblings are busy.
 
-Other feeds still use a single flow: TFDM and ITWS sit at 0.1 s lag, STDDS at 3-5 s. **TFMS runs
-10-12 s behind** and is the next candidate if its portal page shows queue depth.
+All five bridges take the same shape now — `SolaceTuning.Receivers(env, default)` and a
+`_processGate` lock per bridge. Defaults: **SFDPS 3, TFMS 2**, the rest 1, via `SFDPS_FLOWS` /
+`TFMS_FLOWS` / `STDDS_FLOWS` / `TFDM_FLOWS` / `ITWS_FLOWS`. TFMS went from 10-12 s of lag to
+**1.1 s** on two receivers; TFDM and ITWS sit at 0.0-0.1 s on one and need nothing.
 
 ### Lag is the metric — `PosAge` cannot show this
 `FeedHealth` reports `lagSec`/`lagPeakSec` per feed (publisher's own timestamp vs our receipt,
@@ -269,13 +271,55 @@ misread that way here. It was the backlog — constant precisely *because* deliv
 ceiling. A real pipeline delay and a saturated queue look identical until you lift the ceiling and
 watch whether the number drains.
 
-### Restarts expire messages
-A restart unbinds the queue for ~30-40 s (shutdown exceeds systemd's `TimeoutStopSec`, gets
-SIGKILLed, then sits ~10 s in uninterruptible I/O). TFDM's queue holds only ~150 messages — under a
-second at 190 msg/s — so each deploy expires 10-18k messages, visible as isolated spikes on the
-portal's Expired Message Count that line up with `Started sfdps-eram` to the minute. Being
-SIGKILLed mid-save also truncates the flight cache. Batch `.cs` deploys; a faster shutdown is the
-outstanding fix.
+### Restarts expire messages — keep shutdown short
+TFDM's queue holds ~150 messages, under a second at 190 msg/s, so **every second of shutdown is
+thousands of messages expired at the broker**, visible as spikes on the portal's Expired Message
+Count that line up with `Started sfdps-eram` to the minute. Shutdown used to run everything
+unconditionally, overrun systemd's `TimeoutStopSec=10`, and get SIGKILLed — paying for the
+expensive work and then throwing it away. (It did *not* corrupt the flight cache: that write is
+tmp+rename.)
+
+`GracefulShutdown.Run` now takes a **5 s budget and a per-step deadline**, because a budget checked
+only between steps cannot stop one slow step. Each step runs on a thread and is abandoned if it
+overruns; that is safe here because the cache write is atomic and the replay streams are flushed as
+written. Measured per step, which is the point of logging them:
+
+| step | cost |
+|---|---|
+| stop timers | 0 ms |
+| ITWS history | ~100 ms |
+| sector/airspace | ~110 ms |
+| replay recorders | **2.1-2.9 s** |
+| flight cache (no backfill) | >2.6 s — usually abandoned |
+| aircraft DB | **5.0 s** when dirty — moved last |
+
+The aircraft DB saves on its own 2-minute timer and no-ops when clean, so the shutdown copy is
+worth at most two minutes of last-seen timestamps against ~1000 expiring messages. The flight cache
+skips `BackfillFromEvents` on this path (re-parsing stored XML per flight dominated it) and its
+periodic save moved 15 min -> **5 min**, since the periodic save is what the cache actually is.
+
+**Result: the queue is unbound ~18 s per restart, down from 29-42 s.** Still worth batching `.cs`
+deploys — the auto-deploy timer restarts on every backend push.
+
+### Memory: what grew, and why the working set never came back
+A `gcdump` (safe to take right after a restart, when the heap is ~1.3 GB — not at 5 GB on an 8 GB
+box) found **4.87M of 7.3M objects were strings** on a process holding only 12,500 flights. That is
+a cache, not live traffic.
+
+`FlightHistoryIndex` kept a `List<IndexEntry>` per date in a static dictionary and **never
+evicted**. Six strings per entry, ~50k entries a day, so ~8 MB of permanently retained heap per day
+searched — and the flight table queries the 7 most recent days as you type, against 48 days on
+disk. Measured: searching 9 days grew the heap **462 MB**. `MaxCachedDates` (3) now bounds it, LRU,
+never evicting today (it is appended to on every flight purge). A dropped day re-reads its `.idx`.
+
+The second half: the working set grew 465 MB in that test and **never came back**, because
+`RetainVM` kept freed segments reserved. That was justified when RAM was ample; at 5.0 GB RSS /
+53% fragmentation on a box that had started swapping to the SD card (16-24% iowait, flush worker
+permanently in D state) it was not. It is off now. **Working set 5.0 GB -> 2.4 GB.**
+
+Still true and unfixed: the box runs 22-29% iowait with ~31 GB of replay on an SD card, and the
+feed fix means ~3x the SFDPS volume now being recorded. That is the next thing if the box feels
+slow, not the feed.
 
 ## Feed Health (`GET /api/feed`)
 

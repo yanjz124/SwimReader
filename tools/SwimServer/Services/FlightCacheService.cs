@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace SwimServer;
@@ -13,13 +13,18 @@ static class FlightCacheService
     public static void Save(
         ConcurrentDictionary<string, FlightState> flights,
         string cacheDir,
-        JsonSerializerOptions cacheJsonOpts)
+        JsonSerializerOptions cacheJsonOpts,
+        bool backfill = true)
     {
         try
         {
             Directory.CreateDirectory(cacheDir);
-            // Backfill fields from stored event XML before snapshotting
-            foreach (var f in flights.Values) f.BackfillFromEvents();
+            // Backfill fields from stored event XML before snapshotting. Re-parses XML for every
+            // flight, which dominates the cost of this save — skipped on shutdown, where the
+            // budget buys queued messages that would otherwise expire at the broker. The
+            // 15-minute periodic save still does it.
+            if (backfill)
+                foreach (var f in flights.Values) f.BackfillFromEvents();
             var cache = new FlightCache
             {
                 SavedAt = DateTime.UtcNow,

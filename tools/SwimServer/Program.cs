@@ -747,7 +747,9 @@ var solaceThread = new Thread(() =>
                     // obtaining SCDS data products"). Use the minimum level — the consumer
                     // only decompresses, and inflate cost is the same at any level, so 1
                     // satisfies the requirement with the least broker/wire overhead.
-                    CompressionLevel = 1
+                    CompressionLevel = 1,
+                    // Room to absorb a burst while the dispatch thread is briefly suspended.
+                    SocketReceiveBufferSizeInBytes = SolaceTuning.ReceiveBufferBytes
                 };
 
                 using var session = context.CreateSession(sessionProps, null,
@@ -768,7 +770,7 @@ var solaceThread = new Thread(() =>
 
                 var solQueue = ContextFactory.Instance.CreateQueue(queue);
                 using var flow = session.CreateFlow(
-                    new FlowProperties { AckMode = MessageAckMode.AutoAck }, solQueue, null,
+                    SolaceTuning.Flow(), solQueue, null,
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;

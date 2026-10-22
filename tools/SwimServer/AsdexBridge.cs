@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
@@ -101,7 +101,9 @@ class AsdexBridge
                     Host = _host, VPNName = _vpn, UserName = _user, Password = _pass,
                     ReconnectRetries = 100, ReconnectRetriesWaitInMsecs = 5000,
                     SSLValidateCertificate = false,
-                    CompressionLevel = 1   // FAA SCDS requires compressed data; minimum level (decompression cost is level-independent)
+                    CompressionLevel = 1,  // FAA SCDS requires compressed data; minimum level (decompression cost is level-independent)
+                    // Room to absorb a burst while the dispatch thread is briefly suspended.
+                    SocketReceiveBufferSizeInBytes = SolaceTuning.ReceiveBufferBytes
                 };
 
                 using var session = context.CreateSession(sessionProps, null,
@@ -120,7 +122,7 @@ class AsdexBridge
 
                 var solQueue = ContextFactory.Instance.CreateQueue(_queue);
                 using var flow = session.CreateFlow(
-                    new FlowProperties { AckMode = MessageAckMode.AutoAck }, solQueue, null,
+                    SolaceTuning.Flow(), solQueue, null,
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;

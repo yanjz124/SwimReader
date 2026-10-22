@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Hosting;
@@ -212,15 +212,20 @@ public sealed class DgScopeAdapter : BackgroundService
     /// TrackStateManager.ExportTargets — together they let a restarted server
     /// serve the full prior state (callsign, owner, scratchpads, history) on the
     /// connect snapshot instead of bald position-only tracks.</summary>
-    public void ExportCaches(PersistedState s)
+    /// <summary>
+    /// Export the per-target caches for <paramref name="keep"/> only — the targets the snapshot
+    /// is actually persisting. Exporting everything meant each save carried the adapter's entire
+    /// cache, most of which Load discards as stale.
+    /// </summary>
+    public void ExportCaches(PersistedState s, HashSet<Guid> keep)
     {
-        foreach (var kv in _lastTrackJson) s.LastTrackJson[kv.Key.ToString()] = kv.Value;
-        foreach (var kv in _lastFpJsonOut) s.LastFpJson[kv.Key.ToString()] = kv.Value;
-        foreach (var kv in _facilityTracks) s.FacilityTracks[kv.Key] = kv.Value.Keys.Select(g => g.ToString()).ToList();
-        foreach (var kv in _facilityFlightPlans) s.FacilityFlightPlans[kv.Key] = kv.Value.Keys.Select(g => g.ToString()).ToList();
-        foreach (var kv in _enrichedCallsigns) s.EnrichedCallsigns[kv.Key.ToString()] = kv.Value;
-        foreach (var g in _taisHasCallsign.Keys) s.TaisHasCallsign.Add(g.ToString());
-        foreach (var kv in _trackHistory) s.TrackHistory[kv.Key.ToString()] = kv.Value.ToList();
+        foreach (var kv in _lastTrackJson) if (keep.Contains(kv.Key)) s.LastTrackJson[kv.Key.ToString()] = kv.Value;
+        foreach (var kv in _lastFpJsonOut) if (keep.Contains(kv.Key)) s.LastFpJson[kv.Key.ToString()] = kv.Value;
+        foreach (var kv in _facilityTracks) s.FacilityTracks[kv.Key] = kv.Value.Keys.Where(keep.Contains).Select(g => g.ToString()).ToList();
+        foreach (var kv in _facilityFlightPlans) s.FacilityFlightPlans[kv.Key] = kv.Value.Keys.Where(keep.Contains).Select(g => g.ToString()).ToList();
+        foreach (var kv in _enrichedCallsigns) if (keep.Contains(kv.Key)) s.EnrichedCallsigns[kv.Key.ToString()] = kv.Value;
+        foreach (var g in _taisHasCallsign.Keys) if (keep.Contains(g)) s.TaisHasCallsign.Add(g.ToString());
+        foreach (var kv in _trackHistory) if (keep.Contains(kv.Key)) s.TrackHistory[kv.Key.ToString()] = kv.Value.ToList();
         // Handoff state — see PersistedHandoffState comments.
         foreach (var kv in _handoffState)
         {

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -67,6 +67,10 @@ public static class DgScopePersistence
     // stale). Within the window, per-target staleness is filtered on import.
     private static readonly TimeSpan MaxAge = TimeSpan.FromMinutes(60);
     private static readonly TimeSpan TargetTimeout = TimeSpan.FromSeconds(45);   // = TrackStateManager._staleTimeout
+    // What we bother to persist. Load discards anything older than TargetTimeout, so writing the
+    // adapter's whole cache was ~69 MB a minute of data destined to be thrown away on the way
+    // back in. A few minutes of slack covers the save -> shutdown -> restart -> load gap.
+    private static readonly TimeSpan SaveWindow = TimeSpan.FromMinutes(3);
 
     public static string ResolvePath() =>
         Environment.GetEnvironmentVariable("DSTARS_CACHE_PATH")
@@ -76,8 +80,15 @@ public static class DgScopePersistence
     {
         try
         {
-            var state = new PersistedState { SavedAt = DateTime.UtcNow, Targets = tsm.ExportTargets() };
-            adapter.ExportCaches(state);
+            // Persist only what a load would keep. Mirrors the import filter below, with a wider
+            // window so a snapshot stays useful across the restart it exists for.
+            var fresh = DateTime.UtcNow - SaveWindow;
+            var targets = tsm.ExportTargets().Where(t => t.LastSeen >= fresh).ToList();
+            var keep = new HashSet<Guid>(targets.Select(t => t.TrackGuid));
+            foreach (var t in targets) keep.Add(t.FlightPlanGuid);
+
+            var state = new PersistedState { SavedAt = DateTime.UtcNow, Targets = targets };
+            adapter.ExportCaches(state, keep);
 
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var tmp = path + ".tmp";
@@ -129,7 +140,10 @@ public sealed class DgScopePersistenceService : BackgroundService
     private readonly DgScopeAdapter _adapter;
     private readonly ILogger<DgScopePersistenceService> _logger;
     private readonly string _path;
-    private static readonly TimeSpan SaveInterval = TimeSpan.FromMinutes(1);
+    // Insurance against a hard kill only: a normal restart is seeded by the StopAsync save, and
+    // a periodic snapshot older than TargetTimeout is discarded on load anyway. Every 60s it was
+    // rewriting ~69 MB, ~100 GB/day onto an SD card.
+    private static readonly TimeSpan SaveInterval = TimeSpan.FromMinutes(10);
 
     public DgScopePersistenceService(TrackStateManager tsm, DgScopeAdapter adapter, ILogger<DgScopePersistenceService> logger)
     {

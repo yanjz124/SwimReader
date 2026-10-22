@@ -728,8 +728,20 @@ static string FindRepoRoot(string start)
 
 var solaceReady = new TaskCompletionSource();
 
-var solaceThread = new Thread(() =>
+// SFDPS egress sat at ~35 msg/s against ~85 msg/s of ingress with the queue pinned at its limit
+// and ~150k messages expiring per bucket, while our handler was 95% idle and ack tuning changed
+// nothing — the ceiling is per-session, below the application. A Solace queue is
+// competing-consumers, so N bound flows drain N x faster with no duplication: each message is
+// delivered to exactly one of them.
+var sfdpsReceivers = Math.Clamp(
+    int.TryParse(Environment.GetEnvironmentVariable("SFDPS_FLOWS"), out var _rx) ? _rx : 3, 1, 8);
+// Processing stays single-threaded. The handler is ~1.4 ms, so one thread sustains ~700 msg/s —
+// far above what we need — and FlightState keeps the serialisation its mutation logic assumes.
+var sfdpsProcessGate = new object();
+
+void RunSfdpsReceiver(int receiverIndex)
 {
+    var tag = sfdpsReceivers == 1 ? "Solace" : $"Solace#{receiverIndex}";
     try
     {
         while (true)
@@ -764,9 +776,11 @@ var solaceThread = new Thread(() =>
                     continue;
                 }
 
-                Console.WriteLine("[Solace] Connected to SFDPS");
+                Console.WriteLine($"[{tag}] Connected to SFDPS");
                 stats.Connected = true;
                 Interlocked.Exchange(ref lastMessageTicks, DateTime.UtcNow.Ticks);
+                // Own clock, so one dead flow is still detected while its siblings are busy.
+                var myLastMsgTicks = DateTime.UtcNow.Ticks;
 
                 var solQueue = ContextFactory.Instance.CreateQueue(queue);
                 using var flow = session.CreateFlow(
@@ -775,42 +789,45 @@ var solaceThread = new Thread(() =>
                     {
                         using var m = msgArgs.Message;
                         using var _h = FeedHealth.Track("SFDPS", m);
-                        ProcessMessage(m);
+                        Interlocked.Exchange(ref myLastMsgTicks, DateTime.UtcNow.Ticks);
+                        lock (sfdpsProcessGate) ProcessMessage(m);
                     },
                     (_, flowArgs) => Console.WriteLine($"[Flow] {flowArgs.Event} - {flowArgs.Info}"));
 
                 flow.Start();
-                Console.WriteLine("[Solace] Listening on queue");
+                Console.WriteLine($"[{tag}] Listening on queue ({receiverIndex + 1} of {sfdpsReceivers})");
                 solaceReady.TrySetResult();
 
                 // Self-monitor: poll for stale connection every 10s, reconnect after 90s silence
                 while (true)
                 {
                     Thread.Sleep(10000);
-                    var silence = (DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastMessageTicks), DateTimeKind.Utc)).TotalSeconds;
+                    var silence = (DateTime.UtcNow - new DateTime(Interlocked.Read(ref myLastMsgTicks), DateTimeKind.Utc)).TotalSeconds;
                     if (silence > 90)
                     {
-                        Console.WriteLine($"[Solace] No messages for {silence:F0}s — connection stale, reconnecting");
+                        Console.WriteLine($"[{tag}] No messages for {silence:F0}s — connection stale, reconnecting");
                         break;
                     }
                 }
 
                 stats.Connected = false;
                 // Explicit disconnect before using-block disposal
-                try { session.Disconnect(); } catch (Exception ex) { Console.WriteLine($"[Solace] Disconnect: {ex.Message}"); }
+                try { session.Disconnect(); } catch (Exception ex) { Console.WriteLine($"[{tag}] Disconnect: {ex.Message}"); }
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[Solace] Error: {ex.Message}");
+                Console.Error.WriteLine($"[{tag}] Error: {ex.Message}");
                 solaceReady.TrySetResult();
             }
 
-            Console.WriteLine("[Solace] Reconnecting in 10 seconds...");
+            Console.WriteLine($"[{tag}] Reconnecting in 10 seconds...");
             Thread.Sleep(10000);
         }
     }
-    finally { ContextFactory.Instance.Cleanup(); }
-}) { IsBackground = true, Name = "SolaceReceiver" };
+    // Cleanup() tears down the whole ContextFactory, so only the last receiver out may call it —
+    // and since these run for process lifetime, nobody does.
+    finally { }
+}
 
 // ── Flight state cache (persist across restarts) ─────────────────────────────
 
@@ -872,8 +889,13 @@ if (FeedGuard.LiveFeed)
 {
     // Background so a Solace receiver hung inside the SDK can't keep the process
     // alive and block the watchdog's graceful restart (observed: feed dead for hours).
-    solaceThread.IsBackground = true;
-    solaceThread.Start();
+    for (int i = 0; i < sfdpsReceivers; i++)
+    {
+        var idx = i;
+        new Thread(() => RunSfdpsReceiver(idx))
+        { IsBackground = true, Name = $"SolaceReceiver{idx}" }.Start();
+    }
+    Console.WriteLine($"[Solace] {sfdpsReceivers} receiver(s) on the SFDPS queue");
     asdex.Start();
     tfms.Start();
     tfdm.Start();

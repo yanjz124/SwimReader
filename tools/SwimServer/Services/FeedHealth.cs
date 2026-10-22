@@ -62,10 +62,14 @@ static class FeedHealth
         // strictly serial, single-stream) transport caps.
         try
         {
-            var att = msg.BinaryAttachment;
-            if (att is not null) Interlocked.Add(ref c.Bytes, att.Length);
+            // SCDS publishes the document in either slot — SFDPS uses the XML payload, the
+            // STDDS-family feeds the binary attachment. Counting only one of them silently
+            // reported 0 B/s, which is useless exactly when throughput is the question.
+            var n = msg.BinaryAttachment?.Length ?? 0;
+            if (n == 0) n = msg.XmlContent?.Length ?? 0;
+            if (n > 0) Interlocked.Add(ref c.Bytes, n);
         }
-        catch { /* some message types carry no binary attachment */ }
+        catch { /* some message types carry neither */ }
         // The broker stamps most SCDS messages; where it doesn't, the feed reports its own
         // document timestamp through NoteLag and this is simply skipped.
         try

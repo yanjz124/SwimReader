@@ -218,6 +218,65 @@ exactly as before. `SWIM_ALLOW_SHARED_QUEUE=1` overrides for a deliberate live s
 - Visible in `GET /api/stats` as `liveFeed` / `feedBlocked`, and the home page shows **FEED OFF**
   (with the reason on hover) instead of a misleading "OFFLINE".
 
+## One session can't drain SFDPS — run several (`SFDPS_FLOWS`)
+
+**Symptom:** sparse history trails and tracks dropping to coast on the scope, while the server
+logged nothing wrong. The SCDS portal told the real story: SFDPS **ingress ~85 msg/s (2.4 MB/s)
+against egress ~35 msg/s (1.1 MB/s)**, the queue pinned at its 5-6k limit all day, and
+**120-170k messages expiring per sample bucket** — continuous, permanent loss. Overnight, when
+ingress fell below ~45/s, egress matched it exactly, the queue drained to zero and expiry stopped.
+
+**It was never our processing.** The handler takes 1.4 ms and the dispatch thread was 95% idle
+while this happened; CPU was 55% idle; each feed already had its own context and dispatch thread;
+there were no reconnects; sampling the counter every 250 ms showed no stalls (longest gap 0.25 s).
+Ack tuning (timer 1000 ms -> 50 ms, threshold 60% -> 10%) changed nothing. The ceiling sat below
+the application, in **one session's transport** — which, with SCDS-mandated compression, is a
+single serial stream.
+
+**Fix: bind several flows to the same queue.** A Solace queue is competing-consumers — each
+message is delivered to exactly **one** bound flow — so N flows drain N× faster with no
+duplication and no loss. Each needs its own context (a context has one dispatch thread), so it is
+N × (context + session + flow). `SFDPS_FLOWS` sets N, default **3**.
+
+| | before | after (3 receivers) |
+|---|---|---|
+| throughput | 29 msg/s, 1.0 MB/s | **~95 msg/s, 2.4-3.0 MB/s** |
+| lag behind publisher | 63 s, pinned | **3-5 s** |
+| queue | pinned at 5-6k, 150k expiring/bucket | drains |
+
+**Processing stays single-threaded** behind one lock (`sfdpsProcessGate`). The handler sustains
+~700 msg/s alone, far above the ~95/s needed, and `FlightState` keeps the serialisation its
+mutation logic was written against. Only the transport is parallel, because only the transport was
+the bottleneck. Each receiver also runs its own silence watchdog, so one dead flow is detected and
+reconnected while its siblings are busy.
+
+Other feeds still use a single flow: TFDM and ITWS sit at 0.1 s lag, STDDS at 3-5 s. **TFMS runs
+10-12 s behind** and is the next candidate if its portal page shows queue depth.
+
+### Lag is the metric — `PosAge` cannot show this
+`FeedHealth` reports `lagSec`/`lagPeakSec` per feed (publisher's own timestamp vs our receipt,
+averaged over the 10 s window then reset), plus `kbPerSec` and `avgMsgBytes`. **Watch lagSec.**
+
+`PosAge` counts from **receipt**, so a consumer draining an hours-old backlog still stamps every
+record "fresh" and every dashboard looks healthy — which is how a halved feed hid for months, and
+why "position ages look fine" is not evidence of anything. `FlightState.PositionFixTime` now keeps
+the radar fix time from `<position positionTime="...">`, reported as `FixAge` beside `PosAge`;
+`PosAge - FixAge` is the lag. Display logic still runs off `PosAge`, so coast and extrapolation are
+unchanged.
+
+A trap worth remembering: a **constant** lag reads like fixed upstream latency, and was initially
+misread that way here. It was the backlog — constant precisely *because* delivery was pinned at the
+ceiling. A real pipeline delay and a saturated queue look identical until you lift the ceiling and
+watch whether the number drains.
+
+### Restarts expire messages
+A restart unbinds the queue for ~30-40 s (shutdown exceeds systemd's `TimeoutStopSec`, gets
+SIGKILLed, then sits ~10 s in uninterruptible I/O). TFDM's queue holds only ~150 messages — under a
+second at 190 msg/s — so each deploy expires 10-18k messages, visible as isolated spikes on the
+portal's Expired Message Count that line up with `Started sfdps-eram` to the minute. Being
+SIGKILLed mid-save also truncates the flight cache. Batch `.cs` deploys; a faster shutdown is the
+outstanding fix.
+
 ## Feed Health (`GET /api/feed`)
 
 "Are we receiving everything SWIM sends?" is answerable rather than guessed. Per feed

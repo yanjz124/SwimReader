@@ -666,22 +666,44 @@ function median(v) {
 
 // One fleet's utilisation, where it goes and what it flies. Everything here is computed server
 // side (see AirlineResearch typeRows) so the numbers match what /api/airlines/{icao} reports.
-// Air time is only counted while an aircraft is inside US airspace, which is all the feed sees.
-// A long-haul fleet therefore reads far lower than it really flies, and saying so beats having
-// someone conclude the A350s are parked.
-const LONGHAUL = /^(A33|A34|A35|A38|B74|B77|B78|A30|IL9|B76)/;
+// Air time is only counted while an aircraft is inside US airspace, which is all the feed sees,
+// while sector distance is the full great-circle between the route's endpoints. For a domestic
+// fleet the two agree; for a long-haul one they cannot, and the giveaway is the implied ground
+// speed. Deriving it catches every case - including a narrowbody flying transatlantic - instead
+// of hard-coding a list of widebody types.
+const MAX_KT = 650;
+function impliedKt(t) {
+    if (!t.avgSectorNm || !t.avgSectorMin) return 0;
+    return t.avgSectorNm / (t.avgSectorMin / 60);
+}
+const CLIPPED_TIP = 'Air time is only measured inside US airspace, but sector distance is the '
+    + 'full route - so this fleet\'s hours, utilisation and sector time cover just the domestic '
+    + 'portion of each flight. The implied ground speed gives it away.';
+
+// Time + distance for a sector, marked when the two cannot describe the same flight.
+function sectorCell(t) {
+    if (!t.avgSectorMin) return '\u2014';
+    const nm = t.avgSectorNm ? ` <span class="dim">${n0(t.avgSectorNm)}nm</span>` : '';
+    return impliedKt(t) > MAX_KT
+        ? `<span class="warn" title="${CLIPPED_TIP}">${hm(t.avgSectorMin)}\u26a0</span>${nm}`
+        : `${hm(t.avgSectorMin)}${nm}`;
+}
+
 function intlNote(t) {
-    if (!LONGHAUL.test(t.type)) return '';
-    return ' <span class="dim" title="Air time is measured inside US airspace only, so a long-haul fleet&apos;s hours and utilisation are undercounted — the oceanic portion of each flight is not in the feed.">· US airspace only ⓘ</span>';
+    return impliedKt(t) > MAX_KT
+        ? ` <span class="warn" title="${CLIPPED_TIP}">\u00b7 US airspace only \u24d8</span>`
+        : '';
 }
 
 function fleetIntelHtml(t) {
     const util = v => `<div class="fi-s"><div class="v${v.warn ? ' warn' : ''}">${v.v}</div><div class="k">${v.k}</div></div>`;
     const stats = [
         { k: 'TAILS', v: `${n0(t.tails)}${t.parkedTails ? ` <small>${n0(t.parkedTails)} parked</small>` : ''}`, warn: t.parkedTails > t.activeTails },
-        { k: 'AIR H / TAIL / DAY', v: `${n2(t.hpd)} <small>${n0(t.utilPct)}%</small>` },
+        { k: 'AIR H / TAIL / DAY', v: impliedKt(t) > MAX_KT
+            ? `<span title="${CLIPPED_TIP}">${n2(t.hpd)} <small>${n0(t.utilPct)}% domestic only</small></span>`
+            : `${n2(t.hpd)} <small>${n0(t.utilPct)}%</small>` },
         { k: 'LEGS / TAIL / DAY', v: n2(t.legsPerTailDay) },
-        { k: 'AVG SECTOR', v: `${hm(t.avgSectorMin)}${t.avgSectorNm ? ` <small>${n0(t.avgSectorNm)} nm</small>` : ''}` },
+        { k: 'AVG SECTOR', v: sectorCell(t) },
         { k: 'TURN', v: hm(t.turnMin) },
         { k: 'NIGHT STOPS', v: n0(t.nightStops) },
         { k: 'IDLE DAYS', v: n0(t.idleDays), warn: t.idleDays > t.tails },
@@ -741,7 +763,7 @@ function fleetCompareHtml() {
             <td class="num">${n2(t.hpd)}</td>
             <td><span class="bar" style="width:${Math.max(2, Math.round(60 * (t.hpd || 0) / maxH))}px"></span></td>
             <td class="num">${n2(t.legsPerTailDay)}</td>
-            <td class="num">${hm(t.avgSectorMin)}${t.avgSectorNm ? ` <span class="dim">${n0(t.avgSectorNm)}nm</span>` : ''}</td>
+            <td class="num">${sectorCell(t)}</td>
             <td class="num">${hm(t.turnMin)}</td>
             <td class="num">${n0(t.destinations)}</td>
             <td class="num">${n0(t.routeCount)}</td>

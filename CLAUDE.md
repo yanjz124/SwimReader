@@ -1524,6 +1524,33 @@ A real bug did hide behind this: the **home page's ITWS card** had a `.count` sl
 `home.js` ever wrote to, so it was blank regardless of feed health (as were TFDM and SECTORS). Any
 new card needs its count wired there explicitly.
 
+## Airline intel: per-fleet utilisation, destinations and routes
+
+`/airlines/{icao}` FLEET tab. With no fleet selected it compares every type side by side
+(tails, legs, air h, **h/tail/day with a bar**, legs/tail/day, avg sector, turn, destinations,
+routes, share); selecting one shows that fleet's utilisation, top ten destinations and top ten
+routes above its tails. Clicking a comparison row selects the fleet, same as the chips.
+
+All of it is rolled up in `AirlineResearch` `typeRows` — server-side, so the numbers match
+`GET /api/airlines/{icao}` and the page doesn't re-derive them from every route on each render.
+The inputs (`RouteAcc.ByType`, `AptAcc.ByType`) were already being accumulated for the network
+map's type filter; they just were never rolled up per fleet.
+
+**`activeTails` vs `parkedTails` is the one to keep.** A fleet average of 8.5 h/day reads very
+differently when a third of the airframes never moved, and that was invisible before.
+
+**Sector time and sector distance are not measured over the same thing.** `avgSectorNm` is the
+great-circle between the route's endpoints; `avgSectorMin` is air time we observed, which stops
+at the edge of US airspace. For a domestic fleet they agree. For a long-haul one they cannot —
+DAL's A359 read *2h03 · 5,031 nm*, i.e. 2,450 kt. The page derives the implied ground speed and
+flags the cell above 650 kt, which also catches a narrowbody flying transatlantic; a hard-coded
+widebody list (which is what I wrote first) would not. The same caveat applies to `hours`,
+`hpd` and `utilPct` for those fleets: domestic portion only.
+
+Sanity check worth repeating after changes here: **the per-fleet leg counts must sum to the
+carrier's total** (they do — 46,932 for DAL over 14 days). Tails with no known type are excluded
+from fleets but still counted in the carrier total, so a mismatch means double-counting.
+
 ## Flight history search — what's indexed decides what's findable
 
 `GET /api/history?q=&date=` searches one day of `flight-history/{date}.jsonl`; the flight table

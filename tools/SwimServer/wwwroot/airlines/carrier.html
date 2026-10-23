@@ -666,6 +666,15 @@ function median(v) {
 
 // One fleet's utilisation, where it goes and what it flies. Everything here is computed server
 // side (see AirlineResearch typeRows) so the numbers match what /api/airlines/{icao} reports.
+// Air time is only counted while an aircraft is inside US airspace, which is all the feed sees.
+// A long-haul fleet therefore reads far lower than it really flies, and saying so beats having
+// someone conclude the A350s are parked.
+const LONGHAUL = /^(A33|A34|A35|A38|B74|B77|B78|A30|IL9|B76)/;
+function intlNote(t) {
+    if (!LONGHAUL.test(t.type)) return '';
+    return ' <span class="dim" title="Air time is measured inside US airspace only, so a long-haul fleet&apos;s hours and utilisation are undercounted — the oceanic portion of each flight is not in the feed.">· US airspace only ⓘ</span>';
+}
+
 function fleetIntelHtml(t) {
     const util = v => `<div class="fi-s"><div class="v${v.warn ? ' warn' : ''}">${v.v}</div><div class="k">${v.k}</div></div>`;
     const stats = [
@@ -696,7 +705,7 @@ function fleetIntelHtml(t) {
 
     return `<div class="fi-wrap">
       <div class="fi-box">
-        <div class="fi-h">UTILISATION <b>${esc(typeLabel(t.type))}</b> · ${n0(t.flights)} legs · ${n0(t.hours)} air h</div>
+        <div class="fi-h">UTILISATION <b>${esc(typeLabel(t.type))}</b> · ${n0(t.flights)} legs · ${n0(t.hours)} air h${intlNote(t)}</div>
         <div class="fi-stats">${stats.map(util).join('')}</div>
         ${longest}
       </div>

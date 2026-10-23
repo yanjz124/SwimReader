@@ -75,22 +75,25 @@
     .fi-box:last-child { border-right: 0; }
     .fi-h { font-size: 10px; letter-spacing: 1px; color: #555; margin-bottom: 7px; }
     .fi-h b { color: #cccc44; letter-spacing: 2px; }
-    .fi-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 7px 10px; }
-    .fi-s .v { font-size: 15px; color: #d8d8c0; }
+    .fi-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px 12px; }
+    /* Fixed tile height: a label that wraps to two lines would otherwise push its own column's
+       next row down and break the alignment across the grid. */
+    .fi-s { min-height: 40px; }
+    .fi-s .v { font-size: 15px; color: #d8d8c0; line-height: 19px; }
     .fi-s .v small { font-size: 10px; color: #666; }
-    .fi-s .k { font-size: 9px; letter-spacing: .5px; color: #555; }
+    .fi-s .k { font-size: 9px; letter-spacing: .5px; color: #555; white-space: nowrap; }
     .fi-s .v.warn { color: #ff8c00; }
     table.fi-t { border-collapse: collapse; width: 100%; font-size: 11px; }
     table.fi-t th { text-align: left; color: #555; font-weight: normal; font-size: 9px; letter-spacing: .5px; padding: 2px 6px 3px 0; }
     table.fi-t td { padding: 2px 6px 2px 0; color: #bdbda8; white-space: nowrap; }
-    table.fi-t td.num { text-align: right; }
+    table.fi-t th.num, table.fi-t td.num { text-align: right; }
     table.fi-t td.code { color: #cccc44; }
     table.fi-t tr.more td { color: #555; font-size: 10px; }
     /* Fleet comparison (no type selected) */
     table.fleetcmp { border-collapse: collapse; width: 100%; font-size: 11.5px; }
     table.fleetcmp th { text-align: left; color: #555; font-weight: normal; font-size: 9px; letter-spacing: 1px; padding: 6px 10px 5px; border-bottom: 1px solid #222; white-space: nowrap; }
     table.fleetcmp td { padding: 4px 10px; border-bottom: 1px solid #141414; white-space: nowrap; }
-    table.fleetcmp td.num { text-align: right; }
+    table.fleetcmp th.num, table.fleetcmp td.num { text-align: right; }
     table.fleetcmp tr { cursor: pointer; }
     table.fleetcmp tr:hover td { background: #141407; }
     table.fleetcmp .ty { color: #cccc44; }
@@ -102,7 +105,9 @@
     table.grid { border-collapse: collapse; width: 100%; min-width: 1250px; font-size: 12px; }
     table.grid thead th { position: sticky; top: 0; z-index: 2; background: #050505; color: #555; font-weight: normal; font-size: 10px; letter-spacing: 1px; text-align: left; padding: 7px 9px; border-bottom: 1px solid #333; cursor: pointer; user-select: none; white-space: nowrap; }
     table.grid thead th:hover, table.grid thead th.sorted { color: #cccc44; }
-    table.grid .num { text-align: right; }
+    /* Numeric headers follow their column. headCells() already marks them .num; without this
+       every number sat right under a header sitting left. */
+    table.grid .num, table.grid thead th.num { text-align: right; }
     table.grid tbody td { padding: 4px 9px; border-bottom: 1px solid #111; white-space: nowrap; }
     table.grid tbody tr { cursor: pointer; }
     table.grid tbody tr:hover td { background: #0c0c0c; }
@@ -699,18 +704,18 @@ function fleetIntelHtml(t) {
     const util = v => `<div class="fi-s"><div class="v${v.warn ? ' warn' : ''}">${v.v}</div><div class="k">${v.k}</div></div>`;
     const stats = [
         { k: 'TAILS', v: `${n0(t.tails)}${t.parkedTails ? ` <small>${n0(t.parkedTails)} parked</small>` : ''}`, warn: t.parkedTails > t.activeTails },
-        { k: 'AIR H / TAIL / DAY', v: impliedKt(t) > MAX_KT
+        { k: 'AIR H / TAIL-DAY', v: impliedKt(t) > MAX_KT
             ? `<span title="${CLIPPED_TIP}">${n2(t.hpd)} <small>${n0(t.utilPct)}% domestic only</small></span>`
             : `${n2(t.hpd)} <small>${n0(t.utilPct)}%</small>` },
-        { k: 'LEGS / TAIL / DAY', v: n2(t.legsPerTailDay) },
-        { k: 'AVG SECTOR', v: sectorCell(t) },
+        { k: 'LEGS / TAIL-DAY', v: n2(t.legsPerTailDay) },
+        { k: 'AVG LEG', v: sectorCell(t) },
         { k: 'TURN', v: hm(t.turnMin) },
         { k: 'NIGHT STOPS', v: n0(t.nightStops) },
         { k: 'IDLE DAYS', v: n0(t.idleDays), warn: t.idleDays > t.tails },
         { k: 'SHARE', v: `${n0(t.shareFlights)}% <small>legs</small>` },
     ];
     const longest = t.longest
-        ? `<div class="fi-h" style="margin:8px 0 0">LONGEST SECTOR <b>${esc(t.longest.route)}</b> ${hm(t.longest.min)}${t.longest.nm ? ' · ' + n0(t.longest.nm) + ' nm' : ''}</div>`
+        ? `<div class="fi-h" style="margin:8px 0 0">LONGEST LEG <b>${esc(t.longest.route)}</b> ${hm(t.longest.min)}${t.longest.nm ? ' · ' + n0(t.longest.nm) + ' nm' : ''}</div>`
         : '';
 
     const dests = (t.topDests || []).map(d => `<tr>
@@ -753,7 +758,7 @@ function fleetCompareHtml() {
     return `<table class="fleetcmp"><thead><tr>
         <th>FLEET</th><th class="num">TAILS</th><th class="num">LEGS</th><th class="num">AIR H</th>
         <th class="num">H/TAIL/DAY</th><th></th><th class="num">LEGS/TAIL/DAY</th>
-        <th class="num">AVG SECTOR</th><th class="num">TURN</th><th class="num">DESTS</th>
+        <th class="num">AVG LEG</th><th class="num">TURN</th><th class="num">DESTS</th>
         <th class="num">ROUTES</th><th class="num">SHARE</th></tr></thead><tbody>`
         + rows.map(t => `<tr data-type="${esc(t.type)}" title="Click for ${esc(typeLabel(t.type))} destinations and routes">
             <td class="ty">${esc(typeLabel(t.type))}</td>

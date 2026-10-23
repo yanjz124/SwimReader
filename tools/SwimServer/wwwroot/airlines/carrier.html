@@ -67,6 +67,36 @@
     .tchip { border: 1px solid #333; background: #0a0a0a; padding: 4px 10px; font-size: 11px; color: #999; cursor: pointer; }
     .tchip b { color: #fff; font-weight: normal; }
     .tchip.on { border-color: #cccc44; color: #cccc44; }
+    /* Per-fleet intel panel */
+    #fleetIntel { flex-shrink: 0; border-bottom: 1px solid #222; }
+    #fleetIntel:empty { border-bottom: 0; }
+    .fi-wrap { display: grid; grid-template-columns: minmax(300px, 1.1fr) minmax(240px, 1fr) minmax(300px, 1.2fr); gap: 0; }
+    .fi-box { padding: 9px 12px; border-right: 1px solid #222; min-width: 0; }
+    .fi-box:last-child { border-right: 0; }
+    .fi-h { font-size: 10px; letter-spacing: 1px; color: #555; margin-bottom: 7px; }
+    .fi-h b { color: #cccc44; letter-spacing: 2px; }
+    .fi-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 7px 10px; }
+    .fi-s .v { font-size: 15px; color: #d8d8c0; }
+    .fi-s .v small { font-size: 10px; color: #666; }
+    .fi-s .k { font-size: 9px; letter-spacing: .5px; color: #555; }
+    .fi-s .v.warn { color: #ff8c00; }
+    table.fi-t { border-collapse: collapse; width: 100%; font-size: 11px; }
+    table.fi-t th { text-align: left; color: #555; font-weight: normal; font-size: 9px; letter-spacing: .5px; padding: 2px 6px 3px 0; }
+    table.fi-t td { padding: 2px 6px 2px 0; color: #bdbda8; white-space: nowrap; }
+    table.fi-t td.num { text-align: right; }
+    table.fi-t td.code { color: #cccc44; }
+    table.fi-t tr.more td { color: #555; font-size: 10px; }
+    /* Fleet comparison (no type selected) */
+    table.fleetcmp { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+    table.fleetcmp th { text-align: left; color: #555; font-weight: normal; font-size: 9px; letter-spacing: 1px; padding: 6px 10px 5px; border-bottom: 1px solid #222; white-space: nowrap; }
+    table.fleetcmp td { padding: 4px 10px; border-bottom: 1px solid #141414; white-space: nowrap; }
+    table.fleetcmp td.num { text-align: right; }
+    table.fleetcmp tr { cursor: pointer; }
+    table.fleetcmp tr:hover td { background: #141407; }
+    table.fleetcmp .ty { color: #cccc44; }
+    .bar { display: inline-block; height: 7px; background: #cccc44; vertical-align: middle; border-radius: 1px; }
+    .bar.dim { background: #3a3a22; }
+
     .fleetbar { display: flex; gap: 10px; align-items: center; padding: 6px 12px; border-bottom: 1px solid #222; flex-shrink: 0; }
     .list { flex: 1; overflow: auto; }
     table.grid { border-collapse: collapse; width: 100%; min-width: 1250px; font-size: 12px; }
@@ -213,6 +243,7 @@
 
     <section class="pane" id="pane-fleet" hidden>
         <div class="types" id="types"></div>
+        <div id="fleetIntel"></div>
         <div class="fleetbar">
             <input type="text" class="search-box" id="fleetQ" placeholder="Filter tails — reg, ICAO24, type, last airport, callsign" spellcheck="false" autocomplete="off">
             <span class="result-count" id="fleetCount"></span>
@@ -633,11 +664,90 @@ function median(v) {
     return a.length ? a[Math.floor(a.length / 2)] : 0;
 }
 
+// One fleet's utilisation, where it goes and what it flies. Everything here is computed server
+// side (see AirlineResearch typeRows) so the numbers match what /api/airlines/{icao} reports.
+function fleetIntelHtml(t) {
+    const util = v => `<div class="fi-s"><div class="v${v.warn ? ' warn' : ''}">${v.v}</div><div class="k">${v.k}</div></div>`;
+    const stats = [
+        { k: 'TAILS', v: `${n0(t.tails)}${t.parkedTails ? ` <small>${n0(t.parkedTails)} parked</small>` : ''}`, warn: t.parkedTails > t.activeTails },
+        { k: 'AIR H / TAIL / DAY', v: `${n2(t.hpd)} <small>${n0(t.utilPct)}%</small>` },
+        { k: 'LEGS / TAIL / DAY', v: n2(t.legsPerTailDay) },
+        { k: 'AVG SECTOR', v: `${hm(t.avgSectorMin)}${t.avgSectorNm ? ` <small>${n0(t.avgSectorNm)} nm</small>` : ''}` },
+        { k: 'TURN', v: hm(t.turnMin) },
+        { k: 'NIGHT STOPS', v: n0(t.nightStops) },
+        { k: 'IDLE DAYS', v: n0(t.idleDays), warn: t.idleDays > t.tails },
+        { k: 'SHARE', v: `${n0(t.shareFlights)}% <small>legs</small>` },
+    ];
+    const longest = t.longest
+        ? `<div class="fi-h" style="margin:8px 0 0">LONGEST SECTOR <b>${esc(t.longest.route)}</b> ${hm(t.longest.min)}${t.longest.nm ? ' · ' + n0(t.longest.nm) + ' nm' : ''}</div>`
+        : '';
+
+    const dests = (t.topDests || []).map(d => `<tr>
+        <td class="code">${esc(d.code)}</td>
+        <td class="dim">${esc((d.name || '').slice(0, 18))}</td>
+        <td class="num">${n0(d.dep + d.arr)}</td>
+        <td class="num dim" title="nights parked here">${d.stops ? n0(d.stops) : ''}</td></tr>`).join('');
+    const routes = (t.topRoutes || []).map(r => `<tr>
+        <td class="code">${esc(r.a)}–${esc(r.b)}</td>
+        <td class="num">${n0(r.n)}</td>
+        <td class="num dim">${n1(r.perWeek)}/wk</td>
+        <td class="num dim">${hm(r.avgMin)}</td>
+        <td class="num dim" title="tails on this route">${n0(r.tails)}</td></tr>`).join('');
+
+    return `<div class="fi-wrap">
+      <div class="fi-box">
+        <div class="fi-h">UTILISATION <b>${esc(typeLabel(t.type))}</b> · ${n0(t.flights)} legs · ${n0(t.hours)} air h</div>
+        <div class="fi-stats">${stats.map(util).join('')}</div>
+        ${longest}
+      </div>
+      <div class="fi-box">
+        <div class="fi-h">DESTINATIONS · <b>${n0(t.destinations)}</b> airports served</div>
+        <table class="fi-t"><thead><tr><th>APT</th><th></th><th class="num">MOVES</th><th class="num">O/N</th></tr></thead>
+        <tbody>${dests || '<tr><td colspan="4" class="dim">no airport data</td></tr>'}</tbody></table>
+      </div>
+      <div class="fi-box">
+        <div class="fi-h">ROUTES · <b>${n0(t.routeCount)}</b> flown</div>
+        <table class="fi-t"><thead><tr><th>ROUTE</th><th class="num">N</th><th class="num">FREQ</th><th class="num">AVG</th><th class="num">TAILS</th></tr></thead>
+        <tbody>${routes || '<tr><td colspan="5" class="dim">no route data</td></tr>'}</tbody></table>
+      </div>
+    </div>`;
+}
+
+// With no fleet selected, compare them side by side — the view that answers "which of our types
+// works hardest, and which is sitting around".
+function fleetCompareHtml() {
+    const rows = data.types || [];
+    if (!rows.length) return '';
+    const maxH = Math.max(...rows.map(t => t.hpd || 0), 0.01);
+    return `<table class="fleetcmp"><thead><tr>
+        <th>FLEET</th><th class="num">TAILS</th><th class="num">LEGS</th><th class="num">AIR H</th>
+        <th class="num">H/TAIL/DAY</th><th></th><th class="num">LEGS/TAIL/DAY</th>
+        <th class="num">AVG SECTOR</th><th class="num">TURN</th><th class="num">DESTS</th>
+        <th class="num">ROUTES</th><th class="num">SHARE</th></tr></thead><tbody>`
+        + rows.map(t => `<tr data-type="${esc(t.type)}" title="Click for ${esc(typeLabel(t.type))} destinations and routes">
+            <td class="ty">${esc(typeLabel(t.type))}</td>
+            <td class="num">${n0(t.tails)}${t.parkedTails ? ` <span class="dim">(${n0(t.parkedTails)})</span>` : ''}</td>
+            <td class="num">${n0(t.flights)}</td>
+            <td class="num">${n0(t.hours)}</td>
+            <td class="num">${n2(t.hpd)}</td>
+            <td><span class="bar" style="width:${Math.max(2, Math.round(60 * (t.hpd || 0) / maxH))}px"></span></td>
+            <td class="num">${n2(t.legsPerTailDay)}</td>
+            <td class="num">${hm(t.avgSectorMin)}${t.avgSectorNm ? ` <span class="dim">${n0(t.avgSectorNm)}nm</span>` : ''}</td>
+            <td class="num">${hm(t.turnMin)}</td>
+            <td class="num">${n0(t.destinations)}</td>
+            <td class="num">${n0(t.routeCount)}</td>
+            <td class="num dim">${n0(t.shareFlights)}%</td>
+        </tr>`).join('') + '</tbody></table>';
+}
+
 function renderFleet() {
     $('types').innerHTML = data.types.map(t =>
         `<span class="tchip ${fType === t.type ? 'on' : ''}" data-type="${esc(t.type)}" title="${n0(t.flights)} flights · ${n0(t.hours)} air hours">`
         + `<b>${esc(t.type)}</b> ${n0(t.tails)} tails · ${n2(t.hpd)} h/day · ${n2(t.flightsPerDay)} legs/day</span>`).join('')
         || '<span class="dim">No aircraft type data</span>';
+    const sel = fType ? (data.types || []).find(t => t.type === fType) : null;
+    $('fleetIntel').innerHTML = sel ? fleetIntelHtml(sel) : fleetCompareHtml();
+
     const q = $('fleetQ').value.trim().toUpperCase();
     const matchesType = t => !fType || (fType === '?' ? !t.type : t.type === fType);
     let rows = data.tails.filter(t => matchesType(t)
@@ -666,6 +776,15 @@ function renderFleet() {
     }).join('') + '</tbody></table>';
     $('fleetCount').textContent = `${rows.length} of ${data.tails.length} tails${fType ? ' · ' + typeLabel(fType) : ''} · median ${n2(med)} air h/day`;
 }
+
+$('fleetIntel').addEventListener('click', e => {
+    const tr = e.target.closest('tr[data-type]');
+    if (!tr) return;
+    fType = fType === tr.dataset.type ? null : tr.dataset.type;
+    $('netType').value = fType || '';
+    saveUrl();
+    renderFleet();
+});
 
 $('types').addEventListener('click', e => {
     const c = e.target.closest('[data-type]');

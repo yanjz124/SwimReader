@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -83,7 +83,20 @@ sealed class AirlineResearch
         public readonly Dictionary<string, TypeRoute> ByType = new(StringComparer.Ordinal);   // fleet-type breakdown
     }
     private sealed class DayAcc { public long Flights; public readonly HashSet<string> Tails = new(StringComparer.Ordinal); }
-    private sealed class TypeAcc { public long Tails, Flights, AirMin, ActiveDays; }
+    /// <summary>
+    /// Per-fleet rollup. <c>Tails</c> counts every airframe of the type that flew for this
+    /// carrier in the window; <c>ActiveTails</c> only those that actually operated a flight, so
+    /// the two differ exactly by the parked ones — which is the number that makes a utilisation
+    /// figure honest rather than flattering.
+    /// </summary>
+    private sealed class TypeAcc
+    {
+        public long Tails, ActiveTails, Flights, AirMin, ActiveDays, Timed, Stops, Idle;
+        public long TurnSum, Turns;
+        public double NmSum, NmFlights;
+        public long LongestMin, LongestNm;
+        public string LongestRoute = "";
+    }
     private sealed class DirAcc
     {
         public long Flights, AirMin, OpKnown, OpMatch;
@@ -809,9 +822,13 @@ sealed class AirlineResearch
             {
                 if (!types.TryGetValue(row.Type, out var ta)) types[row.Type] = ta = new TypeAcc();
                 ta.Tails++;
+                if (row.Flights > 0) ta.ActiveTails++;
                 ta.Flights += row.Flights;
                 ta.AirMin += row.AirMin;
                 ta.ActiveDays += row.Days;
+                ta.Stops += row.Stops;
+                ta.Idle += row.Idle;
+                if (row.TurnSec >= 0) { ta.TurnSum += row.TurnSec; ta.Turns++; }
             }
         }
         if (flights == 0 && carrier == null) return null;
@@ -835,6 +852,24 @@ sealed class AirlineResearch
                 {
                     located += total;
                     if (!DomesticCountries.Contains(ia.Country) || !DomesticCountries.Contains(ib.Country)) intl += total;
+                }
+            }
+            // Distance and sector length per fleet, taken here because this is where the route's
+            // endpoints have already been resolved to coordinates.
+            foreach (var (ty2, tr) in r.ByType)
+            {
+                if (!types.TryGetValue(ty2, out var ta2)) continue;
+                if (nm.HasValue) { ta2.NmSum += nm.Value * tr.N; ta2.NmFlights += tr.N; }
+                if (tr.Timed > 0)
+                {
+                    ta2.Timed += tr.Timed;
+                    long avg = tr.AirMin / tr.Timed;
+                    if (avg > ta2.LongestMin)
+                    {
+                        ta2.LongestMin = avg;
+                        ta2.LongestNm = (long)(nm ?? 0);
+                        ta2.LongestRoute = r.A + "-" + r.B;
+                    }
                 }
             }
             routeRows.Add(new
@@ -864,12 +899,79 @@ sealed class AirlineResearch
             };
         }).ToList();
 
-        var typeRows = types.OrderByDescending(t => t.Value.Tails).Select(t => new
+        // Per-fleet destinations and routes, from the by-type counters the airport and route
+        // tables already carry. Ranked by movements so "where does this fleet actually go" is the
+        // first thing visible, rather than having to filter the network tab and read it off a map.
+        var typeDests = new Dictionary<string, List<object>>(StringComparer.Ordinal);
+        var typeRoutes = new Dictionary<string, List<object>>(StringComparer.Ordinal);
+        var typeDestCount = new Dictionary<string, int>(StringComparer.Ordinal);
+        var typeRouteCount = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var ty2 in types.Keys)
         {
-            type = t.Key, tails = t.Value.Tails, flights = t.Value.Flights,
-            hours = Math.Round(t.Value.AirMin / 60.0),
-            hpd = Math.Round(t.Value.AirMin / 60.0 / span / Math.Max(1, t.Value.Tails), 2),
-            flightsPerDay = Math.Round((double)t.Value.Flights / Math.Max(1, t.Value.ActiveDays), 2),
+            var ds = apts.Values
+                .Select(a => (a, v: a.ByType.TryGetValue(ty2, out var x) ? x : null))
+                .Where(p => p.v != null && p.v[0] + p.v[1] > 0)
+                .OrderByDescending(p => p.v![0] + p.v![1])
+                .ToList();
+            typeDestCount[ty2] = ds.Count;
+            typeDests[ty2] = ds.Take(10).Select(p => (object)new
+            {
+                code = p.a.Code, name = _airport(p.a.Code)?.City ?? _airport(p.a.Code)?.Name,
+                dep = p.v![0], arr = p.v![1],
+                // Nights parked here — where the fleet actually overnights, not just where it lands.
+                stops = p.v![2],
+            }).ToList();
+
+            var rs = routes.Values
+                .Select(r => (r, v: r.ByType.TryGetValue(ty2, out var x) ? x : null))
+                .Where(p => p.v != null && p.v.N > 0)
+                .OrderByDescending(p => p.v!.N)
+                .ToList();
+            typeRouteCount[ty2] = rs.Count;
+            typeRoutes[ty2] = rs.Take(10).Select(p => (object)new
+            {
+                a = p.r.A, b = p.r.B, n = p.v!.N, ab = p.v!.AB, ba = p.v!.BA,
+                perWeek = Math.Round(p.v!.N * 7 / span, 1),
+                avgMin = p.v!.Timed > 0 ? p.v!.AirMin / p.v!.Timed : (long?)null,
+                tails = p.v!.Tails.Count,
+            }).ToList();
+        }
+
+        var typeRows = types.OrderByDescending(t => t.Value.Tails).Select(t =>
+        {
+            var v = t.Value;
+            return new
+            {
+                type = t.Key, tails = v.Tails, flights = v.Flights,
+                hours = Math.Round(v.AirMin / 60.0),
+                hpd = Math.Round(v.AirMin / 60.0 / span / Math.Max(1, v.Tails), 2),
+                flightsPerDay = Math.Round((double)v.Flights / Math.Max(1, v.ActiveDays), 2),
+
+                // ── utilisation ──
+                // Parked airframes drag the fleet average down; showing both makes it clear
+                // whether a low h/day is slow flying or aircraft sitting still.
+                activeTails = v.ActiveTails,
+                parkedTails = v.Tails - v.ActiveTails,
+                // Legs per airframe per day across the whole window, parked tails included.
+                legsPerTailDay = Math.Round(v.Flights / span / Math.Max(1, v.Tails), 2),
+                utilPct = Math.Round(v.AirMin / 60.0 / span / Math.Max(1, v.Tails) / 24 * 100),
+                avgSectorMin = v.Timed > 0 ? v.AirMin / v.Timed : (long?)null,
+                avgSectorNm = v.NmFlights > 0 ? Math.Round(v.NmSum / v.NmFlights) : (double?)null,
+                turnMin = v.Turns > 0 ? v.TurnSum / v.Turns / 60 : (long?)null,
+                nightStops = v.Stops,
+                idleDays = v.Idle,
+                shareFlights = flights > 0 ? Math.Round(100.0 * v.Flights / flights) : 0,
+                shareHours = airMin > 0 ? Math.Round(100.0 * v.AirMin / airMin) : 0,
+                longest = v.LongestRoute.Length > 0
+                    ? new { route = v.LongestRoute, min = v.LongestMin, nm = v.LongestNm }
+                    : null,
+
+                // ── where it flies ──
+                destinations = typeDestCount.GetValueOrDefault(t.Key),
+                routeCount = typeRouteCount.GetValueOrDefault(t.Key),
+                topDests = typeDests.GetValueOrDefault(t.Key) ?? new List<object>(),
+                topRoutes = typeRoutes.GetValueOrDefault(t.Key) ?? new List<object>(),
+            };
         }).ToList();
 
         var opRows = ops.OrderByDescending(o => o.Value).Take(20).Select(o =>

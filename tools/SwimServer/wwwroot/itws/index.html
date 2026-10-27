@@ -245,11 +245,12 @@
   }
   #wxMap .leaflet-control-attribution a, #ovMap .leaflet-control-attribution a { color: var(--accent) !important; }
   /* National overview: every ITWS site on one map (the default dashboard view) */
-  #ovWrap { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 1100px; }
+  #dashEmpty { height: 100%; }
+  #ovWrap { display: flex; flex-direction: column; gap: 10px; width: 100%; height: 100%; }
   #ovWrap .ov-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   #ovWrap .ov-head .t { color: var(--accent); font-size: 20px; letter-spacing: 0.5px; }
   #ovWrap .ov-head .s { color: var(--dim); font-size: 12px; }
-  #ovMap { width: 100%; height: 62vh; min-height: 420px; background: #050505; border: 1px solid var(--border); border-radius: 4px; }
+  #ovMap { width: 100%; flex: 1; min-height: 420px; background: #050505; border: 1px solid var(--border); border-radius: 4px; }
   #ovMap .leaflet-tooltip { background:#111; border:1px solid var(--border); color:var(--fg);
     font-family: inherit; font-size: 11px; box-shadow:none; }
   #ovMap .leaflet-tooltip b { color: var(--accent); }
@@ -311,11 +312,14 @@
   }
   .ribbon-row {
     font-family: monospace;
-    padding: 2px 0;
+    height: 25px;
+    padding: 0;
     display: flex; gap: 12px; align-items: center;
     border-bottom: 1px solid #1a1a1a;
     font-size: 11px;
     line-height: 1.4;
+    overflow: hidden;
+    white-space: nowrap;
   }
   .ribbon-row:last-child { border-bottom: none; }
   .ribbon-row .rid { color: var(--accent); min-width: 80px; }
@@ -1336,8 +1340,10 @@ const RotatedCanvasLayer = L.Layer.extend({
   },
 });
 
-let _wxMap = null;
+let _wxMap = null, _wxMapAirport = null;
 let _ovMap = null, _ovMarkers = null;   // national ITWS site map (default dashboard view)
+// The map fills whatever height the window leaves, so it has to re-measure when the window changes.
+window.addEventListener("resize", () => _ovMap && _ovMap.invalidateSize());
 
 // Build/refresh the national overview: one marker per ITWS site (reuses the same OSM dark tiles
 // and yellow marker style as the per-airport weather map). Click a marker → open its dashboard.
@@ -1378,12 +1384,17 @@ function showOverview() {
   for (const el of document.querySelectorAll(".ap-row")) el.classList.remove("active");
   renderOverview();
 }
-function paintWeatherMap(precip, sm) {
+function paintWeatherMap(precip, sm, airport) {
   if (!precip?.geo) return;
   const el = document.getElementById("wxMap");
   if (!el) return;
-  // Tear down + rebuild on every airport switch (geo changes).
+  // The dashboard re-renders every update, so the map element is new each time. Rebuild the Leaflet
+  // map, but keep the current pan/zoom when it is still the same airport. Only a fresh load or an
+  // airport switch re-fits the view.
+  const keepView = _wxMap && _wxMapAirport === airport
+    ? { center: _wxMap.getCenter(), zoom: _wxMap.getZoom() } : null;
   if (_wxMap) { _wxMap.remove(); _wxMap = null; }
+  _wxMapAirport = airport;
   _wxMap = L.map(el, {
     center: [precip.geo.trpLat, precip.geo.trpLon],
     zoom: 8, minZoom: 5, maxZoom: 12, zoomControl: true,
@@ -1445,7 +1456,8 @@ function paintWeatherMap(precip, sm) {
     precip.geo.xOffsetM + precip.cols * precip.geo.dxM,
     precip.geo.yOffsetM + precip.rows * precip.geo.dyM,
     precip.geo.rotationDeg);
-  _wxMap.fitBounds([cornerNW, cornerSE], { padding: [10, 10] });
+  if (keepView) _wxMap.setView(keepView.center, keepView.zoom, { animate: false });
+  else _wxMap.fitBounds([cornerNW, cornerSE], { padding: [10, 10] });
 }
 
 function paintPrecip(precip) {
@@ -1570,7 +1582,7 @@ async function loadAirport(airport) {
   if (precip) paintPrecip(precip);
   // Leaflet needs an active DOM container; tear down/build after the
   // dashboard innerHTML replace is committed.
-  if (precip?.geo) requestAnimationFrame(() => paintWeatherMap(precip, sm));
+  if (precip?.geo) requestAnimationFrame(() => paintWeatherMap(precip, sm, airport));
   for (const el of document.querySelectorAll(".ap-row")) {
     el.classList.toggle("active", el.dataset.ap === airport);
   }

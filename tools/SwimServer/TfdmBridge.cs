@@ -381,8 +381,15 @@ class TfdmBridge
             ? fs.Values.OrderBy(f => f.EstDepartureTime ?? f.OffBlockTime ?? "~").Select(f => f.ToJson()).ToArray()
             : Array.Empty<object>();
         _airportInfo.TryGetValue(airport, out var info);
+        // TFDM publishes the same restriction under several tfdmTmiIds, and a reissue often arrives
+        // under a new id without the old one being deleted (UFN entries are never aged out), so
+        // collapse identical restrictions to the most recently seen record.
         var tmis = _tmis.TryGetValue(airport, out var tl)
-            ? tl.Values.OrderBy(t => t.Name).Select(t => t.ToJson()).ToArray() : Array.Empty<object>();
+            ? tl.Values
+                .GroupBy(t => (t.Name, t.Type, t.ControlledElement, t.Restriction, t.MinutesInTrail, t.MilesInTrail))
+                .Select(g => g.OrderByDescending(t => t.LastSeen).ThenByDescending(t => t.StartTime, StringComparer.Ordinal).First())
+                .OrderBy(t => t.Name).Select(t => t.ToJson()).ToArray()
+            : Array.Empty<object>();
         return new { airport, flights, info = info?.ToJson(), tmis };
     }
 

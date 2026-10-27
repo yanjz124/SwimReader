@@ -4816,12 +4816,14 @@ function updateToolbarBorderColor() {
 }
 
 function updateCursorBrightness() {
+    initEdgeCursor();
     try {
         // Cursor brightness: 0-1, where 1=white, 0=black
         const cursorFactor = tbState.bright.cursor / 100;
 
         // Interpolate cursor stroke color from white (at 100) to black (at 0)
         const cursorColor = interpolateColor('#FFFFFF', cursorFactor);
+        drawEdgeCursor(cursorColor);
 
         // Create dynamic CSS with updated cursor SVG
         let styleEl = document.getElementById('dynamic-cursor-brightness');
@@ -4832,7 +4834,7 @@ function updateCursorBrightness() {
         }
 
         // Generate new SVG cursor with interpolated color
-        const cursorSvg = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cline x1='16' y1='9' x2='16' y2='12' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='16' y1='20' x2='16' y2='23' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='9' y1='16' x2='12' y2='16' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Cline x1='20' y1='16' x2='23' y2='16' stroke='${encodeURIComponent(cursorColor)}' stroke-width='4.5'/%3E%3Crect x='12' y='12' width='8' height='8' fill='none' stroke='${encodeURIComponent(cursorColor)}' stroke-width='1.3'/%3E%3C/svg%3E") 16 16, crosshair`;
+        const cursorSvg = `url("${eramCursorUri(cursorColor)}") 8 8, default`;
 
         styleEl.textContent = `
             :root { --eram-cursor: ${cursorSvg}; }
@@ -4840,6 +4842,75 @@ function updateCursorBrightness() {
     } catch (e) {
         // tbState not yet initialized
     }
+}
+
+// Chrome replaces a custom cursor image with its fallback whenever the image would
+// extend past the viewport edge, i.e. within half the cursor size (8px) of an edge.
+// Inside that band only, the native cursor is hidden (html.eram-cursor-edge sets
+// --eram-cursor to none) and the same cursor is drawn as a DOM element, which is
+// clipped by the viewport and slides off the edge. Everywhere else the native image
+// cursor is used, so normal movement has no drawn-cursor lag.
+const CURSOR_EDGE_PX = 9;
+
+function eramCursorUri(color) {
+    const c = encodeURIComponent(color);
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cline x1='8' y1='1' x2='8' y2='4' stroke='${c}' stroke-width='4.5'/%3E%3Cline x1='8' y1='12' x2='8' y2='15' stroke='${c}' stroke-width='4.5'/%3E%3Cline x1='1' y1='8' x2='4' y2='8' stroke='${c}' stroke-width='4.5'/%3E%3Cline x1='12' y1='8' x2='15' y2='8' stroke='${c}' stroke-width='4.5'/%3E%3Crect x='4' y='4' width='8' height='8' fill='none' stroke='${c}' stroke-width='1.3'/%3E%3C/svg%3E`;
+}
+
+// The native cursor is rasterized at 16x16 and then scaled for the display's DPI, which
+// softens the thin box to gray. Drawing the same SVG into a 16x16 canvas and letting the
+// browser upscale that bitmap reproduces the same look; an inline SVG would render crisp.
+function drawEdgeCursor(color) {
+    const canvas = initEdgeCursor();
+    const img = new Image();
+    img.onload = () => {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, 16, 16);
+        ctx.drawImage(img, 0, 0, 16, 16);
+    };
+    img.src = eramCursorUri(color);
+}
+
+let edgeCursorEl = null;
+function initEdgeCursor() {
+    if (edgeCursorEl) return edgeCursorEl;
+    const style = document.createElement('style');
+    style.textContent = ':root.eram-cursor-edge { --eram-cursor: none; }';
+    document.head.appendChild(style);
+    edgeCursorEl = document.createElement('canvas');
+    edgeCursorEl.width = 16;
+    edgeCursorEl.height = 16;
+    edgeCursorEl.style.cssText = 'position:fixed;left:0;top:0;width:16px;height:16px;pointer-events:none;z-index:2147483647;display:none;';
+    document.body.appendChild(edgeCursorEl);
+    drawEdgeCursor('#FFFFFF');
+
+    const root = document.documentElement;
+    let inEdge = false, lastTarget = null, lastShow = false;
+    const hide = () => {
+        edgeCursorEl.style.display = 'none';
+        if (inEdge) { inEdge = false; root.classList.remove('eram-cursor-edge'); }
+    };
+    document.addEventListener('pointermove', (e) => {
+        if (e.pointerType !== 'mouse') { hide(); return; }
+        const x = e.clientX, y = e.clientY;
+        const edge = x < CURSOR_EDGE_PX || y < CURSOR_EDGE_PX ||
+                     x > root.clientWidth - CURSOR_EDGE_PX || y > root.clientHeight - CURSOR_EDGE_PX;
+        if (!edge) { hide(); return; }
+        if (!inEdge) { inEdge = true; root.classList.add('eram-cursor-edge'); lastTarget = null; }
+        if (e.target !== lastTarget) {
+            lastTarget = e.target;
+            // Only draw where the ERAM cursor applies (computed cursor is now `none`)
+            lastShow = e.target instanceof Element && getComputedStyle(e.target).cursor === 'none';
+        }
+        // The OS stops the pointer at the last pixel, so it can never travel off-screen;
+        // once pinned against the right edge, hide it as if it had moved off.
+        const offRight = x >= root.clientWidth - 1;
+        edgeCursorEl.style.display = lastShow && !offRight ? 'block' : 'none';
+        edgeCursorEl.style.transform = `translate(${x - 8}px, ${y - 8}px)`;
+    }, { passive: true, capture: true });
+    root.addEventListener('pointerleave', hide);
+    window.addEventListener('blur', hide);
+    return edgeCursorEl;
 }
 
 function interpolateColor(hexColor, factor) {

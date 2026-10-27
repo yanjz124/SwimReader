@@ -313,6 +313,16 @@ function pickFacility(fac) {
   updateSummary();
 }
 
+// Second click on the selected ARTCC clears the selection and the sector pane.
+function clearFacility() {
+  selectedFacility = null;
+  selectedSectors = new Set();
+  for (const el of document.querySelectorAll("#facilities .row")) el.classList.remove("active");
+  $("sectors-content").style.display = "none";
+  $("sectors-empty").style.display = "block";
+  updateSummary();
+}
+
 function renderSectors(fac) {
   $("sectors-empty").style.display = "none";
   $("sectors-content").style.display = "block";
@@ -355,8 +365,14 @@ async function loadFacilities() {
         </div>
         <span class="meta"><span class="live">${f.totalTracks}T</span> · ${f.sectorCount} sec</span>
       </div>`).join("");
-    for (const el of document.querySelectorAll("#facilities .row"))
-      el.onclick = () => pickFacility(facilityById.get(el.dataset.id));
+    // This list is rebuilt every 5s, so the selected ARTCC has to be re-marked here.
+    for (const el of document.querySelectorAll("#facilities .row")) {
+      el.classList.toggle("active", el.dataset.id === selectedFacility);
+      el.onclick = () => {
+        if (selectedFacility === el.dataset.id) clearFacility();
+        else pickFacility(facilityById.get(el.dataset.id));
+      };
+    }
 
     // Re-render the sector grid for the live counts if a facility is picked.
     if (selectedFacility && facilityById.has(selectedFacility)) {

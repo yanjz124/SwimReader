@@ -208,7 +208,7 @@ body { background: #393939; overflow: hidden; height: 100vh; }
 .leaflet-grab, .leaflet-dragging { cursor: none !important; }
 .leaflet-marker-icon { cursor: none !important; overflow: visible !important; }
 #crosshair {
-    position: fixed; pointer-events: none; z-index: 9999; display: none;
+    position: fixed; left: 0; top: 0; pointer-events: none; z-index: 9999; display: none;
 }
 #crosshair .ch { position: absolute; background: #fff; }
 #crosshair .h { width: 21px; height: 2px; left: -10px; top: -1px; }

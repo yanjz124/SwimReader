@@ -5,29 +5,58 @@ const ch = document.getElementById('crosshair');
 const statusBar = document.getElementById('statusbar');
 let haloTid = null; // trackId of currently highlighted halo
 
+// Pointer work runs once per animation frame, not once per mousemove event. The halo search needs
+// each target's screen position, which is read from the DOM at most every HALO_CACHE_MS: reading it
+// on every event made the browser re-lay out the page for each mouse move at a busy airport.
+const HALO_CACHE_MS = 250;
+let pendingPointer = null, pointerFrame = 0;
+let haloPoints = [], haloPointsT = -Infinity;
+
 document.addEventListener('mousemove', e => {
     // Hide crosshair if over status bar, UI panels, or popups
-    const overUI = e.target.closest('.nav-home, #statusbar, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay, #zulu-clock, #cmd-overlay, #fp-popup');
-    
-    if (overUI) {
-        ch.style.display = 'none';
-        return;
-    }
-    
-    ch.style.left = e.clientX + 'px';
-    ch.style.top  = e.clientY + 'px';
-    ch.style.display = 'block';
+    const overUI = !!e.target.closest('.nav-home, #statusbar, #flight-list, #holdbar-panel, #replay-panel, #ldr-dir-overlay, #zulu-clock, #cmd-overlay, #fp-popup');
+    pendingPointer = { x: e.clientX, y: e.clientY, overUI };
+    if (!pointerFrame) pointerFrame = requestAnimationFrame(applyPointer);
+});
 
-    // Proximity halo: show halo on nearest marker within radius
-    if (typeof markers === 'undefined') return;
-    let bestTid = null, bestDist = Infinity;
+// Target centres in screen pixels, refreshed at most every HALO_CACHE_MS. A halo can lag a new batch
+// or a pan by up to that long; the crosshair itself is never cached.
+function haloCentres(now) {
+    if (now - haloPointsT < HALO_CACHE_MS) return haloPoints;
+    haloPoints = [];
     for (const [tid, marker] of Object.entries(markers)) {
         const el = marker.getElement();
         if (!el) continue;
         const rect = el.getBoundingClientRect();
-        const dist = Math.hypot(e.clientX - (rect.left + 9), e.clientY - (rect.top + 9));
-        if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = tid; }
+        haloPoints.push({ tid, x: rect.left + 9, y: rect.top + 9 });
     }
+    haloPointsT = now;
+    return haloPoints;
+}
+
+function applyPointer() {
+    pointerFrame = 0;
+    const p = pendingPointer;
+    if (!p) return;
+    if (p.overUI) {
+        ch.style.display = 'none';
+        return;
+    }
+
+    // Proximity halo: nearest marker within radius. Done before the crosshair write below, so no
+    // layout is forced in between.
+    let bestTid = null, bestDist = Infinity;
+    if (typeof markers !== 'undefined') {
+        for (const t of haloCentres(performance.now())) {
+            const dist = Math.hypot(p.x - t.x, p.y - t.y);
+            if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = t.tid; }
+        }
+    }
+
+    // transform, not left/top: moving with left/top re-lays out the page on every move
+    ch.style.transform = `translate(${p.x}px, ${p.y}px)`;
+    ch.style.display = 'block';
+
     if (bestTid !== haloTid) {
         // Remove old halo
         if (haloTid) {
@@ -41,8 +70,10 @@ document.addEventListener('mousemove', e => {
         }
         haloTid = bestTid;
     }
-});
+}
+
 document.addEventListener('mouseleave', () => {
+    pendingPointer = null;
     ch.style.display = 'none';
     if (haloTid) {
         const old = markers[haloTid]?.getElement()?.querySelector('.halo');

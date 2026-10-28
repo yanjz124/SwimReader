@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Setup — How's my friend at work doing?</title>
+<title>Setup — SWIM (System Wide Information Management)</title>
 <style>
   :root { --y:#cccc44; --bg:#0c0c0c; --panel:#151515; --line:#2a2a2a; --dim:#888; }
   * { box-sizing:border-box; }
@@ -53,7 +53,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>How's my friend at work doing?</h1>
+  <h1>SWIM (System Wide Information Management)</h1>
   <div class="sub">Local edition — first-time setup. Everything runs on your machine; credentials never leave it.</div>
 
   <div class="card intro">
@@ -84,6 +84,11 @@
         <input id="SWIM_PORT" name="SWIM_PORT" inputmode="numeric" placeholder="5001">
       </div>
       <div class="hint" style="grid-column:1/-1;margin-top:6px">The page will be at <code>http://localhost:&lt;port&gt;</code>. Default 5001. Changing this needs a restart.</div>
+      <div class="portrow" style="margin-top:14px">
+        <label for="REPLAY_CAP_GB">Replay storage (GB)</label>
+        <input id="REPLAY_CAP_GB" name="REPLAY_CAP_GB" type="number" min="1" step="1" placeholder="30">
+      </div>
+      <div class="hint" style="grid-column:1/-1;margin-top:6px">Disk space the scope replay recordings may use on this computer. When full, the oldest recordings are deleted first. Default 30 GB. Changing this needs a restart.</div>
     </div>
 
     <div class="actions">

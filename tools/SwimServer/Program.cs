@@ -428,7 +428,7 @@ if (localMode)
         "TFMS_HOST", "TFMS_VPN", "TFMS_USER", "TFMS_PASS", "TFMS_QUEUE",
         "TFDM_HOST", "TFDM_VPN", "TFDM_USER", "TFDM_PASS", "TFDM_QUEUE",
         "ITWS_HOST", "ITWS_VPN", "ITWS_USER", "ITWS_PASS", "ITWS_QUEUE",
-        "SWIM_PORT",
+        "SWIM_PORT", "REPLAY_CAP_GB",
     };
 
     // Current values (passwords masked) so the form can pre-fill without leaking secrets.

@@ -1,5 +1,5 @@
 <#
-  Builds the downloadable Windows local edition of "How's my friend at work doing?"
+  Builds the downloadable Windows local edition of SWIM (System Wide Information Management)
 
   Produces a self-contained, single-file build under  publish/win-x64/  plus a zip
   ready to hand to a user. They unzip it, double-click SwimServer.exe, and the app

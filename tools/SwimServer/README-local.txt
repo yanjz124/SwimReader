@@ -1,5 +1,5 @@
-How's my friend at work doing? — Local Edition (Windows)
-========================================================
+SWIM (System Wide Information Management) — Local Edition (Windows)
+===================================================================
 
 WHAT THIS IS
   A personal, non-operational tool that connects to the FAA's public SWIM data

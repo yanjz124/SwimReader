@@ -278,7 +278,9 @@
       return;
     }
     console.log(`[STARS NEXRAD] using ${_station.icao} ${_station.name}, ${_station.state}`);
-    if (await fetchRadials()) _lastLiveFetch = Date.now();
+    // Through tick(), not fetchRadials() — the first fetch has to respect replay mode too, or the
+    // page opens by pulling this minute's weather over archived traffic.
+    await tick();
     if (_refreshTimer) clearInterval(_refreshTimer);
     _refreshTimer = setInterval(tick, TICK_MS);
   }

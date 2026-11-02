@@ -311,20 +311,19 @@ namespace NexradDecoder
             this.msg_header_block = msg_header_block;
             return msg_header_block;
         }
-        static DateTime UnixTimeStampToDateTime(double unixTimeStamp)
-        {
-            // Unix timestamp is seconds past epoch
-            System.DateTime dtDateTime = new DateTime(1970, 1, 1, 0, 0, 0, 0, System.DateTimeKind.Utc);
-            dtDateTime = dtDateTime.AddSeconds(unixTimeStamp).ToLocalTime();
-            return dtDateTime.AddDays(-1);
-        }
-
+        // NIDS dates are "days since 1 Jan 1970" counting 1 Jan 1970 itself as day 1, and the time
+        // is seconds since midnight GMT — so a timestamp here is UTC and must stay UTC. This used to
+        // go through a helper that called ToLocalTime(), which shifted every volume time by the
+        // server's UTC offset. Harmless while nothing read the field; not harmless once replay
+        // reports which volume it is showing, since that is the number you check to tell whether
+        // replay is honouring its own clock.
         DateTime readTimeStamp()
         {
-            DateTime dateTime = UnixTimeStampToDateTime(readHalfWord() * 86400);
-            var seconds = readWord();
-            dateTime = dateTime.AddSeconds(seconds);
-            return dateTime;
+            int days    = readHalfWord();   // HW n     — days since 1970-01-01, 1-based
+            int seconds = readWord();       // HW n+1,2 — seconds since midnight GMT
+            return new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                   .AddDays(days - 1)
+                   .AddSeconds(seconds);
         }
         private DateTime convertFromJulian(int jDate)
         {

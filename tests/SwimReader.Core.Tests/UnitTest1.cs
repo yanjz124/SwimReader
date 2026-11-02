@@ -25,8 +25,7 @@ public class ChannelEventBusTests
             }
         }, cts.Token);
 
-        // Give subscriber time to register
-        await Task.Delay(100);
+        await WaitForSubscribers(bus, 1, cts.Token);
 
         // Publish events
         var event1 = new TrackPositionEvent
@@ -80,7 +79,7 @@ public class ChannelEventBusTests
             }
         }, cts.Token);
 
-        await Task.Delay(100);
+        await WaitForSubscribers(bus, 2, cts.Token);
 
         await bus.PublishAsync(new TrackPositionEvent
         {
@@ -93,5 +92,21 @@ public class ChannelEventBusTests
 
         Assert.Single(received1);
         Assert.Single(received2);
+    }
+
+    /// <summary>
+    /// Wait until the bus actually has <paramref name="expected"/> subscribers attached.
+    ///
+    /// These tests used to sleep 100ms and publish, which is a race: SubscribeAsync is a lazy
+    /// IAsyncEnumerable, so a subscriber isn't attached until its consumer starts enumerating.
+    /// On a loaded CI runner the publish landed first, that subscriber received nothing, and the
+    /// test sat out the full 5s cancellation before failing. Waiting on the real condition is
+    /// deterministic; a longer sleep would only have made it rarer.
+    /// </summary>
+    private static async Task WaitForSubscribers(ChannelEventBus bus, int expected, CancellationToken ct)
+    {
+        while (bus.SubscriberCount < expected && !ct.IsCancellationRequested)
+            await Task.Delay(5, CancellationToken.None);
+        Assert.Equal(expected, bus.SubscriberCount);
     }
 }

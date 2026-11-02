@@ -20,6 +20,13 @@ public sealed class ChannelEventBus : IEventBus
     // Subscribe/unsubscribe replaces the entire array under _subLock.
     private volatile Subscriber[] _snapshot = [];
 
+    /// <summary>
+    /// Subscribers currently attached. Note that a subscriber counts only once its consumer has
+    /// begun enumerating: SubscribeAsync is a lazy IAsyncEnumerable, so "called SubscribeAsync"
+    /// and "is attached and will receive a publish" are two different moments.
+    /// </summary>
+    public int SubscriberCount => _snapshot.Length;
+
     public ChannelEventBus(ILogger<ChannelEventBus> logger, int capacity = 10_000)
     {
         _logger = logger;

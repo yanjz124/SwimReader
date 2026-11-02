@@ -1230,6 +1230,95 @@ archive (measured at KMLB: 42.0 vs 41.6 nm, 174.9 vs 175.4 nm, 232.6° vs 233.1�
 check that catches a wrong `range` for a product code, since nothing errors — the echoes just get
 drawn at the wrong distance. The payload carries `code`, `volumeTime` and `archived` for this.
 
+## vNAS adaptation: video maps, and surviving a rename
+
+### Video maps come from vNAS, on demand
+`KNOWN-DEVIATIONS G10` used to say vNAS published the video-map *catalog* but never the geometry,
+so an operator had to seed a CRC export tree by hand. That was wrong, and the mistake is worth
+remembering: `/api/artccs/{id}/video-maps/{mapId}` returns **401**, which reads as "not public".
+It is the **admin** API. CRC never touches it.
+
+**CRC hardcodes no endpoints.** It asks `https://configuration.vnas.vatsim.net/` where everything
+lives and uses what comes back:
+
+| key | value |
+|---|---|
+| `dataApiBaseUrl` | `https://data-api.vnas.vatsim.net/api` |
+| **`videoMapBaseUrl`** | **`https://data-api.vnas.vatsim.net/Files/VideoMaps`** |
+| `artccBoundariesUrl`, `nexradBoundingBoxesUrl`, `navDataUrl`, `aircraftCwtUrl`, `aliasesBaseUrl` | all under `/Files/`, all public |
+
+```
+{videoMapBaseUrl}/{ARTCC}/{mapId}.geojson      → 200, no auth
+```
+
+Verified byte-identical to a local CRC copy (ZJX `01KTWZMWDCE96H2S8XMBGT8XH0`, 132,419 B both
+sides). `StarsBridge` **resolves** that base URL on its daily refresh rather than hardcoding it —
+same reason CRC does — and fetches maps on demand.
+
+### crc-export is a cache now, and presence is not freshness
+The on-disk tree is still written, but a cached file is served only when its mtime is **at least as
+new as the catalog's `lastUpdatedAt`** for that map. That is the rule CRC applies and the one this
+lacked: the Pi's seeded **2.8 GB** tree had silently drifted from the published set (ZBW 273 vs 293,
+ZID 954 vs 968, ZMP 1359 vs 1336).
+
+Fetch-on-demand alone isn't enough — a map nobody opens stays stale until they do — so after each
+daily catalog refresh `SweepStaleMapsAsync()` re-pulls what changed, paced 100 ms and capped at
+**500 downloads per sweep** (a capped sweep continues next tick). First run on the Pi: *15,350
+checked, 514 stale, 500 updated*; second: *14 stale, 14 updated*; now zero. `GET
+/api/stars/videoMaps-sync` reports it.
+
+**The local copy is defended, because it's what's left if vNAS is unreachable or wrong:**
+- a replacement must parse as GeoJSON and must not take a map that had features down to **zero**.
+  Nothing is signed so authenticity can't be checked, but refusing to overwrite good geometry with
+  something that isn't geometry catches the realistic failures — a truncated download, an error
+  page served with a 200.
+- the replaced version is kept one generation under `crc-export/_backup/`, and is served if both
+  the download and the current file are unusable.
+- **nothing is ever deleted because the catalog stopped listing it.** A map we hold and vNAS forgot
+  is exactly the copy worth keeping.
+
+### PBI became DJT — and how the next one handles itself
+NASR, ITWS and TDLS have all moved: `PBI`/`KPBI` resolve to **nothing** in NASR, `KDJT` is
+*PRESIDENT DONALD J TRUMP INTL, WEST PALM BEACH FL, ZMA*. Even the oldest archived day (2026-09-17)
+is 370 × `KDJT` and 0 × `PBI`, so the rename predates our whole history. vNAS's own adaptation still
+says PBI; that is their data.
+
+Two different problems, two mechanisms:
+
+**Display names** — the directory pages keep their curated short labels (they read better in a card
+than a full legal name), but anything the table doesn't cover is filled from `/api/airports/find`
+**after render**, so a slow lookup can't hold up the page. That directory is OurAirports (monthly)
+plus NASR (28-day) and it resolves the **retired** identifier as well as the new one, so a future
+rename fills itself in from either direction with nobody editing a table. `shared/airport-names.js`.
+
+**Identifiers in hand-maintained config** can't be guessed, so they're made visible:
+`GET /api/airports/audit` checks every id in `destination-codes.json` / `handoff-codes.json`.
+Two traps are already baked in:
+- **Check NASR, not OurAirports.** The first version checked OurAirports and reported 0 problems
+  out of 51 — sailing past the very rename that prompted it, because a retired code lives on as the
+  airport's **IATA** code. These files hold FAA LIDs; NASR is the FAA's own list and has dropped PBI.
+- **Follow position, not identifier,** when naming the replacement. Asking OurAirports what PBI "is
+  now" answers `KPBI` — it renamed the airport and kept the ident. The NASR record at the same
+  **coordinates** (1.5 nm tolerance) is the current id whatever it has become, which needs to know
+  nothing about this particular rename. Output: `PBI → DJT, retired — the field at these
+  coordinates is now DJT`.
+
+## The home page rate was a lifetime average
+
+"The website shows 44 msg/s but the portal shows 93 — where is half the feed going?" Nowhere.
+`/api/stats` computes `Rate = total / elapsed-since-process-start`; the SCDS portal shows an
+**instantaneous** rate. Different quantities, and they diverge badly on a long-running process
+because SFDPS publisher volume roughly halves overnight, dragging the lifetime average down.
+
+**`/api/feed` is the comparable number** (last 10 s per feed) and the one to quote, alongside the
+two figures that distinguish "behind" from "fine": `lagSec` and `discardEvents`. Measured during
+that question: 77-89 msg/s instantaneous, 2.3-3.0 s lag, **0 discards** — discards being
+authoritative, since Solace flags `DiscardIndication` when it has actually thrown messages away.
+The home page now shows the live sample, with the average, lag and discard count in the tooltip.
+
+The failure mode that *does* lose messages is a second consumer on the same queue (see
+`SWIM_FEED_HOST`) — distinguishable because lag grows and the portal's egress falls below ingress.
+
 ## Handing a flight to SimBrief / VATSIM
 
 Both `/dispatch` and the flight table's detail panel do this, with the same conventions.

@@ -197,8 +197,30 @@ async function refreshStats() {
         const sr = await fetch('/api/stats');
         if (sr.ok) {
             const s = await sr.json();
+            // Show the rate we are receiving NOW, not the average since the process started.
+            //
+            // s.rate is total/elapsed over the whole life of the process, which is not the number
+            // anyone is comparing against: the SCDS portal shows an instantaneous rate, and SFDPS
+            // publisher volume roughly halves overnight. A server up through a night therefore
+            // showed ~44/s here against ~93/s on the portal and looked like it was losing half the
+            // feed, when the two numbers simply measured different things. /api/feed samples the
+            // last 10 seconds per feed, which is the comparable quantity.
+            let rate = s.rate || 0, rateTitle = 'average since start (no live sample)';
+            try {
+                const fr = await fetch('/api/feed');
+                if (fr.ok) {
+                    const sf = ((await fr.json()).feeds || []).find(f => f.feed === 'SFDPS');
+                    if (sf && typeof sf.msgsPerSec === 'number') {
+                        rate = sf.msgsPerSec;
+                        rateTitle = `last 10s sample · lag ${sf.lagSec}s · `
+                            + `${sf.discardEvents ? sf.discardEvents + ' broker discards' : 'no broker discards'}`
+                            + ` · ${(s.rate || 0).toFixed(0)}/s average since start`;
+                    }
+                }
+            } catch {}
             document.getElementById('sfdpsStat').innerHTML =
-                `SFDPS: <b>${(s.flights || 0).toLocaleString()} flights</b>  <b>${(s.rate || 0).toFixed(0)}/s</b>`;
+                `SFDPS: <b>${(s.flights || 0).toLocaleString()} flights</b>  `
+                + `<b title="${rateTitle}">${rate.toFixed(0)}/s</b>`;
             document.getElementById('eramCount').textContent =
                 `${(s.flights || 0).toLocaleString()} flights`;
             const connEl = document.getElementById('connStat');

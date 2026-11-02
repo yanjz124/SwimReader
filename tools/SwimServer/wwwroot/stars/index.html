@@ -204,14 +204,13 @@ async function selectArtcc(id) {
       $("facilities").innerHTML = `<div class="nostars">No STARS-configured facilities in ${id}.</div>`;
       return;
     }
-    // Video maps are served exclusively from the server's crc-export tree —
-    // there's no client-side import (it would only ever see the *server's*
-    // local CRC folder, not the viewer's). Show a read-only count of what the
-    // server has on disk for this ARTCC.
+    // Video maps come from vNAS's public file store, fetched on demand and cached server-side,
+    // so the count is what the ARTCC publishes rather than what happens to be on disk.
     const avail = await fetch(`/api/stars/videoMaps/${encodeURIComponent(id)}`).then(r => r.json()).catch(() => ({available:[]}));
+    const cachedNote = avail.source === "vnas" ? ` (${avail.cached} cached)` : "";
     const mapsBanner = avail.available.length
-      ? `<div style="padding:8px 16px;background:#0a2a0a;border-bottom:1px solid #1a3a1a;color:#6f6;font-size:11px;">${avail.available.length} video maps available for ${id} on the server</div>`
-      : `<div style="padding:8px 16px;background:#2a1a0a;border-bottom:1px solid #3a2a1a;color:#fb6;font-size:11px;">No video maps on the server for ${id} — targets will still display.</div>`;
+      ? `<div style="padding:8px 16px;background:#0a2a0a;border-bottom:1px solid #1a3a1a;color:#6f6;font-size:11px;">${avail.available.length} video maps for ${id}${cachedNote}</div>`
+      : `<div style="padding:8px 16px;background:#2a1a0a;border-bottom:1px solid #3a2a1a;color:#fb6;font-size:11px;">No video maps for ${id} — targets will still display.</div>`;
     // Live per-facility track counts from TAIS — same STDDS source as the
     // scope feed, and facility ids align with vNAS (e.g. RDU↔RDU). Best-effort;
     // facilities without a TAIS feed just show no count.

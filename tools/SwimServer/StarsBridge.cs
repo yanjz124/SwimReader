@@ -14,6 +14,10 @@ namespace SwimServer;
 /// rules, etc. We hit /api/artccs/{id}/ once per ARTCC and keep the
 /// parsed tree in memory; daily refresh.
 ///
+/// Video-map GEOMETRY comes from the static file store vNAS's own
+/// configuration service names — see the service-discovery block below.
+/// It needs no authentication, so crc-export is a cache, not a dependency.
+///
 /// No Solace involvement — pure HTTP fetcher.
 /// </summary>
 class StarsBridge
@@ -36,6 +40,28 @@ class StarsBridge
     // the environment / .env. Downloaded maps are cached under crc-export/.
     private static readonly string? VnasToken = Environment.GetEnvironmentVariable("VNAS_TOKEN");
     private static readonly string? VnasCookie = Environment.GetEnvironmentVariable("VNAS_COOKIE");
+
+    // ── vNAS service discovery ──────────────────────────────────────────
+    //
+    // CRC hardcodes no endpoints: it asks configuration.vnas.vatsim.net where everything lives
+    // (dataApiBaseUrl, videoMapBaseUrl, navDataUrl, …) and uses what comes back. Video-map
+    // geometry lives in the static file store that config names:
+    //
+    //     {videoMapBaseUrl}/{ARTCC}/{mapId}.geojson     — public, no auth
+    //
+    // The authenticated route is /api/artccs/{id}/video-maps/{mapId}, which is the ADMIN API and
+    // is what returns 401. Confusing the two is why this was believed impossible (KNOWN-DEVIATIONS
+    // G10). We resolve the base URL rather than hardcoding it, for the same reason CRC does: if
+    // vNAS moves the store, the next daily refresh follows it.
+    private const string ConfigUrl = "https://configuration.vnas.vatsim.net/";
+    private const string DefaultVideoMapBase = "https://data-api.vnas.vatsim.net/Files/VideoMaps";
+    private string _videoMapBase = DefaultVideoMapBase;
+
+    // mapId → lastUpdatedAt, per ARTCC, straight out of the ARTCC document. This is how CRC
+    // decides what to re-download, and it is what makes the on-disk copy a cache: a file older
+    // than the published timestamp gets refetched instead of served forever.
+    private readonly ConcurrentDictionary<string, Dictionary<string, DateTime>> _mapStamps =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public StarsBridge(HttpClient http, JsonSerializerOptions jsonOpts)
     {
@@ -71,8 +97,29 @@ class StarsBridge
         }
     }
 
+    private async Task RefreshConfigAsync()
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(await _http.GetStringAsync(ConfigUrl));
+            if (doc.RootElement.TryGetProperty("videoMapBaseUrl", out var v)
+                && v.GetString() is { Length: > 0 } url)
+            {
+                url = url.TrimEnd('/');
+                if (!string.Equals(url, _videoMapBase, StringComparison.Ordinal))
+                    Console.WriteLine($"[STARS] vNAS videoMapBaseUrl = {url}");
+                _videoMapBase = url;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[STARS] vNAS config: {ex.Message} (keeping {_videoMapBase})");
+        }
+    }
+
     private async Task RefreshOnce()
     {
+        await RefreshConfigAsync();
         var listJson = await _http.GetStringAsync("https://data-api.vnas.vatsim.net/api/artccs/");
         using var doc = JsonDocument.Parse(listJson);
         var ids = new List<string>();
@@ -88,6 +135,7 @@ class StarsBridge
         // the pooled buffers are reclaimed by GC once the last reader releases them.
         int evicted = _artccs.Count;
         _artccs.Clear();
+        _mapStamps.Clear();   // rebuilt from the re-fetched ARTCC docs, with the new timestamps
         Console.WriteLine($"[STARS] vNAS: {_artccIds.Length} ARTCCs available" +
             (evicted > 0 ? $"; evicted {evicted} cached facility tree(s) for refresh" : ""));
         _lastRefresh = DateTime.UtcNow;
@@ -292,53 +340,91 @@ class StarsBridge
     // folder of the artcc JSON file. We replicate that layout:
     //   <crcExportRoot>/<artccId>/VideoMaps/<mapId>.geojson
 
+    /// <summary>mapId → lastUpdatedAt for one ARTCC, from its published catalog.</summary>
+    private async Task<Dictionary<string, DateTime>> GetMapStampsAsync(string artccId)
+    {
+        if (_mapStamps.TryGetValue(artccId, out var cached)) return cached;
+        var stamps = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        var doc = await GetArtccAsync(artccId);
+        if (doc is not null
+            && doc.RootElement.TryGetProperty("videoMaps", out var maps)
+            && maps.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var m in maps.EnumerateArray())
+                if (m.TryGetProperty("id", out var idEl) && idEl.GetString() is { Length: > 0 } id
+                    && m.TryGetProperty("lastUpdatedAt", out var tEl)
+                    && tEl.TryGetDateTime(out var t))
+                    stamps[id] = t.ToUniversalTime();
+        }
+        _mapStamps[artccId] = stamps;
+        return stamps;
+    }
+
+    /// <summary>Every video-map id this ARTCC publishes, whether or not we hold a copy.</summary>
+    public async Task<string[]> ListPublishedVideoMapIdsAsync(string artccId)
+        => (await GetMapStampsAsync(artccId)).Keys.ToArray();
+
     public async Task<(string contentType, byte[] bytes)?> GetVideoMapGeoJsonAsync(
         string artccId, string mapId)
     {
+        artccId = artccId.ToUpperInvariant();
         var path = Path.Combine(_crcExportRoot, artccId, "VideoMaps", mapId + ".geojson");
-        if (File.Exists(path))
-        {
-            var bytes = await File.ReadAllBytesAsync(path);
-            return ("application/geo+json", bytes);
-        }
+        var have = File.Exists(path);
 
-        // Cache miss → fetch from the vNAS data API if a token/cookie is configured,
-        // then cache to disk so future requests (and token expiry) are covered.
-        if (VnasToken is { Length: > 0 } || VnasCookie is { Length: > 0 })
+        // Serve the cached copy only if it is at least as new as the published map. Presence alone
+        // is not freshness: a seeded export tree goes stale silently, and the maps on the Pi had
+        // drifted from the current catalog by dozens of files per ARTCC before this.
+        if (have)
         {
+            DateTime? published = null;
             try
             {
-                var url = $"https://data-api.vnas.vatsim.net/api/artccs/{artccId}/video-maps/{mapId}";
-                using var req = new HttpRequestMessage(HttpMethod.Get, url);
-                if (VnasToken is { Length: > 0 })
-                    req.Headers.TryAddWithoutValidation("Authorization",
-                        VnasToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? VnasToken : "Bearer " + VnasToken);
-                if (VnasCookie is { Length: > 0 })
-                    req.Headers.TryAddWithoutValidation("Cookie", VnasCookie);
+                if ((await GetMapStampsAsync(artccId)).TryGetValue(mapId, out var t)) published = t;
+            }
+            catch { /* no catalog → trust what we have rather than refetch everything */ }
 
-                using var resp = await _http.SendAsync(req);
-                if (resp.IsSuccessStatusCode)
-                {
-                    var bytes = await resp.Content.ReadAsByteArrayAsync();
-                    try
-                    {
-                        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                        await File.WriteAllBytesAsync(path, bytes);
-                    }
-                    catch { /* cache best-effort */ }
-                    return ("application/geo+json", bytes);
-                }
-                Console.WriteLine($"[STARS] video map fetch {artccId}/{mapId} -> {(int)resp.StatusCode}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[STARS] video map fetch error {artccId}/{mapId}: {ex.Message}");
-            }
+            if (published is null || File.GetLastWriteTimeUtc(path) >= published)
+                return ("application/geo+json", await File.ReadAllBytesAsync(path));
         }
+
+        try
+        {
+            var url = $"{_videoMapBase}/{artccId}/{mapId}.geojson";
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            // The file store is public. These are sent only if someone has set them, in case vNAS
+            // ever gates it.
+            if (VnasToken is { Length: > 0 })
+                req.Headers.TryAddWithoutValidation("Authorization",
+                    VnasToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? VnasToken : "Bearer " + VnasToken);
+            if (VnasCookie is { Length: > 0 })
+                req.Headers.TryAddWithoutValidation("Cookie", VnasCookie);
+
+            using var resp = await _http.SendAsync(req);
+            if (resp.IsSuccessStatusCode)
+            {
+                var bytes = await resp.Content.ReadAsByteArrayAsync();
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    await File.WriteAllBytesAsync(path, bytes);
+                    File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+                }
+                catch { /* cache best-effort */ }
+                return ("application/geo+json", bytes);
+            }
+            Console.WriteLine($"[STARS] video map {artccId}/{mapId} -> {(int)resp.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[STARS] video map {artccId}/{mapId}: {ex.Message}");
+        }
+
+        // Download failed — a stale copy still draws the right airport, which beats a blank scope.
+        if (have) return ("application/geo+json", await File.ReadAllBytesAsync(path));
         return null;
     }
 
-    /// <summary>List of video map IDs the export tree actually contains for an ARTCC.</summary>
+    /// <summary>Video map IDs currently cached on disk for an ARTCC.</summary>
     public string[] ListAvailableVideoMapIds(string artccId)
     {
         var dir = Path.Combine(_crcExportRoot, artccId, "VideoMaps");

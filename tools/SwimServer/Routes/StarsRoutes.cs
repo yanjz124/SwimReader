@@ -99,20 +99,35 @@ static class StarsRoutes
         });
 
         // ── Phase 2: video maps ─────────────────────────────────────────────
-        // Reads from CRC export tree on disk. See KNOWN-DEVIATIONS G10 for why
-        // we can't fetch from vNAS directly. Layout: crc-export/{artcc}/VideoMaps/{mapId}.geojson
+        // Fetched from vNAS's public file store on demand and cached under
+        // crc-export/{artcc}/VideoMaps/{mapId}.geojson; a cached file older than the published
+        // lastUpdatedAt is refetched. (KNOWN-DEVIATIONS G10, which said the geometry wasn't
+        // publicly served, was wrong — it was looking at the admin API.)
         app.MapGet("/api/stars/videoMap/{artccId}/{mapId}",
             async (string artccId, string mapId) =>
             {
                 var content = await ctx.Stars.GetVideoMapGeoJsonAsync(artccId, mapId);
-                if (content is null) return Results.NotFound(new { error = "map_not_in_crc_export", artccId, mapId });
+                if (content is null) return Results.NotFound(new { error = "map_unavailable", artccId, mapId });
                 return Results.Bytes(content.Value.bytes, content.Value.contentType);
             });
 
-        app.MapGet("/api/stars/videoMaps/{artccId}", (string artccId) =>
+        app.MapGet("/api/stars/videoMaps/{artccId}", async (string artccId) =>
         {
-            var ids = ctx.Stars.ListAvailableVideoMapIds(artccId);
-            return Results.Json(new { artccId, available = ids, crcExportRoot = ctx.Stars.CrcExportRoot }, ctx.JsonOpts);
+            artccId = artccId.ToUpperInvariant();
+            var cached    = ctx.Stars.ListAvailableVideoMapIds(artccId);
+            var published = await ctx.Stars.ListPublishedVideoMapIdsAsync(artccId);
+            // `available` is what the scope can actually draw — everything vNAS publishes, since
+            // an uncached map is one fetch away. It falls back to the disk list if the catalog
+            // couldn't be read, which is the only case where disk is the limit.
+            return Results.Json(new
+            {
+                artccId,
+                available = published.Length > 0 ? published : cached,
+                published = published.Length,
+                cached    = cached.Length,
+                source    = published.Length > 0 ? "vnas" : "crc-export",
+                crcExportRoot = ctx.Stars.CrcExportRoot,
+            }, ctx.JsonOpts);
         });
 
         // (Removed: POST /api/stars/import-from-crc/{artccId}. It ran server-side

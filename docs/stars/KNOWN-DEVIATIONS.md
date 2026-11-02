@@ -109,27 +109,41 @@ shape.
 - **Closeness:** Marked TEMP — Phase 7 removes it.
 - **Test:** Phase 7 commit removes `#topbar` and CSS rules.
 
-### G10 — vNAS doesn't serve video-map GeoJSON content publicly (Phase 2)
-- **What:** `data-api.vnas.vatsim.net/api/artccs/{id}/` lists every video
-  map's metadata (id, name, sourceFileName, starsBrightnessCategory) but
-  no endpoint serves the actual GeoJSON geometry. Every URL pattern we
-  tried returns 404. The WPF program never hit vNAS for content either —
-  `CRCMapImporter.cs` reads from a local CRC export folder structure:
-  `<basedir>/VideoMaps/{artccId}/{mapId}.geojson`.
-- **Why:** vNAS doesn't publish the geometry, only the catalog. CRC
-  desktop pulls the actual content through an authenticated channel that
-  isn't documented for public access.
-- **Workaround:** SwimReader.Server reads from a configurable directory
-  (default: `tools/SwimServer/crc-export/`). The user copies their CRC
-  export tree there (same layout DGScope expects) and the STARS port
-  serves the GeoJSON via `GET /api/stars/videoMap/{artccId}/{mapId}`.
-  Auto-falls-back to the upload endpoint `POST /api/stars/upload-export`
-  if the user wants to push a ZIP instead.
-- **Closeness:** When the export tree is present, 100% identical to
-  DGScope. When the export tree is empty, maps simply don't render — same
-  behavior as launching DGScope without a CRC export.
-- **Test:** Drop one ARTCC's CRC export under `crc-export/ZDC/VideoMaps/`,
-  pick a facility, see maps render exactly as DGScope would.
+### G10 — RESOLVED: vNAS does serve video-map GeoJSON publicly
+- **What it claimed:** that `data-api.vnas.vatsim.net` published only the
+  video-map *catalog* and never the geometry, so an operator had to seed a
+  CRC export tree by hand.
+- **Why it was wrong:** we were looking at the wrong endpoint.
+  `/api/artccs/{id}/video-maps/{mapId}` is the **admin** API and returns
+  **401**, which read as "not public". CRC doesn't use it. CRC hardcodes no
+  endpoints at all — it asks `https://configuration.vnas.vatsim.net/` where
+  everything lives, and that config names a static file store:
+
+  ```
+  videoMapBaseUrl = https://data-api.vnas.vatsim.net/Files/VideoMaps
+  {videoMapBaseUrl}/{ARTCC}/{mapId}.geojson      → 200, no auth
+  ```
+
+  Verified byte-identical to the local CRC copy (ZJX
+  `01KTWZMWDCE96H2S8XMBGT8XH0.geojson`, 132,419 B both sides). The same
+  config also names `artccBoundariesUrl`, `nexradBoundingBoxesUrl`,
+  `navDataUrl`, `aircraftCwtUrl` and the environment hub URLs, all public.
+- **Now:** `StarsBridge` resolves `videoMapBaseUrl` from that config on its
+  daily refresh (resolved, not hardcoded, so a move follows automatically)
+  and fetches maps on demand. `crc-export/` is still written, but as a
+  **cache**: a cached file is served only when it is at least as new as the
+  catalog's `lastUpdatedAt` for that map, otherwise it is refetched. That is
+  the same rule CRC applies, and it is what the old arrangement lacked — the
+  Pi's seeded 2.8 GB tree had silently drifted dozens of maps per ARTCC from
+  the published set.
+- **Still true:** `POST /api/stars/upload-export` remains, for an offline
+  install or an ARTCC vNAS doesn't carry. A download failure falls back to
+  whatever stale copy is cached, since the wrong-vintage map still draws the
+  right airport.
+- **Test:** `GET /api/stars/videoMaps/{artcc}` reports `published` vs
+  `cached` and which `source` it used; deleting a cached `.geojson` and
+  re-requesting it through `GET /api/stars/videoMap/{artcc}/{mapId}` should
+  return the same bytes.
 
 ### G11 — Max-blend → additive blend (Phase 2)
 - **What:** RadarWindow.cs line 5310 sets `GL.BlendEquation(Max)` before

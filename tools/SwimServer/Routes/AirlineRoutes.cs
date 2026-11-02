@@ -6,7 +6,8 @@ namespace SwimServer;
 /// </summary>
 static class AirlineRoutes
 {
-    public static void Register(WebApplication app, AirlineResearch research, AirportDirectory airports)
+    public static void Register(WebApplication app, AirlineResearch research, AirportDirectory airports,
+                                Func<NasrData?> getNasr)
     {
         app.MapGet("/api/airlines/status", () => Results.Json(research.Status()));
 
@@ -38,14 +39,36 @@ static class AirlineRoutes
             return Results.Json(new { count = airports.Count, airports = list });
         });
 
-        // Which airport identifiers in our hand-maintained config no longer resolve.
+        // Which airport identifiers in our hand-maintained config have stopped meaning anything.
         //
-        // Nothing can guess a rename — but an identifier that has stopped meaning anything is worth
-        // surfacing rather than silently matching nothing, which is what PBI did in
-        // destination-codes.json after it became DJT: the ERAM destination letter just stopped
-        // appearing, with no error anywhere. Run this after a NASR/OurAirports cycle.
+        // An identifier that no longer resolves matches nothing and reports no error — which is
+        // exactly what PBI did in destination-codes.json after it became DJT: the ERAM destination
+        // letter simply stopped appearing.
+        //
+        // NASR is the authority here, not OurAirports. These files hold FAA LIDs and NASR is the
+        // FAA's own list, which has already dropped PBI — whereas OurAirports still resolves it,
+        // because a retired code lives on as the airport's IATA code. Checking OurAirports alone
+        // (the first attempt) sailed straight past the rename that prompted this.
+        //
+        // So: NASR decides whether an id is stale, and OurAirports — which does still recognise
+        // the old code — is then asked what it has become, giving a replacement to apply rather
+        // than just a complaint. Re-run after a NASR cycle (28 days).
         app.MapGet("/api/airports/audit", () =>
         {
+            var nasr = getNasr();
+            // NASR not loaded yet: say so rather than reporting every id as stale.
+            if (nasr is null)
+                return Results.Json(new { error = "nasr_not_loaded", retry = true });
+
+            bool KnownToNasr(string id)
+            {
+                var u = id.ToUpperInvariant();
+                if (nasr.AirportInfo.ContainsKey(u) || nasr.AirportInfoIcao.ContainsKey(u)) return true;
+                // K-prefixed ICAO vs bare FAA LID, in both directions.
+                if (u.Length == 4 && u[0] == 'K' && nasr.AirportInfo.ContainsKey(u[1..])) return true;
+                if (u.Length == 3 && nasr.AirportInfoIcao.ContainsKey("K" + u)) return true;
+                return false;
+            }
             var files = new[] { "destination-codes.json", "handoff-codes.json" };
             var root = app.Environment.WebRootPath
                        ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
@@ -70,8 +93,21 @@ static class AirlineRoutes
                             {
                                 if (el.GetString() is not { Length: > 0 } id) continue;
                                 seen++;
-                                if (airports.Find(id) is null)
-                                    unknown.Add(new { facility = fac.Name, key = entry.Name, id });
+                                if (KnownToNasr(id)) continue;
+                                // Stale. What did it become? OurAirports still carries the retired
+                                // code, so it can point at the current airport.
+                                var a = airports.Find(id);
+                                unknown.Add(new
+                                {
+                                    facility = fac.Name,
+                                    key = entry.Name,
+                                    id,
+                                    nowKnownAs = a?.Ident,
+                                    name = a?.Name,
+                                    note = a is null
+                                        ? "unknown to NASR and to OurAirports — likely decommissioned or a typo"
+                                        : "unknown to NASR; OurAirports still resolves it, so this id has been retired or renamed",
+                                });
                             }
                         }
                     }
@@ -79,7 +115,12 @@ static class AirlineRoutes
                 catch (Exception ex) { report.Add(new { file = name, error = ex.Message }); continue; }
                 report.Add(new { file = name, idsChecked = seen, unknown = unknown.Count, entries = unknown });
             }
-            return Results.Json(new { directoryLoaded = airports.Count, files = report });
+            return Results.Json(new
+            {
+                nasrAirports = nasr.AirportInfo.Count,
+                directoryLoaded = airports.Count,
+                files = report,
+            });
         });
     }
 }

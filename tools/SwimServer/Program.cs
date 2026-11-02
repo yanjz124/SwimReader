@@ -1463,7 +1463,7 @@ var incidentArchive = new SwimServer.IncidentArchive(
 IncidentRoutes.Register(app, incidentArchive);
 replayServer.MapIncidentEndpoints(app, incidentsDir);
 AircraftRoutes.Register(app, aircraftDb);
-AirlineRoutes.Register(app, airlineResearch, airportDir);
+AirlineRoutes.Register(app, airlineResearch, airportDir, serverCtx.GetNasr);
 
 await solaceReady.Task;
 

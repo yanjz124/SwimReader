@@ -91,6 +91,16 @@
   // Replay must show the weather that was on the scope then, so the request carries the replay
   // clock and the server answers out of the archive. ReplayBar is the authority on whether a
   // replay is running — the STARS scope's own _replayActive is module-private.
+  //
+  // But isActive() only turns true once the replay socket is up, which races with our station
+  // lookup: whoever won decided whether the first fetch went live. The URL says what the page is
+  // for from the first line and never changes, so that is what gates live requests. Same two
+  // parameters scope.js reads (REPLAY_MODE / INCIDENT_ID).
+  const REPLAY_PAGE = (() => {
+    const q = new URLSearchParams(location.search);
+    return q.has("replay") || q.has("incident");
+  })();
+
   function replayTime() {
     if (!window.ReplayBar?.isActive?.()) return null;
     const t = ReplayBar.currentTime();
@@ -101,6 +111,9 @@
   async function fetchRadials() {
     if (!_station) return false;
     const rt = replayTime();
+    // Replay page whose bar has not produced a clock yet: wait for it. Falling back to live here
+    // is the whole bug — one live scan under archived traffic is still wrong weather.
+    if (!rt && REPLAY_PAGE) { _radials = null; return false; }
     try {
       const url = `/api/stars/nexrad/radials/${_station.icao}/${_product}`
                 + (rt ? `?time=${encodeURIComponent(rt)}` : "");
@@ -136,6 +149,7 @@
       return;
     }
     if (_replaySlot !== null) { _replaySlot = null; _radials = null; }
+    if (REPLAY_PAGE) return;                       // clock not up yet — nothing to ask for
     if (Date.now() - _lastLiveFetch < FETCH_INTERVAL_MS) return;
     const ok = await fetchRadials();
     _lastLiveFetch = ok ? Date.now() : Date.now() - FETCH_INTERVAL_MS + 30000;

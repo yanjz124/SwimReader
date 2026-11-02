@@ -69,6 +69,27 @@ static class AirlineRoutes
                 if (u.Length == 3 && nasr.AirportInfoIcao.ContainsKey("K" + u)) return true;
                 return false;
             }
+
+            // What is the airport at this spot called now?
+            //
+            // Follow POSITION, not identifier. The identifier is the thing in question — and
+            // OurAirports proves why: it renamed KPBI's airport but kept the old ident, so
+            // "what does OurAirports call it" answers with the very code we're trying to replace.
+            // The NASR record sitting at the same coordinates is the current id, whatever it is,
+            // which works for the next rename without knowing anything about this one.
+            string? NasrIdAt(double lat, double lon)
+            {
+                string? best = null;
+                double bestNm = 1.5;        // airports don't move; anything further is a different field
+                foreach (var (lid, p) in nasr.Airports)
+                {
+                    var dLat = (p.Lat - lat) * 60.0;
+                    var dLon = (p.Lon - lon) * 60.0 * Math.Cos(lat * Math.PI / 180);
+                    var nm = Math.Sqrt(dLat * dLat + dLon * dLon);
+                    if (nm < bestNm) { bestNm = nm; best = lid; }
+                }
+                return best;
+            }
             var files = new[] { "destination-codes.json", "handoff-codes.json" };
             var root = app.Environment.WebRootPath
                        ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
@@ -97,16 +118,21 @@ static class AirlineRoutes
                                 // Stale. What did it become? OurAirports still carries the retired
                                 // code, so it can point at the current airport.
                                 var a = airports.Find(id);
+                                var replacement = a is null ? null : NasrIdAt(a.Lat, a.Lon);
                                 unknown.Add(new
                                 {
                                     facility = fac.Name,
                                     key = entry.Name,
                                     id,
-                                    nowKnownAs = a?.Ident,
-                                    name = a?.Name,
+                                    nowKnownAs = replacement,
+                                    name = replacement is not null
+                                           && nasr.AirportInfo.TryGetValue(replacement, out var ri)
+                                               ? ri.Name : a?.Name,
                                     note = a is null
                                         ? "unknown to NASR and to OurAirports — likely decommissioned or a typo"
-                                        : "unknown to NASR; OurAirports still resolves it, so this id has been retired or renamed",
+                                        : replacement is null
+                                            ? "unknown to NASR; no NASR airport at its coordinates either"
+                                            : $"retired — the field at these coordinates is now {replacement}",
                                 });
                             }
                         }

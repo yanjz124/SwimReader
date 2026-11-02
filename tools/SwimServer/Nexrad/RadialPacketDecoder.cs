@@ -17,14 +17,19 @@ namespace NexradDecoder
             symbology_block.LayerNumberOfRangeBins = readHalfWord();
             symbology_block.I_CenterOfSweep = readHalfWord();
             symbology_block.J_CenterOFSweep = readHalfWord();
-            symbology_block.ScaleFactor = readHalfWord() / 1000;
+            symbology_block.ScaleFactor = readHalfWord() / 1000.0;
             symbology_block.NumberOfRadials = readHalfWord();
             symbology_block.Radials = new Radial[symbology_block.NumberOfRadials];
             for (int i = 0; i < symbology_block.NumberOfRadials; i++)
             {
                 int bytes = readHalfWord();
-                double startangle = readHalfWord() / 10;
-                double angledelta = readHalfWord() / 10;
+                // Tenths of a degree, and these are DOUBLES - `/ 10` here was integer division,
+                // so every angle was truncated to a whole degree. Product 94's radials are 1.0
+                // deg wide and survived that by luck; a super-res product's are 0.5 deg, so
+                // angleDelta became 0, every bin wedge collapsed to a zero-area line, and the
+                // whole scan drew nothing at all.
+                double startangle = readHalfWord() / 10.0;
+                double angledelta = readHalfWord() / 10.0;
                 symbology_block.Radials[i] = new Radial();
                 symbology_block.Radials[i].StartAngle = startangle;
                 symbology_block.Radials[i].RadialBytes = bytes;

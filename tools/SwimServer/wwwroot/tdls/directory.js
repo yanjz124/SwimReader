@@ -48,7 +48,7 @@ function renderGrid(airports, hrefFor) {
     countBar.textContent = `${airports.length} airports  •  ${totalAc} acft  •  ${totalMsg} msg`;
     grid.innerHTML = airports.map(a => {
         const icao = a.airport;
-        return `<a class="card" href="${hrefFor(icao)}">
+        return `<a class="card" href="${hrefFor(icao)}" data-icao="${esc(icao)}">
             <div class="card-icao">${esc(icao)}</div>
             <div class="card-name">${AIRPORT_NAMES[icao] || ''}</div>
             <div class="card-counts">
@@ -57,6 +57,9 @@ function renderGrid(airports, hrefFor) {
             </div>
         </a>`;
     }).join('');
+    // Fill any card the curated table above doesn't name — including an airport that changed
+    // identifier, which is what left KPBI blank when it became KDJT.
+    window.AirportNames?.fill(grid);
 }
 
 async function refresh() {

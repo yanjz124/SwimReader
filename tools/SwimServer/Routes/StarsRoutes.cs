@@ -111,6 +111,9 @@ static class StarsRoutes
                 return Results.Bytes(content.Value.bytes, content.Value.contentType);
             });
 
+        // When the mirror last checked itself against vNAS, and what it did about it.
+        app.MapGet("/api/stars/videoMaps-sync", () => Results.Json(ctx.Stars.Sync, ctx.JsonOpts));
+
         app.MapGet("/api/stars/videoMaps/{artccId}", async (string artccId) =>
         {
             artccId = artccId.ToUpperInvariant();

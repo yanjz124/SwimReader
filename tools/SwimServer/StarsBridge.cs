@@ -93,6 +93,8 @@ class StarsBridge
         {
             try { await RefreshOnce(); }
             catch (Exception ex) { Console.Error.WriteLine($"[STARS] vNAS refresh: {ex.Message}"); }
+            try { await SweepStaleMapsAsync(); }
+            catch (Exception ex) { Console.Error.WriteLine($"[STARS] video map sweep: {ex.Message}"); }
             await Task.Delay(TimeSpan.FromHours(24));
         }
     }
@@ -360,6 +362,157 @@ class StarsBridge
         return stamps;
     }
 
+    // ── Keeping the mirror current, and keeping the local copy ours ─────────
+    //
+    // Fetch-on-demand keeps a map fresh once somebody opens it, which is not the same as the
+    // mirror being current: a map nobody looked at this month stays stale until they do. After
+    // each catalog refresh we therefore sweep what we already hold and re-pull only the files the
+    // catalog says have changed.
+    //
+    // Two rules guard the local copy, because it is what's left if vNAS is unreachable or wrong:
+    //
+    //   * a replacement must parse as GeoJSON, and must not take a map that had features down to
+    //     zero. Nothing here is signed, so authenticity can't be checked — but refusing to
+    //     overwrite good geometry with something that isn't geometry is cheap and catches both a
+    //     truncated download and an error page served with a 200.
+    //   * the version being replaced is kept, one generation, under _backup/.
+    //
+    // Nothing is ever deleted because the catalog stopped listing it. If vNAS loses a map or
+    // serves a short catalog, our copy is the one that survives.
+    private const int SweepMaxDownloads = 500;      // per sweep — a mass re-publish shouldn't thrash the SD card
+    private static readonly TimeSpan SweepPace = TimeSpan.FromMilliseconds(100);
+
+    public record SyncStatus(DateTime? LastRunUtc, int Checked, int Stale, int Updated,
+                             int Failed, int Rejected, bool Capped);
+    private volatile SyncStatus _sync = new(null, 0, 0, 0, 0, 0, false);
+    public SyncStatus Sync => _sync;
+
+    private string BackupPath(string artccId, string mapId)
+        => Path.Combine(_crcExportRoot, "_backup", artccId, mapId + ".geojson");
+
+    /// <summary>Does this parse as GeoJSON, and how many features does it carry?</summary>
+    private static bool LooksLikeGeoJson(byte[] bytes, out int features)
+    {
+        features = 0;
+        try
+        {
+            using var doc = JsonDocument.Parse(bytes);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
+            if (!doc.RootElement.TryGetProperty("type", out var t) || t.GetString() is not string ty)
+                return false;
+            if (doc.RootElement.TryGetProperty("features", out var f) && f.ValueKind == JsonValueKind.Array)
+                features = f.GetArrayLength();
+            return ty is "FeatureCollection" or "GeometryCollection" or "Feature";
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Validate, back up the old version, then replace. False = kept what we had.</summary>
+    private bool StoreMap(string path, byte[] bytes, string artccId, string mapId)
+    {
+        if (!LooksLikeGeoJson(bytes, out var newFeatures))
+        {
+            Console.Error.WriteLine($"[STARS] video map {artccId}/{mapId}: not GeoJSON ({bytes.Length} B) — keeping local copy");
+            return false;
+        }
+        if (File.Exists(path))
+        {
+            try
+            {
+                if (LooksLikeGeoJson(File.ReadAllBytes(path), out var oldFeatures)
+                    && oldFeatures > 0 && newFeatures == 0)
+                {
+                    Console.Error.WriteLine($"[STARS] video map {artccId}/{mapId}: {oldFeatures} features → 0 — keeping local copy");
+                    return false;
+                }
+            }
+            catch { /* unreadable local copy — let the replacement through */ }
+            try
+            {
+                var bak = BackupPath(artccId, mapId);
+                Directory.CreateDirectory(Path.GetDirectoryName(bak)!);
+                File.Copy(path, bak, overwrite: true);
+            }
+            catch { /* backup best-effort — never block an update on it */ }
+        }
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var tmp = path + ".tmp";
+            File.WriteAllBytes(tmp, bytes);
+            File.Move(tmp, path, overwrite: true);      // atomic, so a crash can't leave a half file
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[STARS] video map {artccId}/{mapId} write: {ex.Message}");
+            return false;
+        }
+    }
+
+    private async Task<byte[]?> DownloadMapAsync(string artccId, string mapId)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get,
+                $"{_videoMapBase}/{artccId}/{mapId}.geojson");
+            // The file store is public. These are sent only if set, in case vNAS ever gates it.
+            if (VnasToken is { Length: > 0 })
+                req.Headers.TryAddWithoutValidation("Authorization",
+                    VnasToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? VnasToken : "Bearer " + VnasToken);
+            if (VnasCookie is { Length: > 0 })
+                req.Headers.TryAddWithoutValidation("Cookie", VnasCookie);
+
+            using var resp = await _http.SendAsync(req);
+            if (resp.IsSuccessStatusCode) return await resp.Content.ReadAsByteArrayAsync();
+            Console.WriteLine($"[STARS] video map {artccId}/{mapId} -> {(int)resp.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[STARS] video map {artccId}/{mapId}: {ex.Message}");
+        }
+        return null;
+    }
+
+    /// <summary>Re-pull cached maps the catalog says have changed. Only ARTCCs we already hold.</summary>
+    private async Task SweepStaleMapsAsync()
+    {
+        int seen = 0, stale = 0, updated = 0, failed = 0, rejected = 0;
+        bool capped = false;
+        foreach (var artccId in await GetArtccIdsAsync())
+        {
+            var dir = Path.Combine(_crcExportRoot, artccId, "VideoMaps");
+            if (!Directory.Exists(dir)) continue;          // only maintain what this box already mirrors
+            Dictionary<string, DateTime> stamps;
+            try { stamps = await GetMapStampsAsync(artccId); }
+            catch { continue; }
+            if (stamps.Count == 0) continue;               // no catalog → nothing to compare against
+
+            foreach (var file in Directory.GetFiles(dir, "*.geojson"))
+            {
+                var mapId = Path.GetFileNameWithoutExtension(file);
+                // Not in the catalog any more: keep it. A map we hold and vNAS forgot is exactly
+                // the copy worth having.
+                if (!stamps.TryGetValue(mapId, out var published)) continue;
+                seen++;
+                if (File.GetLastWriteTimeUtc(file) >= published) continue;
+                stale++;
+                if (updated + failed + rejected >= SweepMaxDownloads) { capped = true; continue; }
+
+                var bytes = await DownloadMapAsync(artccId, mapId);
+                if (bytes is null) { failed++; }
+                else if (StoreMap(file, bytes, artccId, mapId)) { updated++; }
+                else { rejected++; }
+                await Task.Delay(SweepPace);
+            }
+        }
+        _sync = new SyncStatus(DateTime.UtcNow, seen, stale, updated, failed, rejected, capped);
+        Console.WriteLine($"[STARS] video map sweep: {seen} checked, {stale} stale, "
+            + $"{updated} updated, {failed} failed, {rejected} rejected"
+            + (capped ? $" (capped at {SweepMaxDownloads}; next sweep continues)" : ""));
+    }
+
     /// <summary>Every video-map id this ARTCC publishes, whether or not we hold a copy.</summary>
     public async Task<string[]> ListPublishedVideoMapIdsAsync(string artccId)
         => (await GetMapStampsAsync(artccId)).Keys.ToArray();
@@ -387,40 +540,15 @@ class StarsBridge
                 return ("application/geo+json", await File.ReadAllBytesAsync(path));
         }
 
-        try
-        {
-            var url = $"{_videoMapBase}/{artccId}/{mapId}.geojson";
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            // The file store is public. These are sent only if someone has set them, in case vNAS
-            // ever gates it.
-            if (VnasToken is { Length: > 0 })
-                req.Headers.TryAddWithoutValidation("Authorization",
-                    VnasToken.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? VnasToken : "Bearer " + VnasToken);
-            if (VnasCookie is { Length: > 0 })
-                req.Headers.TryAddWithoutValidation("Cookie", VnasCookie);
+        var fetched = await DownloadMapAsync(artccId, mapId);
+        if (fetched is not null && StoreMap(path, fetched, artccId, mapId))
+            return ("application/geo+json", fetched);
 
-            using var resp = await _http.SendAsync(req);
-            if (resp.IsSuccessStatusCode)
-            {
-                var bytes = await resp.Content.ReadAsByteArrayAsync();
-                try
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                    await File.WriteAllBytesAsync(path, bytes);
-                    File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
-                }
-                catch { /* cache best-effort */ }
-                return ("application/geo+json", bytes);
-            }
-            Console.WriteLine($"[STARS] video map {artccId}/{mapId} -> {(int)resp.StatusCode}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[STARS] video map {artccId}/{mapId}: {ex.Message}");
-        }
-
-        // Download failed — a stale copy still draws the right airport, which beats a blank scope.
+        // Download failed, or the replacement was rejected. A stale copy still draws the right
+        // airport, which beats a blank scope; after that, last generation's backup.
         if (have) return ("application/geo+json", await File.ReadAllBytesAsync(path));
+        var bak = BackupPath(artccId, mapId);
+        if (File.Exists(bak)) return ("application/geo+json", await File.ReadAllBytesAsync(bak));
         return null;
     }
 

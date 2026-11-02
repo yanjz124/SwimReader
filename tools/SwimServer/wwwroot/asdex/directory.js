@@ -1,4 +1,6 @@
-// Known airport names for display (augmented from live data as needed)
+// Curated short names for the cards. Anything missing here (a new ASDE-X site, or an airport that
+// changed identifier — see shared/airport-names.js) is filled in from the server's directory, so
+// this table never has to be exhaustive and a rename can't leave a blank card.
 const AIRPORT_NAMES = {
     KATL:'ATLANTA',KBDL:'BRADLEY',KBOS:'BOSTON',KBWI:'BALTIMORE',
     KCLE:'CLEVELAND',KCLT:'CHARLOTTE',KCVG:'CINCINNATI',KDCA:'WASHINGTON REAGAN',
@@ -41,12 +43,15 @@ async function refresh() {
             const icao = a.airport;
             const name = AIRPORT_NAMES[icao] || '';
             const href = '/asdex/' + icao.toLowerCase();
-            return `<a class="card" href="${href}">
+            return `<a class="card" href="${href}" data-icao="${icao}">
                 <div class="card-icao">${icao}</div>
                 <div class="card-name">${name}</div>
                 <div class="card-count"><span>${a.count}</span>TRACKS</div>
             </a>`;
         }).join('');
+        // Anything the curated table above doesn't name — a new field, or one that changed
+        // identifier — gets filled from the server's airport directory.
+        window.AirportNames?.fill(grid);
     } catch (e) {
         statusEl.textContent = 'ERROR';
         statusEl.className = '';

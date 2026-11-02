@@ -1150,6 +1150,86 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 | `FlushDirty` | 1s | Send new messages to WebSocket clients |
 | `PurgeStale` | 60s | No-op — all aircraft and messages retained indefinitely |
 
+## NEXRAD in replay — two scopes, two sources, no stored weather
+
+A replay showing *this minute's* weather over archived traffic is worse than showing none. Both
+scopes now ask for the volume that was on the scope then, and neither stores anything of ours.
+
+**ERAM** (`eram.js`) switches its WMS from nowCOAST's live mosaic to **IEM's time-addressable
+archive** (`mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi`, `&time=`), slotted to 5 minutes
+because that is IEM's archive granularity. `refreshNexrad()` double-buffers, so the old layer is
+only removed once the new one loads.
+
+**STARS** (`stars/nexrad.js`) can't use that — it decodes **single-site Level III radials**, not a
+CONUS raster. It uses **Unidata's public S3 mirror of the NIDS feed**, `unidata-nexrad-level3`,
+keyed `{SITE}_{PROD}_{yyyy}_{MM}_{dd}_{HH}_{mm}_{ss}` with SITE the **3-letter** id (KDMX→DMX,
+PAHG→AHG, TJUA→JUA). It goes back to **2015** and is current to the minute. Those files are
+byte-for-byte what tgftp serves live — same 30-byte WMO header (`SDUS53 KDMX …`), same
+message/description/symbology blocks — so `RadialPacketDecoder` reads them unchanged.
+
+**The product names differ.** The archive carries the super-res set that replaced what tgftp still
+publishes under the old names. Per site it has N0B/NCR/N0S/N0G/DAA/DPR/EET/NVL/NST/NMD/N0C/N0X and
+**no N0Q, N0R or NCZ**:
+
+| ours | live (tgftp) | archive | code | range |
+|---|---|---|---|---|
+| `p94r0` | N0Q, code 94 | **N0B** | 153 | 248 nm |
+| `p38cr` | NCZ, code 38 | **NCR** | 37 | 124 nm |
+
+`?time=` on `/api/stars/nexrad/radials/{station}/{product}` picks the newest volume at or before
+that instant. Keys sort lexicographically in time order, so that's a prefix list plus a scan, over
+t's hour **and the one before** — at 15:01 the answer is often a 14:58 volume, and in clear-air mode
+(one volume per ~10 min) that gap is routine. A resolved volume is immutable so it's cached without
+a TTL, but replay invents a key per volume scrubbed past and a decoded super-res volume is 720
+radials × ~1840 bins, so the cache is **bounded at 12**; re-resolving costs one S3 GET.
+
+### Gate live requests on the URL, not on ReplayBar
+`ReplayBar.isActive()` only turns true once the replay socket is up, which **races** with the
+NEXRAD module's own station lookup — so whichever won decided whether the first fetch went live.
+`REPLAY_PAGE` reads `?replay=` / `?incident=` instead (what `scope.js` calls `REPLAY_MODE` /
+`INCIDENT_ID`): true from the first line, never changes. The guard sits in `fetchRadials()`, the one
+chokepoint `init`, `tick`, `setProduct` and `enable` all pass through.
+
+One timer serves both modes: live refetches on the NWS publish cadence, a replay refetches when its
+own clock crosses a 2-minute slot — so at 10× the weather keeps step with the traffic. Measured over
+a 12:03→13:44 replay: **19 distinct archived volumes, each 1-5 min behind its clock, 0 of 45
+requests live.**
+
+### The half-degree bug — why this drew *nothing* at first
+Archived volumes arrived, decoded, and filled **zero pixels**: 36,649 bins above 20 dBZ, 146,596
+`geoToScreen` calls, every coordinate finite, no exception.
+
+`StartAngle`, `AngleDelta` and `ScaleFactor` are `double` fields in `RadialPacketDecoder`, but were
+assigned from `readHalfWord() / 10` — **int / int**, so every angle truncated to a whole degree.
+Product 94's radials are 1.0° wide and survived by luck, which is why live weather always looked
+fine. A super-res product's are **0.5°**, so `angleDelta` became 0, `p00 == p01` and `p10 == p11`,
+every bin wedge was a zero-area line, and `fill()` had nothing to shade. Pre-existing — nothing had
+ever fed this decoder a half-degree product.
+
+Worth remembering as a shape: a decode that produces *plausible* numbers and draws nothing usually
+means degenerate geometry, not missing data. Counting `geoToScreen` calls from inside `draw()` is
+what separated "the loop never ran" from "the loop ran and produced zero-area polygons".
+
+### NIDS timestamps are UTC
+`readTimeStamp()` used to run the value through a helper that called `ToLocalTime()`, shifting every
+volume time by the server's UTC offset (−5 h on the Pi). Harmless while nothing read the field; not
+harmless once replay reports which volume it is showing, since that is the number you check to tell
+whether replay honours its own clock. The date is days since 1970-01-01 **counting that day as day
+1**, the time is seconds since midnight GMT.
+
+### Known-dormant: the composite product
+`p38cr` decodes to `numRadials = 0` **both live and archived** — composite reflectivity is a raster
+product (there is a `RasterPacketDecoder`), and it's being fed to the radial one. Nothing calls
+`Nexrad.setProduct()`, so the path is unreachable from the UI and inert. Wiring it up means using
+the raster decoder, not changing the range table.
+
+### Checking this after a change
+`GET /api/stars/nexrad/radials/{stn}/p94r0` with and without `?time=` and compare the echo
+footprint — dBZ-weighted mean range, p99 range and centroid bearing must agree between live and
+archive (measured at KMLB: 42.0 vs 41.6 nm, 174.9 vs 175.4 nm, 232.6° vs 233.1°). That is the only
+check that catches a wrong `range` for a product code, since nothing errors — the echoes just get
+drawn at the wrong distance. The payload carries `code`, `volumeTime` and `archived` for this.
+
 ## Handing a flight to SimBrief / VATSIM
 
 Both `/dispatch` and the flight table's detail panel do this, with the same conventions.

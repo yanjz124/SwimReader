@@ -67,10 +67,14 @@
   }
 
   const FETCH_INTERVAL_MS = 4 * 60 * 1000;   // matches NWS publish cadence
+  const TICK_MS           = 3 * 1000;        // how often we reconsider fetching
+  const REPLAY_SLOT_MS    = 2 * 60 * 1000;   // replay-clock granularity for a refetch
   let _refreshTimer = null;
   let _station = null;      // { icao, lat, lon, name, state }
   let _product = "p94r0";   // base reflectivity (NexradDisplay.URL default)
   let _radials = null;      // decoded radials payload from /api/stars/nexrad/radials
+  let _lastLiveFetch = 0;
+  let _replaySlot = null;   // non-null while replaying: which 2-min slot we last fetched
 
   async function pickStation() {
     if (!window.prefSet?.ScreenCenterPoint) return null;
@@ -84,18 +88,57 @@
     } catch { return null; }
   }
 
+  // Replay must show the weather that was on the scope then, so the request carries the replay
+  // clock and the server answers out of the archive. ReplayBar is the authority on whether a
+  // replay is running — the STARS scope's own _replayActive is module-private.
+  function replayTime() {
+    if (!window.ReplayBar?.isActive?.()) return null;
+    const t = ReplayBar.currentTime();
+    const d = t ? new Date(t) : null;
+    return d && !isNaN(d) ? d.toISOString() : null;
+  }
+
   async function fetchRadials() {
     if (!_station) return false;
+    const rt = replayTime();
     try {
-      const url = `/api/stars/nexrad/radials/${_station.icao}/${_product}`;
+      const url = `/api/stars/nexrad/radials/${_station.icao}/${_product}`
+                + (rt ? `?time=${encodeURIComponent(rt)}` : "");
       const r = await fetch(url);
-      if (!r.ok) { console.warn("[STARS NEXRAD] radials fetch", r.status); return false; }
+      if (!r.ok) {
+        // In replay a miss means the archive has no volume for this time. Keeping the last scan
+        // would leave live (or simply wrong-era) weather under archived traffic, so drop it.
+        if (rt) _radials = null;
+        console.warn("[STARS NEXRAD] radials fetch", r.status, rt ? `@ ${rt}` : "(live)");
+        return false;
+      }
       _radials = await r.json();
       return true;
     } catch (e) {
+      if (rt) _radials = null;
       console.warn("[STARS NEXRAD] radials fetch failed:", e);
       return false;
     }
+  }
+
+  // One timer for both modes: live refetches on the NWS publish cadence, a replay refetches when
+  // its own clock crosses into a new slot — so scrubbing or running at 10x keeps the weather in
+  // step with the traffic instead of with wall-clock time.
+  async function tick() {
+    const rt = replayTime();
+    if (rt) {
+      const slot = Math.floor(new Date(rt).getTime() / REPLAY_SLOT_MS);
+      if (slot === _replaySlot) return;
+      if (_replaySlot === null) _radials = null;   // entering replay: drop the live scan at once
+      _replaySlot = slot;
+      _lastLiveFetch = 0;                          // force a live refetch once replay ends
+      await fetchRadials();
+      return;
+    }
+    if (_replaySlot !== null) { _replaySlot = null; _radials = null; }
+    if (Date.now() - _lastLiveFetch < FETCH_INTERVAL_MS) return;
+    const ok = await fetchRadials();
+    _lastLiveFetch = ok ? Date.now() : Date.now() - FETCH_INTERVAL_MS + 30000;
   }
 
   // GeoPoint.FromPoint equivalent — bearing in degrees true, distance NM.
@@ -235,14 +278,16 @@
       return;
     }
     console.log(`[STARS NEXRAD] using ${_station.icao} ${_station.name}, ${_station.state}`);
-    await fetchRadials();
+    if (await fetchRadials()) _lastLiveFetch = Date.now();
     if (_refreshTimer) clearInterval(_refreshTimer);
-    _refreshTimer = setInterval(fetchRadials, FETCH_INTERVAL_MS);
+    _refreshTimer = setInterval(tick, TICK_MS);
   }
 
   window.Nexrad = {
     init,
     fetchRadials,
+    replayTime,
+    volumeTime() { return _radials?.volumeTime || null; },
     setProduct(p) { _product = p; fetchRadials(); },
     getStation()  { return _station; },
     draw,

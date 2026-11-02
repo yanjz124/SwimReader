@@ -1,0 +1,10 @@
+{
+  "name": "faa-swim",
+  "description": "Query live FAA SWIM air-traffic data through a SwimReader server: track a flight across every source, airport conditions, surface and departure boards, terminal clearances, feed health, flight history and airline research.",
+  "version": "1.0.0",
+  "author": {
+    "name": "yanjz124"
+  },
+  "homepage": "https://github.com/yanjz124/SwimReader",
+  "keywords": ["aviation", "atc", "faa", "swim", "sfdps", "stars", "eram", "nexrad"]
+}

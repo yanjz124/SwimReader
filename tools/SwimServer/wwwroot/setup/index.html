@@ -117,6 +117,9 @@ const FEEDS = [
   { key:'ITWS', title:'ITWS — Terminal weather',
     host:'ITWS_HOST', vpn:'ITWS_VPN', user:'ITWS_USER', pass:'ITWS_PASS', queue:'ITWS_QUEUE',
     dHost:'tcps://ems1.swim.faa.gov:55443', dVpn:'ITWS' },
+  { key:'TBFM', title:'TBFM — Metering (ERAM STA / delay RDBs)',
+    host:'TBFM_HOST', vpn:'TBFM_VPN', user:'TBFM_USER', pass:'TBFM_PASS', queue:'TBFM_QUEUE',
+    dHost:'tcps://ems2.swim.faa.gov:55443', dVpn:'TBFM' },
 ];
 
 function fieldRow(id, label, ph, type) {

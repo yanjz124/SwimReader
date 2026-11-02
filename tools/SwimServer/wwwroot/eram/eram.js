@@ -198,6 +198,89 @@ let crrColorSelectorOpen = false;
 let crrRdbEnabled = false;
 let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles with Ctrl+Shift+O)
 
+// ── TBFM metering RDBs (STA RDB / DELAY RDB / DELAY FORMAT) ──
+// Data: /api/tbfm/eram, from the TBFM MIS feed (TbfmBridge). STA is the meter-fix STA (runway STA
+// when no meter fix is scheduled), shown HHMM zulu. Delay = STA - ETA at the same point, i.e. the
+// time the aircraft must lose; DELAY FORMAT switches whole minutes (+3) to minutes:seconds (+3:20).
+// Live only: TBFM schedules are not recorded, so replay shows no metering rather than today's.
+let staRdbEnabled = false;
+let delayRdbEnabled = false;
+let delayFormatSeconds = false;
+let tbfmByGufi = new Map();     // TBFM gufi -> record
+let tbfmByCallsign = new Map(); // callsign -> [records]
+const TBFM_POLL_MS = 15000;
+
+async function pollTbfm() {
+    if (!(staRdbEnabled || delayRdbEnabled) || replayActive || INCIDENT_ID) {
+        if (tbfmByGufi.size || tbfmByCallsign.size) {
+            tbfmByGufi = new Map(); tbfmByCallsign = new Map();
+            invalidateAllMarkers();
+        }
+        return;
+    }
+    try {
+        const r = await fetch('/api/tbfm/eram');
+        if (!r.ok) return;
+        const j = await r.json();
+        const byGufi = new Map(), byCs = new Map();
+        for (const t of (j.flights || [])) {
+            if (t.gufi) byGufi.set(t.gufi, t);
+            if (t.aid) {
+                const list = byCs.get(t.aid) || [];
+                list.push(t);
+                byCs.set(t.aid, list);
+            }
+        }
+        tbfmByGufi = byGufi; tbfmByCallsign = byCs;
+    } catch { /* keep the last good set */ }
+}
+setInterval(pollTbfm, TBFM_POLL_MS);
+setTimeout(pollTbfm, 1500);  // a toggle persisted ON shouldn't wait a full poll period
+
+// Match an SFDPS flight to its TBFM record: GUFI first, then callsign + destination, then a
+// callsign that only one TBFM record carries.
+function getTbfm(f) {
+    if (!tbfmByGufi.size && !tbfmByCallsign.size) return null;
+    const g = (f.fdpsGufi && tbfmByGufi.get(f.fdpsGufi)) || (f.gufi && tbfmByGufi.get(f.gufi));
+    if (g) return g;
+    const list = f.callsign ? tbfmByCallsign.get(f.callsign) : null;
+    if (!list) return null;
+    const dest = (f.destination || '').toUpperCase().replace(/^K(?=[A-Z0-9]{3}$)/, '');
+    return list.find(t => t.apt && t.apt === dest) || (list.length === 1 ? list[0] : null);
+}
+
+function _zuluHHMM(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    return String(d.getUTCHours()).padStart(2, '0') + String(d.getUTCMinutes()).padStart(2, '0');
+}
+
+// The STA / delay parts of the RDB, or '' when nothing applies.
+function tbfmRdbText(f) {
+    if (!(staRdbEnabled || delayRdbEnabled)) return '';
+    const t = getTbfm(f);
+    if (!t) return '';
+    const useMfx = !!t.staMfx;
+    const sta = useMfx ? t.staMfx : t.staRwy;
+    const eta = useMfx ? t.etaMfx : t.etaRwy;
+    const parts = [];
+    if (staRdbEnabled && sta) {
+        const hhmm = _zuluHHMM(sta);
+        if (hhmm) parts.push(hhmm);
+    }
+    if (delayRdbEnabled && sta && eta) {
+        const sec = Math.round((new Date(sta) - new Date(eta)) / 1000);
+        if (isFinite(sec)) {
+            const sign = sec < 0 ? '-' : '+';
+            const a = Math.abs(sec);
+            parts.push(delayFormatSeconds
+                ? `${sign}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`
+                : `${sign}${Math.round(a / 60)}`);
+        }
+    }
+    return parts.join(' ');
+}
+
 function setCrrColor(color) {
     crrColor = color;
     updateCrrMenuBody();
@@ -2768,10 +2851,16 @@ function buildMarkerHtml(f, cls) {
 
         // CRR RDB (Range Data Block) — distance to group location in nautical miles
         // Position relative to target icon (0,0), cycling around it
+        const rdbParts = [];
         if (crrRdbEnabled && f.latitude && f.longitude) {
             const rdbDist = getCrrRdbDistance(f);
-            if (rdbDist !== null) {
-                const rdbText = rdbDist.toFixed(1) + 'nm';
+            if (rdbDist !== null) rdbParts.push(rdbDist.toFixed(1) + 'nm');
+        }
+        const tbfmText = tbfmRdbText(f);
+        if (tbfmText) rdbParts.push(tbfmText);
+        {
+            if (rdbParts.length) {
+                const rdbText = rdbParts.join(' ');
 
                 // RDB offsets cycle around the target symbol (0,0)
                 const offsetConfigs = [
@@ -3888,7 +3977,8 @@ function flightHash(f, cls) {
     const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
     const coast = isCoasting(f) ? 1 : 0;
     const ais = f._altInitialSide || 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}|${showPortalFence?1:0}`;
+    const tbfmH = tbfmRdbText(f);
+    return `${tbfmH}|${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}|${showPortalFence?1:0}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -5894,6 +5984,9 @@ function loadSettingsFromLocalStorage() {
         if (settings.showPortalFence !== undefined) showPortalFence = settings.showPortalFence;
         if (settings.crrRdbEnabled !== undefined) crrRdbEnabled = settings.crrRdbEnabled;
         if (settings.crrRdbOffset !== undefined) crrRdbOffset = settings.crrRdbOffset;
+        if (settings.staRdbEnabled !== undefined) staRdbEnabled = settings.staRdbEnabled;
+        if (settings.delayRdbEnabled !== undefined) delayRdbEnabled = settings.delayRdbEnabled;
+        if (settings.delayFormatSeconds !== undefined) delayFormatSeconds = settings.delayFormatSeconds;
         if (settings.artccBoundShow !== undefined) artccBoundShow = settings.artccBoundShow;
         if (settings.artccBoundBrightness !== undefined) artccBoundBrightness = settings.artccBoundBrightness;
         if (settings.stateBoundShow !== undefined) stateBoundShow = settings.stateBoundShow;
@@ -6008,6 +6101,9 @@ function saveSettingsToLocalStorage() {
         showPortalFence,
         crrRdbEnabled,
         crrRdbOffset,
+        staRdbEnabled,
+        delayRdbEnabled,
+        delayFormatSeconds,
         artccBoundShow,
         artccBoundBrightness,
         stateBoundShow,
@@ -8041,7 +8137,7 @@ document.addEventListener('keydown', e => {
 
     // Ctrl+Shift+O → cycle CRR RDB offset
     if (e.ctrlKey && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
-        if (crrRdbEnabled) {
+        if (crrRdbEnabled || staRdbEnabled || delayRdbEnabled) {
             crrRdbOffset = (crrRdbOffset + 1) % 4;
             invalidateAllMarkers();
         }
@@ -10383,18 +10479,32 @@ const TB_DB_FIELDS = {
             }),
             toggle('STA RDB', {
                 cls: 'tb-toggle-gray',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => staRdbEnabled,
+                onToggle: (on) => {
+                    staRdbEnabled = on;
+                    pollTbfm().then(invalidateAllMarkers);
+                    invalidateAllMarkers();
+                    saveSettingsToLocalStorage();
+                },
             }),
             toggle('DELAY\nRDB', {
                 cls: 'tb-toggle-gray',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => delayRdbEnabled,
+                onToggle: (on) => {
+                    delayRdbEnabled = on;
+                    pollTbfm().then(invalidateAllMarkers);
+                    invalidateAllMarkers();
+                    saveSettingsToLocalStorage();
+                },
             }),
             toggle('DELAY\nFORMAT', {
                 cls: 'tb-toggle-gray',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => delayFormatSeconds,
+                onToggle: (on) => {
+                    delayFormatSeconds = on;
+                    invalidateAllMarkers();
+                    saveSettingsToLocalStorage();
+                },
             }),
         ],
     ],

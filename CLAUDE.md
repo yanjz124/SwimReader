@@ -1659,6 +1659,31 @@ Place KML files in the repo root (gitignored, not committed):
 - `AllHighSectors.kml`, `AllLowSectors.kml` — available via API, toggleable in sidebar
 - KML categories parsed from `<name>` tags: UHI (ultra-high), HI (high), LO (low), APP (approach)
 
+## TBFM metering → ERAM STA / DELAY RDBs (needs its own subscription)
+
+**None of the five feeds carry TBFM schedules.** STA and meter-fix delay come from the **TBFM
+Metering Information Service (TBFM MIS)**, a separate SCDS subscription. `TbfmBridge` consumes it
+with `TBFM_HOST`/`TBFM_VPN`/`TBFM_USER`/`TBFM_PASS`/`TBFM_QUEUE` (`TBFM_FLOWS` for receivers), and
+stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` guard like the others.
+
+- Message shape: `<env envSrce>` → `<tma msgTime>` → `<air aid apt dap gufi tmaId airType>`, with
+  `mfx`, `rwy`, `eta_mfx`/`eta_rwy` and `sta_mfx`/`sta_rwy` somewhere beneath `<air>`. The layout
+  and the `eta_*`/`mfx`/`rwy` names come from an open-source TBFM MIS consumer. **The `sta_*` names
+  are inferred by analogy and unverified.** The parser matches by local name anywhere under `<air>`,
+  and `GET /api/tbfm/debug` keeps 20 raw samples plus a count of every element name seen. Check it
+  first when the feed goes live: if `withSta` is 0 while `airRecords` climbs, the STA tag names are
+  wrong.
+- Updates are partial; fields merge non-null onto a record keyed `envSrce/tmaId` (fallback `aid/apt`).
+  Purged 20 min after the last update or 10 min after the STA has passed.
+- `GET /api/tbfm/eram` gives the scope its compact records. **LADD callsigns are dropped there**,
+  because the scope matches by callsign.
+- Scope (`eram.js`): polls every 15 s, and only while STA RDB or DELAY RDB is on. Matching is by
+  GUFI, then by callsign + destination, then by a callsign that only one TBFM record carries. The
+  RDB shows the meter-fix STA as `HHMM` (runway STA if there's no meter fix). Delay is `STA − ETA`
+  at the same point, as `+3`, or `+3:20` with DELAY FORMAT on. It shares the RDB with the CRR
+  distance and follows the same `Ctrl+Shift+O` offset. **Live only**: TBFM isn't recorded, so
+  replay and incident views show no metering rather than today's.
+
 ## ITWS: only PHL has the alerting products (queue subscription, not a bug)
 
 "ITWS isn't showing anything" is usually this. The feed is healthy (~11 msg/s, no discards) and the

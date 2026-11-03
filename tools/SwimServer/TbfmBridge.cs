@@ -68,7 +68,10 @@ class TbfmBridge
 
     public void Start()
     {
-        var receivers = SolaceTuning.Receivers("TBFM_FLOWS", 1);
+        // Default 3: TBFM runs several times SFDPS's rate (measured 164-523 msg/s on 3 flows). On
+        // one flow lag sat flat at ~10 s and never drained, the same single-session transport
+        // ceiling CLAUDE.md describes for SFDPS; busyPct stayed under 3%, so parsing isn't it.
+        var receivers = SolaceTuning.Receivers("TBFM_FLOWS", 3);
         for (int i = 0; i < receivers; i++)
         {
             var idx = i;

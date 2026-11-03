@@ -252,7 +252,7 @@ the bottleneck. Each receiver also runs its own silence watchdog, so one dead fl
 reconnected while its siblings are busy.
 
 All five bridges take the same shape now — `SolaceTuning.Receivers(env, default)` and a
-`_processGate` lock per bridge. Defaults: **SFDPS 3, TFMS 2**, the rest 1, via `SFDPS_FLOWS` /
+`_processGate` lock per bridge. Defaults: **SFDPS 3, TBFM 3, TFMS 2**, the rest 1, via `SFDPS_FLOWS` /
 `TFMS_FLOWS` / `STDDS_FLOWS` / `TFDM_FLOWS` / `ITWS_FLOWS`. TFMS went from 10-12 s of lag to
 **1.1 s** on two receivers; TFDM and ITWS sit at 0.0-0.1 s on one and need nothing.
 
@@ -1664,7 +1664,8 @@ Place KML files in the repo root (gitignored, not committed):
 
 **None of the five feeds carry TBFM schedules.** STA and meter-fix delay come from the **TBFM
 Metering Information Service (TBFM MIS)**, a separate SCDS subscription. `TbfmBridge` consumes it
-with `TBFM_HOST`/`TBFM_VPN`/`TBFM_USER`/`TBFM_PASS`/`TBFM_QUEUE` (`TBFM_FLOWS` for receivers), and
+with `TBFM_HOST`/`TBFM_VPN`/`TBFM_USER`/`TBFM_PASS`/`TBFM_QUEUE` (`TBFM_FLOWS` for receivers, default **3**: TBFM runs 164-523 msg/s, several times SFDPS,
+and one flow sat at ~10 s lag that never drained), and
 stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` guard like the others.
 
 - Message shape (verified live 2026-11-02): `<env envSrce="TMA.ZOB.FAA.GOV">` → `<tma>` →

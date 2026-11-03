@@ -1304,6 +1304,53 @@ Two traps are already baked in:
   nothing about this particular rename. Output: `PBI → DJT, retired — the field at these
   coordinates is now DJT`.
 
+### A facility with no STARS config is the common case, not an error
+
+`/stars/{artcc}/{facility}` used to serve the scope shell for **any** two strings. A facility with
+no `starsConfiguration` therefore drew a blank screen and explained nothing — no maps, no ASR
+sites, centred on whatever `visibilityCenters[0]` happened to be. That is not an edge case:
+measured across 10 ARTCCs, **306** facilities have no STARS config and only 6 in ZMA do.
+
+DJT is why it looked like a video-map bug. vNAS splits Palm Beach into the **ATCT (DJT**, no
+config, 0 maps**)** and the **TRACON (PBI**, 160 maps**)**, and names *both* "Palm Beach ATCT".
+After the airport's PBI→DJT rename, DJT is the identifier you reach for and the one that shows
+nothing — while PBI, which looks stale, is the one that works. vNAS's facility id stays PBI; that
+is their data, not ours to rename.
+
+`StarsBridge.Resolve` (pure, over the facility tree) now classifies the request:
+
+| status | when | what the route does |
+|---|---|---|
+| `Ok` | has a `starsConfiguration` | serve the scope, redirecting to canonical case |
+| `Aliased` | no config, but **exactly one** STARS facility in the ARTCC shares its name | 302 to that facility, query string preserved |
+| `NoStarsConfig` | no config, no unique name match | 302 to the picker with `?notice=` |
+| `NotFound` | no such id in this ARTCC | 302 to the picker with `?notice=` |
+| `Unknown` | vNAS unreachable | **serve the scope anyway** — fail open |
+
+**The alias rule is name-based on purpose.** Over those 306 non-STARS facilities it fires exactly
+once (DJT → PBI) and is **never ambiguous**, so it needs no table and handles the next ATCT/TRACON
+split by itself. Requiring *exactly one* match is what makes that safe — two matches means say
+nothing. `Unknown` fails open deliberately: an upstream blip must not turn a facility that normally
+works into an error page.
+
+Two smaller bugs in the same path: `FindFacility` compared ids with `==`, so `/stars/zma/pbi` —
+a URL people type — 404'd and fed the scope a 404 body where it expected a facility; it is
+case-insensitive now, and `Ok` canonicalises the URL so one spelling reaches everything
+downstream. `/api/stars/facility/...` also returns `hasStars` so no caller has to infer
+"displayable" from a null config.
+
+**The `?notice=` banner is rendered with `textContent`, never `innerHTML`** — it comes straight off
+the query string, so innerHTML would be a reflected-XSS hole on a page anyone can link to.
+
+### The SFDPS watchdog was killing local instances every four minutes
+
+`SWIM_FEED_HOST` is documented as leaving "pages, APIs, the flight cache and replay" working for
+local UI work. They did not: `FeedGuard` blocks the SFDPS thread, so `lastMessageTicks` never
+advances, so the 240 s health escalation fired and stopped the process — on a loop. The watchdog
+now returns early when SFDPS was never started (no `SFDPS_USER`, or `FeedGuard.LiveFeed` false).
+A no-op in production, where both are true, and it is what makes verifying a change locally
+possible at all.
+
 ## The home page rate was a lifetime average
 
 "The website shows 44 msg/s but the portal shows 93 — where is half the feed going?" Nowhere.

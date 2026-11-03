@@ -68,6 +68,11 @@
   .areas { border-bottom: 1px solid #1a1a08; }
   .placeholder { padding: 16px; color: #888835; }
   .nostars { color: #888; font-style: italic; padding: 16px; }
+  /* Shown when the scope route sent us back here — a facility with no STARS configuration, or
+     an id this ARTCC doesn't have. The scope used to render blank in both cases. */
+  .notice { display: none; margin: 0 20px 12px; padding: 10px 12px; font-size: 12px;
+            color: #cccc44; background: #2a2a12; border: 1px solid #6b6b22; border-radius: 3px; }
+  .notice.on { display: block; }
   .spinner {
     display: inline-block;
     width: 12px;
@@ -119,6 +124,7 @@
     </span>
   </div>
 </div>
+<div class="notice" id="notice"></div>
 <div class="layout">
   <div class="col">
     <h2>ARTCC</h2>
@@ -307,6 +313,17 @@ async function selectArtcc(id) {
     $("facilities").innerHTML = `<div class="placeholder">Error: ${e}</div>`;
   }
 }
+
+// The scope route redirects here with ?notice= when a facility can't be displayed (no STARS
+// configuration, or an id this ARTCC doesn't have) instead of drawing a blank scope.
+// textContent, never innerHTML — this string comes straight off the query string.
+(function showNotice() {
+  const msg = new URLSearchParams(location.search).get("notice");
+  if (!msg) return;
+  const el = $("notice");
+  el.textContent = msg;
+  el.classList.add("on");
+})();
 
 loadTaisRanges().then(loadArtccs);
 </script>

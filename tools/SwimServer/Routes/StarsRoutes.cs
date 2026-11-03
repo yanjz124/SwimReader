@@ -8,6 +8,49 @@ namespace SwimServer;
 /// </summary>
 static class StarsRoutes
 {
+    // Where a scope request should go instead of the scope, or null to serve it.
+    //
+    // Before this, `/stars/{artcc}/{facility}` served the scope shell for any two strings — a
+    // facility with no starsConfiguration (306 of them across 10 ARTCCs), a typo, or just a
+    // lowercase id all produced a blank screen with no explanation. See the alias rule on
+    // StarsBridge.Resolve for why DJT in particular looked like a video-map bug.
+    private static async Task<string?> ScopeRedirect(
+        ServerContext ctx, HttpContext c, string artcc, string facility, string basePath)
+    {
+        var r = await ctx.Stars.ResolveFacilityAsync(artcc, facility);
+        var qs = c.Request.QueryString.HasValue ? c.Request.QueryString.Value! : "";
+
+        // Back to the picker that matches the surface we came from (/stars or /starsv2), which is
+        // already the right destination: it lists exactly the facilities that do have a config.
+        string Notice(string msg) => $"{basePath}?notice=" + Uri.EscapeDataString(msg);
+
+        switch (r.Status)
+        {
+            case StarsBridge.StarsFacilityStatus.Aliased:
+                // DJT → PBI. Keep the query string so ?area=/?replay=/?profile= survive the hop.
+                return $"{basePath}/{artcc.ToUpperInvariant()}/{r.AliasOf}{qs}";
+
+            case StarsBridge.StarsFacilityStatus.NoStarsConfig:
+                return Notice($"{r.FacilityId} ({r.Type ?? "unknown type"}) has no STARS "
+                            + $"configuration in {artcc.ToUpperInvariant()}, so there is nothing to "
+                            + "display. Pick a facility below.");
+
+            case StarsBridge.StarsFacilityStatus.NotFound:
+                return Notice($"{artcc.ToUpperInvariant()} has no facility \"{r.FacilityId}\". "
+                            + "Pick a facility below.");
+
+            case StarsBridge.StarsFacilityStatus.Ok:
+                // Canonicalise the case so everything downstream — the scope's own
+                // /api/stars/facility fetch, bookmarks, replay links — sees one spelling.
+                var canonical = $"{basePath}/{artcc.ToUpperInvariant()}/{r.FacilityId}";
+                return string.Equals(c.Request.Path.Value, canonical, StringComparison.Ordinal)
+                    ? null : canonical + qs;
+
+            default:
+                return null;   // Unknown — vNAS unreachable; serve it rather than block it.
+        }
+    }
+
     public static void Register(WebApplication app, ServerContext ctx)
     {
         // Landing page: ARTCC + facility picker
@@ -24,6 +67,11 @@ static class StarsRoutes
         app.MapGet("/stars/{artcc:regex(^[A-Za-z0-9]+$)}/{facility:regex(^[A-Za-z0-9]+$)}",
             async (HttpContext c, string artcc, string facility) =>
             {
+                if (await ScopeRedirect(ctx, c, artcc, facility, "/stars") is { } to)
+                {
+                    c.Response.Redirect(to);
+                    return;
+                }
                 var dir = Path.Combine(ctx.WebRootPath, "stars");
                 var html = await File.ReadAllTextAsync(Path.Combine(dir, "scope.html"));
                 long ver = 0;
@@ -55,6 +103,11 @@ static class StarsRoutes
         app.MapGet("/starsv2/{artcc:regex(^[A-Za-z0-9]+$)}/{facility:regex(^[A-Za-z0-9]+$)}",
             async (HttpContext c, string artcc, string facility) =>
             {
+                if (await ScopeRedirect(ctx, c, artcc, facility, "/starsv2") is { } to)
+                {
+                    c.Response.Redirect(to);
+                    return;
+                }
                 var dir = Path.Combine(ctx.WebRootPath, "stars");
                 var html = await File.ReadAllTextAsync(Path.Combine(dir, "starsv2.html"));
                 long ver = 0;

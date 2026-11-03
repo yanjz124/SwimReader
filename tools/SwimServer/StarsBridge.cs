@@ -170,6 +170,93 @@ class StarsBridge
         }
     }
 
+    // ── Is this facility displayable at all? ────────────────────────────────
+    //
+    // `/stars/{artcc}/{facility}` used to serve the scope shell for ANY two strings, so a facility
+    // with no `starsConfiguration` drew a blank screen and said nothing. That is the COMMON case,
+    // not an edge one: measured over 10 ARTCCs, 306 facilities have no STARS config.
+    //
+    // What made it baffling is DJT. vNAS splits Palm Beach into the ATCT (**DJT**, no config, 0
+    // video maps) and the TRACON (**PBI**, 160 maps) — and names BOTH of them "Palm Beach ATCT".
+    // So after the airport's PBI→DJT rename, DJT is the identifier you reach for and the one that
+    // shows nothing.
+    //
+    // Hence the alias rule: a non-STARS facility whose name matches **exactly one** STARS facility
+    // in the same ARTCC resolves to it. Over those 306 that fires exactly once (DJT → PBI) and is
+    // never ambiguous, and unlike a hardcoded table it handles the next ATCT/TRACON split on its
+    // own. Requiring uniqueness is what makes it safe — two matches means we say nothing.
+
+    public enum StarsFacilityStatus
+    {
+        Ok,             // has a starsConfiguration — serve the scope
+        Aliased,        // no config, but exactly one same-named STARS facility — send them there
+        NoStarsConfig,  // no config and no unique alias — nothing to display
+        NotFound,       // the ARTCC has no facility with this id
+        Unknown,        // vNAS unreachable; we can't tell, so don't block
+    }
+
+    public record StarsFacilityResolution(StarsFacilityStatus Status, string FacilityId,
+                                          string? Name, string? Type, string? AliasOf,
+                                          string[] Available);
+
+    private readonly record struct FacNode(string Id, string Name, string? Type, bool HasStars);
+
+    private static void CollectAllFacilities(JsonElement f, List<FacNode> into)
+    {
+        if (f.TryGetProperty("id", out var idEl) && idEl.GetString() is { Length: > 0 } id)
+            into.Add(new FacNode(
+                id,
+                f.TryGetProperty("name", out var n) ? (n.GetString() ?? "") : "",
+                f.TryGetProperty("type", out var t) ? t.GetString() : null,
+                f.TryGetProperty("starsConfiguration", out var sc) && sc.ValueKind != JsonValueKind.Null));
+        if (f.TryGetProperty("childFacilities", out var kids) && kids.ValueKind == JsonValueKind.Array)
+            foreach (var k in kids.EnumerateArray())
+                CollectAllFacilities(k, into);
+    }
+
+    /// <summary>
+    /// Pure resolution over one ARTCC's facility tree — the testable core of
+    /// <see cref="ResolveFacilityAsync"/>. Public so it can be driven from a hand-built tree.
+    /// </summary>
+    public static StarsFacilityResolution Resolve(JsonElement facilityRoot, string facilityId)
+    {
+        var all = new List<FacNode>();
+        CollectAllFacilities(facilityRoot, all);
+        var want = (facilityId ?? "").Trim();
+        var available = all.Where(f => f.HasStars).Select(f => f.Id)
+                           .Distinct(StringComparer.OrdinalIgnoreCase)
+                           .OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+
+        var hit = all.FirstOrDefault(f => string.Equals(f.Id, want, StringComparison.OrdinalIgnoreCase));
+        if (hit.Id is null)
+            return new(StarsFacilityStatus.NotFound, want.ToUpperInvariant(), null, null, null, available);
+        if (hit.HasStars)
+            return new(StarsFacilityStatus.Ok, hit.Id, hit.Name, hit.Type, null, available);
+
+        var sameName = all
+            .Where(f => f.HasStars
+                     && !string.Equals(f.Id, hit.Id, StringComparison.OrdinalIgnoreCase)
+                     && f.Name.Trim().Length > 0
+                     && string.Equals(f.Name.Trim(), hit.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(f => f.Id).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        return sameName.Count == 1
+            ? new(StarsFacilityStatus.Aliased, hit.Id, hit.Name, hit.Type, sameName[0], available)
+            : new(StarsFacilityStatus.NoStarsConfig, hit.Id, hit.Name, hit.Type, null, available);
+    }
+
+    /// <summary>Resolve a facility for the scope route. Fails OPEN if vNAS is unreachable.</summary>
+    public async Task<StarsFacilityResolution> ResolveFacilityAsync(string artccId, string facilityId)
+    {
+        var doc = await GetArtccAsync(artccId);
+        // Unknown, not NotFound: an upstream blip must not turn a facility that normally works
+        // into an error page. The scope is served and left to cope, exactly as before this existed.
+        if (doc is null || !doc.RootElement.TryGetProperty("facility", out var root))
+            return new(StarsFacilityStatus.Unknown, (facilityId ?? "").Trim().ToUpperInvariant(),
+                       null, null, null, Array.Empty<string>());
+        return Resolve(root, facilityId);
+    }
+
     /// <summary>List of facilities (with their parents) that have a STARS
     /// configuration. CRCMapImporter.cs auto-picks if there's exactly one;
     /// the frontend handles that same logic.</summary>
@@ -332,6 +419,9 @@ class StarsBridge
             visibilityCenters,
             positions,
             starsConfiguration = starsConfig,
+            // Explicit, so a caller never has to infer "displayable" from a null config. The scope
+            // route blocks non-STARS facilities before they get here, but the API is public.
+            hasStars = starsConfig is not null && starsConfig.Value.ValueKind != JsonValueKind.Null,
             videoMaps,
         };
     }
@@ -699,7 +789,12 @@ class StarsBridge
 
     private static JsonElement? FindFacility(JsonElement node, string targetId)
     {
-        if (node.TryGetProperty("id", out var idEl) && idEl.GetString() == targetId)
+        // Case-insensitive: the route accepts any case, and /stars/zma/pbi is a URL people type.
+        // This used to be `==`, so a lowercase facility id 404'd here while the ARTCC id (looked up
+        // in an OrdinalIgnoreCase dictionary) worked — the scope then got a 404 body where it
+        // expected a facility and drew an empty screen without saying why.
+        if (node.TryGetProperty("id", out var idEl)
+            && string.Equals(idEl.GetString(), targetId, StringComparison.OrdinalIgnoreCase))
             return node;
         if (node.TryGetProperty("childFacilities", out var children)
             && children.ValueKind == JsonValueKind.Array)

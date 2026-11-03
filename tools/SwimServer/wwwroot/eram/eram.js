@@ -2102,10 +2102,6 @@ let nexradLevel = 3;           // 0=OFF, 1=extreme(3), 2=heavy+extreme(23), 3=al
 let nexradBrightness = 30;
 let _nexradReplaySlot = null;  // last IEM 5-min archive slot rendered during replay
 const MRMS_WMS_URL = 'https://nowcoast.noaa.gov/geoserver/observations/weather_radar/ows';
-// Iowa Environmental Mesonet archived NEXRAD N0Q (base reflectivity), addressable by TIME at
-// 5-minute resolution. Used during replay so the weather matches the replay clock instead of now.
-const IEM_N0Q_URL = 'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi';
-
 // Replay clock snapped to the IEM 5-minute archive slot (null when live → use nowCOAST).
 function nexradReplayTime() {
     if (!replayActive || !replayCurrentTime) return null;
@@ -2116,17 +2112,61 @@ function nexradReplayTime() {
     return t.toISOString().slice(0, 19) + 'Z';
 }
 
-// WMS GetMap URL for one tile: live MRMS mosaic, or the time-matched IEM archive during replay.
+// WMS GetMap URL for one LIVE tile. Replay does not go through here — see conusComposite().
 function nexradTileUrl(bbox) {
-    const rt = nexradReplayTime();
-    if (rt) {
-        return `${IEM_N0Q_URL}?service=WMS&version=1.1.1&request=GetMap` +
-            `&layers=nexrad-n0q&srs=EPSG:4326&bbox=${bbox}&width=256&height=256` +
-            `&format=image/png&transparent=true&time=${rt}`;
-    }
     return `${MRMS_WMS_URL}?service=WMS&version=1.1.1&request=GetMap` +
         `&layers=conus_base_reflectivity_mosaic&srs=EPSG:4326` +
         `&bbox=${bbox}&width=256&height=256&format=image/png&transparent=true`;
+}
+
+// ── Archived weather for replay ─────────────────────────────────────────────
+//
+// This used to ask IEM's n0q.cgi WMS for `&time=<replay clock>`. **That service has no absolute
+// time dimension**, so it answered with current weather and replay drew live radar over archived
+// traffic — measured 2026-11-03: five requests spanning nine days returned byte-identical PNGs,
+// and the layer name we sent (`nexrad-n0q`) isn't even in its GetCapabilities. IEM only offers
+// relative `-m05m`/`-m10m` layers: you can step back from now, not address a past instant.
+//
+// What IS time-addressed is IEM's archived CONUS composite — one PNG per 5-minute slot. It is a
+// whole-continent image rather than tiles, so we fetch it once per slot and let every tile crop
+// from it. Georeferencing comes from its own `.wld`: 0.005 deg/px from upper-left -126.0, 50.0,
+// over 12200x5400 px, i.e. exactly lon -126..-65 / lat 23..50.
+const IEM_ARCHIVE_BASE = 'https://mesonet.agron.iastate.edu/archive/data';
+const CONUS_W = -126, CONUS_E = -65, CONUS_S = 23, CONUS_N = 50;
+const CONUS_SCALE = 4;   // 12200x5400 -> 3050x1350. At native size the RGBA buffer is ~263 MB.
+
+function archiveUrlForSlot(slotIso) {
+    const t = new Date(slotIso);
+    const p = n => String(n).padStart(2, '0');
+    const y = t.getUTCFullYear(), mo = p(t.getUTCMonth() + 1), d = p(t.getUTCDate());
+    const hh = p(t.getUTCHours()), mi = p(t.getUTCMinutes());
+    return `${IEM_ARCHIVE_BASE}/${y}/${mo}/${d}/GIS/uscomp/n0q_${y}${mo}${d}${hh}${mi}.png`;
+}
+
+const _conusCache = new Map();   // slot ISO -> Promise<canvas|null>
+function conusComposite(slotIso) {
+    if (_conusCache.has(slotIso)) return _conusCache.get(slotIso);
+    const p = new Promise(resolve => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+            const c = document.createElement('canvas');
+            c.width = Math.round(img.naturalWidth / CONUS_SCALE);
+            c.height = Math.round(img.naturalHeight / CONUS_SCALE);
+            const g = c.getContext('2d', { willReadFrequently: true });
+            // Nearest-neighbour deliberately: smoothing blends adjacent palette colours into hues
+            // classifyNwsPixel never sees, so a green/yellow boundary would classify as neither.
+            g.imageSmoothingEnabled = false;
+            g.drawImage(img, 0, 0, c.width, c.height);
+            resolve(c);
+        };
+        img.onerror = () => resolve(null);
+        img.src = archiveUrlForSlot(slotIso);
+    });
+    _conusCache.set(slotIso, p);
+    // Bounded: scrubbing invents a slot every 5 replay-minutes and each canvas is ~16 MB.
+    while (_conusCache.size > 3) _conusCache.delete(_conusCache.keys().next().value);
+    return p;
 }
 
 // Classify NWS radar pixel to ERAM NEXRAD level (0=none, 1=moderate, 2=heavy, 3=extreme)
@@ -2148,6 +2188,39 @@ function classifyNwsPixel(r, g, b, a) {
     return 3;
 }
 
+// Recolour one 256x256 tile in place: NWS reflectivity palette -> the three ERAM categories,
+// honouring the NX LVL filter. Shared by the live WMS tile and the archived composite crop so
+// replay and live cannot drift apart in appearance.
+function remapTile(ctx, level) {
+    const imageData = ctx.getImageData(0, 0, 256, 256);
+    const d = imageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+        const cat = classifyNwsPixel(d[i], d[i + 1], d[i + 2], d[i + 3]);
+        if (cat === 0) { d[i + 3] = 0; continue; }
+        // NX LVL filtering: 1=extreme only, 2=heavy+extreme, 3=all
+        if (level === 1 && cat < 3) { d[i + 3] = 0; continue; }
+        if (level === 2 && cat < 2) { d[i + 3] = 0; continue; }
+        const px = i / 4;
+        const tx = px % 256, ty = Math.floor(px / 256);
+        if (cat === 1) {
+            // Moderate: solid blue (#0044ff)
+            d[i] = 0; d[i + 1] = 68; d[i + 2] = 255;
+        } else if (cat === 2) {
+            // Heavy: checkered cyan (#00ccff) and black
+            if ((Math.floor(tx / 4) + Math.floor(ty / 4)) % 2 === 0) {
+                d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
+            } else {
+                d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+            }
+        } else {
+            // Extreme: solid cyan (#00ccff)
+            d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
+        }
+        d[i + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+}
+
 const MrmsEramLayer = L.GridLayer.extend({
     createTile: function (coords, done) {
         const tile = document.createElement('canvas');
@@ -2158,39 +2231,34 @@ const MrmsEramLayer = L.GridLayer.extend({
         const bounds = this._tileCoordsToBounds(coords);
         const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
         const bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
+
+        // Replay: crop this tile out of the archived CONUS composite for the current 5-min slot.
+        // The lat/lon -> pixel mapping is linear, which is what the live WMS path already assumes
+        // by asking for an EPSG:4326 bbox for a Mercator tile — so this adds no new distortion.
+        const slot = nexradReplayTime();
+        if (slot) {
+            conusComposite(slot).then(src => {
+                if (!src) { done(null, tile); return; }
+                const x1 = (sw.lng - CONUS_W) / (CONUS_E - CONUS_W) * src.width;
+                const x2 = (ne.lng - CONUS_W) / (CONUS_E - CONUS_W) * src.width;
+                const y1 = (CONUS_N - ne.lat) / (CONUS_N - CONUS_S) * src.height;
+                const y2 = (CONUS_N - sw.lat) / (CONUS_N - CONUS_S) * src.height;
+                // Wholly outside the CONUS composite (Alaska, Hawaii, ocean) → leave it blank.
+                if (x2 <= 0 || x1 >= src.width || y2 <= 0 || y1 >= src.height) { done(null, tile); return; }
+                ctx.imageSmoothingEnabled = false;
+                ctx.drawImage(src, x1, y1, x2 - x1, y2 - y1, 0, 0, 256, 256);
+                remapTile(ctx, level);
+                done(null, tile);
+            });
+            return tile;
+        }
+
         const url = nexradTileUrl(bbox);
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
             ctx.drawImage(img, 0, 0, 256, 256);
-            // Remap NWS colors to ERAM categories
-            const imageData = ctx.getImageData(0, 0, 256, 256);
-            const d = imageData.data;
-            for (let i = 0; i < d.length; i += 4) {
-                const cat = classifyNwsPixel(d[i], d[i + 1], d[i + 2], d[i + 3]);
-                if (cat === 0) { d[i + 3] = 0; continue; }
-                // NX LVL filtering: 1=extreme only, 2=heavy+extreme, 3=all
-                if (level === 1 && cat < 3) { d[i + 3] = 0; continue; }
-                if (level === 2 && cat < 2) { d[i + 3] = 0; continue; }
-                const px = i / 4;
-                const tx = px % 256, ty = Math.floor(px / 256);
-                if (cat === 1) {
-                    // Moderate: solid blue (#0044ff)
-                    d[i] = 0; d[i + 1] = 68; d[i + 2] = 255;
-                } else if (cat === 2) {
-                    // Heavy: checkered cyan (#00ccff) and black
-                    if ((Math.floor(tx / 4) + Math.floor(ty / 4)) % 2 === 0) {
-                        d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
-                    } else {
-                        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
-                    }
-                } else {
-                    // Extreme: solid cyan (#00ccff)
-                    d[i] = 0; d[i + 1] = 204; d[i + 2] = 255;
-                }
-                d[i + 3] = 255;
-            }
-            ctx.putImageData(imageData, 0, 0);
+            remapTile(ctx, level);
             done(null, tile);
         };
         img.onerror = () => done(null, tile);  // blank tile on error

@@ -205,12 +205,14 @@ let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles w
 // Format reference: an ERAM STA / DCT / Both slide — "0432", "-12:20", "0432 -12:20", one line below
 // the target, white-grey (not FDB yellow). Agrees with the NASA 2019 FIM study's MACS ERAM emulation
 // (NTRS 20190000841, Figs. 4-5: "+00:10" below the target; meter list "1749" "+01:10"), which also
-// gives the 10 s rounding and positive = must be delayed. DELAY FORMAT's
-// real behaviour is undocumented; here it switches to whole minutes (+1) — UNVERIFIED.
+// gives the 10 s rounding and positive = must be delayed.
+// DELAY FORMAT's real behaviour is undocumented. OFF (the default) gives sign + MM:SS, "+03:20";
+// ON gives whole minutes, "+3" — UNVERIFIED. Hence `delayFormatMinutes`: the flag was named
+// `delayFormatSeconds` while doing the opposite of what it said.
 // Live only: TBFM schedules are not recorded, so replay shows no metering rather than today's.
 let staRdbEnabled = false;
 let delayRdbEnabled = false;
-let delayFormatSeconds = false;
+let delayFormatMinutes = false;
 let tbfmByCallsign = new Map(); // callsign -> [records], one per ARTCC metering the flight
 const TBFM_POLL_MS = 15000;
 
@@ -306,7 +308,7 @@ function tbfmRdbText(f) {
             const sec = Math.round(raw / 10) * 10;           // nearest 10 s, as ERAM's DCT
             const sign = sec < 0 ? '-' : '+';
             const a = Math.abs(sec);
-            parts.push(delayFormatSeconds
+            parts.push(delayFormatMinutes
                 ? `${sign}${Math.round(a / 60)}`              // alternate: whole minutes (unverified)
                 : `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`);
         }
@@ -2893,21 +2895,19 @@ function buildMarkerHtml(f, cls) {
         // yellow FDB and the CRR distance's magenta.
         const tbfmText = tbfmRdbText(f);
         if (tbfmText) rdbParts.push(`<span class="ac-rdb-tbfm">${tbfmText}</span>`);
-        {
-            if (rdbParts.length) {
-                const rdbText = rdbParts.join(' ');
+        if (rdbParts.length) {
+            const rdbText = rdbParts.join(' ');
 
-                // RDB offsets cycle around the target symbol (0,0)
-                const offsetConfigs = [
-                    { left: Math.ceil(CHAR_W * 2.5), top: -Math.ceil(LINE_H * 0.5) },  // right
-                    { left: -Math.ceil(CHAR_W * 8) - 20, top: -Math.ceil(LINE_H * 0.5) },  // left
-                    { left: -Math.ceil(CHAR_W * 3) - 10, top: -Math.ceil(LINE_H * 2) },  // above-left
-                    { left: -Math.ceil(CHAR_W * 3) - 10, top: Math.ceil(LINE_H * 0.5) }  // bottom-left
-                ];
-                const cfg = offsetConfigs[crrRdbOffset];
+            // RDB offsets cycle around the target symbol (0,0)
+            const offsetConfigs = [
+                { left: Math.ceil(CHAR_W * 2.5), top: -Math.ceil(LINE_H * 0.5) },  // right
+                { left: -Math.ceil(CHAR_W * 8) - 20, top: -Math.ceil(LINE_H * 0.5) },  // left
+                { left: -Math.ceil(CHAR_W * 3) - 10, top: -Math.ceil(LINE_H * 2) },  // above-left
+                { left: -Math.ceil(CHAR_W * 3) - 10, top: Math.ceil(LINE_H * 0.5) }  // bottom-left
+            ];
+            const cfg = offsetConfigs[crrRdbOffset];
 
-                html += `<div class="ac-rdb" style="left:${cfg.left}px; top:${cfg.top}px;">${rdbText}</div>`;
-            }
+            html += `<div class="ac-rdb" style="left:${cfg.left}px; top:${cfg.top}px;">${rdbText}</div>`;
         }
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
@@ -6021,7 +6021,7 @@ function loadSettingsFromLocalStorage() {
         if (settings.crrRdbOffset !== undefined) crrRdbOffset = settings.crrRdbOffset;
         if (settings.staRdbEnabled !== undefined) staRdbEnabled = settings.staRdbEnabled;
         if (settings.delayRdbEnabled !== undefined) delayRdbEnabled = settings.delayRdbEnabled;
-        if (settings.delayFormatSeconds !== undefined) delayFormatSeconds = settings.delayFormatSeconds;
+        if (settings.delayFormatMinutes !== undefined) delayFormatMinutes = settings.delayFormatMinutes;
         if (settings.artccBoundShow !== undefined) artccBoundShow = settings.artccBoundShow;
         if (settings.artccBoundBrightness !== undefined) artccBoundBrightness = settings.artccBoundBrightness;
         if (settings.stateBoundShow !== undefined) stateBoundShow = settings.stateBoundShow;
@@ -6138,7 +6138,7 @@ function saveSettingsToLocalStorage() {
         crrRdbOffset,
         staRdbEnabled,
         delayRdbEnabled,
-        delayFormatSeconds,
+        delayFormatMinutes,
         artccBoundShow,
         artccBoundBrightness,
         stateBoundShow,
@@ -10534,9 +10534,9 @@ const TB_DB_FIELDS = {
             }),
             toggle('DELAY\nFORMAT', {
                 cls: 'tb-toggle-gray',
-                isOn: () => delayFormatSeconds,
+                isOn: () => delayFormatMinutes,
                 onToggle: (on) => {
-                    delayFormatSeconds = on;
+                    delayFormatMinutes = on;
                     invalidateAllMarkers();
                     saveSettingsToLocalStorage();
                 },

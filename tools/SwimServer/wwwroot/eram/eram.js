@@ -12169,8 +12169,6 @@ function initReplayBar() {
             clearReplayState();
             replayActive = true;
             _nexradReplaySlot = null;
-            // Now there is a replay clock, so the weather layer can be built against the archive.
-            if (nexradLevel > 0) updateNexrad();
             document.getElementById('connection-status').textContent = 'REPLAY';
             document.getElementById('connection-status').style.color = '#ff8c00';
         },
@@ -12179,7 +12177,11 @@ function initReplayBar() {
             renderClock();
             if (nexradLevel > 0) {
                 const slot = nexradReplayTime();
-                if (slot && slot !== _nexradReplaySlot) { _nexradReplaySlot = slot; refreshNexrad(); }
+                // Build the layer on the FIRST tick, not in onStart: onStart runs before any
+                // clock exists, so nexradReplayTime() would still be null there and every tile
+                // would fetch live weather — the bug this whole gate is for.
+                if (slot && !nexradLayer) { _nexradReplaySlot = slot; updateNexrad(); }
+                else if (slot && slot !== _nexradReplaySlot) { _nexradReplaySlot = slot; refreshNexrad(); }
             }
         },
         onSnapshot: (arr) => { applyReplaySnapshot(arr); },

@@ -1259,6 +1259,13 @@ var statsTimer = new Timer(_ =>
 const double SfdpsRestartSilenceSec = 240;  // ~20 missed 12s update cycles; well past the 90s in-thread reconnect
 var healthTimer = new Timer(_ =>
 {
+    // Nothing to be silent about if SFDPS was never started — no credentials, or FeedGuard
+    // blocked the queue because this host doesn't own the feed. Both are the documented local
+    // setup ("pages, APIs, the flight cache and replay all still work, which is what local UI
+    // work needs"), and the 240s escalation below was killing exactly those instances every four
+    // minutes. A no-op in production, where SFDPS_USER is set and LiveFeed is true.
+    if (string.IsNullOrEmpty(user) || !FeedGuard.LiveFeed) return;
+
     var silence = (DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastMessageTicks), DateTimeKind.Utc)).TotalSeconds;
     if (silence > 60)
         Console.WriteLine($"[HEALTH] Warning: no messages for {silence:F0}s");

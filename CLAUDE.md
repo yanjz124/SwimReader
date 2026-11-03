@@ -1751,6 +1751,9 @@ arrived). Adaptation is published rarely (one centre in a ~10-minute capture, no
 minutes after a restart), so it is saved to `flight-cache/tbfm-adaptation.json` (on change, from
 the 60 s purge timer) and reloaded on startup.
 
+**`point` is the `sfx` point when `mrp` names one, else `mfx`**: `staPoint`/`etaPoint` come
+from `sta_sfx`/`eta_sfx`, and `sfx` can differ from `mfx` (live: ZAU AAL1614, mfx `MOTRR`, sfx/dfx
+`FYTTEMF`, with `eta_mfx` ≠ `eta_sfx`). The meter fix is kept separately as `meterFix`.
 Our JSON therefore names it neutrally: **`point` / `pointType` / `staPoint` / `etaPoint`** (it was
 `mfx`/`staMfx`, which read as "meter fix" for every arc). The raw `mrp` block keeps TBFM's tags.
 

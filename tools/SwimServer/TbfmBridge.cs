@@ -476,7 +476,8 @@ class TbfmBridge
                 ctr = CenterOf(x.f.Source),
                 // The point this centre schedules to. TBFM tags it <mfx> whether it is a fix or an
                 // arc (ZLA: PXN, DVC are arcs), so it is named neutrally here; the type is separate.
-                point = x.f.MeterFix,
+                point = ScheduledPoint(x.f),
+                meterFix = x.f.MeterFix,
                 pointType = PointType(x.f),   // MFX / MFA / OMA / OOA from adaptation; null = unknown
                 rwy = x.f.Runway,
                 staPoint = x.mfxDone ? null : x.f.StaMeterFix,
@@ -513,7 +514,8 @@ class TbfmBridge
                 airType = f.AirType,
                 dep = f.Departure,
                 apt = f.Arrival,
-                point = f.MeterFix,
+                point = ScheduledPoint(f),
+                meterFix = f.MeterFix,
                 pointType = PointType(f),
                 rwy = f.Runway,
                 staPoint = f.StaMeterFix, etaPoint = f.EtaMeterFix,
@@ -597,9 +599,20 @@ class TbfmBridge
     /// &lt;mfx&gt; (live: ZLA schedules an OAK arrival to PXN), so this is the only way to tell.
     /// Null until that centre's adaptation has been received.
     /// </summary>
+    /// <summary>
+    /// The point staPoint/etaPoint refer to. Those come from sta_sfx/eta_sfx, and &lt;mrp&gt; names
+    /// sfx separately from mfx: live, ZAU schedules AAL1614 with mfx MOTRR but sfx/dfx FYTTEMF,
+    /// and eta_sfx (FYTTEMF) differs from eta_mfx (MOTRR). So prefer sfx, then dfx; mrp is sent
+    /// rarely, so fall back to mfx, which is the same point whenever mrp hasn't said otherwise.
+    /// </summary>
+    private static string? ScheduledPoint(TbfmFlight f) =>
+        f.Mrp.TryGetValue("sfx", out var sfx) && !string.IsNullOrWhiteSpace(sfx) ? sfx
+        : f.Mrp.TryGetValue("dfx", out var dfx) && !string.IsNullOrWhiteSpace(dfx) ? dfx
+        : f.MeterFix;
+
     private string? PointType(TbfmFlight f)
     {
-        if (f.MeterFix is not { } name || CenterOf(f.Source) is not { } ctr
+        if (ScheduledPoint(f) is not { } name || CenterOf(f.Source) is not { } ctr
             || !_centers.TryGetValue(ctr, out var c)) return null;
         var hits = c.Points.Values.Where(p => p.Name == name).ToList();
         if (hits.Count == 0) hits = c.Points.Values.Where(p => p.Name == name + ".").ToList(); // ZSE names arcs "HELNS."

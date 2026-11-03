@@ -164,6 +164,23 @@ public class TbfmBridgeTests
         Assert.Equal("ARRIVAL", r.GetProperty("mrp").GetProperty("cat").GetString());
     }
 
+    [Fact]
+    public void Point_IsTheSfxFromMrp_NotTheMeterFix()
+    {
+        // Live shape (ZAU, AAL1614): mfx MOTRR, but the STA/ETA are for sfx FYTTEMF
+        var b = NewBridge();
+        b.Process(Air("ZAU", "TST110", "G1",
+            "<mrp><mfx>MOTRR</mfx><sfx>FYTTEMF</sfx><dfx>FYTTEMF</dfx><cat>ARRIVAL</cat></mrp>" +
+            $"<sta><mfx>MOTRR</mfx><sta_sfx>{T(30)}</sta_sfx></sta>", apt: "ORD"));
+        var r = Eram(b, "TST110");
+        Assert.Equal("FYTTEMF", r.GetProperty("point").GetString());
+        Assert.Equal("MOTRR", r.GetProperty("meterFix").GetString());
+
+        // without mrp, the meter fix is the best name we have
+        b.Process(Air("ZAU", "TST111", "G2", $"<sta><mfx>MOTRR</mfx><sta_sfx>{T(30)}</sta_sfx></sta>", apt: "ORD"));
+        Assert.Equal("MOTRR", Eram(b, "TST111").GetProperty("point").GetString());
+    }
+
     // ── other message kinds ──────────────────────────────────────────────────
 
     [Fact]

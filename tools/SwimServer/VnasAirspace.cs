@@ -29,6 +29,13 @@ namespace SwimServer;
 /// Our HttpClient sets one explicitly — without it this would fail in a way that looks like the
 /// ARTCC having no data.</para>
 ///
+/// <para><b>These ids are the join to the live picture.</b> <see cref="AirspaceBridge"/>'s AIXM
+/// feed already reports, per ERAM position, the 5-digit volume ids that position owns — e.g. ZDV
+/// position 07 owning <c>00701, 00702, 00703, 00800, 06100, 06700</c>. Sampled against ZDV's FAV
+/// set, <b>28 of 28 matched</b>. So AIXM says who owns which volume right now and this says what
+/// shape that volume is; together they are the actual combined/decombined sectorisation, which no
+/// static KML can express. Nothing consumes the join yet.</para>
+///
 /// 20 of 24 ARTCCs publish FAVs. The four that don't (ZAN, ZHN, ZSU, ZUA — Anchorage, Honolulu,
 /// San Juan, Guam) return an empty array, not an error.
 /// </summary>
@@ -140,10 +147,10 @@ class VnasAirspace
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[AIRSPACE] cached {artcc} unreadable: {ex.Message}");
+                Console.Error.WriteLine($"[FAV] cached {artcc} unreadable: {ex.Message}");
             }
         }
-        if (n > 0) Console.WriteLine($"[AIRSPACE] loaded {vols} FAVs for {n} ARTCC(s) from cache");
+        if (n > 0) Console.WriteLine($"[FAV] loaded {vols} FAVs for {n} ARTCC(s) from cache");
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -152,7 +159,7 @@ class VnasAirspace
         while (!ct.IsCancellationRequested)
         {
             try { await RefreshAsync(ct); }
-            catch (Exception ex) { _lastError = ex.Message; Console.Error.WriteLine($"[AIRSPACE] refresh: {ex.Message}"); }
+            catch (Exception ex) { _lastError = ex.Message; Console.Error.WriteLine($"[FAV] refresh: {ex.Message}"); }
             try { await Task.Delay(TimeSpan.FromHours(24), ct); }
             catch (OperationCanceledException) { return; }
         }
@@ -168,13 +175,13 @@ class VnasAirspace
             {
                 url = url.TrimEnd('/');
                 if (!string.Equals(url, _apiBase, StringComparison.Ordinal))
-                    Console.WriteLine($"[AIRSPACE] vNAS dataApiBaseUrl = {url}");
+                    Console.WriteLine($"[FAV] vNAS dataApiBaseUrl = {url}");
                 _apiBase = url;
             }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[AIRSPACE] vNAS config: {ex.Message} (keeping {_apiBase})");
+            Console.Error.WriteLine($"[FAV] vNAS config: {ex.Message} (keeping {_apiBase})");
         }
     }
 
@@ -224,14 +231,14 @@ class VnasAirspace
             catch (Exception ex)
             {
                 failed++;
-                Console.Error.WriteLine($"[AIRSPACE] {s.Id}: {ex.Message}");
+                Console.Error.WriteLine($"[FAV] {s.Id}: {ex.Message}");
             }
             await Task.Delay(100, ct);   // paced, same courtesy as the video-map sweep
         }
 
         _lastRefresh = DateTime.UtcNow;
         _lastError = failed > 0 ? $"{failed} ARTCC(s) failed" : null;
-        Console.WriteLine($"[AIRSPACE] {fetched} fetched, {skipped} unchanged, {empty} publish none, {failed} failed");
+        Console.WriteLine($"[FAV] {fetched} fetched, {skipped} unchanged, {empty} publish none, {failed} failed");
     }
 
     private void SaveCache(string artcc, string body)
@@ -244,7 +251,7 @@ class VnasAirspace
             File.WriteAllText(tmp, body);
             File.Move(tmp, path, overwrite: true);
         }
-        catch (Exception ex) { Console.Error.WriteLine($"[AIRSPACE] cache {artcc}: {ex.Message}"); }
+        catch (Exception ex) { Console.Error.WriteLine($"[FAV] cache {artcc}: {ex.Message}"); }
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────

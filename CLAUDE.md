@@ -1789,6 +1789,14 @@ for an aircraft reporting 23,050 — a real hole, since Mode C is not restricted
 query therefore treats a ceiling of C as covering C+99; the reported `upperAlt` is untouched.
 `VnasAirspaceTests` pins this, and caught it.
 
+### The AIXM feed already says who owns which volume
+`AirspaceBridge` (the AIXM position data, confusingly also `[AIRSPACE]` in the log — the FAV client
+logs `[FAV]`) reports per ERAM position the **5-digit volume ids that position owns**: ZDV position
+07 owns `00701, 00702, 00703, 00800, 06100, 06700`. Sampled against ZDV's FAV set, **28 of 28 were
+a `favId`**. So AIXM gives ownership *now* and FAVs give the shape — join them and you have the
+real combined/decombined sectorisation, colour-coded by the position actually working it, which no
+static file can express. Nothing consumes the join yet; it is the reason to do the scope work.
+
 `?lowFt=&highFt=` filters to the slabs overlapping that band, `?sector=` to one sector (bare or
 zero-padded), `?sentinel=true` includes the 99k-only modules. **The ERAM scope still draws the KML**
 — switching its boundary layer over is the open piece of work, and the interesting part is that the

@@ -1692,9 +1692,11 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
 - **Scope shows the next point ahead**: `o4a → o3a → ooa → oma → mfx → rwy`, the first whose ETA
   hasn't passed. Real ERAM picks per sector from site adaptation SWIM doesn't publish, so this
   approximates what the sector working the flight would see.
-- **Expiry keys on the last message that carried a time** (`TimesSeen`), not on any message: TBFM
-  keeps sending route-only `<flt>` updates for schedules long past (live: GLH3, STA = ETA 40 min
-  ago). A time is dropped once it is over 60 s past with no time update since. `ageSec` is also
+- **Expiry is per time**: each STA (meter point, runway, each arc) is dropped once it is over 60 s
+  past and **that STA** hasn't been re-sent since. Not per message (TBFM keeps sending route-only
+  `<flt>` updates for schedules long past: GLH3, STA = ETA 40 min ago), and not per record either:
+  ASA481's record stayed fresh from meter-fix and runway times while its OMA STA sat 13 min dead
+  with the ETA still ahead, and the scope showed a bogus `-15:20`. `ageSec` is also
   time since the last schedule update, and the scope prefers the freshest record per centre.
 - `GET /api/tbfm/eram` gives the scope its compact records. **LADD callsigns are dropped there**,
   because the scope matches by callsign.

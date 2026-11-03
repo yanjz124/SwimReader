@@ -114,6 +114,32 @@ public class TbfmBridgeTests
         Assert.Equal(0, b.FlightCount);
     }
 
+    [Fact]
+    public void StaleArcSta_ExpiresEvenWhileTheRecordIsFresh()
+    {
+        // Live shape (ASA481, ZLA): the oma STA was sent once, long ago; the meter-fix and runway
+        // times keep the record itself fresh. The old per-record rule kept the dead arc STA and the
+        // scope showed -15:20. The arc STA must expire on its own last update.
+        var b = NewBridge();
+        b.Process(Air("ZLA", "TST112", "L12", $"<sta><mfx>SYMON</mfx><sta_oma>{T(-13)}</sta_oma></sta>", apt: "LAX"));
+        // that STA was sent before it passed; simulate it being old by backdating its seen time
+        var flights = (System.Collections.IDictionary)typeof(TbfmBridge)
+            .GetField("_flights", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(b)!;
+        var f = (TbfmFlight)flights["TMA.ZLA.FAA.GOV/L12"]!;
+        var arc = f.ArcTimes["oma"];
+        f.ArcTimes["oma"] = (arc.Sta, arc.Eta, DateTime.UtcNow.AddMinutes(-20));
+
+        // fresh meter-fix and arc ETA updates keep arriving (as live)
+        b.Process(Air("ZLA", "TST112", "L12",
+            $"<sta><mfx>SYMON</mfx><sta_sfx>{T(3)}</sta_sfx></sta>"));
+        b.Process(Air("ZLA", "TST112", "L12",
+            $"<eta><mfx>SYMON</mfx><eta_oma>{T(2)}</eta_oma><eta_sfx>{T(3)}</eta_sfx></eta>"));
+
+        var r = Eram(b, "TST112");
+        Assert.Equal(JsonValueKind.Null, r.GetProperty("arcs").ValueKind);   // dead oma dropped
+        Assert.Equal(JsonValueKind.String, r.GetProperty("staPoint").ValueKind); // SYMON kept
+    }
+
     // ── each centre's schedule kept separately ───────────────────────────────
 
     [Fact]

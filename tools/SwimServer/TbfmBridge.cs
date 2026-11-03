@@ -268,9 +268,11 @@ class TbfmBridge
         // STA - ETA compares one point with itself.
         bool timed = false;
         timed |= MergeTime(ref f.EtaMeterFix, ParseTime(Leaf(eta, "eta_sfx") ?? Leaf(eta, "eta_dfx") ?? Leaf(eta, "eta_mfx")));
-        timed |= MergeTime(ref f.StaMeterFix, ParseTime(Leaf(sta, "sta_sfx") ?? Leaf(sta, "sta_dfx") ?? Leaf(sta, "sta_mfx")));
+        if (MergeTime(ref f.StaMeterFix, ParseTime(Leaf(sta, "sta_sfx") ?? Leaf(sta, "sta_dfx") ?? Leaf(sta, "sta_mfx"))))
+        { timed = true; f.StaMeterFixSeen = now; }
         timed |= MergeTime(ref f.EtaRunway, ParseTime(Leaf(eta, "eta_rwy")));
-        timed |= MergeTime(ref f.StaRunway, ParseTime(Leaf(sta, "sta_rwy")));
+        if (MergeTime(ref f.StaRunway, ParseTime(Leaf(sta, "sta_rwy"))))
+        { timed = true; f.StaRunwaySeen = now; }
         // Meter arcs upstream of the meter fix (outer meter arc, outer-outer, 3rd, 4th). Their
         // names are in <mrp> (e.g. oma = MOXEE/T); which one a sector sees is site adaptation.
         foreach (var arc in Arcs)
@@ -279,8 +281,8 @@ class TbfmBridge
             var aEta = ParseTime(Leaf(eta, "eta_" + arc));
             if (aSta is null && aEta is null) continue;
             timed = true;
-            var cur = f.ArcTimes.TryGetValue(arc, out var c) ? c : (null, null);
-            f.ArcTimes[arc] = (aSta ?? cur.Sta, aEta ?? cur.Eta);
+            var cur = f.ArcTimes.TryGetValue(arc, out var c) ? c : (null, null, default);
+            f.ArcTimes[arc] = (aSta ?? cur.Sta, aEta ?? cur.Eta, aSta.HasValue ? now : cur.StaSeen);
         }
         // Every eta_*/sta_* leaf too, raw, in case TBFM publishes a point we don't model.
         foreach (var blk in new[] { eta, sta })
@@ -502,7 +504,7 @@ class TbfmBridge
             .Where(f => !LaddService.IsBlocked(f.Aid, null))
             // TBFM's track status says when it's over (live: JBU190 acs=LANDED with a runway STA).
             .Where(f => !(f.Flt.TryGetValue("acs", out var acs) && acs == "LANDED"))
-            .Select(f => (f, mfxDone: Passed(f.StaMeterFix, f.TimesSeen, now), rwyDone: Passed(f.StaRunway, f.TimesSeen, now)))
+            .Select(f => (f, mfxDone: Passed(f.StaMeterFix, f.StaMeterFixSeen, now), rwyDone: Passed(f.StaRunway, f.StaRunwaySeen, now)))
             .Where(x => (x.f.StaMeterFix.HasValue && !x.mfxDone) || (x.f.StaRunway.HasValue && !x.rwyDone))
             .Select(x => (object)new
             {
@@ -624,7 +626,7 @@ class TbfmBridge
         Dictionary<string, object>? d = null;
         foreach (var (arc, t) in f.ArcTimes)
         {
-            if (t.Sta is null || Passed(t.Sta, f.TimesSeen, now)) continue;
+            if (t.Sta is null || Passed(t.Sta, t.StaSeen, now)) continue;
             (d ??= new())[arc] = new { name = ArcName(f, arc), sta = t.Sta, eta = t.Eta };
         }
         return d;
@@ -814,7 +816,11 @@ class TbfmFlight
     public readonly ConcurrentDictionary<string, string> Times = new(); // every eta_*/sta_* raw
     public DateTime? EtaMeterFix, StaMeterFix, EtaRunway, StaRunway;
     // Written on the feed thread, read by API requests: concurrent, so enumeration can't throw.
-    public readonly ConcurrentDictionary<string, (DateTime? Sta, DateTime? Eta)> ArcTimes = new();
+    public readonly ConcurrentDictionary<string, (DateTime? Sta, DateTime? Eta, DateTime StaSeen)> ArcTimes = new();
+    // When each STA was itself last sent. Expiry is per time, not per record: a record kept fresh
+    // by its meter-fix and runway times can carry a long-dead arc STA (live: ASA481, ZLA, frozen
+    // schedule, oma STA 13 min past with ETA still ahead → a bogus -15:20 DCT).
+    public DateTime StaMeterFixSeen, StaRunwaySeen;
     public DateTime LastSeen;
     public DateTime TimesSeen;   // last message that carried an STA/ETA (expiry uses this)
 }

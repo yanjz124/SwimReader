@@ -1674,6 +1674,12 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
   `GET /api/tbfm/debug` keeps 20 raw samples plus a count of every element name seen.
 - TBFM's `gufi` is ERAM's short form (`KK756252Wv`). **SFDPS doesn't carry it** (its GUFIs are UUID
   or `us.fdps.*`), so matching to a target is by callsign + destination.
+- **One flight, several STAs.** Each ARTCC's TBFM (`envSrce` `TMA.ZLC.FAA.GOV`, exposed as
+  `ctr: "ZLC"`) publishes its own record with its own meter point. Extended metering means a DFW
+  arrival can be metered by ZLC to `D34S`, ZDV to `ABQ` and ZAB to `CME` at once; ~23% of
+  callsigns had more than one record. The scope shows only the record whose `ctr` is the selected
+  facility (or the controlling centre when none is selected), the same rule as CIDs, and nothing
+  when that centre isn't metering the flight.
 - Updates are partial; fields merge non-null onto a record keyed `envSrce/tmaId` (fallback `aid/apt`).
   Purged 20 min after the last update or 10 min after the STA has passed.
 - `GET /api/tbfm/eram` gives the scope its compact records. **LADD callsigns are dropped there**,

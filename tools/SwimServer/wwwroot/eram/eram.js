@@ -211,14 +211,13 @@ let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles w
 let staRdbEnabled = false;
 let delayRdbEnabled = false;
 let delayFormatSeconds = false;
-let tbfmByGufi = new Map();     // TBFM gufi -> record
-let tbfmByCallsign = new Map(); // callsign -> [records]
+let tbfmByCallsign = new Map(); // callsign -> [records], one per ARTCC metering the flight
 const TBFM_POLL_MS = 15000;
 
 async function pollTbfm() {
     if (!(staRdbEnabled || delayRdbEnabled) || replayActive || INCIDENT_ID) {
-        if (tbfmByGufi.size || tbfmByCallsign.size) {
-            tbfmByGufi = new Map(); tbfmByCallsign = new Map();
+        if (tbfmByCallsign.size) {
+            tbfmByCallsign = new Map();
             invalidateAllMarkers();
         }
         return;
@@ -227,32 +226,35 @@ async function pollTbfm() {
         const r = await fetch('/api/tbfm/eram');
         if (!r.ok) return;
         const j = await r.json();
-        const byGufi = new Map(), byCs = new Map();
+        const byCs = new Map();
         for (const t of (j.flights || [])) {
-            if (t.gufi) byGufi.set(t.gufi, t);
             if (t.aid) {
                 const list = byCs.get(t.aid) || [];
                 list.push(t);
                 byCs.set(t.aid, list);
             }
         }
-        tbfmByGufi = byGufi; tbfmByCallsign = byCs;
+        tbfmByCallsign = byCs;
     } catch { /* keep the last good set */ }
 }
 setInterval(pollTbfm, TBFM_POLL_MS);
 setTimeout(pollTbfm, 1500);  // a toggle persisted ON shouldn't wait a full poll period
 
-// Match an SFDPS flight to its TBFM record: callsign + destination, else a callsign only one TBFM
-// record carries. (The GUFI lookup is kept for completeness but TBFM's gufi is ERAM's short form,
-// which SFDPS doesn't publish, so in practice it never hits.)
+// The TBFM record THIS scope's controller would see. A flight carries one record per ARTCC metering
+// it (extended metering: e.g. ZLC to D34S, ZDV to ABQ, ZAB to CME, all for one DFW arrival), each
+// with that centre's own meter point and STA. A controller only sees their own centre's, so keep the
+// record whose ctr is the selected facility (or, with none selected, the flight's controlling
+// centre) — same rule as CIDs — and show nothing when that centre isn't metering the flight.
+// Matched by callsign (+ destination when known): TBFM's gufi is ERAM's short form, which SFDPS
+// doesn't publish.
 function getTbfm(f) {
-    if (!tbfmByGufi.size && !tbfmByCallsign.size) return null;
-    const g = (f.fdpsGufi && tbfmByGufi.get(f.fdpsGufi)) || (f.gufi && tbfmByGufi.get(f.gufi));
-    if (g) return g;
-    const list = f.callsign ? tbfmByCallsign.get(f.callsign) : null;
+    if (!tbfmByCallsign.size || !f.callsign) return null;
+    const list = tbfmByCallsign.get(f.callsign);
     if (!list) return null;
+    const ctr = myFacility || f.controllingFacility;
+    if (!ctr) return null;
     const dest = (f.destination || '').toUpperCase().replace(/^K(?=[A-Z0-9]{3}$)/, '');
-    return list.find(t => t.apt && t.apt === dest) || (list.length === 1 ? list[0] : null);
+    return list.find(t => t.ctr === ctr && (!dest || !t.apt || t.apt === dest)) || null;
 }
 
 function _zuluHHMM(iso) {

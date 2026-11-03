@@ -292,6 +292,7 @@ class TbfmBridge
                 gufi = f.Gufi,
                 apt = f.Arrival,
                 src = f.Source,
+                ctr = CenterOf(f.Source),
                 mfx = f.MeterFix,
                 rwy = f.Runway,
                 staMfx = f.StaMeterFix,
@@ -301,6 +302,15 @@ class TbfmBridge
                 ageSec = (int)(now - f.LastSeen).TotalSeconds,
             })
             .ToArray();
+    }
+
+    /// <summary>"TMA.ZLC.FAA.GOV" → "ZLC": the ARTCC whose TBFM published (and whose controllers see) it.</summary>
+    internal static string? CenterOf(string? envSrce)
+    {
+        if (string.IsNullOrWhiteSpace(envSrce)) return null;
+        var parts = envSrce.Split('.');
+        var id = parts.Length >= 2 && parts[0].Equals("TMA", StringComparison.OrdinalIgnoreCase) ? parts[1] : parts[0];
+        return id.ToUpperInvariant();
     }
 
     /// <summary>For verifying the field mapping against the live feed.</summary>

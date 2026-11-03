@@ -1,0 +1,271 @@
+/* ── Shared styles for the three TBFM pages (directory, airport board, centre board) ──
+ * ERAM-yellow dark theme, same as every other SwimReader frontend. Loaded after
+ * /shared/frame.css, which owns the top bar.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+body {
+    background: #000;
+    color: #ccc;
+    font-family: 'Consolas', 'Courier New', monospace;
+    margin: 0;
+    min-height: 100vh;
+}
+
+a { color: #cccc44; }
+
+.sub {
+    padding: 8px 18px;
+    color: #888835;
+    font-size: 12px;
+    border-bottom: 1px solid #222;
+}
+
+/* ── Header strip of totals ────────────────────────────────────────────────── */
+.strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    border-bottom: 1px solid #222;
+    background: #060606;
+}
+
+.strip .cell {
+    padding: 8px 18px;
+    border-right: 1px solid #1a1a1a;
+    min-width: 92px;
+}
+
+.strip .k {
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: #555;
+    display: block;
+}
+
+.strip .v {
+    font-size: 17px;
+    color: #dede55;
+}
+
+.strip .v.sm { font-size: 12px; color: #bbb; }
+.strip .v.warn { color: #ff9944; }
+.strip .v.bad { color: #ff5555; }
+.strip .v.good { color: #44aa44; }
+
+/* ── Tabs ─────────────────────────────────────────────────────────────────── */
+.tabs {
+    display: flex;
+    gap: 2px;
+    padding: 8px 18px 0;
+    border-bottom: 1px solid #222;
+}
+
+.tabs button {
+    background: #0d0d0d;
+    border: 1px solid #2a2a08;
+    border-bottom: none;
+    color: #888;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 1px;
+    padding: 6px 14px;
+    cursor: pointer;
+}
+
+.tabs button:hover { color: #cccc44; }
+.tabs button.on { background: #161602; color: #cccc44; border-color: #cccc44; }
+
+/* ── Card grids ───────────────────────────────────────────────────────────── */
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+    gap: 10px;
+    padding: 16px 18px;
+}
+
+a.card {
+    display: block;
+    background: #0d0d0d;
+    border: 1px solid #2a2a08;
+    border-radius: 8px;
+    padding: 12px 14px;
+    text-decoration: none;
+    color: inherit;
+}
+
+a.card:hover { background: #161602; border-color: #cccc44; }
+a.card.hot { border-color: #553311; }
+a.card.hot:hover { border-color: #ff9944; }
+
+.card .icao {
+    font-size: 21px;
+    color: #cccc44;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+.card-name {
+    font-size: 10px;
+    color: #777;
+    margin-top: 1px;
+    min-height: 12px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.card .big {
+    font-size: 19px;
+    color: #fff;
+    margin-top: 7px;
+}
+
+.card .big small { font-size: 11px; color: #888; }
+.card .line { font-size: 10px; color: #888; margin-top: 3px; }
+
+.chip {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 1px;
+    padding: 1px 5px;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: #999;
+    margin-right: 4px;
+    margin-top: 5px;
+}
+
+.chip.dly { border-color: #553311; color: #ff9944; }
+.chip.rate { border-color: #114455; color: #44bbdd; }
+.chip.frz { border-color: #334; color: #88aaff; }
+.chip.off { border-color: #442222; color: #cc5555; }
+
+/* ── Tables ───────────────────────────────────────────────────────────────── */
+.tablewrap { overflow-x: auto; padding: 0 0 40px; }
+
+table.rows {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+table.rows th {
+    position: sticky;
+    top: 0;
+    background: #0a0a0a;
+    color: #666;
+    font-weight: normal;
+    font-size: 9px;
+    letter-spacing: 1px;
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid #333;
+    white-space: nowrap;
+    z-index: 2;
+}
+
+table.rows th.sortable { cursor: pointer; }
+table.rows th.sortable:hover { color: #cccc44; }
+table.rows th .arr { color: #cccc44; }
+
+table.rows td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #141414;
+    white-space: nowrap;
+}
+
+table.rows tbody tr:hover { background: #0e0e04; }
+table.rows tbody tr.open { background: #121203; }
+
+.cs { color: #cccc44; font-weight: bold; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.dim { color: #666; }
+.pos { color: #ff9944; }
+.pos.big { color: #ff5555; font-weight: bold; }
+.neg { color: #668; }
+.ok { color: #44aa44; }
+
+.flags { color: #88aaff; letter-spacing: 1px; }
+
+/* Expanded metering chain under a flight row */
+tr.chain > td { padding: 0 0 6px 28px; background: #080802; }
+
+table.sub {
+    border-collapse: collapse;
+    font-size: 10px;
+    margin: 4px 0 2px;
+}
+
+table.sub th {
+    position: static;
+    background: none;
+    color: #555;
+    font-size: 9px;
+    padding: 2px 10px 2px 0;
+    border: none;
+}
+
+table.sub td {
+    padding: 2px 10px 2px 0;
+    border: none;
+    color: #aaa;
+}
+
+table.sub tr.last td { color: #ddd; }
+
+/* ── Filter bar ───────────────────────────────────────────────────────────── */
+.filterbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 18px;
+    border-bottom: 1px solid #222;
+    background: #060606;
+    flex-wrap: wrap;
+}
+
+.filterbar input[type=text] {
+    background: #111;
+    border: 1px solid #333;
+    color: #ccc;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 3px 8px;
+    width: 220px;
+    outline: none;
+}
+
+.filterbar input[type=text]:focus { border-color: #cccc44; }
+.filterbar label { font-size: 10px; color: #666; letter-spacing: 1px; }
+.filterbar .count { font-size: 10px; color: #555; margin-left: auto; }
+
+.empty { padding: 40px 18px; color: #666; text-align: center; }
+.note { padding: 8px 18px; font-size: 10px; color: #555; line-height: 1.6; }
+
+/* ── Section headings ─────────────────────────────────────────────────────── */
+h2.sec {
+    font-size: 11px;
+    font-weight: normal;
+    letter-spacing: 2px;
+    color: #888835;
+    padding: 14px 18px 6px;
+    border-top: 1px solid #1a1a1a;
+    margin: 0;
+}
+
+/* ── Leaflet ──────────────────────────────────────────────────────────────── */
+#map { height: 460px; border-top: 1px solid #222; border-bottom: 1px solid #222; }
+.leaflet-container { background: #06080b; font-family: inherit; }
+.leaflet-tooltip.tt {
+    background: #0a0a0a; color: #ddd; border: 1px solid #444;
+    font-family: inherit; font-size: 10px; box-shadow: none;
+}
+.leaflet-tooltip.tt:before { display: none; }
+.maplegend { padding: 6px 18px; font-size: 10px; color: #666; }
+.maplegend i { display: inline-block; width: 18px; height: 2px; vertical-align: middle; margin: 0 4px 0 12px; }
+
+@media (max-width: 700px) {
+    .strip .cell { min-width: 74px; padding: 6px 12px; }
+    .strip .v { font-size: 14px; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); padding: 12px; }
+}

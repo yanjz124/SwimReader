@@ -28,7 +28,7 @@ using SwimServer;
 ///
 /// Messages are partial updates, so every field merges (non-null overwrite) onto the record.
 /// </summary>
-class TbfmBridge
+partial class TbfmBridge
 {
     private readonly string _user, _pass, _queue, _host, _vpn;
 
@@ -500,12 +500,12 @@ class TbfmBridge
     public object[] EramSnapshot()
     {
         var now = DateTime.UtcNow;
+        // IsLive (TbfmDashboard.cs) is the shared test, so the scope and the /tbfm pages can't
+        // drift apart on what counts as a live schedule. It also hands back which of the two STAs
+        // the flight has already passed, which is what nulls them out below.
         return _flights.Values
-            .Where(f => !LaddService.IsBlocked(f.Aid, null))
-            // TBFM's track status says when it's over (live: JBU190 acs=LANDED with a runway STA).
-            .Where(f => !(f.Flt.TryGetValue("acs", out var acs) && acs == "LANDED"))
-            .Select(f => (f, mfxDone: Passed(f.StaMeterFix, f.StaMeterFixSeen, now), rwyDone: Passed(f.StaRunway, f.StaRunwaySeen, now)))
-            .Where(x => (x.f.StaMeterFix.HasValue && !x.mfxDone) || (x.f.StaRunway.HasValue && !x.rwyDone))
+            .Select(f => { var ok = IsLive(f, now, out var mfxDone, out var rwyDone); return (f, ok, mfxDone, rwyDone); })
+            .Where(x => x.ok)
             .Select(x => (object)new
             {
                 aid = x.f.Aid,
@@ -575,12 +575,25 @@ class TbfmBridge
     {
         var now = DateTime.UtcNow;
         var perCtr = _flights.Values.GroupBy(f => CenterOf(f.Source) ?? "?").ToDictionary(g => g.Key, g => g.Count());
+        // Delay per centre, over that centre's OWN live records — the hold its own meter points are
+        // assigning. Deliberately not the same roll-up as an airport's (see TbfmDashboard.cs): a
+        // flight held by one centre reads ~0 at the next point downstream once that is absorbed.
+        var dlyPerCtr = _flights.Values
+            .Where(f => IsLive(f, now, out _, out _))
+            .GroupBy(f => CenterOf(f.Source) ?? "?")
+            .ToDictionary(g => g.Key, g => g
+                .Select(f => f.StaMeterFix.HasValue && f.EtaMeterFix.HasValue
+                    ? (f.StaMeterFix.Value - f.EtaMeterFix.Value).TotalMinutes : 0)
+                .Where(d => d >= 1).ToList());
         return _centers.Values.OrderBy(c => c.Id).Select(c => (object)new
         {
             ctr = c.Id,
             heartbeatSec = c.LastHeartbeat is { } h ? (int)(now - h).TotalSeconds : (int?)null,
             lastMessageSec = c.LastMessage is { } m ? (int)(now - m).TotalSeconds : (int?)null,
             schedules = perCtr.TryGetValue(c.Id, out var n) ? n : 0,
+            delayed = dlyPerCtr.TryGetValue(c.Id, out var dl) ? dl.Count : 0,
+            delayMin = dlyPerCtr.TryGetValue(c.Id, out var dl2) ? (int)Math.Round(dl2.Sum()) : 0,
+            maxDelayMin = dlyPerCtr.TryGetValue(c.Id, out var dl3) && dl3.Count > 0 ? Math.Round(dl3.Max(), 1) : 0,
             tracons = c.Tracons.Keys.OrderBy(k => k).ToArray(),
             points = c.Points.Count,
             airports = c.Airports.Count,

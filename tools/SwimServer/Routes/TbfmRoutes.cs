@@ -4,6 +4,10 @@ namespace SwimServer;
 /// TBFM metering endpoints. The ERAM scope polls <c>/api/tbfm/eram</c> for the STA / DELAY RDBs.
 /// <c>/api/tbfm/flight/{callsign}</c>, <c>/centers</c> and <c>/adaptation/{center}</c> expose the
 /// rest of the feed; <c>/api/tbfm/debug</c> has raw samples and the element names seen.
+///
+/// The <c>/tbfm</c> pages are the dashboard over the same state: a directory of metered airports
+/// and centres, one airport's arrival metering board, and one centre's meter-point board with its
+/// adaptation geometry. Projections live in TbfmDashboard.cs.
 /// </summary>
 static class TbfmRoutes
 {
@@ -27,5 +31,26 @@ static class TbfmRoutes
             ctx.Tbfm.Adaptation(center) is { } a ? Results.Json(a, ctx.JsonOpts) : Results.NotFound());
 
         app.MapGet("/api/tbfm/debug", () => Results.Json(ctx.Tbfm.DebugSnapshot(), ctx.JsonOpts));
+
+        // ── Dashboard ────────────────────────────────────────────────────────
+        app.MapGet("/api/tbfm/stats", () => Results.Json(ctx.Tbfm.Stats(), ctx.JsonOpts));
+        app.MapGet("/api/tbfm/airports", () => Results.Json(ctx.Tbfm.AirportsSnapshot(), ctx.JsonOpts));
+        app.MapGet("/api/tbfm/airport/{apt}", (string apt) =>
+            Results.Json(ctx.Tbfm.AirportBoard(apt), ctx.JsonOpts));
+        app.MapGet("/api/tbfm/center/{center}", (string center) =>
+            ctx.Tbfm.CenterBoard(center) is { } b ? Results.Json(b, ctx.JsonOpts) : Results.NotFound());
+
+        app.MapGet("/tbfm", async (HttpContext c) => await Page(c, ctx, "directory.html"));
+        // Literal before parameter, so "center" can't be taken for an airport id.
+        app.MapGet("/tbfm/center/{center:regex(^[A-Za-z0-9]+$)}", async (HttpContext c, string center) =>
+            await Page(c, ctx, "center.html"));
+        app.MapGet("/tbfm/{apt:regex(^[A-Za-z0-9]+$)}", async (HttpContext c, string apt) =>
+            await Page(c, ctx, "airport.html"));
+    }
+
+    private static async Task Page(HttpContext c, ServerContext ctx, string file)
+    {
+        c.Response.ContentType = "text/html";
+        await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "tbfm", file));
     }
 }

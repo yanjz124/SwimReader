@@ -325,6 +325,20 @@ async function refreshStats() {
         }
     } catch {}
 
+    // TBFM counts aeroplanes, not schedules: a flight is metered once in every centre it
+    // crosses, so the record count runs 2x the flight count (see TbfmDashboard.cs).
+    try {
+        const br = await fetch('/api/tbfm/stats');
+        if (br.ok) {
+            const bt = await br.json();
+            const el = document.getElementById('tbfmCount');
+            if (el) el.textContent = bt.configured
+                ? `${bt.live}/${bt.centers} centres  ${(bt.flights || 0).toLocaleString()} metered`
+                  + (bt.delayMin ? `  ${bt.delayMin} min held` : '')
+                : 'not configured';
+        }
+    } catch {}
+
     // ITWS counts sites and product types, not flights — a terminal area publishes ~20
     // products and `connected` is what distinguishes "calm weather" from "feed is down".
     try {

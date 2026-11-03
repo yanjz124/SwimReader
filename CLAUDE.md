@@ -80,6 +80,11 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 - **TAIS Detail** (`/tais/{facility}`) — Terminal radar track table with search, sort, frozen filter, expandable detail
 - **Track a Flight** (`/track`, `/track/{callsign}`) — Mobile-first single-callsign aggregator across every source (SFDPS, TFMS, EDCT, TDLS, TAIS/STARS, ASDE-X); polls `/api/track/{callsign}`
 - **TFDM Boards** (`/tfdm`, `/tfdm/{airport}`) — Terminal surface/departure boards: per-airport live board (WS) with off-block/TSAT/runway/spot/taxi/sequence/delay, proposed-vs-active state, sortable columns + wildcard filter, and an info strip (config/AAR-ADR/closures/queues/gridlock/demand/TMRs). Directory sorted alphabetically.
+- **TBFM Boards** (`/tbfm`, `/tbfm/{airport}`, `/tbfm/center/{ctr}`) — time-based metering: a
+  directory of metered airports and the 20 centre TBFM systems, one airport's arrival board (hold
+  assigned, runway/point STA vs ETA, the per-centre metering chain behind each flight, AAR), and one
+  centre's meter points with its adaptation drawn on a map (meter fixes as points, MFA/OMA/OOA arcs
+  as real arc segments).
 - **Airport Operations** (`/airport`, `/airport/{id}`) — Tower-style field board: wind on a compass rose with NASR runways to scale, head/crosswind per runway end, altimeter/density altitude/RH/ceiling/visibility, 6-hour trend, raw METAR
 - **Route Finder / Dispatch** (`/dispatch`) — Search persisted flight history by route/airline/aircraft type → real callsign, filed route, cruise, airframe, gate; deep-links each into **SimBrief** (airframe/type/variant picker), **VATSIM prefile** and **FlightAware**. `/api/dispatch/search`.
 - **Telegram bot** (`TelegramBridge`, `@swimffbot`) — Follow a flight over inflight "free-messaging" wifi: send a callsign for the same cross-source status the Track page shows; `/sub` pushes updates on meaningful state change. Enabled when `TELEGRAM_BOT_TOKEN` is set. Its TFMS lines (route fallback, status/ETD/ETA, NAS entry fix, centers ahead) are what an inbound international leg shows before SFDPS has it at all — see the Track a Flight section. `GET /api/debug/telegram/{callsign}` returns the exact text the bot would send, so it can be checked without a token.
@@ -1844,6 +1849,61 @@ APIs: `GET /api/tbfm/flight/{callsign}` (every centre's full record), `GET /api/
 (heartbeat, schedule count, adaptation size, rates), `GET /api/tbfm/adaptation/{center}` (points
 with arc geometry, airports, gates, streams). `/api/tbfm/eram` now also carries `mrp` and `sch`,
 and drops schedules whose `acs` is LANDED.
+
+### The /tbfm dashboard — the feed is per-centre, the question is per-airport
+
+`/tbfm` (directory, two tabs), `/tbfm/{airport}` (arrival metering board), `/tbfm/center/{ctr}`
+(meter points + adaptation map). Projections in `TbfmDashboard.cs` (`partial TbfmBridge`, read-only
+over the same state); pages in `wwwroot/tbfm/`.
+
+**A row is an aeroplane, not a schedule.** TBFM meters a flight once in *every* ARTCC it crosses on
+the way in — each centre schedules it across its own boundary gate, and only the last link, the one
+adjacent to the arrival TRACON, carries a runway STA. Measured live (2026-11-03): **5,612 schedule
+records were 2,638 distinct flights**, chains 1-8 centres long, and **PHX arrivals were being
+metered by all 20 CONUS centres at once**. So everything groups by `(callsign, destination)` before
+it counts anything, and the board's row expands to show the chain nearest-the-field-last.
+
+Exactly **0 or 1** record per flight has a runway STA (verified across the whole snapshot), so "the
+terminal schedule" is unambiguous. `mrp/tra` names a real TRACON only on that record; every upstream
+one says `EDC` (Extended Metering), with `cat` = `OVERFLIGHT` / `SATELLITE_TO_EXTERNAL`.
+
+#### Two delay roll-ups, both correct, don't merge them
+Delay is `STA − ETA` at one point.
+- **A flight's** delay is the **maximum** over its chain, never the sum. TBFM distributes a hold
+  upstream, so once a centre has absorbed it the next point downstream reads ~0 — live, AAL1754/PHX
+  took **+5.8 min at ZDV/GUP and 0.0 at ZAB/ZDVPHXX** one point later. Summing double-counts.
+- **A meter point's** delay is its own record's, because that is what the sector working that point
+  sees. `CentersSnapshot` and `CenterBoard` use this; `AirportsSnapshot`/`AirportBoard` use the
+  other. `TbfmDashboardTests` pins both.
+
+#### Negative delay is real and is not clamped
+~4% of records have STA before ETA, which TBFM cannot deliver. It comes out of this bridge's
+merge-on-non-null semantics: when a schedule's scheduled point changes (live: DAL348/PHX, `sfx`
+moved to PINNG from BRDEY) the older `sta_sfx` survives against the new `eta_sfx`. A big negative is
+the *signal* that a record's two times are from different schedules, so it is displayed, not hidden.
+
+#### 3600/hr is TBFM's "no restriction" default, not a rate
+**53 of 57** published AARs sat at exactly 3600 — including DVT and SDL, fields that could not take
+one an hour — with effective times days old, while the only four real ones (**ORD 100, FLL 56,
+MIA 40, MDW 28**) had been set that day. Pages show 3600 as "none"; `restricted` is the flag worth
+reading. `aac`/`sac`/`scc` carry **no `<rat>` at all** (their payload is stream-class and
+scheduling-constraint data `ProcessConfig` doesn't model), so they are counted as
+`otherConfigKinds` rather than listed as blank rates.
+
+#### The adaptation map
+`lat`/`lon` on an arc point is the arc's **centre** (the TRACON reference), not a point on it — ZLA's
+ACAS and AKIM share 33.933/-118.432, which is the LAX reference. An arc is drawn **clockwise from
+`lan` to `ran`** at `rad` nm, wrapping through 360 (ACAS 330°→40° is a 70° span). Points with
+`rad` are arcs (MFA/OMA/OOA/O3A/O4A); those without are meter fixes (MFX) and plot as dots —
+118 of ZLA's 172 points have a radius, which is exactly its non-MFX count. Adaptation is published
+rarely, so a centre with no geometry yet is normal and the page says so instead of drawing nothing.
+
+#### Not surfaced yet
+`oth` is still an unmodelled `<tma>` kind (~10.5k seen) and the `flt` block carries more than the
+pages use — `tcr` (route with per-fix crossing times), `cfx`/`ctm` (coordination fix + time),
+`apreq`, `ina`, `est`, `fps`, `drw`/`trw`. They are all already captured raw in `TbfmFlight.Flt`, so
+`GET /api/tbfm/flight/{callsign}` returns them today; the board shows `typ`/`acs`/`bcn`/`tds`/`ara`
+and the filed route (`a10`).
 
 ## ITWS: only PHL has the alerting products (queue subscription, not a bug)
 

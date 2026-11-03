@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TBFM Centre</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>&#9201;</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/shared/common.css?v=2">
+<link rel="stylesheet" href="/tbfm/tbfm.css?v=1">
+<link rel="stylesheet" href="/shared/frame.css?v=4">
+</head>
+<body class="has-up">
+<header>
+    <a class="nav-home" href="/">&larr; HOME</a>
+    <h1 id="title">TBFM</h1>
+    <span class="header-label" id="tracons"></span>
+    <span id="status">connecting…</span>
+</header>
+
+<div class="strip" id="strip"></div>
+<div class="sub" id="info"></div>
+
+<h2 class="sec">ADAPTATION &mdash; METER POINTS AND ARCS</h2>
+<div id="map"></div>
+<div class="maplegend" id="legend"></div>
+
+<h2 class="sec">METER POINTS IN USE</h2>
+<div class="filterbar">
+    <label for="q">FILTER</label>
+    <input type="text" id="q" placeholder="point, gate, TRACON, airport…" autocomplete="off">
+    <label><input type="checkbox" id="onlydly"> holding only</label>
+    <span class="count" id="count"></span>
+</div>
+<div class="tablewrap">
+    <table class="rows" id="ptbl">
+        <thead><tr id="phdr"></tr></thead>
+        <tbody id="pbody"><tr><td class="empty" colspan="12">Loading…</td></tr></tbody>
+    </table>
+</div>
+
+<h2 class="sec">ACCEPTANCE RATES</h2>
+<div class="tablewrap">
+    <table class="rows">
+        <thead><tr><th>KIND</th><th>ID</th><th>TRACON</th><th class="num">RATE /HR</th>
+            <th>TYPE</th><th>EFFECTIVE</th></tr></thead>
+        <tbody id="rbody"></tbody>
+    </table>
+</div>
+
+<h2 class="sec">AIRPORTS IN ADAPTATION</h2>
+<div class="tablewrap">
+    <table class="rows">
+        <thead><tr><th>APT</th><th>TRACON</th><th class="num">METERED</th>
+            <th>RUNWAYS</th><th>CONFIGS</th></tr></thead>
+        <tbody id="abody"></tbody>
+    </table>
+</div>
+
+<div class="note" id="note"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/tbfm/center.js?v=1"></script>
+<script src="/idle-timer.js?v=3"></script>
+<script src="/shared/frame.js?v=4"></script>
+<script src="/shared/disclaimer.js?v=2"></script>
+</body>
+</html>

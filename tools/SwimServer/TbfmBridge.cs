@@ -40,6 +40,8 @@ class TbfmBridge
     private readonly ConcurrentDictionary<string, long> _elementCounts = new();
     private long _msgCount, _airCount, _unparsed;
 
+    private static readonly string[] Arcs = { "oma", "ooa", "o3a", "o4a" };
+
     private static readonly TimeSpan StaleAfter = TimeSpan.FromMinutes(20);
     private static readonly TimeSpan KeepPastSta = TimeSpan.FromMinutes(10);
 
@@ -182,6 +184,17 @@ class TbfmBridge
             MergeTime(ref f.StaMeterFix, Time(air, "sta_sfx", "sta_dfx", "sta_mfx"));
             MergeTime(ref f.EtaRunway, Time(air, "eta_rwy", "etaRwy"));
             MergeTime(ref f.StaRunway, Time(air, "sta_rwy", "staRwy"));
+            // Meter arcs upstream of the meter fix (outer meter arc, outer-outer, 3rd, 4th), each
+            // with its own STA/ETA. Which one a given sector actually sees is site adaptation that
+            // SWIM doesn't publish, so they are exposed as data rather than picked here.
+            foreach (var arc in Arcs)
+            {
+                var sta = Time(air, "sta_" + arc);
+                var eta = Time(air, "eta_" + arc);
+                if (sta is null && eta is null) continue;
+                var cur = f.ArcTimes.TryGetValue(arc, out var c) ? c : (null, null);
+                f.ArcTimes[arc] = (sta ?? cur.Sta, eta ?? cur.Eta);
+            }
             f.LastSeen = now;
         }
     }
@@ -300,9 +313,22 @@ class TbfmBridge
                 etaMfx = x.mfxDone ? null : x.f.EtaMeterFix,
                 staRwy = x.rwyDone ? null : x.f.StaRunway,
                 etaRwy = x.rwyDone ? null : x.f.EtaRunway,
+                arcs = ArcsJson(x.f, now),
                 ageSec = (int)(now - x.f.LastSeen).TotalSeconds,
             })
             .ToArray();
+    }
+
+    /// <summary>Arc STA/ETA pairs still ahead of the flight, keyed oma/ooa/o3a/o4a; null when none.</summary>
+    private static Dictionary<string, object>? ArcsJson(TbfmFlight f, DateTime now)
+    {
+        Dictionary<string, object>? d = null;
+        foreach (var (arc, t) in f.ArcTimes)
+        {
+            if (t.Sta is null || Passed(t.Sta, f.LastSeen, now)) continue;
+            (d ??= new())[arc] = new { sta = t.Sta, eta = t.Eta };
+        }
+        return d;
     }
 
     /// <summary>
@@ -349,5 +375,7 @@ class TbfmFlight
     public string Aid = "";
     public string? TmaId, Source, Gufi, Arrival, Departure, AirType, MeterFix, Runway;
     public DateTime? EtaMeterFix, StaMeterFix, EtaRunway, StaRunway;
+    // Written on the feed thread, read by API requests: concurrent, so enumeration can't throw.
+    public readonly ConcurrentDictionary<string, (DateTime? Sta, DateTime? Eta)> ArcTimes = new();
     public DateTime LastSeen;
 }

@@ -276,10 +276,13 @@ class TbfmBridge
         {
             var nam = Leaf(mrn, "nam");
             if (nam == null) continue;
-            c.Points[nam] = new TbfmPoint
+            var mrt = Leaf(mrn, "mrt");
+            // Keyed by name AND type: one name can be several points (ZLA: LAX/NORTH is both an
+            // O3A and an O4A; ZSE: HELNS is an MFX and "HELNS." its MFA).
+            c.Points[TbfmCenter.PointKey(nam, mrt)] = new TbfmPoint
             {
                 Name = nam,
-                Type = Leaf(mrn, "mrt"),
+                Type = mrt,
                 Gate = Leaf(mrn, "gat"),
                 MeterFix = Leaf(mrn, "mfx"),
                 Arc = Leaf(mrn, "oma"),
@@ -596,9 +599,12 @@ class TbfmBridge
     {
         if (f.MeterFix is not { } name || CenterOf(f.Source) is not { } ctr
             || !_centers.TryGetValue(ctr, out var c)) return null;
-        return c.Points.TryGetValue(name, out var p) ? p.Type
-             : c.Points.TryGetValue(name + ".", out var arc) ? arc.Type   // arcs are named "HELNS."
-             : null;
+        var hits = c.Points.Values.Where(p => p.Name == name).ToList();
+        if (hits.Count == 0) hits = c.Points.Values.Where(p => p.Name == name + ".").ToList(); // ZSE names arcs "HELNS."
+        if (hits.Count == 0) return null;
+        // The scheduled point is a fix when the centre has one by that name (ZSE: HELNS MFX beside
+        // "HELNS." MFA); otherwise it is whatever single kind of point the name is (ZLA: PXN MFA).
+        return hits.FirstOrDefault(p => p.Type == "MFX")?.Type ?? hits[0].Type;
     }
 
     public void SetCacheDir(string dir) => _cacheDir = dir;
@@ -650,7 +656,7 @@ class TbfmBridge
             foreach (var pc in list)
             {
                 var c = Center(pc.Id);
-                foreach (var p in pc.Points) { c.Points[p.Name] = p; pts++; }
+                foreach (var p in pc.Points) { c.Points[TbfmCenter.PointKey(p.Name, p.Type)] = p; pts++; }
                 foreach (var a in pc.Airports)
                 {
                     var ap = c.Airports.GetOrAdd(a.Name, k => new TbfmAirport { Name = k });
@@ -687,17 +693,19 @@ class TbfmBridge
 
     /// <summary>
     /// The arc's name. First the schedule's own &lt;mrp&gt; (oma = "MOXEE/T"). That block often
-    /// arrives in a different message from the times, so fall back to the centre's adaptation: a
-    /// meter-fix point lists its outer arc (mrn/oma). Only the outer arc has that fallback.
+    /// arrives in a different message from the times, so fall back to the centre's adaptation.
     /// </summary>
     private string? ArcName(TbfmFlight f, string arc)
     {
         if (f.Mrp.TryGetValue(arc, out var n) && !string.IsNullOrWhiteSpace(n)) return n;
-        if (arc == "oma" && f.MeterFix is { } mfx
-            && CenterOf(f.Source) is { } ctr && _centers.TryGetValue(ctr, out var c)
-            && c.Points.TryGetValue(mfx, out var pt) && !string.IsNullOrWhiteSpace(pt.Arc))
-            return pt.Arc;
-        return null;
+        if (f.MeterFix is not { } mfx || CenterOf(f.Source) is not { } ctr
+            || !_centers.TryGetValue(ctr, out var c)) return null;
+        // Adaptation arcs name the meter point they serve (ZLA: ZABEOA is the OMA with mfx ZABEAST).
+        // Name it only when exactly one arc of this kind serves this point: STEWWMP has two OMAs
+        // (STEWOA, STEWOA2), and guessing between them would be worse than saying nothing.
+        var type = arc.ToUpperInvariant();
+        var arcs = c.Points.Values.Where(p => p.Type == type && p.MeterFix == mfx).Select(p => p.Name).Distinct().ToList();
+        return arcs.Count == 1 ? arcs[0] : null;
     }
 
     /// <summary>
@@ -763,8 +771,9 @@ class TbfmFlight
 class TbfmCenter
 {
     public string Id = "";
+    public static string PointKey(string name, string? type) => $"{name}|{type}";
     public DateTime? LastHeartbeat, LastMessage;
-    public readonly ConcurrentDictionary<string, TbfmPoint> Points = new();      // meter reference points
+    public readonly ConcurrentDictionary<string, TbfmPoint> Points = new();      // "name|type" → meter reference point
     public readonly ConcurrentDictionary<string, TbfmAirport> Airports = new();
     public readonly ConcurrentDictionary<string, string> Gates = new();          // gate → TRACON
     public readonly ConcurrentDictionary<string, string> StreamClasses = new();  // stream class → TRACON

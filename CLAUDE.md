@@ -1705,6 +1705,49 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
   minutes (`+3`). It shares the RDB with the CRR distance and follows the same `Ctrl+Shift+O` offset. **Live only**: TBFM isn't recorded, so
   replay and incident views show no metering rather than today's.
 
+### TBFM message kinds and tag glossary
+
+Four kinds arrive on the queue (inventoried from ~900 live messages, 2026-11-02). Each is parsed;
+anything under `<tma>` we don't model is counted in `/api/tbfm/debug` → `unknownKinds` (empty so far).
+
+| Kind | Root | Parsed into |
+|---|---|---|
+| Flight schedule | `env/tma/air` | `TbfmFlight`: times, plus raw `flt` / `mrp` / `sch` leaves |
+| Adaptation | `env/tma/adp` | `TbfmCenter`: meter points, airports, gates, stream classes, TRACONs |
+| Config | `env/tma/con` | `TbfmCenter.Rates`: `aar` (airport) and `tar` (TRACON) acceptance rates |
+| Heartbeat | `mis/hb` (`misSrce`) | `TbfmCenter.LastHeartbeat` |
+
+`<air>` attributes: `aid gufi cid tmaId apt dap`, and `airType` **NEW / AMD / DEL**. **DEL removes
+the schedule** (5 in ~900 messages). Meanings below marked *(guess)* are inferred from values, not
+from the spec (TBFM MIS JMSDD, NSRR); the raw tag is always what the API returns.
+
+- **`flt`**: `aid` `dap` `apt`; `typ` type/equipment (`B38M/L`); `bcn` beacon; `a10` NAS route
+  (field 10); `ara` requested altitude; `ina` *(guess: initial/assigned altitude)*; `spd` filed
+  speed (kt or Mach); `eng` JET / TURBO_PROP / PISTON; `cfx`/`ctm` coordination fix/time; `etd`;
+  `std` scheduled departure (TBFM release time); `acs` track status TRACKED / PROPOSED / ACTIVE /
+  INACTIVE / LOST / **LANDED**; `fps` flight-plan status ACTIVE / PROPOSED / DEPARTED; `tds`
+  *(guess: track data source: a centre, TRACON, TFM)*; `tcr` fix list `FIX/0000 …` *(guess)*;
+  `drw` departure airport_runway (`BUF_23`); `est` FAA; `etm`, `trw` seen empty.
+- **`mrp`** (this schedule's meter points): `mfx` meter fix, `sfx` / `dfx` the points the
+  `sta_sfx`/`sta_dfx` times refer to, `oma`/`ooa`/`o3a`/`o4a` **arc names** (`MOXEE/T`), `rwy`,
+  `gat` gate, `scn` stream class, `tra` TRACON, `cfg` runway config, `cat` ARRIVAL /
+  SATELLITE_ARRIVAL / SATELLITE_TO_EXTERNAL / OVERFLIGHT.
+- **`sch`** flags YES/NO: `sfz` schedule frozen, `rfz` runway frozen *(guess)*, `sus` suspended,
+  `man` manual; plus `mfx`.
+- **`eta` / `sta`**: `mfx` plus `{eta,sta}_{sfx,dfx,mfx,oma,ooa,o3a,o4a,rwy}`. Kept raw in `times`.
+- **`adp/mrns/mrn`** meter reference point: `nam`, `mrt` type **MFX** fix / **MFA** meter-fix arc /
+  **OMA** outer arc / **OOA** outer-outer arc, `gat`, `lat`/`lon` as DDMMSS(N/S)/DDDMMSS(E/W)
+  (parsed to decimal), arcs add `rad` radius nm and `lan`/`ran` left/right angles; `mfx`, `oma`,
+  `alo`/`ahi` altitude band. Arc names carry a trailing `.` (`HELNS.`) beside the fix `HELNS`.
+- **`adp/apns/apn`** airports with `rwns` runways and `cfns` runway configs (`S_28` → 28L/28R);
+  `gans` gates; `scns` stream classes (`PDX_HELNS_JETS`); `tra`/`trn` TRACON.
+- **`con/aar`** (`apt`, `tra`, `rat`, `tim`) and **`con/tar`** (`tra`, `rat`, `tim`, `tarType`).
+
+APIs: `GET /api/tbfm/flight/{callsign}` (every centre's full record), `GET /api/tbfm/centers`
+(heartbeat, schedule count, adaptation size, rates), `GET /api/tbfm/adaptation/{center}` (points
+with arc geometry, airports, gates, streams). `/api/tbfm/eram` now also carries `mrp` and `sch`,
+and drops schedules whose `acs` is LANDED.
+
 ## ITWS: only PHL has the alerting products (queue subscription, not a bug)
 
 "ITWS isn't showing anything" is usually this. The feed is healthy (~11 msg/s, no discards) and the

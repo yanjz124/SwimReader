@@ -1156,10 +1156,28 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 A replay showing *this minute's* weather over archived traffic is worse than showing none. Both
 scopes now ask for the volume that was on the scope then, and neither stores anything of ours.
 
-**ERAM** (`eram.js`) switches its WMS from nowCOAST's live mosaic to **IEM's time-addressable
-archive** (`mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi`, `&time=`), slotted to 5 minutes
-because that is IEM's archive granularity. `refreshNexrad()` double-buffers, so the old layer is
-only removed once the new one loads.
+**ERAM** (`eram.js`) — **BROKEN, and this section used to claim otherwise.** It switches its WMS
+to `mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi` with `&time=`, slotted to 5 minutes.
+**That service has no absolute time addressing, so ERAM replay draws LIVE weather.** Measured
+2026-11-03: five GetMap requests spanning nine days (no time, and four explicit `&time=` values)
+returned byte-identical PNGs — same MD5 every time. It is not a parameter-format problem:
+
+- The layer we ask for, `nexrad-n0q`, **is not in GetCapabilities at all** (the real name is
+  `nexrad-n0q-900913`), and fixing the name changes nothing — still identical across nine days.
+- No layer declares a `<Dimension name="time">`. What IEM offers instead is *relative* layers,
+  `-m05m` / `-m10m`, which do return different images — i.e. you can step back from **now**, but
+  you cannot address an absolute past instant.
+
+**What does work** (verified, distinct images per timestamp): IEM's archived CONUS composite,
+`mesonet.agron.iastate.edu/archive/data/{yyyy}/{MM}/{dd}/GIS/uscomp/n0q_{yyyyMMddHHmm}.png` —
+one ~4 MB 12200x5400 PNG per 5-minute slot, EPSG:4326, upper-left `-126.0, 50.0` at 0.005 deg/px
+per its `.wld`, so bounds are lat 23-50, lon -126 to -65. Being a whole-CONUS image rather than
+WMS tiles, it needs the tile layer to crop from one downscaled canvas per slot instead of
+fetching per tile; decoding it at full size would be ~263 MB of RGBA.
+
+The STARS half of this section IS correct and verified — it uses Unidata's S3 NIDS mirror, which
+is genuinely time-addressed. Only the ERAM half was written without checking that the service
+honoured the parameter.
 
 **STARS** (`stars/nexrad.js`) can't use that — it decodes **single-site Level III radials**, not a
 CONUS raster. It uses **Unidata's public S3 mirror of the NIDS feed**, `unidata-nexrad-level3`,

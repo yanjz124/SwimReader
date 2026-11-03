@@ -1681,8 +1681,11 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
 - Scope (`eram.js`): polls every 15 s, and only while STA RDB or DELAY RDB is on. Matching is by
   GUFI, then by callsign + destination, then by a callsign that only one TBFM record carries. The
   RDB shows the meter-fix STA as `HHMM` (runway STA if there's no meter fix). Delay is `STA − ETA`
-  at the same point, as `+3`, or `+3:20` with DELAY FORMAT on. It shares the RDB with the CRR
-  distance and follows the same `Ctrl+Shift+O` offset. **Live only**: TBFM isn't recorded, so
+  at the same point, rounded to 10 s, as `+02:30` (sign, MM:SS), drawn in the data-block colour.
+  That format follows the only reference found: a NASA 2019 FIM study's MACS ERAM emulation
+  (NTRS 20190000841, Figs. 4–5: delay countdown `+00:10` below the target, meter list STA `1749` +
+  `+01:10`). **What DELAY FORMAT really toggles is undocumented**; here it switches to whole
+  minutes (`+3`). It shares the RDB with the CRR distance and follows the same `Ctrl+Shift+O` offset. **Live only**: TBFM isn't recorded, so
   replay and incident views show no metering rather than today's.
 
 ## ITWS: only PHL has the alerting products (queue subscription, not a bug)

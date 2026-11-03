@@ -201,7 +201,11 @@ let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles w
 // ── TBFM metering RDBs (STA RDB / DELAY RDB / DELAY FORMAT) ──
 // Data: /api/tbfm/eram, from the TBFM MIS feed (TbfmBridge). STA is the meter-fix STA (runway STA
 // when no meter fix is scheduled), shown HHMM zulu. Delay = STA - ETA at the same point, i.e. the
-// time the aircraft must lose; DELAY FORMAT switches whole minutes (+3) to minutes:seconds (+3:20).
+// time the aircraft must lose (positive = must be delayed).
+// Format reference: NASA 2019 FIM study (NTRS 20190000841), MACS ERAM emulation — Fig. 5 shows the
+// Delay Countdown Timer as "+00:10" below the target symbol in the data-block colour, Fig. 4 the
+// meter list as STA "1749" + delay "+01:10"; ETA-STA rounded to the nearest 10 s. DELAY FORMAT's
+// real behaviour is undocumented; here it switches to whole minutes (+1) — UNVERIFIED.
 // Live only: TBFM schedules are not recorded, so replay shows no metering rather than today's.
 let staRdbEnabled = false;
 let delayRdbEnabled = false;
@@ -270,13 +274,14 @@ function tbfmRdbText(f) {
         if (hhmm) parts.push(hhmm);
     }
     if (delayRdbEnabled && sta && eta) {
-        const sec = Math.round((new Date(sta) - new Date(eta)) / 1000);
-        if (isFinite(sec)) {
+        const raw = (new Date(sta) - new Date(eta)) / 1000;
+        if (isFinite(raw)) {
+            const sec = Math.round(raw / 10) * 10;           // nearest 10 s, as ERAM's DCT
             const sign = sec < 0 ? '-' : '+';
             const a = Math.abs(sec);
             parts.push(delayFormatSeconds
-                ? `${sign}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`
-                : `${sign}${Math.round(a / 60)}`);
+                ? `${sign}${Math.round(a / 60)}`              // alternate: whole minutes (unverified)
+                : `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`);
         }
     }
     return parts.join(' ');
@@ -2857,8 +2862,10 @@ function buildMarkerHtml(f, cls) {
             const rdbDist = getCrrRdbDistance(f);
             if (rdbDist !== null) rdbParts.push(rdbDist.toFixed(1) + 'nm');
         }
+        // TBFM parts draw in the data-block colour (as ERAM's delay countdown does); the CRR
+        // distance keeps the RDB's own colour.
         const tbfmText = tbfmRdbText(f);
-        if (tbfmText) rdbParts.push(tbfmText);
+        if (tbfmText) rdbParts.push(`<span style="color:${color}">${tbfmText}</span>`);
         {
             if (rdbParts.length) {
                 const rdbText = rdbParts.join(' ');

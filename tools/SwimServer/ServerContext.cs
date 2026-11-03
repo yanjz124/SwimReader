@@ -45,6 +45,9 @@ class ServerContext
     public required ReplayServer ReplayServer { get; init; }
     public required SectorTracker SectorTracker { get; init; }
     public required AirspaceBridge Airspace { get; init; }
+    /// <summary>ERAM sector geometry (vNAS Fixed Airspace Volumes) — distinct from the AIXM
+    /// position data in <see cref="Airspace"/>.</summary>
+    public required VnasAirspace EramAirspace { get; init; }
     public required NexradStations NexradStations { get; init; }
 
     // ── Filesystem paths ────────────────────────────────────────────────────

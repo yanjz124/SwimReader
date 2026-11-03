@@ -1161,28 +1161,35 @@ The sequence number (e.g., `001`) is only at the very beginning of each message 
 A replay showing *this minute's* weather over archived traffic is worse than showing none. Both
 scopes now ask for the volume that was on the scope then, and neither stores anything of ours.
 
-**ERAM** (`eram.js`) — **BROKEN, and this section used to claim otherwise.** It switches its WMS
-to `mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi` with `&time=`, slotted to 5 minutes.
-**That service has no absolute time addressing, so ERAM replay draws LIVE weather.** Measured
-2026-11-03: five GetMap requests spanning nine days (no time, and four explicit `&time=` values)
-returned byte-identical PNGs — same MD5 every time. It is not a parameter-format problem:
+**ERAM** (`eram.js`) — fixed, after this section spent a while claiming the opposite in both
+directions. The original text said replay weather was time-addressed; it wasn't. The replacement
+text said it was broken; it is not, since `fb13a6f`/`8f7c8a7`/`f8c1e3c`. What was actually wrong,
+and why it took measuring to see:
 
-- The layer we ask for, `nexrad-n0q`, **is not in GetCapabilities at all** (the real name is
-  `nexrad-n0q-900913`), and fixing the name changes nothing — still identical across nine days.
-- No layer declares a `<Dimension name="time">`. What IEM offers instead is *relative* layers,
-  `-m05m` / `-m10m`, which do return different images — i.e. you can step back from **now**, but
-  you cannot address an absolute past instant.
+IEM's WMS, `mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi`, **has no absolute time
+addressing**, so `&time=` was ignored and ERAM replay drew LIVE weather. Measured: five GetMap
+requests spanning nine days (no time, and four explicit `&time=` values) returned **byte-identical
+PNGs**, same MD5 every time. Not a parameter-format problem — the layer asked for, `nexrad-n0q`,
+is not in GetCapabilities at all (the real name is `nexrad-n0q-900913`), and correcting it changed
+nothing; no layer declares a `<Dimension name="time">`. IEM offers *relative* layers (`-m05m`,
+`-m10m`) instead: you can step back from **now**, never to an instant.
 
-**What does work** (verified, distinct images per timestamp): IEM's archived CONUS composite,
-`mesonet.agron.iastate.edu/archive/data/{yyyy}/{MM}/{dd}/GIS/uscomp/n0q_{yyyyMMddHHmm}.png` —
-one ~4 MB 12200x5400 PNG per 5-minute slot, EPSG:4326, upper-left `-126.0, 50.0` at 0.005 deg/px
-per its `.wld`, so bounds are lat 23-50, lon -126 to -65. Being a whole-CONUS image rather than
-WMS tiles, it needs the tile layer to crop from one downscaled canvas per slot instead of
-fetching per tile; decoding it at full size would be ~263 MB of RGBA.
+**What replaced it**: IEM's archived CONUS composite,
+`mesonet.agron.iastate.edu/archive/data/{yyyy}/{MM}/{dd}/GIS/uscomp/n0q_{yyyyMMddHHmm}.png` — one
+~4 MB 12200x5400 PNG per 5-minute slot, EPSG:4326, upper-left `-126.0, 50.0` at 0.005 deg/px per
+its `.wld`, so bounds are lat 23-50, lon -126 to -65. Verified distinct per timestamp. It is a
+whole-CONUS image, not WMS tiles, so the slot is fetched **once** and every tile crops its own box
+out of one downscaled canvas (4x — the native RGBA buffer is ~263 MB); nearest-neighbour
+throughout, because smoothing blends palette colours into hues the level classifier has no
+category for. The slot cache is bounded at 3.
 
-The STARS half of this section IS correct and verified — it uses Unidata's S3 NIDS mirror, which
-is genuinely time-addressed. Only the ERAM half was written without checking that the service
-honoured the parameter.
+**A second bug sat behind it.** Even reading the archive, opening a replay still pulled **63 live
+tiles first**, because the layer is built at module scope before `ReplayBar` has started — the same
+race documented below for STARS. Gating on the URL (`REPLAY_PAGE`) got it to 28, not 0, because
+`onStart` also runs before any clock exists. Building the layer on the **first clock tick** got it
+to **0 live requests in replay, 63 in live** (control unaffected).
+
+The STARS half of this section was always correct
 
 **STARS** (`stars/nexrad.js`) can't use that — it decodes **single-site Level III radials**, not a
 CONUS raster. It uses **Unidata's public S3 mirror of the NIDS feed**, `unidata-nexrad-level3`,
@@ -1723,7 +1730,71 @@ Configured in `appsettings.json` under `AdsbFi`:
 - `MilitaryInjectionService` — polls for military aircraft in configured geofence areas
 - Rate-limited with caching (hex: 5min TTL, geo: 30s TTL)
 
-## KML Sector Boundaries
+## ERAM sectorisation: vNAS Fixed Airspace Volumes beat the KML
+
+`VnasAirspace.cs` + `GET /api/airspace/favs[/{artcc}]`. **This is the good sector geometry**; the
+KML below is what it replaces.
+
+**`GET {dataApiBaseUrl}/favs/{ARTCC}` is public, no auth.** It is not in any documentation — it was
+found by pulling apart the SvelteKit bundle at `https://airspace.virtualnas.net/`, whose
+`/[artcc_id]/airspace` page fetches exactly this. `dataApiBaseUrl` is resolved from
+`configuration.vnas.vatsim.net` rather than hardcoded, same as CRC and the video maps. The site
+itself also confirms `/api/artcc-summaries`, which carries **`eramDataLastUpdatedAt` per ARTCC** —
+the freshness key, so a cached file is only re-pulled when vNAS's ERAM data actually changed.
+
+**The API filters on User-Agent.** `curl` gets 200; `Python-urllib/3.x` gets **403**. The
+HttpClient sets one explicitly — without it every ARTCC reads as "has no airspace", which is a
+much more confusing failure than an error.
+
+### What a FAV is
+One sector's airspace, `favId` = `{sector:3}{volume:2}` (ZDC 00701 and 00702 are sector 7's two
+volumes; the prefix matches `eramConfiguration.sectors[].sectorId` exactly, and all 54 published
+ZDC sectors have at least one). Its **modules** are altitude slabs, each with its own polygon and
+explicit `lowerAlt`/`upperAlt` in feet. ZDC's Gordonsville 32 is three stacked slabs —
+21,100-23,000 / 23,100-27,000 / 27,100-33,400, each a different shape.
+
+Measured 2026-11-03 across all 24 ARTCCs: **2,641 FAVs, 4,504 modules, 75,185 boundary points**,
+~3.7 MB. 20 ARTCCs publish them; ZAN/ZHN/ZSU/ZUA return an empty array (the real answer, not an
+error — and an empty response never overwrites a cached set that has geometry).
+
+| | `AllSectors.kml` | FAVs |
+|---|---|---|
+| ZDC geometry | 78 placemarks | **141 volumes, 365 modules** |
+| altitude | free text, 27 spellings for ZDC (`240-ABV`) | **numeric floor/ceiling per slab** |
+| category | scraped from a KML folder name; 204 of 2,124 placemarks have no folder path, needing a regex fallback | n/a — real volumes |
+| sector identity | the placemark name | **`favId[:3]` = the ERAM sector id** |
+| dated | April 2025, not in the repo | 2026-10-22, fetched and cached |
+| parsed | in the browser, every page load, 4.5 MB | server, cached to `vnas-airspace/` |
+
+### Three things the data does that a first reading gets wrong
+- **No ring is closed.** All 4,886 of them end somewhere other than where they start, so the
+  converter repeats the first point; without it the polygon is invalid and renderers disagree.
+  FAV points are `lat`/`lon` objects, GeoJSON wants `[lon, lat]`.
+- **`99xxx` is not junk, it is "and above".** No module has a *normal* ceiling above 98,990, while
+  **464** pair a normal floor with a 99,000-99,900 ceiling — ZAB 06701 runs 30,000 to 99,100, i.e.
+  FL300 and above. Dropping those would delete the ceiling of every high sector in the country;
+  they are reported `upperAlt: null, unlimitedCeiling: true`. Separately, **224** modules have
+  *both* ends ≥ 99,000, in a ladder of 100 ft bands at 200 ft spacing ((99800,99900) alone 117
+  times). What that encodes is **not known**, so they are kept, flagged `sentinel: true`, and
+  hidden unless asked for — never matched by an altitude query.
+- **`excludeModules` are a 3-D subtraction, not a polygon hole.** Only 38 of 382 share an altitude
+  band with any parent module; ZAU 01101 subtracts just the bottom 100 ft of a 0-10,000 volume. As
+  a GeoJSON interior ring that area would vanish at *every* altitude of the feature, so they travel
+  as their own features with `exclude: true` and their own band.
+
+### Bands are inclusive and tile with a 100 ft step
+1,805 of ~1,830 consecutive module pairs gap by exactly +100 ft, so 23,000 and 23,100 are
+**adjacent**, not 100 ft apart with a void between. An overlap test taken literally returns nothing
+for an aircraft reporting 23,050 — a real hole, since Mode C is not restricted to band edges. The
+query therefore treats a ceiling of C as covering C+99; the reported `upperAlt` is untouched.
+`VnasAirspaceTests` pins this, and caught it.
+
+`?lowFt=&highFt=` filters to the slabs overlapping that band, `?sector=` to one sector (bare or
+zero-padded), `?sentinel=true` includes the 99k-only modules. **The ERAM scope still draws the KML**
+— switching its boundary layer over is the open piece of work, and the interesting part is that the
+sidebar's existing FL low/high filter can then reshape the boundaries, which the KML cannot do.
+
+## KML Sector Boundaries (legacy — see FAVs above)
 
 Place KML files in the repo root (gitignored, not committed):
 - `AllSectors.kml` — auto-loaded by eram.html via `/api/kml/AllSectors.kml`

@@ -20,6 +20,19 @@ static class AirspaceRoutes
             }, ctx.JsonOpts);
         });
 
+        // ERAM Fixed Airspace Volumes from vNAS. Registered BEFORE "/api/airspace/{facility}" so
+        // the literal "favs" can't be taken for a facility id (same rule as /asdex/ws/{airport}).
+        app.MapGet("/api/airspace/favs", () => Results.Json(ctx.EramAirspace.Status(), ctx.JsonOpts));
+
+        // GeoJSON for one ARTCC. ?lowFt=&highFt= keeps only the modules overlapping that band —
+        // which is the whole point of FAVs over the KML: a sector's shape changes with altitude.
+        app.MapGet("/api/airspace/favs/{artcc}", (string artcc, int? lowFt, int? highFt,
+                                                  string? sector, bool? sentinel) =>
+            ctx.EramAirspace.GeoJson(artcc.Trim().ToUpperInvariant(), lowFt, highFt, sector,
+                                     sentinel ?? false) is { } g
+                ? Results.Json(g, ctx.JsonOpts)
+                : Results.NotFound(new { error = $"no FAV data held for {artcc.ToUpperInvariant()}" }));
+
         app.MapGet("/api/airspace/{facility}", (string facility) =>
         {
             var map = ctx.Airspace.Get(facility);

@@ -279,6 +279,15 @@ var starsHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 starsHttp.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader-STARS/1.0");
 var stars = new StarsBridge(starsHttp, jsonOpts);
 
+// ERAM sector geometry — vNAS Fixed Airspace Volumes. Same shape as StarsBridge (HTTPS poll of a
+// public vNAS endpoint, disk-cached, daily refresh), so like stars.Start() it runs regardless of
+// FeedGuard: it consumes no Solace queue. The User-Agent is not decoration — data-api answers 403
+// without a recognisable one, which would read as "this ARTCC has no airspace".
+var airspaceHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+airspaceHttp.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader-Airspace/1.0");
+var eramAirspace = new VnasAirspace(airspaceHttp,
+    Path.Combine(Directory.GetCurrentDirectory(), "vnas-airspace"));
+
 // STDDS message telemetry — in-memory counters only, no disk I/O
 // Key: "TOPIC_PREFIX/ROOT_ELEMENT" → count (e.g. "TAIS/TATrackAndFlightPlan" → 12345)
 var stddsMessageCounts = new ConcurrentDictionary<string, long>();
@@ -633,6 +642,7 @@ var serverCtx = new ServerContext
     ReplayServer = replayServer,
     SectorTracker = sectorTracker,
     Airspace = airspaceBridge,
+    EramAirspace = eramAirspace,
     NexradStations = nexradStations,
     WebRootPath = builder.Environment.WebRootPath,
     HistoryDir = historyDir,
@@ -908,6 +918,7 @@ else
 }
 // vNAS/STARS adaptation is an HTTPS poll, not a SWIM queue — always safe to run.
 stars.Start();
+_ = eramAirspace.RunAsync();
 
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
 // (csIndex/sqIndex declared above so ServerContext can capture; rebuilt below)

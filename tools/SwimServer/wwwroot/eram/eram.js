@@ -4,6 +4,13 @@
 // live feed — if the replay can't start, live traffic under an incident URL looks exactly like a
 // working replay (with a live clock), which is badly misleading.
 const INCIDENT_ID = new URLSearchParams(location.search).get('incident') || '';
+// True from the first line for any page that will end up in replay, whether from `#replay=` or an
+// incident id. Gate live fetches on THIS, never on `replayActive` — that only becomes true once
+// the ReplayBar has auto-started (a range fetch plus 500 ms later), and in the meantime the NEXRAD
+// layer had already pulled a full screen of LIVE tiles over archived traffic. Same lesson the
+// STARS scope learned with ReplayBar.isActive().
+const REPLAY_PAGE = !!INCIDENT_ID
+    || new URLSearchParams(location.hash.slice(1)).has('replay');
 // Incident replay keeps its OWN facility/sector selection, stored per incident id. Reviewing an
 // archive must neither inherit the facility+sectors you work live nor overwrite them when you pick
 // something else in the replay. Every other setting (brightness, history, fonts…) stays shared —
@@ -2298,7 +2305,9 @@ function refreshNexrad() {
 }
 
 // Auto-refresh every 5 minutes (nowCOAST updates every ~4 min)
-if (nexradLevel > 0) updateNexrad();
+// A replay page builds no NEXRAD layer yet: it has no clock to ask the archive for, and
+// building one now would fetch live weather. onStart creates it once the clock exists.
+if (nexradLevel > 0 && !REPLAY_PAGE) updateNexrad();
 setInterval(refreshNexrad, 5 * 60 * 1000);
 
 document.getElementById('sel-nxlvl').addEventListener('change', function () {
@@ -12160,6 +12169,8 @@ function initReplayBar() {
             clearReplayState();
             replayActive = true;
             _nexradReplaySlot = null;
+            // Now there is a replay clock, so the weather layer can be built against the archive.
+            if (nexradLevel > 0) updateNexrad();
             document.getElementById('connection-status').textContent = 'REPLAY';
             document.getElementById('connection-status').style.color = '#ff8c00';
         },

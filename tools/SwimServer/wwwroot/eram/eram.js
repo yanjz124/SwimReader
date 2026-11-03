@@ -1641,9 +1641,41 @@ map.on('move zoom viewreset resize', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// KML sector boundaries (video maps — gray)
+// Sector boundaries — two sources, same renderer
+//
+// `sectorShapes` holds whatever is being drawn, in one shape:
+//     { artcc, name, sectorId, alt, category, coords, lowerAlt, upperAlt }
+// Everything below (layer caching, brightness sliders, dash arrays, zoomToFacility) reads only
+// that, so swapping the source is a data change, not a rendering change.
+//
+//   'fav'  vNAS Fixed Airspace Volumes — /api/airspace/favs/{ARTCC}. What ERAM actually
+//          sectorizes with: one volume per sector, split into altitude slabs each with its own
+//          polygon and numeric floor/ceiling. 2026-10-22 data, 20 ARTCCs.
+//   'kml'  AllSectors.kml — flat rings, every altitude at once, April 2025, 4.5 MB parsed in the
+//          browser. Kept because it covers Approach Control, which FAVs do not.
+//
+// FAV is the default; `?bnd=kml` or the sidebar BND SRC control switches back.
 // ════════════════════════════════════════════════════════════════════════════
-let kmlSectors = [];
+let sectorShapes = [];
+
+let boundarySource = 'fav';           // 'fav' | 'kml'
+let favAltFollow = false;             // FAV only: draw just the slabs the FL filter covers
+const favCache = {};                  // ARTCC -> parsed shapes, so re-toggling is instant
+let favLoadToken = 0;                 // guards against an out-of-order fetch winning
+// Which ARTCC's volumes sectorShapes currently holds. Tracked explicitly rather than inferred
+// from the array, because ZAN/ZHN/ZSU/ZUA publish NO volumes — inferring would leave the "not
+// loaded yet" test true forever and rebuildAllBoundaryLayers would re-enter the fetch endlessly.
+let loadedFavArtcc = null;
+
+// A FAV module has a numeric floor; the renderer wants one of the four ERAM strata. Bucket on the
+// FLOOR, because that is what decides which stratum a controller sees the volume in. Approach
+// Control has no FAV equivalent — TRACON airspace is not published here — so that slider draws
+// nothing in FAV mode, which the sidebar says.
+function favCategory(lowerAlt) {
+    if (lowerAlt >= 35000) return 'Ultra High';
+    if (lowerAlt >= 24000) return 'High Altitude';
+    return 'Low Altitude';
+}
 const boundaryLayers = {};        // keyed by 'ARTCC:category'
 let activeBoundaryArtcc = '';
 const BOUNDARY_CATS = ['Ultra High', 'High Altitude', 'Low Altitude', 'Approach Control'];
@@ -1735,11 +1767,11 @@ async function loadKml() {
             }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
 
             if (coords.length < 2) continue;
-            kmlSectors.push({ artcc, name, sectorId, alt: data['ALT'] || '', category, coords });
+            sectorShapes.push({ artcc, name, sectorId, alt: data['ALT'] || '', category, coords });
         }
         const catCounts = {};
-        for (const s of kmlSectors) catCounts[s.category] = (catCounts[s.category] || 0) + 1;
-        console.log(`[KML] Loaded ${kmlSectors.length} sectors`, catCounts);
+        for (const s of sectorShapes) catCounts[s.category] = (catCounts[s.category] || 0) + 1;
+        console.log(`[KML] Loaded ${sectorShapes.length} sectors`, catCounts);
         // Clear any boundary layers cached before KML finished (they'd be empty)
         for (const key in boundaryLayers) {
             if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
@@ -1755,6 +1787,92 @@ async function loadKml() {
             history.replaceState(null, '', location.pathname + location.hash);
         }
     } catch (e) { console.warn('[KML]', e); }
+}
+
+// ── FAV source ──────────────────────────────────────────────────────────────
+
+/// One ARTCC's FAVs, flattened into the renderer's shape. Exclusions and the 99k sentinel volumes
+/// are left out: an exclusion is a hole in a volume, not a boundary a controller works to, and
+/// drawing it as an outline would read as a sector that isn't there.
+async function loadFavs(artcc) {
+    if (!artcc) return [];
+    // Cached even when empty (ZAN/ZHN/ZSU/ZUA publish no FAVs), so "no volumes" is answered from
+    // memory instead of re-fetching — and so showBoundariesForFacility can't loop on it.
+    if (favCache[artcc]) return favCache[artcc];
+    const r = await fetch(`/api/airspace/favs/${encodeURIComponent(artcc)}`);
+    if (!r.ok) { console.warn('[FAV] no airspace for', artcc, r.status); return []; }
+    const g = await r.json();
+    const out = [];
+    for (const f of (g.features || [])) {
+        const p = f.properties || {};
+        if (p.exclude || p.sentinel) continue;
+        const ring = (f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]) || [];
+        if (ring.length < 3) continue;
+        out.push({
+            artcc: p.artcc || artcc,
+            name: p.favId,
+            sectorId: p.sector,
+            // Printed into the dwell/info text, so say "and above" rather than a fake ceiling.
+            alt: p.unlimitedCeiling ? `${p.lowerAlt}-ABV` : `${p.lowerAlt}-${p.upperAlt}`,
+            category: favCategory(p.lowerAlt),
+            lowerAlt: p.lowerAlt,
+            upperAlt: p.unlimitedCeiling ? 999999 : p.upperAlt,
+            coords: ring.map(c => [c[1], c[0]]),   // GeoJSON is lon,lat — Leaflet wants lat,lon
+        });
+    }
+    favCache[artcc] = out;
+    console.log(`[FAV] ${artcc}: ${out.length} volumes`);
+    return out;
+}
+
+/// Reload whatever source is selected for the ARTCC currently shown, then redraw.
+async function reloadBoundarySource() {
+    const artcc = activeBoundaryArtcc;
+    if (boundarySource === 'kml') {
+        await loadKml();                       // fills sectorShapes and redraws                       // fills sectorShapes and redraws
+        return;
+    }
+    const token = ++favLoadToken;
+    const shapes = await loadFavs(artcc);
+    if (token !== favLoadToken) return;        // a newer switch already won
+    loadedFavArtcc = artcc;
+    sectorShapes = shapes;
+    rebuildAllBoundaryLayers();
+}
+
+/// In FAV mode with FL FOLLOW on, only the slabs overlapping the sidebar's altitude filter draw —
+/// the whole point of volumes over flat rings. Bands are inclusive and tile with a 100 ft step
+/// (see CLAUDE.md), so the ceiling counts as covering C+99 and FL230 doesn't fall through a gap.
+function shapeInAltFilter(s) {
+    if (boundarySource !== 'fav' || !favAltFollow) return true;
+    if (s.lowerAlt === undefined) return true;
+    const lo = (altFilterLow | 0) * 100;
+    const hi = (altFilterHigh | 0) * 100;
+    const top = s.upperAlt >= 999999 ? Infinity : s.upperAlt + 99;
+    return s.lowerAlt <= hi && top >= lo;
+}
+
+function setBoundarySource(src) {
+    if (src === boundarySource) return;
+    boundarySource = src === 'kml' ? 'kml' : 'fav';
+    try { localStorage.setItem('eram.bndSource', boundarySource); } catch (e) {}
+    syncBoundarySourceUi();
+    reloadBoundarySource();
+}
+
+function syncBoundarySourceUi() {
+    const sel = document.getElementById('sel-bnd-src');
+    if (sel) sel.value = boundarySource;
+    const row = document.getElementById('row-bnd-altfollow');
+    if (row) row.style.display = boundarySource === 'fav' ? '' : 'none';
+    const note = document.getElementById('lbl-bnd-src-note');
+    if (note) {
+        note.textContent = boundarySource === 'fav'
+            ? 'vNAS volumes — APP has no FAV equivalent'
+            : 'AllSectors.kml — flat rings, all altitudes';
+    }
+    const cb = document.getElementById('chk-bnd-altfollow');
+    if (cb) cb.checked = favAltFollow;
 }
 
 function rebuildAllBoundaryLayers() {
@@ -1778,6 +1896,19 @@ function showBoundariesForFacility(artcc) {
     activeBoundaryArtcc = artcc;
     if (!artcc) return;
 
+    // FAV data is per-ARTCC, so selecting a facility is what triggers the fetch. Once it lands
+    // this re-enters with the shapes in hand; the cache makes every later switch instant.
+    if (boundarySource === 'fav' && loadedFavArtcc !== artcc) {
+        const token = ++favLoadToken;
+        loadFavs(artcc).then(shapes => {
+            if (token !== favLoadToken || activeBoundaryArtcc !== artcc) return;
+            loadedFavArtcc = artcc;
+            sectorShapes = shapes;
+            rebuildAllBoundaryLayers();
+        });
+        return;
+    }
+
     for (const cat of BOUNDARY_CATS) {
         const br = boundaryBrightness[cat];
         if (br <= 0) continue;
@@ -1787,7 +1918,7 @@ function showBoundariesForFacility(artcc) {
             const dashArray = getBoundaryDashArray(cat);
             const polylineOptions = { color: bndColor(br), weight: 1, opacity: 1, interactive: false, className: 'bnd-path' };
             if (dashArray) polylineOptions.dashArray = dashArray;
-            for (const sec of kmlSectors.filter(s => s.artcc === artcc && s.category === cat)) {
+            for (const sec of sectorShapes.filter(s => s.artcc === artcc && s.category === cat && shapeInAltFilter(s))) {
                 L.polyline(sec.coords, polylineOptions).addTo(group);
             }
             boundaryLayers[key] = group;
@@ -1810,7 +1941,7 @@ function setBoundaryBrightness(cat, brightness) {
         const dashArray = getBoundaryDashArray(cat);
         const polylineOptions = { color: col, weight: 1, opacity: 1, interactive: false, className: 'bnd-path' };
         if (dashArray) polylineOptions.dashArray = dashArray;
-        for (const sec of kmlSectors.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat)) {
+        for (const sec of sectorShapes.filter(s => s.artcc === activeBoundaryArtcc && s.category === cat && shapeInAltFilter(s))) {
             L.polyline(sec.coords, polylineOptions).addTo(group);
         }
         boundaryLayers[key] = group;
@@ -1826,8 +1957,8 @@ function setBoundaryBrightness(cat, brightness) {
 }
 
 function zoomToFacility(artcc) {
-    if (!artcc || kmlSectors.length === 0) return;
-    const sectors = kmlSectors.filter(s => s.artcc === artcc);
+    if (!artcc || sectorShapes.length === 0) return;
+    const sectors = sectorShapes.filter(s => s.artcc === artcc);
     if (sectors.length === 0) return;
     let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
     for (const sec of sectors) {
@@ -1841,7 +1972,17 @@ function zoomToFacility(artcc) {
     map.fitBounds([[minLat, minLon], [maxLat, maxLon]], { padding: [20, 20] });
 }
 
-loadKml();
+// Boot the chosen source. ?bnd=kml|fav wins over the saved setting, so a link can pin either.
+try {
+    const saved = localStorage.getItem('eram.bndSource');
+    if (saved === 'kml' || saved === 'fav') boundarySource = saved;
+    const q = new URLSearchParams(location.search).get('bnd');
+    if (q === 'kml' || q === 'fav') boundarySource = q;
+    favAltFollow = localStorage.getItem('eram.bndAltFollow') === '1';
+} catch (e) {}
+// FAV loads per-ARTCC, so it waits for showBoundariesForFacility to name one; the KML is one
+// 4.5 MB file covering every ARTCC, so it loads up front as it always did.
+if (boundarySource === 'kml') loadKml();
 
 // ════════════════════════════════════════════════════════════════════════════
 // ARTCC boundaries (GeoJSON overlay)
@@ -4698,6 +4839,28 @@ document.getElementById('sel-line4').addEventListener('change', function () {
     invalidateAllMarkers();
     saveSettingsToLocalStorage();
 });
+
+// ── Boundary source controls ────────────────────────────────────────────────
+{
+    const sel = document.getElementById('sel-bnd-src');
+    if (sel) sel.addEventListener('change', function () { setBoundarySource(this.value); });
+    const cb = document.getElementById('chk-bnd-altfollow');
+    if (cb) cb.addEventListener('change', function () {
+        favAltFollow = this.checked;
+        try { localStorage.setItem('eram.bndAltFollow', favAltFollow ? '1' : '0'); } catch (e) {}
+        rebuildAllBoundaryLayers();
+    });
+    syncBoundarySourceUi();
+}
+
+// With FL FOLLOW on, moving the altitude filter has to redraw the boundaries too — that is the
+// whole reason to prefer volumes over flat rings.
+for (const id of ['inp-alt-low', 'inp-alt-high']) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', () => {
+        if (boundarySource === 'fav' && favAltFollow) rebuildAllBoundaryLayers();
+    });
+}
 
 for (const [cat, id] of Object.entries(BOUNDARY_CAT_SLIDER)) {
     const lblId = BOUNDARY_CAT_LABEL[cat];

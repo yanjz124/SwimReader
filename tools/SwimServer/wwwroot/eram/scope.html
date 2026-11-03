@@ -101,6 +101,21 @@
                 </select>
             </div>
             <div class="ctrl-row">
+                <label>BND SRC</label>
+                <select id="sel-bnd-src" style="flex:1;">
+                    <option value="fav">FAV (vNAS)</option>
+                    <option value="kml">KML (legacy)</option>
+                </select>
+            </div>
+            <div class="ctrl-row" style="margin-top:-2px;">
+                <span id="lbl-bnd-src-note" style="font-size:9px; color:#666; padding-left:2px;"></span>
+            </div>
+            <div class="ctrl-row" id="row-bnd-altfollow">
+                <label>FL FOLLOW</label>
+                <input type="checkbox" id="chk-bnd-altfollow">
+                <span style="font-size:9px; color:#666;">draw only slabs in the FL filter</span>
+            </div>
+            <div class="ctrl-row">
                 <label>UHI %</label>
                 <input type="range" id="rng-bnd-uhi" min="0" max="100" value="60" style="flex:1; accent-color:#cccc44;">
                 <span id="lbl-bnd-uhi" style="min-width:28px; text-align:right; font-size:11px;">60</span>

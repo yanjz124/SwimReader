@@ -71,6 +71,7 @@ class TfdmBridge
             Console.WriteLine("[TFDM] No credentials configured — TFDM disabled");
             return;
         }
+        long lastMsgTicks = DateTime.UtcNow.Ticks;
         while (true)
         {
             try
@@ -103,6 +104,7 @@ class TfdmBridge
                     {
                         using var m = msgArgs.Message;
                         using var _h = FeedHealth.Track("TFDM", m);
+                        Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
                         try
                         {
                             lock (_processGate)
@@ -121,8 +123,29 @@ class TfdmBridge
                 flow.Start();
                 Console.WriteLine($"[TFDM] Listening on queue {_queue}");
 
-                // Block this thread while the flow runs; watchdog reconnect if silent.
-                while (true) Thread.Sleep(60000);
+                // Silence watchdog, as TFMS and ITWS do. The comment here used to promise one and
+                // the loop below was `while (true) Thread.Sleep(60000)` — nothing watched anything,
+                // so a flow that stopped delivering without raising an error was never noticed and
+                // never reconnected. 180s because TFDM is lower-rate than TFMS and an over-eager
+                // reconnect unbinds the queue, which expires messages at the broker for nothing.
+                int watchdogCycles = 0;
+                while (true)
+                {
+                    Thread.Sleep(10000);
+                    watchdogCycles++;
+                    var silence = (DateTime.UtcNow -
+                        new DateTime(Interlocked.Read(ref lastMsgTicks), DateTimeKind.Utc)).TotalSeconds;
+                    if (silence > 180)
+                    {
+                        Console.WriteLine($"[TFDM] No messages for {silence:F0}s — reconnecting");
+                        break;
+                    }
+                    if (watchdogCycles % 6 == 0)
+                        Console.WriteLine($"[TFDM] {Interlocked.Read(ref _msgCount)} msgs");
+                }
+
+                try { session.Disconnect(); }
+                catch (Exception ex) { Console.WriteLine($"[TFDM] disconnect: {ex.Message}"); }
             }
             catch (Exception ex)
             {

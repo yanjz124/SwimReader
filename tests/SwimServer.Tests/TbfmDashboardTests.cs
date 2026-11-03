@@ -204,6 +204,25 @@ public class TbfmDashboardTests
     }
 
     [Fact]
+    public void CentreBoard_ShowsOnlyItsOwnRates()
+    {
+        // An airport's AAR may be published by any centre, so the airport board scans them all —
+        // but a CENTRE board that did the same put ZNY's EWR rates on ZLA's page.
+        var b = ThreeCentreChain();
+        b.Process(Rate("ZAB", "aar", "PHX", 40));
+        b.Process(Rate("ZOB", "aar", "CLE", 48));
+
+        var zab = Json(b.CenterBoard("ZAB")!).GetProperty("rates").EnumerateArray().ToArray();
+        Assert.Equal("PHX", Assert.Single(zab).GetProperty("id").GetString());
+
+        var zob = Json(b.CenterBoard("ZOB")!).GetProperty("rates").EnumerateArray().ToArray();
+        Assert.Equal("CLE", Assert.Single(zob).GetProperty("id").GetString());
+
+        // ZAU published nothing, so its board is empty rather than showing the other two.
+        Assert.Empty(Json(b.CenterBoard("ZAU")!).GetProperty("rates").EnumerateArray());
+    }
+
+    [Fact]
     public void Stats_CountsFlightsAndRecordsSeparately()
     {
         var s = Json(ThreeCentreChain().Stats());

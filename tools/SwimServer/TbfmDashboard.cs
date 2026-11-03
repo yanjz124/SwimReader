@@ -322,10 +322,19 @@ partial class TbfmBridge
             adaptedPoints = c.Points.Count,
             adaptedAirports = c.Airports.Count,
             points,
-            // Only the kinds that actually carry a rate. aac / sac / scc are published with no
+            // THIS centre's rates only. RatesFor scans every centre, which is right for an
+            // airport (any centre may publish its AAR) and wrong here — it put ZNY's EWR rates on
+            // ZLA's page. Only the kinds that carry a rate: aac / sac / scc are published with no
             // <rat> at all (their payload is stream-class and scheduling-constraint data this
-            // bridge doesn't model yet), so listing them would be three rows of blank rates.
-            rates = RatesFor(r => r.Rate.HasValue),
+            // bridge doesn't model yet), so listing them would be rows of blank rates.
+            rates = c.Rates.Values.Where(r => r.Rate.HasValue)
+                .OrderBy(r => r.Kind).ThenBy(r => r.Id)
+                .Select(r => (object)new
+                {
+                    ctr = c.Id, kind = r.Kind, id = r.Id, tracon = r.Tracon,
+                    rate = r.Rate, restricted = r.Rate is { } v2 && v2 < UnrestrictedRate,
+                    effective = r.EffectiveTime, type = r.Type,
+                }).ToArray(),
             otherConfigKinds = c.Rates.Values.Where(r => !r.Rate.HasValue)
                 .GroupBy(r => r.Kind).OrderBy(g => g.Key)
                 .Select(g => (object)new { kind = g.Key, n = g.Count() }).ToArray(),

@@ -70,7 +70,12 @@ function drawMap() {
     if (layer) layer.remove();
     layer = L.layerGroup().addTo(map);
 
-    const bounds = [];
+    // Fit to the points being METERED, not to all of them. A centre's adaptation reaches well
+    // outside its own airspace for extended metering — ZLA adapts points as far as the east coast
+    // — so fitting everything shrank the SoCal cluster that is the actual subject to a smudge.
+    // Everything is still drawn; only the initial view is narrowed, and a centre with nothing
+    // scheduled falls back to its whole adaptation.
+    const bounds = [], busyBounds = [];
     for (const p of g) {
         const col = TYPE_COLOR[p.type] || '#888';
         const l = load[p.name] || load[p.name.replace(/\.$/, '')];
@@ -92,21 +97,32 @@ function drawMap() {
                 opacity: busy ? 0.9 : 0.35, dashArray: busy ? null : '3 5',
             }).bindTooltip(tip, { className: 'tt', sticky: true }).addTo(layer);
             bounds.push(...path);
+            if (busy) busyBounds.push(...path);
         } else {
             L.circleMarker([p.lat, p.lon], {
                 radius: busy ? 4 : 2.5, color: col, weight: 1,
                 fillColor: col, fillOpacity: busy ? 0.9 : 0.3, opacity: busy ? 0.9 : 0.4,
             }).bindTooltip(tip, { className: 'tt', sticky: true }).addTo(layer);
             bounds.push([p.lat, p.lon]);
+            if (busy) busyBounds.push([p.lat, p.lon]);
         }
     }
-    if (bounds.length) map.fitBounds(L.latLngBounds(bounds).pad(0.06));
+    // Only on the first draw — a refresh every 10s must not yank a view the reader has panned.
+    const fit = busyBounds.length ? busyBounds : bounds;
+    if (fit.length && !map._tbfmFitted) {
+        map.fitBounds(L.latLngBounds(fit).pad(0.1));
+        map._tbfmFitted = true;
+    }
 
     const kinds = [...new Set(g.map(p => p.type).filter(Boolean))].sort();
     $('legend').innerHTML = kinds.map(k =>
         `<i style="background:${TYPE_COLOR[k] || '#888'}"></i>${k}`).join('')
         + ' &nbsp;&nbsp; solid = being metered now, dashed = adapted but idle, thick = holding. '
-        + `${g.length} of ${board.adaptedPoints} adapted points have coordinates.`;
+        + `${g.length} of ${board.adaptedPoints} adapted points have coordinates`
+        + (busyBounds.length
+            ? ', view fitted to the ones in use — zoom out for the rest, which reach outside '
+              + 'this centre for extended metering.'
+            : '.');
 }
 
 // ── strip / info ────────────────────────────────────────────────────────────
@@ -232,8 +248,20 @@ function renderRates() {
 }
 
 function renderAirports() {
-    const as = (board.airports || []).slice()
+    // A centre adapts every airport it might meter to, which for ZLA is 67 — and ~60 of those are
+    // bare EDC entries with no runways, no configs and nothing scheduled. They are real, but a
+    // screenful of empty rows buries the handful that matter, so they're behind a toggle.
+    const all = (board.airports || []).slice()
         .sort((a, b) => b.metered - a.metered || a.name.localeCompare(b.name));
+    const useful = a => a.metered > 0 || (a.runways || []).length
+        || Object.keys(a.configs || {}).length;
+    const showAll = $('allapts').checked;
+    const as = showAll ? all : all.filter(useful);
+    const hidden = all.length - all.filter(useful).length;
+    $('aptnote').innerHTML = hidden
+        ? `${hidden} adapted airport${hidden === 1 ? '' : 's'} with no runways, configs or traffic `
+          + `${showAll ? 'shown' : 'hidden'}`
+        : '';
     $('abody').innerHTML = as.length ? as.map(a => `<tr>
         <td><a href="/tbfm/${esc(a.name.toLowerCase())}">${esc(a.name)}</a></td>
         <td class="dim">${esc(a.tracon || '')}</td>
@@ -243,6 +271,8 @@ function renderAirports() {
       </tr>`).join('')
         : '<tr><td class="empty" colspan="5">No airports in adaptation yet.</td></tr>';
 }
+
+
 
 async function load() {
     try {
@@ -279,6 +309,7 @@ window.addEventListener('load', () => {
     if (up) { up.href = '/tbfm?tab=centers'; up.innerHTML = '&uarr; TBFM'; }
 });
 
+$('allapts').onchange = () => board && renderAirports();
 $('q').oninput = () => board && renderPoints();
 $('onlydly').onchange = () => board && renderPoints();
 renderPHeader();

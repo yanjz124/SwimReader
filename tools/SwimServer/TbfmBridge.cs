@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text.Json;
 using System.Xml.Linq;
 using SolaceSystems.Solclient.Messaging;
 using SwimServer;
@@ -44,6 +45,12 @@ class TbfmBridge
     private readonly ConcurrentDictionary<string, TbfmCenter> _centers = new();
     // <tma> children we don't model yet, counted so a new message kind shows up in /debug
     private readonly ConcurrentDictionary<string, long> _unknownKinds = new();
+
+    // Adaptation is published rarely (one centre in a ~10-minute capture), so it's kept on disk
+    // and reloaded on startup; otherwise every restart would lose it for hours.
+    private string? _cacheDir;
+    private volatile bool _adaptationDirty;
+    private const string AdaptationFile = "tbfm-adaptation.json";
 
     private static readonly string[] Arcs = { "oma", "ooa", "o3a", "o4a" };
 
@@ -172,7 +179,7 @@ class TbfmBridge
                 switch (kind.Name.LocalName)
                 {
                     case "air": ProcessAir(kind, envSrce, now); break;
-                    case "adp": if (ctr != null) ProcessAdaptation(kind, Center(ctr)); break;
+                    case "adp": if (ctr != null) { ProcessAdaptation(kind, Center(ctr)); _adaptationDirty = true; } break;
                     case "con": if (ctr != null) ProcessConfig(kind, Center(ctr), now); break;
                     default: _unknownKinds.AddOrUpdate(kind.Name.LocalName, 1, (_, n) => n + 1); break;
                 }
@@ -465,6 +472,7 @@ class TbfmBridge
                 src = x.f.Source,
                 ctr = CenterOf(x.f.Source),
                 mfx = x.f.MeterFix,
+                mfxType = PointType(x.f),   // MFX / MFA / OMA / OOA from adaptation; null = unknown
                 rwy = x.f.Runway,
                 staMfx = x.mfxDone ? null : x.f.StaMeterFix,
                 etaMfx = x.mfxDone ? null : x.f.EtaMeterFix,
@@ -501,6 +509,7 @@ class TbfmBridge
                 dep = f.Departure,
                 apt = f.Arrival,
                 mfx = f.MeterFix,
+                mfxType = PointType(f),
                 rwy = f.Runway,
                 staMfx = f.StaMeterFix, etaMfx = f.EtaMeterFix,
                 staRwy = f.StaRunway, etaRwy = f.EtaRunway,
@@ -575,6 +584,105 @@ class TbfmBridge
             (d ??= new())[arc] = new { name = ArcName(f, arc), sta = t.Sta, eta = t.Eta };
         }
         return d;
+    }
+
+    /// <summary>
+    /// What kind of point a schedule's "mfx" really is, from the centre's adaptation: MFX meter fix,
+    /// MFA meter-fix arc, OMA / OOA outer arcs. TBFM labels whatever point it schedules to as
+    /// &lt;mfx&gt; (live: ZLA schedules an OAK arrival to PXN), so this is the only way to tell.
+    /// Null until that centre's adaptation has been received.
+    /// </summary>
+    private string? PointType(TbfmFlight f)
+    {
+        if (f.MeterFix is not { } name || CenterOf(f.Source) is not { } ctr
+            || !_centers.TryGetValue(ctr, out var c)) return null;
+        return c.Points.TryGetValue(name, out var p) ? p.Type
+             : c.Points.TryGetValue(name + ".", out var arc) ? arc.Type   // arcs are named "HELNS."
+             : null;
+    }
+
+    public void SetCacheDir(string dir) => _cacheDir = dir;
+
+    /// <summary>Write adaptation to disk if it changed (called from the purge timer).</summary>
+    public void SaveAdaptationIfDirty()
+    {
+        if (!_adaptationDirty || _cacheDir is null) return;
+        _adaptationDirty = false;
+        try
+        {
+            Directory.CreateDirectory(_cacheDir);
+            var path = Path.Combine(_cacheDir, AdaptationFile);
+            var payload = _centers.Values
+                .Where(c => !c.Points.IsEmpty || !c.Airports.IsEmpty)
+                .Select(c => new PersistedCenter
+                {
+                    Id = c.Id,
+                    Points = c.Points.Values.ToList(),
+                    Airports = c.Airports.Values.Select(a => new PersistedAirport
+                    {
+                        Name = a.Name, Tracon = a.Tracon, Runways = a.Runways,
+                        Configs = new Dictionary<string, string[]>(a.Configs),
+                    }).ToList(),
+                    Gates = new Dictionary<string, string>(c.Gates),
+                    StreamClasses = new Dictionary<string, string>(c.StreamClasses),
+                    Tracons = c.Tracons.Keys.ToList(),
+                }).ToList();
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(payload, PersistOpts));
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            _adaptationDirty = true;
+            Console.Error.WriteLine($"[TBFM] adaptation save failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    public void LoadAdaptation(string dir)
+    {
+        try
+        {
+            var path = Path.Combine(dir, AdaptationFile);
+            if (!File.Exists(path)) return;
+            var list = JsonSerializer.Deserialize<List<PersistedCenter>>(File.ReadAllText(path), PersistOpts);
+            if (list is null) return;
+            int pts = 0;
+            foreach (var pc in list)
+            {
+                var c = Center(pc.Id);
+                foreach (var p in pc.Points) { c.Points[p.Name] = p; pts++; }
+                foreach (var a in pc.Airports)
+                {
+                    var ap = c.Airports.GetOrAdd(a.Name, k => new TbfmAirport { Name = k });
+                    ap.Tracon = a.Tracon; ap.Runways = a.Runways ?? Array.Empty<string>();
+                    foreach (var (k, v) in a.Configs ?? new()) ap.Configs[k] = v;
+                }
+                foreach (var (k, v) in pc.Gates ?? new()) c.Gates[k] = v;
+                foreach (var (k, v) in pc.StreamClasses ?? new()) c.StreamClasses[k] = v;
+                foreach (var t in pc.Tracons ?? new()) c.Tracons[t] = 1;
+            }
+            Console.WriteLine($"[TBFM] loaded adaptation for {list.Count} centre(s), {pts} meter points");
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[TBFM] adaptation load failed: {ex.Message}"); }
+    }
+
+    private static readonly JsonSerializerOptions PersistOpts = new() { IncludeFields = true };
+
+    private class PersistedCenter
+    {
+        public string Id = "";
+        public List<TbfmPoint> Points = new();
+        public List<PersistedAirport> Airports = new();
+        public Dictionary<string, string>? Gates, StreamClasses;
+        public List<string>? Tracons;
+    }
+
+    private class PersistedAirport
+    {
+        public string Name = "";
+        public string? Tracon;
+        public string[]? Runways;
+        public Dictionary<string, string[]>? Configs;
     }
 
     /// <summary>

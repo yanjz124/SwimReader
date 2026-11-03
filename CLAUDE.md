@@ -1743,6 +1743,13 @@ from the spec (TBFM MIS JMSDD, NSRR); the raw tag is always what the API returns
   `gans` gates; `scns` stream classes (`PDX_HELNS_JETS`); `tra`/`trn` TRACON.
 - **`con/aar`** (`apt`, `tra`, `rat`, `tim`) and **`con/tar`** (`tra`, `rat`, `tim`, `tarType`).
 
+**`mfx` is whatever point that centre schedules to, arc or fix.** Live: ZLA schedules N650AL
+(SAN→OAK) to `PXN`, which is an arc, labelled `<mfx>`. Only the centre's adaptation (`mrn/mrt`)
+says which, exposed as `mfxType` (MFX / MFA / OMA / OOA; null until that centre's adaptation has
+arrived). Adaptation is published rarely (one centre in a ~10-minute capture, none in the first
+minutes after a restart), so it is saved to `flight-cache/tbfm-adaptation.json` (on change, from
+the 60 s purge timer) and reloaded on startup.
+
 APIs: `GET /api/tbfm/flight/{callsign}` (every centre's full record), `GET /api/tbfm/centers`
 (heartbeat, schedule count, adaptation size, rates), `GET /api/tbfm/adaptation/{center}` (points
 with arc geometry, airports, gates, streams). `/api/tbfm/eram` now also carries `mrp` and `sch`,

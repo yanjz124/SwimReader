@@ -855,6 +855,8 @@ FlightCacheService.Load(flights, cacheDir, cacheJsonOpts);
 sectorTracker.Load(cacheDir);
 airspaceBridge.SetCacheDir(cacheDir);
 airspaceBridge.Load(cacheDir);
+tbfm.SetCacheDir(cacheDir);
+tbfm.LoadAdaptation(cacheDir);   // TBFM publishes adaptation rarely; keep what we've seen
 
 // ── Flight history persistence (save purged flights to daily JSONL files) ─────
 // History budget: keep total disk usage under 85%. Calculated dynamically each cleanup cycle.
@@ -1350,7 +1352,7 @@ var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSecond
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 var tfdmFlushTimer = new Timer(_ => tfdm.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 var tfdmPurgeTimer = new Timer(_ => tfdm.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
-var tbfmPurgeTimer = new Timer(_ => tbfm.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+var tbfmPurgeTimer = new Timer(_ => { tbfm.PurgeStale(); tbfm.SaveAdaptationIfDirty(); }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 // ITWS: persist 24h time-series history to disk every 5 min (and on shutdown)
 var itwsHistoryTimer = new Timer(_ => itws.SaveHistory(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 // Centralized disk-budget enforcement across all persisted data (replay + flight-history + tdls-history).

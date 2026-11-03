@@ -1898,6 +1898,11 @@ ACAS and AKIM share 33.933/-118.432, which is the LAX reference. An arc is drawn
 118 of ZLA's 172 points have a radius, which is exactly its non-MFX count. Adaptation is published
 rarely, so a centre with no geometry yet is normal and the page says so instead of drawing nothing.
 
+#### Rates are not persisted, adaptation is
+`<con>` is ~1.3% of TBFM traffic, so a centre's acceptance rates take up to an hour to repopulate
+after a restart and the centre board says so rather than showing a bare "No rates published", which
+reads like a fault. Adaptation is the part that is cached to disk.
+
 #### Not surfaced yet
 `oth` is still an unmodelled `<tma>` kind (~10.5k seen) and the `flt` block carries more than the
 pages use — `tcr` (route with per-fix crossing times), `cfx`/`ctm` (coordination fix + time),

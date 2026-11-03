@@ -244,7 +244,12 @@ function renderRates() {
         <td class="dim">${esc(r.type || '')}</td>
         <td class="dim">${(r.effective || '').replace('T', ' ').replace('Z', 'Z')}</td>
       </tr>`).join('')
-        : '<tr><td class="empty" colspan="6">No rates published.</td></tr>';
+        // Rates are NOT persisted across a restart (only adaptation is), and <con> is a rare
+        // message — ~1.3% of TBFM traffic — so an empty table shortly after a deploy is expected
+        // rather than broken. Say so, since "No rates published" reads like a fault.
+        : '<tr><td class="empty" colspan="6">No rates published yet. Rates arrive on TBFM’s '
+        + 'rare <code>con</code> messages and are rebuilt from the feed after a restart, so this '
+        + 'fills in over the following hour.</td></tr>';
 }
 
 function renderAirports() {

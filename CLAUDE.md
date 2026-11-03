@@ -2006,6 +2006,24 @@ rarely, so a center with no geometry yet is normal and the page says so instead 
 after a restart and the center board says so rather than showing a bare "No rates published", which
 reads like a fault. Adaptation is the part that is cached to disk.
 
+#### `oth` decoded: it carries metering ON/OFF per airport per center
+The one unmodelled `<tma>` kind. A sample was never readable because `KeepSample`'s 20-slot ring is
+all `<air>`; one slot per unknown kind now survives, on `/api/tbfm/debug` as `unknownSamples`. It
+turns out to be the fact the dashboard most wants and cannot currently state:
+
+```xml
+<oth><tmg tmgType="NEW"><tra>MCO</tra><tmss>
+  <tms><apt>MCO</apt><ctr>ZJX</ctr><mas>NO</mas></tms>
+  <tms><apt>MCO</apt><ctr>ZMA</ctr><mas>NO</mas></tms>
+  …one per center
+</tmss></tmg></oth>
+```
+
+`tmg` is a metering group for a TRACON (`tra`), and each `tms` says whether **that center is
+actively metering into that airport** (`mas`, YES/NO) — `mas` is 157,886 of the element counts, so
+this is published constantly. Today the boards infer "is TBFM working this field" from whether
+schedules exist; this states it. Not parsed yet.
+
 #### Not surfaced yet
 `oth` is still an unmodelled `<tma>` kind (~10.5k seen) and the `flt` block carries more than the
 pages use — `tcr` (route with per-fix crossing times), `cfx`/`ctm` (coordination fix + time),

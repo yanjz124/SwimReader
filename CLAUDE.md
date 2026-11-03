@@ -268,7 +268,7 @@ which was enough when it was measured. At full daytime volume it was not:
 | | 3 receivers | 6 receivers |
 |---|---|---|
 | throughput | 241 msg/s | **371 msg/s** |
-| lag | **11-13 s, flat** across ten minutes and three restarts | **0.6 s** |
+| lag | **11-13 s, flat** across ten minutes and three restarts | **sawtooth 0.4-12.9 s**, mean 7.5 |
 | busyPct | 2.9% | 13.3% |
 | discards | 0 | 0 |
 
@@ -277,6 +277,20 @@ the ceiling was the single session's transport, not our processing. **A flat lag
 upstream latency are indistinguishable until you lift the ceiling and watch**, which is the whole
 reason the number is worth sampling rather than glancing at. It drained instantly. Default is now
 6; the same check applies to any feed whose lag sits flat and non-zero while `busyPct` is low.
+
+**What "fixed" looks like here is a sawtooth, not a flat low number — don't spot-check it.**
+Measured over 10 minutes at midday volume, 1 h 40 m after a restart, 6 receivers: lag cycles
+**0.4 s to 12.9 s**, mean 7.5, dropping under 2 s six separate times. A single sample is therefore
+worth nothing — glance at the peak and the feed looks exactly as broken as it was at 3 flows
+(this happened: a 12.2 s reading was briefly taken for a regression). What distinguishes the two
+is that **3 flows never came down at all** while 6 reaches ~0 repeatedly, which means capacity now
+exceeds publisher rate.
+
+The residual peaks are **upstream, not our ceiling**: throughput during them (351-518 msg/s) is no
+higher than during the troughs (384-392), so we are not drain-limited — if we were, the peaks would
+coincide with maximum throughput. `busyPct` stays 4-14% and discards stay 0 throughout. CPU is not
+it either; peaks appeared with the box 65-83% idle, and the deepest troughs happened to fall while
+load was 10-13 from an unrelated job. Raising flows further would not move this.
 
 ### Lag is the metric — `PosAge` cannot show this
 `FeedHealth` reports `lagSec`/`lagPeakSec` per feed (publisher's own timestamp vs our receipt,
@@ -1837,8 +1851,8 @@ Place KML files in the repo root (gitignored, not committed):
 
 **None of the five feeds carry TBFM schedules.** STA and meter-fix delay come from the **TBFM
 Metering Information Service (TBFM MIS)**, a separate SCDS subscription. `TbfmBridge` consumes it
-with `TBFM_HOST`/`TBFM_VPN`/`TBFM_USER`/`TBFM_PASS`/`TBFM_QUEUE` (`TBFM_FLOWS` for receivers, default **3**: TBFM runs 164-523 msg/s, several times SFDPS,
-and one flow sat at ~10 s lag that never drained), and
+with `TBFM_HOST`/`TBFM_VPN`/`TBFM_USER`/`TBFM_PASS`/`TBFM_QUEUE` (`TBFM_FLOWS` for receivers, default **6**: TBFM runs 164-550 msg/s, several times SFDPS,
+and 3 flows sat at ~12 s lag that never drained), and
 stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` guard like the others.
 
 - Message shape (verified live 2026-11-02): `<env envSrce="TMA.ZOB.FAA.GOV">` → `<tma>` →

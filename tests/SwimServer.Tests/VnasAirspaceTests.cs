@@ -178,6 +178,27 @@ public class VnasAirspaceTests
     public void UnknownArtcc_IsNull() => Assert.Null(Load("[]").GeoJson("ZZZ"));
 
     [Fact]
+    public void CacheLoad_PicksUpTheFreshnessStamp_AndIgnoresItsOwnSidecar()
+    {
+        // Without the stamp a restart cannot tell a current cache from a stale one, so it
+        // re-downloads every ARTCC — 4.3 MB — and the deploy timer restarts on every backend push.
+        var dir = Path.Combine(Path.GetTempPath(), "swimtest-fav-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "ZDC.json"), $"[{Fav("00101", (0, 10000))}]");
+        File.WriteAllText(Path.Combine(dir, "_fetched.json"), """{"ZDC":"2026-10-22T17:48:03.156Z"}""");
+
+        var a = new VnasAirspace(new HttpClient(), dir);
+        a.LoadCache();
+
+        var s = JsonSerializer.SerializeToElement(a.Status());
+        // The sidecar must not be read as an ARTCC called "_FETCHED".
+        var row = s.GetProperty("rows").EnumerateArray().Single();
+        Assert.Equal("ZDC", row.GetProperty("artcc").GetString());
+        Assert.Equal("2026-10-22T17:48:03.156Z", row.GetProperty("eramDataUpdatedAt").GetString());
+        Assert.True(row.GetProperty("fromCache").GetBoolean());
+    }
+
+    [Fact]
     public void Status_ReportsWhatIsHeld()
     {
         var a = Load($"[{Fav("00101", (0, 10000), (10100, 99900))},{Fav("00701", (99800, 99900))}]");

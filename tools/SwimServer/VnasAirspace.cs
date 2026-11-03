@@ -129,20 +129,42 @@ class VnasAirspace
 
     // ── Refresh ──────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The <c>eramDataLastUpdatedAt</c> each cached file was fetched for. Without it a restart
+    /// cannot tell a current cache from a stale one, so it re-downloads all 20 ARTCCs — 4.3 MB —
+    /// every time, and the auto-deploy timer restarts on every backend push. Kept as one small
+    /// sidecar rather than inside each file so the cached body stays byte-identical to what vNAS
+    /// served.
+    /// </summary>
+    private const string StampFile = "_fetched.json";
+
     /// <summary>Load whatever is cached on disk, so a restart serves geometry before any fetch.</summary>
     public void LoadCache()
     {
         if (!Directory.Exists(_cacheDir)) return;
-        int n = 0, vols = 0;
+        Dictionary<string, string> stamps;
+        try
+        {
+            var sp = Path.Combine(_cacheDir, StampFile);
+            stamps = File.Exists(sp)
+                ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(sp), Json) ?? new()
+                : new();
+        }
+        catch { stamps = new(); }
+
+        int n = 0, vols = 0, stamped = 0;
         foreach (var path in Directory.EnumerateFiles(_cacheDir, "*.json"))
         {
             var artcc = Path.GetFileNameWithoutExtension(path).ToUpperInvariant();
+            if (string.Equals(Path.GetFileName(path), StampFile, StringComparison.OrdinalIgnoreCase)) continue;
             try
             {
                 var favs = JsonSerializer.Deserialize<List<Fav>>(File.ReadAllText(path), Json);
                 if (favs is null) continue;
+                stamps.TryGetValue(artcc, out var stamp);
+                if (stamp != null) stamped++;
                 lock (_gate)
-                    _byArtcc[artcc] = new ArtccAirspace(artcc, favs, null, File.GetLastWriteTimeUtc(path), true);
+                    _byArtcc[artcc] = new ArtccAirspace(artcc, favs, stamp, File.GetLastWriteTimeUtc(path), true);
                 n++; vols += favs.Count;
             }
             catch (Exception ex)
@@ -150,7 +172,24 @@ class VnasAirspace
                 Console.Error.WriteLine($"[FAV] cached {artcc} unreadable: {ex.Message}");
             }
         }
-        if (n > 0) Console.WriteLine($"[FAV] loaded {vols} FAVs for {n} ARTCC(s) from cache");
+        if (n > 0)
+            Console.WriteLine($"[FAV] loaded {vols} FAVs for {n} ARTCC(s) from cache ({stamped} with a freshness stamp)");
+    }
+
+    private void SaveStamps()
+    {
+        try
+        {
+            Dictionary<string, string> stamps;
+            lock (_gate)
+                stamps = _byArtcc.Values.Where(a => a.EramDataUpdatedAt != null)
+                    .ToDictionary(a => a.Artcc, a => a.EramDataUpdatedAt!);
+            var path = Path.Combine(_cacheDir, StampFile);
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(stamps));
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[FAV] stamps: {ex.Message}"); }
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -238,6 +277,7 @@ class VnasAirspace
 
         _lastRefresh = DateTime.UtcNow;
         _lastError = failed > 0 ? $"{failed} ARTCC(s) failed" : null;
+        SaveStamps();
         Console.WriteLine($"[FAV] {fetched} fetched, {skipped} unchanged, {empty} publish none, {failed} failed");
     }
 

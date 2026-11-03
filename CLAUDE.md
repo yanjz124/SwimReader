@@ -1789,6 +1789,13 @@ for an aircraft reporting 23,050 — a real hole, since Mode C is not restricted
 query therefore treats a ceiling of C as covering C+99; the reported `upperAlt` is untouched.
 `VnasAirspaceTests` pins this, and caught it.
 
+Caching keys on **`eramDataLastUpdatedAt`**, which `/api/artcc-summaries` carries per ARTCC — but
+that stamp has to survive the restart or it is useless. The first version threw it away on
+`LoadCache`, so every restart re-downloaded all 20 ARTCCs (**4.3 MB**) even with a current cache,
+and the auto-deploy timer restarts on every backend push. It is now kept in a `_fetched.json`
+sidecar beside the cached bodies — a sidecar rather than a field inside each file, so the cached
+body stays byte-identical to what vNAS served.
+
 ### The AIXM feed already says who owns which volume
 `AirspaceBridge` (the AIXM position data, confusingly also `[AIRSPACE]` in the log — the FAV client
 logs `[FAV]`) reports per ERAM position the **5-digit volume ids that position owns**: ZDV position

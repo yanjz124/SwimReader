@@ -125,7 +125,7 @@ partial class TbfmBridge
             .OrderBy(x => x.r.Kind).ThenBy(x => x.r.Id)
             .Select(x => (object)new
             {
-                ctr = x.c.Id, kind = x.r.Kind, id = x.r.Id, tracon = x.r.Tracon,
+                ctr = x.c.Id, kind = x.r.Kind, id = x.r.Id, point = x.r.Point, tracon = x.r.Tracon,
                 rate = x.r.Rate, restricted = x.r.Rate is { } v && v < UnrestrictedRate,
                 effective = x.r.EffectiveTime, type = x.r.Type,
             })
@@ -331,7 +331,7 @@ partial class TbfmBridge
                 .OrderBy(r => r.Kind).ThenBy(r => r.Id)
                 .Select(r => (object)new
                 {
-                    ctr = c.Id, kind = r.Kind, id = r.Id, tracon = r.Tracon,
+                    ctr = c.Id, kind = r.Kind, id = r.Id, point = r.Point, tracon = r.Tracon,
                     rate = r.Rate, restricted = r.Rate is { } v2 && v2 < UnrestrictedRate,
                     effective = r.EffectiveTime, type = r.Type,
                 }).ToArray(),

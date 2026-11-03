@@ -210,7 +210,14 @@ partial class TbfmBridge
                     case "air": ProcessAir(kind, envSrce, now); break;
                     case "adp": if (ctr != null) { ProcessAdaptation(kind, Center(ctr)); _adaptationDirty = true; } break;
                     case "con": if (ctr != null) ProcessConfig(kind, Center(ctr), now); break;
-                    default: _unknownKinds.AddOrUpdate(kind.Name.LocalName, 1, (_, n) => n + 1); break;
+                    default:
+                        _unknownKinds.AddOrUpdate(kind.Name.LocalName, 1, (_, n) => n + 1);
+                        // `oth` is ~10.5k messages and the only <tma> kind still unmodelled, but
+                        // KeepSample's ring is dominated by <air> so one never survives to be read.
+                        // Hold a few separately; without a sample there is nothing to write a
+                        // parser against.
+                        KeepUnknownSample(kind);
+                        break;
                 }
     }
 
@@ -344,18 +351,26 @@ partial class TbfmBridge
         foreach (var scn in Kids(Block(adp, "scns"), "scn")) if (Leaf(scn, "nam") is { } sn) c.StreamClasses[sn] = tra ?? "";
     }
 
-    // ── <con>: acceptance rates (aar = airport, tar = TRACON) ────────────────
+    // ── <con>: acceptance rates (aar = airport, tar = TRACON, mar/gar = per meter point) ──
     private static void ProcessConfig(XElement con, TbfmCenter c, DateTime now)
     {
         foreach (var r in con.Elements())
         {
-            var kind = r.Name.LocalName;                       // aar / tar / anything new
+            var kind = r.Name.LocalName;                       // aar / tar / mar / gar / anything new
             var id = kind == "aar" ? (Leaf(r, "apt") ?? Leaf(r, "tra")) : (Leaf(r, "tra") ?? Leaf(r, "apt"));
             if (id == null) continue;
-            c.Rates[$"{kind}/{id}"] = new TbfmRate
+            // mar and gar are rates for a METER POINT, not for the TRACON as a whole — they carry
+            // an <mfx> naming it. Keying on {kind}/{id} alone collapsed every meter point in a
+            // TRACON onto one entry, so a centre with a dozen metered fixes reported one rate and
+            // whichever message arrived last won. The point goes in the key, and stays on the
+            // record so a consumer can say which fix a rate belongs to.
+            var point = Leaf(r, "mfx");
+            var key = point is null ? $"{kind}/{id}" : $"{kind}/{id}/{point}";
+            c.Rates[key] = new TbfmRate
             {
                 Kind = kind,
                 Id = id,
+                Point = point,
                 Tracon = Leaf(r, "tra"),
                 Rate = ParseD(Leaf(r, "rat")),
                 EffectiveTime = ParseTime(Leaf(r, "tim")),
@@ -416,6 +431,17 @@ partial class TbfmBridge
     /// route is as reachable as everything else behind the gate, so it must not leak an aircraft
     /// the scope endpoint hides.
     /// </summary>
+    private readonly ConcurrentDictionary<string, string> _unknownSamples = new();
+
+    /// <summary>One retained sample per unmodelled &lt;tma&gt; child, LADD-safe (no &lt;air&gt; inside).</summary>
+    private void KeepUnknownSample(XElement kind)
+    {
+        if (_unknownSamples.Count > 8) return;
+        _unknownSamples.TryAdd(kind.Name.LocalName, Truncate(kind.ToString(SaveOptions.DisableFormatting)));
+    }
+
+    private static string Truncate(string xml) => xml.Length > 4000 ? xml[..4000] + "…(truncated)" : xml;
+
     private void KeepSample(XElement root)
     {
         var copy = new XElement(root);
@@ -809,6 +835,7 @@ partial class TbfmBridge
         deletes = Interlocked.Read(ref _deletes),
         centers = _centers.Count,
         unknownKinds = new Dictionary<string, long>(_unknownKinds),
+        unknownSamples = new Dictionary<string, string>(_unknownSamples),
         withSta = _flights.Values.Count(f => f.StaMeterFix.HasValue || f.StaRunway.HasValue),
         elements = _elementCounts.OrderByDescending(kv => kv.Value)
             .ToDictionary(kv => kv.Key, kv => kv.Value),
@@ -872,6 +899,8 @@ class TbfmAirport
 class TbfmRate
 {
     public string Kind = "", Id = "";
+    /// <summary>The meter point an mar/gar rate applies to (&lt;mfx&gt;); null for aar/tar.</summary>
+    public string? Point;
     public string? Tracon, Type;
     public double? Rate;
     public DateTime? EffectiveTime;

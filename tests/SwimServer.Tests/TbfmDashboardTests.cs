@@ -223,6 +223,25 @@ public class TbfmDashboardTests
     }
 
     [Fact]
+    public void MeterPointRates_DoNotCollapseOntoOneTraconEntry()
+    {
+        // mar/gar are per METER POINT and carry an <mfx>. Keyed on kind/TRACON alone, a center
+        // with a dozen metered fixes reported one rate and the last message in won.
+        var b = ThreeCenterChain();
+        string Mar(string point, int rate) =>
+            $"<env xmlns=\"{Ns}\" envSrce=\"TMA.ZAB.FAA.GOV\" envTime=\"{T(0)}\">"
+          + $"<tma msgId=\"4\" msgTime=\"{T(0)}\"><con><mar><tra>P50</tra><mfx>{point}</mfx>"
+          + $"<rat>{rate}</rat><tim>{T(-5)}</tim></mar></con></tma></env>";
+        b.Process(Mar("BRDEY", 24));
+        b.Process(Mar("ALIBYX1", 18));
+
+        var rates = Json(b.CenterBoard("ZAB")!).GetProperty("rates").EnumerateArray()
+            .Where(r => r.GetProperty("kind").GetString() == "mar").ToArray();
+        Assert.Equal(2, rates.Length);
+        Assert.Equal(new[] { 18.0, 24.0 }, rates.Select(r => r.GetProperty("rate").GetDouble()).OrderBy(x => x));
+    }
+
+    [Fact]
     public void Stats_CountsFlightsAndRecordsSeparately()
     {
         var s = Json(ThreeCenterChain().Stats());

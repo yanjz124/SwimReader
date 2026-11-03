@@ -16,7 +16,11 @@ using SwimServer;
 /// Two asdexMsg sub-types are parsed:
 ///   positionReport — full/partial surface position (AT/SE topics); uses latitude/longitude
 ///   adsbReport     — ADS-B delta update (AD topics); uses lat/lon
-/// SafetyLogicHoldBar root elements are silently ignored.
+///   SafetyLogicHoldBar — safety-logic hold bar state (SH topics). NOT ignored, despite what
+///                        this comment used to say: ProcessHoldBar tracks per-airport bit state
+///                        and HoldBarMapper learns which bit is which physical bar by watching
+///                        which bars light with which traffic, persisted per airport. See the
+///                        /api/asdex/{airport}/holdbar-map and holdbar-geo routes.
 /// </summary>
 class AsdexBridge
 {

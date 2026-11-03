@@ -270,14 +270,31 @@ function _zuluHHMM(iso) {
     return String(d.getUTCHours()).padStart(2, '0') + String(d.getUTCMinutes()).padStart(2, '0');
 }
 
+// A centre's schedule can carry several points, farthest out first: meter arcs o4a, o3a, ooa, oma,
+// then the meter fix (mfx), then the runway. Which one a real sector sees is site adaptation SWIM
+// doesn't publish, so show the NEXT point the flight hasn't reached yet: the outer arc until it
+// crosses, then the meter fix, then the runway. "Reached" = its ETA (else STA) is in the past.
+const TBFM_ARC_ORDER = ['o4a', 'o3a', 'ooa', 'oma'];
+function tbfmNextPoint(t) {
+    const pts = [];
+    for (const a of TBFM_ARC_ORDER) {
+        const p = t.arcs && t.arcs[a];
+        if (p && p.sta) pts.push({ sta: p.sta, eta: p.eta });
+    }
+    if (t.staMfx) pts.push({ sta: t.staMfx, eta: t.etaMfx });
+    if (t.staRwy) pts.push({ sta: t.staRwy, eta: t.etaRwy });
+    const now = Date.now();
+    return pts.find(p => new Date(p.eta || p.sta).getTime() > now) || null;
+}
+
 // The STA / delay parts of the RDB, or '' when nothing applies.
 function tbfmRdbText(f) {
     if (!(staRdbEnabled || delayRdbEnabled)) return '';
     const t = getTbfm(f);
     if (!t) return '';
-    const useMfx = !!t.staMfx;
-    const sta = useMfx ? t.staMfx : t.staRwy;
-    const eta = useMfx ? t.etaMfx : t.etaRwy;
+    const pt = tbfmNextPoint(t);
+    if (!pt) return '';
+    const sta = pt.sta, eta = pt.eta;
     const parts = [];
     if (staRdbEnabled && sta) {
         const hhmm = _zuluHHMM(sta);

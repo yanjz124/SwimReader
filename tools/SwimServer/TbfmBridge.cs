@@ -180,10 +180,11 @@ class TbfmBridge
             // sta_sfx / sta_dfx (equal in every sample seen), with the matching ETA as
             // eta_sfx / eta_dfx. eta_mfx is also published but can differ from eta_sfx by
             // ~1 min, so prefer the sfx pair and STA - ETA compares one point with itself.
-            MergeTime(ref f.EtaMeterFix, Time(air, "eta_sfx", "eta_dfx", "eta_mfx"));
-            MergeTime(ref f.StaMeterFix, Time(air, "sta_sfx", "sta_dfx", "sta_mfx"));
-            MergeTime(ref f.EtaRunway, Time(air, "eta_rwy", "etaRwy"));
-            MergeTime(ref f.StaRunway, Time(air, "sta_rwy", "staRwy"));
+            bool timed = false;
+            timed |= MergeTime(ref f.EtaMeterFix, Time(air, "eta_sfx", "eta_dfx", "eta_mfx"));
+            timed |= MergeTime(ref f.StaMeterFix, Time(air, "sta_sfx", "sta_dfx", "sta_mfx"));
+            timed |= MergeTime(ref f.EtaRunway, Time(air, "eta_rwy", "etaRwy"));
+            timed |= MergeTime(ref f.StaRunway, Time(air, "sta_rwy", "staRwy"));
             // Meter arcs upstream of the meter fix (outer meter arc, outer-outer, 3rd, 4th), each
             // with its own STA/ETA. Which one a given sector actually sees is site adaptation that
             // SWIM doesn't publish, so they are exposed as data rather than picked here.
@@ -192,10 +193,15 @@ class TbfmBridge
                 var sta = Time(air, "sta_" + arc);
                 var eta = Time(air, "eta_" + arc);
                 if (sta is null && eta is null) continue;
+                timed = true;
                 var cur = f.ArcTimes.TryGetValue(arc, out var c) ? c : (null, null);
                 f.ArcTimes[arc] = (sta ?? cur.Sta, eta ?? cur.Eta);
             }
             f.LastSeen = now;
+            // Expiry keys on this, not LastSeen: TBFM keeps sending route-only <flt> updates for a
+            // flight whose schedule has long passed (seen live: GLH3, STA = ETA 40 min in the
+            // past, "updated" 4 min ago), and those must not keep a dead time on the scope.
+            if (timed) f.TimesSeen = now;
         }
     }
 
@@ -222,9 +228,11 @@ class TbfmBridge
         if (!string.IsNullOrWhiteSpace(v)) field = v.Trim();
     }
 
-    private static void MergeTime(ref DateTime? field, DateTime? v)
+    private static bool MergeTime(ref DateTime? field, DateTime? v)
     {
-        if (v.HasValue) field = v;
+        if (!v.HasValue) return false;
+        field = v;
+        return true;
     }
 
     private static string? Attr(XElement e, string name) =>
@@ -298,7 +306,7 @@ class TbfmBridge
         var now = DateTime.UtcNow;
         return _flights.Values
             .Where(f => !LaddService.IsBlocked(f.Aid, null))
-            .Select(f => (f, mfxDone: Passed(f.StaMeterFix, f.LastSeen, now), rwyDone: Passed(f.StaRunway, f.LastSeen, now)))
+            .Select(f => (f, mfxDone: Passed(f.StaMeterFix, f.TimesSeen, now), rwyDone: Passed(f.StaRunway, f.TimesSeen, now)))
             .Where(x => (x.f.StaMeterFix.HasValue && !x.mfxDone) || (x.f.StaRunway.HasValue && !x.rwyDone))
             .Select(x => (object)new
             {
@@ -314,7 +322,7 @@ class TbfmBridge
                 staRwy = x.rwyDone ? null : x.f.StaRunway,
                 etaRwy = x.rwyDone ? null : x.f.EtaRunway,
                 arcs = ArcsJson(x.f, now),
-                ageSec = (int)(now - x.f.LastSeen).TotalSeconds,
+                ageSec = (int)(now - x.f.TimesSeen).TotalSeconds,   // since the last schedule update
             })
             .ToArray();
     }
@@ -325,7 +333,7 @@ class TbfmBridge
         Dictionary<string, object>? d = null;
         foreach (var (arc, t) in f.ArcTimes)
         {
-            if (t.Sta is null || Passed(t.Sta, f.LastSeen, now)) continue;
+            if (t.Sta is null || Passed(t.Sta, f.TimesSeen, now)) continue;
             (d ??= new())[arc] = new { sta = t.Sta, eta = t.Eta };
         }
         return d;
@@ -334,7 +342,7 @@ class TbfmBridge
     /// <summary>
     /// A scheduled time is "done" once it is more than a minute past and TBFM has not updated the
     /// record since. Measured live: after a flight's meter-fix STA passes, the time since the
-    /// record's last update grows in step with it (median 3.1 / 4.8 / 6.9 min at 0-2 / 2-5 /
+    /// record's last time update grows in step with it (median 3.1 / 4.8 / 6.9 min at 0-2 / 2-5 /
     /// 5-10 min past STA), i.e. TBFM stops publishing once the flight reaches the point. A late
     /// flight TBFM is still revising keeps updating, so it is not hidden.
     /// </summary>
@@ -378,4 +386,5 @@ class TbfmFlight
     // Written on the feed thread, read by API requests: concurrent, so enumeration can't throw.
     public readonly ConcurrentDictionary<string, (DateTime? Sta, DateTime? Eta)> ArcTimes = new();
     public DateTime LastSeen;
+    public DateTime TimesSeen;   // last message that carried an STA/ETA (expiry uses this)
 }

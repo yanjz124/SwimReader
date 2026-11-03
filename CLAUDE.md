@@ -1682,6 +1682,16 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
   when that centre isn't metering the flight.
 - Updates are partial; fields merge non-null onto a record keyed `envSrce/tmaId` (fallback `aid/apt`).
   Purged 20 min after the last update or 10 min after the STA has passed.
+- **`mfx` is "the point this centre schedules to", not necessarily the airport's meter fix**
+  (live: ZLA schedules an MRY arrival to `BSR`). The message names no arc: arcs appear only as
+  times (`sta_oma`/`ooa`/`o3a`/`o4a`), exposed as `arcs` in `/api/tbfm/eram`.
+- **Scope shows the next point ahead**: `o4a → o3a → ooa → oma → mfx → rwy`, the first whose ETA
+  hasn't passed. Real ERAM picks per sector from site adaptation SWIM doesn't publish, so this
+  approximates what the sector working the flight would see.
+- **Expiry keys on the last message that carried a time** (`TimesSeen`), not on any message: TBFM
+  keeps sending route-only `<flt>` updates for schedules long past (live: GLH3, STA = ETA 40 min
+  ago). A time is dropped once it is over 60 s past with no time update since. `ageSec` is also
+  time since the last schedule update, and the scope prefers the freshest record per centre.
 - `GET /api/tbfm/eram` gives the scope its compact records. **LADD callsigns are dropped there**,
   because the scope matches by callsign.
 - Scope (`eram.js`): polls every 15 s, and only while STA RDB or DELAY RDB is on. Matching is by

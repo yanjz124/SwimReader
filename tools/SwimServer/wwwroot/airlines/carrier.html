@@ -793,7 +793,7 @@ function renderFleet() {
     $('fleetList').innerHTML = `<table class="grid"><thead><tr>${headCells(FCOLS, fSort)}</tr></thead><tbody>` + rows.map(t => {
         const lowUse = med > 0 && t.hpd < med * 0.4;
         return `<tr data-key="${esc(t.key)}" class="${t.key === openTailKey ? 'sel' : ''}">
-            <td class="reg">${esc(t.reg || '—')}${t.sharedCode ? ' <span class="shared" title="The feed files this Mode S code for more than one airframe, so the two were being counted as one aeroplane. They are split apart here by registration — but only back to when the log started recording it, so this tail&apos;s earlier flights may be missing.">⧉</span>' : ''}</td>
+            <td class="reg">${esc(t.reg || '—')}${t.sharedCode ? ' <span class="shared" title="The feed files this Mode S code for more than one airframe, so the two were being counted as one airplane. They are split apart here by registration — but only back to when the log started recording it, so this tail&apos;s earlier flights may be missing.">⧉</span>' : ''}</td>
             <td class="dim${t.sharedCode ? ' shared' : ''}">${esc(t.hex || '')}</td>
             <td>${esc(t.type || '')}</td>
             <td class="num">${n0(t.flights)}</td>

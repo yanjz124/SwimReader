@@ -18,7 +18,7 @@ namespace SwimServer;
 /// dep is 0 when the feed never gave an actual departure time). The registration is stored per entry, not just per
 /// key, because the key is normally the Mode S hex and operators do file the wrong one: ~0.7% of hex codes turn up
 /// against two or more registrations (a one-digit typo like N604SK/N606SK, or a placeholder hex shared by a dozen
-/// unrelated airframes), which otherwise fuses two aeroplanes into one impossible tail. With the registration on the
+/// unrelated airframes), which otherwise fuses two airplanes into one impossible tail. With the registration on the
 /// row, a conflicted key can be split back apart. Rows are sharded by a hash of the airframe key into 1,024 files under
 /// aircraft-db/flights/. Sharding avoids one tiny file per tail (tens of thousands of 4 KB blocks on the SD card)
 /// while keeping a tail lookup to a scan of ~1/1024 of the log.
@@ -547,7 +547,7 @@ sealed class AircraftFlightLog
     /// <summary>
     /// Fills in the registration on rows written before the log recorded one, but only under Mode S codes the
     /// feed files for more than one airframe — those are the rows that can't otherwise be attributed to either
-    /// aircraft, and the ones that make a tail look like two aeroplanes at once. Other reg-less rows are left
+    /// aircraft, and the ones that make a tail look like two airplanes at once. Other reg-less rows are left
     /// alone: their key is unambiguous, so nothing is gained by touching them.
     ///
     /// Safe to re-run (a row that already has a registration is never modified) and safe to run while the log

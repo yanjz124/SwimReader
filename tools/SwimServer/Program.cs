@@ -282,7 +282,7 @@ var stars = new StarsBridge(starsHttp, jsonOpts);
 // ERAM sector geometry — vNAS Fixed Airspace Volumes. Same shape as StarsBridge (HTTPS poll of a
 // public vNAS endpoint, disk-cached, daily refresh), so like stars.Start() it runs regardless of
 // FeedGuard: it consumes no Solace queue. The User-Agent is not decoration — data-api answers 403
-// without a recognisable one, which would read as "this ARTCC has no airspace".
+// without a recognizable one, which would read as "this ARTCC has no airspace".
 var airspaceHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
 airspaceHttp.DefaultRequestHeaders.UserAgent.ParseAdd("SwimReader-Airspace/1.0");
 var eramAirspace = new VnasAirspace(airspaceHttp,
@@ -759,7 +759,7 @@ var solaceReady = new TaskCompletionSource();
 var sfdpsReceivers = Math.Clamp(
     int.TryParse(Environment.GetEnvironmentVariable("SFDPS_FLOWS"), out var _rx) ? _rx : 3, 1, 8);
 // Processing stays single-threaded. The handler is ~1.4 ms, so one thread sustains ~700 msg/s —
-// far above what we need — and FlightState keeps the serialisation its mutation logic assumes.
+// far above what we need — and FlightState keeps the serialization its mutation logic assumes.
 var sfdpsProcessGate = new object();
 
 void RunSfdpsReceiver(int receiverIndex)
@@ -1148,7 +1148,7 @@ asdex.OnEnrich = (track) =>
 // Save flight cache periodically (every 5 minutes)
 // Every 15 min (was 5): the cache is a ~78 MB write burst each time — less often = less SD-card
 // I/O pressure. Shutdown still saves the cache, so the worst-case loss window is just longer.
-// Every 5 minutes, not 15: the shutdown save is usually abandoned at the budget (serialising
+// Every 5 minutes, not 15: the shutdown save is usually abandoned at the budget (serializing
 // ~12k flights takes longer than the queue can afford to go unbound), so the periodic save is
 // what the cache actually is. Five minutes of lost flight state is refilled by the live feed.
 var cacheTimer = new Timer(_ => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
@@ -1453,7 +1453,7 @@ app.Lifetime.ApplicationStopping.Register(() => GracefulShutdown.Run(
     ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }), // 57ms
     // Cheap (a few hundred KB, no-ops when clean) and irreplaceable on a short timescale: TBFM
     // publishes adaptation rarely, so what the 60s timer hasn't written yet may not come round
-    // again for hours, and pointType reads null for that centre until it does.
+    // again for hours, and pointType reads null for that center until it does.
     ("tbfm adaptation", () => tbfm.SaveAdaptationIfDirty()),
     ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }), // 1.9s
     ("flight cache", () => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts, backfill: false)),
@@ -1604,8 +1604,8 @@ void ProcessFlight(XElement flight, string rawXml)
     Interlocked.Increment(ref _procCount);
 
     var source = flight.Attribute("source")?.Value ?? "";
-    // "centre" is FIXM's own attribute spelling — an external contract, not ours.
-    var center = flight.Attribute("centre")?.Value ?? "";
+    // "center" is FIXM's own attribute spelling — an external contract, not ours.
+    var center = flight.Attribute("center")?.Value ?? "";
     var timestamp = flight.Attribute("timestamp")?.Value;
     var flightType = flight.Attribute("flightType")?.Value;
     // End-to-end lag: how far behind the publisher we are. SFDPS puts its own stamp on every

@@ -358,7 +358,7 @@ class FlightState
         LastSeen = LastSeen.ToString("HH:mm:ss"),
         PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
         // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
-        // runs off PosAge so that coast/extrapolation behaviour is unchanged by this field.
+        // runs off PosAge so that coast/extrapolation behavior is unchanged by this field.
         FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
         History = includeHistory ? HistoryWithAge() : null
         };
@@ -400,7 +400,7 @@ class FlightState
             LastSeen = LastSeen.ToString("HH:mm:ss"),
             PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
         // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
-        // runs off PosAge so that coast/extrapolation behaviour is unchanged by this field.
+        // runs off PosAge so that coast/extrapolation behavior is unchanged by this field.
         FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
         };
     }

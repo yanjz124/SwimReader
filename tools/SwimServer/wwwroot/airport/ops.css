@@ -5,7 +5,7 @@
    panels, navy labels, and cream value boxes with a thin border, so the numbers read as the
    instrument readouts they are. NIGHT is the same layout for a dim room.
 
-   Every colour on the page — including the SVG rose, the runways and the trend — comes from these
+   Every color on the page — including the SVG rose, the runways and the trend — comes from these
    custom properties, so switching themes restyles what is already drawn and redraws nothing. */
 :root,
 :root[data-theme="night"] {

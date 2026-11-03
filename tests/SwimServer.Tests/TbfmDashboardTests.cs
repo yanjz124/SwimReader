@@ -19,7 +19,7 @@ public class TbfmDashboardTests
     private static string T(double minutesFromNow) =>
         DateTime.UtcNow.AddMinutes(minutesFromNow).ToString("yyyy-MM-ddTHH:mm:ssZ");
 
-    /// <summary>One centre's schedule for a flight: a point STA/ETA, optionally a runway pair.</summary>
+    /// <summary>One center's schedule for a flight: a point STA/ETA, optionally a runway pair.</summary>
     private static string Link(string ctr, string aid, string apt, string point,
                                double staMin, double etaMin,
                                double? staRwyMin = null, double? etaRwyMin = null,
@@ -51,7 +51,7 @@ public class TbfmDashboardTests
     private static JsonElement Json(object o) => JsonSerializer.SerializeToElement(o);
 
     /// <summary>A flight metered by ZOB, then ZAU, then ZAB (which owns the runway schedule).</summary>
-    private static TbfmBridge ThreeCentreChain()
+    private static TbfmBridge ThreeCenterChain()
     {
         var b = NewBridge();
         b.Process(Link("ZOB", "TST200", "PHX", "ZAU_N", staMin: 20, etaMin: 20));
@@ -64,9 +64,9 @@ public class TbfmDashboardTests
     // ── grouping ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public void ChainAcrossCentres_IsOneFlight_InStaOrder()
+    public void ChainAcrossCenters_IsOneFlight_InStaOrder()
     {
-        var board = Json(ThreeCentreChain().AirportBoard("PHX"));
+        var board = Json(ThreeCenterChain().AirportBoard("PHX"));
         Assert.Equal(1, board.GetProperty("metered").GetInt32());
         Assert.Equal(1, board.GetProperty("arriving").GetInt32());
 
@@ -83,7 +83,7 @@ public class TbfmDashboardTests
     [Fact]
     public void FlightDelay_IsMaxOverTheChain_NotTheSum()
     {
-        var f = Json(ThreeCentreChain().AirportBoard("PHX")).GetProperty("flights").EnumerateArray().Single();
+        var f = Json(ThreeCenterChain().AirportBoard("PHX")).GetProperty("flights").EnumerateArray().Single();
         // ZAU holds 6 min; the other two links read ~0. Summing would give the same here only
         // because the others are zero — so assert the max explicitly against a second holding link.
         Assert.Equal(6.0, f.GetProperty("delayMin").GetDouble(), 1);
@@ -102,7 +102,7 @@ public class TbfmDashboardTests
     [Fact]
     public void AirportDirectory_CountsFlights_NotRecords()
     {
-        var rows = Json(ThreeCentreChain().AirportsSnapshot()).EnumerateArray()
+        var rows = Json(ThreeCenterChain().AirportsSnapshot()).EnumerateArray()
             .Single(r => r.GetProperty("apt").GetString() == "PHX");
         Assert.Equal(1, rows.GetProperty("metered").GetInt32());
         Assert.Equal(3, rows.GetProperty("centers").GetInt32());
@@ -115,7 +115,7 @@ public class TbfmDashboardTests
     public void KPrefixedAirport_ResolvesToTheFaaLid()
     {
         // TBFM publishes FAA LIDs; a link typed with the ICAO code must still find the board.
-        var board = Json(ThreeCentreChain().AirportBoard("KPHX"));
+        var board = Json(ThreeCenterChain().AirportBoard("KPHX"));
         Assert.Equal("PHX", board.GetProperty("apt").GetString());
         Assert.Equal(1, board.GetProperty("metered").GetInt32());
     }
@@ -123,7 +123,7 @@ public class TbfmDashboardTests
     [Fact]
     public void RunwayDelay_ComesFromTheTerminalRecord()
     {
-        var f = Json(ThreeCentreChain().AirportBoard("PHX")).GetProperty("flights").EnumerateArray().Single();
+        var f = Json(ThreeCenterChain().AirportBoard("PHX")).GetProperty("flights").EnumerateArray().Single();
         Assert.Equal(0.5, f.GetProperty("rwyDelayMin").GetDouble(), 1);
     }
 
@@ -136,12 +136,12 @@ public class TbfmDashboardTests
         Assert.Equal(0, Json(b.AirportBoard("PHX")).GetProperty("metered").GetInt32());
     }
 
-    // ── centre board ─────────────────────────────────────────────────────────
+    // ── center board ─────────────────────────────────────────────────────────
 
     [Fact]
-    public void CentreBoard_RollsUpItsOwnPointsOnly()
+    public void CenterBoard_RollsUpItsOwnPointsOnly()
     {
-        var board = Json(ThreeCentreChain().CenterBoard("ZAU")!);
+        var board = Json(ThreeCenterChain().CenterBoard("ZAU")!);
         Assert.Equal("ZAU", board.GetProperty("ctr").GetString());
         Assert.Equal(1, board.GetProperty("scheduled").GetInt32());
         var p = board.GetProperty("points").EnumerateArray().Single();
@@ -153,12 +153,12 @@ public class TbfmDashboardTests
     }
 
     [Fact]
-    public void CentreBoard_Unknown_IsNull() => Assert.Null(NewBridge().CenterBoard("ZZZ"));
+    public void CenterBoard_Unknown_IsNull() => Assert.Null(NewBridge().CenterBoard("ZZZ"));
 
     [Fact]
     public void PointGeometry_ComesFromAdaptation()
     {
-        var b = ThreeCentreChain();
+        var b = ThreeCenterChain();
         b.Process($"<env xmlns=\"{Ns}\" envSrce=\"TMA.ZAU.FAA.GOV\" envTime=\"{T(0)}\">"
             + $"<tma msgId=\"2\" msgTime=\"{T(0)}\"><adp><tra>C90</tra><mrns>"
             + "<mrn><nam>BFFMP</nam><mrt>MFA</mrt><gat>ZMP_GATE</gat>"
@@ -181,7 +181,7 @@ public class TbfmDashboardTests
     [Fact]
     public void Rate3600_ReadsAsUnrestricted()
     {
-        var b = ThreeCentreChain();
+        var b = ThreeCenterChain();
         b.Process(Rate("ZAB", "aar", "PHX", 3600));
         var row = Json(b.AirportsSnapshot()).EnumerateArray()
             .Single(r => r.GetProperty("apt").GetString() == "PHX");
@@ -192,7 +192,7 @@ public class TbfmDashboardTests
     [Fact]
     public void RealRate_ReadsAsRestricted_AndReachesTheBoard()
     {
-        var b = ThreeCentreChain();
+        var b = ThreeCenterChain();
         b.Process(Rate("ZAB", "aar", "PHX", 40));
         var row = Json(b.AirportsSnapshot()).EnumerateArray()
             .Single(r => r.GetProperty("apt").GetString() == "PHX");
@@ -204,11 +204,11 @@ public class TbfmDashboardTests
     }
 
     [Fact]
-    public void CentreBoard_ShowsOnlyItsOwnRates()
+    public void CenterBoard_ShowsOnlyItsOwnRates()
     {
-        // An airport's AAR may be published by any centre, so the airport board scans them all —
-        // but a CENTRE board that did the same put ZNY's EWR rates on ZLA's page.
-        var b = ThreeCentreChain();
+        // An airport's AAR may be published by any center, so the airport board scans them all —
+        // but a CENTER board that did the same put ZNY's EWR rates on ZLA's page.
+        var b = ThreeCenterChain();
         b.Process(Rate("ZAB", "aar", "PHX", 40));
         b.Process(Rate("ZOB", "aar", "CLE", 48));
 
@@ -225,9 +225,9 @@ public class TbfmDashboardTests
     [Fact]
     public void Stats_CountsFlightsAndRecordsSeparately()
     {
-        var s = Json(ThreeCentreChain().Stats());
-        Assert.Equal(3, s.GetProperty("records").GetInt32());    // one per metering centre
-        Assert.Equal(1, s.GetProperty("flights").GetInt32());    // one aeroplane
+        var s = Json(ThreeCenterChain().Stats());
+        Assert.Equal(3, s.GetProperty("records").GetInt32());    // one per metering center
+        Assert.Equal(1, s.GetProperty("flights").GetInt32());    // one airplane
         Assert.Equal(1, s.GetProperty("airports").GetInt32());
         Assert.Equal(3, s.GetProperty("centers").GetInt32());
     }

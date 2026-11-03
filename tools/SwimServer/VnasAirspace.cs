@@ -5,7 +5,7 @@ namespace SwimServer;
 
 /// <summary>
 /// ERAM sector geometry from vNAS: <b>Fixed Airspace Volumes</b> (FAVs), the thing ERAM actually
-/// sectorises with.
+/// sectorizes with.
 ///
 /// <para><b>Why this exists.</b> The ERAM scope's boundaries come from <c>AllSectors.kml</c> — a
 /// 4.5 MB file dated April 2025, not in the repo, parsed in the browser on every page load. It is
@@ -33,7 +33,7 @@ namespace SwimServer;
 /// feed already reports, per ERAM position, the 5-digit volume ids that position owns — e.g. ZDV
 /// position 07 owning <c>00701, 00702, 00703, 00800, 06100, 06700</c>. Sampled against ZDV's FAV
 /// set, <b>28 of 28 matched</b>. So AIXM says who owns which volume right now and this says what
-/// shape that volume is; together they are the actual combined/decombined sectorisation, which no
+/// shape that volume is; together they are the actual combined/decombined sectorization, which no
 /// static KML can express. Nothing consumes the join yet.</para>
 ///
 /// 20 of 24 ARTCCs publish FAVs. The four that don't (ZAN, ZHN, ZSU, ZUA — Anchorage, Honolulu,

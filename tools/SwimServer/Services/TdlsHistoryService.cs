@@ -159,7 +159,7 @@ static class TdlsHistoryService
                 // "days containing it" saved nothing and still read ~715 MB.
                 //
                 // An EMPTY hit is a miss, not "no results": the index only knows aircraftId while the
-                // search also matches gate, runway and clearance text, so an unrecognised token
+                // search also matches gate, runway and clearance text, so an unrecognized token
                 // ("RNAV") still has to be scanned for.
                 var hits = (q != null && LooksLikeCallsign(q)) ? TdlsCallsignIndex.Find(q, ap) : null;
                 if (hits is { Count: > 0 })

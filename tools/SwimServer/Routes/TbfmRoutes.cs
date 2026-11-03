@@ -6,7 +6,7 @@ namespace SwimServer;
 /// rest of the feed; <c>/api/tbfm/debug</c> has raw samples and the element names seen.
 ///
 /// The <c>/tbfm</c> pages are the dashboard over the same state: a directory of metered airports
-/// and centres, one airport's arrival metering board, and one centre's meter-point board with its
+/// and centers, one airport's arrival metering board, and one center's meter-point board with its
 /// adaptation geometry. Projections live in TbfmDashboard.cs.
 /// </summary>
 static class TbfmRoutes
@@ -19,14 +19,14 @@ static class TbfmRoutes
             flights = ctx.Tbfm.EramSnapshot(),
         }, ctx.JsonOpts));
 
-        // Everything every centre's TBFM holds for one callsign (flt / mrp / sch blocks, all times).
+        // Everything every center's TBFM holds for one callsign (flt / mrp / sch blocks, all times).
         app.MapGet("/api/tbfm/flight/{callsign}", (string callsign) =>
             Results.Json(ctx.Tbfm.FlightDetail(callsign), ctx.JsonOpts));
 
         // One row per TBFM system: heartbeat, schedule count, adaptation size, acceptance rates.
         app.MapGet("/api/tbfm/centers", () => Results.Json(ctx.Tbfm.CentersSnapshot(), ctx.JsonOpts));
 
-        // A centre's adaptation: meter points (type, lat/lon, arc radius/angles), airports, gates.
+        // A center's adaptation: meter points (type, lat/lon, arc radius/angles), airports, gates.
         app.MapGet("/api/tbfm/adaptation/{center}", (string center) =>
             ctx.Tbfm.Adaptation(center) is { } a ? Results.Json(a, ctx.JsonOpts) : Results.NotFound());
 

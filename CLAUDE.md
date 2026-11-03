@@ -81,9 +81,9 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 - **Track a Flight** (`/track`, `/track/{callsign}`) — Mobile-first single-callsign aggregator across every source (SFDPS, TFMS, EDCT, TDLS, TAIS/STARS, ASDE-X); polls `/api/track/{callsign}`
 - **TFDM Boards** (`/tfdm`, `/tfdm/{airport}`) — Terminal surface/departure boards: per-airport live board (WS) with off-block/TSAT/runway/spot/taxi/sequence/delay, proposed-vs-active state, sortable columns + wildcard filter, and an info strip (config/AAR-ADR/closures/queues/gridlock/demand/TMRs). Directory sorted alphabetically.
 - **TBFM Boards** (`/tbfm`, `/tbfm/{airport}`, `/tbfm/center/{ctr}`) — time-based metering: a
-  directory of metered airports and the 20 centre TBFM systems, one airport's arrival board (hold
-  assigned, runway/point STA vs ETA, the per-centre metering chain behind each flight, AAR), and one
-  centre's meter points with its adaptation drawn on a map (meter fixes as points, MFA/OMA/OOA arcs
+  directory of metered airports and the 20 center TBFM systems, one airport's arrival board (hold
+  assigned, runway/point STA vs ETA, the per-center metering chain behind each flight, AAR), and one
+  center's meter points with its adaptation drawn on a map (meter fixes as points, MFA/OMA/OOA arcs
   as real arc segments).
 - **Airport Operations** (`/airport`, `/airport/{id}`) — Tower-style field board: wind on a compass rose with NASR runways to scale, head/crosswind per runway end, altimeter/density altitude/RH/ceiling/visibility, 6-hour trend, raw METAR
 - **Route Finder / Dispatch** (`/dispatch`) — Search persisted flight history by route/airline/aircraft type → real callsign, filed route, cruise, airframe, gate; deep-links each into **SimBrief** (airframe/type/variant picker), **VATSIM prefile** and **FlightAware**. `/api/dispatch/search`.
@@ -251,7 +251,7 @@ N × (context + session + flow). `SFDPS_FLOWS` sets N, default **3**.
 | queue | pinned at 5-6k, 150k expiring/bucket | drains |
 
 **Processing stays single-threaded** behind one lock (`sfdpsProcessGate`). The handler sustains
-~700 msg/s alone, far above the ~95/s needed, and `FlightState` keeps the serialisation its
+~700 msg/s alone, far above the ~95/s needed, and `FlightState` keeps the serialization its
 mutation logic was written against. Only the transport is parallel, because only the transport was
 the bottleneck. Each receiver also runs its own silence watchdog, so one dead flow is detected and
 reconnected while its siblings are busy.
@@ -1180,7 +1180,7 @@ nothing; no layer declares a `<Dimension name="time">`. IEM offers *relative* la
 its `.wld`, so bounds are lat 23-50, lon -126 to -65. Verified distinct per timestamp. It is a
 whole-CONUS image, not WMS tiles, so the slot is fetched **once** and every tile crops its own box
 out of one downscaled canvas (4x — the native RGBA buffer is ~263 MB); nearest-neighbour
-throughout, because smoothing blends palette colours into hues the level classifier has no
+throughout, because smoothing blends palette colors into hues the level classifier has no
 category for. The slot cache is bounded at 3.
 
 **A second bug sat behind it.** Even reading the archive, opening a replay still pulled **63 live
@@ -1338,7 +1338,7 @@ Two traps are already baked in:
 
 `/stars/{artcc}/{facility}` used to serve the scope shell for **any** two strings. A facility with
 no `starsConfiguration` therefore drew a blank screen and explained nothing — no maps, no ASR
-sites, centred on whatever `visibilityCenters[0]` happened to be. That is not an edge case:
+sites, centered on whatever `visibilityCenters[0]` happened to be. That is not an edge case:
 measured across 10 ARTCCs, **306** facilities have no STARS config and only 6 in ZMA do.
 
 DJT is why it looked like a video-map bug. vNAS splits Palm Beach into the **ATCT (DJT**, no
@@ -1432,7 +1432,7 @@ merges them. The E-Jet forced it: SimBrief has airframes under `E170` **and** `E
 all** under `E75L`/`E75S`/`E75X`, so an E175 — most of the regional fleet — offered no variants and
 couldn't reach the add-on it would actually fly. The family is
 `{E175, E75L, E75S, E75X, E170}`, **headed by E175**: `E75L`/`E75S`/`E75X` *are* E175s, so pointing
-them at `E170` (a shorter, different aeroplane) was wrong, even though the same add-ons model both
+them at `E170` (a shorter, different airplane) was wrong, even though the same add-ons model both
 and the E170 entries are still worth offering. A merged list keeps the **filed type's own default**
 (so "SimBrief default" never silently refiles the aircraft as a different ICAO), drops other
 members' defaults, and tags borrowed entries with where they came from (`… · E170`), leaving the
@@ -1492,7 +1492,7 @@ A blind all-days scan is ~30 s of SD-card reads on the Pi. Four things keep it i
    reported back as `truncated` rather than hanging.
 
 An **empty** index hit is treated as a miss, not as "no results" — the index only knows `aircraftId`
-while the search also matches gate, runway and clearance text, so an unrecognised token still gets
+while the search also matches gate, runway and clearance text, so an unrecognized token still gets
 scanned. The deliberate converse: when the index *does* know the callsign, only its days are read, so
 another day's clearance text that merely mentions it won't be returned. This is a callsign lookup;
 paying a 1.5 GB scan to catch that would defeat the point.
@@ -1730,7 +1730,7 @@ Configured in `appsettings.json` under `AdsbFi`:
 - `MilitaryInjectionService` — polls for military aircraft in configured geofence areas
 - Rate-limited with caching (hex: 5min TTL, geo: 30s TTL)
 
-## ERAM sectorisation: vNAS Fixed Airspace Volumes beat the KML
+## ERAM sectorization: vNAS Fixed Airspace Volumes beat the KML
 
 `VnasAirspace.cs` + `GET /api/airspace/favs[/{artcc}]`. **This is the good sector geometry**; the
 KML below is what it replaces.
@@ -1801,7 +1801,7 @@ body stays byte-identical to what vNAS served.
 logs `[FAV]`) reports per ERAM position the **5-digit volume ids that position owns**: ZDV position
 07 owns `00701, 00702, 00703, 00800, 06100, 06700`. Sampled against ZDV's FAV set, **28 of 28 were
 a `favId`**. So AIXM gives ownership *now* and FAVs give the shape — join them and you have the
-real combined/decombined sectorisation, colour-coded by the position actually working it, which no
+real combined/decombined sectorization, color-coded by the position actually working it, which no
 static file can express. Nothing consumes the join yet; it is the reason to do the scope work.
 
 `?lowFt=&highFt=` filters to the slabs overlapping that band, `?sector=` to one sector (bare or
@@ -1836,13 +1836,13 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
   `ctr: "ZLC"`) publishes its own record with its own meter point. Extended metering means a DFW
   arrival can be metered by ZLC to `D34S`, ZDV to `ABQ` and ZAB to `CME` at once; ~23% of
   callsigns had more than one record. The scope shows only the record whose `ctr` is the selected
-  facility (or the controlling centre when none is selected), the same rule as CIDs, and nothing
-  when that centre isn't metering the flight.
+  facility (or the controlling center when none is selected), the same rule as CIDs, and nothing
+  when that center isn't metering the flight.
 - Updates are partial; fields merge non-null onto a record keyed `envSrce/tmaId` (fallback `aid/apt`).
   Purged 20 min after the last update, or 10 min after the **latest** of its meter-fix and
   runway STAs has passed — not the first of the two, or the record would vanish while the
   runway STA was still ahead of the aircraft (which `EramSnapshot` is willing to show).
-- **`mfx` is "the point this centre schedules to", not necessarily the airport's meter fix**
+- **`mfx` is "the point this center schedules to", not necessarily the airport's meter fix**
   (live: ZLA schedules an MRY arrival to `BSR`). The message names no arc: arcs appear only as
   times (`sta_oma`/`ooa`/`o3a`/`o4a`), exposed as `arcs` in `/api/tbfm/eram`.
 - **Scope shows the next point ahead**: `o4a → o3a → ooa → oma → mfx → rwy`, the first whose ETA
@@ -1853,16 +1853,16 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
   `<flt>` updates for schedules long past: GLH3, STA = ETA 40 min ago), and not per record either:
   ASA481's record stayed fresh from meter-fix and runway times while its OMA STA sat 13 min dead
   with the ETA still ahead, and the scope showed a bogus `-15:20`. `ageSec` is also
-  time since the last schedule update, and the scope prefers the freshest record per centre.
+  time since the last schedule update, and the scope prefers the freshest record per center.
 - `GET /api/tbfm/eram` gives the scope its compact records. **LADD callsigns are dropped there**,
   because the scope matches by callsign.
 - Scope (`eram.js`): polls every 15 s, and only while STA RDB or DELAY RDB is on. Matching is **by
   callsign**, narrowed to the record whose `ctr` is the selected facility (or, with none selected,
-  the controlling centre) and to the destination when both sides know it, freshest `ageSec` winning
+  the controlling center) and to the destination when both sides know it, freshest `ageSec` winning
   a tie. **Not by GUFI** — TBFM's is ERAM's short form and SFDPS doesn't publish it, which is the
   whole reason the match is by callsign. The
   RDB shows the meter-fix STA as `HHMM` (runway STA if there's no meter fix). Delay is `STA − ETA`
-  at the same point, rounded to 10 s, as `+02:30` (sign, MM:SS), drawn **white-grey** (not FDB
+  at the same point, rounded to 10 s, as `+02:30` (sign, MM:SS), drawn **white-gray** (not FDB
   yellow, not CRR magenta). Reference: `docs/img/eram/data-blocks/rdb-sta-dct.png`, an ERAM
   STA / DCT / Both slide (`0432`, `-12:20`, `0432 -12:20`, one line below the target). It agrees
   with a NASA 2019 FIM study's MACS ERAM emulation (NTRS 20190000841, Figs. 4–5), which also gives
@@ -1891,7 +1891,7 @@ from the spec (TBFM MIS JMSDD, NSRR); the raw tag is always what the API returns
   speed (kt or Mach); `eng` JET / TURBO_PROP / PISTON; `cfx`/`ctm` coordination fix/time; `etd`;
   `std` scheduled departure (TBFM release time); `acs` track status TRACKED / PROPOSED / ACTIVE /
   INACTIVE / LOST / **LANDED**; `fps` flight-plan status ACTIVE / PROPOSED / DEPARTED; `tds`
-  *(guess: track data source: a centre, TRACON, TFM)*; `tcr` fix list `FIX/0000 …` *(guess)*;
+  *(guess: track data source: a center, TRACON, TFM)*; `tcr` fix list `FIX/0000 …` *(guess)*;
   `drw` departure airport_runway (`BUF_23`); `est` FAA; `etm`, `trw` seen empty.
 - **`mrp`** (this schedule's meter points): `mfx` meter fix, `sfx` / `dfx` the points the
   `sta_sfx`/`sta_dfx` times refer to, `oma`/`ooa`/`o3a`/`o4a` **arc names** (`MOXEE/T`), `rwy`,
@@ -1908,10 +1908,10 @@ from the spec (TBFM MIS JMSDD, NSRR); the raw tag is always what the API returns
   `gans` gates; `scns` stream classes (`PDX_HELNS_JETS`); `tra`/`trn` TRACON.
 - **`con/aar`** (`apt`, `tra`, `rat`, `tim`) and **`con/tar`** (`tra`, `rat`, `tim`, `tarType`).
 
-**`mfx` is whatever point that centre schedules to, arc or fix.** Live: ZLA schedules N650AL
-(SAN→OAK) to `PXN`, which is an arc, labelled `<mfx>`. Only the centre's adaptation (`mrn/mrt`)
-says which, exposed as `pointType` (MFX / MFA / OMA / OOA; null until that centre's adaptation has
-arrived). Adaptation is published rarely (one centre in a ~10-minute capture, none in the first
+**`mfx` is whatever point that center schedules to, arc or fix.** Live: ZLA schedules N650AL
+(SAN→OAK) to `PXN`, which is an arc, labelled `<mfx>`. Only the center's adaptation (`mrn/mrt`)
+says which, exposed as `pointType` (MFX / MFA / OMA / OOA; null until that center's adaptation has
+arrived). Adaptation is published rarely (one center in a ~10-minute capture, none in the first
 minutes after a restart), so it is saved to `flight-cache/tbfm-adaptation.json` (on change, from
 the 60 s purge timer) and reloaded on startup.
 
@@ -1931,22 +1931,22 @@ rebuilt from the feed. A restart costs a few minutes of fewer DCTs (measured: ET
 66% within ~26k messages) — not worth a shutdown step or SD-card writes. Adaptation, which is
 rare, is the part that is saved.
 
-APIs: `GET /api/tbfm/flight/{callsign}` (every centre's full record), `GET /api/tbfm/centers`
+APIs: `GET /api/tbfm/flight/{callsign}` (every center's full record), `GET /api/tbfm/centers`
 (heartbeat, schedule count, adaptation size, rates), `GET /api/tbfm/adaptation/{center}` (points
 with arc geometry, airports, gates, streams). `/api/tbfm/eram` now also carries `mrp` and `sch`,
 and drops schedules whose `acs` is LANDED.
 
-### The /tbfm dashboard — the feed is per-centre, the question is per-airport
+### The /tbfm dashboard — the feed is per-center, the question is per-airport
 
 `/tbfm` (directory, two tabs), `/tbfm/{airport}` (arrival metering board), `/tbfm/center/{ctr}`
 (meter points + adaptation map). Projections in `TbfmDashboard.cs` (`partial TbfmBridge`, read-only
 over the same state); pages in `wwwroot/tbfm/`.
 
-**A row is an aeroplane, not a schedule.** TBFM meters a flight once in *every* ARTCC it crosses on
-the way in — each centre schedules it across its own boundary gate, and only the last link, the one
+**A row is an airplane, not a schedule.** TBFM meters a flight once in *every* ARTCC it crosses on
+the way in — each center schedules it across its own boundary gate, and only the last link, the one
 adjacent to the arrival TRACON, carries a runway STA. Measured live (2026-11-03): **5,612 schedule
-records were 2,638 distinct flights**, chains 1-8 centres long, and **PHX arrivals were being
-metered by all 20 CONUS centres at once**. So everything groups by `(callsign, destination)` before
+records were 2,638 distinct flights**, chains 1-8 centers long, and **PHX arrivals were being
+metered by all 20 CONUS centers at once**. So everything groups by `(callsign, destination)` before
 it counts anything, and the board's row expands to show the chain nearest-the-field-last.
 
 Exactly **0 or 1** record per flight has a runway STA (verified across the whole snapshot), so "the
@@ -1956,7 +1956,7 @@ one says `EDC` (Extended Metering), with `cat` = `OVERFLIGHT` / `SATELLITE_TO_EX
 #### Two delay roll-ups, both correct, don't merge them
 Delay is `STA − ETA` at one point.
 - **A flight's** delay is the **maximum** over its chain, never the sum. TBFM distributes a hold
-  upstream, so once a centre has absorbed it the next point downstream reads ~0 — live, AAL1754/PHX
+  upstream, so once a center has absorbed it the next point downstream reads ~0 — live, AAL1754/PHX
   took **+5.8 min at ZDV/GUP and 0.0 at ZAB/ZDVPHXX** one point later. Summing double-counts.
 - **A meter point's** delay is its own record's, because that is what the sector working that point
   sees. `CentersSnapshot` and `CenterBoard` use this; `AirportsSnapshot`/`AirportBoard` use the
@@ -1977,16 +1977,16 @@ scheduling-constraint data `ProcessConfig` doesn't model), so they are counted a
 `otherConfigKinds` rather than listed as blank rates.
 
 #### The adaptation map
-`lat`/`lon` on an arc point is the arc's **centre** (the TRACON reference), not a point on it — ZLA's
+`lat`/`lon` on an arc point is the arc's **center** (the TRACON reference), not a point on it — ZLA's
 ACAS and AKIM share 33.933/-118.432, which is the LAX reference. An arc is drawn **clockwise from
 `lan` to `ran`** at `rad` nm, wrapping through 360 (ACAS 330°→40° is a 70° span). Points with
 `rad` are arcs (MFA/OMA/OOA/O3A/O4A); those without are meter fixes (MFX) and plot as dots —
 118 of ZLA's 172 points have a radius, which is exactly its non-MFX count. Adaptation is published
-rarely, so a centre with no geometry yet is normal and the page says so instead of drawing nothing.
+rarely, so a center with no geometry yet is normal and the page says so instead of drawing nothing.
 
 #### Rates are not persisted, adaptation is
-`<con>` is ~1.3% of TBFM traffic, so a centre's acceptance rates take up to an hour to repopulate
-after a restart and the centre board says so rather than showing a bare "No rates published", which
+`<con>` is ~1.3% of TBFM traffic, so a center's acceptance rates take up to an hour to repopulate
+after a restart and the center board says so rather than showing a bare "No rates published", which
 reads like a fault. Adaptation is the part that is cached to disk.
 
 #### Not surfaced yet
@@ -2106,9 +2106,9 @@ the field's pressure/temperature state over the raw METAR. `AirportOpsRoutes` + 
 
 ### Two palettes, not the site-wide yellow
 `data-theme` on `<html>` selects **day** (the pale blue field / white panels / navy labels / cream
-readout boxes the real ASOS boards use — colour carries meaning there: blue is a heading, cream is an
+readout boxes the real ASOS boards use — color carries meaning there: blue is a heading, cream is an
 instrument value) or **night**, remembered in `localStorage` and defaulting to the OS preference.
-Every colour on the page, including the SVG rose, runways and trend, is a CSS custom property and
+Every color on the page, including the SVG rose, runways and trend, is a CSS custom property and
 the drawing code sets *classes*, never `fill`/`stroke` — so switching themes restyles what is
 already on screen and redraws nothing. Note `/shared/frame.css` styles the bare `<header>` dark, so
 the board overrides that while keeping its 100px left pad for the floating HOME button.
@@ -2177,7 +2177,7 @@ couple of minutes before the ping fails.
 - SFDPS data rate: ~240 msg/sec, updating ~4000-7000 active flights at any time
 - Each flight updates roughly every 12 seconds
 - CID (Computer ID) is per-facility — each ARTCC assigns its own; stored in `computerIds` map, keyed
-  by the publishing center (the `centre` attribute on `<flight>`). `getCid()` only returns the selected
+  by the publishing center (the `center` attribute on `<flight>`). `getCid()` only returns the selected
   facility's CID; foreign facility CIDs are never shown (matches real ERAM behavior)
 
 ### CIDs collide, and presence breaks the tie
@@ -2200,7 +2200,7 @@ with no CID (4-31 per center, ~153 total across 8 centers; 0 after the change).
 A leftover entry nobody at the facility holds is left on display — it is simply this ARTCC's last CID
 for that aircraft, in use by no one. The per-callsign union fallback (which rescues a CID living on a
 sibling GUFI after a handoff) spans the same history, so `_cidHeldByOther()` vets it: a sibling GUFI
-of the same callsign is the same aeroplane and still a legitimate rescue, a different aircraft is not.
+of the same callsign is the same airplane and still a legitimate rescue, a different aircraft is not.
 - All frontend rendering is single-file HTML (JS + CSS inlined), no build step or framework
 
 ## Building

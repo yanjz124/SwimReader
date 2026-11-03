@@ -6,7 +6,7 @@
 // a named point with a position) or an ARC (MFA / OMA / OOA / O3A / O4A — a segment of a circle
 // at a given radius from the TRACON reference, spanning bearings `lan` → `ran` clockwise). The
 // arc geometry is published in full, so these draw as the real thing rather than a sketch:
-// lat/lon is the arc's CENTRE, not a point on it.
+// lat/lon is the arc's CENTER, not a point on it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const segs = location.pathname.split('/').filter(Boolean);
@@ -20,8 +20,8 @@ const hhmm = iso => iso ? String(iso).slice(11, 16) : '';
 let board = null, map = null, layer = null;
 let sortKey = 'scheduled', sortDir = -1;
 
-// Arc / fix colours by point type. Meter fixes are the ERAM yellow the rest of the site uses;
-// the arcs step outward through cooler colours so nested rings read at a glance.
+// Arc / fix colors by point type. Meter fixes are the ERAM yellow the rest of the site uses;
+// the arcs step outward through cooler colors so nested rings read at a glance.
 const TYPE_COLOR = {
     MFX: '#cccc44', MFA: '#ff9944', OMA: '#44bbdd', OOA: '#6688ff', O3A: '#aa66dd', O4A: '#dd66aa',
 };
@@ -53,7 +53,7 @@ function arcPath(lat, lon, radiusNm, lan, ran) {
 function drawMap() {
     const g = (board.geometry || []).filter(p => p.lat != null && p.lon != null);
     if (!g.length) {
-        $('map').innerHTML = '<div class="empty">No adaptation geometry received for this centre yet. '
+        $('map').innerHTML = '<div class="empty">No adaptation geometry received for this center yet. '
             + 'TBFM publishes adaptation rarely — it is cached to disk, so it fills in over hours.</div>';
         $('map').style.height = 'auto';
         return;
@@ -70,10 +70,10 @@ function drawMap() {
     if (layer) layer.remove();
     layer = L.layerGroup().addTo(map);
 
-    // Fit to the points being METERED, not to all of them. A centre's adaptation reaches well
+    // Fit to the points being METERED, not to all of them. A center's adaptation reaches well
     // outside its own airspace for extended metering — ZLA adapts points as far as the east coast
     // — so fitting everything shrank the SoCal cluster that is the actual subject to a smudge.
-    // Everything is still drawn; only the initial view is narrowed, and a centre with nothing
+    // Everything is still drawn; only the initial view is narrowed, and a center with nothing
     // scheduled falls back to its whole adaptation.
     const bounds = [], busyBounds = [];
     for (const p of g) {
@@ -121,7 +121,7 @@ function drawMap() {
         + `${g.length} of ${board.adaptedPoints} adapted points have coordinates`
         + (busyBounds.length
             ? ', view fitted to the ones in use — zoom out for the rest, which reach outside '
-              + 'this centre for extended metering.'
+              + 'this center for extended metering.'
             : '.');
 }
 
@@ -253,7 +253,7 @@ function renderRates() {
 }
 
 function renderAirports() {
-    // A centre adapts every airport it might meter to, which for ZLA is 67 — and ~60 of those are
+    // A center adapts every airport it might meter to, which for ZLA is 67 — and ~60 of those are
     // bare EDC entries with no runways, no configs and nothing scheduled. They are real, but a
     // screenful of empty rows buries the handful that matter, so they're behind a toggle.
     const all = (board.airports || []).slice()
@@ -285,7 +285,7 @@ async function load() {
         if (!r.ok) {
             $('status').textContent = 'not found';
             $('strip').innerHTML = `<div class="empty">No TBFM system called ${esc(CTR)}. `
-                + '<a href="/tbfm?tab=centers">All centres</a>.</div>';
+                + '<a href="/tbfm?tab=centers">All centers</a>.</div>';
             return;
         }
         board = await r.json();
@@ -308,7 +308,7 @@ async function load() {
 }
 
 // frame.js derives UP from the path, which for /tbfm/center/ZAB would be /tbfm/center — not a page.
-// Point it at the directory's centre tab instead, once frame.js has built the cluster.
+// Point it at the directory's center tab instead, once frame.js has built the cluster.
 window.addEventListener('load', () => {
     const up = document.querySelector('.nav-up');
     if (up) { up.href = '/tbfm?tab=centers'; up.innerHTML = '&uarr; TBFM'; }

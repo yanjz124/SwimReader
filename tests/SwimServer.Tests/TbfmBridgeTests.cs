@@ -140,10 +140,10 @@ public class TbfmBridgeTests
         Assert.Equal(JsonValueKind.String, r.GetProperty("staPoint").ValueKind); // SYMON kept
     }
 
-    // ── each centre's schedule kept separately ───────────────────────────────
+    // ── each center's schedule kept separately ───────────────────────────────
 
     [Fact]
-    public void ExtendedMetering_KeepsOneRecordPerCentre()
+    public void ExtendedMetering_KeepsOneRecordPerCenter()
     {
         var b = NewBridge();
         b.Process(Air("ZLC", "TST104", "C1", $"<sta><mfx>D34S</mfx><sta_sfx>{T(20)}</sta_sfx></sta>", apt: "DFW"));
@@ -236,7 +236,7 @@ public class TbfmBridgeTests
     // ── other message kinds ──────────────────────────────────────────────────
 
     [Fact]
-    public void HeartbeatsAndRates_AreRecordedPerCentre()
+    public void HeartbeatsAndRates_AreRecordedPerCenter()
     {
         var b = NewBridge();
         b.Process($"<mis xmlns=\"{Ns}\" misTime=\"{T(0)}\" misSrce=\"TMA.ZHU.FAA.GOV\"><hb /></mis>");

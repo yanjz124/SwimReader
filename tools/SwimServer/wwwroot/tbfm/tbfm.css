@@ -1,4 +1,4 @@
-/* ── Shared styles for the three TBFM pages (directory, airport board, centre board) ──
+/* ── Shared styles for the three TBFM pages (directory, airport board, center board) ──
  * ERAM-yellow dark theme, same as every other SwimReader frontend. Loaded after
  * /shared/frame.css, which owns the top bar.
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -269,3 +269,28 @@ h2.sec {
     .strip .v { font-size: 14px; }
     .grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); padding: 12px; }
 }
+
+/* Sort control, sitting at the right end of the directory's tab bar. */
+.sortbar {
+    margin-left: auto;
+    align-self: center;
+    font-size: 9px;
+    letter-spacing: 1px;
+    color: #555;
+    padding-bottom: 6px;
+}
+
+.sortbar .sortbtn {
+    background: #0d0d0d;
+    border: 1px solid #2a2a08;
+    color: #888;
+    font-family: inherit;
+    font-size: 9px;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    margin-left: 3px;
+    cursor: pointer;
+}
+
+.sortbar .sortbtn:hover { color: #cccc44; border-color: #555; }
+.sortbar .sortbtn.on { background: #161602; color: #cccc44; border-color: #cccc44; }

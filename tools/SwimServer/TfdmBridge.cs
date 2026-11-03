@@ -60,7 +60,7 @@ class TfdmBridge
     /// the shared queue. Several of these drain the queue in parallel — see SolaceTuning and the
     /// CLAUDE.md note on the per-session ceiling.
     /// </summary>
-    // Receivers run in parallel for the transport only; message processing stays serialised so
+    // Receivers run in parallel for the transport only; message processing stays serialized so
     // the per-track/per-flight state updates keep the single-threaded world they were written for.
     private readonly object _processGate = new();
 

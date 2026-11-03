@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // One airport's TBFM arrival metering board.
 //
-// A row is an AEROPLANE, not a schedule. TBFM meters a flight once in every centre it crosses on
+// A row is an AIRPLANE, not a schedule. TBFM meters a flight once in every center it crosses on
 // the way in, so a single arrival can carry up to eight schedules — click the row to see the whole
 // chain, nearest the field last. Only the last link has a runway STA.
 //
@@ -65,7 +65,7 @@ function renderStrip() {
         cell('FROZEN', b.frozen, b.frozen ? 'sm' : 'sm') +
         cell('AAR', aarTxt, aar && aar.restricted ? 'warn' : 'sm') +
         cell('TRACON', b.tracon || '—', 'sm') +
-        cell('CENTRES', (b.centers || []).length, 'sm');
+        cell('CENTERS', (b.centers || []).length, 'sm');
 }
 
 function renderInfo() {
@@ -266,7 +266,7 @@ async function load() {
         $('status').textContent = new Date().toISOString().slice(11, 19) + 'Z';
         $('status').classList.add('ok');
         renderStrip(); renderInfo(); renderBody();
-        $('note').innerHTML = 'A row is one aeroplane; <b>LNKS</b> is how many centres are metering '
+        $('note').innerHTML = 'A row is one airplane; <b>LNKS</b> is how many centers are metering '
             + 'it. Click a row for the chain, nearest the field last — only the last link carries a '
             + 'runway STA, and an <span class="dim">*</span> on STA means this flight has no runway '
             + 'schedule yet, so the time shown is its nearest meter point. <b>HOLD</b> is the largest '

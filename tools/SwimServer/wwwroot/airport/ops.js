@@ -17,7 +17,7 @@ let timer = null;
 // ── theme ───────────────────────────────────────────────────────────────────
 // Two palettes: "day", modelled on the ASOS/tower boards this page copies (pale blue field, white
 // panels, navy labels, cream value boxes), and "night" for a dim room. Both live entirely in CSS
-// custom properties — including every colour in the SVG rose and trend, which is why the drawing
+// custom properties — including every color in the SVG rose and trend, which is why the drawing
 // code below sets classes rather than fill/stroke attributes. Switching themes restyles what is
 // already on screen; nothing is redrawn.
 const THEME_KEY = 'airport.theme';
@@ -251,10 +251,10 @@ function drawRunways(d) {
             b = [CX + x2 * scale, CY - y2 * scale];
         } else if (ends[0]?.trueAlignDeg != null && rw.lenFt) {
             // No threshold coordinates (rare, and usual at small fields): draw it through the
-            // centre on its alignment, still at the right length.
+            // center on its alignment, still at the right length.
             const align = ends[0].trueAlignDeg;
             const halfPx = Math.min(usable, (rw.lenFt * 0.3048) * (scale || usable / 4000) / 2);
-            a = pt(align, halfPx);                    // threshold of end[0] is upwind of centre
+            a = pt(align, halfPx);                    // threshold of end[0] is upwind of center
             b = pt((align + 180) % 360, halfPx);
         } else continue;
 
@@ -268,13 +268,13 @@ function drawRunways(d) {
             x1: a[0], y1: a[1], x2: b[0], y2: b[1],
             class: 'rwy-pave', 'stroke-width': wPx, 'stroke-linecap': 'butt',
         }));
-        // Centreline stripes
+        // Centerline stripes
         g.appendChild(el('line', {
             x1: a[0], y1: a[1], x2: b[0], y2: b[1],
             class: 'rwy-center', 'stroke-width': 1.2, 'stroke-dasharray': '7 7',
         }));
 
-        // End numbers go just beyond each threshold, pushed sideways off the centreline so they
+        // End numbers go just beyond each threshold, pushed sideways off the centerline so they
         // don't land on another runway's pavement (PANC's 33 threshold sits right on the 07/25
         // pair), with a dark halo so they stay readable wherever they end up. Always upright.
         const ends2 = [[ends[0], a, b], [ends[1], b, a]];

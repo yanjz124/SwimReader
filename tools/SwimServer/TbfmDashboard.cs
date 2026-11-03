@@ -4,15 +4,15 @@ using SwimServer;
 /// Dashboard projections over the TBFM state, for the <c>/tbfm</c> pages. Ingestion, the state
 /// model and the ERAM scope's own snapshot live in TbfmBridge.cs; this file only reads.
 ///
-/// <para><b>The feed is per-centre, the question is per-airport.</b> TBFM meters a flight once in
-/// every ARTCC it crosses on the way to the field — each centre schedules it across its own
+/// <para><b>The feed is per-center, the question is per-airport.</b> TBFM meters a flight once in
+/// every ARTCC it crosses on the way to the field — each center schedules it across its own
 /// boundary gate, and only the last one in the chain (the one adjacent to the arrival TRACON)
 /// carries a runway STA. Measured live: 5,612 schedule records were 2,638 distinct flights, chains
-/// 1 to 8 centres long, and PHX arrivals were being metered by all 20 CONUS centres at once. So
+/// 1 to 8 centers long, and PHX arrivals were being metered by all 20 CONUS centers at once. So
 /// everything here groups records into flights by (callsign, destination) first.</para>
 ///
 /// <para><b>Delay is STA − ETA at one point, and it does not add up along the chain.</b> TBFM
-/// distributes a hold upstream, so once a centre has absorbed it the next point downstream reads
+/// distributes a hold upstream, so once a center has absorbed it the next point downstream reads
 /// ~0 — live, AAL1754/PHX took +5.8 min at ZDV/GUP and 0.0 at ZAB/ZDVPHXX one point later. A
 /// flight's governing delay is therefore the <b>maximum</b> over its chain, never the sum, which
 /// would double-count. A <b>meter point's</b> delay, by contrast, is its own record's delay,
@@ -44,7 +44,7 @@ partial class TbfmBridge
         return (f.StaMeterFix.HasValue && !mfxDone) || (f.StaRunway.HasValue && !rwyDone);
     }
 
-    /// <summary>One flight's schedules, one per centre metering it, nearest point last.</summary>
+    /// <summary>One flight's schedules, one per center metering it, nearest point last.</summary>
     private sealed class MeteredFlight
     {
         public string Aid = "", Apt = "";
@@ -211,7 +211,7 @@ partial class TbfmBridge
             // Only the rates that name this airport, plus its TRACON's, so a board isn't padded
             // with 300 unrelated rows.
             rates = RatesFor(r => r.Id == apt || (tracon != null && r.Id == tracon)),
-            // Runway configuration comes from whichever centre adapted this airport.
+            // Runway configuration comes from whichever center adapted this airport.
             configs = _centers.Values
                 .Select(c => c.Airports.TryGetValue(apt, out var a) ? (c.Id, a) : default)
                 .Where(x => x.a != null)
@@ -246,7 +246,7 @@ partial class TbfmBridge
         chain = m.Chain.Select(f => LinkJson(f, now)).ToArray(),
     };
 
-    /// <summary>One centre's schedule for the flight — one link of the metering chain.</summary>
+    /// <summary>One center's schedule for the flight — one link of the metering chain.</summary>
     private object LinkJson(TbfmFlight f, DateTime now) => new
     {
         ctr = CenterOf(f.Source),
@@ -262,7 +262,7 @@ partial class TbfmBridge
         ageSec = f.TimesSeen == default ? (int?)null : (int)(now - f.TimesSeen).TotalSeconds,
     };
 
-    // ── /api/tbfm/center/{ctr} — one centre's meter-point board ──────────────
+    // ── /api/tbfm/center/{ctr} — one center's meter-point board ──────────────
 
     public object? CenterBoard(string center)
     {
@@ -270,7 +270,7 @@ partial class TbfmBridge
         if (!_centers.TryGetValue(ctr, out var c)) return null;
         var now = DateTime.UtcNow;
 
-        // This centre's own records, which is what its controllers are metering to.
+        // This center's own records, which is what its controllers are metering to.
         var mine = _flights.Values.Where(f => IsLive(f, now, out _, out _) && CenterOf(f.Source) == ctr).ToList();
 
         var points = mine
@@ -322,8 +322,8 @@ partial class TbfmBridge
             adaptedPoints = c.Points.Count,
             adaptedAirports = c.Airports.Count,
             points,
-            // THIS centre's rates only. RatesFor scans every centre, which is right for an
-            // airport (any centre may publish its AAR) and wrong here — it put ZNY's EWR rates on
+            // THIS center's rates only. RatesFor scans every center, which is right for an
+            // airport (any center may publish its AAR) and wrong here — it put ZNY's EWR rates on
             // ZLA's page. Only the kinds that carry a rate: aac / sac / scc are published with no
             // <rat> at all (their payload is stream-class and scheduling-constraint data this
             // bridge doesn't model yet), so listing them would be rows of blank rates.

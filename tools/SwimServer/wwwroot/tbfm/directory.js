@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// TBFM directory: metered airports, and the 20 centre TBFM systems publishing them.
+// TBFM directory: metered airports, and the 20 center TBFM systems publishing them.
 //
-// Two tabs because the feed and the question don't line up. TBFM is a per-centre system — each
+// Two tabs because the feed and the question don't line up. TBFM is a per-center system — each
 // ARTCC schedules a flight across its own boundary gate — but what anyone actually wants to know
-// is how a FIELD is flowing. So the airport tab groups the chain back into aeroplanes, and the
-// centre tab shows the systems themselves.
+// is how a FIELD is flowing. So the airport tab groups the chain back into airplanes, and the
+// center tab shows the systems themselves.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Curated short labels: they read better on a card than a full legal name. Anything missing is
@@ -33,6 +33,16 @@ const NAMES = {
 let tab = 'apt';
 let aptRows = [], ctrRows = [], stats = null;
 let showAllApts = false;
+
+// Metered count by default — that is the "where is TBFM actually working" view. Alphabetical is
+// the other thing people want a directory for: finding a specific field. Remembered, because
+// whichever you prefer you want it every visit.
+let aptSort = localStorage.getItem('tbfm.aptSort') || 'metered';
+const APT_SORTS = {
+    metered: { label: 'METERED', cmp: (a, b) => b.metered - a.metered || a.apt.localeCompare(b.apt) },
+    delay:   { label: 'DELAY',   cmp: (a, b) => b.delayMin - a.delayMin || b.metered - a.metered },
+    apt:     { label: 'A-Z',     cmp: (a, b) => a.apt.localeCompare(b.apt) },
+};
 
 // TBFM publishes a schedule for every flight crossing a metered gate, whatever its destination —
 // which is why 180 airports appear and ~120 of them are a single overflight bound for Heathrow,
@@ -95,7 +105,7 @@ function render() {
     const g = $('grid');
     if (tab === 'apt') {
         $('sub').textContent = 'Airports TBFM is metering arrivals into. A flight is metered once in '
-            + 'every centre it crosses on the way to the field — the card counts aeroplanes, not schedules.';
+            + 'every center it crosses on the way to the field — the card counts airplanes, not schedules.';
         $('note').innerHTML = 'Delay is scheduled time of arrival minus estimated time of arrival, '
             + 'taken as the largest hold anywhere along the flight’s metering chain — TBFM spreads a '
             + 'hold upstream, so adding the links up would count it twice. '
@@ -104,7 +114,9 @@ function render() {
             + 'scheduling to a runway or holding for; the rest are destinations of flights it '
             + 'happens to meter across a gate on the way somewhere else.';
         if (!aptRows.length) { g.innerHTML = '<div class="empty">No airports being metered.</div>'; return; }
-        const shown = showAllApts ? aptRows : aptRows.filter(managed);
+        const cmp = (APT_SORTS[aptSort] || APT_SORTS.metered).cmp;
+        const sorted = aptRows.slice().sort(cmp);
+        const shown = showAllApts ? sorted : sorted.filter(managed);
         const hidden = aptRows.length - aptRows.filter(managed).length;
         g.innerHTML = shown.map(aptCard).join('')
             + (hidden ? `<a class="card" id="moreapts" href="#" style="border-style:dashed">
@@ -119,11 +131,26 @@ function render() {
     } else {
         $('sub').textContent = 'The 20 ARTCC TBFM systems. Each publishes its own schedules, '
             + 'adaptation (meter points and arcs) and acceptance rates.';
-        $('note').innerHTML = 'A centre’s delay total is the hold its own meter points are '
+        $('note').innerHTML = 'A center’s delay total is the hold its own meter points are '
             + 'assigning, which is not the same roll-up as an airport’s — a flight held by one '
-            + 'centre reads ~0 at the next point downstream once that hold has been absorbed.';
+            + 'center reads ~0 at the next point downstream once that hold has been absorbed.';
         if (!ctrRows.length) { g.innerHTML = '<div class="empty">No TBFM systems reporting.</div>'; return; }
         g.innerHTML = ctrRows.map(ctrCard).join('');
+    }
+}
+
+function renderSortBar() {
+    const el = $('aptsort');
+    if (!el) return;
+    el.style.display = tab === 'apt' ? '' : 'none';
+    el.innerHTML = 'SORT ' + Object.entries(APT_SORTS).map(([k, v]) =>
+        `<button class="sortbtn ${aptSort === k ? 'on' : ''}" data-k="${k}">${v.label}</button>`).join('');
+    for (const b of el.querySelectorAll('.sortbtn')) {
+        b.onclick = () => {
+            aptSort = b.dataset.k;
+            try { localStorage.setItem('tbfm.aptSort', aptSort); } catch {}
+            renderSortBar(); render();
+        };
     }
 }
 
@@ -131,6 +158,7 @@ function setTab(t) {
     tab = t;
     $('tab-apt').classList.toggle('on', t === 'apt');
     $('tab-ctr').classList.toggle('on', t === 'ctr');
+    renderSortBar();
     history.replaceState(null, '', t === 'ctr' ? '?tab=centers' : location.pathname);
     render();
 }
@@ -157,6 +185,7 @@ async function load() {
 
 $('tab-apt').onclick = () => setTab('apt');
 $('tab-ctr').onclick = () => setTab('ctr');
+renderSortBar();
 if (new URLSearchParams(location.search).get('tab') === 'centers') setTab('ctr');
 load();
 setInterval(load, 10000);

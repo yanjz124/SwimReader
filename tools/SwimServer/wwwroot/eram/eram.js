@@ -210,10 +210,10 @@ let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles w
 // when no meter fix is scheduled), shown HHMM zulu. Delay = STA - ETA at the same point, i.e. the
 // time the aircraft must lose (positive = must be delayed).
 // Format reference: an ERAM STA / DCT / Both slide — "0432", "-12:20", "0432 -12:20", one line below
-// the target, white-grey (not FDB yellow). Agrees with the NASA 2019 FIM study's MACS ERAM emulation
+// the target, white-gray (not FDB yellow). Agrees with the NASA 2019 FIM study's MACS ERAM emulation
 // (NTRS 20190000841, Figs. 4-5: "+00:10" below the target; meter list "1749" "+01:10"), which also
 // gives the 10 s rounding and positive = must be delayed.
-// DELAY FORMAT's real behaviour is undocumented. OFF (the default) gives sign + MM:SS, "+03:20";
+// DELAY FORMAT's real behavior is undocumented. OFF (the default) gives sign + MM:SS, "+03:20";
 // ON gives whole minutes, "+3" — UNVERIFIED. Hence `delayFormatMinutes`: the flag was named
 // `delayFormatSeconds` while doing the opposite of what it said.
 // Live only: TBFM schedules are not recorded, so replay shows no metering rather than today's.
@@ -251,9 +251,9 @@ setTimeout(pollTbfm, 1500);  // a toggle persisted ON shouldn't wait a full poll
 
 // The TBFM record THIS scope's controller would see. A flight carries one record per ARTCC metering
 // it (extended metering: e.g. ZLC to D34S, ZDV to ABQ, ZAB to CME, all for one DFW arrival), each
-// with that centre's own meter point and STA. A controller only sees their own centre's, so keep the
+// with that center's own meter point and STA. A controller only sees their own center's, so keep the
 // record whose ctr is the selected facility (or, with none selected, the flight's controlling
-// centre) — same rule as CIDs — and show nothing when that centre isn't metering the flight.
+// center) — same rule as CIDs — and show nothing when that center isn't metering the flight.
 // Matched by callsign (+ destination when known): TBFM's gufi is ERAM's short form, which SFDPS
 // doesn't publish.
 function getTbfm(f) {
@@ -263,7 +263,7 @@ function getTbfm(f) {
     const ctr = myFacility || f.controllingFacility;
     if (!ctr) return null;
     const dest = (f.destination || '').toUpperCase().replace(/^K(?=[A-Z0-9]{3}$)/, '');
-    // Freshest wins: after a reroute a centre can briefly hold two records for one flight (seen
+    // Freshest wins: after a reroute a center can briefly hold two records for one flight (seen
     // live: UAL1770 in ZDV, old TBRMP schedule beside the new MNARK one) until the old one ages out.
     let best = null;
     for (const t of list) {
@@ -279,7 +279,7 @@ function _zuluHHMM(iso) {
     return String(d.getUTCHours()).padStart(2, '0') + String(d.getUTCMinutes()).padStart(2, '0');
 }
 
-// A centre's schedule can carry several points, farthest out first: meter arcs o4a, o3a, ooa, oma,
+// A center's schedule can carry several points, farthest out first: meter arcs o4a, o3a, ooa, oma,
 // then the scheduled point (TBFM's <mfx>: a fix or an arc), then the runway. Which one a real sector sees is site adaptation SWIM
 // doesn't publish, so show the NEXT point the flight hasn't reached yet: the outer arc until it
 // crosses, then the meter fix, then the runway. "Reached" = its ETA (else STA) is in the past.
@@ -2161,7 +2161,7 @@ function conusComposite(slotIso) {
             c.width = Math.round(img.naturalWidth / CONUS_SCALE);
             c.height = Math.round(img.naturalHeight / CONUS_SCALE);
             const g = c.getContext('2d', { willReadFrequently: true });
-            // Nearest-neighbour deliberately: smoothing blends adjacent palette colours into hues
+            // Nearest-neighbour deliberately: smoothing blends adjacent palette colors into hues
             // classifyNwsPixel never sees, so a green/yellow boundary would classify as neither.
             g.imageSmoothingEnabled = false;
             g.drawImage(img, 0, 0, c.width, c.height);
@@ -2195,7 +2195,7 @@ function classifyNwsPixel(r, g, b, a) {
     return 3;
 }
 
-// Recolour one 256x256 tile in place: NWS reflectivity palette -> the three ERAM categories,
+// Recolor one 256x256 tile in place: NWS reflectivity palette -> the three ERAM categories,
 // honouring the NX LVL filter. Shared by the live WMS tile and the archived composite crop so
 // replay and live cannot drift apart in appearance.
 function remapTile(ctx, level) {
@@ -2674,7 +2674,7 @@ function _buildCidCache() {
     }
 }
 // Is this CID currently held at this facility by a *different* aircraft? (A sibling GUFI of the
-// same callsign is the same aeroplane, so that doesn't count.) Used to vet a CID borrowed from the
+// same callsign is the same airplane, so that doesn't count.) Used to vet a CID borrowed from the
 // per-callsign union, which `isCidRecycled` can't see — it reads the record's own entry.
 function _cidHeldByOther(cid, callsign) {
     if (!myFacility) return false;
@@ -2968,7 +2968,7 @@ function buildMarkerHtml(f, cls) {
             const rdbDist = getCrrRdbDistance(f);
             if (rdbDist !== null) rdbParts.push(rdbDist.toFixed(1) + 'nm');
         }
-        // STA / DCT draw white-grey (per the ERAM STA/DCT/Both reference), distinct from both the
+        // STA / DCT draw white-gray (per the ERAM STA/DCT/Both reference), distinct from both the
         // yellow FDB and the CRR distance's magenta.
         const tbfmText = tbfmRdbText(f);
         if (tbfmText) rdbParts.push(`<span class="ac-rdb-tbfm">${tbfmText}</span>`);
@@ -3881,7 +3881,7 @@ function autoOffsetPass(entries, fixed, now) {
     // Saturation fallback: when nothing is free (zoomed out far, tiny screen,
     // heavy traffic — overlap is then physically unavoidable), take the slot
     // that overlaps least rather than dumping the block on its preferred side
-    // regardless. Ties go to the earlier slot, so this still favours abeam.
+    // regardless. Ties go to the earlier slot, so this still favors abeam.
     // Only walked when firstFree fails, so the common case pays nothing.
     const leastOverlap = (e, order) => {
         let best = null;

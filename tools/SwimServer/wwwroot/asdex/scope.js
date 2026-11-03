@@ -19,9 +19,9 @@ document.addEventListener('mousemove', e => {
     if (!pointerFrame) pointerFrame = requestAnimationFrame(applyPointer);
 });
 
-// Target centres in screen pixels, refreshed at most every HALO_CACHE_MS. A halo can lag a new batch
+// Target centers in screen pixels, refreshed at most every HALO_CACHE_MS. A halo can lag a new batch
 // or a pan by up to that long; the crosshair itself is never cached.
-function haloCentres(now) {
+function haloCenters(now) {
     if (now - haloPointsT < HALO_CACHE_MS) return haloPoints;
     haloPoints = [];
     for (const [tid, marker] of Object.entries(markers)) {
@@ -47,7 +47,7 @@ function applyPointer() {
     // layout is forced in between.
     let bestTid = null, bestDist = Infinity;
     if (typeof markers !== 'undefined') {
-        for (const t of haloCentres(performance.now())) {
+        for (const t of haloCenters(performance.now())) {
             const dist = Math.hypot(p.x - t.x, p.y - t.y);
             if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = t.tid; }
         }

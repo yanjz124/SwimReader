@@ -325,7 +325,7 @@ async function refreshStats() {
         }
     } catch {}
 
-    // TBFM counts aeroplanes, not schedules: a flight is metered once in every centre it
+    // TBFM counts airplanes, not schedules: a flight is metered once in every center it
     // crosses, so the record count runs 2x the flight count (see TbfmDashboard.cs).
     try {
         const br = await fetch('/api/tbfm/stats');
@@ -333,7 +333,7 @@ async function refreshStats() {
             const bt = await br.json();
             const el = document.getElementById('tbfmCount');
             if (el) el.textContent = bt.configured
-                ? `${bt.live}/${bt.centers} centres  ${(bt.flights || 0).toLocaleString()} metered`
+                ? `${bt.live}/${bt.centers} centers  ${(bt.flights || 0).toLocaleString()} metered`
                   + (bt.delayMin ? `  ${bt.delayMin} min held` : '')
                 : 'not configured';
         }

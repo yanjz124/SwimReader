@@ -35,7 +35,7 @@ static class SimbriefRoutes
     /// under the FAA codes E75L / E75S / E75X that SFDPS actually files for an E175 — most of the
     /// regional fleet — so those flights got "No SimBrief variants" and could not reach the add-on
     /// they would fly. E175 heads the family because that is what an E75x IS (an earlier version of
-    /// this pointed them at E170, a different and shorter aeroplane); E170 rides along because the
+    /// this pointed them at E170, a different and shorter airplane); E170 rides along because the
     /// same add-ons model both and users treat them as interchangeable.
     ///
     /// A table like this only covers the cases someone thought of, which is why the picker also lets

@@ -50,7 +50,7 @@ static class AirlineRoutes
         // because a retired code lives on as the airport's IATA code. Checking OurAirports alone
         // (the first attempt) sailed straight past the rename that prompted this.
         //
-        // So: NASR decides whether an id is stale, and OurAirports — which does still recognise
+        // So: NASR decides whether an id is stale, and OurAirports — which does still recognize
         // the old code — is then asked what it has become, giving a replacement to apply rather
         // than just a complaint. Re-run after a NASR cycle (28 days).
         app.MapGet("/api/airports/audit", () =>

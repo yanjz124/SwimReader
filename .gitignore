@@ -96,3 +96,10 @@ tools/SwimServer/airport-data/
 
 # vNAS adaptation cache — regenerated at runtime, per host
 tools/SwimServer/vnas-cache.json
+
+# Agent memory lives outside the repo's concerns.
+memory/
+
+# Stray build/work tree that collected captured SWIM flight history. Recorded SWIM data is
+# never committed — that would be redistributing FAA data (see the LADD/TOS note in CLAUDE.md).
+tools/SfdpsERAM/

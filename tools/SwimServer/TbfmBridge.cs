@@ -41,12 +41,12 @@ partial class TbfmBridge
     private readonly ConcurrentDictionary<string, long> _elementCounts = new();
     private long _msgCount, _airCount, _unparsed, _deletes;
 
-    // centre id (ZLC) → adaptation, rates, heartbeat
+    // center id (ZLC) → adaptation, rates, heartbeat
     private readonly ConcurrentDictionary<string, TbfmCenter> _centers = new();
     // <tma> children we don't model yet, counted so a new message kind shows up in /debug
     private readonly ConcurrentDictionary<string, long> _unknownKinds = new();
 
-    // Adaptation is published rarely (one centre in a ~10-minute capture), so it's kept on disk
+    // Adaptation is published rarely (one center in a ~10-minute capture), so it's kept on disk
     // and reloaded on startup; otherwise every restart would lose it for hours.
     private string? _cacheDir;
     private volatile bool _adaptationDirty;
@@ -80,7 +80,7 @@ partial class TbfmBridge
         if (receivers > 1) Console.WriteLine($"[TBFM] {receivers} receivers on the queue");
     }
 
-    // Transport runs per receiver; processing is serialised (same rule as every other bridge).
+    // Transport runs per receiver; processing is serialized (same rule as every other bridge).
     private readonly object _processGate = new();
 
     private void Run(int receiverIndex)
@@ -158,7 +158,7 @@ partial class TbfmBridge
                         break;
                     }
                     if (watchdogCycles % 6 == 0)
-                        Console.WriteLine($"[TBFM] {_flights.Count} schedules, {_centers.Count} centre(s), "
+                        Console.WriteLine($"[TBFM] {_flights.Count} schedules, {_centers.Count} center(s), "
                             + $"{Interlocked.Read(ref _msgCount)} msgs ({Interlocked.Read(ref _airCount)} air)");
                 }
 
@@ -216,7 +216,7 @@ partial class TbfmBridge
 
     private TbfmCenter Center(string id) => _centers.GetOrAdd(id, k => new TbfmCenter { Id = k });
 
-    // ── <air>: one centre's schedule for one flight ──────────────────────────
+    // ── <air>: one center's schedule for one flight ──────────────────────────
     private void ProcessAir(XElement air, string? src, DateTime now)
     {
         Interlocked.Increment(ref _airCount);
@@ -228,7 +228,7 @@ partial class TbfmBridge
         var apt = Attr(air, "apt") ?? Leaf(Block(air, "flt"), "apt");
         var key = !string.IsNullOrEmpty(tmaId) ? $"{src ?? "?"}/{tmaId}" : $"{aid}/{apt ?? "?"}";
 
-        // airType: NEW / AMD (amendment) / DEL. DEL means this centre dropped the schedule.
+        // airType: NEW / AMD (amendment) / DEL. DEL means this center dropped the schedule.
         var airType = Attr(air, "airType");
         if (string.Equals(airType, "DEL", StringComparison.OrdinalIgnoreCase))
         {
@@ -296,7 +296,7 @@ partial class TbfmBridge
         if (timed) f.TimesSeen = now;
     }
 
-    // ── <adp>: the centre's TBFM adaptation (meter points, airports, gates, streams) ──
+    // ── <adp>: the center's TBFM adaptation (meter points, airports, gates, streams) ──
     private static void ProcessAdaptation(XElement adp, TbfmCenter c)
     {
         var tra = Leaf(adp, "tra");
@@ -513,7 +513,7 @@ partial class TbfmBridge
                 apt = x.f.Arrival,
                 src = x.f.Source,
                 ctr = CenterOf(x.f.Source),
-                // The point this centre schedules to. TBFM tags it <mfx> whether it is a fix or an
+                // The point this center schedules to. TBFM tags it <mfx> whether it is a fix or an
                 // arc (ZLA: PXN, DVC are arcs), so it is named neutrally here; the type is separate.
                 point = ScheduledPoint(x.f),
                 meterFix = x.f.MeterFix,
@@ -533,7 +533,7 @@ partial class TbfmBridge
             .ToArray();
     }
 
-    /// <summary>Everything every centre holds for one callsign — all blocks, all raw times.</summary>
+    /// <summary>Everything every center holds for one callsign — all blocks, all raw times.</summary>
     public object[] FlightDetail(string callsign)
     {
         var cs = callsign.Trim().ToUpperInvariant();
@@ -575,9 +575,9 @@ partial class TbfmBridge
     {
         var now = DateTime.UtcNow;
         var perCtr = _flights.Values.GroupBy(f => CenterOf(f.Source) ?? "?").ToDictionary(g => g.Key, g => g.Count());
-        // Delay per centre, over that centre's OWN live records — the hold its own meter points are
+        // Delay per center, over that center's OWN live records — the hold its own meter points are
         // assigning. Deliberately not the same roll-up as an airport's (see TbfmDashboard.cs): a
-        // flight held by one centre reads ~0 at the next point downstream once that is absorbed.
+        // flight held by one center reads ~0 at the next point downstream once that is absorbed.
         var dlyPerCtr = _flights.Values
             .Where(f => IsLive(f, now, out _, out _))
             .GroupBy(f => CenterOf(f.Source) ?? "?")
@@ -605,7 +605,7 @@ partial class TbfmBridge
         }).ToArray();
     }
 
-    /// <summary>A centre's TBFM adaptation: meter points (with arc geometry), airports, gates, streams.</summary>
+    /// <summary>A center's TBFM adaptation: meter points (with arc geometry), airports, gates, streams.</summary>
     public object? Adaptation(string center)
     {
         if (!_centers.TryGetValue(center.Trim().ToUpperInvariant(), out var c)) return null;
@@ -657,10 +657,10 @@ partial class TbfmBridge
         : f.MeterFix;
 
     /// <summary>
-    /// What kind of point a schedule's "mfx" really is, from the centre's adaptation: MFX meter fix,
+    /// What kind of point a schedule's "mfx" really is, from the center's adaptation: MFX meter fix,
     /// MFA meter-fix arc, OMA / OOA outer arcs. TBFM labels whatever point it schedules to as
     /// &lt;mfx&gt; (live: ZLA schedules an OAK arrival to PXN), so this is the only way to tell.
-    /// Null until that centre's adaptation has been received.
+    /// Null until that center's adaptation has been received.
     /// </summary>
     private string? PointType(TbfmFlight f)
     {
@@ -669,7 +669,7 @@ partial class TbfmBridge
         var hits = c.Points.Values.Where(p => p.Name == name).ToList();
         if (hits.Count == 0) hits = c.Points.Values.Where(p => p.Name == name + ".").ToList(); // ZSE names arcs "HELNS."
         if (hits.Count == 0) return null;
-        // The scheduled point is a fix when the centre has one by that name (ZSE: HELNS MFX beside
+        // The scheduled point is a fix when the center has one by that name (ZSE: HELNS MFX beside
         // "HELNS." MFA); otherwise it is whatever single kind of point the name is (ZLA: PXN MFA).
         return hits.FirstOrDefault(p => p.Type == "MFX")?.Type ?? hits[0].Type;
     }
@@ -734,7 +734,7 @@ partial class TbfmBridge
                 foreach (var (k, v) in pc.StreamClasses ?? new()) c.StreamClasses[k] = v;
                 foreach (var t in pc.Tracons ?? new()) c.Tracons[t] = 1;
             }
-            Console.WriteLine($"[TBFM] loaded adaptation for {list.Count} centre(s), {pts} meter points");
+            Console.WriteLine($"[TBFM] loaded adaptation for {list.Count} center(s), {pts} meter points");
         }
         catch (Exception ex) { Console.Error.WriteLine($"[TBFM] adaptation load failed: {ex.Message}"); }
     }
@@ -760,7 +760,7 @@ partial class TbfmBridge
 
     /// <summary>
     /// The arc's name. First the schedule's own &lt;mrp&gt; (oma = "MOXEE/T"). That block often
-    /// arrives in a different message from the times, so fall back to the centre's adaptation.
+    /// arrives in a different message from the times, so fall back to the center's adaptation.
     /// </summary>
     private string? ArcName(TbfmFlight f, string arc)
     {

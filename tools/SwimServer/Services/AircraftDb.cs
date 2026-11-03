@@ -400,7 +400,7 @@ sealed class AircraftDb
         if (rec.Registration != null) keys.Add("REG:" + rec.Registration);
         var all = _log.Read(keys);
         // A Mode S code the feed files for two different airframes (see AircraftFlightLog) would otherwise
-        // list both aircraft's flights here as if one aeroplane flew them all. When the rows disagree on
+        // list both aircraft's flights here as if one airplane flew them all. When the rows disagree on
         // registration, show only this airframe's. Rows from before the registration column can't be placed
         // either way, so they're left out rather than credited to whichever record holds the key.
         if (rec.Registration != null && all.Select(e => e.Reg).Where(r => r.Length > 0).Distinct().Take(2).Count() > 1)

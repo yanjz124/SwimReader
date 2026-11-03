@@ -736,7 +736,7 @@ function renderCompassTicks() {
 // *other* product we receive (checked every product at RDU and ATL: not one wind field).
 // METAR is the honest fallback: a real observation for the same airport, already proxied and
 // cached server-side. It is labelled as METAR and only used when Configured Alerts is absent;
-// ITWS centrefield wind updates every ~30s, a METAR is hourly plus SPECIs.
+// ITWS centerfield wind updates every ~30s, a METAR is hourly plus SPECIs.
 // This page has no shared escaper; the METAR text is server-proxied, but it still goes
 // through here rather than straight into innerHTML.
 function escText(v) {

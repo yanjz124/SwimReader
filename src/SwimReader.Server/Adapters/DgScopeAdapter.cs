@@ -441,12 +441,26 @@ public sealed class DgScopeAdapter : BackgroundService
                         _ca.Active = true; _ca.LookAheadSeconds = 5;
                         _ca.HorizontalSeparation = 3; _ca.VerticalSeparation = 1000;
                     }
-                    // Runway-derived corridors as the baseline; profile CA volumes add to them.
-                    var suppression = SuppressionVolumesFor(facility, list);
-                    if (profile is { ConflictAlertSuppressionVolumes.Count: > 0 })
-                        suppression = suppression.Concat(profile.ConflictAlertSuppressionVolumes).ToList();
-                    _ca.SuppressionVolumes = suppression;
-                    _ca.Calculate(list, _caRadar);
+                    // `Active` was assigned above and then never read — CA ran regardless, so a
+                    // profile with ConflictAlertActive=false (and CRC's `<CA>AI` inhibit, which
+                    // that setting backs) silently did nothing. MSAW and ATPA below were already
+                    // gated on their profile flags; CA was the one that wasn't.
+                    if (_ca.Active)
+                    {
+                        // Runway-derived corridors as the baseline; profile CA volumes add to them.
+                        var suppression = SuppressionVolumesFor(facility, list);
+                        if (profile is { ConflictAlertSuppressionVolumes.Count: > 0 })
+                            suppression = suppression.Concat(profile.ConflictAlertSuppressionVolumes).ToList();
+                        _ca.SuppressionVolumes = suppression;
+                        _ca.Calculate(list, _caRadar);
+                    }
+                    else
+                    {
+                        // Calculate is what both sets AND clears these, so merely skipping it would
+                        // freeze whatever was alerting when CA was switched off and leave it on the
+                        // scope forever. Clearing here makes the broadcast below an empty set.
+                        foreach (var a in list) { a.ConflictAlert = false; a.ConflictingTracks.Clear(); }
+                    }
                     var caGuids = list.Where(a => a.ConflictAlert).Select(a => a.Guid.ToString()).ToArray();
                     // Pairs let the scope's LA/CA/MCI list label each conflict: CA when both tracks are
                     // associated, MCI when one is an unassociated intruder (vSTARS Controller's Guide).

@@ -66,6 +66,30 @@ an audible alert. **Acknowledge by clicking the track.**
 | 7777 | `MI` | Military intercept |
 | 7400 | `LL` | Lost link |
 
+**Non-beacon SPCs (CRC Table 13)** — assignable only by hand, never from a squawk:
+
+| Code | Meaning |
+|---|---|
+| `OD` | Opposite Direction Operations |
+| `ME` | Medical Emergency |
+| `MF` | Minimum Fuel |
+| `LN` | Medevac |
+
+### What CRC does NOT specify here (checked against the live docs, 2026-11-03)
+
+Worth recording, because the gaps are where it is tempting to "fix" us into matching DGScope and
+thereby move *away* from the standard:
+
+- **No colour is given for the SPC identifier in the data block.** The only colour CRC states is
+  for the SSA, "The red `RF EM` line displays any currently-active SPCs" — so the SSA SPC line is
+  **red**, and that example is **space-separated**. DGScope renders `OD/ME/MF/LN` in yellow as a
+  second label and joins codes with `/`; both are DGScope's choices, not CRC's.
+- **No separator is documented for multiple codes in a data block.** CRC's only multi-code example
+  is that space-separated SSA line, which is what we follow.
+- **No blink behaviour is stated for the SPC identifier.** Only CA is documented as blinking.
+- **The LA/CA/MCI list's colour and ordering are not specified.**
+
+
 ## Short Term Conflict Alert (STCA / CA)
 
 **Trigger logic:** two tracks within **3 NM horizontally AND 1,000 ft vertically** **with
@@ -82,6 +106,12 @@ rest of the block keeps its normal color; it is NOT a whole-block multi-color fl
 **LA/CA/MCI list:** lists tracks in MSAW/Low-Altitude alert (not yet in CRC STARS), Conflict
 Alert, or **Mode C Intruder (MCI)** status. MCI = an unassociated track in conflict-alert status;
 it shows its **beacon code** instead of a callsign.
+
+> Verified against our implementation 2026-11-03: `ssa.js lacamciId()` returns the flight-plan
+> callsign when there is one and the padded reported beacon code otherwise, which is this rule.
+> `DgScopeAdapter` labels a pair `CA` when both tracks are associated and `MCI` otherwise — also
+> this rule. **DGScope decides it from `FlightPlanCallsign` being empty instead; do not "correct"
+> ours to match it.** CRC defines associated as *owned*, which is what we key on.
 
 **Who can alert (vSTARS Controller's Guide / Command Reference, DGScope `MSAW.cs` + `ConflictAlertSystem.cs`
 — CRC doesn't document MSAW/LA):**

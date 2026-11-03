@@ -25,6 +25,14 @@ dotnet publish -c Release -r win-x64 --self-contained true `
     -o $out --nologo
 if ($LASTEXITCODE -ne 0) { throw "publish failed" }
 
+# The STARS/DGScope feed (port 5000) ships beside the exe in stars/; SwimServer launches it.
+dotnet publish ../../src/SwimReader.Server -c Release -r win-x64 --self-contained true `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
+    -p:EnableCompressionInSingleFile=true `
+    -o "$out/stars" --nologo
+if ($LASTEXITCODE -ne 0) { throw "SwimReader.Server publish failed" }
+
 # Never ship a developer's saved credentials or runtime state.
 foreach ($junk in 'swimreader.config.json','flight-cache','flight-history','tdls-history',
                   'itws-history','replay','crc-export','holdbar-map','nasr-data','ladd') {

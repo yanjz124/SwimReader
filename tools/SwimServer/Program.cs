@@ -1439,6 +1439,8 @@ var taisSnapshotTimer = new Timer(_ =>
 var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer, aircraftSaveTimer /*, poFlushTimer, investigationFlushTimer */ };
 // Re-encode finished replay hours gzip → zstd (~10x smaller) so the replay budget reaches much further back.
 ReplayCompactor.Start(replayDir, app.Lifetime.ApplicationStopping);
+// Bundled STARS feed (stars/SwimReader.Server.exe in the desktop package). No-op elsewhere.
+StarsProcess.Start(app.Lifetime);
 // Ordered, budgeted shutdown. Cheapest-and-irreplaceable first, the flight cache last: it is by
 // far the most expensive (BackfillFromEvents re-parses stored XML for every flight) and the least
 // valuable, since the live feed refills it within seconds of restart. The per-step timings go to

@@ -32,6 +32,15 @@ jobs:
           -p:EnableCompressionInSingleFile=true
           -o publish/win-x64 --nologo
 
+      - name: Publish STARS feed (SwimReader.Server) beside the exe
+        working-directory: tools/SwimServer
+        run: >
+          dotnet publish ../../src/SwimReader.Server -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:EnableCompressionInSingleFile=true
+          -o publish/win-x64/stars --nologo
+
       - name: Stage quick-start README
         working-directory: tools/SwimServer
         run: Copy-Item README-local.txt publish/win-x64/README.txt -Force

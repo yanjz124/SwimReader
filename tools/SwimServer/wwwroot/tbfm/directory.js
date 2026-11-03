@@ -32,6 +32,14 @@ const NAMES = {
 
 let tab = 'apt';
 let aptRows = [], ctrRows = [], stats = null;
+let showAllApts = false;
+
+// TBFM publishes a schedule for every flight crossing a metered gate, whatever its destination —
+// which is why 180 airports appear and ~120 of them are a single overflight bound for Heathrow,
+// Narita or a grass strip. Those records are real, but an airport is only being FLOW-MANAGED when
+// TBFM is scheduling it to a runway or holding someone for it. That is the default view; the rest
+// are one click away.
+const managed = r => r.arriving > 0 || r.delayed > 0;
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -92,9 +100,21 @@ function render() {
             + 'taken as the largest hold anywhere along the flight’s metering chain — TBFM spreads a '
             + 'hold upstream, so adding the links up would count it twice. '
             + '<b>AAR</b> appears only where a real rate is set: TBFM publishes 3600/hr as its '
-            + '“no restriction” default.';
+            + '“no restriction” default. Shown by default are the airports TBFM is '
+            + 'scheduling to a runway or holding for; the rest are destinations of flights it '
+            + 'happens to meter across a gate on the way somewhere else.';
         if (!aptRows.length) { g.innerHTML = '<div class="empty">No airports being metered.</div>'; return; }
-        g.innerHTML = aptRows.map(aptCard).join('');
+        const shown = showAllApts ? aptRows : aptRows.filter(managed);
+        const hidden = aptRows.length - aptRows.filter(managed).length;
+        g.innerHTML = shown.map(aptCard).join('')
+            + (hidden ? `<a class="card" id="moreapts" href="#" style="border-style:dashed">
+                <div class="icao" style="font-size:15px">${showAllApts ? '− FEWER' : '+ ' + hidden}</div>
+                <div class="card-name">${showAllApts ? 'hide en-route only' : 'metered en route only'}</div>
+                <div class="line" style="margin-top:9px">${showAllApts
+                    ? 'airports with no runway schedule and no hold'
+                    : 'crossing a metered gate, bound elsewhere'}</div></a>` : '');
+        const more = document.getElementById('moreapts');
+        if (more) more.onclick = e => { e.preventDefault(); showAllApts = !showAllApts; render(); };
         if (window.AirportNames) AirportNames.fill(g);
     } else {
         $('sub').textContent = 'The 20 ARTCC TBFM systems. Each publishes its own schedules, '

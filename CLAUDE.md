@@ -1745,10 +1745,13 @@ from the spec (TBFM MIS JMSDD, NSRR); the raw tag is always what the API returns
 
 **`mfx` is whatever point that centre schedules to, arc or fix.** Live: ZLA schedules N650AL
 (SAN→OAK) to `PXN`, which is an arc, labelled `<mfx>`. Only the centre's adaptation (`mrn/mrt`)
-says which, exposed as `mfxType` (MFX / MFA / OMA / OOA; null until that centre's adaptation has
+says which, exposed as `pointType` (MFX / MFA / OMA / OOA; null until that centre's adaptation has
 arrived). Adaptation is published rarely (one centre in a ~10-minute capture, none in the first
 minutes after a restart), so it is saved to `flight-cache/tbfm-adaptation.json` (on change, from
 the 60 s purge timer) and reloaded on startup.
+
+Our JSON therefore names it neutrally: **`point` / `pointType` / `staPoint` / `etaPoint`** (it was
+`mfx`/`staMfx`, which read as "meter fix" for every arc). The raw `mrp` block keeps TBFM's tags.
 
 APIs: `GET /api/tbfm/flight/{callsign}` (every centre's full record), `GET /api/tbfm/centers`
 (heartbeat, schedule count, adaptation size, rates), `GET /api/tbfm/adaptation/{center}` (points

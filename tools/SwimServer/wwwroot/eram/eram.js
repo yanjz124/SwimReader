@@ -271,7 +271,7 @@ function _zuluHHMM(iso) {
 }
 
 // A centre's schedule can carry several points, farthest out first: meter arcs o4a, o3a, ooa, oma,
-// then the meter fix (mfx), then the runway. Which one a real sector sees is site adaptation SWIM
+// then the scheduled point (TBFM's <mfx>: a fix or an arc), then the runway. Which one a real sector sees is site adaptation SWIM
 // doesn't publish, so show the NEXT point the flight hasn't reached yet: the outer arc until it
 // crosses, then the meter fix, then the runway. "Reached" = its ETA (else STA) is in the past.
 const TBFM_ARC_ORDER = ['o4a', 'o3a', 'ooa', 'oma'];
@@ -281,7 +281,7 @@ function tbfmNextPoint(t) {
         const p = t.arcs && t.arcs[a];
         if (p && p.sta) pts.push({ sta: p.sta, eta: p.eta });
     }
-    if (t.staMfx) pts.push({ sta: t.staMfx, eta: t.etaMfx });
+    if (t.staPoint) pts.push({ sta: t.staPoint, eta: t.etaPoint });
     if (t.staRwy) pts.push({ sta: t.staRwy, eta: t.etaRwy });
     const now = Date.now();
     return pts.find(p => new Date(p.eta || p.sta).getTime() > now) || null;

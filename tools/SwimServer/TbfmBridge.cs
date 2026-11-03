@@ -474,11 +474,13 @@ class TbfmBridge
                 apt = x.f.Arrival,
                 src = x.f.Source,
                 ctr = CenterOf(x.f.Source),
-                mfx = x.f.MeterFix,
-                mfxType = PointType(x.f),   // MFX / MFA / OMA / OOA from adaptation; null = unknown
+                // The point this centre schedules to. TBFM tags it <mfx> whether it is a fix or an
+                // arc (ZLA: PXN, DVC are arcs), so it is named neutrally here; the type is separate.
+                point = x.f.MeterFix,
+                pointType = PointType(x.f),   // MFX / MFA / OMA / OOA from adaptation; null = unknown
                 rwy = x.f.Runway,
-                staMfx = x.mfxDone ? null : x.f.StaMeterFix,
-                etaMfx = x.mfxDone ? null : x.f.EtaMeterFix,
+                staPoint = x.mfxDone ? null : x.f.StaMeterFix,
+                etaPoint = x.mfxDone ? null : x.f.EtaMeterFix,
                 staRwy = x.rwyDone ? null : x.f.StaRunway,
                 etaRwy = x.rwyDone ? null : x.f.EtaRunway,
                 arcs = ArcsJson(x.f, now),
@@ -511,10 +513,10 @@ class TbfmBridge
                 airType = f.AirType,
                 dep = f.Departure,
                 apt = f.Arrival,
-                mfx = f.MeterFix,
-                mfxType = PointType(f),
+                point = f.MeterFix,
+                pointType = PointType(f),
                 rwy = f.Runway,
-                staMfx = f.StaMeterFix, etaMfx = f.EtaMeterFix,
+                staPoint = f.StaMeterFix, etaPoint = f.EtaMeterFix,
                 staRwy = f.StaRunway, etaRwy = f.EtaRunway,
                 arcs = f.ArcTimes.ToDictionary(kv => kv.Key, kv => new { name = ArcName(f, kv.Key), sta = kv.Value.Sta, eta = kv.Value.Eta }),
                 times = new SortedDictionary<string, string>(f.Times),

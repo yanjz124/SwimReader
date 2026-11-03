@@ -736,9 +736,15 @@ const flightPlans = new Map();   // Guid → FlightPlan {AssociatedTrackGuid, Ow
 const trackToFp = new Map();     // trackGuid → flightPlan (cached lookup)
 const dstarsState = { connected: false, msgCount: 0, lastError: null };
 
+// The id the TRACK feed publishes under, which is not always the facility's own. vNAS still calls
+// Palm Beach PBI (that's where the video maps live) while STDDS/TAIS publishes it as the renamed
+// DJT — so the scope reads adaptation under one id and subscribes under the other. The server
+// works it out from vNAS's own `internalAirports` and hands it back as `feedFacilityId`;
+// `?dstars=` still wins for manual override.
+let feedFacilityId = null;   // set from /api/stars/facility during bootstrap
 function dstarsFacility() {
   const qs = new URLSearchParams(location.search);
-  return qs.get("dstars") || FACILITY;
+  return qs.get("dstars") || feedFacilityId || FACILITY;
 }
 
 // Command channel — POST a partial FlightPlanUpdate to the authoritative Dstars server
@@ -895,7 +901,9 @@ function replayAutoCenter(list) {
   _replayCentered = true;
 }
 function startTaisReplay() {
-  const fac = FACILITY.toUpperCase();
+  // Recordings are filed under the id the feed publishes, not the vNAS facility id — there are
+  // no `replay/tais/PBI` hours, only `DJT` ones, for the same reason the live stream differs.
+  const fac = dstarsFacility().toUpperCase();
   // Two sources, same recordings and same bar: an archived incident's own slice, or the rolling
   // per-facility recording the server keeps for every facility with a TAIS feed.
   const inc = INCIDENT_ID ? encodeURIComponent(INCIDENT_ID) : "";
@@ -2859,6 +2867,8 @@ async function bootstrap() {
     // A STARS facility has one or more AREAS; each area carries its own
     // visibilityCenter (display center), surveillanceRange, maps and altimeter.
     // Center on the selected area's visibilityCenter — NOT the ARTCC center.
+    // Before anything subscribes: the feed may publish this facility under a different id.
+    if (fac && fac.feedFacilityId) feedFacilityId = fac.feedFacilityId;
     const sc = fac && fac.starsConfiguration;
     const areas = (sc && Array.isArray(sc.areas)) ? sc.areas : [];
     const areaSel = new URLSearchParams(location.search).get("area");

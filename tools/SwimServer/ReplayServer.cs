@@ -69,6 +69,16 @@ public class ReplayServer
         return null;
     }
 
+    /// <summary>Facility ids we hold recorded TAIS data for. Steadier than the live list, which
+    /// only contains facilities with traffic right now — a quiet TRACON drops out of that.</summary>
+    public IReadOnlyCollection<string> RecordedTaisFacilities()
+    {
+        var dir = Path.Combine(_replayBaseDir, "tais");
+        if (!Directory.Exists(dir)) return Array.Empty<string>();
+        try { return Directory.GetDirectories(dir).Select(Path.GetFileName).OfType<string>().ToArray(); }
+        catch { return Array.Empty<string>(); }
+    }
+
     public void MapEndpoints(WebApplication app)
     {
         // ERAM replay metadata

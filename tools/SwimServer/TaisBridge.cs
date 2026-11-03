@@ -411,6 +411,9 @@ class TaisBridge
     // ── REST helpers ───────────────────────────────────────────────────────────
 
     /// <summary>Facility directory: [{facility, trackCount}]</summary>
+    /// <summary>Facility ids the live TAIS feed is currently publishing tracks for.</summary>
+    public IReadOnlyCollection<string> LiveFacilities() => _state.Keys.ToArray();
+
     public object GetDirectory() =>
         _state
             .Where(kv => !kv.Value.IsEmpty)

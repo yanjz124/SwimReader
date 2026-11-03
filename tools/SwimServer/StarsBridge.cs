@@ -361,7 +361,14 @@ class StarsBridge
     /// <summary>Returns the STARS configuration for one facility, plus its
     /// location (for screen-center default) and the list of associated
     /// video map IDs. Mirrors what CRCMapImporter pulls from CRCARTCC.</summary>
-    public async Task<object?> GetFacilityAsync(string artccId, string facilityId)
+    /// <param name="resolveFeedId">
+    /// Given the facility's own id plus its vNAS <c>internalAirports</c>, return the id the
+    /// terminal TRACK feed publishes under. These are NOT always the same: vNAS adaptation still
+    /// calls Palm Beach <c>PBI</c> while STDDS/TAIS publishes the renamed <c>DJT</c>, so the scope
+    /// needs PBI for maps and DJT for targets. Null = caller has no opinion; the id stands.
+    /// </param>
+    public async Task<object?> GetFacilityAsync(string artccId, string facilityId,
+                                                Func<string, string[], string?>? resolveFeedId = null)
     {
         var doc = await GetArtccAsync(artccId);
         if (doc is null) return null;
@@ -422,6 +429,8 @@ class StarsBridge
             // Explicit, so a caller never has to infer "displayable" from a null config. The scope
             // route blocks non-STARS facilities before they get here, but the API is public.
             hasStars = starsConfig is not null && starsConfig.Value.ValueKind != JsonValueKind.Null,
+            // Which id to ask the TRACK feed for. Usually the facility's own; see resolveFeedId.
+            feedFacilityId = resolveFeedId?.Invoke(facilityId, InternalAirports(starsConfig)) ?? facilityId,
             videoMaps,
         };
     }
@@ -785,6 +794,22 @@ class StarsBridge
                 Brightness = brightness,
             },
         };
+    }
+
+    /// <summary>The airports a TRACON works, from its vNAS config — the candidates for a feed id
+    /// when the facility's own id isn't what the track feed publishes.</summary>
+    private static string[] InternalAirports(JsonElement? starsConfig)
+    {
+        if (starsConfig is not { } sc || sc.ValueKind != JsonValueKind.Object
+            || !sc.TryGetProperty("internalAirports", out var ia)
+            || ia.ValueKind != JsonValueKind.Array)
+            return Array.Empty<string>();
+        return ia.EnumerateArray()
+                 .Select(e => e.GetString())
+                 .Where(x => !string.IsNullOrWhiteSpace(x))
+                 .Select(x => x!.Trim().ToUpperInvariant())
+                 .Distinct(StringComparer.OrdinalIgnoreCase)
+                 .ToArray();
     }
 
     private static JsonElement? FindFacility(JsonElement node, string targetId)

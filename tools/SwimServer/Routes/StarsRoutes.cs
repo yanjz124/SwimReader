@@ -134,10 +134,34 @@ static class StarsRoutes
             return fac is not null ? Results.Json(fac, ctx.JsonOpts) : Results.NotFound();
         });
 
+        // Which id does the TRACK feed publish this facility under?
+        //
+        // Usually its own. Palm Beach is the exception that proves it isn't guaranteed: vNAS
+        // adaptation still says PBI (160 video maps, 7 areas) while STDDS/TAIS publishes the
+        // renamed DJT (72 tracks). Asking for one id got you maps with no targets; asking for the
+        // other got targets with no maps. Neither URL worked.
+        //
+        // vNAS answers it itself — PBI's `internalAirports` lists DJT — so this needs no table and
+        // no NASR lookup: take the facility's own id if the feed knows it, else the single
+        // internal airport the feed does know. Requiring exactly one keeps it safe, and the
+        // candidate set is live ∪ recorded because the live list only holds facilities with
+        // traffic this minute and a quiet TRACON would drop out of it.
+        string? ResolveFeedId(string facilityId, string[] internalAirports)
+        {
+            var known = new HashSet<string>(ctx.Tais.LiveFacilities(), StringComparer.OrdinalIgnoreCase);
+            foreach (var r in ctx.ReplayServer.RecordedTaisFacilities()) known.Add(r);
+            if (known.Count == 0 || known.Contains(facilityId)) return facilityId;
+            var hits = internalAirports
+                .Where(a => !string.Equals(a, facilityId, StringComparison.OrdinalIgnoreCase)
+                         && known.Contains(a))
+                .ToArray();
+            return hits.Length == 1 ? hits[0] : facilityId;
+        }
+
         app.MapGet("/api/stars/facility/{artccId}/{facilityId}",
             async (string artccId, string facilityId) =>
             {
-                var fac = await ctx.Stars.GetFacilityAsync(artccId, facilityId);
+                var fac = await ctx.Stars.GetFacilityAsync(artccId, facilityId, ResolveFeedId);
                 return fac is not null ? Results.Json(fac, ctx.JsonOpts) : Results.NotFound();
             });
 

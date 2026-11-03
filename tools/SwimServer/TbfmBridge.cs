@@ -284,24 +284,39 @@ class TbfmBridge
     {
         var now = DateTime.UtcNow;
         return _flights.Values
-            .Where(f => f.StaMeterFix.HasValue || f.StaRunway.HasValue)
             .Where(f => !LaddService.IsBlocked(f.Aid, null))
-            .Select(f => (object)new
+            .Select(f => (f, mfxDone: Passed(f.StaMeterFix, f.LastSeen, now), rwyDone: Passed(f.StaRunway, f.LastSeen, now)))
+            .Where(x => (x.f.StaMeterFix.HasValue && !x.mfxDone) || (x.f.StaRunway.HasValue && !x.rwyDone))
+            .Select(x => (object)new
             {
-                aid = f.Aid,
-                gufi = f.Gufi,
-                apt = f.Arrival,
-                src = f.Source,
-                ctr = CenterOf(f.Source),
-                mfx = f.MeterFix,
-                rwy = f.Runway,
-                staMfx = f.StaMeterFix,
-                etaMfx = f.EtaMeterFix,
-                staRwy = f.StaRunway,
-                etaRwy = f.EtaRunway,
-                ageSec = (int)(now - f.LastSeen).TotalSeconds,
+                aid = x.f.Aid,
+                gufi = x.f.Gufi,
+                apt = x.f.Arrival,
+                src = x.f.Source,
+                ctr = CenterOf(x.f.Source),
+                mfx = x.f.MeterFix,
+                rwy = x.f.Runway,
+                staMfx = x.mfxDone ? null : x.f.StaMeterFix,
+                etaMfx = x.mfxDone ? null : x.f.EtaMeterFix,
+                staRwy = x.rwyDone ? null : x.f.StaRunway,
+                etaRwy = x.rwyDone ? null : x.f.EtaRunway,
+                ageSec = (int)(now - x.f.LastSeen).TotalSeconds,
             })
             .ToArray();
+    }
+
+    /// <summary>
+    /// A scheduled time is "done" once it is more than a minute past and TBFM has not updated the
+    /// record since. Measured live: after a flight's meter-fix STA passes, the time since the
+    /// record's last update grows in step with it (median 3.1 / 4.8 / 6.9 min at 0-2 / 2-5 /
+    /// 5-10 min past STA), i.e. TBFM stops publishing once the flight reaches the point. A late
+    /// flight TBFM is still revising keeps updating, so it is not hidden.
+    /// </summary>
+    private static bool Passed(DateTime? sta, DateTime lastSeen, DateTime now)
+    {
+        if (!sta.HasValue) return false;
+        var grace = sta.Value.AddSeconds(60);
+        return now > grace && lastSeen < grace;
     }
 
     /// <summary>"TMA.ZLC.FAA.GOV" → "ZLC": the ARTCC whose TBFM published (and whose controllers see) it.</summary>

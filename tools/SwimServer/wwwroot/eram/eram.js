@@ -254,7 +254,14 @@ function getTbfm(f) {
     const ctr = myFacility || f.controllingFacility;
     if (!ctr) return null;
     const dest = (f.destination || '').toUpperCase().replace(/^K(?=[A-Z0-9]{3}$)/, '');
-    return list.find(t => t.ctr === ctr && (!dest || !t.apt || t.apt === dest)) || null;
+    // Freshest wins: after a reroute a centre can briefly hold two records for one flight (seen
+    // live: UAL1770 in ZDV, old TBRMP schedule beside the new MNARK one) until the old one ages out.
+    let best = null;
+    for (const t of list) {
+        if (t.ctr !== ctr || (dest && t.apt && t.apt !== dest)) continue;
+        if (!best || (t.ageSec ?? 1e9) < (best.ageSec ?? 1e9)) best = t;
+    }
+    return best;
 }
 
 function _zuluHHMM(iso) {

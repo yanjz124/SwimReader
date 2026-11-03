@@ -202,9 +202,10 @@ let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles w
 // Data: /api/tbfm/eram, from the TBFM MIS feed (TbfmBridge). STA is the meter-fix STA (runway STA
 // when no meter fix is scheduled), shown HHMM zulu. Delay = STA - ETA at the same point, i.e. the
 // time the aircraft must lose (positive = must be delayed).
-// Format reference: NASA 2019 FIM study (NTRS 20190000841), MACS ERAM emulation — Fig. 5 shows the
-// Delay Countdown Timer as "+00:10" below the target symbol in the data-block colour, Fig. 4 the
-// meter list as STA "1749" + delay "+01:10"; ETA-STA rounded to the nearest 10 s. DELAY FORMAT's
+// Format reference: an ERAM STA / DCT / Both slide — "0432", "-12:20", "0432 -12:20", one line below
+// the target, white-grey (not FDB yellow). Agrees with the NASA 2019 FIM study's MACS ERAM emulation
+// (NTRS 20190000841, Figs. 4-5: "+00:10" below the target; meter list "1749" "+01:10"), which also
+// gives the 10 s rounding and positive = must be delayed. DELAY FORMAT's
 // real behaviour is undocumented; here it switches to whole minutes (+1) — UNVERIFIED.
 // Live only: TBFM schedules are not recorded, so replay shows no metering rather than today's.
 let staRdbEnabled = false;
@@ -2862,10 +2863,10 @@ function buildMarkerHtml(f, cls) {
             const rdbDist = getCrrRdbDistance(f);
             if (rdbDist !== null) rdbParts.push(rdbDist.toFixed(1) + 'nm');
         }
-        // TBFM parts draw in the data-block colour (as ERAM's delay countdown does); the CRR
-        // distance keeps the RDB's own colour.
+        // STA / DCT draw white-grey (per the ERAM STA/DCT/Both reference), distinct from both the
+        // yellow FDB and the CRR distance's magenta.
         const tbfmText = tbfmRdbText(f);
-        if (tbfmText) rdbParts.push(`<span style="color:${color}">${tbfmText}</span>`);
+        if (tbfmText) rdbParts.push(`<span class="ac-rdb-tbfm">${tbfmText}</span>`);
         {
             if (rdbParts.length) {
                 const rdbText = rdbParts.join(' ');

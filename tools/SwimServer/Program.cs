@@ -1433,6 +1433,10 @@ app.Lifetime.ApplicationStopping.Register(() => GracefulShutdown.Run(
     ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); }),
     ("itws history", () => itws.SaveHistory()),                                   //   65ms
     ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }), // 57ms
+    // Cheap (a few hundred KB, no-ops when clean) and irreplaceable on a short timescale: TBFM
+    // publishes adaptation rarely, so what the 60s timer hasn't written yet may not come round
+    // again for hours, and pointType reads null for that centre until it does.
+    ("tbfm adaptation", () => tbfm.SaveAdaptationIfDirty()),
     ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }), // 1.9s
     ("flight cache", () => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts, backfill: false)),
     // Last on purpose: measured at 5.0s, by far the most expensive step, and it already runs on

@@ -1682,7 +1682,9 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
   facility (or the controlling centre when none is selected), the same rule as CIDs, and nothing
   when that centre isn't metering the flight.
 - Updates are partial; fields merge non-null onto a record keyed `envSrce/tmaId` (fallback `aid/apt`).
-  Purged 20 min after the last update or 10 min after the STA has passed.
+  Purged 20 min after the last update, or 10 min after the **latest** of its meter-fix and
+  runway STAs has passed — not the first of the two, or the record would vanish while the
+  runway STA was still ahead of the aircraft (which `EramSnapshot` is willing to show).
 - **`mfx` is "the point this centre schedules to", not necessarily the airport's meter fix**
   (live: ZLA schedules an MRY arrival to `BSR`). The message names no arc: arcs appear only as
   times (`sta_oma`/`ooa`/`o3a`/`o4a`), exposed as `arcs` in `/api/tbfm/eram`.
@@ -1695,15 +1697,18 @@ stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` g
   time since the last schedule update, and the scope prefers the freshest record per centre.
 - `GET /api/tbfm/eram` gives the scope its compact records. **LADD callsigns are dropped there**,
   because the scope matches by callsign.
-- Scope (`eram.js`): polls every 15 s, and only while STA RDB or DELAY RDB is on. Matching is by
-  GUFI, then by callsign + destination, then by a callsign that only one TBFM record carries. The
+- Scope (`eram.js`): polls every 15 s, and only while STA RDB or DELAY RDB is on. Matching is **by
+  callsign**, narrowed to the record whose `ctr` is the selected facility (or, with none selected,
+  the controlling centre) and to the destination when both sides know it, freshest `ageSec` winning
+  a tie. **Not by GUFI** — TBFM's is ERAM's short form and SFDPS doesn't publish it, which is the
+  whole reason the match is by callsign. The
   RDB shows the meter-fix STA as `HHMM` (runway STA if there's no meter fix). Delay is `STA − ETA`
   at the same point, rounded to 10 s, as `+02:30` (sign, MM:SS), drawn **white-grey** (not FDB
   yellow, not CRR magenta). Reference: `docs/img/eram/data-blocks/rdb-sta-dct.png`, an ERAM
   STA / DCT / Both slide (`0432`, `-12:20`, `0432 -12:20`, one line below the target). It agrees
   with a NASA 2019 FIM study's MACS ERAM emulation (NTRS 20190000841, Figs. 4–5), which also gives
-  the 10 s rounding and "positive = must be delayed". **What DELAY FORMAT really toggles is undocumented**; here it switches to whole
-  minutes (`+3`). It shares the RDB with the CRR distance and follows the same `Ctrl+Shift+O` offset. **Live only**: TBFM isn't recorded, so
+  the 10 s rounding and "positive = must be delayed". **What DELAY FORMAT really toggles is undocumented**; here OFF (the
+  default) is sign + MM:SS (`+03:20`) and ON is whole minutes (`+3`), via `delayFormatMinutes`. It shares the RDB with the CRR distance and follows the same `Ctrl+Shift+O` offset. **Live only**: TBFM isn't recorded, so
   replay and incident views show no metering rather than today's.
 
 ### TBFM message kinds and tag glossary

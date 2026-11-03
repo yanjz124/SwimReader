@@ -88,6 +88,32 @@ public class TbfmBridgeTests
         Assert.True(InEram(b, "TST103"));
     }
 
+    // ── purge waits for the LAST scheduled time, not the first ───────────────
+
+    [Fact]
+    public void Purge_KeepsARecordWhoseRunwayStaIsStillAhead()
+    {
+        var b = NewBridge();
+        // Meter fix well behind, runway still well ahead — the ordinary picture once an arrival is
+        // inside the meter fix. Purging on StaMeterFix alone threw this away 20 min before the
+        // runway STA mattered, while EramSnapshot was still willing to show it.
+        b.Process(Air("ZOA", "TST120", "P1",
+            $"<sta><mfx>PXN</mfx><sta_sfx>{T(-20)}</sta_sfx><sta_rwy>{T(20)}</sta_rwy></sta>"));
+        b.PurgeStale();
+        Assert.Equal(1, b.FlightCount);
+        Assert.True(InEram(b, "TST120"));
+    }
+
+    [Fact]
+    public void Purge_DropsARecordOnceEveryScheduledTimeIsWellPast()
+    {
+        var b = NewBridge();
+        b.Process(Air("ZOA", "TST121", "P2",
+            $"<sta><mfx>PXN</mfx><sta_sfx>{T(-40)}</sta_sfx><sta_rwy>{T(-20)}</sta_rwy></sta>"));
+        b.PurgeStale();
+        Assert.Equal(0, b.FlightCount);
+    }
+
     // ── each centre's schedule kept separately ───────────────────────────────
 
     [Fact]

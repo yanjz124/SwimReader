@@ -87,6 +87,7 @@ class TbfmBridge
             Console.WriteLine("[TBFM] No credentials configured — TBFM disabled");
             return;
         }
+        long lastMsgTicks = DateTime.UtcNow.Ticks;
         while (true)
         {
             try
@@ -118,6 +119,7 @@ class TbfmBridge
                     {
                         using var m = msgArgs.Message;
                         using var _h = FeedHealth.Track("TBFM", m);
+                        Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
                         try
                         {
                             string? body = null;
@@ -134,7 +136,31 @@ class TbfmBridge
                 flow.Start();
                 Console.WriteLine($"[TBFM] Listening on queue {_queue}");
 
-                while (true) Thread.Sleep(60000);
+                // Silence watchdog, as TFMS and ITWS do. A flow can stop delivering without the
+                // session raising anything, and `while (true) Thread.Sleep(...)` would then sit
+                // there forever — this bridge is the only consumer of its queue, so a dead flow is
+                // a dead feed. 180s rather than TFMS's 90s: TBFM is a low-rate feed whose quiet
+                // periods aren't characterised yet, and an over-eager reconnect unbinds the queue,
+                // which costs expired messages at the broker for nothing.
+                int watchdogCycles = 0;
+                while (true)
+                {
+                    Thread.Sleep(10000);
+                    watchdogCycles++;
+                    var silence = (DateTime.UtcNow -
+                        new DateTime(Interlocked.Read(ref lastMsgTicks), DateTimeKind.Utc)).TotalSeconds;
+                    if (silence > 180)
+                    {
+                        Console.WriteLine($"[TBFM] No messages for {silence:F0}s — reconnecting");
+                        break;
+                    }
+                    if (watchdogCycles % 6 == 0)
+                        Console.WriteLine($"[TBFM] {_flights.Count} schedules, {_centers.Count} centre(s), "
+                            + $"{Interlocked.Read(ref _msgCount)} msgs ({Interlocked.Read(ref _airCount)} air)");
+                }
+
+                try { session.Disconnect(); }
+                catch (Exception ex) { Console.WriteLine($"[TBFM] disconnect: {ex.Message}"); }
             }
             catch (Exception ex)
             {
@@ -448,11 +474,19 @@ class TbfmBridge
         var now = DateTime.UtcNow;
         foreach (var (k, f) in _flights)
         {
-            var sta = f.StaMeterFix ?? f.StaRunway;
+            // The LAST scheduled time, not the first non-null one. A record carries both a
+            // meter-fix and a runway STA, and the runway is 20-30 min further on, so keying off
+            // StaMeterFix deleted the record while EramSnapshot was still willing to show its
+            // runway STA (`StaRunway.HasValue && !rwyDone`) — i.e. the runway STA/DELAY blanked
+            // out mid-approach, which is exactly when it matters most.
+            var sta = Later(f.StaMeterFix, f.StaRunway);
             if (now - f.LastSeen > StaleAfter || (sta.HasValue && now - sta.Value > KeepPastSta))
                 _flights.TryRemove(k, out _);
         }
     }
+
+    private static DateTime? Later(DateTime? a, DateTime? b) =>
+        a is null ? b : b is null ? a : (a > b ? a : b);
 
     /// <summary>
     /// Compact per-flight metering records for the ERAM scope. LADD aircraft are dropped: the scope
@@ -594,12 +628,6 @@ class TbfmBridge
     }
 
     /// <summary>
-    /// What kind of point a schedule's "mfx" really is, from the centre's adaptation: MFX meter fix,
-    /// MFA meter-fix arc, OMA / OOA outer arcs. TBFM labels whatever point it schedules to as
-    /// &lt;mfx&gt; (live: ZLA schedules an OAK arrival to PXN), so this is the only way to tell.
-    /// Null until that centre's adaptation has been received.
-    /// </summary>
-    /// <summary>
     /// The point staPoint/etaPoint refer to. Those come from sta_sfx/eta_sfx, and &lt;mrp&gt; names
     /// sfx separately from mfx: live, ZAU schedules AAL1614 with mfx MOTRR but sfx/dfx FYTTEMF,
     /// and eta_sfx (FYTTEMF) differs from eta_mfx (MOTRR). So prefer sfx, then dfx; mrp is sent
@@ -610,6 +638,12 @@ class TbfmBridge
         : f.Mrp.TryGetValue("dfx", out var dfx) && !string.IsNullOrWhiteSpace(dfx) ? dfx
         : f.MeterFix;
 
+    /// <summary>
+    /// What kind of point a schedule's "mfx" really is, from the centre's adaptation: MFX meter fix,
+    /// MFA meter-fix arc, OMA / OOA outer arcs. TBFM labels whatever point it schedules to as
+    /// &lt;mfx&gt; (live: ZLA schedules an OAK arrival to PXN), so this is the only way to tell.
+    /// Null until that centre's adaptation has been received.
+    /// </summary>
     private string? PointType(TbfmFlight f)
     {
         if (ScheduledPoint(f) is not { } name || CenterOf(f.Source) is not { } ctr

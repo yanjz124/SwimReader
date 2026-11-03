@@ -120,6 +120,7 @@ deploy/
   check-deploy.sh                     Git polling script for auto-deploy timer
 tests/
   SwimReader.Core.Tests/              xUnit tests for core domain
+  SwimServer.Tests/                   xUnit tests for SwimServer (TBFM parser so far); InternalsVisibleTo
 ```
 
 ## Tech Stack
@@ -1752,6 +1753,16 @@ the 60 s purge timer) and reloaded on startup.
 
 Our JSON therefore names it neutrally: **`point` / `pointType` / `staPoint` / `etaPoint`** (it was
 `mfx`/`staMfx`, which read as "meter fix" for every arc). The raw `mrp` block keeps TBFM's tags.
+
+**Tests:** `tests/SwimServer.Tests/TbfmBridgeTests.cs` drives the parser with messages shaped
+like live traffic (callsigns/times made up; captured SWIM traffic isn't committed). Run with
+`dotnet test tests/SwimServer.Tests -c Release`: Release, because a running local server locks
+the Debug output.
+
+**Not persisted on purpose:** TBFM flight schedules, like TFMS/TFDM/ASDE-X/TAIS live state, are
+rebuilt from the feed. A restart costs a few minutes of fewer DCTs (measured: ETA pairs back to
+66% within ~26k messages) — not worth a shutdown step or SD-card writes. Adaptation, which is
+rare, is the part that is saved.
 
 APIs: `GET /api/tbfm/flight/{callsign}` (every centre's full record), `GET /api/tbfm/centers`
 (heartbeat, schedule count, adaptation size, rates), `GET /api/tbfm/adaptation/{center}` (points

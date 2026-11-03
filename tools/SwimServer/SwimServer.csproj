@@ -22,6 +22,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- TbfmBridge and friends are internal (top-level classes, no modifier). -->
+    <InternalsVisibleTo Include="SwimServer.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="SolaceSystems.Solclient.Messaging" Version="10.28.3" />
     <!-- BZip2 decompression for NEXRAD Level III symbology blocks
          (DescriptionBlock.ProductSpecific_8 == 1). Matches the version

@@ -1666,13 +1666,14 @@ Metering Information Service (TBFM MIS)**, a separate SCDS subscription. `TbfmBr
 with `TBFM_HOST`/`TBFM_VPN`/`TBFM_USER`/`TBFM_PASS`/`TBFM_QUEUE` (`TBFM_FLOWS` for receivers), and
 stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` guard like the others.
 
-- Message shape: `<env envSrce>` → `<tma msgTime>` → `<air aid apt dap gufi tmaId airType>`, with
-  `mfx`, `rwy`, `eta_mfx`/`eta_rwy` and `sta_mfx`/`sta_rwy` somewhere beneath `<air>`. The layout
-  and the `eta_*`/`mfx`/`rwy` names come from an open-source TBFM MIS consumer. **The `sta_*` names
-  are inferred by analogy and unverified.** The parser matches by local name anywhere under `<air>`,
-  and `GET /api/tbfm/debug` keeps 20 raw samples plus a count of every element name seen. Check it
-  first when the feed goes live: if `withSta` is 0 while `airRecords` climbs, the STA tag names are
-  wrong.
+- Message shape (verified live 2026-11-02): `<env envSrce="TMA.ZOB.FAA.GOV">` → `<tma>` →
+  `<air aid apt dap gufi tmaId cid airType>`, then `<sta><mfx/><sta_sfx/><sta_dfx/><sta_rwy/></sta>`
+  and `<eta><eta_sfx/><eta_dfx/><eta_mfx/><eta_rwy/></eta>`, usually in **separate** messages.
+  **There is no `sta_mfx`**: the meter-fix STA is `sta_sfx`/`sta_dfx` (equal in every sample), and
+  `eta_mfx` can differ from `eta_sfx` by ~1 min, so delay pairs `sta_sfx` with `eta_sfx`.
+  `GET /api/tbfm/debug` keeps 20 raw samples plus a count of every element name seen.
+- TBFM's `gufi` is ERAM's short form (`KK756252Wv`). **SFDPS doesn't carry it** (its GUFIs are UUID
+  or `us.fdps.*`), so matching to a target is by callsign + destination.
 - Updates are partial; fields merge non-null onto a record keyed `envSrce/tmaId` (fallback `aid/apt`).
   Purged 20 min after the last update or 10 min after the STA has passed.
 - `GET /api/tbfm/eram` gives the scope its compact records. **LADD callsigns are dropped there**,

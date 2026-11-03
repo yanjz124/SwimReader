@@ -237,8 +237,9 @@ async function pollTbfm() {
 setInterval(pollTbfm, TBFM_POLL_MS);
 setTimeout(pollTbfm, 1500);  // a toggle persisted ON shouldn't wait a full poll period
 
-// Match an SFDPS flight to its TBFM record: GUFI first, then callsign + destination, then a
-// callsign that only one TBFM record carries.
+// Match an SFDPS flight to its TBFM record: callsign + destination, else a callsign only one TBFM
+// record carries. (The GUFI lookup is kept for completeness but TBFM's gufi is ERAM's short form,
+// which SFDPS doesn't publish, so in practice it never hits.)
 function getTbfm(f) {
     if (!tbfmByGufi.size && !tbfmByCallsign.size) return null;
     const g = (f.fdpsGufi && tbfmByGufi.get(f.fdpsGufi)) || (f.gufi && tbfmByGufi.get(f.gufi));

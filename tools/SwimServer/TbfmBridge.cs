@@ -13,18 +13,17 @@ using SwimServer;
 ///
 /// Message shape (TBFM MIS, namespace urn:us:gov:dot:faa:atm:tfm:tbfmmeteringpublication):
 /// <code>
-///   &lt;env envSrce="ZDC" envTime="..."&gt;
-///     &lt;tma msgTime="..." msgId="..."&gt;
-///       &lt;air aid="AAL123" apt="KDCA" dap="KORD" gufi="..." tmaId="..." airType="..."&gt;
-///         ... &lt;mfx&gt;meter fix&lt;/mfx&gt; &lt;rwy&gt;..&lt;/rwy&gt;
-///         ... &lt;eta_mfx&gt; &lt;eta_rwy&gt; ...   (ETAs)
-///         ... &lt;sta_mfx&gt; &lt;sta_rwy&gt; ...   (STAs)
+///   &lt;env envSrce="TMA.ZOB.FAA.GOV" envTime="..."&gt;
+///     &lt;tma msgId="..." msgTime="..."&gt;
+///       &lt;air airType="AMD" aid="DAL1900" dap="SAN" apt="DTW" tmaId="C01213" gufi="KL737432HU"&gt;
+///         &lt;sta&gt;&lt;mfx&gt;HAYLL&lt;/mfx&gt;&lt;sta_sfx&gt;..&lt;/sta_sfx&gt;&lt;sta_dfx&gt;..&lt;/sta_dfx&gt;&lt;sta_rwy&gt;..&lt;/sta_rwy&gt;&lt;/sta&gt;
+///         &lt;eta&gt;&lt;eta_sfx&gt;..&lt;/eta_sfx&gt;&lt;eta_dfx&gt;..&lt;/eta_dfx&gt;&lt;eta_mfx&gt;..&lt;/eta_mfx&gt;&lt;eta_rwy&gt;..&lt;/eta_rwy&gt;&lt;/eta&gt;
 /// </code>
-/// The top-level layout and the eta_* / mfx / rwy names are confirmed against an open-source TBFM MIS
-/// consumer; the sta_* names are by analogy and are UNVERIFIED until live data arrives. The parser
-/// therefore matches by local name anywhere under &lt;air&gt;, and <see cref="DebugSnapshot"/> keeps
-/// raw samples plus every element name seen, so the mapping can be checked against the real feed
-/// (<c>GET /api/tbfm/debug</c>).
+/// Verified against the live feed (2026-11-02). ETA and STA usually arrive in SEPARATE messages,
+/// so the merge across messages matters. gufi is ERAM's short form (KK756252Wv), which SFDPS does
+/// NOT carry (its GUFIs are UUID / us.fdps.*), so the scope matches by callsign + destination.
+/// Airports come without the K. Other meter points (oma/ooa/o3a/o4a arcs) are published too but unused.
+/// <see cref="DebugSnapshot"/> keeps raw samples plus every element name seen (<c>GET /api/tbfm/debug</c>).
 ///
 /// Messages are partial updates, so every field merges (non-null overwrite) onto the record.
 /// </summary>
@@ -175,8 +174,12 @@ class TbfmBridge
             Merge(ref f.AirType, Attr(air, "airType"));
             Merge(ref f.MeterFix, Text(air, "mfx"));
             Merge(ref f.Runway, Text(air, "rwy"));
-            MergeTime(ref f.EtaMeterFix, Time(air, "eta_mfx", "etaMfx"));
-            MergeTime(ref f.StaMeterFix, Time(air, "sta_mfx", "staMfx"));
+            // Meter-fix times. Live TBFM MIS has no sta_mfx: the meter-fix STA comes as
+            // sta_sfx / sta_dfx (equal in every sample seen), with the matching ETA as
+            // eta_sfx / eta_dfx. eta_mfx is also published but can differ from eta_sfx by
+            // ~1 min, so prefer the sfx pair and STA - ETA compares one point with itself.
+            MergeTime(ref f.EtaMeterFix, Time(air, "eta_sfx", "eta_dfx", "eta_mfx"));
+            MergeTime(ref f.StaMeterFix, Time(air, "sta_sfx", "sta_dfx", "sta_mfx"));
             MergeTime(ref f.EtaRunway, Time(air, "eta_rwy", "etaRwy"));
             MergeTime(ref f.StaRunway, Time(air, "sta_rwy", "staRwy"));
             f.LastSeen = now;
@@ -214,16 +217,19 @@ class TbfmBridge
     private static string? Attr(XElement e, string name) =>
         e.Attributes().FirstOrDefault(a => a.Name.LocalName == name)?.Value;
 
-    /// <summary>First non-empty text of a descendant with any of the given local names.</summary>
+    /// <summary>
+    /// First non-empty leaf text for the given local names, tried in the order given (so the
+    /// first name wins even when a later one appears earlier in the document).
+    /// </summary>
     private static string? Text(XElement parent, params string[] names)
     {
-        foreach (var e in parent.Descendants())
-        {
-            if (!names.Contains(e.Name.LocalName)) continue;
-            if (e.HasElements) continue;
-            var t = e.Value.Trim();
-            if (t.Length > 0) return t;
-        }
+        foreach (var name in names)
+            foreach (var e in parent.Descendants())
+            {
+                if (e.Name.LocalName != name || e.HasElements) continue;
+                var t = e.Value.Trim();
+                if (t.Length > 0) return t;
+            }
         return null;
     }
 

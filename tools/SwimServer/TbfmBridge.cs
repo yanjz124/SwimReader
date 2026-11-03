@@ -68,10 +68,14 @@ partial class TbfmBridge
 
     public void Start()
     {
-        // Default 3: TBFM runs several times SFDPS's rate (measured 164-523 msg/s on 3 flows). On
-        // one flow lag sat flat at ~10 s and never drained, the same single-session transport
-        // ceiling CLAUDE.md describes for SFDPS; busyPct stayed under 3%, so parsing isn't it.
-        var receivers = SolaceTuning.Receivers("TBFM_FLOWS", 3);
+        // Default 6. Three was the original default and it is not enough at full daytime volume:
+        // measured 2026-11-03, TBFM sat at 241 msg/s with lag pinned flat at 11-13 s across ten
+        // minutes and three restarts, busyPct 2.9% — the single-session transport ceiling
+        // CLAUDE.md describes for SFDPS, not our parsing. Raising it to 6 took the same feed to
+        // 371 msg/s and 0.6 s lag immediately, with busyPct 13.3% and still zero discards. A flat
+        // non-zero lag and real upstream latency look identical; lifting the ceiling is the only
+        // way to tell, and this one drained.
+        var receivers = SolaceTuning.Receivers("TBFM_FLOWS", 6);
         for (int i = 0; i < receivers; i++)
         {
             var idx = i;

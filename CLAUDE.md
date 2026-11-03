@@ -257,9 +257,26 @@ the bottleneck. Each receiver also runs its own silence watchdog, so one dead fl
 reconnected while its siblings are busy.
 
 All five bridges take the same shape now — `SolaceTuning.Receivers(env, default)` and a
-`_processGate` lock per bridge. Defaults: **SFDPS 3, TBFM 3, TFMS 2**, the rest 1, via `SFDPS_FLOWS` /
+`_processGate` lock per bridge. Defaults: **SFDPS 3, TBFM 6, TFMS 2**, the rest 1, via `SFDPS_FLOWS` /
 `TFMS_FLOWS` / `STDDS_FLOWS` / `TFDM_FLOWS` / `ITWS_FLOWS`. TFMS went from 10-12 s of lag to
 **1.1 s** on two receivers; TFDM and ITWS sit at 0.0-0.1 s on one and need nothing.
+
+### TBFM hit the same ceiling at 3 flows (2026-11-03)
+The lesson above is not hypothetical and it recurred. TBFM shipped with `TBFM_FLOWS` default 3,
+which was enough when it was measured. At full daytime volume it was not:
+
+| | 3 receivers | 6 receivers |
+|---|---|---|
+| throughput | 241 msg/s | **371 msg/s** |
+| lag | **11-13 s, flat** across ten minutes and three restarts | **0.6 s** |
+| busyPct | 2.9% | 13.3% |
+| discards | 0 | 0 |
+
+Everything pointed the same way as SFDPS: flat non-zero lag, trivial parse load, no discards — so
+the ceiling was the single session's transport, not our processing. **A flat lag and genuine
+upstream latency are indistinguishable until you lift the ceiling and watch**, which is the whole
+reason the number is worth sampling rather than glancing at. It drained instantly. Default is now
+6; the same check applies to any feed whose lag sits flat and non-zero while `busyPct` is low.
 
 ### Lag is the metric — `PosAge` cannot show this
 `FeedHealth` reports `lagSec`/`lagPeakSec` per feed (publisher's own timestamp vs our receipt,

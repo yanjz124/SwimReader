@@ -108,6 +108,14 @@ var itwsQueue = Environment.GetEnvironmentVariable("ITWS_QUEUE") ?? "";
 var itwsHost  = Environment.GetEnvironmentVariable("ITWS_HOST") ?? "tcps://ems1.swim.faa.gov:55443";
 var itwsVpn   = Environment.GetEnvironmentVariable("ITWS_VPN") ?? "ITWS";
 
+// TBFM credentials (Time Based Flow Management — TBFM MIS metering: STA/ETA at meter fix + runway).
+// A separate SCDS subscription; host/VPN come from the portal, so there is no guessed default host.
+var tbfmUser  = Environment.GetEnvironmentVariable("TBFM_USER") ?? "";
+var tbfmPass  = Environment.GetEnvironmentVariable("TBFM_PASS") ?? "";
+var tbfmQueue = Environment.GetEnvironmentVariable("TBFM_QUEUE") ?? "";
+var tbfmHost  = Environment.GetEnvironmentVariable("TBFM_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
+var tbfmVpn   = Environment.GetEnvironmentVariable("TBFM_VPN") ?? "TBFM";
+
 // ── Shared state ────────────────────────────────────────────────────────────
 
 var flights = new ConcurrentDictionary<string, FlightState>();
@@ -263,6 +271,8 @@ var tfdm = new TfdmBridge(tfdmUser, tfdmPass, tfdmQueue, tfdmHost, tfdmVpn, json
 // ITWS bridge — own Solace session for terminal weather products
 var itws = new ItwsBridge(itwsUser, itwsPass, itwsQueue, itwsHost, itwsVpn, jsonOpts);
 itws.SetHistoryDir(Path.Combine(Directory.GetCurrentDirectory(), "itws-history"));
+// TBFM bridge — own Solace session for metering schedules (ERAM STA / DELAY RDBs)
+var tbfm = new TbfmBridge(tbfmUser, tbfmPass, tbfmQueue, tbfmHost, tbfmVpn);
 
 // STARS bridge — vNAS profile cache (no Solace; HTTP fetch from data-api.vnas.vatsim.net)
 var starsHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
@@ -428,6 +438,7 @@ if (localMode)
         "TFMS_HOST", "TFMS_VPN", "TFMS_USER", "TFMS_PASS", "TFMS_QUEUE",
         "TFDM_HOST", "TFDM_VPN", "TFDM_USER", "TFDM_PASS", "TFDM_QUEUE",
         "ITWS_HOST", "ITWS_VPN", "ITWS_USER", "ITWS_PASS", "ITWS_QUEUE",
+        "TBFM_HOST", "TBFM_VPN", "TBFM_USER", "TBFM_PASS", "TBFM_QUEUE",
         "SWIM_PORT", "REPLAY_CAP_GB",
     };
 
@@ -616,6 +627,7 @@ var serverCtx = new ServerContext
     Tfms = tfms,
     Tfdm = tfdm,
     Itws = itws,
+    Tbfm = tbfm,
     Stars = stars,
     EramRecorder = eramRecorder,
     ReplayServer = replayServer,
@@ -658,6 +670,7 @@ ScratchpadRoutes.Register(app, serverCtx);
 // TFMS: WebSocket flight + TMI streams + /api/tfms/* REST
 TfmsRoutes.Register(app, serverCtx);
 TfdmRoutes.Register(app, serverCtx);
+TbfmRoutes.Register(app, serverCtx);
 
 // ITWS: terminal weather products page + /itws/ws WebSocket + /api/itws/* REST
 ItwsRoutes.Register(app, serverCtx);
@@ -842,6 +855,8 @@ FlightCacheService.Load(flights, cacheDir, cacheJsonOpts);
 sectorTracker.Load(cacheDir);
 airspaceBridge.SetCacheDir(cacheDir);
 airspaceBridge.Load(cacheDir);
+tbfm.SetCacheDir(cacheDir);
+tbfm.LoadAdaptation(cacheDir);   // TBFM publishes adaptation rarely; keep what we've seen
 
 // ── Flight history persistence (save purged flights to daily JSONL files) ─────
 // History budget: keep total disk usage under 85%. Calculated dynamically each cleanup cycle.
@@ -884,6 +899,7 @@ if (FeedGuard.LiveFeed)
     tfms.Start();
     tfdm.Start();
     itws.Start();
+    tbfm.Start();
 }
 else
 {
@@ -1336,6 +1352,7 @@ var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSecond
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 var tfdmFlushTimer = new Timer(_ => tfdm.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 var tfdmPurgeTimer = new Timer(_ => tfdm.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+var tbfmPurgeTimer = new Timer(_ => { tbfm.PurgeStale(); tbfm.SaveAdaptationIfDirty(); }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 // ITWS: persist 24h time-series history to disk every 5 min (and on shutdown)
 var itwsHistoryTimer = new Timer(_ => itws.SaveHistory(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
 // Centralized disk-budget enforcement across all persisted data (replay + flight-history + tdls-history).
@@ -1416,6 +1433,10 @@ app.Lifetime.ApplicationStopping.Register(() => GracefulShutdown.Run(
     ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); }),
     ("itws history", () => itws.SaveHistory()),                                   //   65ms
     ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }), // 57ms
+    // Cheap (a few hundred KB, no-ops when clean) and irreplaceable on a short timescale: TBFM
+    // publishes adaptation rarely, so what the 60s timer hasn't written yet may not come round
+    // again for hours, and pointType reads null for that centre until it does.
+    ("tbfm adaptation", () => tbfm.SaveAdaptationIfDirty()),
     ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }), // 1.9s
     ("flight cache", () => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts, backfill: false)),
     // Last on purpose: measured at 5.0s, by far the most expensive step, and it already runs on

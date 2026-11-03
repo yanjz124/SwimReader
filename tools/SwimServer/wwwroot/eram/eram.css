@@ -375,6 +375,9 @@ body.tmu-mode .ac-leader { display: none !important; }
     color: #FF00FF;
 }
 
+/* STA / DCT (TBFM metering) inside the RDB: white-grey, unlike the CRR distance's magenta */
+.ac-rdb .ac-rdb-tbfm { color: #DCDCDC; }
+
 /* ── Column 0 (R / VCI) — inline prefix on each data block line ── */
 .ac-col0 { color: #cccc44; }
 .ac-vci { color: #44cc44; }

@@ -120,6 +120,7 @@ deploy/
   check-deploy.sh                     Git polling script for auto-deploy timer
 tests/
   SwimReader.Core.Tests/              xUnit tests for core domain
+  SwimServer.Tests/                   xUnit tests for SwimServer (TBFM parser so far); InternalsVisibleTo
 ```
 
 ## Tech Stack
@@ -251,7 +252,7 @@ the bottleneck. Each receiver also runs its own silence watchdog, so one dead fl
 reconnected while its siblings are busy.
 
 All five bridges take the same shape now — `SolaceTuning.Receivers(env, default)` and a
-`_processGate` lock per bridge. Defaults: **SFDPS 3, TFMS 2**, the rest 1, via `SFDPS_FLOWS` /
+`_processGate` lock per bridge. Defaults: **SFDPS 3, TBFM 3, TFMS 2**, the rest 1, via `SFDPS_FLOWS` /
 `TFMS_FLOWS` / `STDDS_FLOWS` / `TFDM_FLOWS` / `ITWS_FLOWS`. TFMS went from 10-12 s of lag to
 **1.1 s** on two receivers; TFDM and ITWS sit at 0.0-0.1 s on one and need nothing.
 
@@ -1658,6 +1659,126 @@ Place KML files in the repo root (gitignored, not committed):
 - `AllSectors.kml` — auto-loaded by eram.html via `/api/kml/AllSectors.kml`
 - `AllHighSectors.kml`, `AllLowSectors.kml` — available via API, toggleable in sidebar
 - KML categories parsed from `<name>` tags: UHI (ultra-high), HI (high), LO (low), APP (approach)
+
+## TBFM metering → ERAM STA / DELAY RDBs (needs its own subscription)
+
+**None of the five feeds carry TBFM schedules.** STA and meter-fix delay come from the **TBFM
+Metering Information Service (TBFM MIS)**, a separate SCDS subscription. `TbfmBridge` consumes it
+with `TBFM_HOST`/`TBFM_VPN`/`TBFM_USER`/`TBFM_PASS`/`TBFM_QUEUE` (`TBFM_FLOWS` for receivers, default **3**: TBFM runs 164-523 msg/s, several times SFDPS,
+and one flow sat at ~10 s lag that never drained), and
+stays disabled while `TBFM_USER` is unset. It runs inside the `SWIM_FEED_HOST` guard like the others.
+
+- Message shape (verified live 2026-11-02): `<env envSrce="TMA.ZOB.FAA.GOV">` → `<tma>` →
+  `<air aid apt dap gufi tmaId cid airType>`, then `<sta><mfx/><sta_sfx/><sta_dfx/><sta_rwy/></sta>`
+  and `<eta><eta_sfx/><eta_dfx/><eta_mfx/><eta_rwy/></eta>`, usually in **separate** messages.
+  **There is no `sta_mfx`**: the meter-fix STA is `sta_sfx`/`sta_dfx` (equal in every sample), and
+  `eta_mfx` can differ from `eta_sfx` by ~1 min, so delay pairs `sta_sfx` with `eta_sfx`.
+  `GET /api/tbfm/debug` keeps 20 raw samples plus a count of every element name seen.
+- TBFM's `gufi` is ERAM's short form (`KK756252Wv`). **SFDPS doesn't carry it** (its GUFIs are UUID
+  or `us.fdps.*`), so matching to a target is by callsign + destination.
+- **One flight, several STAs.** Each ARTCC's TBFM (`envSrce` `TMA.ZLC.FAA.GOV`, exposed as
+  `ctr: "ZLC"`) publishes its own record with its own meter point. Extended metering means a DFW
+  arrival can be metered by ZLC to `D34S`, ZDV to `ABQ` and ZAB to `CME` at once; ~23% of
+  callsigns had more than one record. The scope shows only the record whose `ctr` is the selected
+  facility (or the controlling centre when none is selected), the same rule as CIDs, and nothing
+  when that centre isn't metering the flight.
+- Updates are partial; fields merge non-null onto a record keyed `envSrce/tmaId` (fallback `aid/apt`).
+  Purged 20 min after the last update, or 10 min after the **latest** of its meter-fix and
+  runway STAs has passed — not the first of the two, or the record would vanish while the
+  runway STA was still ahead of the aircraft (which `EramSnapshot` is willing to show).
+- **`mfx` is "the point this centre schedules to", not necessarily the airport's meter fix**
+  (live: ZLA schedules an MRY arrival to `BSR`). The message names no arc: arcs appear only as
+  times (`sta_oma`/`ooa`/`o3a`/`o4a`), exposed as `arcs` in `/api/tbfm/eram`.
+- **Scope shows the next point ahead**: `o4a → o3a → ooa → oma → mfx → rwy`, the first whose ETA
+  hasn't passed. Real ERAM picks per sector from site adaptation SWIM doesn't publish, so this
+  approximates what the sector working the flight would see.
+- **Expiry is per time**: each STA (meter point, runway, each arc) is dropped once it is over 60 s
+  past and **that STA** hasn't been re-sent since. Not per message (TBFM keeps sending route-only
+  `<flt>` updates for schedules long past: GLH3, STA = ETA 40 min ago), and not per record either:
+  ASA481's record stayed fresh from meter-fix and runway times while its OMA STA sat 13 min dead
+  with the ETA still ahead, and the scope showed a bogus `-15:20`. `ageSec` is also
+  time since the last schedule update, and the scope prefers the freshest record per centre.
+- `GET /api/tbfm/eram` gives the scope its compact records. **LADD callsigns are dropped there**,
+  because the scope matches by callsign.
+- Scope (`eram.js`): polls every 15 s, and only while STA RDB or DELAY RDB is on. Matching is **by
+  callsign**, narrowed to the record whose `ctr` is the selected facility (or, with none selected,
+  the controlling centre) and to the destination when both sides know it, freshest `ageSec` winning
+  a tie. **Not by GUFI** — TBFM's is ERAM's short form and SFDPS doesn't publish it, which is the
+  whole reason the match is by callsign. The
+  RDB shows the meter-fix STA as `HHMM` (runway STA if there's no meter fix). Delay is `STA − ETA`
+  at the same point, rounded to 10 s, as `+02:30` (sign, MM:SS), drawn **white-grey** (not FDB
+  yellow, not CRR magenta). Reference: `docs/img/eram/data-blocks/rdb-sta-dct.png`, an ERAM
+  STA / DCT / Both slide (`0432`, `-12:20`, `0432 -12:20`, one line below the target). It agrees
+  with a NASA 2019 FIM study's MACS ERAM emulation (NTRS 20190000841, Figs. 4–5), which also gives
+  the 10 s rounding and "positive = must be delayed". **What DELAY FORMAT really toggles is undocumented**; here OFF (the
+  default) is sign + MM:SS (`+03:20`) and ON is whole minutes (`+3`), via `delayFormatMinutes`. It shares the RDB with the CRR distance and follows the same `Ctrl+Shift+O` offset. **Live only**: TBFM isn't recorded, so
+  replay and incident views show no metering rather than today's.
+
+### TBFM message kinds and tag glossary
+
+Four kinds arrive on the queue (inventoried from ~900 live messages, 2026-11-02). Each is parsed;
+anything under `<tma>` we don't model is counted in `/api/tbfm/debug` → `unknownKinds` (empty so far).
+
+| Kind | Root | Parsed into |
+|---|---|---|
+| Flight schedule | `env/tma/air` | `TbfmFlight`: times, plus raw `flt` / `mrp` / `sch` leaves |
+| Adaptation | `env/tma/adp` | `TbfmCenter`: meter points, airports, gates, stream classes, TRACONs |
+| Config | `env/tma/con` | `TbfmCenter.Rates`: `aar` (airport) and `tar` (TRACON) acceptance rates |
+| Heartbeat | `mis/hb` (`misSrce`) | `TbfmCenter.LastHeartbeat` |
+
+`<air>` attributes: `aid gufi cid tmaId apt dap`, and `airType` **NEW / AMD / DEL**. **DEL removes
+the schedule** (5 in ~900 messages). Meanings below marked *(guess)* are inferred from values, not
+from the spec (TBFM MIS JMSDD, NSRR); the raw tag is always what the API returns.
+
+- **`flt`**: `aid` `dap` `apt`; `typ` type/equipment (`B38M/L`); `bcn` beacon; `a10` NAS route
+  (field 10); `ara` requested altitude; `ina` *(guess: initial/assigned altitude)*; `spd` filed
+  speed (kt or Mach); `eng` JET / TURBO_PROP / PISTON; `cfx`/`ctm` coordination fix/time; `etd`;
+  `std` scheduled departure (TBFM release time); `acs` track status TRACKED / PROPOSED / ACTIVE /
+  INACTIVE / LOST / **LANDED**; `fps` flight-plan status ACTIVE / PROPOSED / DEPARTED; `tds`
+  *(guess: track data source: a centre, TRACON, TFM)*; `tcr` fix list `FIX/0000 …` *(guess)*;
+  `drw` departure airport_runway (`BUF_23`); `est` FAA; `etm`, `trw` seen empty.
+- **`mrp`** (this schedule's meter points): `mfx` meter fix, `sfx` / `dfx` the points the
+  `sta_sfx`/`sta_dfx` times refer to, `oma`/`ooa`/`o3a`/`o4a` **arc names** (`MOXEE/T`), `rwy`,
+  `gat` gate, `scn` stream class, `tra` TRACON, `cfg` runway config, `cat` ARRIVAL /
+  SATELLITE_ARRIVAL / SATELLITE_TO_EXTERNAL / OVERFLIGHT.
+- **`sch`** flags YES/NO: `sfz` schedule frozen, `rfz` runway frozen *(guess)*, `sus` suspended,
+  `man` manual; plus `mfx`.
+- **`eta` / `sta`**: `mfx` plus `{eta,sta}_{sfx,dfx,mfx,oma,ooa,o3a,o4a,rwy}`. Kept raw in `times`.
+- **`adp/mrns/mrn`** meter reference point: `nam`, `mrt` type **MFX** fix / **MFA** meter-fix arc /
+  **OMA** outer arc / **OOA** outer-outer arc, `gat`, `lat`/`lon` as DDMMSS(N/S)/DDDMMSS(E/W)
+  (parsed to decimal), arcs add `rad` radius nm and `lan`/`ran` left/right angles; `mfx`, `oma`,
+  `alo`/`ahi` altitude band. Arc names carry a trailing `.` (`HELNS.`) beside the fix `HELNS`.
+- **`adp/apns/apn`** airports with `rwns` runways and `cfns` runway configs (`S_28` → 28L/28R);
+  `gans` gates; `scns` stream classes (`PDX_HELNS_JETS`); `tra`/`trn` TRACON.
+- **`con/aar`** (`apt`, `tra`, `rat`, `tim`) and **`con/tar`** (`tra`, `rat`, `tim`, `tarType`).
+
+**`mfx` is whatever point that centre schedules to, arc or fix.** Live: ZLA schedules N650AL
+(SAN→OAK) to `PXN`, which is an arc, labelled `<mfx>`. Only the centre's adaptation (`mrn/mrt`)
+says which, exposed as `pointType` (MFX / MFA / OMA / OOA; null until that centre's adaptation has
+arrived). Adaptation is published rarely (one centre in a ~10-minute capture, none in the first
+minutes after a restart), so it is saved to `flight-cache/tbfm-adaptation.json` (on change, from
+the 60 s purge timer) and reloaded on startup.
+
+**`point` is the `sfx` point when `mrp` names one, else `mfx`**: `staPoint`/`etaPoint` come
+from `sta_sfx`/`eta_sfx`, and `sfx` can differ from `mfx` (live: ZAU AAL1614, mfx `MOTRR`, sfx/dfx
+`FYTTEMF`, with `eta_mfx` ≠ `eta_sfx`). The meter fix is kept separately as `meterFix`.
+Our JSON therefore names it neutrally: **`point` / `pointType` / `staPoint` / `etaPoint`** (it was
+`mfx`/`staMfx`, which read as "meter fix" for every arc). The raw `mrp` block keeps TBFM's tags.
+
+**Tests:** `tests/SwimServer.Tests/TbfmBridgeTests.cs` drives the parser with messages shaped
+like live traffic (callsigns/times made up; captured SWIM traffic isn't committed). Run with
+`dotnet test tests/SwimServer.Tests -c Release`: Release, because a running local server locks
+the Debug output.
+
+**Not persisted on purpose:** TBFM flight schedules, like TFMS/TFDM/ASDE-X/TAIS live state, are
+rebuilt from the feed. A restart costs a few minutes of fewer DCTs (measured: ETA pairs back to
+66% within ~26k messages) — not worth a shutdown step or SD-card writes. Adaptation, which is
+rare, is the part that is saved.
+
+APIs: `GET /api/tbfm/flight/{callsign}` (every centre's full record), `GET /api/tbfm/centers`
+(heartbeat, schedule count, adaptation size, rates), `GET /api/tbfm/adaptation/{center}` (points
+with arc geometry, airports, gates, streams). `/api/tbfm/eram` now also carries `mrp` and `sch`,
+and drops schedules whose `acs` is LANDED.
 
 ## ITWS: only PHL has the alerting products (queue subscription, not a bug)
 

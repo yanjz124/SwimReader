@@ -198,6 +198,124 @@ let crrColorSelectorOpen = false;
 let crrRdbEnabled = false;
 let crrRdbOffset = 3;  // 0=right, 1=left, 2=above-left, 3=bottom-left (cycles with Ctrl+Shift+O)
 
+// ── TBFM metering RDBs (STA RDB / DELAY RDB / DELAY FORMAT) ──
+// Data: /api/tbfm/eram, from the TBFM MIS feed (TbfmBridge). STA is the meter-fix STA (runway STA
+// when no meter fix is scheduled), shown HHMM zulu. Delay = STA - ETA at the same point, i.e. the
+// time the aircraft must lose (positive = must be delayed).
+// Format reference: an ERAM STA / DCT / Both slide — "0432", "-12:20", "0432 -12:20", one line below
+// the target, white-grey (not FDB yellow). Agrees with the NASA 2019 FIM study's MACS ERAM emulation
+// (NTRS 20190000841, Figs. 4-5: "+00:10" below the target; meter list "1749" "+01:10"), which also
+// gives the 10 s rounding and positive = must be delayed.
+// DELAY FORMAT's real behaviour is undocumented. OFF (the default) gives sign + MM:SS, "+03:20";
+// ON gives whole minutes, "+3" — UNVERIFIED. Hence `delayFormatMinutes`: the flag was named
+// `delayFormatSeconds` while doing the opposite of what it said.
+// Live only: TBFM schedules are not recorded, so replay shows no metering rather than today's.
+let staRdbEnabled = false;
+let delayRdbEnabled = false;
+let delayFormatMinutes = false;
+let tbfmByCallsign = new Map(); // callsign -> [records], one per ARTCC metering the flight
+const TBFM_POLL_MS = 15000;
+
+async function pollTbfm() {
+    if (!(staRdbEnabled || delayRdbEnabled) || replayActive || INCIDENT_ID) {
+        if (tbfmByCallsign.size) {
+            tbfmByCallsign = new Map();
+            invalidateAllMarkers();
+        }
+        return;
+    }
+    try {
+        const r = await fetch('/api/tbfm/eram');
+        if (!r.ok) return;
+        const j = await r.json();
+        const byCs = new Map();
+        for (const t of (j.flights || [])) {
+            if (t.aid) {
+                const list = byCs.get(t.aid) || [];
+                list.push(t);
+                byCs.set(t.aid, list);
+            }
+        }
+        tbfmByCallsign = byCs;
+    } catch { /* keep the last good set */ }
+}
+setInterval(pollTbfm, TBFM_POLL_MS);
+setTimeout(pollTbfm, 1500);  // a toggle persisted ON shouldn't wait a full poll period
+
+// The TBFM record THIS scope's controller would see. A flight carries one record per ARTCC metering
+// it (extended metering: e.g. ZLC to D34S, ZDV to ABQ, ZAB to CME, all for one DFW arrival), each
+// with that centre's own meter point and STA. A controller only sees their own centre's, so keep the
+// record whose ctr is the selected facility (or, with none selected, the flight's controlling
+// centre) — same rule as CIDs — and show nothing when that centre isn't metering the flight.
+// Matched by callsign (+ destination when known): TBFM's gufi is ERAM's short form, which SFDPS
+// doesn't publish.
+function getTbfm(f) {
+    if (!tbfmByCallsign.size || !f.callsign) return null;
+    const list = tbfmByCallsign.get(f.callsign);
+    if (!list) return null;
+    const ctr = myFacility || f.controllingFacility;
+    if (!ctr) return null;
+    const dest = (f.destination || '').toUpperCase().replace(/^K(?=[A-Z0-9]{3}$)/, '');
+    // Freshest wins: after a reroute a centre can briefly hold two records for one flight (seen
+    // live: UAL1770 in ZDV, old TBRMP schedule beside the new MNARK one) until the old one ages out.
+    let best = null;
+    for (const t of list) {
+        if (t.ctr !== ctr || (dest && t.apt && t.apt !== dest)) continue;
+        if (!best || (t.ageSec ?? 1e9) < (best.ageSec ?? 1e9)) best = t;
+    }
+    return best;
+}
+
+function _zuluHHMM(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    return String(d.getUTCHours()).padStart(2, '0') + String(d.getUTCMinutes()).padStart(2, '0');
+}
+
+// A centre's schedule can carry several points, farthest out first: meter arcs o4a, o3a, ooa, oma,
+// then the scheduled point (TBFM's <mfx>: a fix or an arc), then the runway. Which one a real sector sees is site adaptation SWIM
+// doesn't publish, so show the NEXT point the flight hasn't reached yet: the outer arc until it
+// crosses, then the meter fix, then the runway. "Reached" = its ETA (else STA) is in the past.
+const TBFM_ARC_ORDER = ['o4a', 'o3a', 'ooa', 'oma'];
+function tbfmNextPoint(t) {
+    const pts = [];
+    for (const a of TBFM_ARC_ORDER) {
+        const p = t.arcs && t.arcs[a];
+        if (p && p.sta) pts.push({ sta: p.sta, eta: p.eta });
+    }
+    if (t.staPoint) pts.push({ sta: t.staPoint, eta: t.etaPoint });
+    if (t.staRwy) pts.push({ sta: t.staRwy, eta: t.etaRwy });
+    const now = Date.now();
+    return pts.find(p => new Date(p.eta || p.sta).getTime() > now) || null;
+}
+
+// The STA / delay parts of the RDB, or '' when nothing applies.
+function tbfmRdbText(f) {
+    if (!(staRdbEnabled || delayRdbEnabled)) return '';
+    const t = getTbfm(f);
+    if (!t) return '';
+    const pt = tbfmNextPoint(t);
+    if (!pt) return '';
+    const sta = pt.sta, eta = pt.eta;
+    const parts = [];
+    if (staRdbEnabled && sta) {
+        const hhmm = _zuluHHMM(sta);
+        if (hhmm) parts.push(hhmm);
+    }
+    if (delayRdbEnabled && sta && eta) {
+        const raw = (new Date(sta) - new Date(eta)) / 1000;
+        if (isFinite(raw)) {
+            const sec = Math.round(raw / 10) * 10;           // nearest 10 s, as ERAM's DCT
+            const sign = sec < 0 ? '-' : '+';
+            const a = Math.abs(sec);
+            parts.push(delayFormatMinutes
+                ? `${sign}${Math.round(a / 60)}`              // alternate: whole minutes (unverified)
+                : `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`);
+        }
+    }
+    return parts.join(' ');
+}
+
 function setCrrColor(color) {
     crrColor = color;
     updateCrrMenuBody();
@@ -2768,22 +2886,28 @@ function buildMarkerHtml(f, cls) {
 
         // CRR RDB (Range Data Block) — distance to group location in nautical miles
         // Position relative to target icon (0,0), cycling around it
+        const rdbParts = [];
         if (crrRdbEnabled && f.latitude && f.longitude) {
             const rdbDist = getCrrRdbDistance(f);
-            if (rdbDist !== null) {
-                const rdbText = rdbDist.toFixed(1) + 'nm';
+            if (rdbDist !== null) rdbParts.push(rdbDist.toFixed(1) + 'nm');
+        }
+        // STA / DCT draw white-grey (per the ERAM STA/DCT/Both reference), distinct from both the
+        // yellow FDB and the CRR distance's magenta.
+        const tbfmText = tbfmRdbText(f);
+        if (tbfmText) rdbParts.push(`<span class="ac-rdb-tbfm">${tbfmText}</span>`);
+        if (rdbParts.length) {
+            const rdbText = rdbParts.join(' ');
 
-                // RDB offsets cycle around the target symbol (0,0)
-                const offsetConfigs = [
-                    { left: Math.ceil(CHAR_W * 2.5), top: -Math.ceil(LINE_H * 0.5) },  // right
-                    { left: -Math.ceil(CHAR_W * 8) - 20, top: -Math.ceil(LINE_H * 0.5) },  // left
-                    { left: -Math.ceil(CHAR_W * 3) - 10, top: -Math.ceil(LINE_H * 2) },  // above-left
-                    { left: -Math.ceil(CHAR_W * 3) - 10, top: Math.ceil(LINE_H * 0.5) }  // bottom-left
-                ];
-                const cfg = offsetConfigs[crrRdbOffset];
+            // RDB offsets cycle around the target symbol (0,0)
+            const offsetConfigs = [
+                { left: Math.ceil(CHAR_W * 2.5), top: -Math.ceil(LINE_H * 0.5) },  // right
+                { left: -Math.ceil(CHAR_W * 8) - 20, top: -Math.ceil(LINE_H * 0.5) },  // left
+                { left: -Math.ceil(CHAR_W * 3) - 10, top: -Math.ceil(LINE_H * 2) },  // above-left
+                { left: -Math.ceil(CHAR_W * 3) - 10, top: Math.ceil(LINE_H * 0.5) }  // bottom-left
+            ];
+            const cfg = offsetConfigs[crrRdbOffset];
 
-                html += `<div class="ac-rdb" style="left:${cfg.left}px; top:${cfg.top}px;">${rdbText}</div>`;
-            }
+            html += `<div class="ac-rdb" style="left:${cfg.left}px; top:${cfg.top}px;">${rdbText}</div>`;
         }
     } else if (ldbBrightness > 0) {
         // VCI clears when track goes to LDB
@@ -3888,7 +4012,8 @@ function flightHash(f, cls) {
     const poAck = pointoutAcked.has(f.gufi) ? 1 : 0;
     const coast = isCoasting(f) ? 1 : 0;
     const ais = f._altInitialSide || 0;
-    return `${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}|${showPortalFence?1:0}`;
+    const tbfmH = tbfmRdbText(f);
+    return `${tbfmH}|${f.latitude}|${f.longitude}|${f.callsign}|${f.reportedAltitude}|${f.assignedAltitude}|${f.interimAltitude}|${f.assignedVfr||0}|${f.blockFloor||''}|${f.blockCeiling||''}|${f.squawk}|${f.assignedSquawk||''}|${f.handoffEvent}|${f.handoffReceiving}|${f.controllingFacility}|${f.controllingSector}|${f.groundSpeed}|${f.destination}|${getCid(f)}|${cls}|${useFdb}|${useFdb ? 0 : ldbBrightness}|${hoc}|${rInd}|${dbPos}|${ldrLen}|${vci}|${laH}|${liH}|${lrH}|${line4Mode}|${f.aircraftType||''}|${hsfH}|${hsfS}|${f.clearanceHeading||''}|${f.clearanceSpeed||''}|${f.clearanceText||''}|${poAck}|${f.pointoutOriginatingUnit||''}|${f.pointoutReceivingUnit||''}|${coast}|${f.flightStatus||''}|${ais}|${showPortalFence?1:0}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -5894,6 +6019,9 @@ function loadSettingsFromLocalStorage() {
         if (settings.showPortalFence !== undefined) showPortalFence = settings.showPortalFence;
         if (settings.crrRdbEnabled !== undefined) crrRdbEnabled = settings.crrRdbEnabled;
         if (settings.crrRdbOffset !== undefined) crrRdbOffset = settings.crrRdbOffset;
+        if (settings.staRdbEnabled !== undefined) staRdbEnabled = settings.staRdbEnabled;
+        if (settings.delayRdbEnabled !== undefined) delayRdbEnabled = settings.delayRdbEnabled;
+        if (settings.delayFormatMinutes !== undefined) delayFormatMinutes = settings.delayFormatMinutes;
         if (settings.artccBoundShow !== undefined) artccBoundShow = settings.artccBoundShow;
         if (settings.artccBoundBrightness !== undefined) artccBoundBrightness = settings.artccBoundBrightness;
         if (settings.stateBoundShow !== undefined) stateBoundShow = settings.stateBoundShow;
@@ -6008,6 +6136,9 @@ function saveSettingsToLocalStorage() {
         showPortalFence,
         crrRdbEnabled,
         crrRdbOffset,
+        staRdbEnabled,
+        delayRdbEnabled,
+        delayFormatMinutes,
         artccBoundShow,
         artccBoundBrightness,
         stateBoundShow,
@@ -8041,7 +8172,7 @@ document.addEventListener('keydown', e => {
 
     // Ctrl+Shift+O → cycle CRR RDB offset
     if (e.ctrlKey && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
-        if (crrRdbEnabled) {
+        if (crrRdbEnabled || staRdbEnabled || delayRdbEnabled) {
             crrRdbOffset = (crrRdbOffset + 1) % 4;
             invalidateAllMarkers();
         }
@@ -10383,18 +10514,32 @@ const TB_DB_FIELDS = {
             }),
             toggle('STA RDB', {
                 cls: 'tb-toggle-gray',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => staRdbEnabled,
+                onToggle: (on) => {
+                    staRdbEnabled = on;
+                    pollTbfm().then(invalidateAllMarkers);
+                    invalidateAllMarkers();
+                    saveSettingsToLocalStorage();
+                },
             }),
             toggle('DELAY\nRDB', {
                 cls: 'tb-toggle-gray',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => delayRdbEnabled,
+                onToggle: (on) => {
+                    delayRdbEnabled = on;
+                    pollTbfm().then(invalidateAllMarkers);
+                    invalidateAllMarkers();
+                    saveSettingsToLocalStorage();
+                },
             }),
             toggle('DELAY\nFORMAT', {
                 cls: 'tb-toggle-gray',
-                isOn: () => false,
-                onToggle: () => {},
+                isOn: () => delayFormatMinutes,
+                onToggle: (on) => {
+                    delayFormatMinutes = on;
+                    invalidateAllMarkers();
+                    saveSettingsToLocalStorage();
+                },
             }),
         ],
     ],

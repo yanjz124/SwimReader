@@ -1667,15 +1667,31 @@ let favLoadToken = 0;                 // guards against an out-of-order fetch wi
 // loaded yet" test true forever and rebuildAllBoundaryLayers would re-enter the fetch endlessly.
 let loadedFavArtcc = null;
 
-// A FAV module has a numeric floor; the renderer wants one of the four ERAM strata. Bucket on the
-// FLOOR, because that is what decides which stratum a controller sees the volume in. Approach
-// Control has no FAV equivalent — TRACON airspace is not published here — so that slider draws
-// nothing in FAV mode, which the sidebar says.
-function favCategory(lowerAlt) {
-    if (lowerAlt >= 35000) return 'Ultra High';
-    if (lowerAlt >= 24000) return 'High Altitude';
+// A FAV module has numeric altitudes; the renderer wants one of the four ERAM strata. Bucket on
+// the CEILING. Floor was the first attempt and it is wrong: a sector is a stack of slabs, so the
+// lower ones all have low floors and 292 of ZDC's 347 volumes landed in LO — which is off by
+// default, so the scope came up nearly blank. Measured over all 20 ARTCCs, ceiling gives UHI 690
+// against the KML's 692 nationally, i.e. it reproduces what the KML calls ultra high; floor gave
+// 250 and midpoint 499.
+//
+// Approach Control has no FAV equivalent — TRACON airspace is not published here — so that slider
+// draws nothing in FAV mode, which the sidebar says.
+function favCategory(lowerAlt, upperAlt) {
+    if (upperAlt >= 35000) return 'Ultra High';
+    if (upperAlt >= 24000) return 'High Altitude';
     return 'Low Altitude';
 }
+
+// With FL FOLLOW on, which stratum a slab nominally belongs to is beside the point — the altitude
+// filterdecides what is relevant, and gating on the category sliders too just hides slabs the
+// filter already selected. So everything collapses into one pseudo-category driven by the UHI
+// slider, which is the one that is on by default.
+const FL_CAT = 'FL Filter';
+const flFollowActive = () => boundarySource === 'fav' && favAltFollow;
+const activeCats = () => (flFollowActive() ? [FL_CAT] : BOUNDARY_CATS);
+const catBrightness = (cat) => (cat === FL_CAT ? boundaryBrightness['Ultra High'] : boundaryBrightness[cat]);
+const shapesForCat = (artcc, cat) => sectorShapes.filter(s =>
+    s.artcc === artcc && shapeInAltFilter(s) && (cat === FL_CAT || s.category === cat));
 const boundaryLayers = {};        // keyed by 'ARTCC:category'
 let activeBoundaryArtcc = '';
 const BOUNDARY_CATS = ['Ultra High', 'High Altitude', 'Low Altitude', 'Approach Control'];
@@ -1814,7 +1830,7 @@ async function loadFavs(artcc) {
             sectorId: p.sector,
             // Printed into the dwell/info text, so say "and above" rather than a fake ceiling.
             alt: p.unlimitedCeiling ? `${p.lowerAlt}-ABV` : `${p.lowerAlt}-${p.upperAlt}`,
-            category: favCategory(p.lowerAlt),
+            category: favCategory(p.lowerAlt, p.unlimitedCeiling ? 999999 : p.upperAlt),
             lowerAlt: p.lowerAlt,
             upperAlt: p.unlimitedCeiling ? 999999 : p.upperAlt,
             coords: ring.map(c => [c[1], c[0]]),   // GeoJSON is lon,lat — Leaflet wants lat,lon
@@ -1888,7 +1904,7 @@ function rebuildAllBoundaryLayers() {
 function showBoundariesForFacility(artcc) {
     // Remove all layers for the previous ARTCC
     if (activeBoundaryArtcc) {
-        for (const cat of BOUNDARY_CATS) {
+        for (const cat of [...BOUNDARY_CATS, FL_CAT]) {
             const key = `${activeBoundaryArtcc}:${cat}`;
             if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
         }
@@ -1909,8 +1925,8 @@ function showBoundariesForFacility(artcc) {
         return;
     }
 
-    for (const cat of BOUNDARY_CATS) {
-        const br = boundaryBrightness[cat];
+    for (const cat of activeCats()) {
+        const br = catBrightness(cat);
         if (br <= 0) continue;
         const key = `${artcc}:${cat}`;
         if (!boundaryLayers[key]) {
@@ -1918,7 +1934,7 @@ function showBoundariesForFacility(artcc) {
             const dashArray = getBoundaryDashArray(cat);
             const polylineOptions = { color: bndColor(br), weight: 1, opacity: 1, interactive: false, className: 'bnd-path' };
             if (dashArray) polylineOptions.dashArray = dashArray;
-            for (const sec of sectorShapes.filter(s => s.artcc === artcc && s.category === cat && shapeInAltFilter(s))) {
+            for (const sec of shapesForCat(artcc, cat)) {
                 L.polyline(sec.coords, polylineOptions).addTo(group);
             }
             boundaryLayers[key] = group;
@@ -1930,6 +1946,8 @@ function showBoundariesForFacility(artcc) {
 function setBoundaryBrightness(cat, brightness) {
     boundaryBrightness[cat] = brightness;
     if (!activeBoundaryArtcc) return;
+    // One pseudo-layer in FL FOLLOW mode, so per-category patching does not apply.
+    if (flFollowActive()) { rebuildAllBoundaryLayers(); return; }
     const key = `${activeBoundaryArtcc}:${cat}`;
     if (brightness <= 0) {
         if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);

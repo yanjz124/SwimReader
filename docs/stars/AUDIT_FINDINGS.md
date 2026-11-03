@@ -1,7 +1,20 @@
 # STARS port deep audit (vs DGScope)
 
-Generated: 2026-06-23. Source of truth: `.stars-reference/scope/`.
-Sibling: `COMMAND_AUDIT.md` (dispatcher-level command branches with cites).
+> **Read this first: DGScope is NOT the source of truth. CRC is.**
+> This audit was written against `.stars-reference/scope/` (the DGScope WPF source) and treats any
+> divergence from it as a defect. That premise is wrong, and acting on it has already cost work:
+> re-checking a set of its findings against `docs/crc-stars-reference.md`, **six of seven dissolved**
+> — the behavior CRC specifies simply differs from DGScope's, and "fixing" toward DGScope would
+> have moved the port *away* from the spec. Section A ("invented code — REMOVE") is the dangerous
+> one: some of what it calls invented is CRC-correct.
+>
+> Use DGScope for *rendering and algorithm detail* where CRC is silent. Use CRC for anything
+> user-facing — commands, colors, symbols, data-block content, behavior. When they disagree, CRC
+> wins. Verify each item against the CRC reference before touching code for it.
+
+Generated: 2026-06-23. Compared against `.stars-reference/scope/` (DGScope), which is a
+cross-check, not the spec. Sibling: `COMMAND_AUDIT.md` (dispatcher-level command branches with
+cites).
 
 This doc is the broader, file-level audit covering scope.js, preview.js,
 dcb.js, ssa.js, nexrad.js. Each finding has a DGScope cite. Items marked

@@ -504,7 +504,7 @@ class TbfmBridge
                 rwy = f.Runway,
                 staMfx = f.StaMeterFix, etaMfx = f.EtaMeterFix,
                 staRwy = f.StaRunway, etaRwy = f.EtaRunway,
-                arcs = f.ArcTimes.ToDictionary(kv => kv.Key, kv => new { sta = kv.Value.Sta, eta = kv.Value.Eta }),
+                arcs = f.ArcTimes.ToDictionary(kv => kv.Key, kv => new { name = ArcName(f, kv.Key), sta = kv.Value.Sta, eta = kv.Value.Eta }),
                 times = new SortedDictionary<string, string>(f.Times),
                 flt = new SortedDictionary<string, string>(f.Flt),
                 mrp = new SortedDictionary<string, string>(f.Mrp),
@@ -562,16 +562,34 @@ class TbfmBridge
         };
     }
 
-    /// <summary>Arc STA/ETA pairs still ahead of the flight, keyed oma/ooa/o3a/o4a; null when none.</summary>
-    private static Dictionary<string, object>? ArcsJson(TbfmFlight f, DateTime now)
+    /// <summary>
+    /// Arc STA/ETA pairs still ahead of the flight, keyed oma/ooa/o3a/o4a, each with its name;
+    /// null when none.
+    /// </summary>
+    private Dictionary<string, object>? ArcsJson(TbfmFlight f, DateTime now)
     {
         Dictionary<string, object>? d = null;
         foreach (var (arc, t) in f.ArcTimes)
         {
             if (t.Sta is null || Passed(t.Sta, f.TimesSeen, now)) continue;
-            (d ??= new())[arc] = new { sta = t.Sta, eta = t.Eta };
+            (d ??= new())[arc] = new { name = ArcName(f, arc), sta = t.Sta, eta = t.Eta };
         }
         return d;
+    }
+
+    /// <summary>
+    /// The arc's name. First the schedule's own &lt;mrp&gt; (oma = "MOXEE/T"). That block often
+    /// arrives in a different message from the times, so fall back to the centre's adaptation: a
+    /// meter-fix point lists its outer arc (mrn/oma). Only the outer arc has that fallback.
+    /// </summary>
+    private string? ArcName(TbfmFlight f, string arc)
+    {
+        if (f.Mrp.TryGetValue(arc, out var n) && !string.IsNullOrWhiteSpace(n)) return n;
+        if (arc == "oma" && f.MeterFix is { } mfx
+            && CenterOf(f.Source) is { } ctr && _centers.TryGetValue(ctr, out var c)
+            && c.Points.TryGetValue(mfx, out var pt) && !string.IsNullOrWhiteSpace(pt.Arc))
+            return pt.Arc;
+        return null;
     }
 
     /// <summary>

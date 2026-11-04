@@ -321,37 +321,63 @@ static class FlightHistoryIndex
     }
 
     /// <summary>Read N matching records from the .jsonl using the index entries.</summary>
-    public static List<JsonElement> ReadMatching(string historyDir, string date, IEnumerable<IndexEntry> matches, int max)
+    /// <summary>
+    /// Read the records behind the given index entries, newest-file order preserved.
+    ///
+    /// **Lazy on purpose.** Callers filter what comes back (aircraft type, callsign dedup,
+    /// residual clauses) and stop at their own result cap, so materialising a list meant reading
+    /// records nobody looked at: the dispatch search read up to 1,000 per day-file across 7 days
+    /// to produce at most 200 results. Each one is a seek plus a read in a ~300 MB file on an SD
+    /// card, which is where the remaining latency outliers lived. Yielding lets the caller's
+    /// `break` stop the I/O.
+    ///
+    /// Every caller enumerates exactly once with foreach; none re-enumerates or takes .Count.
+    /// If you add one that does, materialise at that call site, not here.
+    ///
+    /// Entries arrive in ascending offset order (the index is built by scanning the file), so
+    /// these are forward seeks rather than random ones — worth preserving if this is ever
+    /// re-sorted.
+    /// </summary>
+    public static IEnumerable<JsonElement> ReadMatching(string historyDir, string date, IEnumerable<IndexEntry> matches, int max)
     {
         var jsonl = JsonlPath(historyDir, date);
-        var result = new List<JsonElement>();
-        if (!File.Exists(jsonl)) return result;
-        try
+        if (!File.Exists(jsonl)) yield break;
+
+        FileStream fs;
+        try { fs = new FileStream(jsonl, FileMode.Open, FileAccess.Read, FileShare.ReadWrite); }
+        catch (Exception ex) { Console.Error.WriteLine($"[HistIdx] Read {date}: {ex.Message}"); yield break; }
+
+        using (fs)
         {
-            using var fs = new FileStream(jsonl, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             byte[] buf = new byte[64 * 1024];
+            int emitted = 0;
             foreach (var m in matches)
             {
-                if (result.Count >= max) break;
-                if (m.Length > buf.Length) buf = new byte[m.Length + 1024];
-                fs.Seek(m.Offset, SeekOrigin.Begin);
-                int read = 0;
-                while (read < m.Length)
-                {
-                    int n = fs.Read(buf, read, m.Length - read);
-                    if (n <= 0) break;
-                    read += n;
-                }
-                if (read == 0) continue;
+                if (emitted >= max) yield break;
+                JsonElement el = default;
+                bool ok = false;
                 try
                 {
-                    var el = JsonSerializer.Deserialize<JsonElement>(new ReadOnlySpan<byte>(buf, 0, read));
-                    result.Add(el);
+                    if (m.Length > buf.Length) buf = new byte[m.Length + 1024];
+                    fs.Seek(m.Offset, SeekOrigin.Begin);
+                    int read = 0;
+                    while (read < m.Length)
+                    {
+                        int n = fs.Read(buf, read, m.Length - read);
+                        if (n <= 0) break;
+                        read += n;
+                    }
+                    if (read > 0)
+                    {
+                        el = JsonSerializer.Deserialize<JsonElement>(new ReadOnlySpan<byte>(buf, 0, read));
+                        ok = true;
+                    }
                 }
-                catch { /* skip malformed */ }
+                catch { /* skip malformed or unreadable record */ }
+                if (!ok) continue;
+                emitted++;
+                yield return el;
             }
         }
-        catch (Exception ex) { Console.Error.WriteLine($"[HistIdx] Read {date}: {ex.Message}"); }
-        return result;
     }
 }

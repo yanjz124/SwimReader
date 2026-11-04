@@ -1456,20 +1456,63 @@ async function sbHydrate(d) {
     if (!live) return;                                   // panel changed while we were fetching
     if (ownRec) st.recs.set(ownRec.registration, ownRec);
     for (const a of fleet) if (a.registration) st.recs.set(a.registration, a);
-    const sel = live.querySelector('.afsel');
-    const others = fleet.filter(a => a.registration && a.registration !== own);
-    let html = '';
-    if (own) html += `<optgroup label="This flight"><option value="${esc(own)}">${esc(ownRec ? sbAfLabel(ownRec) : own + '  ·  not in aircraft DB')}</option></optgroup>`;
-    if (others.length) html += `<optgroup label="${esc(sbOperator(d))} ${esc(d.aircraftType || '')} fleet — ${others.length} tail${others.length === 1 ? '' : 's'}">${
-        others.map(a => `<option value="${esc(a.registration)}">${esc(sbAfLabel(a))}</option>`).join('')}</optgroup>`;
-    html += `<option value="">Generic — no tail data</option>`;
-    sel.innerHTML = html;
     // Restore the previous pick, else this flight's own tail. Resolve it to the DB record when there
     // is one — otherwise the flight's own tail would be sent without the SELCAL and Mode-S the
     // aircraft DB knows about, which is most of the reason for pre-filling SimBrief at all.
     const want = st.af === undefined ? own : (st.af ? st.af.registration : '');
-    sel.value = [...sel.options].some(o => o.value === want) ? want : (own || '');
+    sbFillAfSelect(d, live, own, ownRec, fleet, d.aircraftType || '',
+        sel => [...sel.options].some(o => o.value === want) ? want : (own || ''));
+}
+
+// Rebuild the AIRFRAME options. `fleetType` is the type the fleet was fetched for: the filed type
+// on hydrate, the chosen TYPE after an override. `choose` picks the selection from the new list.
+function sbFillAfSelect(d, live, own, ownRec, fleet, fleetType, choose) {
+    const sel = live.querySelector('.afsel'); if (!sel) return;
+    const others = fleet.filter(a => a.registration && a.registration !== own);
+    let html = '';
+    if (own) html += `<optgroup label="This flight"><option value="${esc(own)}">${esc(ownRec ? sbAfLabel(ownRec) : own + '  ·  not in aircraft DB')}</option></optgroup>`;
+    if (others.length) html += `<optgroup label="${esc(sbOperator(d))} ${esc(fleetType)} fleet — ${others.length} tail${others.length === 1 ? '' : 's'}">${
+        others.map(a => `<option value="${esc(a.registration)}">${esc(sbAfLabel(a))}</option>`).join('')}</optgroup>`;
+    else if (fleetType && fleetType !== (d.aircraftType || ''))
+        html += `<optgroup label="${esc(sbOperator(d))} ${esc(fleetType)} fleet"><option value="" disabled>no ${esc(sbOperator(d))} ${esc(fleetType)} tails on record</option></optgroup>`;
+    html += `<option value="">Generic — no tail data</option>`;
+    sel.innerHTML = html;
+    sel.value = choose(sel) ?? '';
     sbSetAirframe(d, sel.value, false);
+}
+
+// TYPE overridden by hand: reload the operator's fleet for the NEW type, not just the variants.
+// Same reasoning as the route finder (dispatch/index.html setSbType) — otherwise the tail list
+// still shows the filed type's airframes and SimBrief gets a tail whose real type contradicts
+// the type just chosen.
+let _sbTypeSeq = 0;
+async function sbSetType(d, raw) {
+    const st = sbChoice.get(d.gufi); if (!st) return;
+    st.type = (raw || '').trim().toUpperCase();
+    const eff = st.type || (st.af && st.af.type) || d.aircraftType;
+    sbLoadVariants(d, eff);
+
+    const seq = ++_sbTypeSeq;
+    const own = d.registration && d.registration !== 'LADD' ? d.registration : '';
+    const selNow = detailBody.querySelector('.af[data-gufi] .afsel');
+    const prev = selNow ? selNow.value : '';
+    const [ownRec, fleet] = await Promise.all([sbGetTail(own), sbGetFleet(eff, sbOperator(d))]);
+    if (seq !== _sbTypeSeq) return;                      // a later type change supersedes this one
+    const live = detailBody.querySelector(`.af[data-gufi="${CSS.escape(d.gufi || '')}"]`);
+    if (!live) return;                                   // panel changed while we were fetching
+    if (ownRec) st.recs.set(ownRec.registration, ownRec);
+    for (const a of fleet) if (a.registration) st.recs.set(a.registration, a);
+
+    sbFillAfSelect(d, live, own, ownRec, fleet, eff, sel => {
+        const rec = prev ? st.recs.get(prev) : null;
+        const offered = prev && [...sel.options].some(o => o.value === prev && !o.disabled);
+        // Keep the tail only if it IS the new type — the flight's own reg stays listed under
+        // "This flight" whatever TYPE says, so "keep what's offered" would leave the mismatch.
+        if (offered && (!rec || !rec.type || rec.type.toUpperCase() === eff)) return prev;
+        const firstOfType = fleet.find(a => a.registration && (!a.type || a.type.toUpperCase() === eff));
+        if (firstOfType) return firstOfType.registration;
+        return offered ? prev : '';
+    });
 }
 
 function sbSetAirframe(d, reg, keepDefault) {
@@ -1540,9 +1583,7 @@ detailBody.addEventListener('change', e => {
     const d = currentDetail; if (!d) return;
     const t = e.target.closest('.aftype');
     if (t) {
-        const st = sbChoice.get(d.gufi); if (!st) return;
-        st.type = t.value.trim().toUpperCase();
-        sbLoadVariants(d, st.type || (st.af && st.af.type) || d.aircraftType);
+        sbSetType(d, t.value);
         return;
     }
     const a = e.target.closest('.afsel');

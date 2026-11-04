@@ -433,6 +433,60 @@ The other silent loss path is inside our own process: the STDDS service's bounde
 `itemDropped` callback and log it — `ChannelEventBus` per subscriber, and `ScdsHostedService`
 (`InboundDropped`) for the raw inbound buffer.
 
+### The dashboard answers it now, and three fields were added so it could
+
+The home page's THROUGHPUT card is a row per feed: rate, kB/s, lag, **lag floor**, parse-thread
+busy %, **flows**, **reconnects**, broker discards, and a 10-minute sparkline of rate and lag.
+Before this it showed SFDPS's rate and nothing else; the other five feeds were invisible from the
+site and "is anything being lost" was not answerable without SSH.
+
+**`lagFloorSec` is the field worth understanding.** It is the lowest mean lag over the retained
+10-minute window, and it exists because a lag *sample* cannot distinguish the two cases that
+matter — and this repo has misread it in both directions:
+
+| | lag | floor | what it is |
+|---|---|---|---|
+| queue pinned at the broker's ceiling | high | **high** | constant *because* delivery is capped. Reads like upstream latency. SFDPS sat here for months. |
+| bursty feed that is keeping up | high | **~0** | sawtooth: climbs on a burst, drains between. TBFM does this, and one 12 s sample of it was read here as a regression in a fix that was working. |
+
+A sawtooth touches zero; a pinned queue never does. `state` encodes the split as **`behind`**
+(high lag, floor also high, busyPct < 25% → transport ceiling, raise the flow count) versus
+**`lagging`** (high lag, low floor → fine). They are *identical* in a snapshot and have opposite
+answers, which is the whole reason the verdict is computed server-side in `FeedHealth.Verdict`
+rather than left to each reader's thresholds.
+
+`flows` and `reconnects` are there because they complete the diagnosis: the answer to `behind` is
+almost always a higher `*_FLOWS`, so the current value belongs beside the symptom; and a feed that
+rebuilds its session every few minutes posts a healthy average rate with real gaps in it, which
+nothing else on the page would reveal.
+
+**`busyPct` is per parse thread, not summed.** `BusyTicks` accumulates across every one of a
+feed's Solace callback threads while the window is wall-clock, so an N-flow feed reported up to
+N x 100% — TFMS measured **153.6%** on two receivers. It is divided by the flow count now, so the
+number means what the field says it means and is comparable between a 1-flow and a 6-flow feed.
+
+### Two of our own services share one STDDS queue, and only one was counting
+
+`SWIM_FEED_HOST` stops a second **host** binding a queue. It does not stop two services on the
+*same* host, and we have exactly that: `sfdps-eram`'s `AsdexBridge` and `swimreader-stdds`'s
+`ScdsHostedService` both bind `SCDSCONNECTION__QUEUENAME`, which is a single queue in the `.env`.
+A Solace queue is competing-consumers, so **each STDDS message goes to exactly one of them** and
+each sees a fraction of TAIS/TDES/SMES. Nothing errors; both report a healthy-looking rate.
+
+Worse, `swimreader-stdds` had **no throughput instrumentation at all** — no message count, no
+rate, no `DiscardIndication` check — so everything we knew about "the STDDS feed" came from the
+process that only sees part of it.
+
+`StddsFeedHealth` (in `SwimReader.Scds`) now counts per STDDS sub-service (TAIS / TDES / SMES /
+APDS / ISMC, plus a `TOTAL`), with the same field names SwimServer's `FeedHealth` emits so the two
+render side by side. It is served at `GET /feed` on :5000 and proxied by SwimServer as
+**`GET /api/feed/stdds`** (2 s timeout, 5 s cache, `{reachable:false}` rather than a stall when the
+neighbour restarts). The card shows both shares *and their sum*, which is the real queue rate.
+
+**This is a finding, not a fix.** Splitting the queue is still happening — the dashboard just
+makes it visible. Fixing it means either a second STDDS queue in the SCDS portal, or one service
+consuming and re-publishing to the other. Until then, read the sum, never one row.
+
 ## SFDPS Data Pipeline (SwimServer)
 
 ### Message Flow
@@ -1428,6 +1482,104 @@ downstream. `/api/stars/facility/...` also returns `hasStars` so no caller has t
 
 **The `?notice=` banner is rendered with `textContent`, never `innerHTML`** — it comes straight off
 the query string, so innerHTML would be a reflected-XSS hole on a page anyone can link to.
+
+### The STARS picker keyed live traffic on the wrong id (Palm Beach read as dead)
+
+`/stars` showed PBI with no track count, no position chips, and — in REPLAY — greyed out as having
+no recording, while the TRACON was working 170 tracks with 7 positions staffed. The facility was
+fine. **vNAS calls Palm Beach TRACON `PBI` while TAIS publishes it as `DJT`** (the airport was
+renamed), so all three of the picker's live lookups missed: `taisCounts["PBI"]`, `tcpByFac["PBI"]`,
+`taisRanges["PBI"]`.
+
+`ResolveFeedId` already solves this and the **scope** has always used it (`scope.js feedId()`), so
+opening PBI's scope worked — only the directory didn't, which is why it read as a facility going
+offline rather than a key mismatch. The resolver is now threaded through
+`GetStarsFacilitiesAsync` so every summary row carries **`feedFacilityId`**, and the picker keys on
+that. The id shown in the row and used in the launch URL stays vNAS's; the scope resolves the feed
+id itself.
+
+**Audited across all 24 ARTCCs: PBI is the only mismatch in 213 STARS facilities.** 71 others have
+no feed under their own id at all, and those are legitimate — military RAPCON/RATCFs (CVS, HMN,
+LUF, GUS, NQI …) and Hawaii/Guam/PR, none of which are on our STDDS subscription.
+
+### An SPC colours its own two characters, not the whole data block
+
+CRC gives **no** data-block colour for a special purpose code: "the associated two-character
+identifier will be displayed in the first line of the data block", plus an SSA entry and a tone.
+Its one red data-block item is **CA** ("blinking red in the top line"), and its target-colour
+descriptions are white = owned, green = another controller's, cyan = highlighted, yellow = incoming
+point out, red = CA. There is no emergency block colour.
+
+DGScope has one (`RadarWindow.cs:5436 if (Emergency) → DataBlockEmergencyColor`) and this port
+copied it for 7700/7600/7500. The cost was not cosmetic: **white-vs-green is whose aircraft it is**,
+and reddening the block threw that away exactly when it matters most — an emergency on your own
+frequency rendered identically to one three sectors away. Dropped. The `EM`/`RF`/`HJ`/`MI`/`LL`
+identifier is still red on its own line (matching CRC's red `RF EM` SSA line) and still blinks
+until the track is slewed. FDB promotion on an emergency is untouched — that is behaviour, not
+colour.
+
+The pattern to remember: **appearance follows the CRC docs, algorithms follow the DGScope source.**
+`docs/crc-stars-reference.md` already warned that matching DGScope where CRC is silent moves us
+*away* from the standard; this is that warning coming true.
+
+### DCB map buttons belong to the POSITION, and vNAS is the source
+
+A facility publishes one `mapGroup` per group of TCPs — vNAS says so, every group carries a
+`tcps` array. Two things were wrong:
+
+- The binding was computed **once at bootstrap** from `?tcp=` off the URL. Open a facility cold and
+  you got `mapGroups[0]`, whichever vNAS happened to list first. Measured over all 24 ARTCCs:
+  **97 of 213 facilities publish more than one map group, and 92 of those have groups whose DCB
+  slots 1-6 differ.** PCT publishes 15 groups, SCT 33, NCT 39. PCT group 0 is `[1,2,3,4,5,6]` and
+  group 2 is `[37,38,39,40,4,3]` — no overlap worth speaking of. Signing on afterwards with `.SO`
+  re-derived ownership but never revisited the maps.
+- `loadProfileMaps()` replaced the vNAS catalogue **unconditionally** whenever a DGScope
+  ScopeServer profile existed ("profile maps supersede vNAS maps on v2"). That inverts the
+  precedence: vNAS adaptation is authoritative and covers all 213 facilities; a ScopeServer profile
+  is a legacy/reference artifact for a handful. PCT has one and was discarding its own 237 vNAS
+  maps and 15 position groups in favour of the profile's 6-slot binding.
+
+`selectMapGroup()` is now keyed on `ownTcp()` and called from bootstrap **and** `setOwnTcp`, and
+the profile path runs only when vNAS gave us nothing (`?dgmaps=1` forces it for comparison).
+The picker's live position chips launch with `?tcp=`, since you can't type `.SO` before the scope
+exists. Verified: PCT no-tcp → `[1,2,3,4,5,6]` (flagged `activeMapGroupIsDefault`), `?tcp=3M` →
+`[22,23,24,25,3,26]`, `?tcp=1K` → `[37,38,39,40,4,3]`, all matching vNAS exactly.
+
+**A dead alias sat behind this.** `mapButtonAssignments` was bound once at module load, but both
+`selectMapGroup` and `loadProfileMaps` **reassign** `activeMapIds` rather than mutating it — so
+the alias pointed at a dead array from the first rebind. `applyProfile()` wrote a vNAS JSON
+profile's `tcp.dcbMapList` into it, which nothing reads, so **`?profile=NAME` never applied its
+map buttons at all.** The variable is gone; `window.mapButtonAssignments` is a live getter.
+
+### `window.starsState` and `starsState` were different objects — one missing `window.`
+
+The six **WX buttons did nothing** and NEXRAD painted **every intensity level**. One cause.
+
+There were two objects both named `starsState`: the MCA container assigned to `window.starsState`,
+and the DCB container declared as a module-scope `const`. **A `const` in a classic script is not a
+property of `window`**, so which one you got depended on how you spelled the read — unqualified
+`starsState.foo` hit the const (it shadows the global), `window.starsState?.foo` hit the other.
+Both spellings are used throughout `scope.js`, `dcb.js`, `nexrad.js` and `preview.js`.
+
+`wxLevels` lived on the const, the WX buttons wrote to the const, and `nexrad.js draw()` read
+`window.starsState?.wxLevels` — `undefined`, every frame. It then took its documented fallback,
+`prefSet.Nexrad.enabled ? prefSet.Nexrad.levels : 0`, whose `levels` defaulted to **`0x3F`** (all
+six). Hence every level drawn and a WX press that moved the highlight and nothing else.
+
+Fixed with `Object.assign(window.starsState, {...})`, so the const and the global are one object
+and the spellings cannot disagree again — not about `wxLevels`, and not about `TPASize`,
+`MSAWActive`, `AutoOffset`, `rangeBearingLines`, `minSeps` or `tempLine`, each of which is likewise
+read through `window.` in one place and written unqualified in another. `prefSet.Nexrad.levels`
+now defaults to **0**: it is only a fallback for a case that can't happen, and "draw nothing" is
+the right answer there.
+
+### Still open here
+- **The SITE submenu is always empty.** `starsState.asrSites` reads
+  `fac.starsConfiguration.areas.flatMap(a => a.asrSites)`, but STARS areas carry no `asrSites` key.
+  The ASR list lives at **`facility/eramConfiguration/asrSites`** on the ARTCC root (ZMA: VRB, FLL,
+  MYN, QYY, RSW, ZQA, with lat/lon, range and ceiling). So the menu only ever shows MULTI
+  (disabled) + FUSED. Whether a TRACON's SITE menu should list the whole ARTCC's ASRs or only those
+  in range is a judgement call that hasn't been made.
 
 ### The SFDPS watchdog was killing local instances every four minutes
 

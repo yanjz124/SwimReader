@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -17,6 +17,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SwimReader.Core\SwimReader.Core.csproj" />
+    <!-- For BeaconCodes: the non-discrete beacon table decides whether a track can be given a
+         callsign from ADS-B at all, and getting it wrong produces a confidently wrong callsign
+         rather than a missing one. Worth a test, so worth the reference. -->
+    <ProjectReference Include="..\..\src\SwimReader.Server\SwimReader.Server.csproj" />
   </ItemGroup>
 
   <ItemGroup>

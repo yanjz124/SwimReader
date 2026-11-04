@@ -233,19 +233,35 @@ static class FeedHealth
     /// window, not the instant, and the dashboard should not make someone watch for ten minutes
     /// to answer it.
     /// </summary>
-    private static double? LagFloor(Counters c)
+    private static double? LagFloor(Counters c) => LagFloorWith(c).floor;
+
+    /// <summary>
+    /// The floor plus how many windows it was computed from, because the count decides whether
+    /// the floor means anything yet. A feed that started 50 s ago has 5 samples; TBFM's sawtooth
+    /// has a period longer than that, so its floor has not seen a trough and equals its current
+    /// lag — which is indistinguishable from a pinned queue. Measured on a fresh restart, SFDPS
+    /// and TBFM both read "behind" for the first few minutes purely from draining their startup
+    /// backlog. Verdict() therefore withholds that call until the window is reasonably full.
+    /// </summary>
+    private static (double? floor, int samples) LagFloorWith(Counters c)
     {
         lock (c.History)
         {
             double? min = null;
+            int n = 0;
             foreach (var h in c.History)
             {
                 if (h.LagSec < 0) continue;            // no lag samples in that window
+                n++;
                 if (min is null || h.LagSec < min) min = h.LagSec;
             }
-            return min;
+            return (min, n);
         }
     }
+
+    // 5 minutes of windows. Long enough to contain a trough of the slowest sawtooth observed
+    // here, and to outlast the backlog a restart drains.
+    private const int FloorMinSamples = 30;
 
     /// <summary>
     /// One word for what this feed is doing, so every caller reaches the same conclusion from
@@ -264,7 +280,7 @@ static class FeedHealth
     /// The `behind` vs `lagging` split is the whole point: they look identical in a snapshot and
     /// have completely different answers.
     /// </summary>
-    private static string Verdict(Counters c, double ageSec, double? floor)
+    private static string Verdict(Counters c, double ageSec, double? floor, int floorSamples)
     {
         if (Interlocked.Read(ref c.DiscardEvents) > 0) return "loss";
         if (Interlocked.Read(ref c.Msgs) == 0) return "idle";
@@ -272,7 +288,13 @@ static class FeedHealth
         if (c.BusyPct >= 60) return "saturated";
         var lag = c.LagMsMean;
         if (!double.IsNaN(lag) && lag / 1000.0 >= 5.0)
-            return (floor is >= 5.0 && c.BusyPct < 25) ? "behind" : "lagging";
+        {
+            // "behind" is a claim about the SHAPE of the lag over time, so it needs enough
+            // windows to have seen a trough if there is one. Below that, say "lagging" — the
+            // honest reading of a high lag we cannot yet characterize.
+            var settled = floorSamples >= FloorMinSamples;
+            return (settled && floor is >= 5.0 && c.BusyPct < 25) ? "behind" : "lagging";
+        }
         return "ok";
     }
 
@@ -285,7 +307,7 @@ static class FeedHealth
             var lastMsg = Interlocked.Read(ref c.LastMsgTicks);
             var ageSec = lastMsg == 0 ? double.MaxValue
                 : (DateTime.UtcNow - new DateTime(lastMsg, DateTimeKind.Utc)).TotalSeconds;
-            var floor = LagFloor(c);
+            var (floor, floorSamples) = LagFloorWith(c);
             var upSec = (DateTime.UtcNow - _started).TotalSeconds;
             object[] hist;
             lock (c.History)
@@ -323,7 +345,10 @@ static class FeedHealth
                 // 90s silence watchdog in each bridge is measuring.
                 lastMsgAgeSec = Interlocked.Read(ref c.LastMsgTicks) == 0 ? (double?)null : Math.Round(ageSec, 1),
                 avgMsgsPerSec = upSec > 1 ? Math.Round(Interlocked.Read(ref c.Msgs) / upSec, 1) : 0,
-                state = Verdict(c, ageSec, floor),
+                state = Verdict(c, ageSec, floor, floorSamples),
+                // How many 10s windows the floor was computed from. Below ~30 the floor has not
+                // had time to show a trough, so a high floor does not yet mean a pinned queue.
+                floorSamples,
                 // 10 minutes of 10s samples so a caller can draw the shape rather than trust a
                 // point. rate/kbPerSec/busyPct/lagSec per window; lagSec -1 = no samples.
                 history = hist,

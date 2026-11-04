@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -65,9 +65,16 @@ public sealed class CallsignEnrichmentService : BackgroundService
             if (track.IsFrozen || track.IsPseudo)
                 continue;
 
+            // Key by the strongest identifier the track has. A non-discrete code (1200, 7700,
+            // any xx00 — see BeaconCodes) is NOT an identifier: it is shared, so keying on it
+            // would also make every 1200 in the facility collide on one enrichment slot. Those
+            // fall through to a track-number key and are matched on position alone, on a much
+            // tighter gate.
             var enrichKey = track.ModeSCode.HasValue
                 ? $"MS:{track.ModeSCode.Value:X6}"
-                : $"SQ:{track.Facility}:{track.Squawk}";
+                : BeaconCodes.IsDiscrete(track.Squawk)
+                    ? $"SQ:{track.Facility}:{track.Squawk}"
+                    : $"PX:{track.Facility}:{track.TrackNumber}";
 
             // Skip already-enriched targets
             if (_enrichedTargets.ContainsKey(enrichKey))
@@ -140,8 +147,22 @@ public sealed class CallsignEnrichmentService : BackgroundService
         // Build callsign index
         var byCallsign = new Dictionary<string, AdsbFiAircraft>(StringComparer.OrdinalIgnoreCase);
 
+        // Half-degree spatial buckets for the position-only tier (see Cell/Nearby).
+        var byCell = new Dictionary<(int, int), List<AdsbFiAircraft>>();
+
         foreach (var ac in allAircraft.Values)
         {
+            if (ac.Lat.HasValue && ac.Lon.HasValue)
+            {
+                var cell = Cell(ac.Lat.Value, ac.Lon.Value);
+                if (!byCell.TryGetValue(cell, out var bucket))
+                {
+                    bucket = [];
+                    byCell[cell] = bucket;
+                }
+                bucket.Add(ac);
+            }
+
             if (!string.IsNullOrEmpty(ac.Squawk))
             {
                 if (!bySquawk.TryGetValue(ac.Squawk, out var list))
@@ -157,7 +178,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 byCallsign[cs] = ac;
         }
 
-        _regionIndex = new AircraftIndex(allAircraft, bySquawk, byCallsign);
+        _regionIndex = new AircraftIndex(allAircraft, bySquawk, byCallsign, byCell);
 
         // Cross-populate hex cache for individual lookups
         foreach (var (hex, ac) in allAircraft)
@@ -209,13 +230,36 @@ public sealed class CallsignEnrichmentService : BackgroundService
                     msRemaining.Add((key, track));
                 }
             }
-            else if (!string.IsNullOrEmpty(track.Squawk))
+            else if (BeaconCodes.IsDiscrete(track.Squawk))
             {
-                // Priority 3: Squawk + position proximity (least reliable, last resort)
-                if (index.BySquawk.TryGetValue(track.Squawk, out var candidates))
+                // Priority 2: a DISCRETE beacon code, plus a relaxed position/altitude gate.
+                // The code already identifies one aircraft, so the gate only has to rule out a
+                // coincidence — hence the wider thresholds.
+                if (index.BySquawk.TryGetValue(track.Squawk!, out var candidates))
+                    aircraft = ClosestWithin(candidates, track,
+                        _options.PositionProximityNm, _options.AltitudeProximityFeet);
+
+                if (aircraft is not null)
                 {
-                    aircraft = MatchBySquawk(candidates, track);
+                    matchCount++;
+                    await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
+            }
+            else
+            {
+                // Priority 3: position and altitude ALONE, on a tight gate.
+                //
+                // This is the tier SWIM actually needs. TAIS publishes no Mode S code for most
+                // tracks, and a non-discrete code is worthless for correlation, so without this
+                // those tracks were never enriched at all. The thresholds are deliberately much
+                // tighter than the squawk tier's (1.5 NM / 500 ft vs 5 NM / 1000 ft): nothing
+                // corroborates the match except the geometry, so the geometry has to be
+                // unambiguous. A match is also rejected outright if a SECOND candidate is inside
+                // the same gate — with no tiebreaker available, "closest wins" is a guess, and a
+                // wrong callsign is worse than none.
+                aircraft = SoleCandidateWithin(
+                    Nearby(index.ByCell, track.Position.Latitude, track.Position.Longitude),
+                    track, PositionOnlyMatchNm, PositionOnlyAltitudeFeet);
 
                 if (aircraft is not null)
                 {
@@ -259,23 +303,53 @@ public sealed class CallsignEnrichmentService : BackgroundService
         }
     }
 
-    private AdsbFiAircraft? MatchBySquawk(List<AdsbFiAircraft> candidates, TrackPositionEvent track)
-    {
-        // TAIS altitude=0 means "no Mode-C data" (primary-only), not ground level.
-        // Skip altitude check in that case; rely on squawk + position proximity only.
-        var hasAltitude = track.AltitudeFeet.HasValue && track.AltitudeFeet.Value > 0;
+    // Position-only gate. Tighter than the squawk tier on purpose — see the Priority 3 comment.
+    private const double PositionOnlyMatchNm = 1.5;
+    private const int PositionOnlyAltitudeFeet = 500;
 
+    /// <summary>
+    /// Everything inside the position/altitude gate, nearest first.
+    ///
+    /// TAIS reports altitude 0 to mean "no Mode-C data" (a primary-only return), NOT ground
+    /// level, so the altitude test is skipped for those rather than comparing against 0 and
+    /// rejecting every airborne candidate.
+    /// </summary>
+    private static List<AdsbFiAircraft> WithinGate(
+        IEnumerable<AdsbFiAircraft> candidates, TrackPositionEvent track, double nm, int feet)
+    {
+        var hasAltitude = track.AltitudeFeet.HasValue && track.AltitudeFeet.Value > 0;
         return candidates
             .Where(ac =>
                 ac.Lat.HasValue && ac.Lon.HasValue &&
                 GeoDistanceNm(track.Position.Latitude, track.Position.Longitude,
-                    ac.Lat.Value, ac.Lon.Value) <= _options.PositionProximityNm &&
+                    ac.Lat.Value, ac.Lon.Value) <= nm &&
                 (!hasAltitude || (ac.ParsedAltBaro.HasValue &&
-                    Math.Abs(ac.ParsedAltBaro.Value - track.AltitudeFeet!.Value) <= _options.AltitudeProximityFeet)))
+                    Math.Abs(ac.ParsedAltBaro.Value - track.AltitudeFeet!.Value) <= feet)))
             .OrderBy(ac => GeoDistanceNm(
                 track.Position.Latitude, track.Position.Longitude,
                 ac.Lat!.Value, ac.Lon!.Value))
-            .FirstOrDefault();
+            .ToList();
+    }
+
+    /// <summary>Nearest candidate inside the gate, or null. For tiers where an identifier
+    /// (hex or discrete beacon code) has already narrowed the field.</summary>
+    private AdsbFiAircraft? ClosestWithin(
+        IEnumerable<AdsbFiAircraft> candidates, TrackPositionEvent track, double nm, int feet)
+        => WithinGate(candidates, track, nm, feet).FirstOrDefault();
+
+    /// <summary>
+    /// The single candidate inside the gate — null if there are none OR more than one.
+    ///
+    /// Used only by the position-only tier, where nothing but the geometry supports the match.
+    /// With two aircraft in the box there is no tiebreaker, so taking the closer one is a coin
+    /// flip that produces a confidently-wrong callsign; returning null leaves the track
+    /// untagged, which is the honest answer and what a controller can see is happening.
+    /// </summary>
+    private static AdsbFiAircraft? SoleCandidateWithin(
+        IEnumerable<AdsbFiAircraft> candidates, TrackPositionEvent track, double nm, int feet)
+    {
+        var hits = WithinGate(candidates, track, nm, feet);
+        return hits.Count == 1 ? hits[0] : null;
     }
 
     private async Task PublishEnrichmentAsync(
@@ -403,5 +477,33 @@ public sealed class CallsignEnrichmentService : BackgroundService
     private sealed record AircraftIndex(
         Dictionary<string, AdsbFiAircraft> ByHex,
         Dictionary<string, List<AdsbFiAircraft>> BySquawk,
-        Dictionary<string, AdsbFiAircraft> ByCallsign);
+        Dictionary<string, AdsbFiAircraft> ByCallsign,
+        Dictionary<(int, int), List<AdsbFiAircraft>> ByCell);
+
+    // ── Spatial bucketing for the position-only tier ────────────────────────────────────
+    //
+    // That tier has no identifier to narrow the field, so without an index it would test every
+    // ADS-B target in the regional set against every unmatched track — several thousand times a
+    // few hundred, every cycle, on a box where CPU is the scarce resource (see CLAUDE.md on the
+    // Pi's co-tenants). Bucketing by half a degree reduces it to the 3x3 neighbourhood.
+    //
+    // CELL_DEG must stay comfortably larger than the gate: 0.5 deg is ~30 NM of latitude against
+    // a 1.5 NM gate, so a target within range of a track is always in that track's cell or one
+    // adjacent to it, and the 3x3 search cannot miss a candidate near a cell boundary.
+    private const double CellDeg = 0.5;
+
+    private static (int, int) Cell(double lat, double lon) =>
+        ((int)Math.Floor(lat / CellDeg), (int)Math.Floor(lon / CellDeg));
+
+    /// <summary>Every target in the 3x3 cell neighbourhood of a position.</summary>
+    private static IEnumerable<AdsbFiAircraft> Nearby(
+        Dictionary<(int, int), List<AdsbFiAircraft>> byCell, double lat, double lon)
+    {
+        var (cy, cx) = Cell(lat, lon);
+        for (var dy = -1; dy <= 1; dy++)
+            for (var dx = -1; dx <= 1; dx++)
+                if (byCell.TryGetValue((cy + dy, cx + dx), out var bucket))
+                    foreach (var ac in bucket)
+                        yield return ac;
+    }
 }

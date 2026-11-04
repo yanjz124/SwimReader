@@ -76,6 +76,10 @@ function sparkline(hist) {
         + '</svg>';
 }
 
+// A floor computed from only a few windows cannot have seen a trough, so it must not be read
+// as "never drains". Marked with a ? rather than hidden — the number is still the lowest seen.
+function settling(f) { return f.floorSamples != null && f.floorSamples < 30; }
+
 const FEED_COLS = [
     ['FEED', ''], ['STATE', ''], ['MSG/S', 'c-rate'], ['KB/S', 'c-kb'],
     ['LAG', 'c-lag'], ['FLOOR', 'c-floor'], ['BUSY', 'c-busy'],
@@ -96,8 +100,10 @@ function feedRow(f, opts) {
         + '<span class="nm c-lag">' + n1(f.lagSec, 's') + '</span>'
         + '<span class="nm c-floor' + ((f.lagFloorSec != null && f.lagFloorSec < 1) ? ' dim' : '') + '"'
         + ' title="Lowest lag seen in the last 10 min. Near 0 = the lag drains between bursts.'
-        + ' Close to LAG = it never drains, which is a queue pinned at the transport ceiling.">'
-        + n1(f.lagFloorSec, 's') + '</span>'
+        + ' Close to LAG = it never drains, which is a queue pinned at the transport ceiling.'
+        + (settling(f) ? ' Only ' + f.floorSamples + ' of 30 windows so far — not long enough'
+            + ' to have seen a trough, so do not read this as pinned yet.' : '') + '">'
+        + n1(f.lagFloorSec, 's') + (settling(f) ? '?' : '') + '</span>'
         + '<span class="nm c-busy' + ((f.busyPct || 0) < 25 ? ' dim' : '') + '">'
         + (f.busyPct == null ? '--' : f.busyPct + '%') + '</span>'
         + '<span class="nm c-flows' + ((f.flows || 0) ? '' : ' dim') + '">' + (f.flows || '--') + '</span>'

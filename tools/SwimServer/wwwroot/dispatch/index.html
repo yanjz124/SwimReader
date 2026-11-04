@@ -539,12 +539,18 @@ async function setSbType(wrap, raw){
   for(const a of fleet) if(a.registration) wrap._recs.set(a.registration, a);
 
   fillAfSelect(wrap, f, own, fleet, eff, sel => {
-    // Keep the current tail if it is still offered (it is, for the flight's own reg and for
-    // anything hand-typed). Otherwise move to the new type's first tail rather than leaving a
-    // tail of the old type selected, which is the thing that was wrong.
-    if(prev && [...sel.options].some(o => o.value === prev && !o.disabled)) return prev;
-    const first = [...sel.options].find(o => o.value && !o.disabled);
-    return first ? first.value : '';
+    const rec = prev && wrap._recs ? wrap._recs.get(prev) : null;
+    const offered = prev && [...sel.options].some(o => o.value === prev && !o.disabled);
+    // Keep the current tail only if it actually IS the new type. The flight's own registration
+    // stays listed under "This flight" whatever TYPE says, so a plain "keep what's offered" rule
+    // left a B738 selected while TYPE read B38M — the mismatch this whole path exists to remove.
+    // A tail we hold no record for is kept: it was typed in by hand, so it was asked for by name.
+    if(offered && (!rec || !rec.type || rec.type.toUpperCase() === eff)) return prev;
+    // Otherwise take the operator's first tail of the new type. Not simply the first option in
+    // the list — that is the flight's own tail, the one just rejected.
+    const firstOfType = fleet.find(a => a.registration && (!a.type || a.type.toUpperCase() === eff));
+    if(firstOfType) return firstOfType.registration;
+    return offered ? prev : '';     // operator has none of this type — leave the tail alone
   });
 }
 

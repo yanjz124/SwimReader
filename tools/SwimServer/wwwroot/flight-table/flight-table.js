@@ -963,78 +963,46 @@ function buildIcaoFpl(d) {
 function buildSimBriefUrl(d, choice) {
     const af = choice ? choice.af : undefined;
     const variant = (choice && choice.variant) || '';
-    const p = new URLSearchParams();
-    // 3-letter ICAO airline + alphanumeric fltnum (AAL123, BAW12AB)
-    // Otherwise everything goes into fltnum (N123AB, BLOCKED, etc.)
+    return SimBrief.url(sbFlight(d), af, variant, choice && choice.type);
+}
+
+// A flight-table record -> the shared SimBrief flight shape (/shared/simbrief.js).
+//
+// Three things the old local builder got wrong, all of which failed silently because SimBrief
+// ignores a parameter it doesn't recognise and just opens with the field blank:
+//   - `hexcode` was sent top-level; it is an acdata field, so Mode-S never arrived.
+//   - `extrarmk` was sent top-level for RMK/; it is an acdata field too, so remarks never arrived
+//     (and the acdata copy only carried COM/DAT/SUR).
+//   - cat / equip / transponder were set independently; SimBrief needs all three or it discards
+//     all three, so any flight with no surveillance code silently lost its equipment string.
+// The module applies the documented contract in one place for both pages.
+function sbFlight(d) {
     const cs = d.callsign || '';
-    const csMatch = cs.match(/^([A-Z]{3})([A-Z0-9]+)$/);
-    if (csMatch) {
-        p.set('airline', csMatch[1]);
-        p.set('fltnum', csMatch[2]);
-    } else if (cs) {
-        p.set('fltnum', cs);
-    }
-    if (cs) p.set('callsign', cs);
-    // Precedence: the chosen variant's airframe id, then an explicitly chosen TYPE, then the
-    // tail's type, then what was filed. The type is choosable because the filed ICAO often has no
-    // SimBrief airframe (E75L), or isn't what you want to fly (B738 filed, B38M add-on).
-    const sbType = variant || (choice && choice.type) || (af && af.type) || d.aircraftType;
-    if (sbType) p.set('type', sbType);
-    // Airports (already ICAO in SFDPS)
-    if (d.origin) p.set('orig', d.origin);
-    if (d.destination) p.set('dest', d.destination);
-    if (d.alternateAerodrome) {
-        const altns = d.alternateAerodrome.split(' ').filter(Boolean);
-        if (altns[0]) p.set('altn', altns[0]);
-    }
-    // Route (NAS → ICAO cleaned)
+    const m = cs.match(/^([A-Z]{3})([A-Z0-9]+)$/);
+    const altns = (d.alternateAerodrome || '').split(' ').filter(Boolean);
     const routeSource = d.originalRoute || d.route;
-    if (routeSource) {
-        const r = nasToIcaoRoute(routeSource, d.origin, d.destination);
-        if (r && r !== 'DCT') p.set('route', r);
-    }
-    // Altitude
-    if (d.assignedAltitude && !d.assignedVfr) {
-        p.set('fl', String(Math.round(d.assignedAltitude / 100)));
-    }
-    if (d.assignedVfr) p.set('flightrules', 'v');
-    // Registration & Mode S — from the chosen tail when there is one.
-    const reg = af === undefined ? d.registration : (af && af.registration);
-    if (reg) p.set('reg', reg);
-    const hex = af === undefined ? d.modeSCode : (af && af.icao24);
-    if (hex) p.set('hexcode', hex);
-    const sel = af === undefined ? null : (af && af.selcal);
-    if (sel) p.set('selcal', sel);
-    // Equipment (acdata JSON for equip/transponder/pbn/extrarmk)
-    const acdata = {};
-    {
-        const w = icaoWakeFor(d);
-        if (w && w !== '?') acdata.cat = w;
-    }
-    // Build equipment and transponder strings from ICAO FPL fields
-    let equip = '';
-    if (d.communicationCode) equip += d.communicationCode.replace(/\s+/g, '');
-    if (d.navigationCode) equip += d.navigationCode.replace(/\s+/g, '');
-    if (d.dataLinkCode) {
-        const jCodes = d.dataLinkCode.match(/J\d/g) || [];
-        for (const jc of jCodes) { if (!equip.includes(jc)) equip += jc; }
-    }
-    if (!equip) equip = d.equipmentQualifier || 'S';
-    if (!equip.includes('S')) equip = 'S' + equip;
-    acdata.equip = equip;
-    if (d.surveillanceCode) acdata.transponder = d.surveillanceCode.replace(/\s+/g, '');
-    if (d.pbnCode) acdata.pbn = 'PBN/' + d.pbnCode.replace(/\s+/g, '');
-    // Extra remarks (DAT, SUR, etc.)
-    const extra = [];
-    if (d.otherCommunicationCapabilities) extra.push('COM/' + d.otherCommunicationCapabilities.trim());
-    if (d.otherDataLink) extra.push('DAT/' + d.otherDataLink.trim());
-    if (d.otherSurveillanceCapabilities) extra.push('SUR/' + d.otherSurveillanceCapabilities.trim());
-    if (extra.length) acdata.extrarmk = extra.join(' ');
-    if (Object.keys(acdata).length) p.set('acdata', JSON.stringify(acdata));
-    // Remarks (Field 18 RMK/ → extrarmk, not dispatch remarks)
-    if (d.remarks) p.set('extrarmk', 'RMK/' + d.remarks.replace(/\|/g, '').trim());
-    p.set('units', 'LBS');
-    return 'https://dispatch.simbrief.com/options/custom?' + p.toString();
+    const route = routeSource ? nasToIcaoRoute(routeSource, d.origin, d.destination) : '';
+    const wake = icaoWakeFor(d);
+    return {
+        callsign: cs,
+        airline: m ? m[1] : '',
+        fltnum: m ? m[2] : cs,
+        type: d.aircraftType,
+        reg: d.registration,
+        modeS: d.modeSCode,
+        orig: d.origin, dest: d.destination, altn: altns[0] || '',
+        route: (route && route !== 'DCT') ? route : '',
+        flLevel: (d.assignedAltitude && !d.assignedVfr) ? Math.round(d.assignedAltitude / 100) : null,
+        vfr: !!d.assignedVfr,
+        wake: (wake && wake !== '?') ? wake : '',
+        comCode: d.communicationCode, navCode: d.navigationCode,
+        datalinkCode: d.dataLinkCode, equipQualifier: d.equipmentQualifier,
+        transponder: d.surveillanceCode, pbn: d.pbnCode,
+        comOther: d.otherCommunicationCapabilities,
+        datOther: d.otherDataLink,
+        surOther: d.otherSurveillanceCapabilities,
+        remarks: d.remarks,
+    };
 }
 
 function toggleIcaoFpl() {
@@ -1372,12 +1340,12 @@ const _dbSelcal = new Map();   // airframe key -> SELCAL string, or null (looked
 // "Variant or Airframe" it opens on. The variant preference is stored under the same localStorage
 // key dispatch uses, so picking "Fenix A321 CFM" once applies on both pages.
 const sbChoice = new Map();          // gufi -> { af, variant, recs, varType, hydrated }
-const sbTailCache = new Map(), sbFleetCache = new Map(), sbVariantCache = new Map();
+// Tail / fleet / variant lookups live in /shared/simbrief.js, shared with /dispatch.
 // Every ICAO type SimBrief has an airframe for; fills the TYPE box's datalist. Fetched once, but
 // refilled on every call — the picker (and with it the <datalist>) is rebuilt per selected flight.
 let _sbTypes = null;
 function sbLoadTypes() {
-    if (!_sbTypes) _sbTypes = fetch('/api/simbrief/types').then(r => r.ok ? r.json() : []).catch(() => []);
+    if (!_sbTypes) _sbTypes = SimBrief.types();
     _sbTypes.then(list => {
         const dl = document.getElementById('sbtypes');
         if (dl && dl.options.length !== list.length)
@@ -1385,31 +1353,12 @@ function sbLoadTypes() {
     });
     return _sbTypes;
 }
-const SB_VAR_KEY = t => 'dispatch.sbVariant.' + t;
+const SB_VAR_KEY = SimBrief.variantKey;
 
-function sbGetTail(reg) {
-    reg = (reg || '').trim().toUpperCase();
-    if (!reg || reg === 'LADD') return Promise.resolve(null);
-    if (!sbTailCache.has(reg)) sbTailCache.set(reg,
-        fetch('/api/aircraft/' + encodeURIComponent(reg)).then(r => r.ok ? r.json() : null).catch(() => null));
-    return sbTailCache.get(reg);
-}
-function sbGetFleet(type, op) {
-    if (!type || !op) return Promise.resolve([]);
-    const k = type + '|' + op;
-    if (!sbFleetCache.has(k)) sbFleetCache.set(k,
-        fetch(`/api/aircraft/list?type=${encodeURIComponent(type)}&operator=${encodeURIComponent(op)}&sort=lastSeen&limit=500`)
-            .then(r => r.ok ? r.json() : { results: [] }).then(d => d.results || []).catch(() => []));
-    return sbFleetCache.get(k);
-}
-function sbGetVariants(type) {
-    type = (type || '').toUpperCase();
-    if (!type) return Promise.resolve([]);
-    if (!sbVariantCache.has(type)) sbVariantCache.set(type,
-        fetch('/api/simbrief/airframes/' + encodeURIComponent(type)).then(r => r.ok ? r.json() : []).catch(() => []));
-    return sbVariantCache.get(type);
-}
-const sbAfLabel = a => `${a.registration}${a.selcal ? '  ·  SEL ' + a.selcal : ''}${a.icao24 ? '  ·  ' + a.icao24 : ''}`;
+const sbGetTail = SimBrief.tail;
+const sbGetFleet = SimBrief.fleet;
+const sbGetVariants = SimBrief.variants;
+const sbAfLabel = SimBrief.label;
 // The operator for a fleet lookup is the callsign's 3-letter ICAO prefix (AAL123 -> AAL).
 const sbOperator = d => (String(d.callsign || '').match(/^([A-Z]{3})[A-Z0-9]+$/) || [])[1] || '';
 
@@ -1503,16 +1452,9 @@ async function sbSetType(d, raw) {
     if (ownRec) st.recs.set(ownRec.registration, ownRec);
     for (const a of fleet) if (a.registration) st.recs.set(a.registration, a);
 
-    sbFillAfSelect(d, live, own, ownRec, fleet, eff, sel => {
-        const rec = prev ? st.recs.get(prev) : null;
-        const offered = prev && [...sel.options].some(o => o.value === prev && !o.disabled);
-        // Keep the tail only if it IS the new type — the flight's own reg stays listed under
-        // "This flight" whatever TYPE says, so "keep what's offered" would leave the mismatch.
-        if (offered && (!rec || !rec.type || rec.type.toUpperCase() === eff)) return prev;
-        const firstOfType = fleet.find(a => a.registration && (!a.type || a.type.toUpperCase() === eff));
-        if (firstOfType) return firstOfType.registration;
-        return offered ? prev : '';
-    });
+    sbFillAfSelect(d, live, own, ownRec, fleet, eff, sel =>
+        SimBrief.chooseTailForType(prev, st.recs, fleet, eff,
+            !!prev && [...sel.options].some(o => o.value === prev && !o.disabled)));
 }
 
 function sbSetAirframe(d, reg, keepDefault) {

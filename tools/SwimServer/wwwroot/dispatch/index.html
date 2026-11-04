@@ -194,6 +194,7 @@
   </div>
 </div>
 
+<script src="/shared/simbrief.js?v=1"></script>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -253,30 +254,24 @@ const real = v => (v && !/^(N\/?A|UNK|NONE)$/i.test(String(v).trim())) ? v : '';
 // The tail's own ICAO type drives SimBrief's variant (A21N vs A321, B38M vs B738), so picking the
 // right tail lands on the right variant. Swapping variants inside SimBrief afterwards is what used
 // to wipe the registration / SELCAL / Mode-S typed in there.
+// A dispatch row -> the shared SimBrief flight shape. The /api/dispatch/search row has carried
+// the ICAO field-10 bits (wake/equip/nav/surv/pbn/datalink) and remarks all along; the old local
+// builder ignored every one of them, so SimBrief got a bare plan from this page while the flight
+// table sent a full one. Same data, same module, same result now.
+function sbFlight(f){
+  return {
+    callsign: f.callsign, fltnum: f.fltnum, airline: f.airline, type: f.type, reg: f.reg,
+    orig: f.orig, dest: f.dest, altn: f.altn,
+    route: cleanRoute(f.route, f.orig, f.dest),
+    flLevel: cruiseFt(f.cruise),
+    vfr: (f.rules || '').toUpperCase() === 'V',
+    wake: f.wake,
+    navCode: f.nav, datalinkCode: f.datalink, equipQualifier: f.equip,
+    transponder: f.surv, pbn: f.pbn, remarks: f.remarks,
+  };
+}
 function simbriefUrl(f, af, variant, sbType){
-  const p = new URLSearchParams();
-  if(f.airline) p.set('airline', f.airline);
-  if(f.fltnum)  p.set('fltnum', f.fltnum);
-  if(f.orig)    p.set('orig', f.orig);
-  if(f.dest)    p.set('dest', f.dest);
-  // variant = a SimBrief "Variant or Airframe" id (bare ICAO for Default, "pilot_airframe" for a
-  // shared one such as Fenix A321 CFM). Passing it as `type` opens SimBrief on that variant.
-  // Precedence: the chosen variant's airframe id, then an explicitly chosen TYPE, then the tail's
-  // type, then what was filed. The type is choosable because the filed ICAO often has no SimBrief
-  // airframe (E75L), or isn't what you want to fly (B738 filed, B38M add-on).
-  const type = variant || sbType || (af && af.type) || f.type;
-  if(type)      p.set('type', type);
-  const rte = cleanRoute(f.route, f.orig, f.dest);
-  if(rte)       p.set('route', rte);
-  if(f.altn)    p.set('altn', f.altn);
-  const reg = af === undefined ? f.reg : (af && af.registration);
-  if(reg)       p.set('reg', reg);
-  if(af && af.selcal) p.set('selcal', af.selcal);
-  // Mode-S goes in SimBrief's acdata JSON as hexcode (it has no top-level parameter).
-  if(af && af.icao24) p.set('acdata', JSON.stringify({ hexcode: af.icao24 }));
-  const fl = cruiseFt(f.cruise); if(fl) p.set('fl', fl);
-  if(f.callsign) p.set('callsign', f.callsign);
-  return 'https://dispatch.simbrief.com/options/custom?' + p.toString();
+  return SimBrief.url(sbFlight(f), af, variant, sbType);
 }
 // A real ICAO 2012 flight plan, so VATSIM's prefile page can import it directly. The old version
 // produced a human-readable block you had to retype field by field, which is no use to anyone.
@@ -444,23 +439,9 @@ function detailHtml(f, fid){
 // ── airframe picker ──────────────────────────────────────────────────────────
 // Real tails come from the aircraft DB (registration, ICAO 24-bit / Mode-S, SELCAL, type). Lookups
 // are cached for the page, so a list of route cards shares one fleet request per airline + type.
-const tailCache = new Map(), fleetCache = new Map();
-function getTail(reg){
-  reg = (reg||'').trim().toUpperCase();
-  if(!reg) return Promise.resolve(null);
-  if(!tailCache.has(reg)) tailCache.set(reg,
-    fetch('/api/aircraft/' + encodeURIComponent(reg)).then(r => r.ok ? r.json() : null).catch(() => null));
-  return tailCache.get(reg);
-}
-function getFleet(type, op){
-  if(!type || !op) return Promise.resolve([]);
-  const k = type + '|' + op;
-  if(!fleetCache.has(k)) fleetCache.set(k,
-    fetch(`/api/aircraft/list?type=${encodeURIComponent(type)}&operator=${encodeURIComponent(op)}&sort=lastSeen&limit=500`)
-      .then(r => r.ok ? r.json() : { results: [] }).then(d => d.results || []).catch(() => []));
-  return fleetCache.get(k);
-}
-const afLabel = a => `${a.registration}${a.selcal ? '  ·  SEL ' + a.selcal : ''}${a.icao24 ? '  ·  ' + a.icao24 : ''}`;
+// Tail / fleet lookups and the airframe label live in /shared/simbrief.js — the flight table
+// needs exactly the same ones, and keeping two copies is what let the two pages drift.
+const getTail = SimBrief.tail, getFleet = SimBrief.fleet, afLabel = SimBrief.label;
 
 function pickerHtml(f){
   const own = f.reg ? `<option value="${esc(f.reg)}" selected>${esc(f.reg)} — this flight</option>` : '';
@@ -538,20 +519,9 @@ async function setSbType(wrap, raw){
   if(own) wrap._recs.set(own.registration, own);
   for(const a of fleet) if(a.registration) wrap._recs.set(a.registration, a);
 
-  fillAfSelect(wrap, f, own, fleet, eff, sel => {
-    const rec = prev && wrap._recs ? wrap._recs.get(prev) : null;
-    const offered = prev && [...sel.options].some(o => o.value === prev && !o.disabled);
-    // Keep the current tail only if it actually IS the new type. The flight's own registration
-    // stays listed under "This flight" whatever TYPE says, so a plain "keep what's offered" rule
-    // left a B738 selected while TYPE read B38M — the mismatch this whole path exists to remove.
-    // A tail we hold no record for is kept: it was typed in by hand, so it was asked for by name.
-    if(offered && (!rec || !rec.type || rec.type.toUpperCase() === eff)) return prev;
-    // Otherwise take the operator's first tail of the new type. Not simply the first option in
-    // the list — that is the flight's own tail, the one just rejected.
-    const firstOfType = fleet.find(a => a.registration && (!a.type || a.type.toUpperCase() === eff));
-    if(firstOfType) return firstOfType.registration;
-    return offered ? prev : '';     // operator has none of this type — leave the tail alone
-  });
+  fillAfSelect(wrap, f, own, fleet, eff, sel =>
+    SimBrief.chooseTailForType(prev, wrap._recs, fleet, eff,
+      !!prev && [...sel.options].some(o => o.value === prev && !o.disabled)));
 }
 
 function setAirframe(wrap, reg){
@@ -596,7 +566,7 @@ function flightAwareUrl(ident){
 let _sbTypes = null;
 function loadSbTypes(){
   if(_sbTypes) return _sbTypes;
-  _sbTypes = fetch('/api/simbrief/types').then(r => r.ok ? r.json() : []).catch(() => []).then(list => {
+  _sbTypes = SimBrief.types().then(list => {
     const dl = document.getElementById('sbtypes');
     if(dl && !dl.options.length)
       dl.innerHTML = list.map(t => `<option value="${esc(t.type)}">${esc(t.name)}</option>`).join('');
@@ -608,14 +578,11 @@ function loadSbTypes(){
 // ── SimBrief variants ("Variant or Airframe") ────────────────────────────────
 // Served per type by /api/simbrief/airframes/{type} (SimBrief's shared list, cached server-side).
 // The last variant picked for a type is remembered, so choosing "Fenix A321 CFM" once sticks.
-const variantCache = new Map();
-const VAR_KEY = t => 'dispatch.sbVariant.' + t;
+const VAR_KEY = SimBrief.variantKey;
 function getVariants(type){
   type = (type||'').toUpperCase();
   if(!type) return Promise.resolve([]);
-  if(!variantCache.has(type)) variantCache.set(type,
-    fetch('/api/simbrief/airframes/' + encodeURIComponent(type)).then(r => r.ok ? r.json() : []).catch(() => []));
-  return variantCache.get(type);
+  return SimBrief.variants(type);
 }
 async function loadVariants(wrap, type){
   type = (type||'').toUpperCase();
@@ -909,7 +876,7 @@ for(const k of ['orig','dest','airline','type']){
   if(hasCriteria(q)) search(); else $('out').innerHTML = examplesHtml();
 })();
 </script>
-<script src="/shared/frame.js?v=4"></script>
+  <script src="/shared/frame.js?v=4"></script>
 <script src="/shared/disclaimer.js?v=2"></script>
 <datalist id="sbtypes"></datalist>
 </body>

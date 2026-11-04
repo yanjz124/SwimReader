@@ -23,6 +23,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- DgScopeAdapter.ConvertTrack / ConvertFlightPlan are internal so their emitted JSON
+         can be asserted on directly (AdsbBeaconReaderTests). -->
+    <InternalsVisibleTo Include="SwimReader.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SwimReader.Core\SwimReader.Core.csproj" />
     <ProjectReference Include="..\SwimReader.Parsers\SwimReader.Parsers.csproj" />
     <ProjectReference Include="..\SwimReader.Scds\SwimReader.Scds.csproj" />

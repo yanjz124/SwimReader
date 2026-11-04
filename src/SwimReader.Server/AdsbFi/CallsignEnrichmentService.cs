@@ -495,18 +495,42 @@ public sealed class CallsignEnrichmentService : BackgroundService
             return;
         }
 
-        // LADD flights (Mode S target with no callsign): put callsign on line 1
-        // Uncorrelated targets (no Mode S): squawk on line 1, callsign in scratchpad
+        // Two different cases, and they must not be conflated:
+        //
+        //   LADD (a Mode S target TAIS gives no callsign for) — it HAS a flight
+        //   plan, so the callsign is flight-plan data and goes on line 1 as usual.
+        //
+        //   Uncorrelated target (no Mode S) — it has NO flight plan. The callsign is
+        //   a property of the radar target, revealed by holding F1, so it travels as
+        //   AdsbCallsign for the adapter to put on the track update. It is also
+        //   mirrored into Scratchpad1, which is what you see if you click the target
+        //   up to an FDB.
+        //
+        // Callsign and AssignedSquawk stay NULL in that second case. Both used to be
+        // set, and each had its own visible consequence:
+        //
+        //   Callsign = track.Squawk made the beacon code the scope's dedup key.
+        //   dedupByCallsign only applies its "many aircraft share 1200" co-location
+        //   escape to keys it built itself (prefix "SQ:"), so a literal "1200"
+        //   arriving as a callsign read as a unique aircraft id and every VFR 1200
+        //   target in the facility collapsed onto one. Leaving it null lets the
+        //   client derive "SQ:1200" and correctly refuse to merge them. Nothing is
+        //   lost on the display: line 1 falls through to the track's own squawk.
+        //
+        //   AssignedSquawk = the callsign put a callsign in a beacon-code field, so
+        //   FDB line 3's assigned-vs-received mismatch test rendered "1200 N98RR".
+        //   An uncorrelated target has no assigned code; null is the truth.
         var fpEvent = new FlightPlanDataEvent
         {
             Timestamp = DateTime.UtcNow,
             Source = "ADSB_ENRICH",
-            Callsign = isModeSTarget ? aircraft.TrimmedCallsign : track.Squawk,
+            Callsign = isModeSTarget ? aircraft.TrimmedCallsign : null,
+            AdsbCallsign = isModeSTarget ? null : aircraft.TrimmedCallsign,
             ModeSCode = effectiveModeSCode,
             TrackNumber = isModeSTarget ? null : track.TrackNumber,
             AircraftType = aircraft.AircraftType,
             WakeCategory = RecatLookup.GetCategory(aircraft.AircraftType),
-            AssignedSquawk = isModeSTarget ? track.Squawk : aircraft.TrimmedCallsign,
+            AssignedSquawk = isModeSTarget ? track.Squawk : null,
             Scratchpad1 = isModeSTarget ? null : aircraft.TrimmedCallsign,
             Facility = track.Facility
         };

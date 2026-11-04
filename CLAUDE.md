@@ -1656,9 +1656,47 @@ circles by hand is how the gaps survived. And because the rate limiters are per-
 `GetByLocationAsync` always tried adsb.fi first, all 20 would have queued behind one 1.1 s gate;
 it rotates the lead source now and fetches three regions at a time, so 20 cost about what 7 did.
 
-Remaining known cost: enrichment runs one cycle per `EnrichmentRegionRefresh` (60 s), so a new
-track waits up to a minute. The queued entry is overwritten by each TAIS update, so the *position*
-used is current — it is latency, not staleness.
+Matching now runs every 10 s (`EnrichmentRegionRefresh`/6, floor 5 s) while the 20 region fetches
+stay on the 60 s refresh — matching is pure in-memory work against an index already held, and a
+minute was long enough for an uncorrelated VFR target to come and go unmatched. The queued entry is
+overwritten by each TAIS update, so the *position* used is current — it is latency, not staleness.
+
+#### The second half: it matched, published, and still showed nothing
+Coverage was only half of "the beacon reader isn't working". With it fixed the service reported
+**435,400 published** enrichments and F1 still revealed nothing, because the callsign was arriving
+in fields the display does not read.
+
+**STARS' F1 hold-to-reveal readout renders the TRACK's callsign** — `ShowCallsignWithNoSquawk` →
+`t.Callsign` in `scope.js`, mirroring `Aircraft.cs:591-609`, because in DGScope `ADSBBeaconReader`
+is a *receiver* that sets it on the Aircraft itself. An uncorrelated target has no flight plan, so
+the callsign is a property of the **target**. Our enrichment instead fabricated a
+`FlightPlanDataEvent`, and `DstarsTrackUpdate.Callsign` only ever carried `track.Callsign` — which
+TAIS leaves null for exactly these targets. Measured on a live PCT capture: **1,237 track records,
+14 with a callsign, and all 14 were military-injection pseudo tracks.** Not one enrichment.
+
+The two fields it *did* fill were both wrong, and each had its own visible consequence:
+
+| was | became | why it was wrong |
+|---|---|---|
+| `Callsign = track.Squawk` | `null` | It made the beacon code the client's dedup key. `dedupByCallsign` grants its "many aircraft share 1200" co-location escape only to keys **it** built (prefix `SQ:`), so a literal `"1200"` arriving as a callsign read as a unique aircraft id and **every VFR 1200 target in the facility collapsed onto one**. Null lets the client derive `SQ:1200` and refuse to merge. Line 1 falls through to the track's own squawk, so nothing is lost. |
+| `AssignedSquawk = callsign` | `null` | A callsign in a beacon-code field. FDB line 3's assigned-vs-received mismatch test rendered **`1200 N98RR`**. An uncorrelated target has no assigned code. |
+
+`Scratchpad1` keeps the callsign — that is what you see on an FDB, and it is the one place it was
+always legitimately visible.
+
+**It travels as an explicit `AdsbCallsign` field** on the event, and `DgScopeAdapter` moves it to
+`_adsbTrackCallsigns` (keyed by **track** guid, not FP guid) for `ConvertTrack` to apply.
+**Deliberately not published as a `TrackPositionEvent`**: a synthetic position event would restamp
+`LastPositionTime` with a fix that is already seconds old, which is precisely the
+"position-frozen, callsign-shedding ghost" the purge rule in `TrackStateManager.GetTrackGuid`
+exists to prevent. Riding the next real radar update costs one scan and invents nothing.
+
+`AdsbBeaconReaderTests` pins all three fields, and `ConvertTrack`/`ConvertFlightPlan` are `internal`
+so it can assert on the emitted JSON. **That is the only check that can see this class of bug** —
+the same lesson as the cache-busting no-op above. Nothing threw, nothing logged, every counter read
+healthy, and the scope was correct to show nothing: it was told nothing. The diagnostic that
+settled it in one step was dumping `/dstars/{fac}/updates` and counting **track** records carrying a
+callsign — not flight-plan records, which looked fine.
 
 ### The empty SITE submenu is intentional — don't wire it up
 `starsState.asrSites` reads `fac.starsConfiguration.areas.flatMap(a => a.asrSites)` and always

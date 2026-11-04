@@ -11,6 +11,16 @@ public sealed class FlightPlanDataEvent : ISwimEvent
 
     // Identification
     public string? Callsign { get; init; }
+
+    /// <summary>
+    /// A callsign the ADS-B beacon reader resolved for an UNTAGGED radar target
+    /// (<see cref="Source"/> == "ADSB_ENRICH"). It is deliberately NOT
+    /// <see cref="Callsign"/>: an uncorrelated target has no flight plan, so the
+    /// callsign is a property of the TARGET and belongs on the track update, which
+    /// is where STARS' F1 hold-to-reveal readout looks for it. The adapter moves it
+    /// there; nothing else should treat it as flight-plan data.
+    /// </summary>
+    public string? AdsbCallsign { get; init; }
     public string? TrackNumber { get; init; }
     public int? ModeSCode { get; init; }
 

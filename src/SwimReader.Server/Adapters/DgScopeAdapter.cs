@@ -110,6 +110,21 @@ public sealed class DgScopeAdapter : BackgroundService
     private readonly ConcurrentDictionary<Guid, string> _enrichedCallsigns = new();
 
     /// <summary>
+    /// ADS-B callsigns for UNTAGGED targets, keyed by TRACK guid (not FP guid).
+    /// STARS' F1 hold-to-reveal readout renders the TRACK's callsign — DGScope's
+    /// ADSBBeaconReader sets it on the Aircraft itself — so an enrichment that only
+    /// produced a flight plan was invisible to it however well the matching worked.
+    ///
+    /// It is applied in ConvertTrack rather than published as a TrackPositionEvent
+    /// on purpose: a synthetic position event would restamp LastPositionTime with a
+    /// position that is already seconds old, which is exactly the "position-frozen,
+    /// callsign-shedding ghost" the purge rule in TrackStateManager.GetTrackGuid
+    /// exists to prevent. Riding the next real radar update costs one scan and
+    /// invents nothing.
+    /// </summary>
+    private readonly ConcurrentDictionary<Guid, string> _adsbTrackCallsigns = new();
+
+    /// <summary>
     /// Per-aircraft handoff state machine — REVISED 2026-06-23 after
     /// inspecting an NCT TAIS sample.
     ///
@@ -224,6 +239,7 @@ public sealed class DgScopeAdapter : BackgroundService
         foreach (var kv in _facilityTracks) s.FacilityTracks[kv.Key] = kv.Value.Keys.Where(keep.Contains).Select(g => g.ToString()).ToList();
         foreach (var kv in _facilityFlightPlans) s.FacilityFlightPlans[kv.Key] = kv.Value.Keys.Where(keep.Contains).Select(g => g.ToString()).ToList();
         foreach (var kv in _enrichedCallsigns) if (keep.Contains(kv.Key)) s.EnrichedCallsigns[kv.Key.ToString()] = kv.Value;
+        foreach (var kv in _adsbTrackCallsigns) if (keep.Contains(kv.Key)) s.AdsbTrackCallsigns[kv.Key.ToString()] = kv.Value;
         foreach (var g in _taisHasCallsign.Keys) if (keep.Contains(g)) s.TaisHasCallsign.Add(g.ToString());
         foreach (var kv in _trackHistory) if (keep.Contains(kv.Key)) s.TrackHistory[kv.Key.ToString()] = kv.Value.ToList();
         // Handoff state — see PersistedHandoffState comments.
@@ -244,6 +260,7 @@ public sealed class DgScopeAdapter : BackgroundService
         foreach (var kv in s.LastTrackJson) if (Guid.TryParse(kv.Key, out var g) && live.Contains(g)) _lastTrackJson[g] = kv.Value;
         foreach (var kv in s.LastFpJson) if (Guid.TryParse(kv.Key, out var g) && live.Contains(g)) _lastFpJsonOut[g] = kv.Value;
         foreach (var kv in s.EnrichedCallsigns) if (Guid.TryParse(kv.Key, out var g) && live.Contains(g)) _enrichedCallsigns[g] = kv.Value;
+        foreach (var kv in s.AdsbTrackCallsigns) if (Guid.TryParse(kv.Key, out var g) && live.Contains(g)) _adsbTrackCallsigns[g] = kv.Value;
         foreach (var k in s.TaisHasCallsign) if (Guid.TryParse(k, out var g) && live.Contains(g)) _taisHasCallsign[g] = 0;
         foreach (var kv in s.TrackHistory)
             if (Guid.TryParse(kv.Key, out var g) && live.Contains(g) && kv.Value.Count > 0)
@@ -321,7 +338,10 @@ public sealed class DgScopeAdapter : BackgroundService
         }
     }
 
-    private string ConvertTrack(TrackPositionEvent track)
+    // internal, not private: AdsbBeaconReaderTests asserts on the emitted JSON. The bug this
+    // guards was an enrichment that filled fields the display never reads — invisible to any
+    // end-to-end check, because nothing errored and the scope just showed nothing.
+    internal string ConvertTrack(TrackPositionEvent track)
     {
         var guid = _trackState.GetTrackGuid(track.ModeSCode, track.TrackNumber, track.Facility);
         var positionOnly = track.IsPseudo;
@@ -348,7 +368,11 @@ public sealed class DgScopeAdapter : BackgroundService
             GroundTrack = track.GroundTrackDegrees,
             VerticalRate = positionOnly ? null : track.VerticalRateFpm,
             Squawk = positionOnly ? null : track.Squawk,
-            Callsign = positionOnly ? null : track.Callsign,
+            // An untagged target has no TAIS callsign; fall back to the one the
+            // ADS-B beacon reader resolved, so F1 has something to reveal.
+            Callsign = positionOnly
+                ? null
+                : track.Callsign ?? (_adsbTrackCallsigns.TryGetValue(guid, out var adsbCs) ? adsbCs : null),
             ModeSCode = positionOnly ? null : track.ModeSCode,
             Ident = track.Ident,
             IsOnGround = positionOnly ? null : track.IsOnGround,
@@ -578,7 +602,7 @@ public sealed class DgScopeAdapter : BackgroundService
         _trackHistory[guid] = next;
     }
 
-    private string? ConvertFlightPlan(FlightPlanDataEvent fp)
+    internal string? ConvertFlightPlan(FlightPlanDataEvent fp)
     {
         var guid = _trackState.GetFlightPlanGuid(fp.ModeSCode, fp.TrackNumber, fp.Callsign, fp.Facility);
         var trackGuid = _trackState.GetAssociatedTrackGuid(fp.ModeSCode, fp.TrackNumber, fp.Facility);
@@ -594,6 +618,11 @@ public sealed class DgScopeAdapter : BackgroundService
             // Store the enriched callsign so it persists across TAIS batch repeats
             if (!string.IsNullOrEmpty(fp.Callsign))
                 _enrichedCallsigns[guid] = fp.Callsign;
+
+            // Untagged target: the callsign belongs to the TRACK, not this plan.
+            if (!string.IsNullOrEmpty(fp.AdsbCallsign)
+                && trackGuid is { } adsbTrackGuid && adsbTrackGuid != Guid.Empty)
+                _adsbTrackCallsigns[adsbTrackGuid] = fp.AdsbCallsign;
         }
         else
         {
@@ -841,6 +870,7 @@ public sealed class DgScopeAdapter : BackgroundService
                     _trackHistoryTime.TryRemove(guid, out _);
                     _taisHasCallsign.TryRemove(guid, out _);
                     _enrichedCallsigns.TryRemove(guid, out _);
+                    _adsbTrackCallsigns.TryRemove(guid, out _);
                     _overrides.Remove(guid);
                     if (facility is not null)
                     {

@@ -23,6 +23,7 @@ public sealed class PersistedState
     public Dictionary<string, List<string>> FacilityTracks { get; set; } = new();   // facility -> track guids
     public Dictionary<string, List<string>> FacilityFlightPlans { get; set; } = new();
     public Dictionary<string, string> EnrichedCallsigns { get; set; } = new();
+    public Dictionary<string, string> AdsbTrackCallsigns { get; set; } = new();   // TRACK guid -> ADS-B callsign
     public List<string> TaisHasCallsign { get; set; } = new();
     public Dictionary<string, List<DstarsGeoPoint>> TrackHistory { get; set; } = new();
 

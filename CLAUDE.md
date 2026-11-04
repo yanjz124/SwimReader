@@ -346,8 +346,23 @@ a cache, not live traffic.
 `FlightHistoryIndex` kept a `List<IndexEntry>` per date in a static dictionary and **never
 evicted**. Six strings per entry, ~50k entries a day, so ~8 MB of permanently retained heap per day
 searched — and the flight table queries the 7 most recent days as you type, against 48 days on
-disk. Measured: searching 9 days grew the heap **462 MB**. `MaxCachedDates` (3) now bounds it, LRU,
+disk. Measured: searching 9 days grew the heap **462 MB**. `MaxCachedDates` now bounds it, LRU,
 never evicting today (it is appended to on every flight purge). A dropped day re-reads its `.idx`.
+
+**That bound was first set to 3, which was below every caller's window and made the cache do
+negative work.** Both callers scan **7** days — the flight table (`HIST_MAX_DATES`) as you type,
+and `/api/dispatch/search` at `days=7` — so each request walked days 1..7, evicted the early ones
+before finishing, and re-read all seven `.idx` files from the SD card next time, under
+`FlightHistoryIndex`'s single global lock. Measured on the route finder: a city pair took
+**0.008 s at `days=1` and 2.5-3.3 s at `days=7`, with no improvement on repeat** (a 100% miss
+rate), and the log carried 98 eviction lines in 30 minutes. An *airline* search stayed at 0.10 s
+only because it fills its result cap on the first day-file and breaks out before touching the
+rest — which is what made this look like "airport pairs are slow" rather than a cache bug.
+
+It is **8** now: the 7-day window plus today, which is never a victim and so occupies a slot.
+Still bounded (~80 MB, not the 400 MB+ of 48 days) — bounding was the point, 3 was not. **A cache
+smaller than the working set is worse than no cache**: it pays the eviction bookkeeping and the
+re-read both. If a caller ever widens its window, raise this with it.
 
 The second half: the working set grew 465 MB in that test and **never came back**, because
 `RetainVM` kept freed segments reserved. That was justified when RAM was ample; at 5.0 GB RSS /

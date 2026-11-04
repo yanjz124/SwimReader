@@ -32,7 +32,25 @@ public static class StddsFeedHealth
         public long PrevMsgs, PrevBytes;
         public double RateMsgs, RateBytes;
         public DateTime WindowStart = DateTime.UtcNow;
+        // End-to-end lag: the broker's own send timestamp vs when we took delivery. See the
+        // class remarks for why this was the missing metric rather than a nice-to-have.
+        public long LagMsSum, LagSamples, LagMsMax;
+        public double LagMsMean;
+        public long LagMsPeak;
+        // Retained windows, newest last, so the endpoint can report a lag FLOOR. A single lag
+        // reading cannot tell a backlog from a burst; only the minimum over a window can.
+        public readonly List<Window> History = new();
     }
+
+    /// <summary>One 10s window, kept so "is this lag draining?" is answerable.</summary>
+    private readonly record struct Window(double Rate, double KbPerSec, double LagSec);
+
+    // 10 minutes at one sample per 10s — matches SwimServer's FeedHealth so the two line up.
+    private const int HistoryLen = 60;
+
+    // 5 minutes of windows. Below this a floor has not had time to see a trough, and a bursty
+    // feed is indistinguishable from a pinned one.
+    private const int FloorMinSamples = 30;
 
     private static readonly ConcurrentDictionary<string, Counters> _svcs =
         new(StringComparer.OrdinalIgnoreCase);
@@ -52,16 +70,34 @@ public static class StddsFeedHealth
     {
         bool discarded = false;
         try { discarded = msg.DiscardIndication; } catch { /* not all message types expose it */ }
-        Bump("TOTAL", bytes, discarded);
-        Bump(string.IsNullOrEmpty(serviceType) ? "UNKNOWN" : serviceType, bytes, discarded);
+        // The broker stamps SCDS messages; this is the same source SwimServer's FeedHealth uses
+        // for its STDDS bucket, so the two numbers are directly comparable.
+        long lagMs = -1;
+        try
+        {
+            var st = msg.SenderTimestamp;
+            if (st > 0) lagMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - st;
+        }
+        catch { /* publisher did not set it */ }
+        Bump("TOTAL", bytes, discarded, lagMs);
+        Bump(string.IsNullOrEmpty(serviceType) ? "UNKNOWN" : serviceType, bytes, discarded, lagMs);
     }
 
-    private static void Bump(string key, int bytes, bool discarded)
+    private static void Bump(string key, int bytes, bool discarded, long lagMs)
     {
         var c = _svcs.GetOrAdd(key, _ => new Counters());
         Interlocked.Increment(ref c.Msgs);
         if (bytes > 0) Interlocked.Add(ref c.Bytes, bytes);
         Interlocked.Exchange(ref c.LastMsgTicks, DateTime.UtcNow.Ticks);
+        // Clock skew or a malformed stamp would otherwise poison the mean.
+        if (lagMs >= -5_000 && lagMs <= 6 * 3600_000)
+        {
+            Interlocked.Add(ref c.LagMsSum, lagMs);
+            Interlocked.Increment(ref c.LagSamples);
+            long seen;
+            while (lagMs > (seen = Interlocked.Read(ref c.LagMsMax)))
+                if (Interlocked.CompareExchange(ref c.LagMsMax, lagMs, seen) == seen) break;
+        }
         if (discarded)
         {
             Interlocked.Increment(ref c.Discards);
@@ -80,9 +116,47 @@ public static class StddsFeedHealth
             var bytes = Interlocked.Read(ref c.Bytes);
             c.RateMsgs = (msgs - c.PrevMsgs) / elapsed;
             c.RateBytes = (bytes - c.PrevBytes) / elapsed;
+            // Mean over the window then reset. A running mean since startup would hide a lag
+            // that is growing right now, which is the whole point of the metric.
+            var n = Interlocked.Exchange(ref c.LagSamples, 0);
+            var sum = Interlocked.Exchange(ref c.LagMsSum, 0);
+            c.LagMsMean = n > 0 ? (double)sum / n : double.NaN;
+            c.LagMsPeak = Interlocked.Exchange(ref c.LagMsMax, 0);
             c.PrevMsgs = msgs;
             c.PrevBytes = bytes;
             c.WindowStart = now;
+            lock (c.History)
+            {
+                c.History.Add(new Window(
+                    Math.Round(c.RateMsgs, 1),
+                    Math.Round(c.RateBytes / 1024.0, 1),
+                    double.IsNaN(c.LagMsMean) ? -1 : Math.Round(c.LagMsMean / 1000.0, 1)));
+                if (c.History.Count > HistoryLen) c.History.RemoveRange(0, c.History.Count - HistoryLen);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Lowest mean lag over the retained window, plus how many windows it came from.
+    ///
+    /// <para>The floor is the number that matters. A feed keeping up in bursts sawtooths and its
+    /// floor touches ~0; a queue pinned at a ceiling never drains, so its floor stays high. The
+    /// two are identical in a snapshot and have opposite answers — SFDPS sat at a flat 60 s floor
+    /// for hours and read as upstream latency until the floor was looked at.</para>
+    /// </summary>
+    private static (double? floor, int samples) LagFloor(Counters c)
+    {
+        lock (c.History)
+        {
+            double? min = null;
+            var n = 0;
+            foreach (var h in c.History)
+            {
+                if (h.LagSec < 0) continue;   // no lag samples in that window
+                n++;
+                if (min is null || h.LagSec < min) min = h.LagSec;
+            }
+            return (min, n);
         }
     }
 
@@ -115,6 +189,7 @@ public static class StddsFeedHealth
                 var lastMsg = Interlocked.Read(ref c.LastMsgTicks);
                 var lastDiscard = Interlocked.Read(ref c.LastDiscardTicks);
                 var up = (DateTime.UtcNow - _started).TotalSeconds;
+                var (floor, floorSamples) = LagFloor(c);
                 return (object)new
                 {
                     feed = kv.Key,
@@ -131,6 +206,14 @@ public static class StddsFeedHealth
                     discardEvents = Interlocked.Read(ref c.Discards),
                     lastDiscard = lastDiscard == 0 ? null
                         : new DateTime(lastDiscard, DateTimeKind.Utc).ToString("o"),
+                    // How far behind the broker's own send time we are, this window.
+                    lagSec = double.IsNaN(c.LagMsMean) ? (double?)null : Math.Round(c.LagMsMean / 1000.0, 1),
+                    lagPeakSec = c.LagMsPeak == 0 ? (double?)null : Math.Round(c.LagMsPeak / 1000.0, 1),
+                    // The one to read: floor ~0 means the lag drains between bursts, floor close
+                    // to lagSec means it never does. Meaningless until floorSamples is up.
+                    lagFloorSec = floor,
+                    floorSamples,
+                    floorSettled = floorSamples >= FloorMinSamples,
                 };
             })
             .ToArray(),

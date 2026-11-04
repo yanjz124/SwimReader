@@ -140,7 +140,10 @@ function renderThroughputDetail() {
         out.push('<span class="feed-sub">dgscope / stars service &mdash; same STDDS queue, port 5000</span>');
         for (const sv of _stdds.services) {
             if (sv.feed === 'TOTAL') continue;
-            out.push(feedRow(sv, { noState: true, title: 'STDDS sub-service on the neighbouring process' }));
+            // flows is reported once for the whole service, not per sub-service, so fold it in
+            // or the FLOWS column reads blank on exactly the rows where it is the lever.
+            out.push(feedRow(Object.assign({ flows: _stdds.flows }, sv),
+                { noState: true, title: 'STDDS sub-service on the neighbouring process' }));
         }
         if (tot) {
             const here = feeds.find(f => f.feed === 'STDDS');

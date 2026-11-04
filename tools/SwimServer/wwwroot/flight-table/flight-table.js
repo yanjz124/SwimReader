@@ -1422,7 +1422,9 @@ function sbFillAfSelect(d, live, own, ownRec, fleet, fleetType, choose) {
     if (own) html += `<optgroup label="This flight"><option value="${esc(own)}">${esc(ownRec ? sbAfLabel(ownRec) : own + '  ·  not in aircraft DB')}</option></optgroup>`;
     if (others.length) html += `<optgroup label="${esc(sbOperator(d))} ${esc(fleetType)} fleet — ${others.length} tail${others.length === 1 ? '' : 's'}">${
         others.map(a => `<option value="${esc(a.registration)}">${esc(sbAfLabel(a))}</option>`).join('')}</optgroup>`;
-    else if (fleetType && fleetType !== (d.aircraftType || ''))
+    // Only worth saying "no tails on record" when there was an operator to look up; a flight with
+    // no 3-letter callsign prefix (a private tail) never had a fleet to show.
+    else if (sbOperator(d) && fleetType && fleetType !== (d.aircraftType || ''))
         html += `<optgroup label="${esc(sbOperator(d))} ${esc(fleetType)} fleet"><option value="" disabled>no ${esc(sbOperator(d))} ${esc(fleetType)} tails on record</option></optgroup>`;
     html += `<option value="">Generic — no tail data</option>`;
     sel.innerHTML = html;

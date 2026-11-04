@@ -194,7 +194,7 @@
   </div>
 </div>
 
-<script src="/shared/simbrief.js?v=2"></script>
+<script src="/shared/simbrief.js?v=3"></script>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -489,7 +489,9 @@ function fillAfSelect(wrap, f, own, fleet, fleetType, choose){
   if(f.reg) html += `<optgroup label="This flight"><option value="${esc(f.reg)}">${esc(own ? afLabel(own) : f.reg + '  ·  not in aircraft DB')}</option></optgroup>`;
   if(others.length) html += `<optgroup label="${esc(f.airline)} ${esc(fleetType)} fleet — ${others.length} tail${others.length===1?'':'s'}">${
     others.map(a => `<option value="${esc(a.registration)}">${esc(afLabel(a))}</option>`).join('')}</optgroup>`;
-  else if(fleetType && fleetType !== f.type)
+  // Only worth saying "no tails on record" when there was an operator to look up; a flight with
+  // no 3-letter callsign prefix (a private tail) never had a fleet to show.
+  else if(f.airline && fleetType && fleetType !== f.type)
     html += `<optgroup label="${esc(f.airline)} ${esc(fleetType)} fleet"><option value="" disabled>no ${esc(f.airline)} ${esc(fleetType)} tails on record</option></optgroup>`;
   html += `<option value="">Generic — no tail data</option>`;
   sel.innerHTML = html;

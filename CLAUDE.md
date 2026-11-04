@@ -436,27 +436,38 @@ card.** Two causes, both fixed without changing what the cache does:
 
 **69 MB/min -> 3.1 MB/min (95% less); load average 11.8 -> 3.7, iowait mostly 0-1%.**
 
-### Memory is now the binding constraint, and the flow fix made it tighter
-Doubling SFDPS's flows doubled what has to be allocated per second, and the box felt it
-immediately. Measured **18 minutes** after the 6-flow restart:
+### A working-set sample is as useless as a lag sample — I got this wrong first
+Worth recording as a mistake, because it is the *same* mistake this file already warns about for
+lag, made on a different metric an hour later.
 
-| | 2026-11-04, 6 flows, 18 min up | previously documented, 3 flows, 70 min up |
-|---|---|---|
-| working set | **5,796 MB** | 4,900 MB |
-| GC heap | **4,285 MB** | 3,200 MB |
-| managed (live) | 2,388 MB | — |
-| fragmented | **~1,900 MB** | 1,200 MB |
-| host | 6,438 of 8,052 MB used, 882 free | — |
+Two readings after the 6-flow restart — 5,796 MB at 18 min and 6,198 MB at 20 min, with host free
+memory down to 335 MB — were read as a linear ~200 MB/min climb toward swapping, and written up
+here as "memory is now the binding constraint, do not raise any more flow counts". Sampling it
+properly over nine minutes says otherwise:
 
-Reaching 5.8 GB in 18 minutes where it previously took over an hour is the cost of the lag fix,
-and it matters because this box **started swapping to the SD card at ~5.0 GB RSS** (16-24% iowait,
-flush worker permanently in D state). CPU is also at 0% idle now, since draining faster is work.
+| t (uptime) | 20:47 | 21:48 | 22:48 | 23:48 | 24:48 | 26:57 | 27:57 | 28:57 |
+|---|---|---|---|---|---|---|---|---|
+| working set MB | 5557 | 5794 | 5516 | 5771 | 5186 | 5511 | 5088 | **4600** |
 
-**So do not raise any more flow counts until memory is addressed** — the STDDS floor would like
-more, and buying it would trade a 5 s lag for swapping, which costs far more than it saves. If the
-working set keeps climbing, dialling `SFDPS_FLOWS` back to 4-5 trades a little lag for headroom
-and is the cheap lever. `GET /api/debug/memory` plus a gcdump taken shortly after a restart
-(while the heap is still small enough to dump) is still the way in.
+It **sawtooths with the GC cycle and trended down**, host free memory recovered 335 MB -> 1,543 MB,
+and **no swap was used at any point**. 6,198 MB was a peak, not a trajectory. The comparison that
+made it look like a regression — "5.8 GB in 18 min where 3 flows took 70 min to reach 4.9 GB" — was
+a peak against a single historical sample of unknown phase, which is not a comparison at all.
+
+So: the working set at 6 flows runs **~4.6-6.2 GB, bounded, cycling, no swapping**, with SFDPS
+steady at 94.8 msg/s / 2.5 s lag / 2.1 s floor. It is high on an 8 GB box and the unidentified
+growth noted below is still real and still unsolved — but it did not become the binding constraint,
+and nothing here needs dialling back.
+
+**The rule generalizes past lag:** any metric that moves with a collection cycle, a burst, or a
+flush needs a window, not a reading. For the working set that means several minutes of samples
+spanning at least one gen2 collection. `GET /api/debug/memory` plus a gcdump taken shortly after a
+restart (while the heap is still small enough to dump) is still the way into the growth itself.
+
+One transient worth knowing: `/api/system` failed to answer once during that window (the sample
+where host free dipped to 98 MB). Single occurrence, available memory stayed above 1.1 GB, and the
+feed never faltered — but a GC pause long enough to drop a request is the first thing that would
+show if this ever did become the constraint.
 
 ### Memory is still not solved
 Two real leaks were found and fixed (the history-index cache, RetainVM) and the working set
@@ -599,8 +610,10 @@ splitting a live stream.
 Measured after `STDDS_FLOWS=3` + `SCDS_FLOWS=3`: SwimServer 74 → **183 msg/s** (floor 6.9 → 5.5 s),
 neighbour **unchanged at ~530 msg/s** despite all three of its receivers binding (verified in the
 journal), total 599 → **714 msg/s**. So the neighbour's limit is *not* its transport, and the
-STDDS floor still does not reach zero — the queue remains behind. That is the open item, and
-raising flows further is not the next move: see the memory note below.
+STDDS floor still does not reach zero — the queue remains behind. That is the open item. Raising
+its flow counts further is worth trying (the memory worry that first argued against it did not
+survive being measured, see below), but the neighbour not gaining from 1 -> 3 flows says its
+limit is elsewhere, so find that before buying more flows.
 
 **A second STDDS queue in the SCDS portal remains the real fix**, since it removes the split
 entirely rather than racing for a share.

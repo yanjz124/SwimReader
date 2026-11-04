@@ -1,0 +1,43 @@
+# Line endings, normalized to LF everywhere — including Windows working copies.
+#
+# This exists because CI went red for five consecutive runs and the cause was the absence of
+# this file. The situation was:
+#
+#   * no .gitattributes, and core.autocrlf=true on the Windows dev machine
+#   * so the repository stores LF (autocrlf converts on commit) while the Windows working tree
+#     holds CRLF (autocrlf converts on checkout)
+#   * .editorconfig was then written with `end_of_line = crlf`, read off the working copy
+#   * `dotnet format --verify-no-changes` passed locally (CRLF tree, CRLF rule) and failed on the
+#     Linux runner with 39,380 ENDOFLINE errors (LF tree, CRLF rule)
+#
+# Local and CI could not agree, by construction, and no amount of re-running the formatter on
+# Windows would ever have revealed it. `eol=lf` forces LF in the working tree on every platform,
+# so the tree, the repository and both formatters now see the same bytes. .editorconfig says
+# `end_of_line = lf` to match; change the two together or not at all.
+#
+# A practical side effect worth having: the patch scripts used to edit files here write LF, and
+# so does every Linux tool. Those no longer produce a diff against the working tree.
+
+* text=auto eol=lf
+
+# Shell scripts must be LF regardless — these run on the Pi.
+*.sh text eol=lf
+
+# Binaries: never touch the bytes. `text=auto` detects most of these, but being explicit means a
+# corrupted font or screenshot can never be blamed on line-ending conversion.
+*.ttf  binary
+*.otf  binary
+*.woff binary
+*.woff2 binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.gz   binary
+*.zst  binary
+*.zip  binary
+*.dll  binary
+*.so   binary
+*.kml  -text

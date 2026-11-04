@@ -36,7 +36,12 @@ indent_size = 2
 [*.cs]
 indent_size = 4
 tab_width = 4
-end_of_line = crlf
+# LF, matching what the repository actually stores and what .gitattributes now forces into the
+# working tree on every platform. This said `crlf` for one afternoon, read off a Windows checkout
+# where core.autocrlf had converted it — which made `dotnet format --verify-no-changes` pass
+# locally and fail on the Linux runner with 39,380 ENDOFLINE errors. See .gitattributes; the two
+# files have to say the same thing.
+end_of_line = lf
 
 # ── using directives ────────────────────────────────────────────────────────────────────────
 dotnet_sort_system_directives_first = true

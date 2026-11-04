@@ -266,7 +266,10 @@ header .sub {
 .st.off       { color: #555; border-color: #222; background: #0d0d0d; }
 /* Sparkline: 10 minutes of 10s samples. Shape matters more than the numbers —
    a lag that sawtooths down to zero is healthy, one that sits flat and high is not. */
-.feed-table .spark { display: block; width: 100%; min-width: 90px; height: 20px; }
+/* Shorter than the row, with a gap, so adjacent rows' areas don't fuse into one block —
+   at 20px in a 29px row the fills touched and six sparklines read as a single chart. */
+.feed-table .spark { display: block; width: 100%; min-width: 90px; height: 15px; margin: 2px 0; }
+.feed-table .c-trend { line-height: 0; }
 .feed-note {
     grid-column: 1 / -1; font-size: 10.5px; color: #666; line-height: 1.5;
     margin-top: 7px; padding-top: 6px; border-top: 1px solid #1a1a1a;

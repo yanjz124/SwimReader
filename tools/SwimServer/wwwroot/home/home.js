@@ -70,9 +70,12 @@ function sparkline(hist) {
         lagPath += (pen ? 'L' : 'M') + ' ' + x(i).toFixed(1) + ' ' + yy + ' ';
         pen = true;
     });
+    // A baseline under the area makes each row read as its own chart rather than as part of a
+    // continuous band running down the column.
     return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">'
-        + '<path d="' + area + '" fill="#2a2a10" stroke="#cccc44" stroke-width="0.8"/>'
-        + (lagPath ? '<path d="' + lagPath + '" fill="none" stroke="#d9a066" stroke-width="1" stroke-linejoin="round"/>' : '')
+        + '<path d="' + area + '" fill="#23230e" stroke="#cccc44" stroke-width="0.7"/>'
+        + (lagPath ? '<path d="' + lagPath + '" fill="none" stroke="#e08a3c" stroke-width="1.1" stroke-linejoin="round"/>' : '')
+        + '<line x1="0" y1="' + (H - 0.3) + '" x2="' + W + '" y2="' + (H - 0.3) + '" stroke="#333" stroke-width="0.6"/>'
         + '</svg>';
 }
 

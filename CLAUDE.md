@@ -364,6 +364,17 @@ Still bounded (~80 MB, not the 400 MB+ of 48 days) — bounding was the point, 3
 smaller than the working set is worse than no cache**: it pays the eviction bookkeeping and the
 re-read both. If a caller ever widens its window, raise this with it.
 
+The other half was `ReadMatching` returning a `List`: callers filter what comes back and stop at
+their own cap, so the dispatch search read up to **1,000 records per day-file across 7 days to
+produce at most 200 results**, each a seek+read in a ~300 MB `.jsonl` on the SD card. It yields
+now, so the caller's `break` stops the I/O. Every caller enumerates once with `foreach`; add one
+that takes `.Count` or re-enumerates and it must materialise at that call site.
+
+Measured end to end on city pairs at `days=7`: **2.5-3.3 s every time → 0.08-0.31 s warm**, with
+the worst outliers (KSAN-KOAK 12.6 s, KSTL-KTPA 8.9 s) now 0.31 s and 0.12 s. The **first** query
+after a restart is still seconds — seven index files and a cold page cache — which is inherent,
+and worth knowing before reading a post-deploy measurement as a regression.
+
 The second half: the working set grew 465 MB in that test and **never came back**, because
 `RetainVM` kept freed segments reserved. That was justified when RAM was ample; at 5.0 GB RSS /
 53% fragmentation on a box that had started swapping to the SD card (16-24% iowait, flush worker

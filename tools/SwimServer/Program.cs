@@ -1606,8 +1606,13 @@ void ProcessFlight(XElement flight, string rawXml)
     Interlocked.Increment(ref _procCount);
 
     var source = flight.Attribute("source")?.Value ?? "";
-    // "center" is FIXM's own attribute spelling — an external contract, not ours.
-    var center = flight.Attribute("center")?.Value ?? "";
+    // DO NOT "fix" this spelling. FIXM is an international standard and the attribute on the
+    // wire is literally centre="ZID" (verified in live SFDPS). It is their contract, not our
+    // prose. An American-spelling sweep renamed it once (6fa43a6) and rewrote this very comment
+    // to match, erasing its own warning; the attribute then never matched, ComputerIds stayed
+    // empty for every flight, and ALL CIDs vanished from the scope whenever a facility was
+    // selected. Nothing threw — the lookup just silently returned "".
+    var center = flight.Attribute("centre")?.Value ?? "";
     var timestamp = flight.Attribute("timestamp")?.Value;
     var flightType = flight.Attribute("flightType")?.Value;
     // End-to-end lag: how far behind the publisher we are. SFDPS puts its own stamp on every

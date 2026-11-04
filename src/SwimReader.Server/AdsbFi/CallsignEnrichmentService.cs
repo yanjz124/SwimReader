@@ -39,7 +39,8 @@ public sealed class CallsignEnrichmentService : BackgroundService
     // position-only tier that sees candidates but rejects them all is a very different problem
     // from one that never gets a candidate.
     private long _seen, _queued, _matchHex, _matchSquawk, _matchPosition,
-                 _posNoCandidate, _posAmbiguous, _skippedNonDiscrete, _published, _skippedDuplicate;
+                 _posNoCoverage, _posNoCandidate, _posAmbiguous,
+                 _skippedNonDiscrete, _published, _skippedDuplicate;
     private DateTime _lastMatch;
 
     /// <summary>Enrichment counters for GET /diag — see the fields above for why they exist.</summary>
@@ -58,6 +59,9 @@ public sealed class CallsignEnrichmentService : BackgroundService
         // Why the position tier declined: nothing in the 1.5 NM / 500 ft gate, versus two or
         // more in it (rejected on purpose — with no tiebreaker, picking the closer one is a
         // coin flip that produces a confidently wrong callsign).
+        // No ADS-B target within ~90 NM at all: the region set doesn't cover this facility.
+        // Loosening the gate cannot help these; only more coverage can.
+        positionNoCoverage = Interlocked.Read(ref _posNoCoverage),
         positionNoCandidate = Interlocked.Read(ref _posNoCandidate),
         positionAmbiguous = Interlocked.Read(ref _posAmbiguous),
         // Tracks whose only identifier was a non-discrete code (1200, 7700, any xx00), so the
@@ -302,9 +306,16 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 // unambiguous. A match is also rejected outright if a SECOND candidate is inside
                 // the same gate — with no tiebreaker available, "closest wins" is a guess, and a
                 // wrong callsign is worse than none.
-                var near = WithinGate(
-                    Nearby(index.ByCell, track.Position.Latitude, track.Position.Longitude),
-                    track, PositionOnlyMatchNm, PositionOnlyAltitudeFeet);
+                // Split "nothing nearby at all" from "nearby but outside the gate", because the
+                // two have opposite fixes and a single no-candidate count cannot tell them apart.
+                // The 3x3 cell neighbourhood is ~90 NM, so an empty one means the ADS-B region
+                // set simply does not cover this facility — widening coverage is the answer, and
+                // loosening the gate would do nothing. A non-empty one that still fails the
+                // 1.5 NM / 500 ft gate is a real near-miss and is about the gate.
+                var neighbourhood = Nearby(index.ByCell,
+                    track.Position.Latitude, track.Position.Longitude).ToList();
+                var near = WithinGate(neighbourhood, track,
+                    PositionOnlyMatchNm, PositionOnlyAltitudeFeet);
                 aircraft = near.Count == 1 ? near[0] : null;
 
                 if (aircraft is not null)
@@ -313,6 +324,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                     Interlocked.Increment(ref _matchPosition);
                     await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
+                else if (neighbourhood.Count == 0) Interlocked.Increment(ref _posNoCoverage);
                 else if (near.Count == 0) Interlocked.Increment(ref _posNoCandidate);
                 else Interlocked.Increment(ref _posAmbiguous);
             }

@@ -2197,6 +2197,32 @@ set the cookie with `Network.setCookie`, navigate, settle, `Page.captureScreensh
 `Runtime.exceptionThrown` / `Log.entryAdded` so console errors are visible. (`chromium` and
 `websocket-client` are both already on the Pi; pass `--remote-allow-origins=*`.)
 
+## The ERAM scope's opening snapshot (why it used to take forever)
+
+`/ws` sends every flight with its full plan on connect: ~6,900 flights, **17.6 MB of JSON, 5.3 s
+over loopback** and much worse through the Cloudflare tunnel, before the browser has parsed a byte.
+Two things fixed it; both are measurements worth keeping.
+
+**`permessage-deflate` was never enabled on any socket in this repo.** This payload deflates
+**7.2x — 17.8 MB to 2.08 MB**. It is one argument on `AcceptWebSocketAsync` and needs no client
+change, since browsers negotiate the extension automatically. Verify with the handshake, not by
+guessing: the response must carry `Sec-WebSocket-Extensions: permessage-deflate`. Note the API is
+named `DangerousEnableCompression` — that is about CRIME/BREACH, where a secret shares a
+compression stream with attacker-chosen data. `/ws` carries the same public telemetry to every
+client and no per-client token, so it does not apply here; **don't copy it onto a socket that
+echoes caller input back beside anything sensitive.**
+
+**`history` was 39% of the payload and half of it was undrawable.** The server stored and shipped
+`MaxPosHistory` = 20 points per flight, but the scope truncates to `MAX_HISTORY` the instant a
+batch lands (slider max **10**, default 5) and its render cutoff is `MAX_HISTORY x 12 s` on top of
+that — so points 11-20 could not be drawn at any setting. 36,816 of 74,229 points were parsed and
+discarded. `ToSummary(historyMax:)` caps it at the WS call site only; `ToDetail` (one flight on
+demand) and the flight-history archive keep the full trail.
+
+Result: 17.6 MB -> 14.7 MB raw, **~2.1 MB on the wire**. If this needs more later, the next lever
+is that the scope and the flight table share `/ws` and the scope needs far fewer fields — but they
+share it deliberately, so that is a real design change, not a tweak.
+
 ## Live Client Count (`/api/system`)
 
 `wsClients` is the **sum across every feed**, with a `wsByFeed: [{feed, count}]` breakdown of the ones
@@ -2226,8 +2252,29 @@ couple of minutes before the ping fails.
 - SFDPS data rate: ~240 msg/sec, updating ~4000-7000 active flights at any time
 - Each flight updates roughly every 12 seconds
 - CID (Computer ID) is per-facility — each ARTCC assigns its own; stored in `computerIds` map, keyed
-  by the publishing center (the `center` attribute on `<flight>`). `getCid()` only returns the selected
-  facility's CID; foreign facility CIDs are never shown (matches real ERAM behavior)
+  by the publishing center (the **`centre`** attribute on `<flight>` — see below). `getCid()` only
+  returns the selected facility's CID; foreign facility CIDs are never shown (matches real ERAM behavior)
+
+### FIXM spells it `centre`, and renaming it silently deletes every CID
+The attribute on the wire is literally `centre="ZID"`. FIXM is an international standard; that is
+**their** contract, not our prose, and it is the one place in this repo where the house
+American-spelling rule must not be applied. `AsdexBridge.cs` has the same exception for an AIXM key.
+
+An American-spelling sweep (`6fa43a6`) renamed `flight.Attribute("centre")` to `"center"` and
+rewrote the comment that warned against it, so the warning erased itself. `XElement.Attribute`
+returns null for a name that isn't there, the code coalesced to `""`, and `state.ComputerIds[center]`
+was never written for any flight. Measured on the live feed: **6,882 of 6,882 flights had
+`computerIds: null`, and 100% of in-facility flights at every ARTCC sampled had no CID.**
+
+**Nothing threw, and the scalar `ComputerId` kept working** — so the "All" view looked perfectly
+normal and only a selected facility (the normal way to use the scope) was broken. That asymmetry is
+what made it read as a display bug rather than a parse failure, and it is why the collision logic
+below was the first suspect and the wrong one. `FixmContractTests` now fails in CI if either the
+attribute spelling or the `ComputerIds[center]` keying changes.
+
+The diagnostic that settled it in one step: dump a live WS snapshot and count
+`computerIds` keys. All-null across every flight means the map was never populated (parse side);
+a populated map with blanks means arbitration (the section below).
 
 ### CIDs collide, and presence breaks the tie
 `computerIds` is a permanent per-flight **history**: an entry is kept for the life of the record

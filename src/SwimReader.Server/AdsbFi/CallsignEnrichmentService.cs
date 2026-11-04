@@ -177,16 +177,26 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
         var allAircraft = new Dictionary<string, AdsbFiAircraft>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var region in regions)
+        // Three at a time: the rate limiters are per-source and GetByLocationAsync now rotates
+        // which source each region prefers, so three requests can genuinely be in flight. More
+        // concurrency than sources would just queue on the same semaphores.
+        using (var gate = new SemaphoreSlim(3))
         {
-            var aircraft = await _multiClient.GetByLocationAsync(
-                region.Latitude, region.Longitude, region.RadiusNm, ct);
-
-            foreach (var ac in aircraft)
+            var fetches = regions.Select(async region =>
             {
-                if (!string.IsNullOrEmpty(ac.Hex))
-                    allAircraft[ac.Hex] = ac; // Dedup by hex across overlapping regions
-            }
+                await gate.WaitAsync(ct);
+                try
+                {
+                    return await _multiClient.GetByLocationAsync(
+                        region.Latitude, region.Longitude, region.RadiusNm, ct);
+                }
+                finally { gate.Release(); }
+            }).ToList();
+
+            foreach (var aircraft in await Task.WhenAll(fetches))
+                foreach (var ac in aircraft)
+                    if (!string.IsNullOrEmpty(ac.Hex))
+                        allAircraft[ac.Hex] = ac; // Dedup by hex across overlapping regions
         }
 
         // Build squawk index

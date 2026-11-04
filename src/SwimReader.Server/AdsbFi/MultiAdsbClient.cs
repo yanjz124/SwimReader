@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -57,13 +57,22 @@ public sealed class MultiAdsbClient
     public async Task<IReadOnlyList<AdsbFiAircraft>> GetByLocationAsync(
         double lat, double lon, int radiusNm, CancellationToken ct)
     {
-        // Only adsb.fi supports v3 geo queries; adsb.lol and airplanes.live use v2 point format
+        // Each source speaks its own geo dialect.
         var paths = new[]
         {
             ("AdsbFi", $"v3/lat/{lat:F6}/lon/{lon:F6}/dist/{radiusNm}"),
             ("AirplanesLive", $"v2/point/{lat:F6}/{lon:F6}/{radiusNm}"),
             ("AdsbLol", $"v2/lat/{lat:F6}/lon/{lon:F6}/dist/{radiusNm}"),
         };
+
+        // ROTATE which source goes first. Every rate limiter here is per-source, so trying
+        // adsb.fi first every time funnelled all 20 region queries through one 1.1 s gate and
+        // serialized a refresh that the other two APIs could have been sharing. Rotating
+        // spreads them three ways while keeping the others as fallbacks, so a refresh costs
+        // about a third of the wall time and no source sees more than its share.
+        var start = (Interlocked.Increment(ref _nextSource) - 1) % paths.Length;
+        if (start < 0) start += paths.Length;
+        paths = Enumerable.Range(0, paths.Length).Select(i => paths[(start + i) % paths.Length]).ToArray();
 
         foreach (var (sourceName, path) in paths)
         {

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -35,6 +35,12 @@ public sealed class ScdsHostedService : BackgroundService
 
     /// <summary>Count of inbound messages discarded by the buffer since start.</summary>
     public long InboundDropped => Interlocked.Read(ref _inboundDropped);
+
+    /// <summary>Whether a Solace flow is currently bound. Surfaced by GET /feed.</summary>
+    public bool Connected { get; private set; }
+
+    /// <summary>The queue this service binds — shown by GET /feed so a shared queue is obvious.</summary>
+    public string QueueName => _options.QueueName;
 
     private Channel<(string topic, string body)> BuildInbound() =>
         // DropOldest stops a slow parse loop from blocking the Solace callback thread, but it
@@ -88,6 +94,7 @@ public sealed class ScdsHostedService : BackgroundService
         }
 
         _logger.LogInformation("SCDS hosted service starting");
+        StddsFeedHealth.Start();
 
         // Start the processing loop that drains the inbound channel
         _ = ProcessLoopAsync(stoppingToken);
@@ -104,6 +111,7 @@ public sealed class ScdsHostedService : BackgroundService
                     (_, args) => HandleFlowEvent(args));
 
                 _logger.LogInformation("Listening for SCDS messages on queue {Queue}", _options.QueueName);
+                Connected = true;
 
                 // Block until cancellation — messages arrive via callback
                 await Task.Delay(Timeout.Infinite, stoppingToken);
@@ -123,6 +131,8 @@ public sealed class ScdsHostedService : BackgroundService
                 }
 
                 _connectionManager.Disconnect();
+                Connected = false;
+                StddsFeedHealth.NoteReconnect();
 
                 await Task.Delay(_options.ReconnectDelay, stoppingToken);
             }
@@ -143,6 +153,12 @@ public sealed class ScdsHostedService : BackgroundService
             if (body is null) return;
 
             var topic = message.Destination?.Name ?? "unknown";
+
+            // Count it before queueing. This process had no throughput instrumentation at all,
+            // which mattered more than it sounds: it shares one competing-consumers queue with
+            // SwimServer, so each of them sees part of the STDDS stream and the only way to know
+            // the real queue rate is to add the two together. See StddsFeedHealth.
+            StddsFeedHealth.Note(InferServiceType(topic), message, body.Length);
 
             // Non-blocking write to channel; drops oldest if full
             _inbound.Writer.TryWrite((topic, body));

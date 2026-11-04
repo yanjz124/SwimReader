@@ -226,3 +226,57 @@ header .sub {
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
+
+/* ── Per-feed throughput table (THROUGHPUT card) ──────────────────────────
+   One row per SWIM feed, so "is anything losing data" is answerable at a glance
+   instead of by SSH. Takes the full grid row when open, like the storage card. */
+#throughputCard.open { grid-column: 1 / -1; }
+.feed-table {
+    grid-column: 1 / -1;
+    display: grid;
+    /* feed | state | rate | kB/s | lag | floor | busy | flows | reconn | discards | trend */
+    grid-template-columns:
+        max-content max-content repeat(2, max-content) repeat(2, max-content)
+        max-content max-content max-content max-content 1fr;
+    gap: 2px 12px;
+    font-size: 11px;
+    align-items: center;
+    margin-top: 8px;
+    overflow-x: auto;
+}
+.feed-table .hd {
+    color: #555; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.8px;
+    padding-bottom: 3px; border-bottom: 1px solid #222; white-space: nowrap;
+}
+.feed-table .fd { color: #cccc44; white-space: nowrap; }
+.feed-table .nm { color: #aaa; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.feed-table .dim { color: #555; }
+/* State badge. Colors carry the verdict: green fine, amber "watch", red "losing data". */
+.feed-table .st {
+    font-size: 9.5px; letter-spacing: 0.5px; text-transform: uppercase;
+    padding: 1px 5px; border-radius: 2px; border: 1px solid; white-space: nowrap; text-align: center;
+}
+.st.ok        { color: #6a6; border-color: #2a3a2a; background: #0d140d; }
+.st.lagging   { color: #cccc44; border-color: #3a3a14; background: #14140a; }
+.st.behind    { color: #d9a066; border-color: #3a2a14; background: #140f08; }
+.st.saturated { color: #d9a066; border-color: #3a2a14; background: #140f08; }
+.st.silent    { color: #d96060; border-color: #3a1a1a; background: #140a0a; }
+.st.loss      { color: #ff5555; border-color: #5a1a1a; background: #1a0a0a; }
+.st.idle      { color: #555; border-color: #222; background: #0d0d0d; }
+.st.off       { color: #555; border-color: #222; background: #0d0d0d; }
+/* Sparkline: 10 minutes of 10s samples. Shape matters more than the numbers —
+   a lag that sawtooths down to zero is healthy, one that sits flat and high is not. */
+.feed-table .spark { display: block; width: 100%; min-width: 90px; height: 20px; }
+.feed-note {
+    grid-column: 1 / -1; font-size: 10.5px; color: #666; line-height: 1.5;
+    margin-top: 7px; padding-top: 6px; border-top: 1px solid #1a1a1a;
+}
+.feed-note b { color: #cccc44; font-weight: normal; }
+.feed-note .warn { color: #d9a066; }
+.feed-note .bad { color: #ff5555; }
+.feed-sub { grid-column: 1 / -1; color: #cccc44; font-size: 9.5px; letter-spacing: 1.2px;
+    text-transform: uppercase; margin-top: 9px; }
+@media (max-width: 760px) {
+    /* Drop the least-diagnostic columns before the layout has to scroll. */
+    .feed-table .c-kb, .feed-table .c-avg, .feed-table .c-reconn { display: none; }
+}

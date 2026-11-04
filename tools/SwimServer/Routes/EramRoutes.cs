@@ -1,4 +1,4 @@
-using System.Net.WebSockets;
+﻿using System.Net.WebSockets;
 
 namespace SwimServer;
 
@@ -11,6 +11,11 @@ namespace SwimServer;
 /// </summary>
 static class EramRoutes
 {
+    // Last good /feed body from the neighbouring STDDS service, so a restart over there shows a
+    // few seconds of stale numbers rather than an empty card on every dashboard poll.
+    private static string? _stddsFeedCache;
+    private static DateTime _stddsFeedAt;
+
     public static void Register(WebApplication app, ServerContext ctx)
     {
         // WebSocket — streams flight updates to browser
@@ -367,6 +372,37 @@ static class EramRoutes
             host = Environment.MachineName,
             feeds = FeedHealth.Snapshot(),
         }, ctx.JsonOpts));
+
+        // The OTHER consumer of the STDDS queue.
+        //
+        // swimreader-stdds (port 5000) binds the SAME Solace queue as this process's AsdexBridge,
+        // and a Solace queue is competing-consumers: each message is delivered to exactly ONE
+        // bound flow. So the "STDDS" figure in /api/feed above is this process's SHARE, not the
+        // queue's rate, and the two have to be read together. SWIM_FEED_HOST does not prevent
+        // this — it stops a second HOST binding the queue, and both services run on the feed
+        // host by design.
+        //
+        // Short timeout and a cached last-good answer: the dashboard polls this every 10s and a
+        // restart of the neighbouring service must degrade to "unreachable", not stall the card.
+        app.MapGet("/api/feed/stdds", async () =>
+        {
+            var cached = _stddsFeedCache;
+            if (cached is not null && (DateTime.UtcNow - _stddsFeedAt).TotalSeconds < 5)
+                return Results.Content(cached, "application/json");
+            try
+            {
+                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+                var body = await http.GetStringAsync("http://127.0.0.1:5000/feed");
+                _stddsFeedCache = body;
+                _stddsFeedAt = DateTime.UtcNow;
+                return Results.Content(body, "application/json");
+            }
+            catch (Exception ex)
+            {
+                return Results.Json(new { service = "STDDS", reachable = false, error = ex.Message },
+                    ctx.JsonOpts);
+            }
+        });
 
         // Deployed build: current git commit + commit time (so the homepage can show what's live).
         app.MapGet("/api/version", () => Results.Json(VersionInfo.Get(ctx.RepoRoot), ctx.JsonOpts));

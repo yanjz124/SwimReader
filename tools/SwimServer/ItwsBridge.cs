@@ -105,6 +105,7 @@ class ItwsBridge
         Console.WriteLine($"[ITWS] Parse workers: {workers}");
 
         var receivers = SolaceTuning.Receivers("ITWS_FLOWS", 1);
+        FeedHealth.Register("ITWS", receivers);
         for (int i = 0; i < receivers; i++)
         {
             var idx = i;
@@ -197,6 +198,7 @@ class ItwsBridge
             }
             catch (Exception ex) { Console.Error.WriteLine($"[ITWS] Error: {ex.Message}"); }
 
+            FeedHealth.NoteReconnect("ITWS");
             Console.WriteLine("[ITWS] Reconnecting in 10 seconds...");
             Thread.Sleep(10000);
         }

@@ -71,6 +71,7 @@ class TfmsBridge
             return;
         }
         var receivers = SolaceTuning.Receivers("TFMS_FLOWS", 2);
+        FeedHealth.Register("TFMS", receivers);
         for (int i = 0; i < receivers; i++)
         {
             var idx = i;
@@ -164,6 +165,7 @@ class TfmsBridge
             }
             catch (Exception ex) { Console.Error.WriteLine($"[TFMS] Error: {ex.Message}"); }
 
+            FeedHealth.NoteReconnect("TFMS");
             Console.WriteLine("[TFMS] Reconnecting in 10 seconds...");
             Thread.Sleep(10000);
         }

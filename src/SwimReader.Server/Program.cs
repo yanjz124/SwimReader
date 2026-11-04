@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Options;
+﻿using Microsoft.Extensions.Options;
 using SwimReader.Core.Bus;
 using SwimReader.Parsers;
 using SwimReader.Parsers.Apds;
@@ -49,7 +49,11 @@ builder.Services.AddSingleton<IEventBus, ChannelEventBus>();
 
 // --- SCDS connection ---
 builder.Services.AddSingleton<ScdsConnectionManager>();
-builder.Services.AddHostedService<ScdsHostedService>();
+// Singleton + hosted-service-resolving-the-singleton (same pattern as DgScopeAdapter below), so
+// GET /feed can read the live instance's counters. AddHostedService<T> alone registers only as
+// IHostedService and the instance is then unreachable from a controller.
+builder.Services.AddSingleton<ScdsHostedService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ScdsHostedService>());
 
 // --- Parsers ---
 builder.Services.AddSingleton<IStddsMessageParser, TaisMessageParser>();

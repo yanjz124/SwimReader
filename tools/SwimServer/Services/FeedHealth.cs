@@ -40,14 +40,61 @@ static class FeedHealth
         public double RateMsgs, BusyPct, RateBytes, LagMsMean;
         public long LagMsPeak;            // max lag seen in the last window
         public DateTime WindowStart = DateTime.UtcNow;
+
+        public long LastMsgTicks;         // UTC ticks of the most recent message
+        public long Reconnects;           // times this feed's receivers rebuilt their session
+        public int Flows;                 // receivers bound to the queue (see SolaceTuning)
+        public DateTime FirstMsg;         // for a lifetime average alongside the live sample
+
+        // Rolling per-sample history, newest last. Written only by the timer, read under lock.
+        public readonly List<Window> History = new();
     }
+
+    /// <summary>One 10s window. Kept so the endpoint can answer "is this lag draining?".</summary>
+    internal readonly record struct Window(double Rate, double KbPerSec, double BusyPct, double LagSec);
+
+    // 10 minutes at one sample per 10s. Enough to see a sawtooth cycle; small enough that six
+    // feeds' worth still serializes to a few kB on a dashboard poll.
+    private const int HistoryLen = 60;
 
     private static readonly ConcurrentDictionary<string, Counters> _feeds = new(StringComparer.OrdinalIgnoreCase);
     private static readonly double TicksPerMs = System.Diagnostics.Stopwatch.Frequency / 1000.0;
     private static Timer? _timer;
+    // For a lifetime average alongside the live sample — the two diverge a lot over a day,
+    // which is exactly what made the home page's old number look like a halved feed.
+    private static readonly DateTime _started = DateTime.UtcNow;
 
     /// <summary>Starts the 10s sampler. Safe to call once at startup.</summary>
     public static void Start() => _timer ??= new Timer(_ => Sample(), null, 10_000, 10_000);
+
+    /// <summary>
+    /// Declare a feed before its first message, with how many receivers it binds to the queue.
+    ///
+    /// The flow count is here because it is half of the diagnosis. A Solace queue is
+    /// competing-consumers and one session has a hard transport ceiling, so the signature of a
+    /// feed that needs more flows is "lag sits high and never drains while busyPct is low" —
+    /// and the next question is always "how many has it got?". Both SFDPS and TBFM hit that
+    /// ceiling in production (see CLAUDE.md); knowing the current N is what turns the symptom
+    /// into an action. Calling this also makes a configured-but-silent feed visible at all,
+    /// instead of it being absent from the snapshot and indistinguishable from "not enabled".
+    /// </summary>
+    public static void Register(string feed, int flows)
+    {
+        var c = _feeds.GetOrAdd(feed, _ => new Counters());
+        c.Flows = flows;
+    }
+
+    /// <summary>
+    /// One of a feed's receivers tore down its session and rebuilt it — either the 90s silence
+    /// watchdog fired or the session threw. Worth counting separately from throughput: a feed
+    /// that reconnects every few minutes delivers a respectable average rate with real gaps in
+    /// it, and nothing else on the dashboard would show that.
+    /// </summary>
+    public static void NoteReconnect(string feed)
+    {
+        var c = _feeds.GetOrAdd(feed, _ => new Counters());
+        Interlocked.Increment(ref c.Reconnects);
+    }
 
     /// <summary>
     /// Wraps one message handler: counts the message, notes a broker discard indication, and times
@@ -57,6 +104,7 @@ static class FeedHealth
     {
         var c = _feeds.GetOrAdd(feed, _ => new Counters());
         Interlocked.Increment(ref c.Msgs);
+        Interlocked.Exchange(ref c.LastMsgTicks, DateTime.UtcNow.Ticks);
         // Payload size after the API has decompressed it. Combined with the rate this gives the
         // throughput actually crossing one session, which is what a compressed (and therefore
         // strictly serial, single-stream) transport caps.
@@ -146,7 +194,79 @@ static class FeedHealth
             c.PrevBytes = bytes;
             c.PrevBusyTicks = busy;
             c.WindowStart = now;
+            // Keep the window so the endpoint can report a lag FLOOR, not just a sample. See
+            // LagFloor below for why one reading cannot answer the question anyone is asking.
+            lock (c.History)
+            {
+                c.History.Add(new Window(
+                    Math.Round(c.RateMsgs, 1),
+                    Math.Round(c.RateBytes / 1024.0, 1),
+                    c.BusyPct,
+                    double.IsNaN(c.LagMsMean) ? -1 : Math.Round(c.LagMsMean / 1000.0, 1)));
+                if (c.History.Count > HistoryLen) c.History.RemoveRange(0, c.History.Count - HistoryLen);
+            }
         }
+    }
+
+    /// <summary>
+    /// The LOWEST mean lag over the retained window, and the single most useful number here.
+    ///
+    /// A lag sample on its own cannot distinguish the two things you need to tell apart, and
+    /// this repo has got it wrong in both directions:
+    ///
+    ///   * a feed whose queue is pinned at the broker's ceiling reports a lag that is high and
+    ///     CONSTANT — constant precisely because delivery is capped — which reads like fixed
+    ///     upstream latency. SFDPS sat like that for months.
+    ///   * a feed that is keeping up but receives in bursts reports a SAWTOOTH: it climbs while
+    ///     a burst lands and falls back to ~0 between. TBFM does this, and a single 12s sample
+    ///     of one was read here as a regression in a fix that was actually working.
+    ///
+    /// The floor separates them. A sawtooth touches zero, so its floor is ~0. A pinned queue
+    /// never drains, so its floor stays high. "Is this lag draining?" is a question about the
+    /// window, not the instant, and the dashboard should not make someone watch for ten minutes
+    /// to answer it.
+    /// </summary>
+    private static double? LagFloor(Counters c)
+    {
+        lock (c.History)
+        {
+            double? min = null;
+            foreach (var h in c.History)
+            {
+                if (h.LagSec < 0) continue;            // no lag samples in that window
+                if (min is null || h.LagSec < min) min = h.LagSec;
+            }
+            return min;
+        }
+    }
+
+    /// <summary>
+    /// One word for what this feed is doing, so every caller reaches the same conclusion from
+    /// the same numbers instead of each re-deriving the thresholds.
+    ///
+    ///   loss       the broker threw messages away. Authoritative and unrecoverable.
+    ///   silent     nothing for 90s+ — the watchdog's own reconnect threshold.
+    ///   saturated  our parse thread is the bottleneck. Still lossless (the broker spools for
+    ///              us) but the spool is all that stands between us and discards.
+    ///   behind     lag is high AND never drains, while the parse thread is idle — the
+    ///              signature of one session's transport ceiling. More flows is the fix.
+    ///   lagging    lag is high but the floor is low: bursty arrival, keeping up. Not a fault.
+    ///   idle       registered, no messages yet.
+    ///   ok         everything else.
+    ///
+    /// The `behind` vs `lagging` split is the whole point: they look identical in a snapshot and
+    /// have completely different answers.
+    /// </summary>
+    private static string Verdict(Counters c, double ageSec, double? floor)
+    {
+        if (Interlocked.Read(ref c.DiscardEvents) > 0) return "loss";
+        if (Interlocked.Read(ref c.Msgs) == 0) return "idle";
+        if (ageSec > 90) return "silent";
+        if (c.BusyPct >= 60) return "saturated";
+        var lag = c.LagMsMean;
+        if (!double.IsNaN(lag) && lag / 1000.0 >= 5.0)
+            return (floor is >= 5.0 && c.BusyPct < 25) ? "behind" : "lagging";
+        return "ok";
     }
 
     public static object Snapshot() => _feeds
@@ -155,6 +275,15 @@ static class FeedHealth
         {
             var c = kv.Value;
             var lastDiscard = Interlocked.Read(ref c.LastDiscardTicks);
+            var lastMsg = Interlocked.Read(ref c.LastMsgTicks);
+            var ageSec = lastMsg == 0 ? double.MaxValue
+                : (DateTime.UtcNow - new DateTime(lastMsg, DateTimeKind.Utc)).TotalSeconds;
+            var floor = LagFloor(c);
+            var upSec = (DateTime.UtcNow - _started).TotalSeconds;
+            object[] hist;
+            lock (c.History)
+                hist = c.History.Select(h => (object)new
+                { rate = h.Rate, kbPerSec = h.KbPerSec, busyPct = h.BusyPct, lagSec = h.LagSec }).ToArray();
             return (object)new
             {
                 feed = kv.Key,
@@ -176,6 +305,21 @@ static class FeedHealth
                 // Non-zero = the broker threw messages away before handing us the next one.
                 discardEvents = Interlocked.Read(ref c.DiscardEvents),
                 lastDiscard = lastDiscard == 0 ? null : new DateTime(lastDiscard, DateTimeKind.Utc).ToString("o"),
+                // The lowest mean lag in the retained window. Compare with lagSec: floor ~0 is a
+                // sawtooth that drains, floor ~= lagSec is a queue that never does. See LagFloor.
+                lagFloorSec = floor,
+                // Receivers bound to this feed's queue. The answer to "behind" is usually to
+                // raise this (SFDPS_FLOWS / TBFM_FLOWS / ...), so show what it already is.
+                flows = c.Flows,
+                reconnects = Interlocked.Read(ref c.Reconnects),
+                // Since the last message, not since the last position fix — this is what the
+                // 90s silence watchdog in each bridge is measuring.
+                lastMsgAgeSec = Interlocked.Read(ref c.LastMsgTicks) == 0 ? (double?)null : Math.Round(ageSec, 1),
+                avgMsgsPerSec = upSec > 1 ? Math.Round(Interlocked.Read(ref c.Msgs) / upSec, 1) : 0,
+                state = Verdict(c, ageSec, floor),
+                // 10 minutes of 10s samples so a caller can draw the shape rather than trust a
+                // point. rate/kbPerSec/busyPct/lagSec per window; lagSec -1 = no samples.
+                history = hist,
             };
         })
         .ToArray();

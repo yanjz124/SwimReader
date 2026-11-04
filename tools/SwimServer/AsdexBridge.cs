@@ -81,6 +81,7 @@ class AsdexBridge
     public void Start()
     {
         var receivers = SolaceTuning.Receivers("STDDS_FLOWS", 1);
+        FeedHealth.Register("STDDS", receivers);
         for (int i = 0; i < receivers; i++)
         {
             var idx = i;
@@ -195,6 +196,7 @@ class AsdexBridge
             }
             catch (Exception ex) { Console.Error.WriteLine($"[STDDS] Error: {ex.Message}"); }
 
+            FeedHealth.NoteReconnect("STDDS");
             Console.WriteLine("[STDDS] Reconnecting in 10 seconds...");
             Thread.Sleep(10000);
         }

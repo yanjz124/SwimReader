@@ -6,7 +6,7 @@
 <title>SWIM Viewer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>✈️</text></svg>">
 <link rel="stylesheet" href="/shared/common.css?v=3">
-<link rel="stylesheet" href="/home/home.css?v=10">
+<link rel="stylesheet" href="/home/home.css?v=11">
 <script defer src="/shared/frame.js?v=4"></script>
 </head>
 <body>
@@ -173,7 +173,7 @@
         <div class="grid">
             <div class="card server-card" id="throughputCard" role="button" tabindex="0" aria-expanded="false">
                 <div class="title">THROUGHPUT</div>
-                <div class="desc">Live message rate and flight volume — tap for detail</div>
+                <div class="desc">Per-feed data rate, lag and broker discards — tap to see where data is being lost</div>
                 <div class="count" id="throughputCount"></div>
                 <div class="server-detail" id="throughputDetail" hidden></div>
             </div>
@@ -200,7 +200,7 @@
     <div style="margin-top:4px;color:#b06060;">NOT FOR OPERATIONAL USE — for situational awareness and reference only.</div>
 </footer>
 
-<script src="/home/home.js?v=12"></script>
+<script src="/home/home.js?v=13"></script>
 <script src="/idle-timer.js?v=3"></script>
 <script src="/shared/disclaimer.js?v=3"></script>
 </body>

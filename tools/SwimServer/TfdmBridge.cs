@@ -46,6 +46,7 @@ class TfdmBridge
     public void Start()
     {
         var receivers = SolaceTuning.Receivers("TFDM_FLOWS", 1);
+        FeedHealth.Register("TFDM", receivers);
         for (int i = 0; i < receivers; i++)
         {
             var idx = i;
@@ -146,10 +147,12 @@ class TfdmBridge
 
                 try { session.Disconnect(); }
                 catch (Exception ex) { Console.WriteLine($"[TFDM] disconnect: {ex.Message}"); }
+                FeedHealth.NoteReconnect("TFDM");
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine("[TFDM] session error: " + ex.Message + " — reconnecting in 10s");
+                FeedHealth.NoteReconnect("TFDM");
                 Thread.Sleep(10000);
             }
         }

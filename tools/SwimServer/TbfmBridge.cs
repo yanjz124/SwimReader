@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -76,6 +76,7 @@ partial class TbfmBridge
         // non-zero lag and real upstream latency look identical; lifting the ceiling is the only
         // way to tell, and this one drained.
         var receivers = SolaceTuning.Receivers("TBFM_FLOWS", 6);
+        FeedHealth.Register("TBFM", receivers);
         for (int i = 0; i < receivers; i++)
         {
             var idx = i;
@@ -168,10 +169,12 @@ partial class TbfmBridge
 
                 try { session.Disconnect(); }
                 catch (Exception ex) { Console.WriteLine($"[TBFM] disconnect: {ex.Message}"); }
+                FeedHealth.NoteReconnect("TBFM");
             }
             catch (Exception ex)
             {
                 Console.Error.WriteLine("[TBFM] session error: " + ex.Message + " — reconnecting in 10s");
+                FeedHealth.NoteReconnect("TBFM");
                 Thread.Sleep(10000);
             }
         }

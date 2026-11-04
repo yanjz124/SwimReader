@@ -28,25 +28,182 @@ throughputCard.addEventListener('click', toggleThroughput);
 throughputCard.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleThroughput(); }
 });
+// ── Per-feed throughput ──────────────────────────────────────────────────
+// /api/feed reports every SWIM feed's last-10s rate, how hard its single parse thread is
+// working, how far behind the publisher it is, and any broker discards. The card shows all of
+// it per feed, because "the feed is fine" used to be a judgement made from ONE number
+// (SFDPS's) while nothing surfaced the other five at all.
+let _feed = null;      // latest /api/feed
+let _stdds = null;     // latest /api/feed/stdds (the other consumer of the STDDS queue)
+
+const STATE_WHY = {
+    ok:        'keeping up',
+    lagging:   'behind the publisher in bursts, but the lag keeps draining to ~0 — normal for a bursty feed',
+    behind:    "lag is high and never drains while the parse thread sits idle: one session's transport ceiling. Raising this feed's FLOWS is the fix.",
+    saturated: 'our parse thread is the bottleneck. Still lossless — the broker spools for us — but the spool is the only thing preventing discards.',
+    silent:    "no messages for 90s+, which is the receiver's own watchdog reconnect threshold",
+    loss:      'the broker discarded messages before delivering them. Confirmed, unrecoverable data loss.',
+    idle:      'configured, nothing received yet',
+    off:       'not consuming the live queues',
+};
+
+// A tiny sparkline over the last 10 minutes. Two series on one baseline: rate (filled) and lag
+// (line), scaled independently — each answers a question about its own shape, not their ratio.
+function sparkline(hist) {
+    if (!hist || hist.length < 2) return '';
+    const W = 100, H = 20, n = hist.length;
+    const x = (i) => (i / (n - 1)) * W;
+    const maxR = Math.max(1, ...hist.map(h => h.rate));
+    const lags = hist.map(h => (h.lagSec != null && h.lagSec >= 0) ? h.lagSec : null);
+    const seen = lags.filter(v => v != null);
+    const maxL = Math.max(1, ...(seen.length ? seen : [1]));
+    const ry = (v) => H - (v / maxR) * (H - 2) - 1;
+    const area = 'M 0 ' + H + ' '
+        + hist.map((h, i) => 'L ' + x(i).toFixed(1) + ' ' + ry(h.rate).toFixed(1)).join(' ')
+        + ' L ' + W + ' ' + H + ' Z';
+    // The lag line BREAKS across windows that recorded no samples rather than interpolating a
+    // value that was never measured.
+    let lagPath = '', pen = false;
+    lags.forEach((v, i) => {
+        if (v == null) { pen = false; return; }
+        const yy = (H - (v / maxL) * (H - 2) - 1).toFixed(1);
+        lagPath += (pen ? 'L' : 'M') + ' ' + x(i).toFixed(1) + ' ' + yy + ' ';
+        pen = true;
+    });
+    return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">'
+        + '<path d="' + area + '" fill="#2a2a10" stroke="#cccc44" stroke-width="0.8"/>'
+        + (lagPath ? '<path d="' + lagPath + '" fill="none" stroke="#d9a066" stroke-width="1" stroke-linejoin="round"/>' : '')
+        + '</svg>';
+}
+
+const FEED_COLS = [
+    ['FEED', ''], ['STATE', ''], ['MSG/S', 'c-rate'], ['KB/S', 'c-kb'],
+    ['LAG', 'c-lag'], ['FLOOR', 'c-floor'], ['BUSY', 'c-busy'],
+    ['FLOWS', 'c-flows'], ['RECONN', 'c-reconn'], ['DISCARD', 'c-disc'],
+    ['10 MIN · RATE / LAG', 'c-trend'],
+];
+
+function feedRow(f, opts) {
+    const o = opts || {};
+    const st = o.noState ? null : (f.state || 'ok');
+    const n1 = (v, suf) => v == null ? '--' : v.toFixed(1) + (suf || '');
+    const n0 = (v) => v == null ? '--' : v.toFixed(0);
+    return '<span class="fd" title="' + (o.title || '') + '">' + f.feed + '</span>'
+        + (st ? '<span class="st ' + st + '" title="' + (STATE_WHY[st] || '') + '">' + st + '</span>'
+              : '<span class="st idle" title="Sub-service of the neighbouring process">·</span>')
+        + '<span class="nm c-rate">' + n1(f.msgsPerSec) + '</span>'
+        + '<span class="nm c-kb">' + n0(f.kbPerSec) + '</span>'
+        + '<span class="nm c-lag">' + n1(f.lagSec, 's') + '</span>'
+        + '<span class="nm c-floor' + ((f.lagFloorSec != null && f.lagFloorSec < 1) ? ' dim' : '') + '"'
+        + ' title="Lowest lag seen in the last 10 min. Near 0 = the lag drains between bursts.'
+        + ' Close to LAG = it never drains, which is a queue pinned at the transport ceiling.">'
+        + n1(f.lagFloorSec, 's') + '</span>'
+        + '<span class="nm c-busy' + ((f.busyPct || 0) < 25 ? ' dim' : '') + '">'
+        + (f.busyPct == null ? '--' : f.busyPct + '%') + '</span>'
+        + '<span class="nm c-flows' + ((f.flows || 0) ? '' : ' dim') + '">' + (f.flows || '--') + '</span>'
+        + '<span class="nm c-reconn' + ((f.reconnects || 0) ? '' : ' dim') + '">' + (f.reconnects || 0) + '</span>'
+        + '<span class="nm c-disc"' + ((f.discardEvents || 0) ? ' style="color:#ff5555"' : '') + '>'
+        + (f.discardEvents || 0) + '</span>'
+        + '<span class="c-trend">' + sparkline(f.history) + '</span>';
+}
+
 function renderThroughputDetail() {
     const t = _thr || {};
+    const feeds = (_feed && _feed.feeds) || [];
+    const out = [];
+
+    out.push('<div class="feed-table">');
+    out.push(FEED_COLS.map(c => '<span class="hd ' + c[1] + '">' + c[0] + '</span>').join(''));
+    for (const f of feeds) out.push(feedRow(f));
+
+    // The OTHER consumer of the STDDS queue, shown inline because the two numbers only mean
+    // something together: a Solace queue delivers each message to exactly one bound consumer, so
+    // our "STDDS" row is a SHARE of the queue rather than the queue's rate.
+    if (_stdds && _stdds.reachable !== false && Array.isArray(_stdds.services)) {
+        const tot = _stdds.services.find(x => x.feed === 'TOTAL');
+        out.push('<span class="feed-sub">dgscope / stars service &mdash; same STDDS queue, port 5000</span>');
+        for (const sv of _stdds.services) {
+            if (sv.feed === 'TOTAL') continue;
+            out.push(feedRow(sv, { noState: true, title: 'STDDS sub-service on the neighbouring process' }));
+        }
+        if (tot) {
+            const here = feeds.find(f => f.feed === 'STDDS');
+            const mine = here ? (here.msgsPerSec || 0) : 0;
+            const theirs = tot.msgsPerSec || 0;
+            out.push('<div class="feed-note"><b>The STDDS queue is shared.</b> This process takes '
+                + mine.toFixed(1) + '/s and the DGScope/STARS service takes ' + theirs.toFixed(1)
+                + '/s, so the queue is delivering about <b>' + (mine + theirs).toFixed(1)
+                + '/s</b> and each process sees only its own share &mdash; a Solace queue hands every '
+                + 'message to exactly one consumer. SWIM_FEED_HOST does not cover this: it stops a '
+                + 'second <i>host</i> binding the queue, and both of these run on the feed host.'
+                + (tot.inboundDropped ? ' <span class="bad">That service has also dropped '
+                    + tot.inboundDropped.toLocaleString() + ' messages internally (its parse loop fell '
+                    + 'behind) &mdash; loss we cause, not the broker.</span>' : '')
+                + '</div>');
+        }
+    } else if (_stdds && _stdds.reachable === false) {
+        out.push('<div class="feed-note"><span class="warn">DGScope/STARS service (port 5000) is '
+            + 'unreachable</span> &mdash; its share of the STDDS queue is unknown.</div>');
+    }
+
+    // Plain-language verdict, so the table doesn't have to be interpreted to be useful.
+    const bad = feeds.filter(f => f.state === 'loss');
+    const watch = feeds.filter(f => ['behind', 'saturated', 'silent'].includes(f.state));
+    let verdict;
+    if (bad.length)
+        verdict = '<span class="bad">Confirmed data loss on ' + bad.map(f => f.feed).join(', ')
+            + '</span> &mdash; the broker discarded messages before delivery. Not recoverable.';
+    else if (watch.length)
+        verdict = '<span class="warn">Watch ' + watch.map(f => f.feed + ' (' + f.state + ')').join(', ')
+            + '</span> &mdash; no broker discards yet, so nothing is lost. Hover a badge for what it means.';
+    else
+        verdict = 'No broker discards on any feed &mdash; nothing is being lost upstream.';
+
+    out.push('<div class="feed-note">' + verdict + '<br>'
+        + '<b>LAG</b> is the publisher\'s own timestamp against our receipt; <b>FLOOR</b> is its lowest '
+        + 'value over 10 minutes. High LAG with a near-zero FLOOR is a bursty feed that is keeping up. '
+        + 'High LAG whose FLOOR never drops is a queue pinned at one session\'s transport ceiling, and '
+        + 'more <b>FLOWS</b> is what fixes that. <b>BUSY</b> is the share of that feed\'s single parse '
+        + 'thread spent parsing &mdash; sustained high values mean only the broker\'s spool is keeping us '
+        + 'lossless. <b>DISCARD</b> is the one authoritative loss signal: Solace sets it on the next '
+        + 'message after it has thrown some away.</div>');
+    out.push('</div>');
+
     const fields = [
         ['Flights tracked', (t.flights ?? 0).toLocaleString()],
-        ['Msg / sec', (t.rate ?? 0).toFixed(0)],
-        ['Msg / day (est)', fmtCompact((t.rate ?? 0) * 86400)],
-        ['Data ingress', t.todayData ?? '--'],
+        ['All feeds now', feeds.length
+            ? feeds.reduce((a, f) => a + (f.msgsPerSec || 0), 0).toFixed(0) + '/s' : '--'],
+        ['SFDPS msg / day (est)', fmtCompact(feedRate('SFDPS') * 86400)],
+        ['Data ingress today', t.todayData ?? '--'],
         ['Avg data / day', t.avgData ?? '--'],
         ['Flight archive', t.archive ?? '--'],
     ];
-    throughputDetail.innerHTML = fields.map(([l, v]) =>
-        `<span class="lbl">${l}</span><span class="val">${v}</span>`).join('');
+    out.push(fields.map(f =>
+        '<span class="lbl">' + f[0] + '</span><span class="val">' + f[1] + '</span>').join(''));
+    throughputDetail.innerHTML = out.join('');
 }
+
+function feedRate(name) {
+    const f = _feed && (_feed.feeds || []).find(x => x.feed === name);
+    return f ? (f.msgsPerSec || 0) : 0;
+}
+
 function updateThroughput() {
     const t = _thr || {};
+    const feeds = (_feed && _feed.feeds) || [];
+    const total = feeds.reduce((a, f) => a + (f.msgsPerSec || 0), 0);
+    const loss = feeds.filter(f => (f.discardEvents || 0) > 0).length;
+    const watch = feeds.filter(f => ['behind', 'saturated', 'silent'].includes(f.state)).length;
     const cEl = document.getElementById('throughputCount');
-    if (cEl) cEl.textContent =
-        `${(t.flights ?? 0).toLocaleString()} flights  ${(t.rate ?? 0).toFixed(0)}/s`
-        + (t.todayData ? `  ${t.todayData} today` : '');
+    if (cEl) {
+        // Collapsed line: the combined rate of EVERY feed, then whichever of "losing data" /
+        // "to watch" / "all ok" applies. It used to show SFDPS's rate alone.
+        cEl.textContent = feeds.length
+            ? total.toFixed(0) + '/s across ' + feeds.length + ' feeds  ·  '
+              + (loss ? loss + ' LOSING DATA' : watch ? watch + ' to watch' : 'all ok')
+            : (t.flights ?? 0).toLocaleString() + ' flights  ' + (t.rate ?? 0).toFixed(0) + '/s';
+        cEl.style.color = loss ? '#ff5555' : (watch ? '#d9a066' : '');
+    }
     if (throughputCard.classList.contains('open')) renderThroughputDetail();
 }
 
@@ -177,8 +334,23 @@ storageCard.addEventListener('keydown', (e) => {
 loadStorage();
 setInterval(loadStorage, 5 * 60 * 1000);
 
+// Both feed endpoints, once per poll. Ordered first in refreshStats so the status bar and the
+// THROUGHPUT card read the same snapshot. The STDDS one is a proxy to the neighbouring process
+// and returns {reachable:false} rather than failing when that service is restarting.
+async function refreshFeeds() {
+    try {
+        const r = await fetch('/api/feed');
+        if (r.ok) _feed = await r.json();
+    } catch { /* keep the previous snapshot */ }
+    try {
+        const r = await fetch('/api/feed/stdds');
+        if (r.ok) _stdds = await r.json();
+    } catch { _stdds = { reachable: false }; }
+}
+
 // ── Live stats polling ────────────────────────────────────────
 async function refreshStats() {
+    await refreshFeeds();
     try {
         const syr = await fetch('/api/system');
         if (syr.ok) {
@@ -205,19 +377,17 @@ async function refreshStats() {
             // showed ~44/s here against ~93/s on the portal and looked like it was losing half the
             // feed, when the two numbers simply measured different things. /api/feed samples the
             // last 10 seconds per feed, which is the comparable quantity.
+            // _feed is refreshed once per poll in refreshFeeds() and shared by the status bar
+            // and the THROUGHPUT card, so this costs no extra request.
             let rate = s.rate || 0, rateTitle = 'average since start (no live sample)';
-            try {
-                const fr = await fetch('/api/feed');
-                if (fr.ok) {
-                    const sf = ((await fr.json()).feeds || []).find(f => f.feed === 'SFDPS');
-                    if (sf && typeof sf.msgsPerSec === 'number') {
-                        rate = sf.msgsPerSec;
-                        rateTitle = `last 10s sample · lag ${sf.lagSec}s · `
-                            + `${sf.discardEvents ? sf.discardEvents + ' broker discards' : 'no broker discards'}`
-                            + ` · ${(s.rate || 0).toFixed(0)}/s average since start`;
-                    }
-                }
-            } catch {}
+            const sf = (_feed && (_feed.feeds || []).find(f => f.feed === 'SFDPS')) || null;
+            if (sf && typeof sf.msgsPerSec === 'number') {
+                rate = sf.msgsPerSec;
+                rateTitle = `last 10s sample · lag ${sf.lagSec}s (floor ${sf.lagFloorSec}s) · `
+                    + `${sf.flows} flows · ${sf.busyPct}% parse · `
+                    + `${sf.discardEvents ? sf.discardEvents + ' broker discards' : 'no broker discards'}`
+                    + ` · ${(s.rate || 0).toFixed(0)}/s average since start`;
+            }
             document.getElementById('sfdpsStat').innerHTML =
                 `SFDPS: <b>${(s.flights || 0).toLocaleString()} flights</b>  `
                 + `<b title="${rateTitle}">${rate.toFixed(0)}/s</b>`;
@@ -238,9 +408,12 @@ async function refreshStats() {
             // THROUGHPUT card
             _thr.flights = s.flights || 0;
             _thr.rate = s.rate || 0;
-            updateThroughput();
         }
     } catch {}
+
+    // One repaint per poll, after the feed snapshot is in — not inside the /api/stats block,
+    // so the feed table still updates on a poll where /api/stats happens to fail.
+    updateThroughput();
 
     // Flight-history archive → data ingress per day (daily jsonl file sizes) + archive totals.
     try {

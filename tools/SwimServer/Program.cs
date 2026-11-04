@@ -758,6 +758,9 @@ var solaceReady = new TaskCompletionSource();
 // delivered to exactly one of them.
 var sfdpsReceivers = Math.Clamp(
     int.TryParse(Environment.GetEnvironmentVariable("SFDPS_FLOWS"), out var _rx) ? _rx : 3, 1, 8);
+// Declared up front so /api/feed can show the flow count beside the lag — "lag never drains
+// while busyPct is low" means raise this, so the current value belongs next to the symptom.
+FeedHealth.Register("SFDPS", sfdpsReceivers);
 // Processing stays single-threaded. The handler is ~1.4 ms, so one thread sustains ~700 msg/s —
 // far above what we need — and FlightState keeps the serialization its mutation logic assumes.
 var sfdpsProcessGate = new object();
@@ -843,6 +846,7 @@ void RunSfdpsReceiver(int receiverIndex)
                 solaceReady.TrySetResult();
             }
 
+            FeedHealth.NoteReconnect("SFDPS");
             Console.WriteLine($"[{tag}] Reconnecting in 10 seconds...");
             Thread.Sleep(10000);
         }

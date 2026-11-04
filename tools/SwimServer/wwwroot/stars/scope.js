@@ -445,6 +445,11 @@ function ringToLines(coords, out) {
  * that it is a guess rather than this position's layout.
  */
 function selectMapGroup() {
+  // A DGScope v2 profile's DCB map list supersedes vNAS entirely (see loadProfileMaps),
+  // and that is a deliberate per-facility override, not a fallback. Re-deriving from the
+  // vNAS mapGroup on sign-on would throw it away mid-session — which is exactly what the
+  // first version of this did to PCT, whose profile binds slots [54,55,56,40,57,26].
+  if (_profileMapsActive) return starsState.activeMapGroup;
   const groups = starsState.mapGroups || [];
   const me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
   let group = null;
@@ -559,6 +564,7 @@ async function loadProfileMaps() {
   } catch (e) { return; }
   if (!Array.isArray(maps) || !maps.length) return;
   // Profile maps supersede vNAS maps on v2.
+  _profileMapsActive = true;
   videoMaps.length = 0;
   activeMapIds = Array(38).fill(null);
   for (const m of maps) {
@@ -652,6 +658,9 @@ function drawVideoMapLines() {
 // position selection). A DGScope profile XML can still overwrite this when
 // loaded.
 let activeMapIds = Array(38).fill(null);
+// True once a DGScope v2 profile has replaced the vNAS catalog + DCB binding for this
+// facility. Checked by selectMapGroup so a later sign-on doesn't undo it.
+let _profileMapsActive = false;
 function dcbMapAt(i) {
   // i ∈ [0..5] for inline MAP buttons.
   const starsId = activeMapIds[i];
@@ -664,9 +673,11 @@ function dcbSubmenuMapAt(i) {
   if (starsId == null) return null;
   return videoMaps.find(m => m.starsId === starsId) || null;
 }
-// Kept as a back-compat alias for the global window export below; the
-// underlying state is now `activeMapIds`.
-let mapButtonAssignments = activeMapIds;
+// NOTE: there is deliberately no `mapButtonAssignments` variable any more. It was a
+// back-compat alias bound once at module load, and both selectMapGroup() and
+// loadProfileMaps() REASSIGN activeMapIds rather than mutating it — so the alias went
+// stale immediately and anything reading or writing it was talking to a dead array.
+// window.mapButtonAssignments is a live getter at the bottom of this file instead.
 
 // Apply a DGScope profile XML: prefSet overrides + DCBMapList + DisplayedMaps.
 // Backend serializes with camelCase per ServerContext JsonSerializer settings.
@@ -733,14 +744,24 @@ async function applyProfile(profileName) {
       };
       prefSet.RangeRingLocation = { ...prefSet.ScreenCenterPoint };
     }
-    if (Array.isArray(p.tcp?.dcbMapList)) mapButtonAssignments = p.tcp.dcbMapList;
+    // Write the DCB binding where the buttons actually read it. This used to assign to
+    // `mapButtonAssignments`, a back-compat alias that captured the array by reference at
+    // module load — while dcbMapAt()/dcbSubmenuMapAt() read `activeMapIds`, which
+    // selectMapGroup and loadProfileMaps both REASSIGN. So the alias pointed at a
+    // long-dead array and a `?profile=` profile's map buttons were silently ignored.
+    if (Array.isArray(p.tcp?.dcbMapList)) {
+      activeMapIds = Array(38).fill(null);
+      for (let i = 0; i < Math.min(38, p.tcp.dcbMapList.length); i++)
+        activeMapIds[i] = p.tcp.dcbMapList[i] != null ? p.tcp.dcbMapList[i] : null;
+      _profileMapsActive = true;   // an explicit per-position binding; don't re-derive it
+    }
     if (Array.isArray(p.displayedMaps)) {
       const set = new Set(p.displayedMaps);
       for (const m of videoMaps) m.visible = set.has(m.starsId);
     }
     recomputeScale();
     if (dcb) dcb.render();
-    console.log(`[STARS] profile ${profileName} applied: range=${prefSet.Range} maps=${mapButtonAssignments.length}`);
+    console.log(`[STARS] profile ${profileName} applied: range=${prefSet.Range} maps=${activeMapIds.filter(x => x != null).length}`);
   } catch (e) { console.error("[STARS] profile load failed:", e); }
 }
 
@@ -3553,7 +3574,8 @@ window.videoMaps        = videoMaps;
 // ssa.js reads the SSA altimeter stations (area ssaAirports / profile AltimeterStations) from here.
 // NOT window.starsState — that is a separate object (ATPA, min seps, …) created above.
 window.starsScopeState  = starsState;
-window.mapButtonAssignments = mapButtonAssignments;
+// Live, because activeMapIds is reassigned (not mutated) whenever the binding changes.
+Object.defineProperty(window, "mapButtonAssignments", { get: () => activeMapIds });
 window.ClockPhase       = ClockPhase;
 // Exposed for the NEXRAD overlay (nexrad.js) which needs to project image
 // corners from radar-centered lat/lon into the current scope view.

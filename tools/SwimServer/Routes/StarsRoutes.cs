@@ -78,8 +78,7 @@ static class StarsRoutes
                 foreach (var f in System.IO.Directory.EnumerateFiles(dir)
                              .Where(p => p.EndsWith(".js") || p.EndsWith(".css")))
                     ver = System.Math.Max(ver, File.GetLastWriteTimeUtc(f).Ticks);
-                html = System.Text.RegularExpressions.Regex.Replace(
-                    html, "(src|href)=\"([\\w.-]+\\.(?:js|css))\"", $"$1=\"$2?v={ver}\"");
+                html = AssetVersion.Stamp(html, ver);
                 c.Response.Headers.CacheControl = "no-cache";
                 c.Response.ContentType = "text/html";
                 await c.Response.WriteAsync(html);
@@ -114,8 +113,7 @@ static class StarsRoutes
                 foreach (var f in System.IO.Directory.EnumerateFiles(dir)
                              .Where(p => p.EndsWith(".js") || p.EndsWith(".css")))
                     ver = System.Math.Max(ver, File.GetLastWriteTimeUtc(f).Ticks);
-                html = System.Text.RegularExpressions.Regex.Replace(
-                    html, "(src|href)=\"([\\w.-]+\\.(?:js|css))\"", $"$1=\"$2?v={ver}\"");
+                html = AssetVersion.Stamp(html, ver);
                 c.Response.Headers.CacheControl = "no-cache";
                 c.Response.ContentType = "text/html";
                 await c.Response.WriteAsync(html);

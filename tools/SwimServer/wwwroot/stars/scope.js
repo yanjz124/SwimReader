@@ -25,6 +25,12 @@ const pathMatch = location.pathname.match(/^\/stars(?:v2)?\/([^/]+)\/([^/]+)/);
 if (!pathMatch) { location.href = "/stars"; throw new Error("bad path"); }
 const ARTCC = pathMatch[1];
 const FACILITY = pathMatch[2];
+// Published explicitly because profile-editor.js reads `window.FACILITY`, and a
+// top-level `const` is not a window property. It has a URL fallback so it worked,
+// but leaving the two spellings disagreeing is how the starsState and dcb bugs
+// below happened — GlobalScopeContractTests fails on any such pair now.
+window.ARTCC = ARTCC;
+window.FACILITY = FACILITY;
 // Incident replay: /stars/{artcc}/{facility}?incident={id} plays this facility's archived TAIS
 // (STARS terminal) slice instead of the live feed. Empty = normal live scope.
 const INCIDENT_ID = new URLSearchParams(location.search).get("incident") || "";
@@ -3096,11 +3102,17 @@ const starsState = Object.assign(window.starsState, {
   activeMapGroup: null,
 });
 
+// `let dcb` is NOT a window property (same trap as starsState above), and
+// preview.js / profile.js reach it as `window.dcb` — guarded, so for every build
+// since those guards were written `window.dcb` was undefined and they silently
+// did nothing: the preview area's open-maps and open-brite actions never opened
+// those DCB popouts, and the DCB never re-rendered after a pref change. Assigning
+// through window here makes the two spellings one object.
 let dcb;
 function mountDcb() {
   const root = document.getElementById("dcb");
   if (!root) return;
-  dcb = new DCB(root, starsState);
+  dcb = window.dcb = new DCB(root, starsState);
   // Debug: ?menu=MAPS|BRITE|AUX|SITE pre-opens submenu so headless tests can
   // screenshot each one without scripted clicks.
   const qMenu = new URLSearchParams(location.search).get("menu");

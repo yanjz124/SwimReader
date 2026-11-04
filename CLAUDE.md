@@ -1573,6 +1573,93 @@ read through `window.` in one place and written unqualified in another. `prefSet
 now defaults to **0**: it is only a fallback for a case that can't happen, and "draw nothing" is
 the right answer there.
 
+### Cache-busting silently did nothing, so shipped scope.js fixes never arrived
+
+`/stars` and `/starsv2` compute a version from the newest asset mtime and stamp it into the HTML.
+The pattern was:
+
+```
+(src|href)="([\w.-]+\.(?:js|css))"
+```
+
+which needs the closing quote **immediately** after `.js`/`.css`. Every tag in `scope.html`
+already carried a hand-maintained version — `scope.js?v=68`, `dcb.js?v=7` — so the pattern matched
+nothing, the rewrite was a no-op, and the page kept emitting the literal `?v=68`. That URL had
+been frozen since **2026-09-28**, so every change to scope.js after that date was invisible to any
+browser that had loaded the page once. The character class also has no `/`, so `/shared/*.js|css`
+was never stamped at all.
+
+**This defeats browser-based verification, which is the part to remember.** A fresh headless
+Chromium has an empty cache, so it fetches whatever the HTML names and shows the new behaviour —
+every check passes, and would pass no matter how broken the stamping is. Confirming a change in a
+clean browser says nothing about whether a returning user will see it. **Check the emitted tag.**
+`AssetVersion.Stamp` + `AssetVersionTests` (which asserts against the real `scope.html`) exist
+because a unit test is the only thing that can see this.
+
+The numbers written into the HTML are inert now — the server always overrides them — so forgetting
+to bump one can no longer serve stale code.
+
+### PTL "always on" is a persisted preference, not a stuck flag
+`savePrefsToLocalStorage` persists `PTLOwn` and `PTLAll`, so once either is toggled it restores on
+every load, forever. The gate itself (`ShowPTL || (Owned && PTLOwn) || (FDB && PTLAll)`) is
+correct and dates from June. The DCB AUX buttons render lit when active, which is how to tell.
+Worth knowing before hunting a rendering bug: a clean browser profile shows the defaults (both
+off) and will never reproduce it.
+
+### ADS-B callsign enrichment: the regions, not the matching
+
+Ported from the `ADSBBeaconReader` receiver in the DGScope branch (`yanjz124/scope`). Four tiers,
+in `CallsignEnrichmentService`:
+
+| tier | gate | serves |
+|---|---|---|
+| Mode S hex | exact | anything TAIS gives a Mode S code |
+| discrete beacon code | 5 NM / 1,000 ft | correlated tracks |
+| — | — | *(the DGScope receiver's squawk+position tier; not ported, the index already de-duplicates)* |
+| position only | **1.5 NM / 500 ft, and rejected if a second candidate is inside the gate** | **uncorrelated targets** — TAIS publishes no Mode S for them |
+
+**Non-discrete codes are never correlated on** (`BeaconCodes`): the 64 block-boundary codes
+(anything ending in 00), the conspicuity/special-purpose set, and the DC SFRA/FRZ allocations, per
+FAA JO 7110.66 and 7110.65 Ch.5 S.2. Matching on them was a *wrong-answer* bug — several `1200`
+targets sit inside a 5 NM box in busy VFR airspace, so "nearest wins" handed a track somebody
+else's callsign, and 7700/7600/7500 are non-discrete too.
+
+The position tier **declines an ambiguous match on purpose**. With no identifier, two candidates in
+the gate means no tiebreaker, and picking the closer one is a coin flip that produces a
+confidently wrong callsign. Untagged is the honest answer and the one a controller can see.
+
+For an uncorrelated target the ADS-B callsign goes to **`Scratchpad1`**, with the squawk staying on
+line 1 (`PublishEnrichmentAsync`); for a Mode S target it goes to the callsign field.
+
+#### What was actually broken: coverage, and only measurement found it
+"The beacon reader isn't working" could not be investigated — the matching logs at Debug, on a box
+whose journal is capped, and silence from the service is indistinguishable from "nothing matched".
+`GET /diag` now carries per-tier counters, and they named the cause immediately:
+
+| | |
+|---|---|
+| `matchedByPosition` | 651 |
+| **`positionNoCoverage`** | **1397** — no ADS-B target within ~90 NM of the track *at all* |
+| `positionNoCandidate` | 1094 — targets nearby, none inside the gate |
+| `positionAmbiguous` | 87 |
+
+**Splitting no-coverage from no-match is what made it findable.** A single "no candidate" count
+points at the gate, and loosening the gate would have changed nothing. The region list was five
+hand-placed 250 NM circles, and **15 of the 28 busiest TRACONs fell outside every one** — Seattle
+by 386 NM, Portland 279, Phoenix 196, Salt Lake 188, Denver 167, Boston 129, plus Houston, Miami,
+Detroit, Cleveland, Minneapolis, Cincinnati, Nashville, Albuquerque and **Palm Beach**. Those
+facilities could never be enriched by position however good the matching was.
+
+Now 20 circles, generated to cover every facility we serve and pruned to the minimum that still
+does (verified zero uncovered). **Regenerate it that way when the facility list grows** — nudging
+circles by hand is how the gaps survived. And because the rate limiters are per-source while
+`GetByLocationAsync` always tried adsb.fi first, all 20 would have queued behind one 1.1 s gate;
+it rotates the lead source now and fetches three regions at a time, so 20 cost about what 7 did.
+
+Remaining known cost: enrichment runs one cycle per `EnrichmentRegionRefresh` (60 s), so a new
+track waits up to a minute. The queued entry is overwritten by each TAIS update, so the *position*
+used is current — it is latency, not staleness.
+
 ### The empty SITE submenu is intentional — don't wire it up
 `starsState.asrSites` reads `fac.starsConfiguration.areas.flatMap(a => a.asrSites)` and always
 comes back **empty**, because STARS areas carry no `asrSites` key at all. The ASR list lives at

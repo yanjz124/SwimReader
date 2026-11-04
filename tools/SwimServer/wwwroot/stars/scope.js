@@ -2991,7 +2991,13 @@ async function bootstrap() {
     // STARS v2: if a DGScope profile with video maps is loaded for this facility, use ITS maps
     // (the profile is the source of truth) — rendered through the same videoMaps[] pipeline.
     await loadProfileMaps();
-    // Phase 4: ASR sites for SITE submenu (vNAS starsConfiguration → areas → asrSites if present)
+    // SITE submenu ASR sites — ALWAYS EMPTY, AND THAT IS INTENDED. STARS areas carry no
+    // `asrSites` key; vNAS keeps the ASR list on the ARTCC root under
+    // `facility/eramConfiguration/asrSites` (ZMA: VRB, FLL, MYN, QYY, RSW, ZQA), which is ERAM
+    // adaptation rather than a TRACON's sensor list. This scope always runs fused/multi-sensor,
+    // so the menu correctly offers only MULTI (disabled) + FUSED, and FUSED is active by default.
+    // Filling this from the ARTCC's ERAM list would offer single-site selections for radars that
+    // may be nowhere near the TRACON, backing a mode nothing here implements. Don't.
     starsState.asrSites = fac?.starsConfiguration?.areas?.flatMap(a => a.asrSites || []) || [];
 
     // Optional vNAS profile from URL ?profile=NAME (web-only artifact).

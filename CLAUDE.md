@@ -1573,13 +1573,21 @@ read through `window.` in one place and written unqualified in another. `prefSet
 now defaults to **0**: it is only a fallback for a case that can't happen, and "draw nothing" is
 the right answer there.
 
-### Still open here
-- **The SITE submenu is always empty.** `starsState.asrSites` reads
-  `fac.starsConfiguration.areas.flatMap(a => a.asrSites)`, but STARS areas carry no `asrSites` key.
-  The ASR list lives at **`facility/eramConfiguration/asrSites`** on the ARTCC root (ZMA: VRB, FLL,
-  MYN, QYY, RSW, ZQA, with lat/lon, range and ceiling). So the menu only ever shows MULTI
-  (disabled) + FUSED. Whether a TRACON's SITE menu should list the whole ARTCC's ASRs or only those
-  in range is a judgement call that hasn't been made.
+### The empty SITE submenu is intentional — don't wire it up
+`starsState.asrSites` reads `fac.starsConfiguration.areas.flatMap(a => a.asrSites)` and always
+comes back **empty**, because STARS areas carry no `asrSites` key at all. The ASR list lives at
+`facility/eramConfiguration/asrSites` on the **ARTCC root** (ZMA: VRB, FLL, MYN, QYY, RSW, ZQA,
+each with lat/lon, range and ceiling), which is ERAM adaptation, not a TRACON's sensor list.
+
+So the menu only ever offers MULTI (disabled, as in DGScope) and FUSED — and **that is the
+intended state**: this scope always runs fused/multi-sensor, which is also what a real STARS sits
+in for normal operations. FUSED is active by default (`state.radar == null` selects it), so the
+menu already reflects reality.
+
+Populating it from the ARTCC's ERAM ASR list would be the wrong data in the right-looking place:
+it would offer single-site selections for radars that may be nowhere near the TRACON, backing a
+mode nothing here implements. Leave it. Noted because the empty menu reads like an unfinished
+feature and invites exactly that fix.
 
 ### The SFDPS watchdog was killing local instances every four minutes
 

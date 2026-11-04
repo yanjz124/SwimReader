@@ -1456,7 +1456,37 @@ The failure mode that *does* lose messages is a second consumer on the same queu
 
 ## Handing a flight to SimBrief / VATSIM
 
-Both `/dispatch` and the flight table's detail panel do this, with the same conventions.
+Both `/dispatch` and the flight table's detail panel do this, through **one shared module,
+`wwwroot/shared/simbrief.js`**. Anything that decides *what SimBrief receives* lives there: the
+tail / fleet / variant / type lookups and their caches, the variant storage key, the airframe
+label, the equipment-string assembly, the post-override tail-selection rule, and the URL builder.
+Each page keeps only what is genuinely its own — row rendering, and its own route cleaning
+(`cleanRoute` vs `nasToIcaoRoute`) — and normalizes its record into one flight shape.
+
+**It was two copies, and they drifted.** The same bug had to be fixed twice on one day (a TYPE
+override reloaded the VARIANT list but not the AIRFRAME list, so SimBrief could be handed a tail
+whose real type contradicted the chosen type). Reading the two builders side by side then found
+**four more disagreements, every one silent** — SimBrief ignores a parameter it does not recognise
+and simply opens with the field blank, so none of these ever produced an error:
+
+| | was | per [the docs](https://developers.navigraph.com/docs/simbrief/using-the-api) |
+|---|---|---|
+| `hexcode` | flight table sent it **top-level** → Mode-S never arrived | an **`acdata`** field |
+| `extrarmk` | flight table sent `RMK/` **top-level** → remarks never arrived | an **`acdata`** field (top-level is `manualrmk`) |
+| `cat`/`equip`/`transponder` | set independently, so a flight with no surveillance code silently lost its equipment string | **all three or all three are discarded** |
+| `fl` | flight table sent `assignedAltitude/100`, i.e. `360` for FL360 — which reads as 360 ft | documented examples are `34000` and `FL340`; there is no bare-hundreds form. **Feet.** |
+
+And `/dispatch` sent none of the equipment data at all, although `/api/dispatch/search` has
+returned `wake`/`equip`/`nav`/`surv`/`pbn`/`datalink`/`remarks` all along — so the route finder
+now prefills as completely as the flight table does.
+
+**The lesson worth keeping:** a prefill API that ignores unknown parameters gives no feedback, so
+duplicated builders drift silently and stay wrong indefinitely. Check a generated URL against the
+parameter list rather than against the other page.
+
+Verified live on both pages after the extraction — overriding TYPE reloads the operator's fleet
+for the new type and moves the tail to one that is actually that type: dispatch SWA B738 192
+tails → B38M 355 tails, flight table AAL1080 B738 307 tails/N902AN → B38M 105 tails/N356TX.
 
 **SimBrief** — `dispatch.simbrief.com/options/custom?…`. Three selectors drive it:
 - **AIRFRAME**: which real tail to pre-fill with — the flight's own (resolved to its aircraft-DB

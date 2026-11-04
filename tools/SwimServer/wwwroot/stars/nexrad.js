@@ -61,7 +61,12 @@
     if (!window.prefSet) return false;
     prefSet.Nexrad = prefSet.Nexrad || {};
     if (prefSet.Nexrad.enabled    === undefined) prefSet.Nexrad.enabled    = false;
-    if (prefSet.Nexrad.levels     === undefined) prefSet.Nexrad.levels     = 0x3F;   // all 6 on by default
+    // 0, NOT 0x3F. This is only a fallback for the (now impossible) case where
+    // starsState.wxLevels is unreadable, and the right answer there is "draw nothing"
+    // — defaulting to all six levels is how a missing `window.` on the wxLevels read
+    // turned into "NEXRAD shows every intensity and the WX buttons do nothing". A level
+    // shows because its button is on; nothing is on until someone presses one.
+    if (prefSet.Nexrad.levels     === undefined) prefSet.Nexrad.levels     = 0;
     if (prefSet.Nexrad.brightness === undefined) prefSet.Nexrad.brightness = 80;
     return true;
   }

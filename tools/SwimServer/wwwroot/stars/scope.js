@@ -3022,7 +3022,30 @@ async function bootstrap() {
 }
 
 // Phase 4: DCB state container exposed to dcb.js.
-const starsState = {
+//
+// THIS IS THE SAME OBJECT AS window.starsState, deliberately. It did not used to be, and
+// that cost us the WX buttons.
+//
+// There were two objects both named `starsState`: the MCA container assigned to
+// `window.starsState` a few hundred lines up, and this DCB container declared as a
+// module-scope `const`. A `const` in a classic script is not a property of `window`, so
+// which one you got depended entirely on how you spelled the read — unqualified
+// `starsState.foo` resolved to this one (the const shadows the global), while
+// `window.starsState?.foo` resolved to the other. Both spellings are used throughout this
+// file and across dcb.js / nexrad.js / preview.js.
+//
+// So `wxLevels` lived here, the WX buttons wrote here, and nexrad.js read
+// `window.starsState?.wxLevels` — which was `undefined` forever. Its draw() then took the
+// documented fallback, `prefSet.Nexrad.enabled ? prefSet.Nexrad.levels : 0`, and
+// `levels` defaulted to 0x3F. Net effect: every intensity level painted as soon as NEXRAD
+// came on, and pressing a WX button changed the button's highlight and nothing else. Both
+// halves of the bug report, from one missing `window.`.
+//
+// Object.assign returns its target, so this const and the global are one object from here
+// on and the two spellings can no longer disagree — about wxLevels or about TPASize,
+// MSAWActive, AutoOffset, rangeBearingLines, minSeps or tempLine, every one of which is
+// read through `window.` somewhere and written unqualified somewhere else.
+const starsState = Object.assign(window.starsState, {
   prefSet,
   videoMaps,
   asrSites: [],
@@ -3032,7 +3055,7 @@ const starsState = {
   mapGroups: [],
   activeMapGroupIsDefault: false,   // true = no group matches the signed-on position
   activeMapGroup: null,
-};
+});
 
 let dcb;
 function mountDcb() {

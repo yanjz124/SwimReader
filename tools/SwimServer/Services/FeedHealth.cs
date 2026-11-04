@@ -183,7 +183,14 @@ static class FeedHealth
             var bytes = Interlocked.Read(ref c.Bytes);
             c.RateMsgs = (msgs - c.PrevMsgs) / elapsed;
             c.RateBytes = (bytes - c.PrevBytes) / elapsed;
-            c.BusyPct = Math.Round((busy - c.PrevBusyTicks) / TicksPerMs / (elapsed * 1000.0) * 100.0, 1);
+            // Divide by the receiver count. BusyTicks is summed across every one of this feed's
+            // Solace callback threads, so with N flows the figure ran to N x 100% — TFMS showed
+            // 153.6% on two receivers, which is not a percentage of anything. Normalizing gives
+            // the documented quantity: the average share of ONE parse thread, which is what the
+            // "sustained high busy means only the spool is keeping us lossless" reading needs,
+            // and what makes the number comparable between a 1-flow and a 6-flow feed.
+            var threads = Math.Max(1, c.Flows);
+            c.BusyPct = Math.Round((busy - c.PrevBusyTicks) / TicksPerMs / (elapsed * 1000.0 * threads) * 100.0, 1);
             // Mean over the window, then reset — a running mean since startup would hide a lag
             // that is growing right now, which is the whole point of the metric.
             var n = Interlocked.Exchange(ref c.LagSamples, 0);

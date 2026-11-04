@@ -217,9 +217,14 @@ async function selectArtcc(id) {
     const mapsBanner = avail.available.length
       ? `<div style="padding:8px 16px;background:#0a2a0a;border-bottom:1px solid #1a3a1a;color:#6f6;font-size:11px;">${avail.available.length} video maps for ${id}${cachedNote}</div>`
       : `<div style="padding:8px 16px;background:#2a1a0a;border-bottom:1px solid #3a2a1a;color:#fb6;font-size:11px;">No video maps for ${id} — targets will still display.</div>`;
-    // Live per-facility track counts from TAIS — same STDDS source as the
-    // scope feed, and facility ids align with vNAS (e.g. RDU↔RDU). Best-effort;
-    // facilities without a TAIS feed just show no count.
+    // Live per-facility track counts from TAIS — same STDDS source as the scope feed.
+    //
+    // Keyed on `feedFacilityId`, NOT `f.id`. The two agree almost everywhere, which is exactly why
+    // this was wrong for a year and only broke one facility: vNAS adaptation calls Palm Beach
+    // TRACON PBI while TAIS publishes it as DJT (the airport was renamed), so `taisCounts["PBI"]`
+    // was undefined and a TRACON working 170 tracks with 7 positions staffed showed neither —
+    // it read as a dead facility. The scope itself always resolved this (scope.js feedId()); only
+    // the picker didn't. Best-effort; facilities with no TAIS feed just show no count.
     const taisCounts = {};
     try {
       for (const t of await fetch("/api/tais").then(r => r.json())) taisCounts[t.facility] = t.trackCount;
@@ -232,14 +237,16 @@ async function selectArtcc(id) {
     const facilityRows = data.facilities.map(f => {
       const areas = Array.isArray(f.areas) ? f.areas.filter(a => a && a.id) : [];
       const multi = areas.length > 1;
-      const cnt = taisCounts[f.id];
+      // Everything live or recorded is keyed by the feed id (see above).
+      const feedId = f.feedFacilityId || f.id;
+      const cnt = taisCounts[feedId];
       const cntStr = (cnt != null) ? ` · ${cnt}T` : "";
-      const tcp = tcpByFac[f.id];
+      const tcp = tcpByFac[feedId];
       const posStr = (tcp && tcp.tcpCount) ? ` · ${tcp.tcpCount} pos` : "";
       const caret = multi ? `<span class="caret">▸</span>` : `<span class="caret"></span>`;
       // In REPLAY mode the row advertises what's on tape instead of what's live, and a facility with
       // no recording is disabled rather than opening a scope that would just sit empty.
-      const rec = taisRanges[f.id];
+      const rec = taisRanges[feedId];
       const norec = replayMode && !rec;
       const meta = replayMode
         ? (rec ? `<span class="rec">${fmtRange(rec)}</span>` : "no recording")

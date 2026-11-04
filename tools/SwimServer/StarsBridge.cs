@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -260,14 +260,23 @@ class StarsBridge
     /// <summary>List of facilities (with their parents) that have a STARS
     /// configuration. CRCMapImporter.cs auto-picks if there's exactly one;
     /// the frontend handles that same logic.</summary>
-    public async Task<object?> GetStarsFacilitiesAsync(string artccId)
+    /// <param name="resolveFeedId">
+    /// Same resolver <see cref="GetFacilityAsync"/> takes, for the same reason — the picker shows
+    /// each facility's live track count and controller positions, and both are keyed by the id the
+    /// TRACK feed publishes, which is not always the facility's own. Palm Beach is the live case:
+    /// vNAS says PBI, TAIS says DJT, so the row read "0 maps' worth of traffic" on a TRACON working
+    /// 170 tracks and looked inactive. Optional, so a caller that only wants names/map counts can
+    /// skip the live-facility lookup.
+    /// </param>
+    public async Task<object?> GetStarsFacilitiesAsync(string artccId,
+                                                       Func<string, string[], string?>? resolveFeedId = null)
     {
         var doc = await GetArtccAsync(artccId);
         if (doc is null) return null;
         var root = doc.RootElement;
         var results = new List<object>();
         if (root.TryGetProperty("facility", out var facility))
-            CollectStarsFacilities(facility, parentId: null, results);
+            CollectStarsFacilities(facility, parentId: null, results, resolveFeedId);
         return new { artccId, facilities = results };
     }
 
@@ -308,7 +317,8 @@ class StarsBridge
                 CollectStarsFacilityIds(child, artccId);
     }
 
-    private static void CollectStarsFacilities(JsonElement facility, string? parentId, List<object> results)
+    private static void CollectStarsFacilities(JsonElement facility, string? parentId, List<object> results,
+                                               Func<string, string[], string?>? resolveFeedId = null)
     {
         var id = facility.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
         var name = facility.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : null;
@@ -347,6 +357,9 @@ class StarsBridge
                 videoMapCount,
                 areaCount = areaList.Count,
                 areas = areaList,
+                // The id the TRACK feed publishes this facility under — what the picker must key
+                // its live track/position lookups on. Same as `id` for all but a handful.
+                feedFacilityId = resolveFeedId?.Invoke(id, InternalAirports(sc)) ?? id,
             });
         }
 
@@ -354,7 +367,7 @@ class StarsBridge
             && children.ValueKind == JsonValueKind.Array)
         {
             foreach (var child in children.EnumerateArray())
-                CollectStarsFacilities(child, id, results);
+                CollectStarsFacilities(child, id, results, resolveFeedId);
         }
     }
 

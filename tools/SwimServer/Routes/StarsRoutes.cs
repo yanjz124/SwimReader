@@ -1,4 +1,4 @@
-namespace SwimServer;
+﻿namespace SwimServer;
 
 /// <summary>
 /// STARS frontend routes: the scope SPA + vNAS profile REST.
@@ -128,9 +128,12 @@ static class StarsRoutes
             return Results.Json(ids, ctx.JsonOpts);
         });
 
+        // ResolveFeedId is passed so each row carries the id the TRACK feed publishes it under —
+        // the picker's live track count and position chips are keyed by that, not by vNAS's id.
+        // (A local function may be used above its declaration; it is below, with the rationale.)
         app.MapGet("/api/stars/artcc/{artccId}", async (string artccId) =>
         {
-            var fac = await ctx.Stars.GetStarsFacilitiesAsync(artccId);
+            var fac = await ctx.Stars.GetStarsFacilitiesAsync(artccId, ResolveFeedId);
             return fac is not null ? Results.Json(fac, ctx.JsonOpts) : Results.NotFound();
         });
 

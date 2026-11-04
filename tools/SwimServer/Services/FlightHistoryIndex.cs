@@ -32,10 +32,22 @@ static class FlightHistoryIndex
     private const string IdxVersion = "#fhidx\tv2";
 
     // How many day indexes to keep resident. Each is ~50k entries of six strings — roughly 8 MB
-    // of permanently-retained heap per day — and the flight table searches the 7 most recent days
-    // as you type, so an un-evicted cache quietly pinned hundreds of MB across 48 days of history.
-    // Dropping one costs a re-read of its .idx, which is a few MB of sequential I/O.
-    private const int MaxCachedDates = 3;
+    // of permanently-retained heap per day — and an un-evicted cache quietly pinned hundreds of
+    // MB across 48 days of history, which is why this is bounded at all.
+    //
+    // It must be >= the widest window any caller asks for, or the cache does strictly negative
+    // work. It was 3 while both callers scan **7** days — the flight table (HIST_MAX_DATES) as you
+    // type, and /api/dispatch/search at days=7 — so every request walked days 1..7, evicting the
+    // early ones before it finished and re-reading all seven .idx files from the SD card next
+    // time, under this class's single global lock. Measured: 100% miss, a city-pair dispatch
+    // search 0.008 s at days=1 but **2.5-3.3 s at days=7, no faster on repeat**, and 98 eviction
+    // log lines in 30 minutes. An airline search stayed fast only because it fills its result cap
+    // on the first day-file and breaks out before touching the rest.
+    //
+    // 8 = the 7-day window plus today (never a victim, so it occupies a slot). Still bounded,
+    // which is what the original fix was actually about: ~80 MB, not the 400 MB+ of 48 days.
+    // If a caller ever wants a wider window, raise this with it.
+    private const int MaxCachedDates = 8;
 
     // date → entries (lazily loaded). Cached in memory after first build.
     private static readonly Dictionary<string, List<IndexEntry>> _cache = new();

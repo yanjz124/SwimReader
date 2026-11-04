@@ -335,12 +335,10 @@ public class ReplayServer
             await SendJson(ws, new { type = "replay_start", range, speed, startTime = startTime.ToString("o") }, cts.Token);
 
             // Main playback loop
-            await PlaybackLoop(ws, dataDir, startTime, SpeedAt, () => paused, () =>
-            {
-                var t = seekTarget;
-                seekTarget = null;
-                return t;
-            }, state, vp, cts.Token);
+            // peek is deliberately NON-destructive: several nested loops test "is a seek
+            // pending?" to unwind, and only PlaybackLoop acts on the value. See clearSeek below.
+            await PlaybackLoop(ws, dataDir, startTime, SpeedAt, () => paused,
+                () => seekTarget, () => seekTarget = null, state, vp, cts.Token);
 
             // End of data
             if (ws.State == WebSocketState.Open)
@@ -358,7 +356,7 @@ public class ReplayServer
     }
 
     private async Task PlaybackLoop(WebSocket ws, string dataDir, DateTime startTime,
-        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> peekSeek, Action clearSeek,
         Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         if (!Directory.Exists(dataDir))
@@ -372,10 +370,12 @@ public class ReplayServer
 
         while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
-            // Check for seek
-            var seekTo = consumeSeek();
+            // Check for seek. This is the ONLY place the pending seek is cleared — the nested
+            // loops below only peek, so the target survives the unwind back up to here.
+            var seekTo = peekSeek();
             if (seekTo.HasValue)
             {
+                clearSeek();
                 currentTime = seekTo.Value;
                 state.Clear();  // running model is rebuilt from the new position's snapshot
                 // Send a clear signal so client resets state
@@ -404,14 +404,14 @@ public class ReplayServer
             // Read and play back all files for this hour
             foreach (var hourFile in hourFiles)
             {
-                currentTime = await PlayFile(ws, hourFile, currentTime, speedAt, isPaused, consumeSeek, state, vp, ct);
+                currentTime = await PlayFile(ws, hourFile, currentTime, speedAt, isPaused, peekSeek, clearSeek, state, vp, ct);
                 if (ct.IsCancellationRequested) break;
-                if (consumeSeek() != null) break;
+                if (peekSeek() != null) break;
             }
             if (ct.IsCancellationRequested) break;
 
             // If a seek happened during playback, loop back to handle it
-            if (consumeSeek() != null) continue;
+            if (peekSeek() != null) continue;
 
             // Move to next hour
             currentTime = new DateTime(currentTime.Year, currentTime.Month, currentTime.Day,
@@ -420,7 +420,7 @@ public class ReplayServer
     }
 
     private async Task<DateTime> PlayFile(WebSocket ws, string filePath, DateTime startFrom,
-        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> peekSeek, Action clearSeek,
         Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         var lastSentTime = DateTimeOffset.MinValue;
@@ -495,12 +495,12 @@ public class ReplayServer
         }
 
         // Phase 2: Real-time paced playback of remaining lines (after the first record we already sent)
-        var endTime = await PlayRemainingLines(ws, sr, lastSentTime, speedAt, isPaused, consumeSeek, state, vp, ct);
+        var endTime = await PlayRemainingLines(ws, sr, lastSentTime, speedAt, isPaused, peekSeek, clearSeek, state, vp, ct);
         return DateTimeOffset.FromUnixTimeMilliseconds(endTime).UtcDateTime;
     }
 
     private async Task<long> PlayRemainingLines(WebSocket ws, StreamReader sr, DateTimeOffset lastSentTime,
-        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> consumeSeek,
+        Func<long, double> speedAt, Func<bool> isPaused, Func<DateTime?> peekSeek, Action clearSeek,
         Dictionary<string, StateRec> state, Viewport vp, CancellationToken ct)
     {
         long lastMillis = lastSentTime.ToUnixTimeMilliseconds();
@@ -514,8 +514,8 @@ public class ReplayServer
         {
             if (ct.IsCancellationRequested || ws.State != WebSocketState.Open) break;
 
-            // Check for seek (breaks out to main loop)
-            if (consumeSeek() != null) break;
+            // Check for seek (breaks out to main loop, which consumes it)
+            if (peekSeek() != null) break;
 
             // Viewport changed (client panned/zoomed) → re-snapshot the now-visible
             // region from the running state model so no tracks are missing.
@@ -534,7 +534,7 @@ public class ReplayServer
                     await SendViewportSnapshot(ws, state, vp.Bounds, lastMillis, ct);
                 }
                 await Task.Delay(100, ct);
-                if (consumeSeek() != null) return lastMillis;
+                if (peekSeek() != null) return lastMillis;
             }
 
             if (string.IsNullOrWhiteSpace(line)) continue;
@@ -555,7 +555,29 @@ public class ReplayServer
                     {
                         var waitMs = (int)Math.Min(accWaitMs, 5000);
                         accWaitMs -= waitMs;                // carry the sub-frame remainder
-                        await Task.Delay(waitMs, ct);
+
+                        // Sleep in <=100 ms slices rather than one long await. A quiet stretch of
+                        // data legitimately produces a multi-second wait, and a single Task.Delay
+                        // over it makes the session look hung: a seek sits unserved and a speed
+                        // change doesn't bite until the old wait expires. Re-checking per slice is
+                        // what makes the transport controls feel attached to anything.
+                        var spdUsed = spd;
+                        while (waitMs > 0 && !ct.IsCancellationRequested)
+                        {
+                            if (peekSeek() != null) break;      // unwind now; don't serve it late
+                            var spdNow = speedAt(millis);
+                            if (spdNow > 0 && spdNow != spdUsed)
+                            {
+                                // Speed changed mid-wait: rescale what's left of it. 2x faster
+                                // halves the remaining wait instead of honoring the old pacing.
+                                waitMs = (int)(waitMs * spdUsed / spdNow);
+                                spdUsed = spdNow;
+                                if (waitMs <= 0) break;
+                            }
+                            var slice = Math.Min(waitMs, 100);
+                            await Task.Delay(slice, ct);
+                            waitMs -= slice;
+                        }
                     }
                 }
             }

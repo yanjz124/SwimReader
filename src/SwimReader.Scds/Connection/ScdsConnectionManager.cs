@@ -16,7 +16,12 @@ public sealed class ScdsConnectionManager : IDisposable
     private readonly ILogger<ScdsConnectionManager> _logger;
     private IContext? _context;
     private ISession? _session;
-    private bool _initialized;
+    // STATIC, because ContextFactory.Instance.Init() configures a process-global and must be
+    // called exactly once before any session is created. Once several managers exist — one per
+    // receiver, since a context owns a single dispatch thread — a per-instance guard would let
+    // each of them call Init again.
+    private static readonly object _initGate = new();
+    private static bool _initialized;
 
     public ScdsConnectionManager(
         IOptions<ScdsConnectionOptions> options,
@@ -33,17 +38,20 @@ public sealed class ScdsConnectionManager : IDisposable
     /// </summary>
     public void InitializeSolace()
     {
-        if (_initialized) return;
-
-        var cfp = new ContextFactoryProperties
+        lock (_initGate)
         {
-            SolClientLogLevel = SolLogLevel.Warning
-        };
-        cfp.LogToConsoleError();
-        ContextFactory.Instance.Init(cfp);
-        _initialized = true;
+            if (_initialized) return;
 
-        _logger.LogInformation("Solace context factory initialized");
+            var cfp = new ContextFactoryProperties
+            {
+                SolClientLogLevel = SolLogLevel.Warning
+            };
+            cfp.LogToConsoleError();
+            ContextFactory.Instance.Init(cfp);
+            _initialized = true;
+
+            _logger.LogInformation("Solace context factory initialized");
+        }
     }
 
     /// <summary>

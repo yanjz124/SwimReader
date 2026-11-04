@@ -33,6 +33,10 @@ static class FeedHealth
         // Stopwatch ticks spent BLOCKED waiting for the feed's process gate, which is a
         // completely different problem from parsing being slow — see WaitPct below.
         public long WaitTicks;
+        // Set once the feed's handler calls Scope.Locked(). A gated feed's BusyTicks can never
+        // exceed wall time (one thread holds the lock at a time), so it must NOT be divided by
+        // the flow count — see Sample().
+        public bool Gated;
         public long LastDiscardTicks;     // UTC ticks of the most recent discard indication
         // End-to-end lag: the publisher's own timestamp vs when we got the message. This is the
         // metric whose absence hid a halved feed for months — PosAge counts from RECEIPT, so a
@@ -192,7 +196,11 @@ static class FeedHealth
         /// before it counts as wait, everything after as parse. A feed that never calls it has
         /// all of its handler time charged to parse, which is correct for an ungated feed.
         /// </summary>
-        public void Locked() => _acquired = System.Diagnostics.Stopwatch.GetTimestamp();
+        public void Locked()
+        {
+            _acquired = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_c is not null) _c.Gated = true;
+        }
 
         public void Dispose()
         {
@@ -230,10 +238,22 @@ static class FeedHealth
             // "sustained high busy means only the spool is keeping us lossless" reading needs,
             // and what makes the number comparable between a 1-flow and a 6-flow feed.
             var threads = Math.Max(1, c.Flows);
-            c.BusyPct = Math.Round((busy - c.PrevBusyTicks) / TicksPerMs / (elapsed * 1000.0 * threads) * 100.0, 1);
-            // Normalized the same way, so busyPct + waitPct is the share of a receiver thread's
-            // life spent in the handler at all. waitPct near 100/N on an N-flow feed means the
-            // receivers are queueing on the gate and extra flows would buy nothing.
+            // BUSY is gate UTILIZATION for a gated feed: the share of wall time some thread was
+            // inside the critical section. Deliberately NOT divided by the flow count.
+            //
+            // Dividing it was right while BusyTicks included lock-wait (TFMS read 153.6% on two
+            // receivers, which is not a percentage of anything). Once wait moved to its own
+            // counter the division became a bug, because only one thread can hold the gate, so
+            // BusyTicks <= elapsed and the quotient caps at 100/N. SFDPS's maximum was therefore
+            // 33% and TBFM's, on six flows, 16.7% — which made the `saturated` threshold (>= 60)
+            // UNREACHABLE on every multi-flow feed, i.e. the one verdict about parsing being the
+            // bottleneck could never fire. Undivided, 60% means 60% of a serial resource on any
+            // feed, and the figure stays comparable across flow counts.
+            var busyDivisor = c.Gated ? 1 : threads;
+            c.BusyPct = Math.Round((busy - c.PrevBusyTicks) / TicksPerMs / (elapsed * 1000.0 * busyDivisor) * 100.0, 1);
+            // WAIT stays per-thread: it is time spent by each receiver, and N receivers can block
+            // concurrently, so the sum genuinely can reach N x elapsed. Near 100% means every
+            // receiver is queueing on the gate and extra flows would buy nothing.
             c.WaitPct = Math.Round((wait - c.PrevWaitTicks) / TicksPerMs / (elapsed * 1000.0 * threads) * 100.0, 1);
             // Mean over the window, then reset — a running mean since startup would hide a lag
             // that is growing right now, which is the whole point of the metric.

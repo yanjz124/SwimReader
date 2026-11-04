@@ -91,12 +91,16 @@ public static class StddsFeedHealth
     /// the host service's own drop-oldest counter — loss we cause, which has to be separable
     /// from loss the broker causes if "where did the data go" is to be answerable.
     /// </summary>
-    public static object Snapshot(long inboundDropped, bool connected, string? queue) => new
+    public static object Snapshot(long inboundDropped, bool connected, string? queue, int flows = 1) => new
     {
         service = "STDDS",
         host = Environment.MachineName,
         connected,
         queue,
+        // Receivers this service binds (SCDS_FLOWS). Shown beside the lag because the answer to
+        // a lag floor that never drains is almost always a higher flow count, and this service
+        // ran on a single hardcoded flow while being the queue's largest consumer.
+        flows,
         reconnects = Interlocked.Read(ref _reconnects),
         // Our own bounded channel discarding because the parse loop fell behind. Distinct from
         // the broker's discards below: this one is entirely on us and is fixable here.

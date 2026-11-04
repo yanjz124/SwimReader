@@ -23,6 +23,31 @@ public sealed class ScdsHostedService : BackgroundService
     private readonly IEventBus _eventBus;
     private readonly ScdsConnectionOptions _options;
     private readonly ILogger<ScdsHostedService> _logger;
+    private readonly IOptions<ScdsConnectionOptions> _optionsAccessor;
+    private readonly ILoggerFactory _loggerFactory;
+    private int _connectedFlows;
+
+    /// <summary>
+    /// Receivers to bind to the queue, from SCDS_FLOWS (1-8, default 1).
+    ///
+    /// This service had no flow support at all while the other five bridges had had it for
+    /// months, and it is the LARGEST consumer of the STDDS queue — measured at ~525 msg/s
+    /// against SwimServer's ~74. A Solace queue is competing-consumers, so N flows drain it N
+    /// times faster with no duplication; one session also has a hard transport ceiling, because
+    /// SCDS mandates compression and a compressed session is a single serial stream. With one
+    /// flow here and one in SwimServer, a queue needing ~600 msg/s was being drained by two
+    /// sessions and both sat at a lag floor that never reached zero.
+    ///
+    /// Each receiver needs its own context (a context owns one dispatch thread) and therefore
+    /// its own session and ScdsConnectionManager. Processing is untouched: every flow writes
+    /// into the same bounded channel, which is already SingleWriter=false, and one loop drains
+    /// it — so only the transport is parallel, which is the only part that was the bottleneck.
+    /// </summary>
+    private int Receivers()
+    {
+        var raw = Environment.GetEnvironmentVariable("SCDS_FLOWS");
+        return int.TryParse(raw, out var v) ? Math.Clamp(v, 1, 8) : 1;
+    }
 
     /// <summary>
     /// Internal buffer for raw messages extracted from Solace callbacks.
@@ -36,8 +61,11 @@ public sealed class ScdsHostedService : BackgroundService
     /// <summary>Count of inbound messages discarded by the buffer since start.</summary>
     public long InboundDropped => Interlocked.Read(ref _inboundDropped);
 
-    /// <summary>Whether a Solace flow is currently bound. Surfaced by GET /feed.</summary>
-    public bool Connected { get; private set; }
+    /// <summary>Whether ANY of this service's flows is currently bound. Surfaced by GET /feed.</summary>
+    public bool Connected => Volatile.Read(ref _connectedFlows) > 0;
+
+    /// <summary>Receivers bound to the queue, so GET /feed can show it beside the lag.</summary>
+    public int Flows => Receivers();
 
     /// <summary>The queue this service binds — shown by GET /feed so a shared queue is obvious.</summary>
     public string QueueName => _options.QueueName;
@@ -62,12 +90,15 @@ public sealed class ScdsHostedService : BackgroundService
         ScdsConnectionManager connectionManager,
         IEventBus eventBus,
         IOptions<ScdsConnectionOptions> options,
-        ILogger<ScdsHostedService> logger)
+        ILogger<ScdsHostedService> logger,
+        ILoggerFactory loggerFactory)
     {
         _connectionManager = connectionManager;
         _eventBus = eventBus;
         _options = options.Value;
+        _optionsAccessor = options;
         _logger = logger;
+        _loggerFactory = loggerFactory;
         _inbound = BuildInbound();   // after _logger: the drop callback reports through it
     }
 
@@ -93,25 +124,54 @@ public sealed class ScdsHostedService : BackgroundService
             return;
         }
 
-        _logger.LogInformation("SCDS hosted service starting");
+        var receivers = Receivers();
+        _logger.LogInformation("SCDS hosted service starting with {Receivers} receiver(s) on queue {Queue}",
+            receivers, _options.QueueName);
         StddsFeedHealth.Start();
 
-        // Start the processing loop that drains the inbound channel
+        // One drain loop for all receivers: the channel decouples transport from processing, so
+        // parallelising the transport needs no change here.
         _ = ProcessLoopAsync(stoppingToken);
 
+        // Receiver 0 uses the injected manager so DI owns its disposal as before; the rest get
+        // their own, because one context = one dispatch thread = one session = one flow.
+        var loops = new List<Task>(receivers);
+        for (var i = 0; i < receivers; i++)
+        {
+            var index = i;
+            var manager = index == 0
+                ? _connectionManager
+                : new ScdsConnectionManager(_optionsAccessor,
+                    _loggerFactory.CreateLogger<ScdsConnectionManager>());
+            loops.Add(Task.Run(() => ReceiveLoopAsync(manager, index, stoppingToken), stoppingToken));
+        }
+
+        try { await Task.WhenAll(loops); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { /* shutting down */ }
+
+        _logger.LogInformation("SCDS hosted service stopped");
+    }
+
+    /// <summary>
+    /// One receiver: its own session and flow on the shared queue, with its own reconnect loop
+    /// so a single dead flow is rebuilt while its siblings keep draining.
+    /// </summary>
+    private async Task ReceiveLoopAsync(ScdsConnectionManager manager, int index, CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             IFlow? flow = null;
             try
             {
-                _connectionManager.Connect();
+                manager.Connect();
 
-                flow = _connectionManager.CreateQueueFlow(
+                flow = manager.CreateQueueFlow(
                     (_, args) => HandleMessage(args),
                     (_, args) => HandleFlowEvent(args));
 
-                _logger.LogInformation("Listening for SCDS messages on queue {Queue}", _options.QueueName);
-                Connected = true;
+                _logger.LogInformation("Receiver {Index} listening for SCDS messages on queue {Queue}",
+                    index, _options.QueueName);
+                Interlocked.Increment(ref _connectedFlows);
 
                 // Block until cancellation — messages arrive via callback
                 await Task.Delay(Timeout.Infinite, stoppingToken);
@@ -122,23 +182,21 @@ public sealed class ScdsHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "SCDS connection error, reconnecting in {Delay}s",
-                    _options.ReconnectDelay.TotalSeconds);
+                _logger.LogError(ex, "SCDS receiver {Index} connection error, reconnecting in {Delay}s",
+                    index, _options.ReconnectDelay.TotalSeconds);
 
                 if (flow is not null)
                 {
                     try { flow.Dispose(); } catch { /* best effort */ }
                 }
 
-                _connectionManager.Disconnect();
-                Connected = false;
+                manager.Disconnect();
+                Interlocked.Decrement(ref _connectedFlows);
                 StddsFeedHealth.NoteReconnect();
 
                 await Task.Delay(_options.ReconnectDelay, stoppingToken);
             }
         }
-
-        _logger.LogInformation("SCDS hosted service stopped");
     }
 
     /// <summary>

@@ -83,7 +83,7 @@ public sealed class DiagnosticsController : ControllerBase
     /// </summary>
     [HttpGet("feed")]
     public IActionResult Feed() => Ok(SwimReader.Scds.StddsFeedHealth.Snapshot(
-        _scds.InboundDropped, _scds.Connected, _scds.QueueName));
+        _scds.InboundDropped, _scds.Connected, _scds.QueueName, _scds.Flows));
 
     [HttpGet("diag")]
     public IActionResult Diagnostics()

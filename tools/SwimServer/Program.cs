@@ -2404,7 +2404,8 @@ void SendSnapshot(WsClient client)
                 return false;
             return true;
         })
-        .Select(f => f.ToSummary(includeHistory: true, reveal: client.Reveal))
+        .Select(f => f.ToSummary(includeHistory: true, reveal: client.Reveal,
+            historyMax: FlightState.WsHistoryPoints))
         .ToArray();
     Console.WriteLine($"[WS] Snapshot: {summaries.Length} flights (of {flights.Count} total)");
     var json = JsonSerializer.SerializeToUtf8Bytes(new WsMsg("snapshot", summaries), jsonOpts);

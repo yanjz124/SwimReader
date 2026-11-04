@@ -319,7 +319,7 @@ class FlightState
     }
 
     // LADD: mask identity for public output. _ladd == blocked && !reveal.
-    public object ToSummary(bool includeHistory = false, bool reveal = false)
+    public object ToSummary(bool includeHistory = false, bool reveal = false, int historyMax = int.MaxValue)
     {
         bool _ladd = LaddService.ShouldMask(Callsign, Registration, reveal, ModeSCode);
         return new
@@ -360,7 +360,7 @@ class FlightState
         // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
         // runs off PosAge so that coast/extrapolation behavior is unchanged by this field.
         FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
-        History = includeHistory ? HistoryWithAge() : null
+        History = includeHistory ? HistoryWithAge(historyMax) : null
         };
     }
 
@@ -405,10 +405,25 @@ class FlightState
         };
     }
 
-    private object[] HistoryWithAge()
+    /// <summary>
+    /// Position trail, newest last. <paramref name="max"/> keeps only the newest N points.
+    ///
+    /// The WS snapshot passes <see cref="WsHistoryPoints"/> because the ERAM scope cannot draw
+    /// more: it truncates to MAX_HISTORY (slider max 10) the moment a batch arrives, and its
+    /// render cutoff is MAX_HISTORY x 12 s besides. We stored and shipped 20, so roughly half of
+    /// the largest field in the payload was parsed and thrown away.
+    ///
+    /// Everything else stays unbounded on purpose: ToDetail is one flight on demand, and the
+    /// flight-history archive (HistoryRoutes) keeps the full trail it always has.
+    /// </summary>
+    public const int WsHistoryPoints = 10;
+
+    private object[] HistoryWithAge(int max = int.MaxValue)
     {
         var nowTicks = DateTime.UtcNow.Ticks;
-        return GetPositionHistory().Select(h => new {
+        var hist = GetPositionHistory();
+        if (hist.Count > max) hist = hist.GetRange(hist.Count - max, max);
+        return hist.Select(h => new {
             h.Lat, h.Lon, Sym = h.Sym.ToString(),
             Age = (int)((nowTicks - h.Ticks) / TimeSpan.TicksPerSecond)
         }).ToArray();

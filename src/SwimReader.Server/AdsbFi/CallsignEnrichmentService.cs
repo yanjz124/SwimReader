@@ -143,15 +143,35 @@ public sealed class CallsignEnrichmentService : BackgroundService
     {
         await Task.Delay(TimeSpan.FromSeconds(5), ct);
 
+        // Two cadences, because the two halves cost wildly different things.
+        //
+        // RefreshRegionsAsync is 20 rate-limited HTTP calls and belongs on the slow timer.
+        // ProcessAllPendingAsync is pure in-memory matching against the index we already hold —
+        // it costs nothing, so running it only once per refresh made every new track wait up to
+        // a full minute for a callsign for no reason. An uncorrelated VFR target can be on and
+        // off a TRACON's scope inside that window. The DGScope receiver this is ported from
+        // polls every 5 s.
+        //
+        // Matching between refreshes uses an index up to 60 s old, which is fine: the gate is
+        // 1.5 NM and ADS-B positions are interpolated against the TRACON track's CURRENT
+        // position (the pending entry is overwritten by every TAIS update), so the error that
+        // matters is the index's age, not the track's.
         var refreshInterval = _options.EnrichmentRegionRefresh;
-        using var timer = new PeriodicTimer(refreshInterval);
+        var matchInterval = TimeSpan.FromSeconds(Math.Max(5, refreshInterval.TotalSeconds / 6));
+        using var timer = new PeriodicTimer(matchInterval);
+        var lastRefresh = DateTime.MinValue;
 
         while (true)
         {
             try
             {
-                await RefreshRegionsAsync(ct);
-                await ProcessAllPendingAsync(ct);
+                var refreshed = DateTime.UtcNow - lastRefresh >= refreshInterval;
+                if (refreshed)
+                {
+                    await RefreshRegionsAsync(ct);
+                    lastRefresh = DateTime.UtcNow;
+                }
+                await ProcessAllPendingAsync(allowHexLookups: refreshed, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -250,7 +270,11 @@ public sealed class CallsignEnrichmentService : BackgroundService
     /// Match all pending tracks against the combined regional index.
     /// Priority: hex (Mode S 24-bit) → callsign → squawk.
     /// </summary>
-    private async Task ProcessAllPendingAsync(CancellationToken ct)
+    /// <param name="allowHexLookups">
+    /// Whether this pass may spend rate-limited HTTP on per-hex lookups. True only on the slow
+    /// (region-refresh) cadence; the fast matching pass is index-only and must stay free.
+    /// </param>
+    private async Task ProcessAllPendingAsync(bool allowHexLookups, CancellationToken ct)
     {
         var index = _regionIndex;
         if (index is null) return;
@@ -340,7 +364,18 @@ public sealed class CallsignEnrichmentService : BackgroundService
             }
         }
 
-        // Process remaining Mode S keys with individual hex lookups (cache first)
+        // Individual hex lookups for Mode S keys the regional index didn't hold. These are
+        // rate-limited HTTP (up to 50 x 1.1 s), so they run ONLY on the slow cadence — the fast
+        // matching pass must not multiply them by six. Anything left over goes back on the queue
+        // rather than being dropped: ProcessAllPendingAsync removed these keys from _pendingWork
+        // on the way in, so skipping them silently would lose the track entirely.
+        if (!allowHexLookups)
+        {
+            foreach (var (key, track) in msRemaining)
+                _pendingWork.TryAdd(key, track);
+            return;
+        }
+
         foreach (var (key, track) in msRemaining.Take(50))
         {
             if (_enrichedTargets.ContainsKey(key))

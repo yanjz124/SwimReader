@@ -14,14 +14,19 @@ public sealed class DiagnosticsController : ControllerBase
     private readonly ClientConnectionManager _clients;
     private readonly SwimReader.Server.Profile.ProfileStore _profiles;
     private readonly SwimReader.Scds.ScdsHostedService _scds;
+    private readonly SwimReader.Server.AdsbFi.CallsignEnrichmentService? _enrich;
 
     public DiagnosticsController(TrackStateManager trackState, ClientConnectionManager clients,
-        SwimReader.Server.Profile.ProfileStore profiles, SwimReader.Scds.ScdsHostedService scds)
+        SwimReader.Server.Profile.ProfileStore profiles, SwimReader.Scds.ScdsHostedService scds,
+        // Nullable: enrichment is only registered when AdsbFi:CallsignEnrichmentEnabled is set,
+        // and /diag must still answer when it isn't.
+        SwimReader.Server.AdsbFi.CallsignEnrichmentService? enrich = null)
     {
         _trackState = trackState;
         _clients = clients;
         _profiles = profiles;
         _scds = scds;
+        _enrich = enrich;
     }
 
     /// <summary>Report the loaded STARS profile for a facility — for verifying profile XML loading.</summary>
@@ -88,7 +93,11 @@ public sealed class DiagnosticsController : ControllerBase
             ActiveTracks = _trackState.ActiveTrackCount,
             ConnectedClients = _clients.ClientCount,
             Uptime = Environment.TickCount64 / 1000,
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            // ADS-B callsign enrichment, per matching tier. Without this, "the beacon reader
+            // isn't working" can only be investigated by raising the log level on a box whose
+            // journal is capped — and silence from the service looks the same as no matches.
+            Enrichment = _enrich is null ? null : _enrich.Stats(),
         });
     }
 }

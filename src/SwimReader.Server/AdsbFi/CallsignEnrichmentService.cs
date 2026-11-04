@@ -30,6 +30,44 @@ public sealed class CallsignEnrichmentService : BackgroundService
     // Combined regional aircraft data, indexed for fast lookup
     private volatile AircraftIndex? _regionIndex;
 
+    // ── Per-tier counters ───────────────────────────────────────────────────
+    //
+    // "Is the beacon reader working?" was not answerable without turning on Debug logging on a
+    // box whose journal is capped (see CLAUDE.md on logging volume), and silence from this
+    // service is indistinguishable from "nothing matched". The DGScope receiver this is ported
+    // from writes a log file for exactly that reason. Counting per tier also says WHY: a
+    // position-only tier that sees candidates but rejects them all is a very different problem
+    // from one that never gets a candidate.
+    private long _seen, _queued, _matchHex, _matchSquawk, _matchPosition,
+                 _posNoCandidate, _posAmbiguous, _skippedNonDiscrete, _published, _skippedDuplicate;
+    private DateTime _lastMatch;
+
+    /// <summary>Enrichment counters for GET /diag — see the fields above for why they exist.</summary>
+    public object Stats() => new
+    {
+        regionAircraft = _regionIndex?.ByHex.Count ?? 0,
+        regionCells = _regionIndex?.ByCell.Count ?? 0,
+        pending = _pendingWork.Count,
+        tracksSeen = Interlocked.Read(ref _seen),
+        tracksQueued = Interlocked.Read(ref _queued),
+        // Which tier produced the match. positionOnly is the one that serves uncorrelated
+        // targets, since TAIS publishes no Mode S code for them.
+        matchedByHex = Interlocked.Read(ref _matchHex),
+        matchedBySquawk = Interlocked.Read(ref _matchSquawk),
+        matchedByPosition = Interlocked.Read(ref _matchPosition),
+        // Why the position tier declined: nothing in the 1.5 NM / 500 ft gate, versus two or
+        // more in it (rejected on purpose — with no tiebreaker, picking the closer one is a
+        // coin flip that produces a confidently wrong callsign).
+        positionNoCandidate = Interlocked.Read(ref _posNoCandidate),
+        positionAmbiguous = Interlocked.Read(ref _posAmbiguous),
+        // Tracks whose only identifier was a non-discrete code (1200, 7700, any xx00), so the
+        // squawk tier correctly refused them and they fell through to position-only.
+        nonDiscreteSquawk = Interlocked.Read(ref _skippedNonDiscrete),
+        published = Interlocked.Read(ref _published),
+        skippedDuplicate = Interlocked.Read(ref _skippedDuplicate),
+        lastMatch = _lastMatch == default ? null : _lastMatch.ToString("o"),
+    };
+
     public CallsignEnrichmentService(
         IEventBus eventBus,
         MultiAdsbClient multiClient,
@@ -59,11 +97,15 @@ public sealed class CallsignEnrichmentService : BackgroundService
             if (evt is not TrackPositionEvent track)
                 continue;
 
+            Interlocked.Increment(ref _seen);
+
             // Skip tracks that already have a callsign or are frozen/pseudo
             if (!string.IsNullOrEmpty(track.Callsign))
                 continue;
             if (track.IsFrozen || track.IsPseudo)
                 continue;
+            if (!BeaconCodes.IsDiscrete(track.Squawk) && !track.ModeSCode.HasValue)
+                Interlocked.Increment(ref _skippedNonDiscrete);
 
             // Key by the strongest identifier the track has. A non-discrete code (1200, 7700,
             // any xx00 — see BeaconCodes) is NOT an identifier: it is shared, so keying on it
@@ -81,6 +123,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 continue;
 
             // Queue for enrichment (update with latest position data)
+            if (!_pendingWork.ContainsKey(enrichKey)) Interlocked.Increment(ref _queued);
             _pendingWork[enrichKey] = track;
         }
     }
@@ -222,6 +265,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 if (index.ByHex.TryGetValue(hex, out aircraft))
                 {
                     matchCount++;
+                    Interlocked.Increment(ref _matchHex);
                     await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
                 else
@@ -242,6 +286,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 if (aircraft is not null)
                 {
                     matchCount++;
+                    Interlocked.Increment(ref _matchSquawk);
                     await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
             }
@@ -257,15 +302,19 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 // unambiguous. A match is also rejected outright if a SECOND candidate is inside
                 // the same gate — with no tiebreaker available, "closest wins" is a guess, and a
                 // wrong callsign is worse than none.
-                aircraft = SoleCandidateWithin(
+                var near = WithinGate(
                     Nearby(index.ByCell, track.Position.Latitude, track.Position.Longitude),
                     track, PositionOnlyMatchNm, PositionOnlyAltitudeFeet);
+                aircraft = near.Count == 1 ? near[0] : null;
 
                 if (aircraft is not null)
                 {
                     matchCount++;
+                    Interlocked.Increment(ref _matchPosition);
                     await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
+                else if (near.Count == 0) Interlocked.Increment(ref _posNoCandidate);
+                else Interlocked.Increment(ref _posAmbiguous);
             }
         }
 
@@ -383,6 +432,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
             _publishedCallsigns.ContainsKey(csKey))
         {
             _enrichedTargets[enrichKey] = DateTime.UtcNow;
+            Interlocked.Increment(ref _skippedDuplicate);
             _logger.LogDebug("Skipping enrichment for {Key}: callsign {Callsign} already in use",
                 enrichKey, aircraft.TrimmedCallsign);
             return;
@@ -405,6 +455,8 @@ public sealed class CallsignEnrichmentService : BackgroundService
         };
 
         await _eventBus.PublishAsync(fpEvent, ct);
+        Interlocked.Increment(ref _published);
+        _lastMatch = DateTime.UtcNow;
 
         // If TAIS has no altitude but ADS-B does, supplement the track
         if ((!track.AltitudeFeet.HasValue || track.AltitudeFeet.Value == 0) &&

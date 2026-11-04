@@ -113,7 +113,9 @@ var adsbFiConfig = builder.Configuration.GetSection(AdsbFiOptions.SectionName).G
 if (adsbFiConfig?.Enabled == true)
 {
     if (adsbFiConfig.CallsignEnrichmentEnabled)
-        builder.Services.AddHostedService<CallsignEnrichmentService>();
+        // Singleton + hosted-service-resolving-it, so GET /diag can read the enrichment counters.
+        builder.Services.AddSingleton<CallsignEnrichmentService>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<CallsignEnrichmentService>());
 
     if (adsbFiConfig.MilitaryInjectionEnabled)
         builder.Services.AddHostedService<MilitaryInjectionService>();

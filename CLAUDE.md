@@ -2368,6 +2368,48 @@ list replay files through `ReplayFiles` (`OpenRead`, `List`, `Find`, `Stem`)**, 
 directly, or compacted hours silently disappear from replay. ERAM uses level 3 + long-distance matching (128 MB
 window — its snapshots repeat far apart); STARS/ASDE-X use plain level 9. `REPLAY_COMPACT=0` disables; `REPLAY_ZSTD_LEVEL` overrides.
 
+### Replay seek, and why "it's slow because it's compressed" is the wrong answer
+
+Reported from outside (chris, via Hunter): STARS replay play/pause flaky, speed changes sluggish,
+and **seeking to a time inside the recorded range answering "End of data"** — all attributed to the
+recordings being compressed, with a request for an uncompressed build to test against.
+
+**Compression was not the cause and removing it would be a bad trade.** Measured on the largest
+TAIS hour on the Pi: **3.95 MB compressed vs 199 MB plain, 50.5x**, and decompressing the *entire
+hour* takes **0.21 s**. Storing replay uncompressed costs ~200 MB per facility-hour to save a fifth
+of a second — ruinous for anyone self-hosting, which was the actual plan behind the question.
+
+**The real bug was a destructive read used as a boolean.** The pending seek lived in one captured
+local; `consumeSeek()` both returned *and cleared* it. Four nested loops used it purely as a
+predicate to unwind toward `PlaybackLoop`, the only place that can act on it (it owns
+`currentTime`):
+
+```csharp
+if (consumeSeek() != null) break;   // target read, cleared, and thrown away
+```
+
+So the innermost check destroyed the answer, every outer check then saw null, the `continue` that
+would have handled the seek never ran, and control fell through to "move to the next hour". Seeking
+near the end of a recording therefore ran out of files and emitted `replay_end`. Seeking while
+paused lost it the same way. It was intermittent-looking — a seek landing exactly while the outer
+loop was at its top did work — which is what "finicky" meant.
+
+Split into `peekSeek()` (non-destructive) and `clearSeek()`, called in **exactly one** place;
+`ReplaySeekContractTests` pins that. Verified live: a forward seek across 237 h of archive, from
+hour 1 to within 2 h of the end, is acked and streams data; pause gives 27 -> 0 -> 33 records.
+
+Second, smaller cause of "sluggish": pacing slept in one `Task.Delay` of up to 5 s, so a seek sat
+unserved and a speed change didn't bite until the old wait expired. It now sleeps in <=100 ms
+slices and **rescales the remainder when speed changes** mid-wait. At 300x: 836 records/4 s.
+
+**All sockets now negotiate permessage-deflate** (`SwimWs.AcceptAsync`), replay included — it was
+`/ws` only at first, which missed the one that matters most to a self-hoster paying for bandwidth.
+Client-negotiated, so a consumer that doesn't offer it (the DGScope WPF app) is unaffected.
+
+A note on diagnosing these: the control channel is `{cmd: "..."}`, **not** `{type: "..."}`, and the
+receive loop wraps parsing in `catch { }` — so a malformed command is silently ignored and looks
+exactly like a server that isn't responding to the UI. That cost a debugging round here.
+
 ### Logging volume (don't let it eat the journal)
 
 The Pi's journal is capped at 500 MB. Left unchecked the two services were writing **~340 lines/s**

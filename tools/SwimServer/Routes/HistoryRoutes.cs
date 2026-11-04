@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 
 namespace SwimServer;
 
@@ -147,7 +147,8 @@ static class HistoryRoutes
             if (!Directory.Exists(ctx.HistoryDir)) return Results.Json(Array.Empty<object>(), ctx.JsonOpts);
             var files = Directory.GetFiles(ctx.HistoryDir, "*.jsonl")
                 .Where(f => !Path.GetFileName(f).Equals("pinned.jsonl", StringComparison.OrdinalIgnoreCase))
-                .Select(f => new {
+                .Select(f => new
+                {
                     date = Path.GetFileNameWithoutExtension(f),
                     sizeMb = Math.Round(new FileInfo(f).Length / 1024.0 / 1024.0, 1)
                 })

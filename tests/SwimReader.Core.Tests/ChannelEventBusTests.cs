@@ -1,7 +1,7 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using SwimReader.Core.Bus;
 using SwimReader.Core.Events;
 using SwimReader.Core.Models;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace SwimReader.Core.Tests;
 

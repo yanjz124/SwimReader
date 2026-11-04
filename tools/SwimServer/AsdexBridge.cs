@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
@@ -149,29 +149,29 @@ class AsdexBridge
                         var topic = m.Destination?.Name ?? "";
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
                         lock (_processGate)
-                        if (topic.StartsWith("SMES/", StringComparison.OrdinalIgnoreCase))
-                        {
-                            ProcessSmes(m);
-                        }
-                        else if (OnOtherMessage is not null)
-                        {
-                            string? body = null;
-                            // FAA TAIS publishes XML declared as encoding="UTF-8" but
-                            // stuffs raw single-byte sector codes (0x80-0xFF) into
-                            // <scratchPad2> and <runway> on inter-facility handoffs.
-                            // UTF-8 decode replaces those bytes with U+FFFD, losing
-                            // the receiver-TCP data. Decode as ISO-8859-1 instead —
-                            // round-trips every byte 0x00-0xFF to U+0000-U+00FF
-                            // losslessly. The XML body is essentially ASCII + a
-                            // handful of high bytes, so Latin-1 is safe here even
-                            // though the declared encoding lies.
-                            var enc = Encoding.GetEncoding(28591); // ISO-8859-1
-                            if (m.BinaryAttachment is { Length: > 0 })
-                                body = enc.GetString(m.BinaryAttachment);
-                            else if (m.XmlContent is { Length: > 0 })
-                                body = enc.GetString(m.XmlContent);
-                            if (body is not null) OnOtherMessage(topic, body);
-                        }
+                            if (topic.StartsWith("SMES/", StringComparison.OrdinalIgnoreCase))
+                            {
+                                ProcessSmes(m);
+                            }
+                            else if (OnOtherMessage is not null)
+                            {
+                                string? body = null;
+                                // FAA TAIS publishes XML declared as encoding="UTF-8" but
+                                // stuffs raw single-byte sector codes (0x80-0xFF) into
+                                // <scratchPad2> and <runway> on inter-facility handoffs.
+                                // UTF-8 decode replaces those bytes with U+FFFD, losing
+                                // the receiver-TCP data. Decode as ISO-8859-1 instead —
+                                // round-trips every byte 0x00-0xFF to U+0000-U+00FF
+                                // losslessly. The XML body is essentially ASCII + a
+                                // handful of high bytes, so Latin-1 is safe here even
+                                // though the declared encoding lies.
+                                var enc = Encoding.GetEncoding(28591); // ISO-8859-1
+                                if (m.BinaryAttachment is { Length: > 0 })
+                                    body = enc.GetString(m.BinaryAttachment);
+                                else if (m.XmlContent is { Length: > 0 })
+                                    body = enc.GetString(m.XmlContent);
+                                if (body is not null) OnOtherMessage(topic, body);
+                            }
                     },
                     (_, flowArgs) => Console.WriteLine($"[STDDS Flow] {flowArgs.Event} - {flowArgs.Info}"));
 
@@ -247,12 +247,12 @@ class AsdexBridge
 
                 var flightId = report.Elements().FirstOrDefault(e => e.Name.LocalName == "flightId");
                 var callsign = flightId?.Elements().FirstOrDefault(e => e.Name.LocalName == "aircraftId")?.Value;
-                var squawk   = flightId?.Elements().FirstOrDefault(e => e.Name.LocalName == "mode3ACode")?.Value;
+                var squawk = flightId?.Elements().FirstOrDefault(e => e.Name.LocalName == "mode3ACode")?.Value;
 
-                var info   = report.Elements().FirstOrDefault(e => e.Name.LocalName == "flightInfo");
+                var info = report.Elements().FirstOrDefault(e => e.Name.LocalName == "flightInfo");
                 var acType = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "acType")?.Value;
                 var tgtType = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "tgtType")?.Value;
-                var wake   = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "wake")?.Value;
+                var wake = info?.Elements().FirstOrDefault(e => e.Name.LocalName == "wake")?.Value;
 
                 var movement = report.Elements().FirstOrDefault(e => e.Name.LocalName == "movement");
                 int? speed = ParseInt(movement?.Elements().FirstOrDefault(e => e.Name.LocalName == "speed")?.Value);
@@ -363,12 +363,12 @@ class AsdexBridge
                 if (track is not null)
                 {
                     // Merge enrichment fields into the AT track (position comes from AT reports)
-                    if (adAcType   is not null) track.AircraftType = adAcType;
-                    if (adSquawk   is not null) track.Squawk       = adSquawk;
-                    if (eramGufi   is not null) track.EramGufi     = eramGufi;
-                    if (sfdpsGufi  is not null) track.SfdpsGufi    = sfdpsGufi;
-                    if (adDep      is not null) track.AdDeparture  = adDep;
-                    if (adDest     is not null) track.AdDestination = adDest;
+                    if (adAcType is not null) track.AircraftType = adAcType;
+                    if (adSquawk is not null) track.Squawk = adSquawk;
+                    if (eramGufi is not null) track.EramGufi = eramGufi;
+                    if (sfdpsGufi is not null) track.SfdpsGufi = sfdpsGufi;
+                    if (adDep is not null) track.AdDeparture = adDep;
+                    if (adDest is not null) track.AdDestination = adDest;
                     track.LastSeen = DateTime.UtcNow;
                     // Remove any standalone AD track for this ID (now merged into AT)
                     airportTracks.TryRemove(trackId, out _);
@@ -478,7 +478,7 @@ class AsdexBridge
         {
             if (int.TryParse(hex[i].ToString(), NumberStyles.HexNumber, null, out var nibble))
             {
-                bits[i * 4]     = (nibble & 8) != 0;
+                bits[i * 4] = (nibble & 8) != 0;
                 bits[i * 4 + 1] = (nibble & 4) != 0;
                 bits[i * 4 + 2] = (nibble & 2) != 0;
                 bits[i * 4 + 3] = (nibble & 1) != 0;
@@ -719,9 +719,12 @@ class AsdexBridge
             .Select(kv =>
             {
                 var t = kv.Value.Values.ToArray();
-                return new { airport = kv.Key, count = t.Length,
-                             lat = t.Average(x => x.Latitude),
-                             lon = t.Average(x => x.Longitude) };
+                return new
+                {
+                    airport = kv.Key, count = t.Length,
+                    lat = t.Average(x => x.Latitude),
+                    lon = t.Average(x => x.Longitude)
+                };
             })
             .OrderByDescending(x => x.count)
             .ToArray();
@@ -794,17 +797,17 @@ class AsdexBridge
 
 class AsdexTrack
 {
-    public string Airport   { get; set; } = "";
-    public string TrackId   { get; set; } = "";
-    public string? Callsign  { get; set; }
-    public string? Squawk    { get; set; }
+    public string Airport { get; set; } = "";
+    public string TrackId { get; set; } = "";
+    public string? Callsign { get; set; }
+    public string? Squawk { get; set; }
     public string? AircraftType { get; set; }
-    public string? TargetType   { get; set; }   // "aircraft", "vehicle", "unknown"
+    public string? TargetType { get; set; }   // "aircraft", "vehicle", "unknown"
     public string? WakeCategory { get; set; }   // RECAT: A-F (from SMES flightInfo/wake)
-    public double  Latitude  { get; set; }
-    public double  Longitude { get; set; }
-    public double? AltitudeFeet   { get; set; }
-    public int?    SpeedKts       { get; set; }
+    public double Latitude { get; set; }
+    public double Longitude { get; set; }
+    public double? AltitudeFeet { get; set; }
+    public int? SpeedKts { get; set; }
     public double? HeadingDegrees { get; set; }   // From SMES, OR derived from position delta
     public string? EramGufi { get; set; }
     public DateTime LastSeen { get; set; } = DateTime.UtcNow;
@@ -814,22 +817,22 @@ class AsdexTrack
     private const double MinMovementMeters = 2.0;  // below this, position noise dominates
 
     // From AD enhanced data (ADS-B reports)
-    public string? SfdpsGufi      { get; set; }  // for SFDPS flight lookup
-    public string? AdDeparture    { get; set; }  // departureAirport from AD
-    public string? AdDestination  { get; set; }  // destinationAirport from AD
+    public string? SfdpsGufi { get; set; }  // for SFDPS flight lookup
+    public string? AdDeparture { get; set; }  // departureAirport from AD
+    public string? AdDestination { get; set; }  // destinationAirport from AD
 
     // Enrichment from SFDPS (set by OnEnrich delegate)
-    public string? FpOrigin       { get; set; }
-    public string? FpDestination  { get; set; }
-    public string? FpStar         { get; set; }
-    public string? FpRoute        { get; set; }
+    public string? FpOrigin { get; set; }
+    public string? FpDestination { get; set; }
+    public string? FpStar { get; set; }
+    public string? FpRoute { get; set; }
 
     // Enrichment from TDLS (set by OnEnrich delegate)
-    public string? TdlsGate       { get; set; }
-    public string? TdlsRunway     { get; set; }
+    public string? TdlsGate { get; set; }
+    public string? TdlsRunway { get; set; }
 
     // Departure gate code — from fix→code mapping or destination fallback (set by OnEnrich)
-    public string? GateCode        { get; set; }
+    public string? GateCode { get; set; }
 
     /// <summary>
     /// Merges incoming data. Position (lat/lon) is always updated.
@@ -856,11 +859,11 @@ class AsdexTrack
             _prevLon = lon;
         }
 
-        Latitude  = lat;
+        Latitude = lat;
         Longitude = lon;
-        if (callsign is not null) Callsign    = callsign;
-        if (squawk   is not null) Squawk      = squawk;
-        if (acType   is not null) AircraftType = acType;
+        if (callsign is not null) Callsign = callsign;
+        if (squawk is not null) Squawk = squawk;
+        if (acType is not null) AircraftType = acType;
         // Target type: never downgrade from aircraft/vehicle back to unknown.
         // SMES occasionally reclassifies a fully identified track as unknown for a few
         // cycles; we keep the previously-known type to avoid flickering.
@@ -873,14 +876,14 @@ class AsdexTrack
                 TargetType = tgtType;
             }
         }
-        if (alt.HasValue)     AltitudeFeet   = alt;
-        if (speed.HasValue)   SpeedKts        = speed;
-        if (heading.HasValue) HeadingDegrees  = heading;
-        if (eramGufi   is not null) EramGufi      = eramGufi;
-        if (wake       is not null) WakeCategory  = wake;
-        if (sfdpsGufi  is not null) SfdpsGufi     = sfdpsGufi;
-        if (adDep      is not null) AdDeparture   = adDep;
-        if (adDest     is not null) AdDestination = adDest;
+        if (alt.HasValue) AltitudeFeet = alt;
+        if (speed.HasValue) SpeedKts = speed;
+        if (heading.HasValue) HeadingDegrees = heading;
+        if (eramGufi is not null) EramGufi = eramGufi;
+        if (wake is not null) WakeCategory = wake;
+        if (sfdpsGufi is not null) SfdpsGufi = sfdpsGufi;
+        if (adDep is not null) AdDeparture = adDep;
+        if (adDest is not null) AdDestination = adDest;
         LastSeen = DateTime.UtcNow;
     }
 
@@ -909,26 +912,26 @@ class AsdexTrack
     /// reveal=true (operator signed in) shows the real callsign instead of "LADD".</summary>
     public object ToJson(bool reveal = false) => new
     {
-        trackId  = TrackId,
+        trackId = TrackId,
         callsign = LaddService.MaskCallsign(Callsign, null, reveal),
-        squawk   = Squawk,
-        acType   = AircraftType,
-        tgtType  = TargetType,
-        lat      = Latitude,
-        lon      = Longitude,
-        altFt    = AltitudeFeet,
-        spdKts   = SpeedKts,
-        hdg      = HeadingDegrees,
+        squawk = Squawk,
+        acType = AircraftType,
+        tgtType = TargetType,
+        lat = Latitude,
+        lon = Longitude,
+        altFt = AltitudeFeet,
+        spdKts = SpeedKts,
+        hdg = HeadingDegrees,
         eramGufi = EramGufi,
-        wake     = WakeCategory,
-        ageSec   = (int)(DateTime.UtcNow - LastSeen).TotalSeconds,
+        wake = WakeCategory,
+        ageSec = (int)(DateTime.UtcNow - LastSeen).TotalSeconds,
         // Enrichment: best available destination/origin (SFDPS > AD > TDLS)
-        dest     = FpDestination ?? AdDestination,
-        origin   = FpOrigin ?? AdDeparture,
-        star     = FpStar,
-        route    = FpRoute,
-        gate     = TdlsGate,
-        runway   = TdlsRunway,
+        dest = FpDestination ?? AdDestination,
+        origin = FpOrigin ?? AdDeparture,
+        star = FpStar,
+        route = FpRoute,
+        gate = TdlsGate,
+        runway = TdlsRunway,
         gateCode = GateCode,
     };
 }
@@ -1181,10 +1184,13 @@ class HoldbarMapper
             lineCount = _lines.Count,
             mappedBits = mapping.Count,
             mappings = mapping.OrderBy(kv => kv.Key)
-                .Select(kv => new { bit = kv.Key, lineIdx = kv.Value,
+                .Select(kv => new
+                {
+                    bit = kv.Key, lineIdx = kv.Value,
                     observations = _observations.TryGetValue(kv.Key, out var o)
                         ? o.OrderByDescending(x => x.Value).Select(x => new { lineIdx = x.Key, count = x.Value })
-                        : Enumerable.Empty<object>() })
+                        : Enumerable.Empty<object>()
+                })
         };
     }
 

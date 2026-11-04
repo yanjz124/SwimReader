@@ -1,4 +1,4 @@
-﻿namespace SwimReader.Server.AdsbFi;
+namespace SwimReader.Server.AdsbFi;
 
 public sealed class AdsbFiOptions
 {

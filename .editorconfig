@@ -1,0 +1,140 @@
+# SwimReader — editor and `dotnet format` configuration.
+#
+# This file DESCRIBES the style the codebase already has; it was not used to impose a new one.
+# Before it existed, `dotnet format --verify-no-changes` reported 987 whitespace diffs, and
+# reading them showed they were almost all one deliberate choice: several object-initializer
+# members per line. Reformatting to the default would have turned FlightState.ToSnapshot() from
+# ~15 lines into ~90 and made it harder to read, not easier. So the defaults that disagree with
+# the house style are overridden below, and the rest is left at .NET defaults.
+#
+# Consequence worth knowing: CI runs `dotnet format --verify-no-changes`, so a formatting change
+# is now a build break rather than a silent drift. If a rule here is genuinely wrong, change the
+# rule in one commit — don't reformat around it.
+
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{yml,yaml,json,md}]
+indent_size = 2
+
+# Markdown uses two trailing spaces for a hard line break.
+[*.md]
+trim_trailing_whitespace = false
+
+# Frontend is 2-space throughout (measured: ~4:1 over 4-space in the largest files).
+[*.{js,css,html}]
+indent_size = 2
+
+[*.{csproj,props,targets}]
+indent_size = 2
+
+[*.cs]
+indent_size = 4
+tab_width = 4
+end_of_line = crlf
+
+# ── using directives ────────────────────────────────────────────────────────────────────────
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+csharp_using_directive_placement = outside_namespace:silent
+
+# ── file-scoped namespaces ──────────────────────────────────────────────────────────────────
+# Every file in the repo already uses `namespace X;` rather than a braced block.
+csharp_style_namespace_declarations = file_scoped:suggestion
+
+# ── the house style: dense initializers ─────────────────────────────────────────────────────
+# THIS is the setting that matters. The .NET default puts every object-initializer and
+# anonymous-type member on its own line. Large DTO projections here deliberately group related
+# members per line (identity, then position, then altitude, …), which reads as a record of what
+# travels together. Leaving the default on would have produced a 987-line reformat.
+csharp_new_line_before_members_in_object_initializers = false
+csharp_new_line_before_members_in_anonymous_types = false
+
+# Short bodies, switch arms and initializers that already fit on one line stay on one line.
+csharp_preserve_single_line_statements = true
+csharp_preserve_single_line_blocks = true
+
+# ── braces and newlines (Allman, as written) ────────────────────────────────────────────────
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+
+# ── indentation ────────────────────────────────────────────────────────────────────────────
+csharp_indent_case_contents = true
+csharp_indent_case_contents_when_block = false
+csharp_indent_switch_labels = true
+csharp_indent_labels = one_less_than_current
+csharp_indent_block_contents = true
+csharp_indent_braces = false
+
+# ── spacing ────────────────────────────────────────────────────────────────────────────────
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_space_between_parentheses = false
+csharp_space_before_colon_in_inheritance_clause = true
+csharp_space_after_colon_in_inheritance_clause = true
+csharp_space_around_binary_operators = before_and_after
+csharp_space_between_method_call_name_and_opening_parenthesis = false
+csharp_space_between_method_call_empty_parameter_list_parentheses = false
+csharp_space_between_method_declaration_empty_parameter_list_parentheses = false
+csharp_space_between_square_brackets = false
+
+# ── language style preferences ──────────────────────────────────────────────────────────────
+# Suggestions, not warnings: these are opinions about new code, and promoting them to warnings
+# would bury the build in diagnostics about code that is already correct and readable.
+csharp_style_var_for_built_in_types = true:silent
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:silent
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_expression_bodied_properties = true:suggestion
+csharp_style_expression_bodied_accessors = true:suggestion
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_style_prefer_switch_expression = true:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_style_conditional_delegate_call = true:suggestion
+csharp_style_throw_expression = true:suggestion
+csharp_prefer_simple_using_statement = true:suggestion
+csharp_prefer_braces = when_multiline:silent
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:silent
+dotnet_style_prefer_conditional_expression_over_return = true:silent
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_prefer_compound_assignment = true:suggestion
+dotnet_style_readonly_field = true:suggestion
+dotnet_style_qualification_for_field = false:silent
+dotnet_style_qualification_for_property = false:silent
+dotnet_style_qualification_for_method = false:silent
+dotnet_style_qualification_for_event = false:silent
+
+# ── naming ─────────────────────────────────────────────────────────────────────────────────
+dotnet_naming_rule.private_fields_underscore.severity = suggestion
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel.required_prefix = _
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+
+dotnet_naming_rule.types_pascal.severity = suggestion
+dotnet_naming_rule.types_pascal.symbols = types_and_members
+dotnet_naming_rule.types_pascal.style = pascal
+dotnet_naming_symbols.types_and_members.applicable_kinds = class,struct,interface,enum,property,method,event
+dotnet_naming_style.pascal.capitalization = pascal_case
+
+# ── diagnostics we deliberately do not enforce ─────────────────────────────────────────────
+# Generated/data files: RecatLookup is a 2,677-line FAA JO 7360.1E lookup table and the NEXRAD
+# decoders are a port of an external format reader. Both are correct and neither benefits from
+# being restyled.
+[tools/SwimServer/Nexrad/*.cs]
+dotnet_analyzer_diagnostic.severity = none

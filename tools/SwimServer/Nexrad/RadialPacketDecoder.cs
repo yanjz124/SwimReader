@@ -1,4 +1,4 @@
-﻿//
+//
 // Created by Chris Harrell, 09/10/2010
 //
 // Base NexradDecoder class.
@@ -49,7 +49,7 @@ namespace NexradDecoder
                         int value = description_block.Threshold[symbology_block.Radials[i].ColorValues[j]];
                         if (description_block.Mode == 1 && (description_block.Code >= 16 && description_block.Code <= 21))
                             value = ((int)(((double)value / 256.0) * 16));
-                        
+
                         symbology_block.Radials[i].Values[j] = value;
                     }
                 }
@@ -64,7 +64,7 @@ namespace NexradDecoder
                         int value = readByte();
                         symbology_block.Radials[i].ColorValues[j] = value / 16;
                         if (value > 2)
-                            symbology_block.Radials[i].Values[j] = (increment * (value-2)) + minval;
+                            symbology_block.Radials[i].Values[j] = (increment * (value - 2)) + minval;
                     }
                 }
             }

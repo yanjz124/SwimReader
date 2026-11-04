@@ -232,7 +232,7 @@ class TaisBridge
                     var sp2 = ElVal(fp, "scratchPad2");
                     var rwy = ElVal(fp, "runway");
                     track.ScratchPad2Hex = HexIfNonAscii(sp2);
-                    track.RunwayHex      = HexIfNonAscii(rwy);
+                    track.RunwayHex = HexIfNonAscii(rwy);
                 }
 
                 // Enhanced data (origin/destination airports)

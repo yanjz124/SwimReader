@@ -1,4 +1,4 @@
-﻿using System.Net.WebSockets;
+using System.Net.WebSockets;
 
 namespace SwimServer;
 
@@ -199,9 +199,9 @@ static class EramRoutes
                     byFac[fac] = inner;
                 }
                 inner.TryGetValue(sec, out var cur);
-                cur.tracks    += isOwn ? 1 : 0;
-                cur.hIn       += hIn   ? 1 : 0;
-                cur.hOut      += hOut  ? 1 : 0;
+                cur.tracks += isOwn ? 1 : 0;
+                cur.hIn += hIn ? 1 : 0;
+                cur.hOut += hOut ? 1 : 0;
                 inner[sec] = cur;
             }
             foreach (var f in ctx.Flights.Values)
@@ -211,7 +211,7 @@ static class EramRoutes
                 var sec = Norm(f.ControllingSector);
                 if (!string.IsNullOrEmpty(fac)) Bump(fac, sec, isOwn: true, hIn: false, hOut: false);
                 var (rFac, rSec) = Split(f.HandoffReceiving);
-                if (!string.IsNullOrEmpty(rFac))  Bump(rFac, rSec, false, true,  false);
+                if (!string.IsNullOrEmpty(rFac)) Bump(rFac, rSec, false, true, false);
                 var (tFac, tSec) = Split(f.HandoffTransferring);
                 if (!string.IsNullOrEmpty(tFac) && (tFac != fac || tSec != sec))
                     Bump(tFac, tSec, false, false, true);
@@ -250,9 +250,9 @@ static class EramRoutes
             var rows = byFac
                 .Select(kv => new
                 {
-                    facility    = kv.Key,
+                    facility = kv.Key,
                     // Real TRACON id when this facility is an ERAM NAS code (null otherwise).
-                    traconId    = bareTracon.TryGetValue(kv.Key, out var rid)
+                    traconId = bareTracon.TryGetValue(kv.Key, out var rid)
                                   && !string.Equals(rid, kv.Key, StringComparison.OrdinalIgnoreCase) ? rid : null,
                     totalTracks = kv.Value.Values.Sum(v => v.tracks),
                     sectorCount = kv.Value.Count(s => s.Value.tracks > 0),
@@ -291,11 +291,11 @@ static class EramRoutes
                             }
                             return new
                             {
-                                id          = s.Key,
-                                tracks      = s.Value.tracks,
-                                handoffsIn  = s.Value.hIn,
+                                id = s.Key,
+                                tracks = s.Value.tracks,
+                                handoffsIn = s.Value.hIn,
                                 handoffsOut = s.Value.hOut,
-                                history     = hist,
+                                history = hist,
                             };
                         })
                         .ToArray()
@@ -309,9 +309,9 @@ static class EramRoutes
             return Results.Json(new
             {
                 rangeMinutes = windowMin,
-                buckets      = 60,                          // page knows each bucket = windowMin/60 mins
+                buckets = 60,                          // page knows each bucket = windowMin/60 mins
                 maxRangeMinutes = SectorTracker.HistorySamples,
-                facilities   = rows,
+                facilities = rows,
             }, ctx.JsonOpts);
         });
 
@@ -325,10 +325,10 @@ static class EramRoutes
             return Results.Json(new
             {
                 facility = fac.ToUpperInvariant(),
-                sector   = sec.ToUpperInvariant(),
+                sector = sec.ToUpperInvariant(),
                 sampleSeconds = 60,
                 windowMinutes = SectorTracker.HistorySamples,
-                history  = hist,
+                history = hist,
             }, ctx.JsonOpts);
         });
 

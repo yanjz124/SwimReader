@@ -93,17 +93,17 @@ static class TrackRoutes
                 foreach (System.Text.RegularExpressions.Match mm in System.Text.RegularExpressions.Regex.Matches(h.summary ?? "", @"[A-Z]{2,4}/[0-9A-Z]{1,3}"))
                     AddFreqKey(mm.Value);
 
-            var tdls  = ctx.Tdls.FindByCallsign(callsign);
-            var tais  = ctx.Tais.FindByCallsign(callsign);
+            var tdls = ctx.Tdls.FindByCallsign(callsign);
+            var tais = ctx.Tais.FindByCallsign(callsign);
             var asdex = ctx.Asdex.FindByCallsign(callsign);
-            var tfms  = ctx.Tfms.GetTrackByCallsign(callsign, LaddService.Reveal(http));
+            var tfms = ctx.Tfms.GetTrackByCallsign(callsign, LaddService.Reveal(http));
             // Match TFDM to the current leg (origin/dest) — a reused flight number can carry TFDM
             // data for a previous leg. Prefer the live SFDPS record that has both airports.
             var legF = ctx.Flights.Values
                 .Where(f => string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase) && f.FlightStatus != "CANCELLED")
                 .OrderByDescending(f => !string.IsNullOrEmpty(f.Origin) && !string.IsNullOrEmpty(f.Destination) ? 1 : 0)
                 .FirstOrDefault();
-            var tfdm  = ctx.Tfdm.FindByCallsign(callsign, legF?.Origin, legF?.Destination);   // TFDM surface timing (joins to the SFDPS plan)
+            var tfdm = ctx.Tfdm.FindByCallsign(callsign, legF?.Origin, legF?.Destination);   // TFDM surface timing (joins to the SFDPS plan)
 
             var found = sfdps.Count > 0 || tdls.Count > 0 || tais.Count > 0 || asdex.Count > 0
                         || tfms is not null || tfdm.Count > 0;
@@ -150,45 +150,45 @@ static class TrackRoutes
     // the flight-plan card and the mock ERAM/STARS data blocks.
     private static object SfdpsProjection(FlightState f, string? sectorFreq, string? handoffFreq,
         string? controllingTracon = null, string? handoffReceivingMapped = null) => new
-    {
-        gufi = f.Gufi, callsign = f.Callsign, cid = f.ComputerId, status = f.FlightStatus,
-        sectorFreq, handoffFreq,
-        // Real TRACON id for an SFDPS NAS code (null when unmapped/an ARTCC sector); raw code stays in controllingFacility.
-        controllingTracon, handoffReceivingMapped,
-        cids = f.ComputerIds.IsEmpty ? null : new Dictionary<string, string>(f.ComputerIds),
-        // flight plan / identity
-        origin = f.Origin, dest = f.Destination, alternate = f.AlternateAerodrome,
-        acType = f.AircraftType, wake = f.WakeCategory, equip = f.EquipmentQualifier,
-        registration = f.Registration, rules = f.FlightRules, flightType = f.FlightType,
-        route = f.Route, originalRoute = f.OriginalRoute, star = f.STAR, remarks = f.Remarks,
-        oper = f.Operator, originator = f.Originator,
-        // ICAO field 10/18 capabilities
-        pbn = f.PBNCode, nav = f.NavigationCode, comm = f.CommunicationCode, surv = f.SurveillanceCode,
-        otherNav = f.OtherNavigationCapabilities, otherComm = f.OtherCommunicationCapabilities,
-        otherSurv = f.OtherSurveillanceCapabilities, otherDataLink = f.OtherDataLink,
-        dataLink = f.DataLinkCode, selcal = f.SELCAL, perf = f.AircraftPerformance,
-        eet = f.EstimatedElapsedTimes,
-        // altitude
-        assignedAlt = f.AssignedAltitude, assignedVfr = f.AssignedVfr,
-        blockFloor = f.BlockFloor, blockCeil = f.BlockCeiling,
-        interimAlt = f.InterimAltitude, reportedAlt = f.ReportedAltitude,
-        reqAlt = f.RequestedAltitude, reqSpeed = f.RequestedSpeed,
-        // position / ownership
-        lat = f.Latitude, lon = f.Longitude, gs = f.GroundSpeed,
-        reportingFacility = f.ReportingFacility, controllingFacility = f.ControllingFacility,
-        controllingSector = f.ControllingSector,
-        handoffEvent = f.HandoffEvent, handoffReceiving = f.HandoffReceiving, handoffTransferring = f.HandoffTransferring,
-        pointoutOrig = f.PointoutOriginatingUnit, pointoutRecv = f.PointoutReceivingUnit,
-        squawk = f.Squawk, assignedSquawk = f.AssignedSquawk, coast = f.CoastIndicator,
-        // clearance (HSF)
-        clrHeading = f.ClearanceHeading, clrSpeed = f.ClearanceSpeed, clrText = f.ClearanceText,
-        // times
-        depTime = f.ActualDepartureTime, eta = f.ETA, edct = f.EdctTime,
-        coordTime = f.CoordinationTime, coordFix = f.CoordinationFix,
-        lastMsg = f.LastMsgSource,
-        posAgeSec = f.LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - f.LastPositionTime).TotalSeconds,
-        lastSeen = f.LastSeen.ToString("o"),
-    };
+        {
+            gufi = f.Gufi, callsign = f.Callsign, cid = f.ComputerId, status = f.FlightStatus,
+            sectorFreq, handoffFreq,
+            // Real TRACON id for an SFDPS NAS code (null when unmapped/an ARTCC sector); raw code stays in controllingFacility.
+            controllingTracon, handoffReceivingMapped,
+            cids = f.ComputerIds.IsEmpty ? null : new Dictionary<string, string>(f.ComputerIds),
+            // flight plan / identity
+            origin = f.Origin, dest = f.Destination, alternate = f.AlternateAerodrome,
+            acType = f.AircraftType, wake = f.WakeCategory, equip = f.EquipmentQualifier,
+            registration = f.Registration, rules = f.FlightRules, flightType = f.FlightType,
+            route = f.Route, originalRoute = f.OriginalRoute, star = f.STAR, remarks = f.Remarks,
+            oper = f.Operator, originator = f.Originator,
+            // ICAO field 10/18 capabilities
+            pbn = f.PBNCode, nav = f.NavigationCode, comm = f.CommunicationCode, surv = f.SurveillanceCode,
+            otherNav = f.OtherNavigationCapabilities, otherComm = f.OtherCommunicationCapabilities,
+            otherSurv = f.OtherSurveillanceCapabilities, otherDataLink = f.OtherDataLink,
+            dataLink = f.DataLinkCode, selcal = f.SELCAL, perf = f.AircraftPerformance,
+            eet = f.EstimatedElapsedTimes,
+            // altitude
+            assignedAlt = f.AssignedAltitude, assignedVfr = f.AssignedVfr,
+            blockFloor = f.BlockFloor, blockCeil = f.BlockCeiling,
+            interimAlt = f.InterimAltitude, reportedAlt = f.ReportedAltitude,
+            reqAlt = f.RequestedAltitude, reqSpeed = f.RequestedSpeed,
+            // position / ownership
+            lat = f.Latitude, lon = f.Longitude, gs = f.GroundSpeed,
+            reportingFacility = f.ReportingFacility, controllingFacility = f.ControllingFacility,
+            controllingSector = f.ControllingSector,
+            handoffEvent = f.HandoffEvent, handoffReceiving = f.HandoffReceiving, handoffTransferring = f.HandoffTransferring,
+            pointoutOrig = f.PointoutOriginatingUnit, pointoutRecv = f.PointoutReceivingUnit,
+            squawk = f.Squawk, assignedSquawk = f.AssignedSquawk, coast = f.CoastIndicator,
+            // clearance (HSF)
+            clrHeading = f.ClearanceHeading, clrSpeed = f.ClearanceSpeed, clrText = f.ClearanceText,
+            // times
+            depTime = f.ActualDepartureTime, eta = f.ETA, edct = f.EdctTime,
+            coordTime = f.CoordinationTime, coordFix = f.CoordinationFix,
+            lastMsg = f.LastMsgSource,
+            posAgeSec = f.LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - f.LastPositionTime).TotalSeconds,
+            lastSeen = f.LastSeen.ToString("o"),
+        };
 
     // Frequency for a "FAC/SECTOR" — ERAM sector (e.g. ZDC/32) or STARS TCP code
     // (subset+sectorId, e.g. PCT/1J), both keyed exactly as vNAS/TAIS report them.

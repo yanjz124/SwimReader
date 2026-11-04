@@ -167,8 +167,11 @@ static class TdlsHistoryService
                 // Empty but the index knows the callsign: it genuinely has nothing matching (e.g. the
                 // airport filter excluded it). That's an answer — don't scan 128 files to repeat it.
                 if (hits != null && q != null && TdlsCallsignIndex.Knows(q))
-                    return new { count = 0, results = Array.Empty<object>(), truncated = false,
-                        scannedDays = 0, indexed = true, indexState = TdlsCallsignIndex.State.ToString() };
+                    return new
+                    {
+                        count = 0, results = Array.Empty<object>(), truncated = false,
+                        scannedDays = 0, indexed = true, indexState = TdlsCallsignIndex.State.ToString()
+                    };
                 dates = Directory.GetFiles(historyDir, "*.jsonl")
                     .Select(Path.GetFileNameWithoutExtension)
                     .Where(x => !string.IsNullOrEmpty(x))

@@ -1,4 +1,4 @@
-﻿using SolaceSystems.Solclient.Messaging;
+using SolaceSystems.Solclient.Messaging;
 
 namespace SwimServer;
 

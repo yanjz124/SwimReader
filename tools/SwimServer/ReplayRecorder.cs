@@ -189,12 +189,12 @@ public sealed class ReplayRecorder : IDisposable
             // Flush in order: writer → gzip → file. Each layer must be flushed
             // before its underlying stream is disposed, or the compressed buffer
             // is lost and the file becomes unreadable from that point.
-            if (sw != null)  { try { await sw.FlushAsync(); } catch { } }
-            if (gz != null)  { try { await gz.FlushAsync(); } catch { } }
-            if (fs != null)  { try { await fs.FlushAsync(); } catch { } }
-            if (sw != null)  { try { sw.Dispose(); } catch { } }
-            if (gz != null)  { try { gz.Dispose(); } catch { } }
-            if (fs != null)  { try { fs.Dispose(); } catch { } }
+            if (sw != null) { try { await sw.FlushAsync(); } catch { } }
+            if (gz != null) { try { await gz.FlushAsync(); } catch { } }
+            if (fs != null) { try { await fs.FlushAsync(); } catch { } }
+            if (sw != null) { try { sw.Dispose(); } catch { } }
+            if (gz != null) { try { gz.Dispose(); } catch { } }
+            if (fs != null) { try { fs.Dispose(); } catch { } }
         }
     }
 

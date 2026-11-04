@@ -1,4 +1,4 @@
-﻿namespace SwimServer;
+namespace SwimServer;
 
 /// <summary>
 /// Debug / introspection endpoints under /api/debug/*.
@@ -42,7 +42,8 @@ static class DebugRoutes
             var matches = ctx.Flights.Where(kv =>
                 (kv.Value.Callsign?.ToUpperInvariant().Contains(needle) ?? false) ||
                 (kv.Value.ComputerId?.Contains(needle) ?? false))
-                .Select(kv => new {
+                .Select(kv => new
+                {
                     kv.Value.Gufi, kv.Value.Callsign, kv.Value.ComputerId,
                     ComputerIds = new Dictionary<string, string>(kv.Value.ComputerIds),
                     kv.Value.Origin, kv.Value.Destination, kv.Value.Squawk
@@ -76,7 +77,8 @@ static class DebugRoutes
         {
             var results = ctx.XmlSampleStore
                 .Where(kv => kv.Value.Contains(q, StringComparison.OrdinalIgnoreCase))
-                .Select(kv => {
+                .Select(kv =>
+                {
                     // Find context around the match
                     var idx = kv.Value.IndexOf(q, StringComparison.OrdinalIgnoreCase);
                     var start = Math.Max(0, idx - 200);
@@ -132,7 +134,8 @@ static class DebugRoutes
             var withPos = ctx.Flights.Values.Where(f => f.Latitude.HasValue).ToList();
             var nullPosTime = withPos.Count(f => f.LastPositionTime == default);
             var buckets = withPos.Where(f => f.LastPositionTime != default)
-                .GroupBy(f => {
+                .GroupBy(f =>
+                {
                     var age = (int)(DateTime.UtcNow - f.LastPositionTime).TotalSeconds;
                     return age switch { < 15 => "0-14s", < 30 => "15-29s", < 60 => "30-59s", < 300 => "1-5m", _ => ">5m" };
                 })
@@ -145,7 +148,8 @@ static class DebugRoutes
         {
             var cpdlcFlights = ctx.Flights.Values
                 .Where(f => !string.IsNullOrEmpty(f.DataLinkCode) && f.DataLinkCode.Contains("J"))
-                .Select(f => new {
+                .Select(f => new
+                {
                     f.Gufi, f.Callsign, f.AircraftType,
                     f.DataLinkCode, f.OtherDataLink, f.CommunicationCode,
                     f.Origin, f.Destination,
@@ -158,7 +162,8 @@ static class DebugRoutes
             var cpdlcXCount = ctx.Flights.Values.Count(f =>
                 !string.IsNullOrEmpty(f.OtherDataLink) &&
                 f.OtherDataLink.Contains("CPDLC", StringComparison.OrdinalIgnoreCase));
-            return Results.Json(new {
+            return Results.Json(new
+            {
                 totalFlights = total,
                 dataLinkJ = jCount,
                 otherDataLinkCPDLC = cpdlcXCount,
@@ -221,7 +226,8 @@ static class DebugRoutes
         {
             var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "tais-watch.log");
             long size = System.IO.File.Exists(path) ? new System.IO.FileInfo(path).Length : 0;
-            return Results.Json(new {
+            return Results.Json(new
+            {
                 callsigns = TaisBridge.WatchCallsigns.Keys.ToList(),
                 logPath = path,
                 logBytes = size,

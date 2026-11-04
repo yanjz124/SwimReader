@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Options;
 using SwimReader.Core.Bus;
 using SwimReader.Parsers;
 using SwimReader.Parsers.Apds;
@@ -115,7 +115,7 @@ if (adsbFiConfig?.Enabled == true)
     if (adsbFiConfig.CallsignEnrichmentEnabled)
         // Singleton + hosted-service-resolving-it, so GET /diag can read the enrichment counters.
         builder.Services.AddSingleton<CallsignEnrichmentService>();
-        builder.Services.AddHostedService(sp => sp.GetRequiredService<CallsignEnrichmentService>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<CallsignEnrichmentService>());
 
     if (adsbFiConfig.MilitaryInjectionEnabled)
         builder.Services.AddHostedService<MilitaryInjectionService>();

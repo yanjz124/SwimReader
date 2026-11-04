@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using SolaceSystems.Solclient.Messaging;
 
 namespace SwimServer;

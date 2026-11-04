@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 
 namespace SwimServer;
 
@@ -323,44 +323,44 @@ class FlightState
     {
         bool _ladd = LaddService.ShouldMask(Callsign, Registration, reveal, ModeSCode);
         return new
-    {
-        Gufi,
-        Callsign = _ladd ? LaddService.Label : Callsign,
-        ComputerId,
-        ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
-        Operator = _ladd ? null : Operator,
-        Originator, FlightStatus,
-        Origin, Destination, AircraftType, WakeCategory,
-        AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
-        InterimAltitude, ReportedAltitude,
-        Latitude, Longitude, GroundSpeed, Squawk, AssignedSquawk,
-        TrackVelocityX, TrackVelocityY,
-        CoastIndicator = CoastIndicator ? true : (bool?)null,       // only send when true
-        TargetLatitude, TargetLongitude, TargetAltitude,
-        ControllingFacility, ControllingSector,
-        // Seconds the current sector has held the track. Sent as an age (not a
-        // timestamp) so it stays correct across clock skew, like PosAge.
-        ControlAgeSec = ControlSince.HasValue ? (int)(DateTime.UtcNow - ControlSince.Value).TotalSeconds : (int?)null,
-        ReportingFacility,
-        HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
-        PointoutOriginatingUnit, PointoutReceivingUnit,
-        ClearanceHeading, ClearanceSpeed, ClearanceText,
-        DataLinkCode, OtherDataLink,
-        OriginalAssignedAltitude, OriginalAssignedVfr,
-        RequestedAltitude,
-        Route, OriginalRoute, FlightRules, FlightType, STAR, Remarks,
-        Registration = _ladd ? null : Registration,
-        EquipmentQualifier, AircraftPerformance, RequestedSpeed,
-        OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
-        CoordinationFix, CoordinationTime,
-        ETA, ActualDepartureTime, EdctTime,
-        LastMsgSource,
-        LastSeen = LastSeen.ToString("HH:mm:ss"),
-        PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
-        // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
-        // runs off PosAge so that coast/extrapolation behavior is unchanged by this field.
-        FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
-        History = includeHistory ? HistoryWithAge(historyMax) : null
+        {
+            Gufi,
+            Callsign = _ladd ? LaddService.Label : Callsign,
+            ComputerId,
+            ComputerIds = ComputerIds.IsEmpty ? null : new Dictionary<string, string>(ComputerIds),
+            Operator = _ladd ? null : Operator,
+            Originator, FlightStatus,
+            Origin, Destination, AircraftType, WakeCategory,
+            AssignedAltitude, AssignedVfr, BlockFloor, BlockCeiling,
+            InterimAltitude, ReportedAltitude,
+            Latitude, Longitude, GroundSpeed, Squawk, AssignedSquawk,
+            TrackVelocityX, TrackVelocityY,
+            CoastIndicator = CoastIndicator ? true : (bool?)null,       // only send when true
+            TargetLatitude, TargetLongitude, TargetAltitude,
+            ControllingFacility, ControllingSector,
+            // Seconds the current sector has held the track. Sent as an age (not a
+            // timestamp) so it stays correct across clock skew, like PosAge.
+            ControlAgeSec = ControlSince.HasValue ? (int)(DateTime.UtcNow - ControlSince.Value).TotalSeconds : (int?)null,
+            ReportingFacility,
+            HandoffEvent, HandoffReceiving, HandoffTransferring, HandoffAccepting, HandoffForced,
+            PointoutOriginatingUnit, PointoutReceivingUnit,
+            ClearanceHeading, ClearanceSpeed, ClearanceText,
+            DataLinkCode, OtherDataLink,
+            OriginalAssignedAltitude, OriginalAssignedVfr,
+            RequestedAltitude,
+            Route, OriginalRoute, FlightRules, FlightType, STAR, Remarks,
+            Registration = _ladd ? null : Registration,
+            EquipmentQualifier, AircraftPerformance, RequestedSpeed,
+            OtherNavigationCapabilities, OtherSurveillanceCapabilities, EstimatedElapsedTimes,
+            CoordinationFix, CoordinationTime,
+            ETA, ActualDepartureTime, EdctTime,
+            LastMsgSource,
+            LastSeen = LastSeen.ToString("HH:mm:ss"),
+            PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
+            // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
+            // runs off PosAge so that coast/extrapolation behavior is unchanged by this field.
+            FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
+            History = includeHistory ? HistoryWithAge(historyMax) : null
         };
     }
 
@@ -399,9 +399,9 @@ class FlightState
             FlightStatus,
             LastSeen = LastSeen.ToString("HH:mm:ss"),
             PosAge = LastPositionTime == default ? (int?)null : (int)(DateTime.UtcNow - LastPositionTime).TotalSeconds,
-        // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
-        // runs off PosAge so that coast/extrapolation behavior is unchanged by this field.
-        FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
+            // Age of the radar fix itself. PosAge minus FixAge is the feed's lag; display logic still
+            // runs off PosAge so that coast/extrapolation behavior is unchanged by this field.
+            FixAge = PositionFixTime == default ? (int?)null : (int)(DateTime.UtcNow - PositionFixTime).TotalSeconds,
         };
     }
 
@@ -423,7 +423,8 @@ class FlightState
         var nowTicks = DateTime.UtcNow.Ticks;
         var hist = GetPositionHistory();
         if (hist.Count > max) hist = hist.GetRange(hist.Count - max, max);
-        return hist.Select(h => new {
+        return hist.Select(h => new
+        {
             h.Lat, h.Lon, Sym = h.Sym.ToString(),
             Age = (int)((nowTicks - h.Ticks) / TimeSpan.TicksPerSecond)
         }).ToArray();

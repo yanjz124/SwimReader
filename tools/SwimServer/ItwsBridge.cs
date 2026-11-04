@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
@@ -333,9 +333,9 @@ class ItwsBridge
             if (ca is null) return;
             long t = ParseLong(GetLocal(ca, "ca_aw_seconds"));
             if (t <= 0) return;
-            int? dir   = ParseInt(GetLocal(ca, "ca_aw_wind_dir"));
+            int? dir = ParseInt(GetLocal(ca, "ca_aw_wind_dir"));
             int? speed = ParseInt(GetLocal(ca, "ca_aw_wind_speed"));
-            int? gust  = ParseInt(GetLocal(ca, "ca_aw_gust_speed"));
+            int? gust = ParseInt(GetLocal(ca, "ca_aw_gust_speed"));
             var sample = new WindHistorySample(t, dir, speed, gust);
             AppendDedup(_windHistory, site, sample, s => s.T);
         }

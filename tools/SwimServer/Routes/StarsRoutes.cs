@@ -1,4 +1,4 @@
-﻿namespace SwimServer;
+namespace SwimServer;
 
 /// <summary>
 /// STARS frontend routes: the scope SPA + vNAS profile REST.
@@ -195,7 +195,7 @@ static class StarsRoutes
         app.MapGet("/api/stars/videoMaps/{artccId}", async (string artccId) =>
         {
             artccId = artccId.ToUpperInvariant();
-            var cached    = ctx.Stars.ListAvailableVideoMapIds(artccId);
+            var cached = ctx.Stars.ListAvailableVideoMapIds(artccId);
             var published = await ctx.Stars.ListPublishedVideoMapIdsAsync(artccId);
             // `available` is what the scope can actually draw — everything vNAS publishes, since
             // an uncached map is one fetch away. It falls back to the disk list if the catalog
@@ -205,8 +205,8 @@ static class StarsRoutes
                 artccId,
                 available = published.Length > 0 ? published : cached,
                 published = published.Length,
-                cached    = cached.Length,
-                source    = published.Length > 0 ? "vnas" : "crc-export",
+                cached = cached.Length,
+                source = published.Length > 0 ? "vnas" : "crc-export",
                 crcExportRoot = ctx.Stars.CrcExportRoot,
             }, ctx.JsonOpts);
         });
@@ -218,8 +218,11 @@ static class StarsRoutes
 
         // DGScope profile XMLs from %LOCALAPPDATA%/DGScope Profile Manager/
         app.MapGet("/api/stars/profiles/{artccId}", (string artccId) =>
-            Results.Json(new { artccId = artccId.ToUpperInvariant(),
-                profiles = ctx.Stars.ListProfiles(artccId.ToUpperInvariant()) }, ctx.JsonOpts));
+            Results.Json(new
+            {
+                artccId = artccId.ToUpperInvariant(),
+                profiles = ctx.Stars.ListProfiles(artccId.ToUpperInvariant())
+            }, ctx.JsonOpts));
 
         // /api/stars/profile/{x}/{y} was previously registered both here (JSON,
         // vNAS-style) AND in StarsProfileRoutes.cs (XML, DGScope-style),

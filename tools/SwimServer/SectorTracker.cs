@@ -104,7 +104,7 @@ sealed class SectorTracker
         for (int b = 0; b < buckets; b++)
         {
             int start = (int)(b * step);
-            int end   = (int)((b + 1) * step);
+            int end = (int)((b + 1) * step);
             if (end > full.Length) end = full.Length;
             int m = 0;
             for (int i = start; i < end; i++) if (full[i] > m) m = full[i];
@@ -203,9 +203,9 @@ sealed class SectorTracker
             Directory.CreateDirectory(dir);
             var p = new Persisted { WritePos = _writePos };
             foreach (var kv in _history) p.History[kv.Key] = kv.Value;
-            foreach (var kv in _trans)   p.Trans[$"{kv.Key.from}>>{kv.Key.to}"] = kv.Value;
+            foreach (var kv in _trans) p.Trans[$"{kv.Key.from}>>{kv.Key.to}"] = kv.Value;
             var path = Path.Combine(dir, "sectors.json");
-            var tmp  = path + ".tmp";
+            var tmp = path + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(p));
             File.Move(tmp, path, overwrite: true);
         }

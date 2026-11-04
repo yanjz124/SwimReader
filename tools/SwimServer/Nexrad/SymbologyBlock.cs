@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -19,7 +19,7 @@ namespace NexradDecoder
 
     public class RasterSymbologyBlock : SymbologyBlock
     {
-        
+
         public int LayerPacketCode2 { get; set; }
         public int LayerPacketCode3 { get; set; }
         public int I_Coord_Start { get; set; }

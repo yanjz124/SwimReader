@@ -1,4 +1,4 @@
-﻿//
+//
 // Created by Chris Harrell, 09/10/2010
 //
 // Base NexradDecoder class.
@@ -11,17 +11,17 @@ namespace NexradDecoder
             RasterSymbologyBlock symbology_block = new RasterSymbologyBlock();
             symbology_block.LayerDivider = readHalfWord();
             symbology_block.LayerLength = readWord();
-            symbology_block.LayerPacketCode = readHalfWord(); 
-		    symbology_block.LayerPacketCode2 = readHalfWord();
-		    symbology_block.LayerPacketCode3 = readHalfWord();	
-		    symbology_block.I_Coord_Start = readHalfWord();
-		    symbology_block.J_Coord_Start = readHalfWord();
-		    symbology_block.X_Scale_Int = readHalfWord();
-		    symbology_block.X_Scale_Fraction = readHalfWord();
-		    symbology_block.Y_Scale_Int = readHalfWord();
-		    symbology_block.Y_Scale_Fraction = readHalfWord();
-		    symbology_block.NumRows = readHalfWord();
-		    symbology_block.PackingDescriptor = readHalfWord();
+            symbology_block.LayerPacketCode = readHalfWord();
+            symbology_block.LayerPacketCode2 = readHalfWord();
+            symbology_block.LayerPacketCode3 = readHalfWord();
+            symbology_block.I_Coord_Start = readHalfWord();
+            symbology_block.J_Coord_Start = readHalfWord();
+            symbology_block.X_Scale_Int = readHalfWord();
+            symbology_block.X_Scale_Fraction = readHalfWord();
+            symbology_block.Y_Scale_Int = readHalfWord();
+            symbology_block.Y_Scale_Fraction = readHalfWord();
+            symbology_block.NumRows = readHalfWord();
+            symbology_block.PackingDescriptor = readHalfWord();
             symbology_block.Rows = new Row[symbology_block.NumRows];
             for (int i = 0; i < symbology_block.NumRows; i++)
             {
@@ -32,7 +32,7 @@ namespace NexradDecoder
                 for (int j = 0; j < rowBytes; j++)
                 {
                     var tempColorValues = parseRLE();
-                    symbology_block.Rows[i].Data = ArrayMerge.Merge(symbology_block.Rows[i].Data,tempColorValues);
+                    symbology_block.Rows[i].Data = ArrayMerge.Merge(symbology_block.Rows[i].Data, tempColorValues);
                 }
             }
             base.symbology_block = symbology_block;

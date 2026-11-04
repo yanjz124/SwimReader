@@ -124,8 +124,9 @@ static class NexradStarsRoutes
             return Results.Json(new
             {
                 loadedAt = ctx.NexradStations.LoadedAt.ToString("o"),
-                count    = ctx.NexradStations.All.Count,
-                stations = ctx.NexradStations.All.Select(s => new {
+                count = ctx.NexradStations.All.Count,
+                stations = ctx.NexradStations.All.Select(s => new
+                {
                     icao = s.Icao, name = s.Name, state = s.State,
                     lat = s.Lat, lon = s.Lon, elevFt = s.ElevFt, type = s.Type
                 }).ToArray(),
@@ -178,14 +179,14 @@ static class NexradStarsRoutes
                 if (archiveKey is null)
                     return Results.Json(new { error = $"no archived {ap} volume for {station} at or before {t:yyyy-MM-ddTHH:mm:ss}Z" },
                                         ctx.JsonOpts, statusCode: 404);
-                url      = $"{Bucket}/{archiveKey}";
+                url = $"{Bucket}/{archiveKey}";
                 cacheKey = archiveKey;     // a resolved volume is immutable, so it never goes stale
             }
             else
             {
                 // tgftp serves the raw NIDS file at sn.last — the same URL
                 // DGScope's NexradDisplay.URL (NexradDisplay.cs:42) points at.
-                url      = $"https://tgftp.nws.noaa.gov/SL.us008001/DF.of/DC.radar/DS.{product}/SI.{station.ToLowerInvariant()}/sn.last";
+                url = $"https://tgftp.nws.noaa.gov/SL.us008001/DF.of/DC.radar/DS.{product}/SI.{station.ToLowerInvariant()}/sn.last";
                 cacheKey = $"{station}:{product}";
             }
 
@@ -213,20 +214,20 @@ static class NexradStarsRoutes
                 decoder.setStreamResource(ms);
                 decoder.parseMHB();
                 var description = decoder.parsePDB();
-                var symbology   = (RadialSymbologyBlock)decoder.parsePSB();
+                var symbology = (RadialSymbologyBlock)decoder.parsePSB();
 
                 // RecomputeVertices NWSNexrad branch (cs:150-192).
                 int range = description.Code switch
                 {
-                    94  => 248,                         // N0Q  base reflectivity      (live p94r0)
+                    94 => 248,                         // N0Q  base reflectivity      (live p94r0)
                     153 => 248,                         // N0B  super-res base refl    (archive)
-                    38  => 248,                         // NCZ  composite reflectivity (live p38cr)
-                    37  => 124,                         // NCR  composite reflectivity (archive)
-                    180 =>  48,                         // legacy TDWR 48nm
-                    _   => 248,                         // unknown code → assume max
+                    38 => 248,                         // NCZ  composite reflectivity (live p38cr)
+                    37 => 124,                         // NCR  composite reflectivity (archive)
+                    180 => 48,                         // legacy TDWR 48nm
+                    _ => 248,                         // unknown code → assume max
                 };
                 // scanrange = range * cos(ProductSpecific_3 deg) (cs:164)
-                double scanrange  = range * Math.Cos(description.ProductSpecific_3 * (Math.PI / 180));
+                double scanrange = range * Math.Cos(description.ProductSpecific_3 * (Math.PI / 180));
                 double resolution = scanrange / symbology.LayerNumberOfRangeBins;
 
                 // Strip per-radial: startAngle, angleDelta, values[]. We
@@ -238,7 +239,7 @@ static class NexradStarsRoutes
                     var r = symbology.Radials[i];
                     // Pack as parallel arrays of bin-index + value for
                     // compactness vs a sparse [0,0,0,12,0,0,...] array.
-                    var bins   = new List<int>(r.Values.Length / 8);
+                    var bins = new List<int>(r.Values.Length / 8);
                     var values = new List<double>(r.Values.Length / 8);
                     for (int j = 0; j < r.Values.Length; j++)
                     {
@@ -246,7 +247,8 @@ static class NexradStarsRoutes
                         bins.Add(j);
                         values.Add(r.Values[j]);
                     }
-                    radials[i] = new {
+                    radials[i] = new
+                    {
                         startAngle = r.StartAngle,
                         angleDelta = r.AngleDelta,
                         bins, values,
@@ -255,19 +257,19 @@ static class NexradStarsRoutes
 
                 var payload = new
                 {
-                    radarLat   = description.Latitude,
-                    radarLon   = description.Longitude,
+                    radarLat = description.Latitude,
+                    radarLon = description.Longitude,
                     range,
                     scanrange,
                     resolution,                          // NM per bin
                     numRadials = symbology.NumberOfRadials,
-                    numBins    = symbology.LayerNumberOfRangeBins,
+                    numBins = symbology.LayerNumberOfRangeBins,
                     // Which volume this actually is, so a replay can be checked against its clock
                     // rather than taken on trust.
-                    code       = description.Code,
+                    code = description.Code,
                     volumeTime = description.ScanTime == default
                                  ? null : description.ScanTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'"),
-                    archived   = archiveKey is not null,
+                    archived = archiveKey is not null,
                     radials,
                 };
                 Remember(cacheKey, payload);

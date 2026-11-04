@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using SwimReader.Server.Adapters;
 using SwimReader.Server.Streaming;
 

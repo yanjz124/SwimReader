@@ -41,12 +41,18 @@ static class TdlsRoutes
             var cs = (q ?? "").Trim().ToUpperInvariant();
             TdlsCallsignIndex.EnsureBuilt(ctx.TdlsHistoryDir);
             if (cs.Length < 3)
-                return Results.Json(new { callsign = cs, occurrences = Array.Empty<object>(), total = 0,
-                    indexState = TdlsCallsignIndex.State.ToString() }, ctx.JsonOpts);
+                return Results.Json(new
+                {
+                    callsign = cs, occurrences = Array.Empty<object>(), total = 0,
+                    indexState = TdlsCallsignIndex.State.ToString()
+                }, ctx.JsonOpts);
             // LADD: never confirm a blocked aircraft exists, exactly as the message search doesn't.
             if (LaddService.ShouldMask(cs, null, LaddService.Reveal(http)))
-                return Results.Json(new { callsign = cs, occurrences = Array.Empty<object>(), total = 0,
-                    ladd = true, indexState = TdlsCallsignIndex.State.ToString() }, ctx.JsonOpts);
+                return Results.Json(new
+                {
+                    callsign = cs, occurrences = Array.Empty<object>(), total = 0,
+                    ladd = true, indexState = TdlsCallsignIndex.State.ToString()
+                }, ctx.JsonOpts);
             var occ = TdlsCallsignIndex.Occurrences(cs);
             return Results.Json(new
             {

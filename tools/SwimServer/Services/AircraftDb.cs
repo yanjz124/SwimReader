@@ -195,26 +195,26 @@ sealed class AircraftDb
         static bool FieldMatches(AircraftRecord r, string fld, Func<string?, bool> m) => fld switch
         {
             "registration" => m(r.Registration),
-            "icao24"       => m(r.Icao24),
-            "selcal"       => m(r.Selcal),
-            "type"         => m(r.Type),
-            "operator"     => m(r.Operator?.ToUpperInvariant()),
-            "callsign"     => r.Callsigns.Any(c => m(c)),
-            _              => m(r.Registration) || m(r.Icao24) || m(r.Selcal) || m(r.Type)
+            "icao24" => m(r.Icao24),
+            "selcal" => m(r.Selcal),
+            "type" => m(r.Type),
+            "operator" => m(r.Operator?.ToUpperInvariant()),
+            "callsign" => r.Callsigns.Any(c => m(c)),
+            _ => m(r.Registration) || m(r.Icao24) || m(r.Selcal) || m(r.Type)
                               || m(r.Operator?.ToUpperInvariant()) || r.Callsigns.Any(c => m(c)),
         };
 
         Func<AircraftRecord, IComparable> key = sort switch
         {
             "registration" => r => r.Registration ?? "",
-            "icao24"       => r => r.Icao24 ?? "",
-            "type"         => r => r.Type ?? "",
-            "operator"     => r => r.Operator ?? "",
-            "selcal"       => r => r.Selcal ?? "",
-            "wake"         => r => r.Wake ?? "",
-            "sightings"    => r => r.Sightings,
-            "firstSeen"    => r => r.FirstSeenUtc,
-            _              => r => r.LastSeenUtc,   // default: most recently seen
+            "icao24" => r => r.Icao24 ?? "",
+            "type" => r => r.Type ?? "",
+            "operator" => r => r.Operator ?? "",
+            "selcal" => r => r.Selcal ?? "",
+            "wake" => r => r.Wake ?? "",
+            "sightings" => r => r.Sightings,
+            "firstSeen" => r => r.FirstSeenUtc,
+            _ => r => r.LastSeenUtc,   // default: most recently seen
         };
         // Stable tiebreak on last-seen so equal keys page deterministically.
         var ordered = desc

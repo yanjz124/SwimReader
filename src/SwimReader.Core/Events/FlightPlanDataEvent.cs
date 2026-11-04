@@ -57,7 +57,7 @@ public sealed class FlightPlanDataEvent : ISwimEvent
     //   "normal handoff"        — handoff in progress
     //   "intrafacility handoff" — local handoff within facility
     public string? HandoffOcr { get; init; }
-    public bool   IsHandoffInProgress { get; init; }
+    public bool IsHandoffInProgress { get; init; }
 
     // Source facility
     public string? Facility { get; init; }

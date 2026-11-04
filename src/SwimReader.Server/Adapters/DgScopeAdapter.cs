@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Hosting;
@@ -248,7 +248,7 @@ public sealed class DgScopeAdapter : BackgroundService
             s.HandoffStates[kv.Key.ToString()] = new PersistedHandoffState
             {
                 ConfirmedOwner = kv.Value.ConfirmedOwner,
-                HandoffTo      = kv.Value.HandoffTo,
+                HandoffTo = kv.Value.HandoffTo,
             };
         }
     }
@@ -284,7 +284,7 @@ public sealed class DgScopeAdapter : BackgroundService
                 _handoffState[g] = new HandoffState
                 {
                     ConfirmedOwner = kv.Value.ConfirmedOwner,
-                    HandoffTo      = kv.Value.HandoffTo,
+                    HandoffTo = kv.Value.HandoffTo,
                 };
             }
         }
@@ -861,7 +861,7 @@ public sealed class DgScopeAdapter : BackgroundService
                     // window vs OG ScopeServer's 252 (verified on PCT, 2026-06-26).
                     // Only broadcast when we've actually told clients about the GUID.
                     bool everSentTrack = _lastTrackJson.ContainsKey(guid);
-                    bool everSentFp    = _lastFpJsonOut.ContainsKey(guid);
+                    bool everSentFp = _lastFpJsonOut.ContainsKey(guid);
 
                     _lastFpJson.TryRemove(guid, out _);
                     _lastFpJsonOut.TryRemove(guid, out _);

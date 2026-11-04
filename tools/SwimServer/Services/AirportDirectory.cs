@@ -81,8 +81,13 @@ sealed class AirportDirectory
             var type = F("type");
             int typeRank = type switch
             {
-                "large_airport" => 0, "medium_airport" => 1, "small_airport" => 2,
-                "seaplane_base" => 3, "heliport" => 4, "closed" => 9, _ => 5,
+                "large_airport" => 0,
+                "medium_airport" => 1,
+                "small_airport" => 2,
+                "seaplane_base" => 3,
+                "heliport" => 4,
+                "closed" => 9,
+                _ => 5,
             };
             var country = F("iso_country");
             var a = new Airport(F("ident"), F("name"), F("municipality"), country, lat, lon, type);

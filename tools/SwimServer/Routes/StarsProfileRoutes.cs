@@ -26,9 +26,10 @@ static class StarsProfileRoutes
             {
                 var artcc = Path.GetFileName(artccDir);
                 foreach (var f in Directory.EnumerateFiles(artccDir, "*.xml"))
-                    list.Add(new {
+                    list.Add(new
+                    {
                         artcc,
-                        name  = Path.GetFileNameWithoutExtension(f),
+                        name = Path.GetFileNameWithoutExtension(f),
                         bytes = new FileInfo(f).Length,
                     });
             }
@@ -52,7 +53,7 @@ static class StarsProfileRoutes
             // Serve as text/xml so DOMParser picks it up cleanly. ETag from
             // mtime + length avoids re-shipping the (potentially 200 KB)
             // file on every page load.
-            var fi  = new FileInfo(path);
+            var fi = new FileInfo(path);
             var etag = $"\"{fi.LastWriteTimeUtc.Ticks:x}-{fi.Length:x}\"";
             return Results.File(path, "application/xml", entityTag: new Microsoft.Net.Http.Headers.EntityTagHeaderValue(etag));
         });

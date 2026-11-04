@@ -55,7 +55,7 @@ class TdlsBridge
                 case "TowerDepartureEventMessage":
                     ProcessDeparture(root);
                     break;
-                // DATISData — airport-level, skip
+                    // DATISData — airport-level, skip
             }
         }
         catch (Exception ex)

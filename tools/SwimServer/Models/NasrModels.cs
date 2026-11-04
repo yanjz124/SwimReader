@@ -1,4 +1,4 @@
-﻿namespace SwimServer;
+namespace SwimServer;
 
 record NavPoint(string Ident, double Lat, double Lon, string Type = "");
 record AirportOverlayPoint(string Lid, string Icao, double Lat, double Lon, string Cls);

@@ -117,9 +117,12 @@ class TelegramBridge
             var snapshot = _subs.ToArray();
             var map = snapshot.ToDictionary(
                 kv => kv.Key.ToString(),
-                kv => { lock (kv.Value) return kv.Value.OrderBy(x => x).ToDictionary(
+                kv =>
+                {
+                    lock (kv.Value) return kv.Value.OrderBy(x => x).ToDictionary(
                             cs => cs,
-                            cs => (_subAt.TryGetValue(Key(kv.Key, cs), out var dt) ? dt : DateTime.UtcNow).ToString("o")); });
+                            cs => (_subAt.TryGetValue(Key(kv.Key, cs), out var dt) ? dt : DateTime.UtcNow).ToString("o"));
+                });
             var json = JsonSerializer.Serialize(map);
             lock (_saveLock)
             {

@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
@@ -81,40 +81,40 @@ var pass = Environment.GetEnvironmentVariable("SFDPS_PASS") ?? "";
 var queue = Environment.GetEnvironmentVariable("SFDPS_QUEUE") ?? "";
 
 // STDDS credentials (ASDE-X / SMES)
-var stddsUser  = Environment.GetEnvironmentVariable("SCDSCONNECTION__USERNAME") ?? "";
-var stddsPass  = Environment.GetEnvironmentVariable("SCDSCONNECTION__PASSWORD") ?? "";
+var stddsUser = Environment.GetEnvironmentVariable("SCDSCONNECTION__USERNAME") ?? "";
+var stddsPass = Environment.GetEnvironmentVariable("SCDSCONNECTION__PASSWORD") ?? "";
 var stddsQueue = Environment.GetEnvironmentVariable("SCDSCONNECTION__QUEUENAME") ?? "";
-var stddsHost  = Environment.GetEnvironmentVariable("SCDSCONNECTION__HOST") ?? "tcps://ems2.swim.faa.gov:55443";
-var stddsVpn   = Environment.GetEnvironmentVariable("SCDSCONNECTION__MESSAGEVPN") ?? "STDDS";
+var stddsHost = Environment.GetEnvironmentVariable("SCDSCONNECTION__HOST") ?? "tcps://ems2.swim.faa.gov:55443";
+var stddsVpn = Environment.GetEnvironmentVariable("SCDSCONNECTION__MESSAGEVPN") ?? "STDDS";
 
 // TFMS credentials (Traffic Flow Management)
-var tfmsUser  = Environment.GetEnvironmentVariable("TFMS_USER") ?? "";
-var tfmsPass  = Environment.GetEnvironmentVariable("TFMS_PASS") ?? "";
+var tfmsUser = Environment.GetEnvironmentVariable("TFMS_USER") ?? "";
+var tfmsPass = Environment.GetEnvironmentVariable("TFMS_PASS") ?? "";
 var tfmsQueue = Environment.GetEnvironmentVariable("TFMS_QUEUE") ?? "";
-var tfmsHost  = Environment.GetEnvironmentVariable("TFMS_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
-var tfmsVpn   = Environment.GetEnvironmentVariable("TFMS_VPN") ?? "TFMS";
+var tfmsHost = Environment.GetEnvironmentVariable("TFMS_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
+var tfmsVpn = Environment.GetEnvironmentVariable("TFMS_VPN") ?? "TFMS";
 
 // TFDM credentials (Terminal Flight Data Manager — surface/departure management)
-var tfdmUser  = Environment.GetEnvironmentVariable("TFDM_USER") ?? "";
-var tfdmPass  = Environment.GetEnvironmentVariable("TFDM_PASS") ?? "";
+var tfdmUser = Environment.GetEnvironmentVariable("TFDM_USER") ?? "";
+var tfdmPass = Environment.GetEnvironmentVariable("TFDM_PASS") ?? "";
 var tfdmQueue = Environment.GetEnvironmentVariable("TFDM_QUEUE") ?? "";
-var tfdmHost  = Environment.GetEnvironmentVariable("TFDM_HOST") ?? "tcps://ems3.swim.faa.gov:55443";
-var tfdmVpn   = Environment.GetEnvironmentVariable("TFDM_VPN") ?? "TFDM";
+var tfdmHost = Environment.GetEnvironmentVariable("TFDM_HOST") ?? "tcps://ems3.swim.faa.gov:55443";
+var tfdmVpn = Environment.GetEnvironmentVariable("TFDM_VPN") ?? "TFDM";
 
 // ITWS credentials (Integrated Terminal Weather System)
-var itwsUser  = Environment.GetEnvironmentVariable("ITWS_USER") ?? "";
-var itwsPass  = Environment.GetEnvironmentVariable("ITWS_PASS") ?? "";
+var itwsUser = Environment.GetEnvironmentVariable("ITWS_USER") ?? "";
+var itwsPass = Environment.GetEnvironmentVariable("ITWS_PASS") ?? "";
 var itwsQueue = Environment.GetEnvironmentVariable("ITWS_QUEUE") ?? "";
-var itwsHost  = Environment.GetEnvironmentVariable("ITWS_HOST") ?? "tcps://ems1.swim.faa.gov:55443";
-var itwsVpn   = Environment.GetEnvironmentVariable("ITWS_VPN") ?? "ITWS";
+var itwsHost = Environment.GetEnvironmentVariable("ITWS_HOST") ?? "tcps://ems1.swim.faa.gov:55443";
+var itwsVpn = Environment.GetEnvironmentVariable("ITWS_VPN") ?? "ITWS";
 
 // TBFM credentials (Time Based Flow Management — TBFM MIS metering: STA/ETA at meter fix + runway).
 // A separate SCDS subscription; host/VPN come from the portal, so there is no guessed default host.
-var tbfmUser  = Environment.GetEnvironmentVariable("TBFM_USER") ?? "";
-var tbfmPass  = Environment.GetEnvironmentVariable("TBFM_PASS") ?? "";
+var tbfmUser = Environment.GetEnvironmentVariable("TBFM_USER") ?? "";
+var tbfmPass = Environment.GetEnvironmentVariable("TBFM_PASS") ?? "";
 var tbfmQueue = Environment.GetEnvironmentVariable("TBFM_QUEUE") ?? "";
-var tbfmHost  = Environment.GetEnvironmentVariable("TBFM_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
-var tbfmVpn   = Environment.GetEnvironmentVariable("TBFM_VPN") ?? "TBFM";
+var tbfmHost = Environment.GetEnvironmentVariable("TBFM_HOST") ?? "tcps://ems2.swim.faa.gov:55443";
+var tbfmVpn = Environment.GetEnvironmentVariable("TBFM_VPN") ?? "TBFM";
 
 // ── Shared state ────────────────────────────────────────────────────────────
 
@@ -199,7 +199,8 @@ var nexradStations = new SwimServer.NexradStations();
 // Lazy: first /api/stars/nexrad/* request triggers a fetch. Refresh once a
 // day in the background so the table stays current with NOAA without
 // stalling startup if the upstream is briefly unreachable.
-var nexradRefreshTimer = new Timer(async _ => {
+var nexradRefreshTimer = new Timer(async _ =>
+{
     try { await nexradStations.RefreshAsync(); }
     catch (Exception ex) { Console.Error.WriteLine($"[NEXRAD] periodic refresh failed: {ex.Message}"); }
 }, null, TimeSpan.FromMinutes(1), TimeSpan.FromHours(24));
@@ -1312,7 +1313,8 @@ var healthTimer = new Timer(_ =>
             Thread.Sleep(20000);
             Console.Error.WriteLine("[HEALTH] Graceful stop did not complete in 20s — hard exit.");
             Environment.Exit(1);
-        }) { IsBackground = true }.Start();
+        })
+        { IsBackground = true }.Start();
     }
 }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 
@@ -1356,7 +1358,7 @@ var sectorTrackerTimer = new Timer(_ =>
     {
         sectorTracker.Snapshot(flights);
         sectorTracker.Save(cacheDir);
-    airspaceBridge.Save(cacheDir);
+        airspaceBridge.Save(cacheDir);
     }
     catch (Exception ex) { Console.Error.WriteLine($"[SectorTracker] {ex.GetType().Name}: {ex.Message}"); }
 }, null, TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(1));
@@ -1454,14 +1456,17 @@ app.Lifetime.ApplicationStopping.Register(() => GracefulShutdown.Run(
     // half-way through. Irreplaceable state first; replay tails and the flight cache last,
     // since both survive being cut short.
     TimeSpan.FromSeconds(5),
-    ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); }),
+    ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); }
+),
     ("itws history", () => itws.SaveHistory()),                                   //   65ms
-    ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }), // 57ms
-    // Cheap (a few hundred KB, no-ops when clean) and irreplaceable on a short timescale: TBFM
-    // publishes adaptation rarely, so what the 60s timer hasn't written yet may not come round
-    // again for hours, and pointType reads null for that center until it does.
+    ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }
+), // 57ms
+   // Cheap (a few hundred KB, no-ops when clean) and irreplaceable on a short timescale: TBFM
+   // publishes adaptation rarely, so what the 60s timer hasn't written yet may not come round
+   // again for hours, and pointType reads null for that center until it does.
     ("tbfm adaptation", () => tbfm.SaveAdaptationIfDirty()),
-    ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }), // 1.9s
+    ("replay recorders", () => { eramRecorder.Dispose(); asdex.DisposeRecorders(); tais.DisposeRecorders(); }
+), // 1.9s
     ("flight cache", () => FlightCacheService.Save(flights, cacheDir, cacheJsonOpts, backfill: false)),
     // Last on purpose: measured at 5.0s, by far the most expensive step, and it already runs on
     // a 2-minute timer and no-ops when clean. Skipping it costs at most two minutes of last-seen

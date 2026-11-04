@@ -1,4 +1,4 @@
-﻿using System.IO.Compression;
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 
 namespace SwimServer;
@@ -467,7 +467,8 @@ static class NasrService
         // Log discovered columns for debugging
         Console.WriteLine($"[NASR]   ILS columns: apt={iApt} rwy={iRwy} type={iType} lat={iLat} lon={iLon} brg={iBrg} var={iVar} varH={iVarH} len={iLen}");
 
-        if (iApt < 0 || iLat < 0 || iLon < 0 || iBrg < 0) {
+        if (iApt < 0 || iLat < 0 || iLon < 0 || iBrg < 0)
+        {
             Console.WriteLine("[NASR]   ILS_BASE.csv: missing required columns, skipping centerlines");
             Console.WriteLine($"[NASR]   Headers: {string.Join(", ", headers.Take(30))}");
             return result;

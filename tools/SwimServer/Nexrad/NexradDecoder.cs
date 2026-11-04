@@ -1,11 +1,11 @@
-﻿//
+//
 // Created by Chris Harrell, 09/10/2010
 //
 // Base NexradDecoder class.
 
-using ICSharpCode.SharpZipLib.BZip2;
 using System;
 using System.IO;
+using ICSharpCode.SharpZipLib.BZip2;
 
 namespace NexradDecoder
 {
@@ -319,7 +319,7 @@ namespace NexradDecoder
         // replay is honouring its own clock.
         DateTime readTimeStamp()
         {
-            int days    = readHalfWord();   // HW n     — days since 1970-01-01, 1-based
+            int days = readHalfWord();   // HW n     — days since 1970-01-01, 1-based
             int seconds = readWord();       // HW n+1,2 — seconds since midnight GMT
             return new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)
                    .AddDays(days - 1)
@@ -368,7 +368,7 @@ namespace NexradDecoder
             description_block.Threshold[6] = readHalfWord();                                //HW 37
             description_block.Threshold[7] = readHalfWord();                                //HW 38
             description_block.Threshold[8] = readHalfWord();                                //HW 39
-                                       
+
             description_block.Threshold[9] = readHalfWord();                               //HW 40
             description_block.Threshold[10] = readHalfWord();                               //HW 41
             description_block.Threshold[11] = readHalfWord();                               //HW 42
@@ -404,7 +404,7 @@ namespace NexradDecoder
             fs.Seek(symbology_block_offset, SeekOrigin.Begin);
             if (description_block.ProductSpecific_8 == 1) // This means the Symbology is BZip2 compressed
             {
-                using (MemoryStream copy = new MemoryStream()) 
+                using (MemoryStream copy = new MemoryStream())
                 {
                     fs.CopyTo(copy);
                     copy.Seek(0, SeekOrigin.Begin);

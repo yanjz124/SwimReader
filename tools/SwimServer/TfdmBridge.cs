@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -110,13 +110,13 @@ class TfdmBridge
                         {
                             lock (_processGate)
                             {
-                            string? body = null;
-                            if (m.BinaryAttachment is { Length: > 0 } ba)
-                                body = System.Text.Encoding.UTF8.GetString(ba);
-                            else if (m.XmlContent is { Length: > 0 } xc)
-                                body = System.Text.Encoding.UTF8.GetString(xc);
-                            if (!string.IsNullOrWhiteSpace(body)) Process(body!);
-                        }
+                                string? body = null;
+                                if (m.BinaryAttachment is { Length: > 0 } ba)
+                                    body = System.Text.Encoding.UTF8.GetString(ba);
+                                else if (m.XmlContent is { Length: > 0 } xc)
+                                    body = System.Text.Encoding.UTF8.GetString(xc);
+                                if (!string.IsNullOrWhiteSpace(body)) Process(body!);
+                            }
                         }
                         catch (Exception ex) { Console.Error.WriteLine("[TFDM] parse: " + ex.Message); }
                     },
@@ -169,7 +169,7 @@ class TfdmBridge
             case "NasMessage": ProcessFlight(root); break;
             case "airportInformationData": ProcessAirportInfo(root); break;
             case "trafficManagementRestrictions": ProcessTmr(root); break;
-            // TTP_FlightDelay heartbeats / other → ignored for now
+                // TTP_FlightDelay heartbeats / other → ignored for now
         }
     }
 

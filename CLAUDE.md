@@ -607,16 +607,35 @@ competing consumers draining a backlog means more total flows gives faster *tota
 raising either side helps both. It is only zero-sum once the floor reaches ~0 and they are
 splitting a live stream.
 
-Measured after `STDDS_FLOWS=3` + `SCDS_FLOWS=3`: SwimServer 74 → **183 msg/s** (floor 6.9 → 5.5 s),
-neighbour **unchanged at ~530 msg/s** despite all three of its receivers binding (verified in the
-journal), total 599 → **714 msg/s**. So the neighbour's limit is *not* its transport, and the
-STDDS floor still does not reach zero — the queue remains behind. That is the open item. Raising
-its flow counts further is worth trying (the memory worry that first argued against it did not
-survive being measured, see below), but the neighbour not gaining from 1 -> 3 flows says its
-limit is elsewhere, so find that before buying more flows.
+**And then measuring it showed the queue was never the problem.** `StddsFeedHealth` had no lag
+metric at all, so "STDDS is behind" rested entirely on SwimServer's floor — one consumer's view of
+a queue it takes under a quarter of. With lag added to the service that takes the rest:
 
-**A second STDDS queue in the SCDS portal remains the real fix**, since it removes the split
-entirely rather than racing for a share.
+| | rate | lag | floor | settled |
+|---|---|---|---|---|
+| swimreader-stdds (76% of traffic) | 496 msg/s, 2.47 MB/s | 0.3 s | **0.1 s** | 37 windows |
+| SwimServer's share | 149 msg/s, 0.77 MB/s | 4.6 s | **3.5 s** | yes |
+
+Uniform 0.1-0.2 s floors across every sub-service, 0 discards. **A backlogged queue cannot hand
+anyone messages a tenth of a second old**, so the queue is healthy and there is nothing to drain.
+
+What is real is narrower: **SwimServer's own STDDS path sits at a 3.5 s floor** while the same
+queue delivers to the neighbour at 0.1 s. Ruled out already — parse (gate held 6.3% of wall
+time), gate contention (`waitPct` 0.2%), transport per flow (the neighbour pushes 2.47 MB/s over
+the same 3 flows), and CPU. With competing consumers the broker holds each message for the flow
+it assigned it to, so a consumer whose flows free their in-transit window more slowly sees *its
+own* messages arrive older while the other's flow freely — that is the mechanism to look at next,
+and it is specific to our side.
+
+`STDDS_FLOWS=3` is still earned (floor 6.9 -> 3.5 s, share 74 -> 149 msg/s). **More flows is not:
+that is now measured rather than assumed**, since the neighbour gained nothing from 1 -> 3 and
+reaches a 0.1 s floor regardless. The second-queue option below is also unnecessary for
+throughput — the split costs SwimServer freshness, not the queue capacity.
+
+**A second STDDS queue would still help, but not for the reason first written here.** It was
+described as "the real fix" on the assumption the queue lacked capacity; it does not. What a
+second queue buys is removing the race for a share, which is what costs SwimServer its 3.5 s of
+freshness — a freshness fix, not a throughput one.
 
 ## SFDPS Data Pipeline (SwimServer)
 

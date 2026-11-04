@@ -130,7 +130,7 @@ public class ReplayServer
             if (!string.IsNullOrEmpty(speedParam)) double.TryParse(speedParam, out speed);
 
             var initialBounds = ParseBoundsFromQuery(ctx);
-            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            using var ws = await SwimWs.AcceptAsync(ctx);
             var dir = Path.Combine(_replayBaseDir, "eram");
             double.TryParse(ctx.Request.Query["preload"].FirstOrDefault(), out var preloadSeconds);
             await RunReplaySession(ws, dir, startTime, speed, initialBounds, preloadSeconds);
@@ -162,7 +162,7 @@ public class ReplayServer
             if (!icao.StartsWith("K") && !icao.StartsWith("P")) icao = "K" + icao;
 
             var initialBounds = ParseBoundsFromQuery(ctx);
-            using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+            using var ws = await SwimWs.AcceptAsync(ctx);
             var dir = Path.Combine(_replayBaseDir, "asdex", icao);
             double.TryParse(ctx.Request.Query["preload"].FirstOrDefault(), out var preloadSeconds);
             await RunReplaySession(ws, dir, startTime, speed, initialBounds, preloadSeconds);
@@ -250,7 +250,7 @@ public class ReplayServer
         if (double.TryParse(ctx.Request.Query["speed"].FirstOrDefault(), out var sp) && sp > 0) speed = sp;
         var bounds = ParseBoundsFromQuery(ctx);
         double.TryParse(ctx.Request.Query["preload"].FirstOrDefault(), out var preload);
-        using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
+        using var ws = await SwimWs.AcceptAsync(ctx);
         await RunReplaySession(ws, dir, startTime, speed, bounds, preload);
     }
 

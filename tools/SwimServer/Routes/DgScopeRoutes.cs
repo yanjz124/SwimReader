@@ -108,7 +108,7 @@ static class DgScopeRoutes
             return;
         }
 
-        using var client = await c.WebSockets.AcceptWebSocketAsync();
+        using var client = await SwimWs.AcceptAsync(c);
         Interlocked.Increment(ref _active);
         try
         {

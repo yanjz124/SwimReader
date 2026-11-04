@@ -21,7 +21,7 @@ static class TaisRoutes
         {
             if (!c.WebSockets.IsWebSocketRequest) { c.Response.StatusCode = 400; return; }
             facility = facility.ToUpperInvariant();
-            using var ws = await c.WebSockets.AcceptWebSocketAsync();
+            using var ws = await SwimWs.AcceptAsync(c);
             var client = new WsClient(ws) { Reveal = LaddService.Reveal(c) };
 
             var sendTask = Task.Run(async () =>

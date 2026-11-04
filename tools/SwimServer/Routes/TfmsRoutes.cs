@@ -14,7 +14,7 @@ static class TfmsRoutes
         app.Map("/tfms/ws", async (HttpContext c) =>
         {
             if (!c.WebSockets.IsWebSocketRequest) { c.Response.StatusCode = 400; return; }
-            using var ws = await c.WebSockets.AcceptWebSocketAsync();
+            using var ws = await SwimWs.AcceptAsync(c);
             var client = new WsClient(ws) { Reveal = LaddService.Reveal(c) };
 
             var sendTask = Task.Run(async () =>
@@ -54,7 +54,7 @@ static class TfmsRoutes
         app.Map("/tfms/ws/tmi", async (HttpContext c) =>
         {
             if (!c.WebSockets.IsWebSocketRequest) { c.Response.StatusCode = 400; return; }
-            using var ws = await c.WebSockets.AcceptWebSocketAsync();
+            using var ws = await SwimWs.AcceptAsync(c);
             var client = new WsClient(ws);
 
             var sendTask = Task.Run(async () =>

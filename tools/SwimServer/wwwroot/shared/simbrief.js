@@ -28,7 +28,7 @@
  * `flight` shape — every field optional, pass what the page knows:
  *   callsign fltnum airline type reg modeS
  *   orig dest altn route        (route already cleaned by the caller)
- *   flLevel                     (altitude in HUNDREDS of feet, e.g. 360)
+ *   altFt                       (cruise altitude in FEET, e.g. 36000 — see below)
  *   vfr                         (bool)
  *   wake transponder pbn        (ICAO field 10 bits)
  *   comCode navCode datalinkCode equipQualifier   (assembled into acdata.equip)
@@ -157,7 +157,11 @@
         if (flight.altn) p.set('altn', flight.altn);
         if (flight.route) p.set('route', flight.route);
 
-        if (flight.flLevel) p.set('fl', String(flight.flLevel));
+        // FEET. SimBrief documents `fl` with the example values `34000` and `FL340` and offers no
+        // bare-hundreds form, so sending 360 for FL360 reads as 360 ft. The flight table did
+        // exactly that (assignedAltitude / 100) while /dispatch sent feet — one more thing the
+        // two copies disagreed about, invisible because SimBrief just opens with a wrong number.
+        if (flight.altFt) p.set('fl', String(flight.altFt));
         if (flight.vfr) p.set('flightrules', 'v');
 
         const reg = af === undefined ? flight.reg : (af && af.registration);

@@ -194,7 +194,7 @@
   </div>
 </div>
 
-<script src="/shared/simbrief.js?v=1"></script>
+<script src="/shared/simbrief.js?v=2"></script>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -263,7 +263,7 @@ function sbFlight(f){
     callsign: f.callsign, fltnum: f.fltnum, airline: f.airline, type: f.type, reg: f.reg,
     orig: f.orig, dest: f.dest, altn: f.altn,
     route: cleanRoute(f.route, f.orig, f.dest),
-    flLevel: cruiseFt(f.cruise),
+    altFt: cruiseFt(f.cruise),            // already normalized to feet
     vfr: (f.rules || '').toUpperCase() === 'V',
     wake: f.wake,
     navCode: f.nav, datalinkCode: f.datalink, equipQualifier: f.equip,

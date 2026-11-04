@@ -992,7 +992,7 @@ function sbFlight(d) {
         modeS: d.modeSCode,
         orig: d.origin, dest: d.destination, altn: altns[0] || '',
         route: (route && route !== 'DCT') ? route : '',
-        flLevel: (d.assignedAltitude && !d.assignedVfr) ? Math.round(d.assignedAltitude / 100) : null,
+        altFt: (d.assignedAltitude && !d.assignedVfr) ? Math.round(d.assignedAltitude) : null,
         vfr: !!d.assignedVfr,
         wake: (wake && wake !== '?') ? wake : '',
         comCode: d.communicationCode, navCode: d.navigationCode,

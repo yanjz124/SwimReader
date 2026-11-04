@@ -83,7 +83,16 @@ thereby move *away* from the standard:
 - **No colour is given for the SPC identifier in the data block.** The only colour CRC states is
   for the SSA, "The red `RF EM` line displays any currently-active SPCs" — so the SSA SPC line is
   **red**, and that example is **space-separated**. DGScope renders `OD/ME/MF/LN` in yellow as a
-  second label and joins codes with `/`; both are DGScope's choices, not CRC's.
+  second label and joins codes with `/`; both are DGScope's choices, not CRC's. We draw the
+  two-char id red, consistent with that SSA line.
+- **The whole data block does NOT turn red for an SPC, and we no longer do it.** CRC says only
+  that "the associated two-character identifier will be displayed in the first line of the data
+  block"; its one red data-block item is CA, "blinking red in the top line". Its target-colour
+  descriptions are white = owned, green = another controller's, cyan = highlighted, yellow =
+  incoming point out, red = CA — there is no emergency block colour. DGScope has one
+  (`RadarWindow.cs:5436 if (Emergency) → DataBlockEmergencyColor`) and this port copied it,
+  which **overwrote the ownership colour**: an emergency on your own frequency rendered exactly
+  like one three sectors away. That is the warning at the top of this section happening for real.
 - **No separator is documented for multiple codes in a data block.** CRC's only multi-code example
   is that space-separated SSA line, which is what we follow.
 - **No blink behaviour is stated for the SPC identifier.** Only CA is documented as blinking.

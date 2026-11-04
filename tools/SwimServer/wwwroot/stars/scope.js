@@ -1801,8 +1801,9 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   // Aircraft.cs:485-498 for the W/NW/SW direction cases).
   const padLeft = blockX + blockWidth <= screen.x;
 
-  // Data-block color priority — verbatim from RadarWindow.cs:5436-5468:
-  //   5436  if (Emergency)                  → DataBlockEmergencyColor (red)
+  // Data-block color priority — from RadarWindow.cs:5436-5468, with the first branch
+  // deliberately dropped (see the SPC note below; CRC gives no block color for one):
+  //   5436  if (Emergency)                  → DataBlockEmergencyColor (red)  [NOT ported]
   //   5442  else if (Marked)                → SelectedColor          (cyan)
   //   5448  else if (ForceQuickLook)        → PointoutColor          (yellow)
   //   5454  else if (Owned || QuickLookPlus)→ OwnedColor             (white)
@@ -1838,9 +1839,22 @@ function drawDataBlockAndLeader(t, fp, posNow) {
   let baseColor = COLORS.DataBlock;
   // Conflict Alert is NOT a whole-block color change — CA annotation only
   // (CRC STARS § STCA; handled below).
-  if (t.Emergency || t.Squawk === "7700" || t.Squawk === "7600" || t.Squawk === "7500") {
-    baseColor = COLORS.Emerg;
-  } else if (t._marked) {
+  //
+  // NEITHER IS AN SPC. DGScope reddens the whole block for an emergency
+  // (RadarWindow.cs:5436 `if (Emergency) → DataBlockEmergencyColor`) and this port
+  // copied it. CRC does not: an SPC is "the associated two-character identifier
+  // will be displayed in the first line of the data block", plus an SSA entry and a
+  // tone — and CRC's only red data-block item is CA, "blinking red in the top line".
+  // The two-char id IS drawn red below (matching the SSA's red `RF EM` line); the
+  // rest of the block keeps its ownership color.
+  //
+  // This is not pedantry about a shade. White-vs-green is *whose aircraft it is*, and
+  // reddening the block threw that away precisely when it matters most — an emergency
+  // on your frequency looked identical to one three sectors away. CRC's reference
+  // section already warns that DGScope's uncolored-by-spec choices are "where it is
+  // tempting to fix us into matching DGScope and thereby move away from the standard";
+  // appearance follows the docs, algorithms follow the source. Don't re-add this.
+  if (t._marked) {
     baseColor = COLORS.Selected;            // cyan
   } else if (t._forceQuickLook) {
     baseColor = COLORS.Pointout;            // yellow (cs:5448-5452)

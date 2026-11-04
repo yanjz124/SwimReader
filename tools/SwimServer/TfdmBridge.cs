@@ -104,12 +104,13 @@ class TfdmBridge
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
-                        using var _h = FeedHealth.Track("TFDM", m);
+                        using var h = FeedHealth.Track("TFDM", m);
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
                         try
                         {
                             lock (_processGate)
                             {
+                                h.Locked();
                                 string? body = null;
                                 if (m.BinaryAttachment is { Length: > 0 } ba)
                                     body = System.Text.Encoding.UTF8.GetString(ba);

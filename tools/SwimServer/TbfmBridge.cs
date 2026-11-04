@@ -126,7 +126,7 @@ partial class TbfmBridge
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
-                        using var _h = FeedHealth.Track("TBFM", m);
+                        using var h = FeedHealth.Track("TBFM", m);
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
                         try
                         {
@@ -136,7 +136,7 @@ partial class TbfmBridge
                             else if (m.XmlContent is { Length: > 0 } xc)
                                 body = System.Text.Encoding.UTF8.GetString(xc);
                             if (string.IsNullOrWhiteSpace(body)) return;
-                            lock (_processGate) Process(body!);
+                            lock (_processGate) { h.Locked(); Process(body!); }
                         }
                         catch (Exception ex) { Console.Error.WriteLine("[TBFM] parse: " + ex.Message); }
                     },

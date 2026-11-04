@@ -145,10 +145,12 @@ class AsdexBridge
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
-                        using var _h = FeedHealth.Track("STDDS", m);
+                        using var h = FeedHealth.Track("STDDS", m);
                         var topic = m.Destination?.Name ?? "";
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
                         lock (_processGate)
+                        {
+                            h.Locked();
                             if (topic.StartsWith("SMES/", StringComparison.OrdinalIgnoreCase))
                             {
                                 ProcessSmes(m);
@@ -172,6 +174,7 @@ class AsdexBridge
                                     body = enc.GetString(m.XmlContent);
                                 if (body is not null) OnOtherMessage(topic, body);
                             }
+                        }
                     },
                     (_, flowArgs) => Console.WriteLine($"[STDDS Flow] {flowArgs.Event} - {flowArgs.Info}"));
 

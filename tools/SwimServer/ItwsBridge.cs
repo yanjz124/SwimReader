@@ -164,9 +164,9 @@ class ItwsBridge
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
-                        using var _h = FeedHealth.Track("ITWS", m);
+                        using var h = FeedHealth.Track("ITWS", m);
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
-                        lock (_processGate) ProcessMessage(m);
+                        lock (_processGate) { h.Locked(); ProcessMessage(m); }
                     },
                     (_, flowArgs) => Console.WriteLine($"[ITWS Flow] {flowArgs.Event} - {flowArgs.Info}"));
 

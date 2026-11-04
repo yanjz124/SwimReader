@@ -39,7 +39,8 @@ let _stdds = null;     // latest /api/feed/stdds (the other consumer of the STDD
 const STATE_WHY = {
     ok:        'keeping up',
     lagging:   'behind the publisher in bursts, but the lag keeps draining to ~0 — normal for a bursty feed',
-    behind:    "lag is high and never drains while the parse thread sits idle: one session's transport ceiling. Raising this feed's FLOWS is the fix.",
+    behind:    "lag is high and never drains while the parse thread sits idle AND the process gate is uncontended: one session's transport ceiling. Raising this feed's FLOWS is the fix.",
+    gated:     'lag is high and never drains, but the parse thread is not the bottleneck — the receivers are queueing on this feed\'s process gate. Processing is serialized, so MORE FLOWS WILL NOT HELP: shorten the critical section or move work out of it.',
     saturated: 'our parse thread is the bottleneck. Still lossless — the broker spools for us — but the spool is the only thing preventing discards.',
     silent:    "no messages for 90s+, which is the receiver's own watchdog reconnect threshold",
     loss:      'the broker discarded messages before delivering them. Confirmed, unrecoverable data loss.',
@@ -85,7 +86,7 @@ function settling(f) { return f.floorSamples != null && f.floorSamples < 30; }
 
 const FEED_COLS = [
     ['FEED', ''], ['STATE', ''], ['MSG/S', 'c-rate'], ['KB/S', 'c-kb'],
-    ['LAG', 'c-lag'], ['FLOOR', 'c-floor'], ['BUSY', 'c-busy'],
+    ['LAG', 'c-lag'], ['FLOOR', 'c-floor'], ['BUSY', 'c-busy'], ['WAIT', 'c-wait'],
     ['FLOWS', 'c-flows'], ['RECONN', 'c-reconn'], ['DISCARD', 'c-disc'],
     ['10 MIN · RATE / LAG', 'c-trend'],
 ];
@@ -109,6 +110,12 @@ function feedRow(f, opts) {
         + n1(f.lagFloorSec, 's') + (settling(f) ? '?' : '') + '</span>'
         + '<span class="nm c-busy' + ((f.busyPct || 0) < 25 ? ' dim' : '') + '">'
         + (f.busyPct == null ? '--' : f.busyPct + '%') + '</span>'
+        + '<span class="nm c-wait' + ((f.waitPct || 0) < 25 ? ' dim' : '') + '"'
+        + ' title="Share of a receiver thread spent BLOCKED on this feed\'s process gate, measured'
+        + ' apart from parse time. High WAIT with low BUSY means processing is serialized rather'
+        + ' than slow, and adding flows cannot help — each extra flow just queues on the same lock.'
+        + ' This used to be counted as BUSY, which made the number move against its own fix.">'
+        + (f.waitPct == null ? '--' : f.waitPct + '%') + '</span>'
         + '<span class="nm c-flows' + ((f.flows || 0) ? '' : ' dim') + '">' + (f.flows || '--') + '</span>'
         + '<span class="nm c-reconn' + ((f.reconnects || 0) ? '' : ' dim') + '">' + (f.reconnects || 0) + '</span>'
         + '<span class="nm c-disc"' + ((f.discardEvents || 0) ? ' style="color:#ff5555"' : '') + '>'

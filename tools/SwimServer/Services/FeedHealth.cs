@@ -29,15 +29,18 @@ static class FeedHealth
         public long Msgs;                 // total messages handed to us
         public long Bytes;                // payload bytes handed to us (post-decompression)
         public long DiscardEvents;        // messages flagged DiscardIndication (= a gap before them)
-        public long BusyTicks;            // Stopwatch ticks spent inside the handler
+        public long BusyTicks;            // Stopwatch ticks spent PARSING (inside the process gate)
+        // Stopwatch ticks spent BLOCKED waiting for the feed's process gate, which is a
+        // completely different problem from parsing being slow — see WaitPct below.
+        public long WaitTicks;
         public long LastDiscardTicks;     // UTC ticks of the most recent discard indication
         // End-to-end lag: the publisher's own timestamp vs when we got the message. This is the
         // metric whose absence hid a halved feed for months — PosAge counts from RECEIPT, so a
         // consumer draining an hours-old backlog still stamps every record "fresh".
         public long LagMsSum, LagSamples, LagMsMax;
         // Snapshot of the previous 10s interval, written by the timer.
-        public long PrevMsgs, PrevBusyTicks, PrevBytes;
-        public double RateMsgs, BusyPct, RateBytes, LagMsMean;
+        public long PrevMsgs, PrevBusyTicks, PrevWaitTicks, PrevBytes;
+        public double RateMsgs, BusyPct, WaitPct, RateBytes, LagMsMean;
         public long LagMsPeak;            // max lag seen in the last window
         public DateTime WindowStart = DateTime.UtcNow;
 
@@ -51,7 +54,7 @@ static class FeedHealth
     }
 
     /// <summary>One 10s window. Kept so the endpoint can answer "is this lag draining?".</summary>
-    internal readonly record struct Window(double Rate, double KbPerSec, double BusyPct, double LagSec);
+    internal readonly record struct Window(double Rate, double KbPerSec, double BusyPct, double WaitPct, double LagSec);
 
     // 10 minutes at one sample per 10s. Enough to see a sawtooth cycle; small enough that six
     // feeds' worth still serializes to a few kB on a dashboard poll.
@@ -162,13 +165,49 @@ static class FeedHealth
             if (Interlocked.CompareExchange(ref c.LagMsMax, lagMs, seen) == seen) break;
     }
 
-    public readonly struct Scope : IDisposable
+    /// <summary>
+    /// Times one message. NOT a readonly struct: <see cref="Locked"/> mutates it, which is what
+    /// lets the same scope report wait and parse separately. `using var` on a struct calls
+    /// Dispose on the variable itself, so the mutation is visible.
+    ///
+    /// <para><b>Why this exists.</b> Every feed's handler is created BEFORE it takes the feed's
+    /// process gate, so the original single timer charged lock-wait to parse time. That made
+    /// busyPct unreadable on exactly the feed that most needed it: SFDPS runs 3 receivers against
+    /// one <c>sfdpsProcessGate</c>, so two of them are usually blocked, and the feed reported 76.6%
+    /// "busy" while the actual parsing might be a fraction of that. Worse, it inverted the signal —
+    /// adding flows is the documented fix for a transport ceiling, and each extra flow piles onto
+    /// the same lock and pushes measured busyPct UP, toward the reading that says stop adding
+    /// flows. A metric that moves against the fix is worse than no metric.</para>
+    /// </summary>
+    public struct Scope : IDisposable
     {
-        private readonly Counters _c;
+        private readonly Counters? _c;
         private readonly long _t0;
-        internal Scope(Counters c) { _c = c; _t0 = System.Diagnostics.Stopwatch.GetTimestamp(); }
-        public void Dispose() =>
-            Interlocked.Add(ref _c.BusyTicks, System.Diagnostics.Stopwatch.GetTimestamp() - _t0);
+        private long _acquired;   // when the gate was taken; 0 = this feed has no gate
+
+        internal Scope(Counters c) { _c = c; _t0 = System.Diagnostics.Stopwatch.GetTimestamp(); _acquired = 0; }
+
+        /// <summary>
+        /// Call as the FIRST statement inside the feed's <c>lock (_processGate)</c>. Everything
+        /// before it counts as wait, everything after as parse. A feed that never calls it has
+        /// all of its handler time charged to parse, which is correct for an ungated feed.
+        /// </summary>
+        public void Locked() => _acquired = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        public void Dispose()
+        {
+            if (_c is null) return;
+            var end = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_acquired == 0)
+            {
+                Interlocked.Add(ref _c.BusyTicks, end - _t0);
+            }
+            else
+            {
+                Interlocked.Add(ref _c.WaitTicks, _acquired - _t0);
+                Interlocked.Add(ref _c.BusyTicks, end - _acquired);
+            }
+        }
     }
 
     private static void Sample()
@@ -180,6 +219,7 @@ static class FeedHealth
             if (elapsed <= 0) continue;
             var msgs = Interlocked.Read(ref c.Msgs);
             var busy = Interlocked.Read(ref c.BusyTicks);
+            var wait = Interlocked.Read(ref c.WaitTicks);
             var bytes = Interlocked.Read(ref c.Bytes);
             c.RateMsgs = (msgs - c.PrevMsgs) / elapsed;
             c.RateBytes = (bytes - c.PrevBytes) / elapsed;
@@ -191,6 +231,10 @@ static class FeedHealth
             // and what makes the number comparable between a 1-flow and a 6-flow feed.
             var threads = Math.Max(1, c.Flows);
             c.BusyPct = Math.Round((busy - c.PrevBusyTicks) / TicksPerMs / (elapsed * 1000.0 * threads) * 100.0, 1);
+            // Normalized the same way, so busyPct + waitPct is the share of a receiver thread's
+            // life spent in the handler at all. waitPct near 100/N on an N-flow feed means the
+            // receivers are queueing on the gate and extra flows would buy nothing.
+            c.WaitPct = Math.Round((wait - c.PrevWaitTicks) / TicksPerMs / (elapsed * 1000.0 * threads) * 100.0, 1);
             // Mean over the window, then reset — a running mean since startup would hide a lag
             // that is growing right now, which is the whole point of the metric.
             var n = Interlocked.Exchange(ref c.LagSamples, 0);
@@ -200,6 +244,7 @@ static class FeedHealth
             c.PrevMsgs = msgs;
             c.PrevBytes = bytes;
             c.PrevBusyTicks = busy;
+            c.PrevWaitTicks = wait;
             c.WindowStart = now;
             // Keep the window so the endpoint can report a lag FLOOR, not just a sample. See
             // LagFloor below for why one reading cannot answer the question anyone is asking.
@@ -209,6 +254,7 @@ static class FeedHealth
                     Math.Round(c.RateMsgs, 1),
                     Math.Round(c.RateBytes / 1024.0, 1),
                     c.BusyPct,
+                    c.WaitPct,
                     double.IsNaN(c.LagMsMean) ? -1 : Math.Round(c.LagMsMean / 1000.0, 1)));
                 if (c.History.Count > HistoryLen) c.History.RemoveRange(0, c.History.Count - HistoryLen);
             }
@@ -271,8 +317,13 @@ static class FeedHealth
     ///   silent     nothing for 90s+ — the watchdog's own reconnect threshold.
     ///   saturated  our parse thread is the bottleneck. Still lossless (the broker spools for
     ///              us) but the spool is all that stands between us and discards.
-    ///   behind     lag is high AND never drains, while the parse thread is idle — the
-    ///              signature of one session's transport ceiling. More flows is the fix.
+    ///   gated      lag is high and never drains, the parse thread is NOT the bottleneck, but
+    ///              the receivers are queueing on this feed's process gate. Processing is
+    ///              serialized, so MORE FLOWS WILL NOT HELP — the fix is to shorten the
+    ///              critical section or move work out of it.
+    ///   behind     lag is high AND never drains, while the parse thread is idle AND the gate
+    ///              is not contended — the signature of one session's transport ceiling. More
+    ///              flows is the fix.
     ///   lagging    lag is high but the floor is low: bursty arrival, keeping up. Not a fault.
     ///   idle       registered, no messages yet.
     ///   ok         everything else.
@@ -293,7 +344,14 @@ static class FeedHealth
             // windows to have seen a trough if there is one. Below that, say "lagging" — the
             // honest reading of a high lag we cannot yet characterize.
             var settled = floorSamples >= FloorMinSamples;
-            return (settled && floor is >= 5.0 && c.BusyPct < 25) ? "behind" : "lagging";
+            if (!settled || floor is null || floor < 5.0) return "lagging";
+            // Both of the remaining cases are "lag high and not draining". What separates them
+            // is WHERE the time goes, and they have opposite answers — so this is the one branch
+            // worth getting right. Contention is judged against a full thread (100%) rather than
+            // the per-thread average, because on an N-flow feed N-1 receivers can be blocked
+            // while the normalized figure still looks moderate.
+            if (c.WaitPct >= 25 && c.BusyPct < 60) return "gated";
+            return c.BusyPct < 25 ? "behind" : "lagging";
         }
         return "ok";
     }
@@ -321,6 +379,10 @@ static class FeedHealth
                 // Share of the feed's single callback thread spent parsing. Sustained high values
                 // mean only the broker's spool is keeping us lossless.
                 busyPct = c.BusyPct,
+                // Share of a receiver thread spent BLOCKED on this feed's process gate. High
+                // waitPct with low busyPct means processing is serialized, not slow, and adding
+                // flows cannot help — see Scope for why these must be measured apart.
+                waitPct = c.WaitPct,
                 // Throughput over one session. A compressed Solace session is a single serial
                 // zlib stream, so this is the number to compare against when throughput looks
                 // capped rather than bursty.

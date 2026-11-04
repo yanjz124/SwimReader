@@ -234,10 +234,10 @@ header .sub {
 .feed-table {
     grid-column: 1 / -1;
     display: grid;
-    /* feed | state | rate | kB/s | lag | floor | busy | flows | reconn | discards | trend */
+    /* feed | state | rate | kB/s | lag | floor | busy | wait | flows | reconn | discards | trend */
     grid-template-columns:
         max-content max-content repeat(2, max-content) repeat(2, max-content)
-        max-content max-content max-content max-content 1fr;
+        max-content max-content max-content max-content max-content 1fr;
     gap: 2px 12px;
     font-size: 11px;
     align-items: center;
@@ -259,6 +259,8 @@ header .sub {
 .st.ok        { color: #6a6; border-color: #2a3a2a; background: #0d140d; }
 .st.lagging   { color: #cccc44; border-color: #3a3a14; background: #14140a; }
 .st.behind    { color: #d9a066; border-color: #3a2a14; background: #140f08; }
+/* gated: same family as behind/saturated — it is the same severity, a different cause. */
+.st.gated     { color: #d9a066; border-color: #3a2a14; background: #140f08; }
 .st.saturated { color: #d9a066; border-color: #3a2a14; background: #140f08; }
 .st.silent    { color: #d96060; border-color: #3a1a1a; background: #140a0a; }
 .st.loss      { color: #ff5555; border-color: #5a1a1a; background: #1a0a0a; }

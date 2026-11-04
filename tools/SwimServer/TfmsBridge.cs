@@ -130,9 +130,9 @@ class TfmsBridge
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
-                        using var _h = FeedHealth.Track("TFMS", m);
+                        using var h = FeedHealth.Track("TFMS", m);
                         Interlocked.Exchange(ref lastMsgTicks, DateTime.UtcNow.Ticks);
-                        lock (_processGate) ProcessMessage(m);
+                        lock (_processGate) { h.Locked(); ProcessMessage(m); }
                     },
                     (_, flowArgs) => Console.WriteLine($"[TFMS Flow] {flowArgs.Event} - {flowArgs.Info}"));
 

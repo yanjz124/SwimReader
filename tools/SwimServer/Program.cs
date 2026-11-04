@@ -815,9 +815,9 @@ void RunSfdpsReceiver(int receiverIndex)
                     (_, msgArgs) =>
                     {
                         using var m = msgArgs.Message;
-                        using var _h = FeedHealth.Track("SFDPS", m);
+                        using var h = FeedHealth.Track("SFDPS", m);
                         Interlocked.Exchange(ref myLastMsgTicks, DateTime.UtcNow.Ticks);
-                        lock (sfdpsProcessGate) ProcessMessage(m);
+                        lock (sfdpsProcessGate) { h.Locked(); ProcessMessage(m); }
                     },
                     (_, flowArgs) => Console.WriteLine($"[Flow] {flowArgs.Event} - {flowArgs.Info}"));
 

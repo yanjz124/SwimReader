@@ -445,10 +445,9 @@ function ringToLines(coords, out) {
  * that it is a guess rather than this position's layout.
  */
 function selectMapGroup() {
-  // A DGScope v2 profile's DCB map list supersedes vNAS entirely (see loadProfileMaps),
-  // and that is a deliberate per-facility override, not a fallback. Re-deriving from the
-  // vNAS mapGroup on sign-on would throw it away mid-session — which is exactly what the
-  // first version of this did to PCT, whose profile binds slots [54,55,56,40,57,26].
+  // Only true when vNAS had no maps for this facility and a DGScope profile supplied the
+  // binding instead (or ?dgmaps=1 forced it). In that case the profile IS the binding and
+  // there is no vNAS mapGroup to re-derive from, so leave it alone on sign-on.
   if (_profileMapsActive) return starsState.activeMapGroup;
   const groups = starsState.mapGroups || [];
   const me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
@@ -556,6 +555,18 @@ async function loadProfileMaps() {
       }
     }
   } catch (e) { /* leave SSA on vNAS stations */ }
+  // ── Video maps: vNAS FIRST ────────────────────────────────────────────────
+  // vNAS adaptation is the authoritative source for maps and for the DCB binding, and
+  // it covers 213 STARS facilities with per-position mapGroups. A DGScope ScopeServer
+  // profile is a legacy/reference artifact that exists for a handful of facilities
+  // (PCT is the one we have), so it fills a GAP rather than overriding adaptation.
+  //
+  // This used to be unconditional — "profile maps supersede vNAS maps on v2" — which
+  // meant the one facility that happens to have a profile silently ignored its own 237
+  // published vNAS maps and its 15 position map groups. `?dgmaps=1` forces the profile
+  // path for comparing the two.
+  const forceDg = new URLSearchParams(location.search).get("dgmaps") === "1";
+  if (videoMaps.length > 0 && !forceDg) return;
   let maps;
   try {
     const r = await fetch(`/dstars/profile/${encodeURIComponent(FACILITY)}/maps`, { credentials: "omit" });
@@ -563,7 +574,8 @@ async function loadProfileMaps() {
     maps = await r.json();
   } catch (e) { return; }
   if (!Array.isArray(maps) || !maps.length) return;
-  // Profile maps supersede vNAS maps on v2.
+  // Only reached when vNAS gave us nothing (or ?dgmaps=1): the profile IS the binding
+  // now, so sign-on must not re-derive it from a vNAS group that doesn't exist.
   _profileMapsActive = true;
   videoMaps.length = 0;
   activeMapIds = Array(38).fill(null);

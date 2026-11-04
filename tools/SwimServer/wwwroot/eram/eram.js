@@ -1,3 +1,9 @@
+/* The names below are called from inline on*= attributes in HTML that this file builds as
+   template-literal strings, so no static analysis can see the reference. `exported` tells
+   ESLint they are entry points rather than dead code — without it no-unused-vars reports
+   them and the only way to a clean run would be deleting working features. Keep this list
+   in step with the markup; a name that stops being referenced should be deleted, not listed. */
+/* exported closeFd, deleteCrrAircraft, deleteCrrGroupAllAircraft, deleteSelectedAltimeterStation, deleteSelectedWeatherStation, selectAltimeterStation, selectWeatherStation, setCrrColor */
 // State
 // ════════════════════════════════════════════════════════════════════════════
 // Incident replay context: /eram/scope?incident={id}. In this mode the scope must NEVER open the
@@ -1007,20 +1013,12 @@ function updateCrrMenuBody() {
     body.innerHTML = html;
 }
 
-function selectCrrGroup(label, event) {
-    event.stopPropagation();
-
-    if (event.button === 0) {
-        // Left-click: Start LF command to add/remove aircraft
-        mcaState.content = `LF ${label} `;
-        mcaState.selectedFlids = [];
-        updateMcaPreview();
-    } else if (event.button === 1) {
-        // Middle-click: Open delete popup
-        event.preventDefault();
-        openCrrGroupDeletePopup(label, event);
-    }
-}
+// selectCrrGroup() used to live here. It was never called — the CRR menu is driven by
+// the delegated [data-group] click/auxclick handlers further down — and its body
+// referenced `mcaState.content`, `mcaState.selectedFlids` and `updateMcaPreview()`,
+// none of which exist anywhere in this codebase (the MCA is `mca` + mcaRender()). It
+// would have thrown ReferenceError on the first left-click. Removed rather than ported,
+// since the handlers that replaced it already do the job.
 
 function deleteCrrGroup(label, event) {
     if (event) event.stopPropagation();

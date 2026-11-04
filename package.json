@@ -1,0 +1,14 @@
+{
+  "name": "swimreader-frontend-lint",
+  "private": true,
+  "description": "Lint config for the wwwroot frontends. There is no build step — the pages are served to the browser exactly as they sit on disk — so this package exists only to run ESLint.",
+  "scripts": {
+    "//": "max-warnings pins today's dead-code count (see eslint.config.mjs). It is a ratchet: lower it as dead code is removed, never raise it.",
+    "lint": "eslint tools/SwimServer/wwwroot --max-warnings 57"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.15.0",
+    "eslint": "9.15.0",
+    "globals": "15.12.0"
+  }
+}

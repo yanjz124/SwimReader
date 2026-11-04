@@ -3535,7 +3535,12 @@ function handleDcbClick(id) {
       break;
     case "OFF_CNTR":
       // Toggle off-center: restore screen center to facility location.
-      prefSet.ScreenCenterPoint = { ...starsState.facilityLocation } || prefSet.ScreenCenterPoint;
+      // `{ ...x }` is an object literal and therefore ALWAYS truthy, so the `||` fallback
+      // this used to carry could never run: with no facilityLocation it spread undefined
+      // into {} and set the screen center to an object with no lat/lon, centering the
+      // scope on NaN instead of leaving it where it was.
+      if (starsState.facilityLocation)
+        prefSet.ScreenCenterPoint = { ...starsState.facilityLocation };
       _afterPrefChange();
       break;
     case "PLACE_RR":

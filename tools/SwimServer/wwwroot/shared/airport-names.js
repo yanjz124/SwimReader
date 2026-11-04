@@ -23,8 +23,8 @@ window.AirportNames = (function () {
     /\b(international|intl|regional|rgnl|municipal|muni|metropolitan|county|field|airport|airfield|air\s+park|airpark|air\s+force\s+base|afb)\b/gi;
 
   function shorten(name, city) {
-    let s = String(name || '').replace(BOILERPLATE, ' ').replace(/[\s,\-]{2,}/g, ' ').trim();
-    s = s.replace(/[\s,\-]+$/, '');
+    let s = String(name || '').replace(BOILERPLATE, ' ').replace(/[\s,-]{2,}/g, ' ').trim();
+    s = s.replace(/[\s,-]+$/, '');
     if (s.length < 3) s = city || name || '';
     return s.toUpperCase();
   }

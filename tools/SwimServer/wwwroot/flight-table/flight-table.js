@@ -1,3 +1,9 @@
+/* The names below are called from inline on*= attributes in HTML that this file builds as
+   template-literal strings, so no static analysis can see the reference. `exported` tells
+   ESLint they are entry points rather than dead code — without it no-unused-vars reports
+   them and the only way to a clean run would be deleting working features. Keep this list
+   in step with the markup; a name that stops being referenced should be deleted, not listed. */
+/* exported copyIcaoFpl, copyXml, toggleIcaoFpl, toggleSimbrief */
 // ── State ────────────────────────────────────────────────────
 const allFlights = new Map();
 const knownFacilities = new Set();

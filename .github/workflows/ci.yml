@@ -21,8 +21,28 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore SwimReader.sln
 
+      # Runs before the build so a formatting break is reported as itself rather than
+      # buried under compiler output. The rules live in .editorconfig and DESCRIBE the
+      # style the code already had — see that file before "fixing" anything here.
+      - name: Verify formatting
+        run: dotnet format SwimReader.sln --verify-no-changes --no-restore
+
       - name: Build
         run: dotnet build SwimReader.sln -c Release --no-restore
 
       - name: Test
         run: dotnet test SwimReader.sln -c Release --no-build --verbosity normal
+
+      # The frontends have no build step, so without this nothing ever checks them. Errors
+      # fail the job; the dead-code warning count is pinned in package.json as a ratchet.
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - name: Install lint tooling
+        run: npm ci
+
+      - name: Lint frontends
+        run: npm run lint

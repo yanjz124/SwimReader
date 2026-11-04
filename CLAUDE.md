@@ -292,6 +292,45 @@ coincide with maximum throughput. `busyPct` stays 4-14% and discards stay 0 thro
 it either; peaks appeared with the box 65-83% idle, and the deepest troughs happened to fall while
 load was 10-13 from an unrelated job. Raising flows further would not move this.
 
+### SFDPS outgrew 3 flows too (2026-11-04) — and 60 s of it looked exactly like upstream latency
+Third time for this shape, and the first where the wrong answer was actively argued for by the
+dashboard. Reported as "why is everything behind". Settled 10-minute window, 3 flows:
+
+| | |
+|---|---|
+| throughput | 97.8 msg/s, **2.70 MB/s** — sitting on the documented 3-flow ceiling |
+| lag | 61.3 s, **floor 60.1 s**, flat for hours at 5 h uptime |
+| discards | **0** |
+| parse | gate held ~12% of wall time — about 8x headroom |
+| gate contention | **0.0%** |
+| CPU | ~idle; clock +0.7 s, NTP synced |
+
+Everything after the socket was nearly idle, so the ceiling was the session transport again.
+`SFDPS_FLOWS` **3 → 6** and the backlog drained in under two minutes:
+
+| t | rate | MB/s | lag | floor |
+|---|---|---|---|---|
+| +1 min | **131.6/s** | **3.71** | 22.3 s | 22.3 s |
+| +2 min | 86.8/s | 2.35 | 2.4 s | 2.3 s |
+| +16 min | 94.3/s | 2.30 | 2.7 s | **2.1 s** |
+
+**The t+1 min spike is the whole proof.** 131.6 msg/s and 3.71 MB/s is far above the ~85 msg/s
+the publisher sustains, which is what draining a backlog looks like; at 3 flows we matched
+publisher rate exactly and therefore never drained, which is *why* the lag was so perfectly
+flat. A standing backlog and genuine upstream latency are the same picture until capacity
+exceeds publisher rate — so the only way to tell is to lift the ceiling and watch. Floor
+**60.1 s → 2.1 s**.
+
+Same round: **TBFM 6 → 8** (volume had grown 371 → 477 msg/s since 6 was set), floor
+**5.2 s → 0.4 s**, which restores the sawtooth that this file notes is what "fixed" looks like
+here. **STDDS 1 → 3** on the SwimServer side, floor 6.9 s → 3.7 s and its share of the shared
+queue 74 → 183 msg/s.
+
+**Flow counts are not set-and-forget.** Each of SFDPS, TBFM and STDDS was sized against a
+measurement and then quietly outgrown. The signature is always the same — a lag floor that
+never reaches zero while `busyPct` and `waitPct` are both low — and it is worth re-checking
+after any period of publisher growth rather than waiting for someone to notice.
+
 ### Lag is the metric — `PosAge` cannot show this
 `FeedHealth` reports `lagSec`/`lagPeakSec` per feed (publisher's own timestamp vs our receipt,
 averaged over the 10 s window then reset), plus `kbPerSec` and `avgMsgBytes`. **Watch lagSec.**
@@ -397,6 +436,28 @@ card.** Two causes, both fixed without changing what the cache does:
 
 **69 MB/min -> 3.1 MB/min (95% less); load average 11.8 -> 3.7, iowait mostly 0-1%.**
 
+### Memory is now the binding constraint, and the flow fix made it tighter
+Doubling SFDPS's flows doubled what has to be allocated per second, and the box felt it
+immediately. Measured **18 minutes** after the 6-flow restart:
+
+| | 2026-11-04, 6 flows, 18 min up | previously documented, 3 flows, 70 min up |
+|---|---|---|
+| working set | **5,796 MB** | 4,900 MB |
+| GC heap | **4,285 MB** | 3,200 MB |
+| managed (live) | 2,388 MB | — |
+| fragmented | **~1,900 MB** | 1,200 MB |
+| host | 6,438 of 8,052 MB used, 882 free | — |
+
+Reaching 5.8 GB in 18 minutes where it previously took over an hour is the cost of the lag fix,
+and it matters because this box **started swapping to the SD card at ~5.0 GB RSS** (16-24% iowait,
+flush worker permanently in D state). CPU is also at 0% idle now, since draining faster is work.
+
+**So do not raise any more flow counts until memory is addressed** — the STDDS floor would like
+more, and buying it would trade a 5 s lag for swapping, which costs far more than it saves. If the
+working set keeps climbing, dialling `SFDPS_FLOWS` back to 4-5 trades a little lag for headroom
+and is the cheap lever. `GET /api/debug/memory` plus a gcdump taken shortly after a restart
+(while the heap is still small enough to dump) is still the way in.
+
 ### Memory is still not solved
 Two real leaks were found and fixed (the history-index cache, RetainVM) and the working set
 dropped 5.0 -> 2.4 GB — but it climbs again, and faster now, because the feed fix means 3x the
@@ -460,10 +521,44 @@ almost always a higher `*_FLOWS`, so the current value belongs beside the sympto
 rebuilds its session every few minutes posts a healthy average rate with real gaps in it, which
 nothing else on the page would reveal.
 
-**`busyPct` is per parse thread, not summed.** `BusyTicks` accumulates across every one of a
-feed's Solace callback threads while the window is wall-clock, so an N-flow feed reported up to
-N x 100% — TFMS measured **153.6%** on two receivers. It is divided by the flow count now, so the
-number means what the field says it means and is comparable between a 1-flow and a 6-flow feed.
+### `busyPct` counted lock-wait as parsing, so it pointed away from its own fix
+`FeedHealth.Track` is constructed **before** the handler takes the feed's process gate, so the
+original single timer charged time spent *blocked* to parse time. On SFDPS — 3 receivers against
+one `sfdpsProcessGate`, so two are usually waiting — the feed reported **76.6% "busy"** while the
+real parse cost was a fraction of it. Splitting them took the same feed to **9.2%**.
+
+Two consequences, both bad:
+- it read **`saturated`**, whose documented meaning is "only the broker's spool is keeping us
+  lossless, do not put a buffer in front of the parser" — a diagnosis about parsing, on a feed
+  whose parsing was 8x over-provisioned.
+- **the metric moved against the fix.** More flows is the remedy for a transport ceiling, and
+  each extra flow piles onto the same lock, pushing measured busyPct *up* — toward the reading
+  that says stop adding flows.
+
+`Scope` is a mutable struct with `Locked()`, called as the first statement inside each feed's
+`lock`. Before it is `WaitTicks`, after it is `BusyTicks`; an ungated feed charges everything to
+parse, which is correct for it. That makes a third verdict expressible:
+
+| state | condition | answer |
+|---|---|---|
+| `saturated` | busy >= 60% | parsing is the bottleneck |
+| `gated` | wait >= 25%, busy < 60% | processing is **serialized**. More flows will NOT help — shorten the critical section |
+| `behind` | busy < 25%, wait < 25%, floor high | one session's transport ceiling. More flows |
+
+All three look identical in a snapshot and two have opposite answers.
+
+**`waitPct` measured 0.0% on all six feeds**, which disproved the hypothesis it was built for
+(that `XDocument.Parse` inside `sfdpsProcessGate` was serializing the receivers — it is not; the
+gate is held ~12% of wall time at 3 flows, ~29% at 6). That is the instrumentation earning its
+keep: one measurement killed a plausible theory before anyone refactored the hot path on it.
+
+**BUSY is gate utilization and is NOT divided by the flow count; WAIT is per-thread and is.**
+Dividing busy was right while it included wait (TFMS once read **153.6%** on two receivers,
+which is not a percentage of anything), and became a bug the moment wait moved out: only one
+thread holds the gate, so `BusyTicks <= elapsed` and the quotient caps at **100/N**. SFDPS's
+maximum was 33% and TBFM's, on six flows, **16.7%** — so the `saturated` threshold of 60% was
+*unreachable on every multi-flow feed*. Wait stays per-thread because N receivers genuinely can
+block at once.
 
 ### Two of our own services share one STDDS queue, and only one was counting
 
@@ -483,9 +578,32 @@ render side by side. It is served at `GET /feed` on :5000 and proxied by SwimSer
 **`GET /api/feed/stdds`** (2 s timeout, 5 s cache, `{reachable:false}` rather than a stall when the
 neighbour restarts). The card shows both shares *and their sum*, which is the real queue rate.
 
-**This is a finding, not a fix.** Splitting the queue is still happening — the dashboard just
-makes it visible. Fixing it means either a second STDDS queue in the SCDS portal, or one service
-consuming and re-publishing to the other. Until then, read the sum, never one row.
+**`ScdsHostedService` had no flow support at all** — a single hardcoded flow, while the other
+five bridges had had `*_FLOWS` for months, and it is the queue's **largest** consumer (~525 msg/s
+against SwimServer's ~74). So a queue needing ~600 msg/s was drained by two single-flow sessions
+and both sat at a floor that never reached zero. `SCDS_FLOWS` (1-8, default 1) now binds N
+receivers, each with its own context/session/manager, because a context owns one dispatch thread.
+Receiver 0 keeps the DI-injected manager so disposal is unchanged, and each loop reconnects
+independently so one dead flow is rebuilt while its siblings drain. Processing is untouched: every
+flow writes the same bounded channel (already `SingleWriter=false`) and one loop drains it.
+
+`ScdsConnectionManager`'s `_initialized` guard had to become **static** — `ContextFactory.Init`
+configures a process-global and must run exactly once, so a per-instance guard would let every
+manager call it again.
+
+**A caveat on the "it's zero-sum" intuition**, which is wrong while the queue is backlogged:
+competing consumers draining a backlog means more total flows gives faster *total* drain, so
+raising either side helps both. It is only zero-sum once the floor reaches ~0 and they are
+splitting a live stream.
+
+Measured after `STDDS_FLOWS=3` + `SCDS_FLOWS=3`: SwimServer 74 → **183 msg/s** (floor 6.9 → 5.5 s),
+neighbour **unchanged at ~530 msg/s** despite all three of its receivers binding (verified in the
+journal), total 599 → **714 msg/s**. So the neighbour's limit is *not* its transport, and the
+STDDS floor still does not reach zero — the queue remains behind. That is the open item, and
+raising flows further is not the next move: see the memory note below.
+
+**A second STDDS queue in the SCDS portal remains the real fix**, since it removes the split
+entirely rather than racing for a share.
 
 ## SFDPS Data Pipeline (SwimServer)
 

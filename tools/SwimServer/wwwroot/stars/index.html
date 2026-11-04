@@ -93,6 +93,8 @@
     margin-top: 4px;
   }
   .fac-tcps .tcp-chip b { color: #cccc44; font-weight: normal; margin-left: 3px; }
+  .fac-tcps .tcp-chip { cursor: pointer; }
+  .fac-tcps .tcp-chip:hover { background: #26260a; border-color: #cccc44; color: #e8e8c0; }
 
   /* LIVE / REPLAY launch mode. Replay opens the facility's recorded terminal data instead of the
      live feed — the scope itself is unchanged either way, it just gets a different source. */
@@ -256,8 +258,16 @@ async function selectArtcc(id) {
           <span class="id">${caret}${f.id}</span>
           <span class="meta">${meta}</span>
         </div>`;
+      // The chips are the staffed positions, and clicking one signs the scope on to it.
+      // That is not just a convenience: a facility's DCB map buttons belong to the POSITION
+      // (vNAS publishes one mapGroup per group of TCPs — PCT has 15, SCT 33, NCT 39), so
+      // opening a facility cold binds whichever group vNAS listed first and the inline MAP
+      // buttons are somebody else's. Launching with ?tcp= lands on the right layout, and the
+      // scope re-binds if you later sign on elsewhere with `.SO`.
       const tcpLine = (tcp && tcp.tcps.length)
-        ? `<div class="fac-tcps">${tcp.tcps.map(t => `<span class="tcp-chip">${t.tcp}<b>${t.count}</b></span>`).join("")}</div>`
+        ? `<div class="fac-tcps">${tcp.tcps.map(t =>
+            `<span class="tcp-chip" data-fac="${f.id}" data-tcp="${t.tcp}" title="Open ${f.id} signed on as ${t.tcp} — uses this position's DCB map buttons">${t.tcp}<b>${t.count}</b></span>`
+          ).join("")}</div>`
         : "";
       const sub = multi
         ? `<div class="areas" data-for="${f.id}" hidden>` +
@@ -292,13 +302,18 @@ async function selectArtcc(id) {
         };
       }
     }
-    const launch = (facId, areaId) => {
+    const launch = (facId, areaId, tcp) => {
       const q = [];
       if (areaId) q.push(`area=${encodeURIComponent(areaId)}`);
+      if (tcp) q.push(`tcp=${encodeURIComponent(tcp)}`);
       if (replayMode) q.push("replay=1");
       location.href = `/stars/${encodeURIComponent(id)}/${encodeURIComponent(facId)}`
         + (q.length ? `?${q.join("&")}` : "");
     };
+    // Position chip → open signed on to that TCP, which also binds its DCB map group.
+    for (const el of document.querySelectorAll("#facilities .tcp-chip")) {
+      el.onclick = (e) => { e.stopPropagation(); launch(el.dataset.fac, null, el.dataset.tcp); };
+    }
     // Facility row: multi-area facilities expand their area submenu; single/no
     // area launches straight into the scope.
     for (const el of document.querySelectorAll("#facilities .row.fac")) {

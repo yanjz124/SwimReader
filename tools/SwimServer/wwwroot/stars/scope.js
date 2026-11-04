@@ -422,6 +422,49 @@ function ringToLines(coords, out) {
   // GeoJSON spec: first == last for valid rings, so the last segment closes it.
 }
 
+/**
+ * Bind the DCB map buttons to the signed-on position's map group.
+ *
+ * In real STARS the DCB map layout belongs to the POSITION, not the facility: a TRACON
+ * publishes one Mapgroup per group of TCPs and you get the one for the position you
+ * signed on to. vNAS says so explicitly — every mapGroup carries a `tcps` array.
+ *
+ * This used to run once, inline in loadVideoMapsCatalog, reading `?tcp=` straight off the
+ * URL. Two consequences, both silent:
+ *   - open a facility without ?tcp= and you got mapGroups[0], whichever that happens to
+ *     be in vNAS's array. Measured across all 24 ARTCCs: 97 of 213 STARS facilities
+ *     publish more than one map group and 92 of those have groups whose DCB slots 1-6
+ *     differ, so for most multi-group facilities the inline MAP buttons were simply
+ *     somebody else's. PCT has 15 groups, SCT 33, NCT 39.
+ *   - signing on afterwards with `.SO 3M` re-derived ownership (Handoff.onPositionChange)
+ *     but never revisited the maps, so the buttons stayed on group 0 for the session.
+ *
+ * Now it is a function keyed on ownTcp(), called at bootstrap AND from setOwnTcp, so the
+ * buttons track the position. No match (or no sign-on) still falls back to the first
+ * group — something has to be bound — but starsState.activeMapGroupIsDefault records
+ * that it is a guess rather than this position's layout.
+ */
+function selectMapGroup() {
+  const groups = starsState.mapGroups || [];
+  const me = (window.ownTcp && window.ownTcp() || "").trim().toUpperCase();
+  let group = null;
+  if (me && groups.length) {
+    group = groups.find(g => Array.isArray(g.tcps)
+      && g.tcps.some(t => (t || "").trim().toUpperCase() === me)) || null;
+  }
+  starsState.activeMapGroupIsDefault = !group;
+  if (!group) group = groups[0] || null;
+  starsState.activeMapGroup = group;
+  // Length-38 nullable starsId array (matches DGScope TCP.DCBMapList): slots 1-6 are the
+  // inline MAP buttons, 7-32 the MAPS submenu, 33-38 reserved.
+  activeMapIds = Array(38).fill(null);
+  if (group && Array.isArray(group.mapIds)) {
+    for (let i = 0; i < Math.min(38, group.mapIds.length); i++)
+      activeMapIds[i] = (group.mapIds[i] != null) ? group.mapIds[i] : null;
+  }
+  return group;
+}
+
 async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
   // vnasMaps from /api/stars/facility/{...} carries id, name, shortName, starsId, starsBrightnessCategory.
   // starsConfig.videoMapIds is the ordered list this facility uses.
@@ -451,24 +494,9 @@ async function loadVideoMapsCatalog(starsConfig, vnasMaps) {
   //   tcps[]    → controller positions (e.g. "1S","1B","3M") this group
   //               applies to. Different positions in the same TRACON can
   //               and do see different DCB map layouts.
-  // Selection: ?tcp=NAME overrides; otherwise first mapGroup.
+  // Selection follows the signed-on position — see selectMapGroup.
   starsState.mapGroups = Array.isArray(starsConfig?.mapGroups) ? starsConfig.mapGroups : [];
-  const tcpSel = new URLSearchParams(location.search).get("tcp");
-  let activeGroup = null;
-  if (tcpSel && starsState.mapGroups.length) {
-    activeGroup = starsState.mapGroups.find(g =>
-      Array.isArray(g.tcps) && g.tcps.some(t => (t || "").toUpperCase() === tcpSel.toUpperCase())
-    ) || null;
-  }
-  if (!activeGroup) activeGroup = starsState.mapGroups[0] || null;
-  starsState.activeMapGroup = activeGroup;
-  // Length-38 nullable starsId array (matches DGScope TCP.DCBMapList).
-  activeMapIds = Array(38).fill(null);
-  if (activeGroup && Array.isArray(activeGroup.mapIds)) {
-    for (let i = 0; i < Math.min(38, activeGroup.mapIds.length); i++) {
-      activeMapIds[i] = (activeGroup.mapIds[i] != null) ? activeGroup.mapIds[i] : null;
-    }
-  }
+  selectMapGroup();
   // ?maps= overrides which maps are visible (persisted selection).
   if (_urlMapIds) {
     for (const m of videoMaps) m.visible = m.starsId != null && _urlMapIds.includes(m.starsId);
@@ -1270,6 +1298,14 @@ function setOwnTcp(v) {
   // ThisPositionIndicator changes: re-derive Owned, clear all FDB toggles,
   // remove self from QuickLookList. The Handoff module owns this logic.
   if (window.Handoff) window.Handoff.onPositionChange();
+  // The DCB map layout belongs to the position too (see selectMapGroup), so re-bind the
+  // buttons and prefetch whatever this group assigns. Without this the maps stayed on
+  // whichever group was picked at bootstrap for the rest of the session.
+  if (typeof selectMapGroup === "function" && (starsState.mapGroups || []).length) {
+    selectMapGroup();
+    if (typeof warmAllMaps === "function") warmAllMaps();
+    if (typeof dcb !== "undefined" && dcb) dcb.render();
+  }
   window.pushUrlState?.();
 }
 window.setOwnTcp = setOwnTcp;
@@ -2994,6 +3030,7 @@ const starsState = {
   dcbMapAt,
   dcbSubmenuMapAt,
   mapGroups: [],
+  activeMapGroupIsDefault: false,   // true = no group matches the signed-on position
   activeMapGroup: null,
 };
 

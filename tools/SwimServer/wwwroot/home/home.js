@@ -369,15 +369,26 @@ async function refreshFeeds() {
         const r = await fetch('/api/feed');
         if (r.ok) _feed = await r.json();
     } catch { /* keep the previous snapshot */ }
+}
+
+// Separate from refreshFeeds so the proxied neighbour (up to a 2 s timeout when it is restarting)
+// never holds up the SFDPS rate or any card; it repaints the throughput table when it lands.
+async function refreshStdds() {
+    if (!OPERATOR) return;
     try {
         const r = await fetch('/api/feed/stdds');
         if (r.ok) _stdds = await r.json();
     } catch { _stdds = { reachable: false }; }
+    updateThroughput();
 }
 
 // ── Live stats polling ────────────────────────────────────────
-async function refreshStats() {
-    await refreshFeeds();
+//
+// Every group below is its own function and refreshStats() runs them all at once. They used to run
+// back to back, ~13 awaited requests in a row: free on localhost, but through the tunnel each is a
+// ~60-170 ms round trip, so cards filled in one at a time over a second or two. Only the work that
+// reads the /api/feed snapshot (the SFDPS rate, the throughput repaint) waits for it.
+async function refreshSystem() {
     try {
         const syr = OPERATOR ? await fetch('/api/system') : null;
         if (syr && syr.ok) {
@@ -392,6 +403,10 @@ async function refreshStats() {
         }
     } catch {}
 
+}
+
+async function refreshCore() {
+    await refreshFeeds();
     try {
         const sr = await fetch('/api/stats');
         if (sr.ok) {
@@ -442,6 +457,9 @@ async function refreshStats() {
     // so the feed table still updates on a poll where /api/stats happens to fail.
     updateThroughput();
 
+}
+
+async function refreshHistory() {
     // Flight-history archive → data ingress per day (daily jsonl file sizes) + archive totals.
     // Only feeds the THROUGHPUT card, so it follows the same gate.
     try {
@@ -459,16 +477,23 @@ async function refreshStats() {
         }
     } catch {}
 
+}
+
+async function refreshAsdex() {
     try {
         const ar = await fetch('/api/asdex');
         if (ar.ok) {
             const airports = await ar.json();
             const totalTracks = airports.reduce((s, a) => s + a.count, 0);
-            document.getElementById('asdexCount').textContent =
-                `${airports.length} airports  ${totalTracks} tracks`;
+            const asdexText = `${airports.length} airports  ${totalTracks} tracks`;
+            document.getElementById('asdexCount').textContent = asdexText;
+            document.getElementById('stddsStat').innerHTML = `STDDS: <b>${asdexText}</b>`;
         }
     } catch {}
 
+}
+
+async function refreshTais() {
     try {
         const tr = await fetch('/api/tais');
         if (tr.ok) {
@@ -481,6 +506,9 @@ async function refreshStats() {
         }
     } catch {}
 
+}
+
+async function refreshTdls() {
     try {
         const dr = await fetch('/api/tdls');
         if (dr.ok) {
@@ -488,12 +516,12 @@ async function refreshStats() {
             const totalMsg = airports.reduce((s, a) => s + a.messageCount, 0);
             document.getElementById('tdlsCount').textContent =
                 `${airports.length} airports  ${totalMsg} messages`;
-            const stddsTracks = document.getElementById('asdexCount').textContent;
-            document.getElementById('stddsStat').innerHTML =
-                `STDDS: <b>${stddsTracks || 'connecting...'}</b>`;
         }
     } catch {}
 
+}
+
+async function refreshTfms() {
     try {
         const tfr = await fetch('/api/tfms/stats');
         if (tfr.ok) {
@@ -507,6 +535,9 @@ async function refreshStats() {
         }
     } catch {}
 
+}
+
+async function refreshEdct() {
     try {
         const er = await fetch('/api/edct');
         if (er.ok) {
@@ -516,6 +547,9 @@ async function refreshStats() {
         }
     } catch {}
 
+}
+
+async function refreshTfdm() {
     try {
         const fr = await fetch('/api/tfdm');
         if (fr.ok) {
@@ -526,6 +560,9 @@ async function refreshStats() {
         }
     } catch {}
 
+}
+
+async function refreshTbfm() {
     // TBFM counts airplanes, not schedules: a flight is metered once in every center it
     // crosses, so the record count runs 2x the flight count (see TbfmDashboard.cs).
     try {
@@ -540,6 +577,9 @@ async function refreshStats() {
         }
     } catch {}
 
+}
+
+async function refreshItws() {
     // ITWS counts sites and product types, not flights — a terminal area publishes ~20
     // products and `connected` is what distinguishes "calm weather" from "feed is down".
     try {
@@ -555,6 +595,21 @@ async function refreshStats() {
 }
 
 // Deployed build (git commit + time) so you can confirm what's actually live.
+let _statsBusy = false;
+async function refreshStats() {
+    if (_statsBusy) return;   // a slow poll must not stack another full round on top of itself
+    _statsBusy = true;
+    try {
+        // The timer is a release valve: one request that never answers can't wedge polling for good.
+        await Promise.race([
+            Promise.all([refreshSystem(), refreshCore(), refreshStdds(), refreshHistory(), refreshAsdex(),
+                refreshTais(), refreshTdls(), refreshTfms(), refreshEdct(), refreshTfdm(), refreshTbfm(),
+                refreshItws()]),
+            new Promise(r => setTimeout(r, 15000)),
+        ]);
+    } finally { _statsBusy = false; }
+}
+
 async function refreshVersion() {
     const el = document.getElementById('buildFooter');
     if (!el) return;

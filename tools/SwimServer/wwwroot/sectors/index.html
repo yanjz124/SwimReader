@@ -173,6 +173,12 @@
     border-radius: 2px;
   }
   .leaflet-control-category select:focus { outline: 1px solid var(--accent); }
+  .leaflet-control-category input[type="number"] {
+    background: #1a1a1a; color: var(--text); border: 1px solid #333;
+    padding: 4px 6px; font-family: inherit; font-size: 12px;
+    border-radius: 2px; color-scheme: dark;   /* dark spinner arrows instead of the light native ones */
+  }
+  .leaflet-control-category input[type="number"]:focus { outline: 1px solid var(--accent); }
   .leaflet-control-zoom { background: #1a1a1a !important; border: 1px solid #333 !important; border-radius: 4px !important; }
   .leaflet-control-zoom a { background: #1a1a1a !important; color: var(--text) !important; border: 1px solid #333 !important; }
   .leaflet-control-zoom a:hover { background: #2a2a2a !important; }
@@ -226,6 +232,11 @@
         <option value="720">12 h</option>
         <option value="1440">24 h</option>
     </select>
+    <span class="lbl" style="margin-left:14px;">BOUNDARIES</span>
+    <select id="bndSel" title="Where sector shapes come from. vNAS: Fixed Airspace Volumes, coloured by who owns each volume right now (AIXM). KML: the old AllSectors.kml file.">
+        <option value="fav">vNAS</option>
+        <option value="kml">KML</option>
+    </select>
     <span class="reload-note">Auto-refreshes every 5s</span>
 </div>
 <main>
@@ -256,6 +267,28 @@ const initFreqs = initParams.get("freqs");
 if (initFreqs === "1") {
     showFreqs = true;
 }
+
+// Boundary source for the split map. vNAS is the default; ?bnd=kml|fav wins over the saved choice.
+const bndSel = document.getElementById("bndSel");
+let bndSource = "fav";
+try {
+    const saved = localStorage.getItem("sectors.bnd");
+    if (saved === "kml" || saved === "fav") bndSource = saved;
+} catch {}
+{
+    const q = initParams.get("bnd");
+    if (q === "kml" || q === "fav") bndSource = q;
+}
+bndSel.value = bndSource;
+bndSel.addEventListener("change", () => {
+    bndSource = bndSel.value === "kml" ? "kml" : "fav";
+    try { localStorage.setItem("sectors.bnd", bndSource); } catch {}
+    const url = new URL(location.href);
+    url.searchParams.set("bnd", bndSource);
+    history.replaceState(null, "", url);
+    syncFavControls();
+    if (selected) renderSplitMap(selected);
+});
 
 async function refresh() {
     try {
@@ -514,6 +547,7 @@ let kmlSectorsCache = null;
 let airspaceCache = {};
 let catControl = null;
 let renderingMap = false;  // prevent concurrent renders
+let renderPending = null;  // a render asked for mid-render (a toggle must not be dropped)
 let primaryColorMap = {};  // track unique color per primary sector
 let highlightedPoly = null;  // track currently highlighted polygon
 
@@ -719,6 +753,79 @@ async function loadKmlSectors() {
     return out;
 }
 
+// ── vNAS Fixed Airspace Volumes ───────────────────────────────────────────
+// A volume is one altitude slab of one sector, `favId` = {sector:3}{volume:2}, with its own polygon.
+// The AIXM feed lists, per position, the favIds it owns — the SAME ids, so colouring is a direct
+// join (no sector-name guessing, which is what the KML path needs and why ZLA was special-cased).
+// Slabs tile in altitude, so the map shows one flight level at a time rather than a category.
+const FAV_LEVEL = { 'Ultra High': 390, 'High Altitude': 300, 'Low Altitude': 180 };
+let favFl = null;                // user-entered flight level; null = follow the category
+const favCache = {};             // ARTCC -> shapes
+
+const favLevel = () => (favFl ?? FAV_LEVEL[selectedCat] ?? 300);
+
+// Bands are inclusive and tile with a 100 ft step, so a ceiling of C also covers C+99.
+function favCovers(s, ft) {
+    return s.lowerAlt <= ft && (s.upperAlt == null || s.upperAlt + 99 >= ft);
+}
+
+async function loadFavSectors(artcc) {
+    if (favCache[artcc]) return favCache[artcc];
+    let g;
+    try {
+        const r = await fetch(`/api/airspace/favs/${encodeURIComponent(artcc)}`);
+        if (r.status === 404) return (favCache[artcc] = []);   // none held for this ARTCC
+        if (!r.ok) return [];                                  // transient: don't cache
+        g = await r.json();
+    } catch { return []; }
+    const out = [];
+    for (const f of (g.features || [])) {
+        const p = f.properties || {};
+        if (p.exclude || p.sentinel) continue;    // an exclusion is a hole in 3-D, not a sector
+        const ring = f.geometry?.coordinates?.[0] || [];
+        if (ring.length < 3) continue;
+        const favId = String(p.favId || '').padStart(5, '0');
+        out.push({
+            artcc: p.artcc || artcc,
+            sectorId: favId,
+            favId,
+            category: null,
+            coords: ring.map(c => [c[1], c[0]]),      // GeoJSON is lon,lat; Leaflet wants lat,lon
+            lowerAlt: p.lowerAlt,
+            upperAlt: p.unlimitedCeiling ? null : p.upperAlt,
+            altFloor: Math.round(p.lowerAlt / 100),
+            altCeiling: p.unlimitedCeiling ? 'ABV' : Math.round(p.upperAlt / 100),
+        });
+    }
+    return (favCache[artcc] = out);
+}
+
+// The FL box only means something for vNAS shapes.
+function syncFavControls() {
+    const wrap = document.getElementById('flWrap');
+    if (wrap) wrap.style.display = bndSource === 'fav' ? 'flex' : 'none';
+    const inp = document.getElementById('flIn');
+    if (inp) inp.value = favLevel();
+}
+
+// Biggest polygon by bounding box — where a combined position's label sits, instead of the mean of
+// volumes that can be hundreds of miles apart (and land the label inside someone else's sector).
+function largestShape(shapes) {
+    let best = null, bestArea = -1;
+    for (const s of shapes) {
+        let a = 90, b = -90, c = 180, d = -180;
+        for (const [lat, lon] of s.coords) {
+            if (lat < a) a = lat;
+            if (lat > b) b = lat;
+            if (lon < c) c = lon;
+            if (lon > d) d = lon;
+        }
+        const area = (b - a) * (d - c);
+        if (area > bestArea) { bestArea = area; best = s; }
+    }
+    return best;
+}
+
 let sectorFreqs = {};  // cache sector frequencies globally
 
 async function fetchSectorFreqs() {
@@ -781,11 +888,24 @@ function ensureSplitMap() {
                     <input type="checkbox" id="mapShowFreqs" ${showFreqs ? 'checked' : ''} style="cursor:pointer;accent-color:#666;filter:invert(0.3);">
                     FREQ
                 </label>
+                <label id="flWrap" for="flIn" style="display:none;align-items:center;gap:4px;color:var(--text);font-size:11px;margin:0;white-space:nowrap;" title="Flight level shown. Volumes are altitude slabs, so one level shows one sector layer.">
+                    FL
+                    <input type="number" id="flIn" min="0" max="600" step="10" style="width:52px;">
+                </label>
             </div>`;
             L.DomEvent.disableClickPropagation(div);
+            const flIn = div.querySelector('#flIn');
+            flIn.addEventListener('change', () => {
+                const v = parseInt(flIn.value, 10);
+                favFl = Number.isFinite(v) && v >= 0 ? v : null;
+                syncFavControls();
+                if (selected) renderSplitMap(selected);
+            });
             const sel = div.querySelector('#catSel');
             sel.addEventListener('change', () => {
                 selectedCat = sel.value;
+                favFl = null;          // a category pick resets the level to that category's
+                syncFavControls();
                 if (selected) renderSplitMap(selected);
             });
             const freqCheckbox = div.querySelector('#mapShowFreqs');
@@ -803,11 +923,12 @@ function ensureSplitMap() {
 
     catControl = new CatControl();
     catControl.addTo(splitMap);
+    syncFavControls();
 }
 
 
 async function renderSplitMap(facility) {
-    if (renderingMap) return;  // prevent concurrent renders
+    if (renderingMap) { renderPending = facility; return; }  // run once more when this one ends
     renderingMap = true;
 
     try {
@@ -822,18 +943,35 @@ async function renderSplitMap(facility) {
         splitMapLayer.clearLayers();
         legend.textContent = '';  // use textContent to clear all content
 
-        const [kmlAll, airspace] = await Promise.all([
-            loadKmlSectors(),
+        let useFav = bndSource === 'fav';
+        const [airspace, loaded] = await Promise.all([
             fetchAirspace(facility),
+            useFav ? loadFavSectors(facility) : loadKmlSectors(),
             fetchSectorFreqs().then(freqs => { sectorFreqs = freqs; }),
         ]);
 
-        const sectors = kmlAll.filter(s =>
-            s.artcc === facility && s.category === selectedCat);
+        let sectors, note = '';
+        if (useFav) {
+            const favShapes = loaded.filter(s => s.artcc === facility);
+            if (favShapes.length) {
+                const ft = favLevel() * 100;
+                sectors = favShapes.filter(s => favCovers(s, ft));
+            } else {
+                // ZAN/ZHN/ZSU/ZUA publish no volumes: fall back rather than draw nothing.
+                useFav = false;
+                note = ' · vNAS has no volumes here, showing KML';
+                const kml = await loadKmlSectors();
+                sectors = kml.filter(s => s.artcc === facility && s.category === selectedCat);
+            }
+        } else {
+            sectors = loaded.filter(s => s.artcc === facility && s.category === selectedCat);
+        }
         if (!sectors.length) {
-            meta.textContent = 'no KML boundaries for this facility';
+            meta.textContent = useFav ? `no vNAS volumes at FL${favLevel()}` : 'no KML boundaries for this facility';
             legend.textContent = '';
-            legend.appendChild(document.createElement('span')).textContent = 'No sector geometry loaded (AllSectors.kml)';
+            legend.appendChild(document.createElement('span')).textContent = useFav
+                ? 'No volume covers this level. Try another altitude.'
+                : 'No sector geometry loaded (AllSectors.kml)';
             renderingMap = false;
             return;
         }
@@ -842,7 +980,7 @@ async function renderSplitMap(facility) {
         const positions = airspace?.positions || [];
 
         // For ZLA, rebuild groupMap using first 2 digits of FAV numbers
-        if (facility === 'ZLA' && positions.length > 0) {
+        if (!useFav && facility === 'ZLA' && positions.length > 0) {
             groupMap = {};
             const seenSectors = new Set();
             for (const pos of positions) {
@@ -864,7 +1002,15 @@ async function renderSplitMap(facility) {
             }
         }
 
-        const hasSplits = Object.keys(groupMap).length > 0;
+        // vNAS: the AIXM favNumbers ARE the volume ids, so ownership is a direct lookup.
+        const favOwner = {};
+        if (useFav) {
+            for (const pos of positions)
+                for (const f of pos.favNumbers || [])
+                    favOwner[String(f).padStart(5, '0')] = pos.primarySector;
+        }
+        const primaryOf = sec => useFav ? favOwner[sec.favId] : groupMap[sec.sectorId];
+        const hasSplits = useFav ? Object.keys(favOwner).length > 0 : Object.keys(groupMap).length > 0;
 
         if (!hasSplits) {
             meta.textContent = 'no AIXM assignment data yet';
@@ -883,7 +1029,7 @@ async function renderSplitMap(facility) {
                 (ageMin != null ? ` · updated ${ageMin < 120 ? ageMin + 'm' : Math.round(ageMin / 60) + 'h'} ago` : '');
 
             for (const sec of sectors) {
-                const primary = groupMap[sec.sectorId];
+                const primary = primaryOf(sec);
                 const fill = primary ? colorForPrimary(primary) : '#333333';
                 const fillOpacity = primary ? 0.62 : 0.15;
                 const poly = L.polygon(closeRing(sec.coords), {
@@ -939,9 +1085,11 @@ async function renderSplitMap(facility) {
 
             // Primary-sector labels at largest inscribed circle center
             for (const pos of uniquePositions) {
-                const polys = pos.controlledSectors
-                    .map(id => sectors.find(s => s.sectorId === id))
-                    .filter(Boolean);
+                const polys = useFav
+                    ? [largestShape(sectors.filter(s => favOwner[s.favId] === pos.primarySector))].filter(Boolean)
+                    : pos.controlledSectors
+                        .map(id => sectors.find(s => s.sectorId === id))
+                        .filter(Boolean);
                 if (!polys.length) continue;
 
                 // For each individual sector polygon, find best point, then average
@@ -988,7 +1136,7 @@ async function renderSplitMap(facility) {
             // Only show primaries that have visible sectors on the map
             const visiblePrimaries = new Set();
             for (const sec of sectors) {
-                const primary = groupMap[sec.sectorId];
+                const primary = primaryOf(sec);
                 if (primary) visiblePrimaries.add(primary);
             }
 
@@ -996,7 +1144,9 @@ async function renderSplitMap(facility) {
                 if (!visiblePrimaries.has(pos.primarySector)) continue; // skip if not visible
 
                 const col = colorForPrimary(pos.primarySector);
-                const secs = pos.controlledSectors.join(', ');
+                const secs = useFav
+                    ? [...new Set((pos.favNumbers || []).map(f => String(f).padStart(5, '0').slice(0, 3)))].join(', ')
+                    : pos.controlledSectors.join(', ');
                 const row = document.createElement('div');
                 row.className = 'legend-row';
                 row.innerHTML = `
@@ -1008,11 +1158,14 @@ async function renderSplitMap(facility) {
             legend.appendChild(table);
         }
 
+        if (useFav) meta.textContent += ` · vNAS FL${favLevel()}`;
+        meta.textContent += note;
         const bounds = L.latLngBounds(sectors.flatMap(s => s.coords));
         if (bounds.isValid()) splitMap.fitBounds(bounds, { padding: [16, 16] });
         setTimeout(() => splitMap.invalidateSize(), 50);
     } finally {
         renderingMap = false;
+        if (renderPending) { const f = renderPending; renderPending = null; renderSplitMap(f); }
     }
 }
 

@@ -27,8 +27,8 @@ function haloCenters(now) {
     for (const [tid, marker] of Object.entries(markers)) {
         const el = marker.getElement();
         if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        haloPoints.push({ tid, x: rect.left + 9, y: rect.top + 9 });
+        const a = iconAnchorOnScreen(el);
+        haloPoints.push({ tid, x: a.x, y: a.y });
     }
     haloPointsT = now;
     return haloPoints;
@@ -84,11 +84,63 @@ document.addEventListener('mouseleave', () => {
 
 // ── Map rotation ────────────────────────────────────────────────────────────
 let mapRotation = 0; // degrees, 360=north-up
+let mapReady = false;   // `map` is a const declared further down — don't touch it before then
 const rotInput = document.getElementById('rot');
+
+// A screen delta expressed in the map container's own frame. The container is CSS-rotated by
+// -mapRotation, so undoing that is a rotation by +mapRotation. It is the identity at ROT 360,
+// which is why everything that skipped this step looked correct until someone rotated.
+function screenToMap(dx, dy) {
+    const rad = mapRotation * Math.PI / 180;
+    const c = Math.cos(rad), s = Math.sin(rad);
+    return [dx * c - dy * s, dx * s + dy * c];
+}
+
+// Where a marker's target symbol actually is on screen. getBoundingClientRect() returns the
+// axis-aligned box of a *rotated* 200x18 icon, so its top-left corner is nowhere near the 9,9
+// anchor once ROT is set — at ROT 090 the two are ~128 px apart, which is why hover halos, taps
+// and clicks all pick the wrong target (or none) on a rotated scope. The box is always centered on
+// the image of the icon's own center, whatever the rotation, so measure from there instead.
+const ICON_ANCHOR_DX = 9 - 200 / 2, ICON_ANCHOR_DY = 9 - 18 / 2;   // anchor, from the icon's center
+function iconAnchorOnScreen(el) {
+    const r = el.getBoundingClientRect();
+    const rad = -mapRotation * Math.PI / 180;   // the CSS rotation the icon inherits from #map
+    const c = Math.cos(rad), s = Math.sin(rad);
+    return {
+        x: r.left + r.width / 2 + ICON_ANCHOR_DX * c - ICON_ANCHOR_DY * s,
+        y: r.top + r.height / 2 + ICON_ANCHOR_DX * s + ICON_ANCHOR_DY * c,
+    };
+}
+
+// Rotating a viewport-sized element leaves the screen's corners outside it, and
+// .leaflet-container clips hard at its own edge — so at any angle that isn't a multiple of 360
+// those corners have no map drawn in them at all. Size the element to the rectangle that still
+// covers the screen once rotated: a w x h viewport needs w|cos| + h|sin| by w|sin| + h|cos|.
+// That exact box rather than the simpler diagonal square (which would cover every angle at once)
+// because every extra pixel is renderer surface, and this page runs with several hundred markers
+// up at ORD/ATL.
+function sizeMapForRotation() {
+    const rad = mapRotation * Math.PI / 180;
+    const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+    const w = window.innerWidth, h = window.innerHeight;
+    const W = Math.ceil(w * c + h * s), H = Math.ceil(w * s + h * c);
+    const el = document.getElementById('map');
+    el.style.width = W + 'px';
+    el.style.height = H + 'px';
+    el.style.marginLeft = -(W / 2) + 'px';
+    el.style.marginTop = -(H / 2) + 'px';
+    // Leaflet caches the container size, so without this it keeps laying out for the old one.
+    // pan (default true) holds the geographic center at the container's center — which is the
+    // screen's center — so growing the box reveals the corners instead of shifting the view.
+    if (mapReady) map.invalidateSize({ animate: false });
+}
+window.addEventListener('resize', sizeMapForRotation);
+
 function applyRotation(deg) {
     mapRotation = ((deg % 360) + 360) % 360;
     // 360 = north-up (no rotation). Rotation = -(360 - value) = value - 360
     const cssAngle = mapRotation === 360 ? 0 : -mapRotation;
+    sizeMapForRotation();
     document.getElementById('map').style.transform = `rotate(${cssAngle}deg)`;
     // Counter-rotate data blocks so text stays upright
     document.querySelectorAll('.db').forEach(el => {
@@ -280,6 +332,7 @@ const map = L.map('map', {
     doubleClickZoom: false,
     keyboard: false
 });
+mapReady = true;
 
 // Right-click drag panning
 (function() {
@@ -297,7 +350,9 @@ const map = L.map('map', {
         if (!panning) return;
         const dx = e.clientX - startX, dy = e.clientY - startY;
         startX = e.clientX; startY = e.clientY;
-        map.panBy([-dx, -dy], { animate: false });
+        // Into the container's frame first, or the view slides off at an angle to the cursor.
+        const [mdx, mdy] = screenToMap(dx, dy);
+        map.panBy([-mdx, -mdy], { animate: false });
     });
     document.addEventListener('mouseup', e => {
         if (e.button === 2) panning = false;
@@ -817,8 +872,7 @@ document.addEventListener('mousedown', e => {
     if (!m) { dragTid = null; return; }
     const el = m.getElement();
     if (!el) { dragTid = null; return; }
-    const rect = el.getBoundingClientRect();
-    dragOrigin = { x: rect.left + 9, y: rect.top + 9 };
+    dragOrigin = iconAnchorOnScreen(el);
     e.preventDefault();
     e.stopPropagation();
 });
@@ -828,9 +882,7 @@ document.addEventListener('mousemove', e => {
     const sdx = e.clientX - dragOrigin.x;
     const sdy = e.clientY - dragOrigin.y;
     // Convert screen delta to icon-local (undo CSS rotation)
-    const rad = mapRotation * Math.PI / 180;
-    const ldx = sdx * Math.cos(rad) + sdy * Math.sin(rad);
-    const ldy = -sdx * Math.sin(rad) + sdy * Math.cos(rad);
+    const [ldx, ldy] = screenToMap(sdx, sdy);
     // Snap to nearest octant
     let angle = Math.atan2(ldx, -ldy) * 180 / Math.PI;
     if (angle < 0) angle += 360;
@@ -865,8 +917,7 @@ document.addEventListener('touchstart', e => {
         if (!m) { touchDragTid = null; return; }
         const el = m.getElement();
         if (!el) { touchDragTid = null; return; }
-        const rect = el.getBoundingClientRect();
-        touchOrigin = { x: rect.left + 9, y: rect.top + 9 };
+        touchOrigin = iconAnchorOnScreen(el);
         touchMoved = false;
         e.preventDefault();
         return;
@@ -882,9 +933,7 @@ document.addEventListener('touchmove', e => {
     const touch = e.touches[0];
     const sdx = touch.clientX - touchOrigin.x;
     const sdy = touch.clientY - touchOrigin.y;
-    const rad = mapRotation * Math.PI / 180;
-    const ldx = sdx * Math.cos(rad) + sdy * Math.sin(rad);
-    const ldy = -sdx * Math.sin(rad) + sdy * Math.cos(rad);
+    const [ldx, ldy] = screenToMap(sdx, sdy);
     let angle = Math.atan2(ldx, -ldy) * 180 / Math.PI;
     if (angle < 0) angle += 360;
     const idx = Math.round(angle / 45) % 8;
@@ -910,9 +959,8 @@ document.addEventListener('touchend', e => {
     for (const [tid, marker] of Object.entries(markers)) {
         const el = marker.getElement();
         if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        const cx = rect.left + 9, cy = rect.top + 9;
-        const dist = Math.hypot(touch.clientX - cx, touch.clientY - cy);
+        const a = iconAnchorOnScreen(el);
+        const dist = Math.hypot(touch.clientX - a.x, touch.clientY - a.y);
         if (dist < HALO_RADIUS && dist < bestDist) { bestDist = dist; bestTid = tid; }
     }
     if (!bestTid) {
@@ -965,12 +1013,9 @@ document.addEventListener('click', e => {
     for (const [tid, marker] of Object.entries(markers)) {
         const el = marker.getElement();
         if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        // Marker anchor is at (9, 9) within the icon
-        const cx = rect.left + 9;
-        const cy = rect.top + 9;
-        const dx = clickPt.x - cx;
-        const dy = clickPt.y - cy;
+        const a = iconAnchorOnScreen(el);
+        const dx = clickPt.x - a.x;
+        const dy = clickPt.y - a.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist < HALO_RADIUS && dist < bestDist) {
             bestDist = dist;

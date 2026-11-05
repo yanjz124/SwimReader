@@ -1272,6 +1272,36 @@ VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z'
 
 **Map rotation (ROT input):** `applyRotation()` rotates the whole `#map` element via CSS `transform: rotate()`. Data blocks must stay **upright** (readable) regardless of map heading, so each `.db` is counter-rotated by the inverse angle. This counter-rotation is baked into `makeIcon()` (using the current `mapRotation`), **not only** applied in `applyRotation()` — because markers rebuild via `setIcon()` on ~1s position updates, and a fresh `.db` created after a rotation would otherwise inherit the map's rotation until the next slider input. `applyRotation()` still updates already-rendered blocks so the slider feels live.
 
+**Rotation is the one setting under which nothing else can be trusted, because at ROT 360 every
+correction below is the identity** — the default case cannot reveal any of them, and each one of
+these shipped and sat there.
+
+- **The element has to be bigger than the screen.** A viewport-sized rectangle, rotated, no longer
+  covers the viewport: the screen's corners fall outside it and `.leaflet-container` clips hard at
+  its own edge, so those corners simply have **no map drawn in them**. `sizeMapForRotation()` sizes
+  `#map` to the rectangle that still covers the screen at the current angle — a `w x h` viewport
+  needs `w|cos| + h|sin|` by `w|sin| + h|cos|` — keeps it centered with negative margins, and calls
+  `invalidateSize()` (whose default `pan: true` holds the geographic center at the container's
+  center, which is the screen's center, so growing the box reveals the corners instead of shifting
+  the view). The exact box rather than the diagonal square that would cover every angle at once,
+  because every extra pixel is renderer surface and ORD/ATL run several hundred markers.
+- **A screen delta is not a map delta.** `screenToMap()` rotates one into the container's frame.
+  The right-drag pan fed `panBy` raw `clientX/Y` deltas, so a rotated scope slid off at an angle to
+  the cursor; the data-block drag did convert, but by `-mapRotation` instead of `+mapRotation`, so
+  the octant it snapped to was reflected (identical at ROT 180, which is the sort of thing that
+  makes a sign error survive a spot check).
+- **`getBoundingClientRect()` of a rotated icon is a bounding box, not the icon.** The marker is
+  `200x18` with its anchor at `(9, 9)`, so `rect.left + 9` is the target's position only while the
+  page is north-up; at ROT 090 the two are **~128 px apart**. That one expression backed the hover
+  halo, both drag origins, the tap hit-test and the click hit-test — i.e. every way of picking a
+  target was off by that much. `iconAnchorOnScreen()` measures from the box's center instead, which
+  is always the image of the icon's own center whatever the rotation.
+
+Measured at KJFK, ROT 330, 1584x805 viewport: `#map` goes 1584x805 -> **1775x1490**, and the
+taxiways, aprons and runway ends the old build cut off along the right edge and the top
+corners are drawn. ASDE-X is the only scope with a ROT control (`grep mapRotation` finds
+nothing elsewhere).
+
 **Heavy type detection (client-side, ICAO type code):**
 ```javascript
 const HEAVY_PREFIXES = ['B74','B77','B78','A33','A34','A35','A38','A30',

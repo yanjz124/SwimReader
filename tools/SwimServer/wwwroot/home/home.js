@@ -1,3 +1,9 @@
+// Signed-in (operator) view, from the non-secret "sv" cookie /login sets — the same cookie
+// frame.js reads to add .op-signed, which is what actually hides the SYSTEM group. Used here
+// only to not fire four requests per poll that would 403: the gate is server-side
+// (LaddService.OperatorView), so forging this cookie buys empty cards.
+const OPERATOR = /(?:^|;\s*)sv=1(?:;|$)/.test(document.cookie);
+
 let _sys = {};            // latest /api/system snapshot
 const serverCard   = document.getElementById('serverCard');
 const serverDetail = document.getElementById('serverDetail');
@@ -299,6 +305,7 @@ function fmtStamp(iso) {
     return `${d.getUTCDate()} ${M} ${String(d.getUTCHours()).padStart(2,'0')}Z`;
 }
 async function loadStorage() {
+    if (!OPERATOR) return;
     try {
         const r = await fetch('/api/storage');
         if (!r.ok) return;
@@ -357,6 +364,7 @@ setInterval(loadStorage, 5 * 60 * 1000);
 // THROUGHPUT card read the same snapshot. The STDDS one is a proxy to the neighbouring process
 // and returns {reachable:false} rather than failing when that service is restarting.
 async function refreshFeeds() {
+    if (!OPERATOR) return;   // _feed stays null; updateThroughput() already tolerates that
     try {
         const r = await fetch('/api/feed');
         if (r.ok) _feed = await r.json();
@@ -371,8 +379,8 @@ async function refreshFeeds() {
 async function refreshStats() {
     await refreshFeeds();
     try {
-        const syr = await fetch('/api/system');
-        if (syr.ok) {
+        const syr = OPERATOR ? await fetch('/api/system') : null;
+        if (syr && syr.ok) {
             _sys = await syr.json();
             const sEl = document.getElementById('serverStat');
             if (sEl) sEl.innerHTML =
@@ -435,9 +443,10 @@ async function refreshStats() {
     updateThroughput();
 
     // Flight-history archive → data ingress per day (daily jsonl file sizes) + archive totals.
+    // Only feeds the THROUGHPUT card, so it follows the same gate.
     try {
-        const hr = await fetch('/api/history/dates');
-        if (hr.ok) {
+        const hr = OPERATOR ? await fetch('/api/history/dates') : null;
+        if (hr && hr.ok) {
             const dates = await hr.json();               // [{ date: "YYYY-MM-DD", sizeMb }]
             const days = dates.length;
             const totalMb = dates.reduce((a, d) => a + (d.sizeMb || 0), 0);

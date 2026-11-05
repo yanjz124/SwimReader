@@ -349,29 +349,44 @@ static class EramRoutes
         // socket (ERAM scope, flight table) — the other feeds keep their own registries, and STARS
         // rides the proxied DGScope HTTP stream rather than a WebSocket, so it is counted in
         // DgScopeRoutes. A feed missing from this array silently reads as zero.
-        app.MapGet("/api/system", () => Results.Json(SystemStats.Snapshot(new (string, int)[]
+        //
+        // Operator-only (LaddService.OperatorView): who is connected, how much disk is left and
+        // what this box is called are facts about the deployment, not about air traffic. The
+        // home page hides the card that reads this for the same reason.
+        app.MapGet("/api/system", (HttpContext http) =>
         {
-            ("SFDPS", ctx.Clients.Count),
-            ("STARS", DgScopeRoutes.ActiveClients),
-            ("ASDE-X", ctx.Asdex.ClientCount),
-            ("TAIS", ctx.Tais.ClientCount),
-            ("TDLS", ctx.Tdls.ClientCount),
-            ("TFDM", ctx.Tfdm.ClientCount),
-            ("TFMS", ctx.Tfms.ClientCount),
-            ("ITWS", ctx.Itws.ClientCount),
-            ("Replay", ctx.ReplayServer.ClientCount),
-        }, ctx.Flights.Count), ctx.JsonOpts));
+            if (!LaddService.OperatorView(http)) return LaddService.OperatorOnly();
+            return Results.Json(SystemStats.Snapshot(new (string, int)[]
+            {
+                ("SFDPS", ctx.Clients.Count),
+                ("STARS", DgScopeRoutes.ActiveClients),
+                ("ASDE-X", ctx.Asdex.ClientCount),
+                ("TAIS", ctx.Tais.ClientCount),
+                ("TDLS", ctx.Tdls.ClientCount),
+                ("TFDM", ctx.Tfdm.ClientCount),
+                ("TFMS", ctx.Tfms.ClientCount),
+                ("ITWS", ctx.Itws.ClientCount),
+                ("Replay", ctx.ReplayServer.ClientCount),
+            }, ctx.Flights.Count), ctx.JsonOpts);
+        });
 
         // Feed health: per-feed throughput, how hard the parse thread is working, and any
         // broker-side discards (see FeedHealth — a non-zero discardEvents is confirmed data loss).
-        app.MapGet("/api/feed", () => Results.Json(new
+        //
+        // Operator-only, same as /api/system: this is the state of our subscription — queue
+        // sharing, flow counts, where the lag is — and it names the feed host.
+        app.MapGet("/api/feed", (HttpContext http) =>
         {
-            liveFeed = FeedGuard.LiveFeed,
-            feedBlocked = FeedGuard.BlockedReason,
-            feedHost = FeedGuard.FeedHost,
-            host = Environment.MachineName,
-            feeds = FeedHealth.Snapshot(),
-        }, ctx.JsonOpts));
+            if (!LaddService.OperatorView(http)) return LaddService.OperatorOnly();
+            return Results.Json(new
+            {
+                liveFeed = FeedGuard.LiveFeed,
+                feedBlocked = FeedGuard.BlockedReason,
+                feedHost = FeedGuard.FeedHost,
+                host = Environment.MachineName,
+                feeds = FeedHealth.Snapshot(),
+            }, ctx.JsonOpts);
+        });
 
         // The OTHER consumer of the STDDS queue.
         //
@@ -384,8 +399,9 @@ static class EramRoutes
         //
         // Short timeout and a cached last-good answer: the dashboard polls this every 10s and a
         // restart of the neighbouring service must degrade to "unreachable", not stall the card.
-        app.MapGet("/api/feed/stdds", async () =>
+        app.MapGet("/api/feed/stdds", async (HttpContext req) =>
         {
+            if (!LaddService.OperatorView(req)) return LaddService.OperatorOnly();
             var cached = _stddsFeedCache;
             if (cached is not null && (DateTime.UtcNow - _stddsFeedAt).TotalSeconds < 5)
                 return Results.Content(cached, "application/json");

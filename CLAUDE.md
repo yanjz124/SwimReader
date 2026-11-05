@@ -862,9 +862,11 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `WS /ws` | WebSocket — sends `snapshot`, `update`, `remove`, `stats` messages |
 | `GET /api/flights/{gufi}` | Full flight detail + all events (with `index` and `hasXml` per event) |
 | `GET /api/event-xml/{index}/{gufi}` | Raw FIXM XML for a specific event (lazy-loaded by FDIO) |
-| `GET /api/stats` | Server stats (total messages, rate, flight count) |
-| `GET /api/feed` | Per-feed throughput, parse-thread load, and broker discard counts (see Feed Health) |
-| `GET /api/system` | Process metrics for the home server card — CPU/mem/GC/threads/uptime/disk, plus `wsClients` and `wsByFeed` (see below) |
+| `GET /api/stats` | Server stats (total messages, rate, flight count) — **public** |
+| `GET /api/feed` | Per-feed throughput, parse-thread load, and broker discard counts (see Feed Health) — **operator only** |
+| `GET /api/feed/stdds` | The other consumer's share of the STDDS queue (proxied from :5000) — **operator only** |
+| `GET /api/storage` | Per-dataset disk use, retention span and bucket caps — **operator only** |
+| `GET /api/system` | Process metrics for the home server card — CPU/mem/GC/threads/uptime/disk, plus `wsClients` and `wsByFeed` (see below) — **operator only** |
 | `GET /api/airport/{id}` | Airport ops: NASR airport + runways (with TRUE/magnetic alignment and per-end wind components), current METAR, derived weather, 6 h history |
 | `GET /api/kml` | List available KML boundary files |
 | `GET /api/kml/{name}` | Serve a specific KML file from repo root |
@@ -1269,6 +1271,36 @@ VEHICLE_PATH = 'M -4 -4 L 4 -4 L 4 4 L -4 4 Z'
 **Rotation:** Aircraft SVG is rotated via `<g transform="rotate(${hdg})">` inline — not CSS, so it works across all browsers and doesn't require marker re-creation.
 
 **Map rotation (ROT input):** `applyRotation()` rotates the whole `#map` element via CSS `transform: rotate()`. Data blocks must stay **upright** (readable) regardless of map heading, so each `.db` is counter-rotated by the inverse angle. This counter-rotation is baked into `makeIcon()` (using the current `mapRotation`), **not only** applied in `applyRotation()` — because markers rebuild via `setIcon()` on ~1s position updates, and a fresh `.db` created after a rotation would otherwise inherit the map's rotation until the next slider input. `applyRotation()` still updates already-rendered blocks so the slider feels live.
+
+**Rotation is the one setting under which nothing else can be trusted, because at ROT 360 every
+correction below is the identity** — the default case cannot reveal any of them, and each one of
+these shipped and sat there.
+
+- **The element has to be bigger than the screen.** A viewport-sized rectangle, rotated, no longer
+  covers the viewport: the screen's corners fall outside it and `.leaflet-container` clips hard at
+  its own edge, so those corners simply have **no map drawn in them**. `sizeMapForRotation()` sizes
+  `#map` to the rectangle that still covers the screen at the current angle — a `w x h` viewport
+  needs `w|cos| + h|sin|` by `w|sin| + h|cos|` — keeps it centered with negative margins, and calls
+  `invalidateSize()` (whose default `pan: true` holds the geographic center at the container's
+  center, which is the screen's center, so growing the box reveals the corners instead of shifting
+  the view). The exact box rather than the diagonal square that would cover every angle at once,
+  because every extra pixel is renderer surface and ORD/ATL run several hundred markers.
+- **A screen delta is not a map delta.** `screenToMap()` rotates one into the container's frame.
+  The right-drag pan fed `panBy` raw `clientX/Y` deltas, so a rotated scope slid off at an angle to
+  the cursor; the data-block drag did convert, but by `-mapRotation` instead of `+mapRotation`, so
+  the octant it snapped to was reflected (identical at ROT 180, which is the sort of thing that
+  makes a sign error survive a spot check).
+- **`getBoundingClientRect()` of a rotated icon is a bounding box, not the icon.** The marker is
+  `200x18` with its anchor at `(9, 9)`, so `rect.left + 9` is the target's position only while the
+  page is north-up; at ROT 090 the two are **~128 px apart**. That one expression backed the hover
+  halo, both drag origins, the tap hit-test and the click hit-test — i.e. every way of picking a
+  target was off by that much. `iconAnchorOnScreen()` measures from the box's center instead, which
+  is always the image of the icon's own center whatever the rotation.
+
+Measured at KJFK, ROT 330, 1584x805 viewport: `#map` goes 1584x805 -> **1775x1490**, and the
+taxiways, aprons and runway ends the old build cut off along the right edge and the top
+corners are drawn. ASDE-X is the only scope with a ROT control (`grep mapRotation` finds
+nothing elsewhere).
 
 **Heavy type detection (client-side, ICAO type code):**
 ```javascript
@@ -2713,6 +2745,58 @@ demand) and the flight-history archive keep the full trail.
 Result: 17.6 MB -> 14.7 MB raw, **~2.1 MB on the wire**. If this needs more later, the next lever
 is that the scope and the flight table share `/ws` and the scope needs far fewer fields — but they
 share it deliberately, so that is a real design change, not a tweak.
+
+## The SYSTEM group is operator-only (`LaddService.OperatorView`)
+
+The home page's **SYSTEM** group — THROUGHPUT, STORAGE & RETENTION, SERVER STATUS — and the four
+endpoints behind it (`/api/feed`, `/api/feed/stdds`, `/api/system`, `/api/storage`) describe the
+**deployment**, not air traffic: who is connected, what the box is called, how much disk is left,
+how far behind each Solace queue we are and how many flows we bind. A visitor has no use for it and
+it is the material an operator would rather not publish, so it follows the same sign-in that
+reveals un-masked LADD identities. There is deliberately **one** notion of "the operator" here, not
+a second password.
+
+`LaddService.OperatorView(http)` is that predicate, and it is true in three cases:
+
+| case | why |
+|---|---|
+| the `/login` sign-in cookie (`laddKey`, also accepted as `X-LADD-Key` / `?laddKey=`) | the operator, wherever they are |
+| **`LADD_BYPASS_KEY` unset** | with no key, `Reveal` can never return true, so gating on it alone would hide this from the owner of a local or LAN deployment *with no way back in*. Unset = no gate, the same convention `SWIM_FEED_HOST` and `SWIM_GATE_HOST` use. `Init` logs which of the two states is live. |
+| **loopback, with no proxy header** | `curl http://127.0.0.1:5001/api/feed` on the box is the documented way to check feed health, and anyone who can run it can already read `.env`. |
+
+**The second half of that last row is the whole trap.** cloudflared dials **127.0.0.1**, and there
+is no `UseForwardedHeaders` in this pipeline, so `RemoteIpAddress` is loopback for *every* public
+request. A gate written as "signed in OR loopback" would let the entire internet through while
+reading as a careful local-access carve-out — and nothing would look wrong from either side.
+Requiring the absence of `CF-Connecting-IP` / `CF-Ray` / `CF-Visitor` / `X-Forwarded-*` /
+`X-Real-IP` / `Forwarded` is what makes "local" mean local. `OperatorViewTests` pins each header
+individually, because that is the half a later refactor is most likely to drop.
+
+Verified against a local instance with the key set, all four endpoints: loopback unproxied **200**,
+loopback + `CF-Connecting-IP` **403**, tunneled + the cookie **200**, tunneled + a wrong key
+**403**; `/api/stats`, `/api/asdex`, `/api/tdls`, `/api/tfms/stats`, `/api/history/dates` and `/`
+all still 200 for a visitor.
+
+**The page hides it in CSS, and that is presentation only.** `frame.js` already adds `.op-signed`
+to `<html>` from the non-secret `sv` cookie (the same signal behind the green build footer and the
+exit chip); `home.css` carries `html:not(.op-signed) #systemGroup, html:not(.op-signed) #serverStat
+{ display: none }`. Written as `:not()` rather than hide-then-restore so neither rule has to know
+what display value those elements would otherwise have, and so a visitor never sees the group for a
+frame while the deferred `frame.js` runs. Forging `sv=1` shows three cards that 403 — the server is
+the gate. `home.js` reads the same cookie into `OPERATOR` purely to skip four requests per poll
+that would only 403.
+
+**One visible regression, accepted.** The status bar's SFDPS chip preferred `/api/feed`'s live 10 s
+sample and now falls back, for visitors, to `/api/stats`'s **lifetime average** — the exact number
+["The home page rate was a lifetime average"](#the-home-page-rate-was-a-lifetime-average) explains
+is not comparable with the SCDS portal. The existing fallback tooltip says "average since start (no
+live sample)", so it is labelled rather than misleading. Fixing it properly means putting one
+instantaneous SFDPS rate into `/api/stats`; the per-feed table is what must stay private, not that
+single number. The `SRV:` chip is hidden with the group rather than left reading `--`.
+
+**Adding a card to the SYSTEM group needs nothing.** Adding an endpoint that reports deployment
+state *does*: gate it with `LaddService.OperatorView` and return `LaddService.OperatorOnly()`,
+which carries a one-line body so a hand `curl` reads as a gate rather than as a bug.
 
 ## Live Client Count (`/api/system`)
 

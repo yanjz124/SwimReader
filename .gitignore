@@ -94,8 +94,11 @@ tools/SwimServer/ladd/*.csv
 # Downloaded OurAirports dataset (refreshed monthly by AirportDirectory)
 tools/SwimServer/airport-data/
 
-# vNAS adaptation cache — regenerated at runtime, per host
+# vNAS adaptation cache — regenerated at runtime, per host. vnas-airspace/ is the Fixed Airspace
+# Volume bodies plus the _fetched.json freshness sidecar: ~4 MB, re-pulled whenever vNAS's
+# eramDataLastUpdatedAt moves, so there is nothing to keep in git.
 tools/SwimServer/vnas-cache.json
+tools/SwimServer/vnas-airspace/
 
 # Agent memory lives outside the repo's concerns.
 memory/

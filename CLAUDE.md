@@ -862,9 +862,11 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `WS /ws` | WebSocket — sends `snapshot`, `update`, `remove`, `stats` messages |
 | `GET /api/flights/{gufi}` | Full flight detail + all events (with `index` and `hasXml` per event) |
 | `GET /api/event-xml/{index}/{gufi}` | Raw FIXM XML for a specific event (lazy-loaded by FDIO) |
-| `GET /api/stats` | Server stats (total messages, rate, flight count) |
-| `GET /api/feed` | Per-feed throughput, parse-thread load, and broker discard counts (see Feed Health) |
-| `GET /api/system` | Process metrics for the home server card — CPU/mem/GC/threads/uptime/disk, plus `wsClients` and `wsByFeed` (see below) |
+| `GET /api/stats` | Server stats (total messages, rate, flight count) — **public** |
+| `GET /api/feed` | Per-feed throughput, parse-thread load, and broker discard counts (see Feed Health) — **operator only** |
+| `GET /api/feed/stdds` | The other consumer's share of the STDDS queue (proxied from :5000) — **operator only** |
+| `GET /api/storage` | Per-dataset disk use, retention span and bucket caps — **operator only** |
+| `GET /api/system` | Process metrics for the home server card — CPU/mem/GC/threads/uptime/disk, plus `wsClients` and `wsByFeed` (see below) — **operator only** |
 | `GET /api/airport/{id}` | Airport ops: NASR airport + runways (with TRUE/magnetic alignment and per-end wind components), current METAR, derived weather, 6 h history |
 | `GET /api/kml` | List available KML boundary files |
 | `GET /api/kml/{name}` | Serve a specific KML file from repo root |
@@ -2713,6 +2715,58 @@ demand) and the flight-history archive keep the full trail.
 Result: 17.6 MB -> 14.7 MB raw, **~2.1 MB on the wire**. If this needs more later, the next lever
 is that the scope and the flight table share `/ws` and the scope needs far fewer fields — but they
 share it deliberately, so that is a real design change, not a tweak.
+
+## The SYSTEM group is operator-only (`LaddService.OperatorView`)
+
+The home page's **SYSTEM** group — THROUGHPUT, STORAGE & RETENTION, SERVER STATUS — and the four
+endpoints behind it (`/api/feed`, `/api/feed/stdds`, `/api/system`, `/api/storage`) describe the
+**deployment**, not air traffic: who is connected, what the box is called, how much disk is left,
+how far behind each Solace queue we are and how many flows we bind. A visitor has no use for it and
+it is the material an operator would rather not publish, so it follows the same sign-in that
+reveals un-masked LADD identities. There is deliberately **one** notion of "the operator" here, not
+a second password.
+
+`LaddService.OperatorView(http)` is that predicate, and it is true in three cases:
+
+| case | why |
+|---|---|
+| the `/login` sign-in cookie (`laddKey`, also accepted as `X-LADD-Key` / `?laddKey=`) | the operator, wherever they are |
+| **`LADD_BYPASS_KEY` unset** | with no key, `Reveal` can never return true, so gating on it alone would hide this from the owner of a local or LAN deployment *with no way back in*. Unset = no gate, the same convention `SWIM_FEED_HOST` and `SWIM_GATE_HOST` use. `Init` logs which of the two states is live. |
+| **loopback, with no proxy header** | `curl http://127.0.0.1:5001/api/feed` on the box is the documented way to check feed health, and anyone who can run it can already read `.env`. |
+
+**The second half of that last row is the whole trap.** cloudflared dials **127.0.0.1**, and there
+is no `UseForwardedHeaders` in this pipeline, so `RemoteIpAddress` is loopback for *every* public
+request. A gate written as "signed in OR loopback" would let the entire internet through while
+reading as a careful local-access carve-out — and nothing would look wrong from either side.
+Requiring the absence of `CF-Connecting-IP` / `CF-Ray` / `CF-Visitor` / `X-Forwarded-*` /
+`X-Real-IP` / `Forwarded` is what makes "local" mean local. `OperatorViewTests` pins each header
+individually, because that is the half a later refactor is most likely to drop.
+
+Verified against a local instance with the key set, all four endpoints: loopback unproxied **200**,
+loopback + `CF-Connecting-IP` **403**, tunneled + the cookie **200**, tunneled + a wrong key
+**403**; `/api/stats`, `/api/asdex`, `/api/tdls`, `/api/tfms/stats`, `/api/history/dates` and `/`
+all still 200 for a visitor.
+
+**The page hides it in CSS, and that is presentation only.** `frame.js` already adds `.op-signed`
+to `<html>` from the non-secret `sv` cookie (the same signal behind the green build footer and the
+exit chip); `home.css` carries `html:not(.op-signed) #systemGroup, html:not(.op-signed) #serverStat
+{ display: none }`. Written as `:not()` rather than hide-then-restore so neither rule has to know
+what display value those elements would otherwise have, and so a visitor never sees the group for a
+frame while the deferred `frame.js` runs. Forging `sv=1` shows three cards that 403 — the server is
+the gate. `home.js` reads the same cookie into `OPERATOR` purely to skip four requests per poll
+that would only 403.
+
+**One visible regression, accepted.** The status bar's SFDPS chip preferred `/api/feed`'s live 10 s
+sample and now falls back, for visitors, to `/api/stats`'s **lifetime average** — the exact number
+["The home page rate was a lifetime average"](#the-home-page-rate-was-a-lifetime-average) explains
+is not comparable with the SCDS portal. The existing fallback tooltip says "average since start (no
+live sample)", so it is labelled rather than misleading. Fixing it properly means putting one
+instantaneous SFDPS rate into `/api/stats`; the per-feed table is what must stay private, not that
+single number. The `SRV:` chip is hidden with the group rather than left reading `--`.
+
+**Adding a card to the SYSTEM group needs nothing.** Adding an endpoint that reports deployment
+state *does*: gate it with `LaddService.OperatorView` and return `LaddService.OperatorOnly()`,
+which carries a one-line body so a hand `curl` reads as a gate rather than as a bug.
 
 ## Live Client Count (`/api/system`)
 

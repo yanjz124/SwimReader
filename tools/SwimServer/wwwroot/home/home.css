@@ -63,6 +63,23 @@ header .sub {
     margin: 0 auto;
 }
 .group { margin-bottom: 18px; }
+
+/* ── Operator-only: the SYSTEM group and the SRV status chip ──────────────────────────────
+   Per-feed throughput and lag, disk use and retention, and process CPU/memory/clients are
+   facts about the deployment rather than about air traffic, so a visitor doesn't see them.
+   frame.js adds .op-signed to <html> from the non-secret "sv" cookie the /login sign-in
+   sets — the same signal that turns the build footer green and shows the exit chip.
+
+   Written as :not(.op-signed) rather than hide-then-restore so neither rule has to know
+   what display value these elements would otherwise have, and so the hiding applies from
+   first paint for a visitor (frame.js is deferred, so a signed-in operator may see the
+   group appear a frame late — the safe direction).
+
+   This is presentation only. /api/feed, /api/feed/stdds, /api/system and /api/storage are
+   gated server-side in LaddService.OperatorView, so forging the cookie reveals three empty
+   cards, not the data. */
+html:not(.op-signed) #systemGroup,
+html:not(.op-signed) #serverStat { display: none; }
 .group-title {
     font-size: 10px;
     color: #555;

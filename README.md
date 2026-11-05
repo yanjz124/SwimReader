@@ -78,6 +78,7 @@ dotnet test
 | `SWIM_FEED_HOST` | **Set this.** A Solace queue delivers each message to exactly one consumer, so two instances on the same queue *split* the feed instead of duplicating it — silently. Name the host that owns the feed; everywhere else the consumers stay off while pages, APIs and replay keep working. |
 | `SWIM_ALLOW_SHARED_QUEUE` | Overrides the above for a deliberate local session against live data. |
 | `SWIM_GATE_HOST` / `_USER` / `_PASS` | Host-scoped HTTP basic auth for a public hostname. Unset = open (local use). |
+| `LADD_BYPASS_KEY` | Enables the signed-in operator view: un-masked LADD identities, **and** the home page's SYSTEM group (feed throughput/lag, disk and retention, process health). Unset = no operator view exists, so that material is open — set it on anything public. |
 | `SWIM_TRACE` | Opt-in per-message tracing (`CLR`, `INTERIM`, `HOLDBAR`, or `all`). Off by default — it is loud. |
 | `TELEGRAM_BOT_TOKEN` | Enables the Telegram bot. |
 

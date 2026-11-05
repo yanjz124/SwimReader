@@ -6,7 +6,7 @@
 <title>SWIM Viewer</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>✈️</text></svg>">
 <link rel="stylesheet" href="/shared/common.css?v=3">
-<link rel="stylesheet" href="/home/home.css?v=12">
+<link rel="stylesheet" href="/home/home.css?v=13">
 <script defer src="/shared/frame.js?v=4"></script>
 </head>
 <body>
@@ -168,7 +168,10 @@
         </div>
     </section>
 
-    <section class="group">
+    <!-- Operator-only. Hidden by CSS unless frame.js found the sign-in cookie; the three
+         endpoints behind these cards are gated server-side, so this is presentation, not the
+         gate. See LaddService.OperatorView. -->
+    <section class="group" id="systemGroup">
         <h2 class="group-title">SYSTEM</h2>
         <div class="grid">
             <div class="card server-card" id="throughputCard" role="button" tabindex="0" aria-expanded="false">
@@ -200,7 +203,7 @@
     <div style="margin-top:4px;color:#b06060;">NOT FOR OPERATIONAL USE — for situational awareness and reference only.</div>
 </footer>
 
-<script src="/home/home.js?v=15"></script>
+<script src="/home/home.js?v=16"></script>
 <script src="/idle-timer.js?v=3"></script>
 <script src="/shared/disclaimer.js?v=3"></script>
 </body>

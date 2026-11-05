@@ -46,6 +46,9 @@ static class LaddService
     public static void Init(string workingDir)
     {
         BypassKey = Environment.GetEnvironmentVariable("LADD_BYPASS_KEY");
+        Console.WriteLine(string.IsNullOrEmpty(BypassKey)
+            ? "[LADD] No LADD_BYPASS_KEY — no private view; operator-only pages are OPEN to everyone"
+            : "[LADD] LADD_BYPASS_KEY set — un-masked view and operator-only pages require /login");
         _dir = Path.Combine(workingDir, "ladd");
         try { Directory.CreateDirectory(_dir); } catch { /* best effort */ }
         Load();
@@ -126,14 +129,78 @@ static class LaddService
 
     /// <summary>Does this request carry the bypass key (query <c>?laddKey=</c>,
     /// header <c>X-LADD-Key</c>, or cookie <c>laddKey</c>)? Grants real identities.</summary>
-    public static bool Reveal(HttpContext http)
+    public static bool Reveal(HttpContext http) => Reveal(http, BypassKey);
+
+    // Same, against an explicit key. Exists so the tests can pin the decision without calling
+    // Init() and leaving BypassKey set for every other test in the run.
+    internal static bool Reveal(HttpContext http, string? key)
     {
-        var key = BypassKey;
         if (string.IsNullOrEmpty(key)) return false;
         if (http.Request.Query.TryGetValue("laddKey", out var q) && q == key) return true;
         if (http.Request.Headers.TryGetValue("X-LADD-Key", out var h) && h == key) return true;
         if (http.Request.Cookies.TryGetValue("laddKey", out var c) && c == key) return true;
         return false;
+    }
+
+    /// <summary>
+    /// May this request see <b>operator-only</b> material — the parts of the site that exist for
+    /// whoever runs the deployment rather than for a visitor? Today that is the home page's
+    /// SYSTEM group: per-feed throughput and lag, disk use and retention, process CPU / memory /
+    /// client counts.
+    ///
+    /// <para>Deliberately the same gesture as the un-masked LADD view rather than a second
+    /// login. There is one notion of "the operator" in this codebase — the <c>/login</c> sign-in
+    /// that sets the <c>laddKey</c> cookie — and inventing a second one would mean two secrets to
+    /// keep and two ways to be half signed in.</para>
+    ///
+    /// <para><b>Two widenings, both load-bearing.</b></para>
+    ///
+    /// <para><b>1. No LADD_BYPASS_KEY ⇒ open.</b> Without that key <see cref="Reveal"/> can never
+    /// return true, so gating on it alone would hide this material from everyone — including the
+    /// owner of a local or LAN deployment, with no way in. Same convention as
+    /// <c>SWIM_GATE_HOST</c>: unset means no gate. A deployment that wants it private sets the
+    /// key, and <c>Init</c> logs which of the two states is in effect.</para>
+    ///
+    /// <para><b>2. Loopback ⇒ open, but only when the request is unproxied.</b> This process sits
+    /// behind a Cloudflare tunnel whose connector dials 127.0.0.1, and there is no
+    /// <c>UseForwardedHeaders</c> in the pipeline — so <c>RemoteIpAddress</c> is loopback for
+    /// every public request and testing it alone would make this whole gate a silent no-op.
+    /// Requiring the absence of the proxy's own headers is what makes "local" mean local. It is
+    /// worth having at all because <c>curl</c> against <c>/api/feed</c> on the box is the
+    /// documented way to check feed health, and anyone who can do that can already read
+    /// <c>.env</c>.</para>
+    /// </summary>
+    public static bool OperatorView(HttpContext http) => OperatorView(http, BypassKey);
+
+    internal static bool OperatorView(HttpContext http, string? key)
+    {
+        if (Reveal(http, key)) return true;
+        if (string.IsNullOrEmpty(key)) return true;   // no private view configured at all
+        return IsLocalUnproxied(http);
+    }
+
+    /// <summary>
+    /// 403 for a non-operator request, with a one-line body: these endpoints are checked by
+    /// hand with <c>curl</c>, and an empty 403 reads as a bug rather than as a gate.
+    /// </summary>
+    public static IResult OperatorOnly() => Results.Json(
+        new { error = "operator only", hint = "sign in at /login, or call from the host" },
+        statusCode: 403);
+
+    // Loopback AND nothing saying a proxy forwarded it. Either half on its own is worthless
+    // here — see the remarks on OperatorView.
+    private static readonly string[] ProxyHeaders =
+    {
+        "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host",
+        "CF-Connecting-IP", "CF-Ray", "CF-Visitor", "X-Real-IP", "Forwarded",
+    };
+
+    private static bool IsLocalUnproxied(HttpContext http)
+    {
+        foreach (var h in ProxyHeaders)
+            if (http.Request.Headers.ContainsKey(h)) return false;
+        var ip = http.Connection.RemoteIpAddress;
+        return ip is not null && System.Net.IPAddress.IsLoopback(ip);
     }
 
     /// <summary>The call sign to display: real when <paramref name="reveal"/>, else

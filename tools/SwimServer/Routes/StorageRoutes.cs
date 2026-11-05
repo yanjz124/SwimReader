@@ -51,8 +51,12 @@ static class StorageRoutes
                      "FAA navigation data (downloaded every AIRAC)"),
         };
 
-        app.MapGet("/api/storage", async () =>
+        // Operator-only (LaddService.OperatorView), like /api/feed and /api/system: how much
+        // disk this deployment has and how far back each archive reaches is a fact about the
+        // deployment. The home page's STORAGE card is hidden from visitors to match.
+        app.MapGet("/api/storage", async (HttpContext http) =>
         {
+            if (!LaddService.OperatorView(http)) return LaddService.OperatorOnly();
             if (_cached is not null && DateTime.UtcNow - _cachedAt < CacheFor) return Results.Json(_cached);
             await Gate.WaitAsync();
             try

@@ -1720,10 +1720,28 @@ function getBoundaryDashArray(category) {
     return undefined;  // solid line (no dashArray)
 }
 
+// Parsed once and kept apart from sectorShapes. sectorShapes may BE a favCache array, so filling it
+// in place would leave the vNAS volumes drawn under the KML and write KML into that cache.
+let kmlShapes = null;
+
 async function loadKml() {
     try {
+        if (!kmlShapes) kmlShapes = await parseKml();
+        if (boundarySource !== 'kml') return;   // switched away while it was loading
+        sectorShapes = kmlShapes;
+        // Clear any boundary layers cached before KML finished (they'd be empty)
+        for (const key in boundaryLayers) {
+            if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
+            delete boundaryLayers[key];
+        }
+        if (myFacility) showBoundariesForFacility(myFacility);
+    } catch (e) { console.warn('[KML]', e); }
+}
+
+async function parseKml() {
+        const parsed = [];
         const resp = await fetch('/api/kml/AllSectors.kml');
-        if (!resp.ok) return;
+        if (!resp.ok) throw new Error(`AllSectors.kml: HTTP ${resp.status}`);
         const text = await resp.text();
         const parser = new DOMParser();
         const xml = parser.parseFromString(text, 'text/xml');
@@ -1781,26 +1799,12 @@ async function loadKml() {
             }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
 
             if (coords.length < 2) continue;
-            sectorShapes.push({ artcc, name, sectorId, alt: data['ALT'] || '', category, coords });
+            parsed.push({ artcc, name, sectorId, alt: data['ALT'] || '', category, coords });
         }
         const catCounts = {};
-        for (const s of sectorShapes) catCounts[s.category] = (catCounts[s.category] || 0) + 1;
-        console.log(`[KML] Loaded ${sectorShapes.length} sectors`, catCounts);
-        // Clear any boundary layers cached before KML finished (they'd be empty)
-        for (const key in boundaryLayers) {
-            if (boundaryLayers[key]) map.removeLayer(boundaryLayers[key]);
-            delete boundaryLayers[key];
-        }
-        if (myFacility) showBoundariesForFacility(myFacility);
-        // Fresh LAUNCH from the picker (?center=1) → center the scope on the chosen ARTCC now
-        // that its sector bounds are loaded, overriding the restored last-session view. This is
-        // a one-shot: strip the flag so a later refresh keeps whatever the user has panned to.
-        // (RESUME omits center=1, so it keeps the saved view.)
-        if (myFacility && new URLSearchParams(location.search).get('center') === '1') {
-            zoomToFacility(myFacility);
-            history.replaceState(null, '', location.pathname + location.hash);
-        }
-    } catch (e) { console.warn('[KML]', e); }
+        for (const s of parsed) catCounts[s.category] = (catCounts[s.category] || 0) + 1;
+        console.log(`[KML] Loaded ${parsed.length} sectors`, catCounts);
+        return parsed;
 }
 
 // ── FAV source ──────────────────────────────────────────────────────────────
@@ -1842,11 +1846,12 @@ async function loadFavs(artcc) {
 /// Reload whatever source is selected for the ARTCC currently shown, then redraw.
 async function reloadBoundarySource() {
     const artcc = activeBoundaryArtcc;
+    const token = ++favLoadToken;              // an in-flight FAV fetch must not land over this
     if (boundarySource === 'kml') {
-        await loadKml();                       // fills sectorShapes and redraws                       // fills sectorShapes and redraws
+        loadedFavArtcc = null;                 // sectorShapes is about to stop holding FAVs
+        await loadKml();                       // fills sectorShapes and redraws
         return;
     }
-    const token = ++favLoadToken;
     const shapes = await loadFavs(artcc);
     if (token !== favLoadToken) return;        // a newer switch already won
     loadedFavArtcc = artcc;
@@ -1939,6 +1944,9 @@ function showBoundariesForFacility(artcc) {
         }
         boundaryLayers[key].addTo(map);
     }
+    // Every source's landing comes back through here, so this is the one place a zoom that was
+    // waiting on its shapes gets served.
+    settleFacilityZoom();
 }
 
 function setBoundaryBrightness(cat, brightness) {
@@ -1972,10 +1980,35 @@ function setBoundaryBrightness(cat, brightness) {
     }
 }
 
+// ARTCCs that publish no FAVs, so there are no shapes to frame. Approximate, and only ever used to
+// aim the map; the feed still draws no boundaries for them in FAV mode.
+const NO_FAV_ARTCC_BOUNDS = {
+    ZAN: [[51, -175], [72, -130]],
+    ZHN: [[18, -161], [23, -154]],
+    ZSU: [[16, -69], [20, -63]],
+    ZUA: [[12, 143], [15.5, 146]],
+};
+
+// Facility wanted in frame, held until its shapes exist. FAVs load per-ARTCC, so at the moment a
+// facility is chosen sectorShapes still holds the PREVIOUS ARTCC's volumes (or nothing).
+let pendingFacilityZoom = null;
+
 function zoomToFacility(artcc) {
-    if (!artcc || sectorShapes.length === 0) return;
+    pendingFacilityZoom = artcc || null;
+    settleFacilityZoom();
+}
+
+function settleFacilityZoom() {
+    const artcc = pendingFacilityZoom;
+    if (!artcc) return;
+    const ready = boundarySource === 'fav' ? loadedFavArtcc === artcc : sectorShapes === kmlShapes;
+    if (!ready) return;   // still loading
+    pendingFacilityZoom = null;
     const sectors = sectorShapes.filter(s => s.artcc === artcc);
-    if (sectors.length === 0) return;
+    if (sectors.length === 0) {
+        if (NO_FAV_ARTCC_BOUNDS[artcc]) map.fitBounds(NO_FAV_ARTCC_BOUNDS[artcc], { padding: [20, 20] });
+        return;
+    }
     let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
     for (const sec of sectors) {
         for (const [lat, lon] of sec.coords) {
@@ -9958,6 +9991,15 @@ try {
         mySectors = new Set(_secs);
         facilityOnly = false;
         saveSettingsToLocalStorage();
+        // Don't wait for the WS snapshot to name this facility: settings load drew the saved one.
+        showBoundariesForFacility(myFacility);
+    }
+    // Fresh LAUNCH from the picker or a deep link (?center=1): frame the chosen ARTCC, overriding
+    // the restored last-session view. One-shot, so a later refresh keeps wherever the user panned.
+    // (RESUME omits center=1, so it keeps the saved view.)
+    if (_q.get('center') === '1') {
+        if (myFacility) zoomToFacility(myFacility);
+        history.replaceState(null, '', location.pathname + location.hash);
     }
 } catch (e) { /* ignore bad deep-link params */ }
 rebuildFacilityDropdown();

@@ -1843,6 +1843,72 @@ stay on the 60 s refresh — matching is pure in-memory work against an index al
 minute was long enough for an uncorrelated VFR target to come and go unmatched. The queued entry is
 overwritten by each TAIS update, so the *position* used is current — it is latency, not staleness.
 
+#### Third half: ADS-B was never the only source we had
+
+Reported as "only a few targets get an F1 callsign". True, and the reason was that the service
+had exactly one source of truth — public ADS-B APIs — so a target they did not cover stayed
+untagged forever. We already hold two sets of positively identified aircraft and were using
+neither: every en-route **SFDPS** flight, and every TRACON track that **another facility** has
+already correlated.
+
+Measured first, across 142 facilities and 14,148 untagged targets:
+
+| candidate source | names |
+|---|---|
+| discrete beacon + 5 NM/1,000 ft gate vs SFDPS | **31.0%** |
+| same, vs another facility's tagged tracks | **24.6%** |
+| Mode S vs another facility's tagged tracks | 10.9% |
+| ambiguous, correctly declined | 3.1% |
+| **union** | **38.6%** |
+
+**SFDPS had no Mode S at all, and nothing said so.** FIXM documents
+`aircraftDescription/@aircraftAddress`; that is what this parser read for its whole life, and on
+the live NAS feed it is **never populated** — 0 of 8,863 positioned flights carried a `ModeSCode`,
+while the supplementalData nameValue **`ADSB_02M_52B`** (the hex prefixed with a hyphen,
+`-AD9003`) was the **single most common key in the entire feed at 399,198 occurrences**. The field
+existed in the model, in the WS payload and in the LADD masking call; it was simply always null,
+which reads exactly like "this aircraft has no Mode S code". Parsing it took SFDPS from 0% to
+**88%** Mode S coverage, and that is the tier that matters most: an exact Mode S match needs no
+distance gate and cannot be ambiguous, and **21.7%** of untagged targets carry a Mode S code with
+a *non-discrete* squawk, so nothing else can reach them. `ModeSSourceTests` pins it.
+
+**The candidates are shaped as `AdsbFiAircraft` and merged into the one existing index**, not
+matched by a parallel path, so they inherit every tier, every gate, the non-discrete beacon rule
+and the decline-on-ambiguity rule unchanged. The ambiguity rule in particular *only works if all
+candidates share a bucket* — two sources each finding one "unique" match is precisely the coin
+flip it exists to refuse.
+
+**SFDPS arrives over HTTP** (`GET /api/enrich/aircraft` on SwimServer, operator-gated, which for
+the real consumer is the unproxied-loopback case). It cannot be subscribed to here: a Solace queue
+is competing-consumers, so a second subscriber would *split* the feed, not duplicate it. LADD
+aircraft are omitted entirely rather than masked — a masked row still pairs a position with a
+beacon code, and turning exactly that pair into an identity is what the list is for.
+
+Two bugs that only measurement found, both of which looked like success:
+
+- **The cross-facility source held one entry in the whole NAS.** It read
+  `TrackPositionEvent.Callsign`, which is the obvious place for a correlated callsign and is almost
+  always null — TAIS puts the callsign on the **flight plan** (a live capture: 14 of 1,237 track
+  records carried one). Position and identity are now joined on `(facility, track number)`, and
+  only an entry that is both identified *and* located is evidence. `/diag` reports held and named
+  counts separately, because the gap between them is the only thing that shows this.
+- **The SWIM refresh ran once every two minutes**, not every ten seconds. The matching cycle is
+  self-limiting: a pass is "slow" if 60 s have elapsed since the last region refresh, and a slow
+  pass spends ~20 rate-limited region fetches plus up to 50 hex lookups at ~1.1 s. Once one pass
+  exceeds 60 s, *every* pass qualifies and it never recovers. That defeated the source's own rule
+  of stripping positions older than 60 s so a 5 NM gate could trust them. It has its own loop now;
+  `pending` fell from ~11,000 to ~2,600.
+
+**Two rules worth keeping.** A tagged track from the *same* facility is never a candidate — that
+is the facility's own picture, so a hit is a duplicate, not a correlation. And an `ADSB_ENRICH`
+event is explicitly refused as evidence: it carries a callsign this service guessed, and letting
+one guess justify the next would spread a wrong answer across facilities with no way back.
+
+Result after 22 minutes live: 30,303 matches, **adsb 15,648 / sfdps 7,191 / tais 7,464** — the two
+new sources are **48%** of all matches. `/diag` now splits by **source** as well as tier, because
+a rising match count otherwise cannot distinguish "ADS-B coverage improved" from "we started
+reading our own feed", and those have completely different follow-ups.
+
 #### The second half: it matched, published, and still showed nothing
 Coverage was only half of "the beacon reader isn't working". With it fixed the service reported
 **435,400 published** enrichments and F1 still revealed nothing, because the callsign was arriving

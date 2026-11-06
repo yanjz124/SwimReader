@@ -24,6 +24,15 @@ static class AirspaceRoutes
         // the literal "favs" can't be taken for a facility id (same rule as /asdex/ws/{airport}).
         app.MapGet("/api/airspace/favs", () => Results.Json(ctx.EramAirspace.Status(), ctx.JsonOpts));
 
+        // Whole-center lateral boundaries, one Polygon per ARTCC (properties.id), ~32 KB. Served
+        // verbatim from vNAS's own ArtccBoundaries.geojson. There is deliberately no altitude
+        // filter: unlike a FAV, an ARTCC boundary has no high/low variants to choose between.
+        // Registered before "/api/airspace/{facility}" for the same reason "favs" is.
+        app.MapGet("/api/airspace/artcc-boundaries", () =>
+            ctx.EramAirspace.ArtccBoundaries() is { } geo
+                ? Results.Content(geo, "application/geo+json")
+                : Results.NotFound(new { error = "ARTCC boundaries not fetched yet" }));
+
         // GeoJSON for one ARTCC. ?lowFt=&highFt= keeps only the modules overlapping that band —
         // which is the whole point of FAVs over the KML: a sector's shape changes with altitude.
         app.MapGet("/api/airspace/favs/{artcc}", (string artcc, int? lowFt, int? highFt,

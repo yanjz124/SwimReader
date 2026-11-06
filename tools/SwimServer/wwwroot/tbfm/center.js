@@ -17,7 +17,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hhmm = iso => iso ? String(iso).slice(11, 16) : '';
 
-let board = null, map = null, layer = null;
+let board = null, map = null, layer = null, bndLayer = null, bndGeo = null;
 let sortKey = 'scheduled', sortDir = -1;
 
 // Arc / fix colors by point type. Meter fixes are the ERAM yellow the rest of the site uses;
@@ -49,6 +49,49 @@ function arcPath(lat, lon, radiusNm, lan, ran) {
     return pts;
 }
 
+// ── ARTCC boundaries ────────────────────────────────────────────────
+// Whole-center outlines, so a meter point reads against the airspace it belongs to and extended
+// metering is visible as points sitting in somebody else's center.
+//
+// Deliberately NOT the FAVs: those are per-sector, per-altitude-slab volumes (2,641 nationally)
+// and drawing them here would bury the adaptation this page exists to show. vNAS's
+// ArtccBoundaries.geojson is one polygon per ARTCC and publishes no high/low variants, so it IS
+// already the high-altitude outline — there is no altitude choice to expose.
+//
+// Fetched ONCE and kept in its own layer and pane. `layer` below is torn down and rebuilt on every
+// 10 s refresh; boundaries must not ride on that (24 polygons re-added 6x a minute), and the pane
+// pins them under the adaptation instead of relying on add order surviving each rebuild.
+const BND_PANE = 'artccBnd';
+
+async function drawBoundaries() {
+    if (!map || bndLayer) return;
+    if (!bndGeo) {
+        try {
+            const r = await fetch('/api/airspace/artcc-boundaries');
+            if (!r.ok) return;              // not fetched yet — the map is still fine without it
+            bndGeo = await r.json();
+        } catch { return; }
+    }
+    if (!map.getPane(BND_PANE)) map.createPane(BND_PANE).style.zIndex = 350;   // tiles 200, overlays 400
+    bndLayer = L.geoJSON(bndGeo, {
+        pane: BND_PANE,
+        style: f => {
+            const own = String(f.properties && f.properties.id || '').toUpperCase() === CTR;
+            return {
+                // This center solid and brighter, its neighbours dashed and dim, so they read as
+                // context rather than competing with the meter points for attention.
+                color: own ? '#6f7f8f' : '#44515c',
+                weight: own ? 1.6 : 0.8,
+                opacity: own ? 0.95 : 0.5,
+                dashArray: own ? null : '2 6',
+                fill: false,
+                interactive: false,         // never steal a tooltip from a meter point
+            };
+        },
+    }).addTo(map);
+}
+
+
 // ── map ─────────────────────────────────────────────────────────────────────
 function drawMap() {
     const g = (board.geometry || []).filter(p => p.lat != null && p.lon != null);
@@ -67,6 +110,7 @@ function drawMap() {
         // Same proxied basemap the scopes use, so there's no third-party tile dependency here.
         L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 11 }).addTo(map);
     }
+    drawBoundaries();   // once; fire-and-forget so a slow fetch never holds up the adaptation
     if (layer) layer.remove();
     layer = L.layerGroup().addTo(map);
 
@@ -117,6 +161,7 @@ function drawMap() {
     const kinds = [...new Set(g.map(p => p.type).filter(Boolean))].sort();
     $('legend').innerHTML = kinds.map(k =>
         `<i style="background:${TYPE_COLOR[k] || '#888'}"></i>${k}`).join('')
+        + `<i style="background:#6f7f8f"></i>${esc(CTR)}<i style="background:#44515c"></i>adjacent ARTCC`
         + ' &nbsp;&nbsp; solid = being metered now, dashed = adapted but idle, thick = holding. '
         + `${g.length} of ${board.adaptedPoints} adapted points have coordinates`
         + (busyBounds.length

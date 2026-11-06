@@ -2538,6 +2538,33 @@ ACAS and AKIM share 33.933/-118.432, which is the LAX reference. An arc is drawn
 118 of ZLA's 172 points have a radius, which is exactly its non-MFX count. Adaptation is published
 rarely, so a center with no geometry yet is normal and the page says so instead of drawing nothing.
 
+#### ARTCC boundaries under it come from vNAS, not the FAVs
+
+`GET /api/airspace/artcc-boundaries` serves vNAS's own `ArtccBoundaries.geojson` verbatim — the URL
+is resolved from `configuration.vnas.vatsim.net` (`artccBoundariesUrl`) like the video maps and the
+FAVs, not hardcoded. **24 features, one Polygon per ARTCC keyed by `properties.id`, ~32 KB**, cached
+to `vnas-airspace/_artcc-boundaries.geojson` on the daily FAV refresh and defended the same way: a
+replacement must parse as a non-empty FeatureCollection or the held copy stands.
+
+**This is the right source for "just the high altitude boundaries", and the FAVs are not.** An ARTCC
+boundary has **no high/low variants** — vNAS publishes a single lateral outline per center — so
+there is no altitude parameter to expose and none is accepted. The FAVs are per-sector,
+per-altitude-slab volumes (2,641 nationally) and drawing them here would bury the adaptation the
+page exists to show.
+
+On `/tbfm/center/{ctr}` the overlay is fetched **once** into its own layer and its own pane
+(z-index 350: above tiles at 200, below overlays at 400). Both halves matter — `layer` holding the
+meter points is torn down and rebuilt on every 10 s refresh, so boundaries riding on it would be 24
+polygons re-added six times a minute, and the pane pins them *under* the adaptation rather than
+trusting add order to survive each rebuild. The center's own boundary draws solid and brighter, its
+neighbours dashed and dim; all are `interactive: false` so they can never take a tooltip from a
+meter point. The practical payoff is that extended metering becomes visible as points sitting in
+somebody else's center.
+
+`LoadCache`'s FAV scan now skips any `_`-prefixed file rather than naming the stamp sidecar
+explicitly — no ARTCC id starts with one, so one rule covers anything added later instead of each
+new file parsing as a FAV list until someone notices.
+
 #### Rates are not persisted, adaptation is
 `<con>` is ~1.3% of TBFM traffic, so a center's acceptance rates take up to an hour to repopulate
 after a restart and the center board says so rather than showing a bare "No rates published", which

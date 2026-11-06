@@ -43,6 +43,7 @@ class VnasAirspace
 {
     private const string ConfigUrl = "https://configuration.vnas.vatsim.net/";
     private const string DefaultApiBase = "https://data-api.vnas.vatsim.net/api";
+    private const string DefaultBoundariesUrl = "https://data-api.vnas.vatsim.net/Files/ArtccBoundaries.geojson";
 
     /// <summary>
     /// Altitudes at or above this are ERAM's "and above" encoding, not real feet. Evidence: no
@@ -65,6 +66,14 @@ class VnasAirspace
     private readonly HttpClient _http;
     private readonly string _cacheDir;
     private string _apiBase = DefaultApiBase;
+    private string _boundariesUrl = DefaultBoundariesUrl;
+
+    /// <summary>Raw ArtccBoundaries.geojson, served as-is. One Polygon per ARTCC keyed by
+    /// <c>properties.id</c> — 24 features, ~32 KB. This is the CENTER's lateral boundary, and vNAS
+    /// publishes no high/low variants of it, so there is nothing to filter by altitude: it is
+    /// already the "just the high altitude boundaries" shape rather than the FAV sector soup.</summary>
+    private string? _boundaries;
+    private DateTime? _boundariesAt;
 
     // ARTCC → its volumes. Replaced wholesale per ARTCC on refresh, so readers never see a partial set.
     private readonly Dictionary<string, ArtccAirspace> _byArtcc = new(StringComparer.OrdinalIgnoreCase);
@@ -137,6 +146,7 @@ class VnasAirspace
     /// served.
     /// </summary>
     private const string StampFile = "_fetched.json";
+    private const string BoundariesFile = "_artcc-boundaries.geojson";
 
     /// <summary>Load whatever is cached on disk, so a restart serves geometry before any fetch.</summary>
     public void LoadCache()
@@ -152,11 +162,25 @@ class VnasAirspace
         }
         catch { stamps = new(); }
 
+        try
+        {
+            var bp = Path.Combine(_cacheDir, BoundariesFile);
+            if (File.Exists(bp) && ValidBoundaries(File.ReadAllText(bp)) is { } cached)
+            {
+                _boundaries = cached;
+                _boundariesAt = File.GetLastWriteTimeUtc(bp);
+            }
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[FAV] cached boundaries unreadable: {ex.Message}"); }
+
         int n = 0, vols = 0, stamped = 0;
         foreach (var path in Directory.EnumerateFiles(_cacheDir, "*.json"))
         {
             var artcc = Path.GetFileNameWithoutExtension(path).ToUpperInvariant();
-            if (string.Equals(Path.GetFileName(path), StampFile, StringComparison.OrdinalIgnoreCase)) continue;
+            // Everything we keep in here that is not an ARTCC is underscore-prefixed, and no ARTCC
+            // id is — so one rule covers the stamp sidecar and anything added later, instead of
+            // each new file needing its own skip and silently parsing as a FAV list until it does.
+            if (Path.GetFileName(path).StartsWith('_')) continue;
             try
             {
                 var favs = JsonSerializer.Deserialize<List<Fav>>(File.ReadAllText(path), Json);
@@ -217,6 +241,10 @@ class VnasAirspace
                     Console.WriteLine($"[FAV] vNAS dataApiBaseUrl = {url}");
                 _apiBase = url;
             }
+            // Same reason CRC resolves its endpoints: the file lives wherever the config says.
+            if (doc.RootElement.TryGetProperty("artccBoundariesUrl", out var b)
+                && b.GetString() is { Length: > 0 } burl)
+                _boundariesUrl = burl;
         }
         catch (Exception ex)
         {
@@ -227,6 +255,7 @@ class VnasAirspace
     public async Task RefreshAsync(CancellationToken ct = default)
     {
         await ResolveApiBaseAsync(ct);
+        await RefreshBoundariesAsync(ct);
         var summaries = JsonSerializer.Deserialize<List<Summary>>(
             await _http.GetStringAsync($"{_apiBase}/artcc-summaries", ct), Json) ?? new();
 
@@ -281,6 +310,60 @@ class VnasAirspace
         Console.WriteLine($"[FAV] {fetched} fetched, {skipped} unchanged, {empty} publish none, {failed} failed");
     }
 
+    /// <summary>The body if it is usable GeoJSON, else null. Nothing is signed, so authenticity
+    /// cannot be checked — but refusing to replace good geometry with something that is not
+    /// geometry catches the realistic failures: a truncated download, an error page served 200.</summary>
+    private static string? ValidBoundaries(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var r = doc.RootElement;
+            if (!r.TryGetProperty("type", out var t) || t.GetString() != "FeatureCollection") return null;
+            if (!r.TryGetProperty("features", out var f) || f.ValueKind != JsonValueKind.Array) return null;
+            return f.GetArrayLength() > 0 ? body : null;
+        }
+        catch { return null; }
+    }
+
+    private async Task RefreshBoundariesAsync(CancellationToken ct)
+    {
+        try
+        {
+            var body = ValidBoundaries(await _http.GetStringAsync(_boundariesUrl, ct));
+            if (body is null)
+            {
+                // Keep what we hold. An unreachable or broken vNAS must not cost us the overlay.
+                Console.Error.WriteLine("[FAV] ARTCC boundaries: response was not a usable FeatureCollection, keeping cache");
+                return;
+            }
+            _boundaries = body;
+            _boundariesAt = DateTime.UtcNow;
+            Directory.CreateDirectory(_cacheDir);
+            var path = Path.Combine(_cacheDir, BoundariesFile);
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, body);
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[FAV] ARTCC boundaries: {ex.Message}");
+        }
+    }
+
+    private static int BoundaryCount(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.GetProperty("features").GetArrayLength();
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>Raw ArtccBoundaries.geojson, or null if we have never managed to fetch one.</summary>
+    public string? ArtccBoundaries() => _boundaries;
+
     private void SaveCache(string artcc, string body)
     {
         try
@@ -320,6 +403,13 @@ class VnasAirspace
             return new
             {
                 artccs = rows.Length,
+                artccBoundaries = _boundaries is null ? null : new
+                {
+                    features = BoundaryCount(_boundaries),
+                    bytes = _boundaries.Length,
+                    fetchedAt = _boundariesAt,
+                    url = _boundariesUrl,
+                },
                 withGeometry = _byArtcc.Values.Count(a => a.Favs.Count > 0),
                 lastRefresh = _lastRefresh,
                 error = _lastError,

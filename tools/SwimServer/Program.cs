@@ -740,6 +740,17 @@ static char GetHistSym(FlightState f)
     return '+';                                             // Primary only
 }
 
+// Radar fix time from <position positionTime="...">, as UTC.
+static bool TryParseFixTime(System.Xml.Linq.XElement pos, out DateTime fixUtc)
+{
+    fixUtc = default;
+    var ptAttr = pos.Attribute("positionTime")?.Value;
+    return ptAttr is not null &&
+        DateTime.TryParse(ptAttr, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out fixUtc);
+}
+
 static string FindRepoRoot(string start)
 {
     var dir = new DirectoryInfo(start);
@@ -1920,6 +1931,14 @@ void ProcessFlight(XElement flight, string rawXml)
     {
         // Position (TH, HZ)
         var pos = enRoute.Elements().FirstOrDefault(e => e.Name.LocalName == "position");
+        // Multi-sensor coverage: ERAM can publish the same track from two sensors a second or two
+        // apart, and the later message sometimes carries an OLDER fix. Applying it jumps the target
+        // backwards along its own path (and leaves a history dot ahead of it). The radar fix time
+        // orders them; a position whose fix predates the one we already hold is dropped whole —
+        // velocity/target position with it, since they describe that same older instant.
+        if (pos is not null && state.PositionFixTime != default &&
+            TryParseFixTime(pos, out var incomingFix) && incomingFix < state.PositionFixTime)
+            pos = null;
         if (pos is not null)
         {
             var locPos = pos.Descendants().FirstOrDefault(e => e.Name.LocalName == "pos");
@@ -1928,7 +1947,8 @@ void ProcessFlight(XElement flight, string rawXml)
                 var parts = locPos.Value.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length == 2 && double.TryParse(parts[0], out var lat) && double.TryParse(parts[1], out var lon))
                 {
-                    // Record old position in history before updating (if moved)
+                    // Record old position in history before updating (if moved). AddPosition thins this
+                    // to one point per radar scan, so multi-sensor tracks keep a full-length trail.
                     if (state.Latitude.HasValue && state.Longitude.HasValue)
                     {
                         var dlat = Math.Abs(state.Latitude.Value - lat);
@@ -1941,11 +1961,7 @@ void ProcessFlight(XElement flight, string rawXml)
                     state.LastPositionTime = DateTime.UtcNow;
                     // When the radar actually saw it, as opposed to when we got told. Kept
                     // separately so display logic (coast, extrapolation) is unaffected.
-                    var ptAttr = pos.Attribute("positionTime")?.Value;
-                    if (ptAttr is not null &&
-                        DateTime.TryParse(ptAttr, System.Globalization.CultureInfo.InvariantCulture,
-                            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
-                            out var fixUtc))
+                    if (TryParseFixTime(pos, out var fixUtc))
                         state.PositionFixTime = fixUtc;
                 }
             }

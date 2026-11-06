@@ -128,10 +128,21 @@ class FlightState
     private readonly List<PositionRecord> _posHistory = new();
     private const int MaxPosHistory = 20;
 
+    /// <summary>
+    /// Minimum spacing between history points. ERAM draws one history symbol per radar scan
+    /// (~12 s). Tracks covered by more than one sensor get updates every few seconds, which
+    /// recorded every one would halve the trail's length for the same history count and bunch
+    /// the dots. 9 s keeps one point per scan with room for ordinary 12 s jitter.
+    /// </summary>
+    public static readonly TimeSpan MinHistorySpacing = TimeSpan.FromSeconds(9);
+
     public void AddPosition(double lat, double lon, char sym)
     {
         lock (_posHistory)
         {
+            if (_posHistory.Count > 0 &&
+                DateTime.UtcNow.Ticks - _posHistory[^1].Ticks < MinHistorySpacing.Ticks)
+                return;
             _posHistory.Add(new PositionRecord(lat, lon, DateTime.UtcNow.Ticks, sym));
             if (_posHistory.Count > MaxPosHistory) _posHistory.RemoveAt(0);
         }

@@ -3555,10 +3555,29 @@ function handoffSuffix(receiving, transferring) {
 // ════════════════════════════════════════════════════════════════════════════
 // History tracking
 // ════════════════════════════════════════════════════════════════════════════
+// One history symbol per radar scan. A track seen by more than one sensor gets position updates
+// every few seconds; recording each would bunch the dots and halve the trail's length for the same
+// history count. Spacing is measured on the DATA clock (replay time in replay, wall clock live) so
+// a 10x replay thins the same way live does. 9 s = one 12 s scan with room for jitter. Mirrors
+// FlightState.MinHistorySpacing on the server, which seeds the snapshot trail.
+const HIST_MIN_SPACING_MS = 9000;
+function histClock() {
+    const rb = window.ReplayBar;
+    if (rb && rb.isActive && rb.isActive()) {
+        const t = rb.currentTime && rb.currentTime();
+        const ms = t ? Date.parse(t) : NaN;
+        if (!isNaN(ms)) return ms;
+    }
+    return Date.now();
+}
 function addHistoryPoint(gufi, lat, lon, sym) {
     if (!flightHistory.has(gufi)) flightHistory.set(gufi, []);
     const hist = flightHistory.get(gufi);
-    hist.push({ lat, lon, sym: sym || '\\', time: performance.now() });
+    const clk = histClock();
+    const last = hist[hist.length - 1];
+    // clk < last.clk: the clock jumped back (replay seek) — start counting afresh.
+    if (last && last.clk != null && clk >= last.clk && clk - last.clk < HIST_MIN_SPACING_MS) return;
+    hist.push({ lat, lon, sym: sym || '\\', time: performance.now(), clk });
     if (hist.length > MAX_HISTORY) hist.shift();
 }
 
@@ -3799,9 +3818,11 @@ function connectWs() {
                 trackFacility(f);
                 if (f.history && f.history.length > 0) {
                     const now = performance.now();
+                    const clkNow = histClock();
                     const hist = f.history.map(h => ({
                         lat: h.lat, lon: h.lon, sym: h.sym || '\\',
-                        time: now - ((h.age || 0) * 1000)
+                        time: now - ((h.age || 0) * 1000),
+                        clk: clkNow - ((h.age || 0) * 1000)
                     }));
                     while (hist.length > MAX_HISTORY) hist.shift();
                     flightHistory.set(f.gufi, hist);

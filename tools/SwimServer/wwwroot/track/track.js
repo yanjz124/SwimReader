@@ -143,11 +143,13 @@
       tfdm:  (d.tfdm  || []).filter(f => f.airport && normDep(f.airport) === depFilter),
       asdex: (d.asdex || []).filter(e => e.airport && (normDep(e.airport) === depFilter || selDests.has(normDep(e.airport)))),
       tfms:  (d.tfms && d.tfms.depArpt && normDep(d.tfms.depArpt) === depFilter) ? d.tfms : null,
-      // TBFM keys on (callsign, destination), so it belongs to whichever leg is being flown. Keep
-      // it when its departure matches, and also when TBFM never learned one — an arrival chain
-      // with no departure field is still about the leg in the air, and dropping it would blank the
-      // metering card for exactly the long inbound where it matters most.
-      tbfm:  (!d.tbfm || !d.tbfm.dep || normDep(d.tbfm.dep) === depFilter) ? d.tbfm : null,
+      // TBFM is keyed on (callsign, DESTINATION), so the leg it belongs to is decided by where it
+      // is landing, not where it left — and matching on departure does not even work: TBFM writes
+      // bare IATA-style ids where SFDPS writes ICAO, so ROU1721 came through as YYZ against
+      // SFDPS's CYYZ and normDep (which only strips a leading K) left them unequal, blanking the
+      // card on a real 4-center hold. Destinations agree after normDep (PHX vs KPHX), and an
+      // unknown destination is kept rather than dropped.
+      tbfm:  (!d.tbfm || !d.tbfm.dest || !selDests.size || selDests.has(normDep(d.tbfm.dest))) ? d.tbfm : null,
     });
     const taisList = df.tais || [];
     const asd = (df.asdex || [])[0] || null;

@@ -2503,35 +2503,73 @@ const MrmsEramLayer = L.GridLayer.extend({
     }
 });
 
-// Warm the cache for the zoom levels either side of the current one, once the map settles.
-// Live only — replay crops one whole-CONUS composite that is already cached per slot.
-let _wxPrefetchTimer = null;
+// Keep weather tiles loaded just beyond the screen, like aircraft are, so neither a pan nor a
+// zoom ever shows a tile arriving. Two rings are kept warm in the image cache:
+//   * the current zoom level, padded by PAD_NEAR of a screen on every side (pan margin)
+//   * the levels either side, padded by PAD_ZOOM (zoom margin)
+// Live only: replay crops one whole-CONUS composite already cached per slot.
+//
+// Requests go through a small queue (WX_PREFETCH_PARALLEL at a time, nearest to centre first)
+// rather than being fired all at once. Browsers cap connections per host, so a few hundred
+// speculative requests would otherwise sit in front of a tile the user actually needs now.
+// Tiles the layer asks for itself call wxImage() directly and never wait in this queue; a queued
+// URL the layer has since fetched is simply skipped.
+const WX_PAD_NEAR = 0.75, WX_PAD_ZOOM = 0.25, WX_PREFETCH_PARALLEL = 4, WX_PREFETCH_MAX = 500;
+let _wxPrefetchTimer = null, _wxQueue = [], _wxActive = 0;
+function _wxPump() {
+    while (_wxActive < WX_PREFETCH_PARALLEL && _wxQueue.length) {
+        const job = _wxQueue.shift();
+        if (job.gen !== wxGen) continue;                       // refreshed since: stale weather
+        if (_wxImgCache.has(`${wxGen}|${job.url}`)) continue;  // layer already fetched it
+        const e = wxImage(job.url);
+        if (e.state !== 'loading') continue;
+        _wxActive++;
+        e.waiters.push(() => { _wxActive--; _wxPump(); });
+    }
+}
+function _wxQueueRing(layer, z, pad, out) {
+    if (z < 0 || z > layer.options.maxZoom) return;
+    const b = map.getBounds().pad(pad);
+    const nw = map.project(b.getNorthWest(), z).divideBy(256).floor();
+    const se = map.project(b.getSouthEast(), z).divideBy(256).floor();
+    const max = Math.pow(2, z);
+    const cx = (nw.x + se.x) / 2, cy = (nw.y + se.y) / 2;
+    for (let y = Math.max(0, nw.y); y <= Math.min(max - 1, se.y); y++) {
+        for (let x = nw.x; x <= se.x; x++) {
+            const c = L.point(((x % max) + max) % max, y); c.z = z;
+            const tb = layer._tileCoordsToBounds(c);
+            const sw = tb.getSouthWest(), ne = tb.getNorthEast();
+            out.push({ gen: wxGen, d: Math.hypot(x - cx, y - cy) / Math.max(1, se.x - nw.x),
+                       url: nexradTileUrl(`${sw.lng},${sw.lat},${ne.lng},${ne.lat}`) });
+        }
+    }
+}
 function prefetchNexradNeighbours() {
     if (!nexradLayer || !map.hasLayer(nexradLayer) || nexradReplayTime()) return;
     const layer = nexradLayer;
     const tz = Math.round(map.getZoom());
-    const b = map.getBounds();
-    for (const z of [tz + 1, tz - 1]) {
-        if (z < 0 || z > layer.options.maxZoom) continue;
-        const nw = map.project(b.getNorthWest(), z).divideBy(256).floor();
-        const se = map.project(b.getSouthEast(), z).divideBy(256).floor();
-        const n = (se.x - nw.x + 1) * (se.y - nw.y + 1);
-        if (n > 300) continue;   // huge screen at a deep level — not worth hammering nowCOAST
-        const max = Math.pow(2, z);
-        for (let y = nw.y; y <= se.y; y++) {
-            if (y < 0 || y >= max) continue;
-            for (let x = nw.x; x <= se.x; x++) {
-                const c = L.point(((x % max) + max) % max, y); c.z = z;
-                const tb = layer._tileCoordsToBounds(c);
-                const sw = tb.getSouthWest(), ne = tb.getNorthEast();
-                wxImage(nexradTileUrl(`${sw.lng},${sw.lat},${ne.lng},${ne.lat}`));
-            }
-        }
-    }
+    const jobs = [];
+    _wxQueueRing(layer, tz, WX_PAD_NEAR, jobs);
+    _wxQueueRing(layer, tz + 1, WX_PAD_ZOOM, jobs);
+    _wxQueueRing(layer, tz - 1, WX_PAD_ZOOM, jobs);
+    // Nearest the screen's centre first, whichever zoom it is at, and a cap so a huge window at
+    // a deep zoom can't hammer nowCOAST. Replaces anything still queued from the last position.
+    jobs.sort((p, q) => p.d - q.d);
+    _wxQueue = jobs.slice(0, WX_PREFETCH_MAX);
+    _wxPump();
 }
+// Settle (400 ms after the map stops) covers zooms and the end of a pan; the throttled 'move'
+// keeps the ring following a long drag so the edge is already loaded when it arrives.
+let _wxMoveLast = 0;
 map.on('moveend', () => {
     clearTimeout(_wxPrefetchTimer);
     _wxPrefetchTimer = setTimeout(prefetchNexradNeighbours, 400);
+});
+map.on('move', () => {
+    const now = performance.now();
+    if (now - _wxMoveLast < 500) return;
+    _wxMoveLast = now;
+    prefetchNexradNeighbours();
 });
 
 function createNexradLayer() {

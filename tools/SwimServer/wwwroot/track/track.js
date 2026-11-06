@@ -624,8 +624,14 @@
     const tag = held ? `<span class="tag">held ${t.delayMin.toFixed(1)} min</span>` : '';
     const flags = [t.frozen ? 'frozen' : null, t.suspended ? 'suspended' : null,
                    t.manual ? 'manual' : null].filter(Boolean).join('  ');
+    // The hold and the next point are usually DIFFERENT links, so the hold row names its own
+    // point: live, SKW6450 was next at CORKR with zero delay while its 1.3 min came from BRUSR
+    // two centers later. Two adjacent rows reading "hold 1.3 min" / "next point CORKR" say the
+    // delay is somewhere it is not.
     const head = grid([
-      ['Hold assigned', mins(t.delayMin), t.delayMin >= 5 ? 'warn' : (held ? 'hl' : '')],
+      ['Hold assigned', t.delayMin == null ? null
+        : mins(t.delayMin) + (t.holdPoint ? '  at ' + t.holdPoint + (t.holdCtr ? ' (' + t.holdCtr + ')' : '') : ''),
+        t.delayMin >= 5 ? 'warn' : (held ? 'hl' : '')],
       ['Next meter point', [t.point, t.pointType ? '(' + t.pointType + ')' : null, t.ctr].filter(Boolean).join('  ')],
       ['STA vs ETA', (t.staPoint || t.etaPoint) ? [hhmm(t.staPoint) || '—', hhmm(t.etaPoint) || '—'].join('  vs  ') : null],
       ['Runway STA', t.staRwy ? hhmm(t.staRwy) + (t.rwy ? '  RWY ' + t.rwy : '') : null],

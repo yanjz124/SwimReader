@@ -594,12 +594,19 @@ static class TrackRoutes
         if (tbfm != null)
         {
             var bp = new List<string>();
+            // The hold and the next point are different places — see TbfmTrack. Naming the hold's
+            // own point is the difference between "held 1.3m at BRUSR" and claiming it is held at
+            // a fix whose delay is zero.
             if (tbfm.DelayMin is { } d && Math.Abs(d) >= 0.1)
-                bp.Add((d > 0 ? "hold " : "early ") + Math.Abs(d).ToString("0.#") + "m");
+                bp.Add((d > 0 ? "hold " : "early ") + Math.Abs(d).ToString("0.#") + "m"
+                       + (tbfm.HoldPoint != null ? " at " + tbfm.HoldPoint
+                          + (tbfm.HoldCtr != null ? " (" + tbfm.HoldCtr + ")" : "") : ""));
             if (!string.IsNullOrEmpty(tbfm.Point))
-                bp.Add("at " + tbfm.Point + (tbfm.Ctr != null ? " (" + tbfm.Ctr + ")" : ""));
-            if (tbfm.StaPoint is { } sp) bp.Add("STA " + HmDt(sp));
-            if (tbfm.StaRwy is { } sr) bp.Add("rwy " + (tbfm.Rwy != null ? tbfm.Rwy + " " : "") + HmDt(sr));
+                bp.Add("next " + tbfm.Point + (tbfm.Ctr != null ? " (" + tbfm.Ctr + ")" : "")
+                       + (tbfm.StaPoint is { } sp ? " STA " + HmDt(sp) : ""));
+            if (tbfm.StaRwy is { } sr)
+                bp.Add("rwy " + (tbfm.Rwy != null ? tbfm.Rwy + " " : "") + HmDt(sr)
+                       + (tbfm.RwyDelayMin is { } rd && rd >= 1 ? " (+" + rd.ToString("0.#") + "m)" : ""));
             if (tbfm.Frozen) bp.Add("frozen");
             if (tbfm.Suspended) bp.Add("suspended");
             if (bp.Count > 0) sb.Append("TBFM: ").Append(string.Join(" · ", bp)).Append('\n');

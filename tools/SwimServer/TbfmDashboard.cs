@@ -121,7 +121,16 @@ partial class TbfmBridge
         int? AgeSec);
 
     /// <summary>
-    /// One flight's metering. A typed record rather than an anonymous object because the Telegram
+    /// One flight's metering.
+    ///
+    /// <para><b><c>Ctr</c>/<c>Point</c> and <c>HoldCtr</c>/<c>HoldPoint</c> are usually different
+    /// points and must not be conflated.</b> The first is the next point the aircraft reaches; the
+    /// second is where the governing hold is actually taken, which is wherever along the chain the
+    /// delay is largest. Live: SKW6450/PHX was next at CORKR (ZLC) with zero delay while its
+    /// 1.3 min came from BRUSR (ZAB) two links later — printing the hold against the next point
+    /// put the delay at a fix that had none.
+    ///
+    /// A typed record rather than an anonymous object because the Telegram
     /// bot reads the fields in C# while <c>/api/track</c> serializes the same instance — one shape,
     /// so the page and the bot cannot drift apart on what TBFM says about a flight.
     /// </summary>
@@ -129,6 +138,7 @@ partial class TbfmBridge
         string? Dep, string? Dest, int Centers, double? DelayMin, double? RwyDelayMin,
         DateTime? NextSta, bool Frozen, bool Suspended, bool Manual, string? Status,
         string? Ctr, string? Point, DateTime? StaPoint, DateTime? EtaPoint,
+        string? HoldCtr, string? HoldPoint,
         string? Rwy, DateTime? StaRwy, DateTime? EtaRwy,
         IReadOnlyList<string> Remaining, IReadOnlyList<TbfmLink> Chain);
 
@@ -172,6 +182,10 @@ partial class TbfmBridge
 
         // The link the aircraft is working toward: the first whose point it has not reached.
         var next = chain.FirstOrDefault(l => !l.Passed) ?? chain.LastOrDefault();
+        // ...and the link the governing hold comes from, which is a different question. DelayMin
+        // is the chain maximum, so the point it belongs to is the link holding that maximum.
+        var hold = m.DelayMin is { } dm
+            ? chain.FirstOrDefault(l => l.DelayMin is { } v && Math.Abs(v - dm) < 0.001) : null;
 
         return new TbfmTrack(
             Dep: m.Dep, Dest: m.Apt, Centers: m.Chain.Count,
@@ -180,6 +194,7 @@ partial class TbfmBridge
             NextSta: m.NextSta, Frozen: m.Frozen, Suspended: m.Suspended, Manual: m.Manual,
             Status: m.Status,
             Ctr: next?.Ctr, Point: next?.Point, StaPoint: next?.Sta, EtaPoint: next?.Eta,
+            HoldCtr: hold?.Ctr, HoldPoint: hold?.Point,
             // Exactly 0 or 1 record per flight carries a runway STA (verified across a whole live
             // snapshot), so "the terminal schedule" is unambiguous.
             Rwy: m.Terminal?.Runway, StaRwy: m.Terminal?.StaRunway, EtaRwy: m.Terminal?.EtaRunway,

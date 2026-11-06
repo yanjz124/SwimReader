@@ -597,11 +597,18 @@ static class TrackRoutes
             // The hold and the next point are different places — see TbfmTrack. Naming the hold's
             // own point is the difference between "held 1.3m at BRUSR" and claiming it is held at
             // a fix whose delay is zero.
+            // ...but when they ARE the same link, say it once: "hold 3.1m at BFFMP (ZAU) · next
+            // BFFMP (ZAU)" is the same fix twice. Which happens often, since the nearest point
+            // ahead is frequently where the hold sits.
+            var sameLink = tbfm.HoldPoint != null && tbfm.HoldPoint == tbfm.Point
+                           && tbfm.HoldCtr == tbfm.Ctr;
+            var at = (string? pt, string? ctr) =>
+                pt == null ? "" : " at " + pt + (ctr != null ? " (" + ctr + ")" : "");
             if (tbfm.DelayMin is { } d && Math.Abs(d) >= 0.1)
                 bp.Add((d > 0 ? "hold " : "early ") + Math.Abs(d).ToString("0.#") + "m"
-                       + (tbfm.HoldPoint != null ? " at " + tbfm.HoldPoint
-                          + (tbfm.HoldCtr != null ? " (" + tbfm.HoldCtr + ")" : "") : ""));
-            if (!string.IsNullOrEmpty(tbfm.Point))
+                       + at(tbfm.HoldPoint, tbfm.HoldCtr)
+                       + (sameLink && tbfm.StaPoint is { } hsp ? " STA " + HmDt(hsp) : ""));
+            if (!string.IsNullOrEmpty(tbfm.Point) && !sameLink)
                 bp.Add("next " + tbfm.Point + (tbfm.Ctr != null ? " (" + tbfm.Ctr + ")" : "")
                        + (tbfm.StaPoint is { } sp ? " STA " + HmDt(sp) : ""));
             if (tbfm.StaRwy is { } sr)

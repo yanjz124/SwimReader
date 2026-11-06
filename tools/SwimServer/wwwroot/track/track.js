@@ -622,6 +622,9 @@
     const mins = v => v == null ? null : (v > 0 ? '+' : '') + v.toFixed(1) + ' min';
     const held = t.delayMin != null && t.delayMin >= 1;
     const tag = held ? `<span class="tag">held ${t.delayMin.toFixed(1)} min</span>` : '';
+    // When the hold sits on the next point anyway, the row below already names it — don't print
+    // the same fix on two consecutive rows.
+    const sameLink = !!t.holdPoint && t.holdPoint === t.point && t.holdCtr === t.ctr;
     const flags = [t.frozen ? 'frozen' : null, t.suspended ? 'suspended' : null,
                    t.manual ? 'manual' : null].filter(Boolean).join('  ');
     // The hold and the next point are usually DIFFERENT links, so the hold row names its own
@@ -630,7 +633,7 @@
     // delay is somewhere it is not.
     const head = grid([
       ['Hold assigned', t.delayMin == null ? null
-        : mins(t.delayMin) + (t.holdPoint ? '  at ' + t.holdPoint + (t.holdCtr ? ' (' + t.holdCtr + ')' : '') : ''),
+        : mins(t.delayMin) + ((t.holdPoint && !sameLink) ? '  at ' + t.holdPoint + (t.holdCtr ? ' (' + t.holdCtr + ')' : '') : ''),
         t.delayMin >= 5 ? 'warn' : (held ? 'hl' : '')],
       ['Next meter point', [t.point, t.pointType ? '(' + t.pointType + ')' : null, t.ctr].filter(Boolean).join('  ')],
       ['STA vs ETA', (t.staPoint || t.etaPoint) ? [hhmm(t.staPoint) || '—', hhmm(t.etaPoint) || '—'].join('  vs  ') : null],

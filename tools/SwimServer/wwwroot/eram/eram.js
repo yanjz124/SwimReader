@@ -1337,6 +1337,10 @@ const map = L.map('map', {
     wheelPxPerZoomLevel: 200,  // smooth scroll zoom
     zoomAnimation: false, // instant zoom — no animation phase, so overlay elements (history,
                           // vectors/PTL, rings) don't vanish-and-reappear on every zoom step
+    fadeAnimation: false, // no tile fade-in. Crossing a whole zoom level builds a fresh tile set,
+                          // and Leaflet fades every new tile up from opacity 0 over ~200 ms. On the
+                          // high-contrast NEXRAD layer that read as the weather flashing/resizing on
+                          // each zoom; tiles now just appear when loaded, matching instant zoom.
 });
 
 const tileLayer = L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', {
@@ -2341,6 +2345,7 @@ function archiveUrlForSlot(slotIso) {
 }
 
 const _conusCache = new Map();   // slot ISO -> Promise<canvas|null>
+const _conusReady = new Map();   // slot ISO -> canvas|null, once decoded (sync lookup for createTile)
 function conusComposite(slotIso) {
     if (_conusCache.has(slotIso)) return _conusCache.get(slotIso);
     const p = new Promise(resolve => {
@@ -2355,6 +2360,7 @@ function conusComposite(slotIso) {
             // classifyNwsPixel never sees, so a green/yellow boundary would classify as neither.
             g.imageSmoothingEnabled = false;
             g.drawImage(img, 0, 0, c.width, c.height);
+            _conusReady.set(slotIso, c);
             resolve(c);
         };
         img.onerror = () => resolve(null);
@@ -2362,7 +2368,10 @@ function conusComposite(slotIso) {
     });
     _conusCache.set(slotIso, p);
     // Bounded: scrubbing invents a slot every 5 replay-minutes and each canvas is ~16 MB.
-    while (_conusCache.size > 3) _conusCache.delete(_conusCache.keys().next().value);
+    while (_conusCache.size > 3) {
+        const k = _conusCache.keys().next().value;
+        _conusCache.delete(k); _conusReady.delete(k);
+    }
     return p;
 }
 
@@ -2418,6 +2427,32 @@ function remapTile(ctx, level) {
     ctx.putImageData(imageData, 0, 0);
 }
 
+// ── Weather tile cache + neighbour-zoom prefetch ────────────────────────────────────────────
+// Crossing a zoom level builds a new tile set, and fetching it from nowCOAST takes long enough
+// to see the old stretched weather swap out piece by piece. So fetched images are cached by URL,
+// and after the map settles the zoom levels either side of the current one are fetched in the
+// background. A zoom then finds its tiles already decoded, draws them in the same frame, and
+// looks like nothing changed. Cached entries are PNG Images (mostly empty, a few KB each), not
+// canvases, so the bound is cheap. `wxGen` changes on each 5-min refresh so stale weather is
+// never served from cache.
+let wxGen = 0;
+const _wxImgCache = new Map();   // `${gen}|${url}` -> { img, state: 'loading'|'ok'|'err', waiters }
+const WX_CACHE_MAX = 1500;
+function wxImage(url) {
+    const key = `${wxGen}|${url}`;
+    let e = _wxImgCache.get(key);
+    if (e) { _wxImgCache.delete(key); _wxImgCache.set(key, e); return e; }   // LRU touch
+    e = { img: new Image(), state: 'loading', waiters: [] };
+    const settle = st => { e.state = st; const w = e.waiters; e.waiters = []; for (const cb of w) cb(e); };
+    e.img.crossOrigin = 'anonymous';
+    e.img.onload = () => settle('ok');
+    e.img.onerror = () => { settle('err'); _wxImgCache.delete(key); };   // retry next time
+    e.img.src = url;
+    _wxImgCache.set(key, e);
+    while (_wxImgCache.size > WX_CACHE_MAX) _wxImgCache.delete(_wxImgCache.keys().next().value);
+    return e;
+}
+
 const MrmsEramLayer = L.GridLayer.extend({
     createTile: function (coords, done) {
         const tile = document.createElement('canvas');
@@ -2428,50 +2463,92 @@ const MrmsEramLayer = L.GridLayer.extend({
         const bounds = this._tileCoordsToBounds(coords);
         const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
         const bbox = `${sw.lng},${sw.lat},${ne.lng},${ne.lat}`;
+        // GridLayer registers the tile only after createTile returns, so even a tile drawn
+        // synchronously from cache must report on a microtask, never inline.
+        const finish = () => Promise.resolve().then(() => done(null, tile));
 
         // Replay: crop this tile out of the archived CONUS composite for the current 5-min slot.
         // The lat/lon -> pixel mapping is linear, which is what the live WMS path already assumes
         // by asking for an EPSG:4326 bbox for a Mercator tile — so this adds no new distortion.
         const slot = nexradReplayTime();
         if (slot) {
-            conusComposite(slot).then(src => {
-                if (!src) { done(null, tile); return; }
+            const draw = src => {
+                if (!src) return;
                 const x1 = (sw.lng - CONUS_W) / (CONUS_E - CONUS_W) * src.width;
                 const x2 = (ne.lng - CONUS_W) / (CONUS_E - CONUS_W) * src.width;
                 const y1 = (CONUS_N - ne.lat) / (CONUS_N - CONUS_S) * src.height;
                 const y2 = (CONUS_N - sw.lat) / (CONUS_N - CONUS_S) * src.height;
                 // Wholly outside the CONUS composite (Alaska, Hawaii, ocean) → leave it blank.
-                if (x2 <= 0 || x1 >= src.width || y2 <= 0 || y1 >= src.height) { done(null, tile); return; }
+                if (x2 <= 0 || x1 >= src.width || y2 <= 0 || y1 >= src.height) return;
                 ctx.imageSmoothingEnabled = false;
                 ctx.drawImage(src, x1, y1, x2 - x1, y2 - y1, 0, 0, 256, 256);
                 remapTile(ctx, level);
-                done(null, tile);
-            });
+            };
+            // Composite already decoded → draw now, so a zoom in replay is seamless too.
+            if (_conusReady.has(slot)) { draw(_conusReady.get(slot)); finish(); return tile; }
+            conusComposite(slot).then(src => { draw(src); done(null, tile); })
+                                .catch(() => done(null, tile));
             return tile;
         }
 
-        const url = nexradTileUrl(bbox);
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-            ctx.drawImage(img, 0, 0, 256, 256);
+        const e = wxImage(nexradTileUrl(bbox));
+        const draw = ent => {
+            if (ent.state !== 'ok') return;   // blank tile on error
+            ctx.drawImage(ent.img, 0, 0, 256, 256);
             remapTile(ctx, level);
-            done(null, tile);
         };
-        img.onerror = () => done(null, tile);  // blank tile on error
-        img.src = url;
+        if (e.state !== 'loading') { draw(e); finish(); }
+        else e.waiters.push(ent => { draw(ent); done(null, tile); });
         return tile;
     }
 });
 
+// Warm the cache for the zoom levels either side of the current one, once the map settles.
+// Live only — replay crops one whole-CONUS composite that is already cached per slot.
+let _wxPrefetchTimer = null;
+function prefetchNexradNeighbours() {
+    if (!nexradLayer || !map.hasLayer(nexradLayer) || nexradReplayTime()) return;
+    const layer = nexradLayer;
+    const tz = Math.round(map.getZoom());
+    const b = map.getBounds();
+    for (const z of [tz + 1, tz - 1]) {
+        if (z < 0 || z > layer.options.maxZoom) continue;
+        const nw = map.project(b.getNorthWest(), z).divideBy(256).floor();
+        const se = map.project(b.getSouthEast(), z).divideBy(256).floor();
+        const n = (se.x - nw.x + 1) * (se.y - nw.y + 1);
+        if (n > 300) continue;   // huge screen at a deep level — not worth hammering nowCOAST
+        const max = Math.pow(2, z);
+        for (let y = nw.y; y <= se.y; y++) {
+            if (y < 0 || y >= max) continue;
+            for (let x = nw.x; x <= se.x; x++) {
+                const c = L.point(((x % max) + max) % max, y); c.z = z;
+                const tb = layer._tileCoordsToBounds(c);
+                const sw = tb.getSouthWest(), ne = tb.getNorthEast();
+                wxImage(nexradTileUrl(`${sw.lng},${sw.lat},${ne.lng},${ne.lat}`));
+            }
+        }
+    }
+}
+map.on('moveend', () => {
+    clearTimeout(_wxPrefetchTimer);
+    _wxPrefetchTimer = setTimeout(prefetchNexradNeighbours, 400);
+});
+
 function createNexradLayer() {
-    return new MrmsEramLayer({
+    const layer = new MrmsEramLayer({
         pane: 'nexrad',
         opacity: nexradBrightness / 100,
         maxZoom: 16,
         tileSize: 256,
         nxLevel: nexradLevel,
     });
+    // Warm the neighbouring zoom levels as soon as this view's tiles are in, so the very first
+    // zoom after load/refresh is covered too (not only zooms after a pan).
+    layer.on('load', () => {
+        clearTimeout(_wxPrefetchTimer);
+        _wxPrefetchTimer = setTimeout(prefetchNexradNeighbours, 400);
+    });
+    return layer;
 }
 
 function updateNexrad() {
@@ -2485,6 +2562,8 @@ function updateNexrad() {
 // Used by the 5-min live timer AND when the replay clock crosses a 5-min archive slot.
 function refreshNexrad() {
     if (!nexradLayer) return;
+    wxGen++;   // new weather: don't serve the previous 5 minutes from cache
+    for (const k of _wxImgCache.keys()) if (!k.startsWith(`${wxGen}|`)) _wxImgCache.delete(k);
     const oldLayer = nexradLayer;
     const newLayer = createNexradLayer();
     nexradLayer = newLayer;

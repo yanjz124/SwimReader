@@ -11,6 +11,18 @@ namespace SwimServer;
 /// </summary>
 public class ReplayServer
 {
+    /// <summary>Inter-record gap above which playback skips ahead instead of waiting it out.
+    /// Sized to separate a recording outage from a genuinely quiet facility: a small TRACON's
+    /// normal reporting gaps run to tens of seconds (GTF: 41 gaps of 15-60 s in one hour, all
+    /// real), while a restart or feed drop leaves minutes of nothing. Compared against real
+    /// recording time, not scaled wait, so it is speed-independent.</summary>
+    private const long GapSkipMs = 60_000;
+
+    /// <summary>How far the readable tail of the newest hour file trails real time.
+    /// ReplayRecorder flushes writer→gzip every 30 s, so anything newer than this is written but
+    /// not yet readable.</summary>
+    private const long RecorderFlushLagMs = 30_000;
+
     private readonly string _replayBaseDir;
     private readonly JsonSerializerOptions _jsonOpts;
     private int _sessions;
@@ -548,12 +560,29 @@ public class ReplayServer
                 var spd = speedAt(millis);   // huge during a preload window → bursts with no wait
                 if (spd > 0 && deltaMs > 0)
                 {
-                    var scaled = deltaMs / spd;
-                    if (scaled > 5000) accWaitMs = 0;      // large real gap → skip, don't sit idle
-                    else accWaitMs += scaled;
+                    // A gap longer than GapSkipMs is a recording outage, not quiet traffic, so
+                    // it is skipped and the client is told — the clock jump then shows as a gap
+                    // instead of looking like a stall. The arithmetic is in PacingWaitMs.
+                    if (deltaMs > GapSkipMs)
+                    {
+                        await SendJson(ws, new
+                        {
+                            type = "replay_gap",
+                            from = DateTimeOffset.FromUnixTimeMilliseconds(lastMillis).ToString("o"),
+                            to = DateTimeOffset.FromUnixTimeMilliseconds(millis).ToString("o"),
+                        }, ct);
+                    }
+                    accWaitMs += PacingWaitMs(deltaMs, spd, millis,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RecorderFlushLagMs);
                     if (accWaitMs >= 16)
                     {
-                        var waitMs = (int)Math.Min(accWaitMs, 5000);
+                        // Drain the WHOLE accumulated wait. It used to be capped at 5000 ms per
+                        // record, which was harmless only because the clause above had already
+                        // thrown away anything longer; with real quiet time now paced, a cap would
+                        // let the accumulator grow without bound and the stream would fall further
+                        // behind its own clock on every record. The <=100 ms slicing below is what
+                        // keeps a long wait responsive, so the cap bought nothing.
+                        var waitMs = (int)accWaitMs;
                         accWaitMs -= waitMs;                // carry the sub-frame remainder
 
                         // Sleep in <=100 ms slices rather than one long await. A quiet stretch of
@@ -587,6 +616,41 @@ public class ReplayServer
         }
 
         return lastMillis;
+    }
+
+    /// <summary>
+    /// How much wall-clock wait one record earns: the core of replay pacing, pure so it can be
+    /// tested over a timestamp sequence (see ReplayPacingTests).
+    /// </summary>
+    /// <param name="deltaMs">Real recorded time since the previous record.</param>
+    /// <param name="speed">Playback multiplier (1 = real time).</param>
+    /// <param name="recordMs">This record's recorded time, for the live-edge test.</param>
+    /// <param name="liveEdgeMs">Newest recorded instant that is readable (now minus the
+    /// recorder's flush lag). Far in the future for a historical replay.</param>
+    /// <remarks>
+    /// The rule this replaced tested <c>deltaMs / speed > 5000</c> — five seconds of *scaled
+    /// wait* — and served anything above it with ZERO wait. That silently broke 1x playback for
+    /// every quiet facility: a TRACON reporting every 10-30 s has nearly all of its inter-record
+    /// gaps above that threshold, so the replay clock ran away. Measured over one recorded hour:
+    /// GTF 5.5x on average and 32x through its quietest stretches, FAI 123x, against 1.1x for
+    /// A80 and PCT — which is why it only ever surfaced as a *STARS* complaint, TAIS being the
+    /// one feed recorded per small facility (140 of 143 recorded facilities are small TRACONs).
+    ///
+    /// The consequence was not merely a fast clock. Racing let replay overtake the recorder, and
+    /// reaching the end of the newest hour file is treated as end-of-archive, so a quiet
+    /// facility's session ended within a couple of minutes — after which every track went
+    /// unrefreshed and the scope blanked LostTargetSeconds (30 s) later with nothing on screen to
+    /// say why. Hence both halves below: compare against REAL recorded time so the threshold
+    /// means the same at every speed, and never skip past the live edge.
+    /// </remarks>
+    internal static double PacingWaitMs(long deltaMs, double speed, long recordMs, long liveEdgeMs)
+    {
+        if (deltaMs <= 0 || speed <= 0) return 0;
+        if (deltaMs <= GapSkipMs) return deltaMs / speed;
+        // Skipped gap: free when it is history, but never advance past data that does not exist
+        // yet. Waiting out the overshoot is waiting for the recorder, which is what a replay
+        // caught up to live should do instead of running off the end and ending.
+        return recordMs > liveEdgeMs ? recordMs - liveEdgeMs : 0;
     }
 
     private static string KindToType(string? kind) => kind switch
@@ -803,6 +867,13 @@ public class ReplayServer
         var rangeEnd = end.AddHours(1);
         if (clampLo is { } cl && cl > rangeStart) rangeStart = cl;
         if (clampHi is { } ch && ch < rangeEnd) rangeEnd = ch;
+        // Never advertise time that has not been recorded yet. The last file is the hour in
+        // progress, so `end.AddHours(1)` can sit up to an hour in the FUTURE — the scrubber then
+        // let you drag into unwritten time, where the session immediately reports end-of-data and
+        // closes. The readable tail also trails real time by the recorder's flush interval
+        // (ReplayRecorder flushes every 30 s), so the honest right edge is a little behind now.
+        var written = DateTime.UtcNow.AddSeconds(-30);
+        if (written < rangeEnd) rangeEnd = written;
         if (rangeEnd <= rangeStart) { rangeStart = start; rangeEnd = end.AddHours(1); }   // degenerate → unclamped
 
         return new

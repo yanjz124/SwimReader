@@ -2985,6 +2985,54 @@ A note on diagnosing these: the control channel is `{cmd: "..."}`, **not** `{typ
 receive loop wraps parsing in `catch { }` — so a malformed command is silently ignored and looks
 exactly like a server that isn't responding to the UI. That cost a debugging round here.
 
+### "1x" was not 1x, and only the quiet facilities showed it
+
+Reported from outside: **STARS replay stops and every target disappears after about 30 seconds.**
+Three defects in a chain, and the 30 seconds is the last link, not the first.
+
+**The pacer skipped any inter-record gap over 5 s.** `if (scaled > 5000) accWaitMs = 0;` was there
+so a recording outage wouldn't sit idle, but it tested five seconds of *scaled wait* and served
+anything above it with **zero** wait. A quiet TRACON's normal reporting cadence is above that, so
+most of its hour was skipped for free. Measured over one recorded hour, simulating the real pacer
+against the real timestamps:
+
+| facility | hour recorded | gaps > 5 s | effective speed at "1x" |
+|---|---|---|---|
+| A80 | 34 MB | 24 (173 s of 3599) | 1.1x |
+| PCT | 24 MB | few | 1.1x |
+| GTF | 30 KB | 179 (2929 s of 3575) | **5.5x avg, 32x locally** |
+| FAI | 2.9 KB | nearly all | **123x** |
+
+**That is why it read as a STARS bug.** ERAM is one dense recording and ASDE-X is per big airport,
+but TAIS is recorded **per facility** and 140 of the 143 recorded facilities are small TRACONs. The
+scopes anyone checks against were the 1.1x ones.
+
+**Racing is what killed the session.** `PlaybackLoop` treats the end of the newest hour file as
+end-of-archive, so a replay that overtakes the recorder sends `replay_end` and closes. Verified
+live: GTF started 70 s behind real time ran at 4.8x, crossed the live edge at 37 s wall, and the
+socket closed. **Then the client's `LOST_TARGET_MS = 30000` (scope.js) stopped rendering every
+track 30 s later** — which is the reported symptom, and the bar's "End of data" is the only clue
+on screen.
+
+Fixes: the threshold is `GapSkipMs` (60 s) measured against **real recorded time**, so it means the
+same at every speed and separates a restart's minutes of nothing from genuine quiet; a skip emits
+`replay_gap`, which the bar already renders; the skip never advances past the live edge
+(`RecorderFlushLagMs`), so a caught-up replay waits for the recorder; the per-record 5000 ms wait
+cap is gone, since with real quiet time now paced it would let the accumulator grow without bound
+(the <=100 ms slicing is what keeps a long wait responsive); and `GetTimeRange` no longer advertises
+the **future** — the last file is the hour in progress, so `end.AddHours(1)` let the scrubber drag
+into unwritten time, which also ends the session. GTF 5.5x -> 1.6x, A80/PCT -> 1.00x.
+
+**`ReplayPacingTests` is the only thing that can see this class of bug** — same lesson as the
+cache-busting no-op and the ADS-B callsign fields. Nothing threw, no counter moved, and a check on
+a busy facility passes at 1.1x no matter how broken the rule is. The test paces a synthetic
+sequence at several cadences and asserts wall time equals recorded span; every case above 5 s
+fails against the old rule and passes against the new one.
+
+**Still open:** a replay that legitimately reaches the end of the newest hour file ends rather than
+tailing it. The clamp above stops it *racing* there, but following a live recording means resuming
+reads on a gzip stream that is still being appended, which is a real change, not a threshold.
+
 ### Logging volume (don't let it eat the journal)
 
 The Pi's journal is capped at 500 MB. Left unchecked the two services were writing **~340 lines/s**

@@ -108,6 +108,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
         _ = CleanupLoopAsync(ct);
         _ = EnrichmentWorkerAsync(ct);
+        _ = SwimRefreshLoopAsync(ct);
 
         // Fast event consumer: reads events quickly and queues enrichment work
         await foreach (var evt in _eventBus.SubscribeAsync("CallsignEnrichment", ct))
@@ -201,12 +202,6 @@ public sealed class CallsignEnrichmentService : BackgroundService
                     await RefreshRegionsAsync(ct);
                     lastRefresh = DateTime.UtcNow;
                 }
-                // SWIM candidates refresh on the FAST cadence, not with the regions. The
-                // SFDPS pull is one local HTTP call rather than 20 rate-limited public ones, and
-                // position freshness is the whole currency of a distance gate: at 450 kt a
-                // 60-second-old fix is already 7 NM out against a 5 NM gate.
-                await _swim.RefreshSfdpsAsync(ct);
-                RebuildIndex();
                 await ProcessAllPendingAsync(allowHexLookups: refreshed, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -219,6 +214,38 @@ public sealed class CallsignEnrichmentService : BackgroundService
             }
 
             await timer.WaitForNextTickAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// Keep the SWIM half of the index fresh, on its OWN loop.
+    ///
+    /// <para>It used to ride inside the matching cycle, which turned out to mean once every two
+    /// minutes. That cycle is self-limiting: a pass is "slow" if 60 s have elapsed since the last
+    /// region refresh, and a slow pass spends ~20 rate-limited region fetches plus up to 50
+    /// individual hex lookups at ~1.1 s each. Once one pass exceeds 60 s, EVERY pass qualifies as
+    /// slow, so it never comes back down — measured at 128 s between SFDPS fetches, against a
+    /// source whose positions are filtered to 60 s old precisely so a 5 NM gate can trust them.
+    /// Handing fresh positions to a gate two minutes later defeats the filter.</para>
+    ///
+    /// <para>Its own loop also costs nothing to run often: one HTTP call to a process on
+    /// localhost, and an index rebuild over ~18k entries. The expensive, rate-limited half stays
+    /// where it is.</para>
+    /// </summary>
+    private async Task SwimRefreshLoopAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await _swim.RefreshSfdpsAsync(ct);
+                RebuildIndex();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) { _logger.LogWarning(ex, "SWIM correlation refresh failed"); }
+            try { await timer.WaitForNextTickAsync(ct); }
+            catch (OperationCanceledException) { return; }
         }
     }
 

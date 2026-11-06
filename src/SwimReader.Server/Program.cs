@@ -109,6 +109,18 @@ builder.Services.AddSingleton<AdsbFiClient>();
 builder.Services.AddSingleton<MultiAdsbClient>();
 builder.Services.AddSingleton<AdsbFiCache>();
 
+// SFDPS + cross-facility correlation candidates for the callsign enrichment. Its own HttpClient
+// with a short timeout: the far side is a local process that restarts on every backend deploy,
+// and this must never be what holds up an enrichment pass.
+builder.Services.AddHttpClient("SwimServer", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
+builder.Services.AddSingleton<SwimCorrelationSource>(sp => new SwimCorrelationSource(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("SwimServer"),
+    sp.GetRequiredService<ILoggerFactory>().CreateLogger<SwimCorrelationSource>(),
+    sp.GetRequiredService<IOptions<AdsbFiOptions>>().Value.SwimServerBaseUrl));
+
 var adsbFiConfig = builder.Configuration.GetSection(AdsbFiOptions.SectionName).Get<AdsbFiOptions>();
 if (adsbFiConfig?.Enabled == true)
 {

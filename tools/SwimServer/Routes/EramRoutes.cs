@@ -148,6 +148,54 @@ static class EramRoutes
         });
 
         // REST API for stats
+        // ── Correlation index for the STARS callsign enrichment ─────────────────
+        //
+        // A compact dump of every positioned SFDPS flight, for swimreader-stdds to correlate
+        // uncorrelated TRACON targets against. It lives here because SFDPS is consumed by THIS
+        // process and a Solace queue is competing-consumers — a second subscriber would split
+        // the feed rather than duplicate it (see SWIM_FEED_HOST), so the other service must be
+        // handed the data over HTTP instead of subscribing itself.
+        //
+        // Measured opportunity when this was written: across 142 facilities and 14,148 untagged
+        // TRACON targets, a discrete beacon code plus a 5 NM / 1,000 ft gate against this set
+        // names 31.0% of them, and 21.7% carry a Mode S code with a NON-discrete squawk, which
+        // nothing but an exact Mode S match can reach.
+        //
+        // Operator-gated, which for the real consumer means the unproxied-loopback case: it is a
+        // bulk dump of the whole en-route picture, and nothing on the public site needs it.
+        // LADD-blocked aircraft are omitted ENTIRELY rather than masked — a masked row would
+        // still let the far side put a position and a beacon code together, and the point of the
+        // list is to turn exactly that pair into an identity.
+        app.MapGet("/api/enrich/aircraft", (HttpContext http) =>
+        {
+            if (!LaddService.OperatorView(http)) return LaddService.OperatorOnly();
+            var now = DateTime.UtcNow;
+            var rows = new List<object>();
+            foreach (var f in ctx.Flights.Values)
+            {
+                if (f.Latitude is null || f.Longitude is null) continue;
+                if (string.IsNullOrEmpty(f.Callsign)) continue;
+                if (f.FlightStatus == "CANCELLED") continue;
+                if (LaddService.IsBlocked(f.Callsign, f.Registration)) continue;
+                // Age is the caller's to judge: SFDPS keeps a flight for 60 minutes after its
+                // last update, so a stale record still carries a position that was true once.
+                // An exact Mode S match is unharmed by that; a position gate is not, which is
+                // why the age travels with the row instead of being filtered to one value here.
+                rows.Add(new
+                {
+                    cs = f.Callsign,
+                    hex = f.ModeSCode,
+                    sq = f.Squawk,
+                    lat = f.Latitude,
+                    lon = f.Longitude,
+                    alt = f.ReportedAltitude,
+                    age = (int)(now - f.LastSeen).TotalSeconds,
+                });
+            }
+            return Results.Json(new { ts = now.ToString("o"), count = rows.Count, aircraft = rows },
+                                ctx.JsonOpts);
+        });
+
         app.MapGet("/api/stats", () => Results.Json(ctx.Stats.Snapshot(ctx.Flights.Count), ctx.JsonOpts));
 
         // Per-facility/sector active-track breakdown + 1h sparkline history.

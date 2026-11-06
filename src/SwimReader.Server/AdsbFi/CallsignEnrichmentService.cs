@@ -15,6 +15,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
     private readonly MultiAdsbClient _multiClient;
     private readonly AdsbFiCache _cache;
     private readonly TrackStateManager _trackState;
+    private readonly SwimCorrelationSource _swim;
     private readonly AdsbFiOptions _options;
     private readonly ILogger<CallsignEnrichmentService> _logger;
 
@@ -29,6 +30,9 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
     // Combined regional aircraft data, indexed for fast lookup
     private volatile AircraftIndex? _regionIndex;
+    /// <summary>Last ADS-B region sweep, kept so the index can be rebuilt on the fast cadence
+    /// when only the SWIM half has changed.</summary>
+    private volatile IReadOnlyList<AdsbFiAircraft> _adsbSet = Array.Empty<AdsbFiAircraft>();
 
     // ── Per-tier counters ───────────────────────────────────────────────────
     //
@@ -38,6 +42,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
     // from writes a log file for exactly that reason. Counting per tier also says WHY: a
     // position-only tier that sees candidates but rejects them all is a very different problem
     // from one that never gets a candidate.
+    private long _srcAdsb, _srcSfdps, _srcTais;
     private long _seen, _queued, _matchHex, _matchSquawk, _matchPosition,
                  _posNoCoverage, _posNoCandidate, _posAmbiguous,
                  _skippedNonDiscrete, _published, _skippedDuplicate;
@@ -70,12 +75,20 @@ public sealed class CallsignEnrichmentService : BackgroundService
         published = Interlocked.Read(ref _published),
         skippedDuplicate = Interlocked.Read(ref _skippedDuplicate),
         lastMatch = _lastMatch == default ? null : _lastMatch.ToString("o"),
+        // WHICH source produced the name, independent of which tier did. Without this split a
+        // rising match count cannot distinguish "ADS-B coverage improved" from "we started
+        // reading our own feed", and the two have completely different follow-ups.
+        matchedFromAdsb = Interlocked.Read(ref _srcAdsb),
+        matchedFromSfdps = Interlocked.Read(ref _srcSfdps),
+        matchedFromTais = Interlocked.Read(ref _srcTais),
+        swim = _swim.Stats(),
     };
 
     public CallsignEnrichmentService(
         IEventBus eventBus,
         MultiAdsbClient multiClient,
         AdsbFiCache cache,
+        SwimCorrelationSource swim,
         TrackStateManager trackState,
         IOptions<AdsbFiOptions> options,
         ILogger<CallsignEnrichmentService> logger)
@@ -83,6 +96,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
         _eventBus = eventBus;
         _multiClient = multiClient;
         _cache = cache;
+        _swim = swim;
         _trackState = trackState;
         _options = options.Value;
         _logger = logger;
@@ -103,9 +117,15 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
             Interlocked.Increment(ref _seen);
 
-            // Skip tracks that already have a callsign or are frozen/pseudo
+            // A track that already has a callsign needs no enrichment — but it is EVIDENCE.
+            // The same aircraft is often untagged at the neighbouring facility, and this loop
+            // already sees every one of them, so remembering it costs an index entry and names
+            // 24.6% of untagged targets that ADS-B could not.
             if (!string.IsNullOrEmpty(track.Callsign))
+            {
+                _swim.NoteTagged(track);
                 continue;
+            }
             if (track.IsFrozen || track.IsPseudo)
                 continue;
             if (!BeaconCodes.IsDiscrete(track.Squawk) && !track.ModeSCode.HasValue)
@@ -171,6 +191,12 @@ public sealed class CallsignEnrichmentService : BackgroundService
                     await RefreshRegionsAsync(ct);
                     lastRefresh = DateTime.UtcNow;
                 }
+                // SWIM candidates refresh on the FAST cadence, not with the regions. The
+                // SFDPS pull is one local HTTP call rather than 20 rate-limited public ones, and
+                // position freshness is the whole currency of a distance gate: at 450 kt a
+                // 60-second-old fix is already 7 NM out against a 5 NM gate.
+                await _swim.RefreshSfdpsAsync(ct);
+                RebuildIndex();
                 await ProcessAllPendingAsync(allowHexLookups: refreshed, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -219,51 +245,65 @@ public sealed class CallsignEnrichmentService : BackgroundService
                         allAircraft[ac.Hex] = ac; // Dedup by hex across overlapping regions
         }
 
-        // Build squawk index
-        var bySquawk = new Dictionary<string, List<AdsbFiAircraft>>(StringComparer.Ordinal);
-        // Build callsign index
-        var byCallsign = new Dictionary<string, AdsbFiAircraft>(StringComparer.OrdinalIgnoreCase);
-
-        // Half-degree spatial buckets for the position-only tier (see Cell/Nearby).
-        var byCell = new Dictionary<(int, int), List<AdsbFiAircraft>>();
-
-        foreach (var ac in allAircraft.Values)
-        {
-            if (ac.Lat.HasValue && ac.Lon.HasValue)
-            {
-                var cell = Cell(ac.Lat.Value, ac.Lon.Value);
-                if (!byCell.TryGetValue(cell, out var bucket))
-                {
-                    bucket = [];
-                    byCell[cell] = bucket;
-                }
-                bucket.Add(ac);
-            }
-
-            if (!string.IsNullOrEmpty(ac.Squawk))
-            {
-                if (!bySquawk.TryGetValue(ac.Squawk, out var list))
-                {
-                    list = [];
-                    bySquawk[ac.Squawk] = list;
-                }
-                list.Add(ac);
-            }
-
-            var cs = ac.TrimmedCallsign;
-            if (!string.IsNullOrEmpty(cs))
-                byCallsign[cs] = ac;
-        }
-
-        _regionIndex = new AircraftIndex(allAircraft, bySquawk, byCallsign, byCell);
+        _adsbSet = allAircraft.Values.ToList();
+        RebuildIndex();
 
         // Cross-populate hex cache for individual lookups
         foreach (var (hex, ac) in allAircraft)
             _cache.SetHex(hex, ac);
 
         _logger.LogInformation(
-            "Enrichment regions refreshed: {RegionCount} regions, {AcCount} aircraft, {SqGroups} squawk groups",
-            regions.Count, allAircraft.Count, bySquawk.Count);
+            "Enrichment regions refreshed: {RegionCount} regions, {AcCount} ADS-B aircraft",
+            regions.Count, allAircraft.Count);
+    }
+
+    /// <summary>
+    /// Build the lookup index from every source: the ADS-B region sweep, plus SFDPS and other
+    /// facilities' already-correlated tracks.
+    ///
+    /// <para>They are merged into ONE index rather than consulted as a second matching path, so
+    /// that every tier, every gate, the decline-on-ambiguity rule and the non-discrete beacon
+    /// rule apply to the new candidates unchanged. A parallel matcher would be a second set of
+    /// thresholds to keep in step with the first, and the ambiguity rule in particular only works
+    /// if all candidates are in the same bucket — two sources each finding one "unique" match is
+    /// exactly the coin flip that rule exists to refuse.</para>
+    /// </summary>
+    private void RebuildIndex()
+    {
+        var adsb = _adsbSet;
+        var swim = _swim.Candidates();
+
+        var byHex = new Dictionary<string, AdsbFiAircraft>(StringComparer.OrdinalIgnoreCase);
+        var bySquawk = new Dictionary<string, List<AdsbFiAircraft>>(StringComparer.Ordinal);
+        var byCallsign = new Dictionary<string, AdsbFiAircraft>(StringComparer.OrdinalIgnoreCase);
+        var byCell = new Dictionary<(int, int), List<AdsbFiAircraft>>();
+
+        // SWIM goes in AFTER ADS-B so that it wins a Mode S collision. Both are the same
+        // aircraft; the difference is the name. ADS-B carries the pilot-entered flight id, which
+        // is blank or malformed often enough to matter, while SFDPS carries the callsign ATC is
+        // actually working — and this readout exists to answer "who is that" on a radar scope.
+        foreach (var ac in adsb.Concat(swim))
+        {
+            if (!string.IsNullOrEmpty(ac.Hex)) byHex[ac.Hex] = ac;
+
+            if (ac.Lat.HasValue && ac.Lon.HasValue)
+            {
+                var cell = Cell(ac.Lat.Value, ac.Lon.Value);
+                if (!byCell.TryGetValue(cell, out var bucket)) byCell[cell] = bucket = [];
+                bucket.Add(ac);
+            }
+
+            if (!string.IsNullOrEmpty(ac.Squawk))
+            {
+                if (!bySquawk.TryGetValue(ac.Squawk, out var list)) bySquawk[ac.Squawk] = list = [];
+                list.Add(ac);
+            }
+
+            var cs = ac.TrimmedCallsign;
+            if (!string.IsNullOrEmpty(cs)) byCallsign[cs] = ac;
+        }
+
+        _regionIndex = new AircraftIndex(byHex, bySquawk, byCallsign, byCell);
     }
 
     /// <summary>
@@ -304,6 +344,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 {
                     matchCount++;
                     Interlocked.Increment(ref _matchHex);
+                    CountSource(aircraft);
                     await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
                 else
@@ -325,6 +366,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 {
                     matchCount++;
                     Interlocked.Increment(ref _matchSquawk);
+                    CountSource(aircraft);
                     await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
             }
@@ -356,6 +398,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 {
                     matchCount++;
                     Interlocked.Increment(ref _matchPosition);
+                    CountSource(aircraft);
                     await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
                 else if (neighbourhood.Count == 0) Interlocked.Increment(ref _posNoCoverage);
@@ -410,6 +453,18 @@ public sealed class CallsignEnrichmentService : BackgroundService
     }
 
     // Position-only gate. Tighter than the squawk tier on purpose — see the Priority 3 comment.
+    /// <summary>Attribute a match to the source that supplied the candidate, not the tier that
+    /// matched it — the two answer different questions (see Stats).</summary>
+    private void CountSource(AdsbFiAircraft ac)
+    {
+        switch (ac.SyntheticSource)
+        {
+            case "sfdps": Interlocked.Increment(ref _srcSfdps); break;
+            case "tais": Interlocked.Increment(ref _srcTais); break;
+            default: Interlocked.Increment(ref _srcAdsb); break;
+        }
+    }
+
     private const double PositionOnlyMatchNm = 1.5;
     private const int PositionOnlyAltitudeFeet = 500;
 
@@ -426,6 +481,12 @@ public sealed class CallsignEnrichmentService : BackgroundService
         var hasAltitude = track.AltitudeFeet.HasValue && track.AltitudeFeet.Value > 0;
         return candidates
             .Where(ac =>
+                // A tagged track from the SAME facility is not independent evidence — it is this
+                // facility's own radar picture, so a hit means two of its tracks are within the
+                // gate of each other, which is a duplicate or a genuinely different aeroplane,
+                // never a correlation. The value of the TAIS source is specifically the
+                // NEIGHBOURING facility that has already identified the same target.
+                !(ac.SyntheticFacility is { } sf && sf == track.Facility) &&
                 ac.Lat.HasValue && ac.Lon.HasValue &&
                 GeoDistanceNm(track.Position.Latitude, track.Position.Longitude,
                     ac.Lat.Value, ac.Lon.Value) <= nm &&

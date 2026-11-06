@@ -62,6 +62,14 @@ public sealed class AdsbFiOptions
     ];
 
     public TimeSpan EnrichmentRegionRefresh { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Where SwimServer answers, for the SFDPS correlation source. It is a separate process on
+    /// the same box and must stay the only consumer of the SFDPS Solace queue (SWIM_FEED_HOST),
+    /// so its en-route picture is fetched over HTTP rather than subscribed to a second time.
+    /// Empty disables that source; the ADS-B and cross-facility ones are unaffected.
+    /// </summary>
+    public string SwimServerBaseUrl { get; set; } = "http://127.0.0.1:5001";
 }
 
 public sealed class FacilityCoverage

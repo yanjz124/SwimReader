@@ -2282,6 +2282,23 @@ void ProcessFlight(XElement flight, string rawXml)
         if (name == "FDPS_GUFI" && !string.IsNullOrEmpty(val)) state.FdpsGufi = val;
         if (name == "4TH_ADAPTED_FIELD" && !string.IsNullOrEmpty(val)) state.FourthAdaptedField = val;
         if (name == "TMI_IDS" && !string.IsNullOrEmpty(val)) state.TmiIds = val;
+        // The Mode S 24-bit address, and the ONLY place SFDPS actually publishes it. The
+        // aircraftDescription/@aircraftAddress read above is the documented home for it and is
+        // empty on this feed — measured 0 of 8,863 live flights with a ModeSCode while
+        // ADSB_02M_52B was the single most common nameValue key in the whole feed at 399,198
+        // occurrences. Value is the hex prefixed with a hyphen ("-AD9003").
+        //
+        // Worth having for its own sake (LADD masking already keys off ModeSCode), but the
+        // reason it went in is correlation: an exact Mode S match needs no distance gate and
+        // cannot be ambiguous, and 21.7% of untagged TRACON targets carry a Mode S code with a
+        // NON-discrete squawk, so nothing else can name them.
+        if (name == "ADSB_02M_52B" && !string.IsNullOrEmpty(val))
+        {
+            var hex = val.TrimStart('-').Trim();
+            if (hex.Length is >= 5 and <= 6
+                && hex.All(c => char.IsAsciiHexDigit(c)))
+                state.ModeSCode = hex.ToUpperInvariant().PadLeft(6, '0');
+        }
     }
 
     // Add event to log (store raw XML for non-TH/HZ to save memory; TH=65% of traffic)

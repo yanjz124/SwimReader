@@ -2150,9 +2150,39 @@ presence flag — never ETD/ETA/position, which are re-estimated constantly and 
 (the same rule TFDM follows).
 
 ### Page sections
+**Cards are grouped by the question they answer**, in the order someone following a flight asks it:
+hero → **WHERE IT IS** (position/ownership, STARS, ASDE-X) → **WHAT IS AHEAD** (TBFM metering,
+TFMS) → **PLAN AND CLEARANCES** (flight plan, EDCT, TDLS, TFDM) → **WHAT HAPPENED** (handoff and
+point-out history). A group heading renders only when that group has a card. Before this the order
+was the order the sources had been added — EDCT between the handoff log and the flight plan, and
+TFMS last although it is often the *only* source for an inbound international leg — which read as
+a pile of feeds rather than one flight.
+
 Hero (callsign, origin▸dest·type/wake·registration, **phase** label, prominent next-frequency handoff banner, center + terminal frequencies, source presence) → Position/Ownership (per GUFI: controlling+freq, CIDs, handoff+freq, point-out, altitude, Line-4 HSF, ground speed, squawk/assigned, position+age, coast, status) → Terminal/STARS (entry▸exit, scratchpad, owner+freq, handoff+freq, alt/gs/squawk) → Handoff/point-out history → EDCT → Flight plan (full ICAO + equipment/capabilities) → TDLS (CPDLC + departure messages) → Surface/ASDE-X → Traffic flow/TFMS (route, procedures/entry fixes, predicted fix/center/sector transit, plan, times, position).
 
 **No mock data blocks.** An earlier version rendered simplified ERAM/STARS data-block art in both the full page (`blocksCard`) and the text page (`EramText`). Both were removed as unrealistic — the same data (4th-line/HSF, handoff, STARS entry/exit/scratchpad) lives in the cards/rows below. Don't reintroduce the mock blocks. (`track.js` still contains the now-unused `blocksCard`/`eramBlockHtml`/`starsBlockHtml` helpers, dead but harmless.)
+
+### TBFM metering on `/track` and the bot
+`TbfmBridge.TrackSummary(callsign)` returns one typed `TbfmTrack` — **the same instance the page
+serializes and the bot reads in C#**, so the two cannot drift apart on what TBFM says. It goes
+through `GroupFlights`, which is what makes it inherit the three rules that are each easy to get
+wrong alone: liveness (LANDED, LADD and past-STA records dropped), grouping by
+`(callsign, destination)`, and **delay as the chain MAXIMUM, never the sum**.
+
+That last one drives the display. The card's top figure is the governing hold (the max); the
+per-center rows below show each link's own delay, which is what the sector working that point sees.
+Summing them would double-count, because TBFM distributes a hold upstream and a center that has
+absorbed it reads ~0 one point down.
+
+Matching is **by callsign**, like TFDM — TBFM's `gufi` is ERAM's short form and SFDPS doesn't
+publish it, so there is no id to join on. The departure filter keeps a TBFM chain whose `dep` is
+unknown: an arrival chain with no departure field still belongs to the leg in the air, and dropping
+it would blank the card on exactly the long inbound where metering matters most.
+
+**The bot's change key carries only TBFM's discrete state** — scheduled point, runway, frozen,
+suspended, and the hold **rounded to a whole minute**. The STAs and ETAs are re-estimated on every
+update and would push on every drift; rounding the delay is what makes it discrete, so 4.6 → 5.1
+min notifies and 4.61 → 4.62 does not. Same rule TFMS and TFDM already follow.
 
 ### The `/t` text page is disabled (and why)
 `/t` was a ~2 KB, no-JS, `<meta http-equiv=refresh content=30>` page meant for constrained wifi. It is

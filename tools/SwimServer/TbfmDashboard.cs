@@ -65,11 +65,15 @@ partial class TbfmBridge
     private static bool Yes(TbfmFlight f, string k) => f.Sch.TryGetValue(k, out var v) && v == "YES";
 
     /// <summary>Live schedules grouped into flights by (callsign, destination).</summary>
-    private List<MeteredFlight> GroupFlights(DateTime now, string? apt = null, string? ctr = null)
+    private List<MeteredFlight> GroupFlights(DateTime now, string? apt = null, string? ctr = null,
+                                             string? aid = null)
     {
         var by = new Dictionary<(string, string), MeteredFlight>();
         foreach (var f in _flights.Values)
         {
+            // Callsign filter first: /track asks about ONE flight, and neither the liveness test
+            // nor the per-flight sort below is worth paying across several thousand records for it.
+            if (aid != null && f.Aid != aid) continue;
             if (!IsLive(f, now, out _, out _)) continue;
             var a = f.Arrival ?? "?";
             if (apt != null && a != apt) continue;
@@ -106,6 +110,81 @@ partial class TbfmBridge
             list.Add(m);
         }
         return list;
+    }
+
+    // ── /api/track and the Telegram bot ──────────────────────────────────
+
+    /// <summary>One center's link in a flight's metering chain.</summary>
+    public sealed record TbfmLink(
+        string? Ctr, string? Point, string? PointType, string? Tracon, string? Gate, string? Cat,
+        DateTime? Sta, DateTime? Eta, double? DelayMin, bool Passed, bool Frozen, bool Suspended,
+        int? AgeSec);
+
+    /// <summary>
+    /// One flight's metering. A typed record rather than an anonymous object because the Telegram
+    /// bot reads the fields in C# while <c>/api/track</c> serializes the same instance — one shape,
+    /// so the page and the bot cannot drift apart on what TBFM says about a flight.
+    /// </summary>
+    public sealed record TbfmTrack(
+        string? Dep, string? Dest, int Centers, double? DelayMin, double? RwyDelayMin,
+        DateTime? NextSta, bool Frozen, bool Suspended, bool Manual, string? Status,
+        string? Ctr, string? Point, DateTime? StaPoint, DateTime? EtaPoint,
+        string? Rwy, DateTime? StaRwy, DateTime? EtaRwy,
+        IReadOnlyList<string> Remaining, IReadOnlyList<TbfmLink> Chain);
+
+    /// <summary>
+    /// One flight's metering: the chain of centers working it, nearest the field last, plus the
+    /// roll-up that answers "is it being held, and by how much".
+    ///
+    /// <para>Deliberately not <see cref="FlightDetail"/>, which dumps every raw block for debugging.
+    /// This goes through <see cref="GroupFlights"/> so it inherits the three rules that are each
+    /// easy to get wrong alone: liveness (landed, LADD and past-STA records dropped), grouping by
+    /// (callsign, destination), and <b>delay as the MAXIMUM over the chain, never the sum</b> —
+    /// TBFM distributes a hold upstream, so a center that has absorbed it reads ~0 one point down.</para>
+    /// </summary>
+    public TbfmTrack? TrackSummary(string callsign)
+    {
+        var cs = (callsign ?? "").Trim().ToUpperInvariant();
+        if (cs.Length == 0 || LaddService.IsBlocked(cs, null)) return null;
+        var now = DateTime.UtcNow;
+        var flights = GroupFlights(now, aid: cs);
+        if (flights.Count == 0) return null;
+        // A callsign can carry chains for two destinations when a previous leg's records have not
+        // aged out. The one with the nearest STA is the leg being flown now.
+        var m = flights.OrderBy(x => x.NextSta ?? DateTime.MaxValue).First();
+
+        var chain = m.Chain.Select(f => new TbfmLink(
+            Ctr: CenterOf(f.Source),
+            Point: ScheduledPoint(f),
+            PointType: PointType(f),        // MFX / MFA / OMA / OOA; null until adaptation arrives
+            Tracon: Mr(f, "tra"),           // "EDC" upstream; only the last link names a real TRACON
+            Gate: Mr(f, "gat"),
+            Cat: Mr(f, "cat"),              // ARRIVAL / OVERFLIGHT / SATELLITE_*
+            Sta: f.StaMeterFix,
+            Eta: f.EtaMeterFix,
+            DelayMin: DelayOf(f.StaMeterFix, f.EtaMeterFix),
+            // Kept once the point is behind the aircraft: the chain reads as a route, and dropping
+            // the passed links hides where the hold was actually taken.
+            Passed: Passed(f.StaMeterFix, f.StaMeterFixSeen, now),
+            Frozen: Yes(f, "sfz") || Yes(f, "rfz"),
+            Suspended: Yes(f, "sus"),
+            AgeSec: f.TimesSeen == default ? null : (int)(now - f.TimesSeen).TotalSeconds)).ToList();
+
+        // The link the aircraft is working toward: the first whose point it has not reached.
+        var next = chain.FirstOrDefault(l => !l.Passed) ?? chain.LastOrDefault();
+
+        return new TbfmTrack(
+            Dep: m.Dep, Dest: m.Apt, Centers: m.Chain.Count,
+            DelayMin: m.DelayMin,           // the governing hold: max over the chain, not the sum
+            RwyDelayMin: m.RwyDelayMin,
+            NextSta: m.NextSta, Frozen: m.Frozen, Suspended: m.Suspended, Manual: m.Manual,
+            Status: m.Status,
+            Ctr: next?.Ctr, Point: next?.Point, StaPoint: next?.Sta, EtaPoint: next?.Eta,
+            // Exactly 0 or 1 record per flight carries a runway STA (verified across a whole live
+            // snapshot), so "the terminal schedule" is unambiguous.
+            Rwy: m.Terminal?.Runway, StaRwy: m.Terminal?.StaRunway, EtaRwy: m.Terminal?.EtaRunway,
+            Remaining: chain.Where(l => !l.Passed && l.Ctr != null).Select(l => l.Ctr!).Distinct().ToList(),
+            Chain: chain);
     }
 
     // ── Rates ────────────────────────────────────────────────────────────────

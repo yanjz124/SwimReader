@@ -143,24 +143,50 @@
       tfdm:  (d.tfdm  || []).filter(f => f.airport && normDep(f.airport) === depFilter),
       asdex: (d.asdex || []).filter(e => e.airport && (normDep(e.airport) === depFilter || selDests.has(normDep(e.airport)))),
       tfms:  (d.tfms && d.tfms.depArpt && normDep(d.tfms.depArpt) === depFilter) ? d.tfms : null,
+      // TBFM keys on (callsign, destination), so it belongs to whichever leg is being flown. Keep
+      // it when its departure matches, and also when TBFM never learned one — an arrival chain
+      // with no departure field is still about the leg in the air, and dropping it would blank the
+      // metering card for exactly the long inbound where it matters most.
+      tbfm:  (!d.tbfm || !d.tbfm.dep || normDep(d.tbfm.dep) === depFilter) ? d.tbfm : null,
     });
     const taisList = df.tais || [];
     const asd = (df.asdex || [])[0] || null;
     const edctVal = (flights[0] && flights[0].edct) || (!depFilter ? d.edct : null);
 
-    let h = '';
-    h += heroCard(df, flights[0] || null, taisList[0] || null, asd);
-    h += departureBar(deps, depFilter);
-    h += ownershipCard(flights);
-    h += handoffHistoryCard(d.handoffHistory);
-    if (edctVal) h += `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(edctVal), 'hl'], ['Slot', String(edctVal).slice(0, 16).replace('T', ' ') + 'Z']])}</div>`;
-    if (flights[0]) h += flightPlanCard(flights[0]);
-    if (df.tdls && df.tdls.length) h += tdlsCard(df.tdls);
-    if (df.tfdm && df.tfdm.length) h += tfdmCard(df.tfdm);
-    if (df.asdex && df.asdex.length) h += asdexCard(df.asdex);
-    if (taisList.length) h += taisCard(taisList);
-    if (df.tfms) h += tfmsCard(df.tfms);
-    out.innerHTML = h;
+    // Cards are grouped by what question they answer, in the order someone following a flight asks
+    // them: where is it, what is ahead of it, what was planned, what already happened. Before this
+    // the order was the order the sources were added (EDCT between the handoff log and the flight
+    // plan; TFMS, often the ONLY source for an inbound international leg, last), which read as a
+    // pile of feeds rather than one flight. A group heading is emitted only if the group has a card.
+    const groups = [
+      ['', [
+        heroCard(df, flights[0] || null, taisList[0] || null, asd),
+        departureBar(deps, depFilter),
+      ]],
+      ['WHERE IT IS', [
+        ownershipCard(flights),
+        taisList.length ? taisCard(taisList) : '',
+        (df.asdex && df.asdex.length) ? asdexCard(df.asdex) : '',
+      ]],
+      ['WHAT IS AHEAD', [
+        df.tbfm ? tbfmCard(df.tbfm) : '',
+        df.tfms ? tfmsCard(df.tfms) : '',
+      ]],
+      ['PLAN AND CLEARANCES', [
+        flights[0] ? flightPlanCard(flights[0]) : '',
+        edctVal ? `<div class="card"><h2>EDCT <span class="tag">departure slot</span></h2>${grid([['Controlled Departure', hhmm(edctVal), 'hl'], ['Slot', String(edctVal).slice(0, 16).replace('T', ' ') + 'Z']])}</div>` : '',
+        (df.tdls && df.tdls.length) ? tdlsCard(df.tdls) : '',
+        (df.tfdm && df.tfdm.length) ? tfdmCard(df.tfdm) : '',
+      ]],
+      ['WHAT HAPPENED', [
+        handoffHistoryCard(d.handoffHistory),
+      ]],
+    ];
+    out.innerHTML = groups.map(function (g) {
+      const body = g[1].filter(Boolean).join('');
+      if (!body) return '';
+      return (g[0] ? `<div class="grphdr">${g[0]}</div>` : '') + body;
+    }).join('');
   }
 
   // Normalized departure code (strip the ICAO K so KIND == IND) for grouping/compare.
@@ -207,7 +233,7 @@
     const dst = (f && f.dest) || (tais && tais.dest) || (asd && asd.track.dest) || (d.tfms && d.tfms.arrArpt) || '';
     const ph = phaseOf(d, f, tais, asd);
     const chips = [['SFDPS', (d.sfdps || []).length > 0], ['TFMS', !!d.tfms], ['TDLS', (d.tdls || []).length > 0],
-      ['STARS', (d.tais || []).length > 0], ['ASDE-X', (d.asdex || []).length > 0], ['TFDM', (d.tfdm || []).length > 0], ['EDCT', !!d.edct]]
+      ['STARS', (d.tais || []).length > 0], ['ASDE-X', (d.asdex || []).length > 0], ['TFDM', (d.tfdm || []).length > 0], ['TBFM', !!d.tbfm], ['EDCT', !!d.edct]]
       .map(function (x) { return `<span class="chip${x[1] ? ' on' : ''}">${x[0]}</span>`; }).join('');
     const sub = [type + wake, (f && f.registration) || ''].filter(Boolean).join(' · ');
     const freq = f && f.sectorFreq;
@@ -585,6 +611,50 @@
   // TFMS carries the filed NAS route plus the predicted center/sector transit, and it usually has a
   // flight hours before it reaches US airspace and shows up in SFDPS. For an inbound international
   // leg this is often the only source with a route at all, so show it in full rather than a summary.
+  // TBFM arrival metering. The one source that answers "am I going to be held on the way in".
+  //
+  // The delay shown at the top is the chain MAXIMUM, not a sum: TBFM distributes a hold upstream,
+  // so once a center has absorbed it the next point down reads ~0 and adding them would
+  // double-count. The per-link rows below show each center's own figure, which is what the sector
+  // working that point actually sees — two different roll-ups of the same number, each right for
+  // its own question (see TbfmDashboard.cs).
+  function tbfmCard(t) {
+    const mins = v => v == null ? null : (v > 0 ? '+' : '') + v.toFixed(1) + ' min';
+    const held = t.delayMin != null && t.delayMin >= 1;
+    const tag = held ? `<span class="tag">held ${t.delayMin.toFixed(1)} min</span>` : '';
+    const flags = [t.frozen ? 'frozen' : null, t.suspended ? 'suspended' : null,
+                   t.manual ? 'manual' : null].filter(Boolean).join('  ');
+    const head = grid([
+      ['Hold assigned', mins(t.delayMin), t.delayMin >= 5 ? 'warn' : (held ? 'hl' : '')],
+      ['Next meter point', [t.point, t.pointType ? '(' + t.pointType + ')' : null, t.ctr].filter(Boolean).join('  ')],
+      ['STA vs ETA', (t.staPoint || t.etaPoint) ? [hhmm(t.staPoint) || '—', hhmm(t.etaPoint) || '—'].join('  vs  ') : null],
+      ['Runway STA', t.staRwy ? hhmm(t.staRwy) + (t.rwy ? '  RWY ' + t.rwy : '') : null],
+      ['Runway hold', mins(t.rwyDelayMin), t.rwyDelayMin >= 5 ? 'warn' : ''],
+      ['Schedule', flags],
+      ['Destination', t.dest],
+      ['Metered by', t.centers + (t.centers === 1 ? ' center' : ' centers')],
+    ]);
+    // Chain overview reuses the TFMS crossing row, so passed links dim and the next is called out.
+    const chain = t.chain || [];
+    const overview = chain.length > 1
+      ? `<div class="subhdr">METERING CHAIN (${chain.length}) <span class="tag">nearest the field last</span></div>`
+        + pathRow(chain.map(l => ({ name: l.ctr || '?', time: l.sta })), 'ctr')
+      : '';
+    const rows = chain.map(function (l) {
+      const bits = [
+        l.point ? l.point + (l.pointType ? ' (' + l.pointType + ')' : '') : null,
+        hhmm(l.sta) ? 'STA ' + hhmm(l.sta) : null,
+        hhmm(l.eta) ? 'ETA ' + hhmm(l.eta) : null,
+        l.delayMin != null ? mins(l.delayMin) : null,
+        l.frozen ? 'frozen' : null,
+        l.passed ? 'passed' : null,
+      ].filter(Boolean).join('  ·  ');
+      return [l.ctr || '?', bits];
+    });
+    const detail = rows.length ? `<div class="subhdr">BY CENTER</div>` + grid(rows) : '';
+    return `<div class="card"><h2>ARRIVAL METERING (TBFM)${tag}</h2>${head}${overview}${detail}</div>`;
+  }
+
   function tfmsCard(t) {
     const dp = [t.dpName, t.dpTransitionFix].filter(Boolean).join('.');
     const star = [t.starTransitionFix, t.star].filter(Boolean).join('.');

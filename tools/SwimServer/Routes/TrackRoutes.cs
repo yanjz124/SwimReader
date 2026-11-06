@@ -104,9 +104,13 @@ static class TrackRoutes
                 .OrderByDescending(f => !string.IsNullOrEmpty(f.Origin) && !string.IsNullOrEmpty(f.Destination) ? 1 : 0)
                 .FirstOrDefault();
             var tfdm = ctx.Tfdm.FindByCallsign(callsign, legF?.Origin, legF?.Destination);   // TFDM surface timing (joins to the SFDPS plan)
+            // TBFM arrival metering: which centers are scheduling it in, and the hold they assign.
+            // Joins by callsign like TFDM does — TBFM's gufi is ERAM's short form, which SFDPS does
+            // not publish, so there is no id to match on.
+            var tbfm = ctx.Tbfm.TrackSummary(callsign);
 
             var found = sfdps.Count > 0 || tdls.Count > 0 || tais.Count > 0 || asdex.Count > 0
-                        || tfms is not null || tfdm.Count > 0;
+                        || tfms is not null || tfdm.Count > 0 || tbfm is not null;
 
             return Results.Json(new
             {
@@ -124,6 +128,7 @@ static class TrackRoutes
                 tais,
                 asdex,
                 tfdm,
+                tbfm,
             }, ctx.JsonOpts);
         });
 
@@ -356,7 +361,9 @@ static class TrackRoutes
         var tfms = ctx.Tfms.FindByCallsign(cs);
         var (legO, legD) = LegOf(flights);
         var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs, legO, legD).FirstOrDefault();
-        if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0 && tfms == null && tfdm0 == null)
+        var tbfm = ctx.Tbfm.TrackSummary(cs);
+        if (flights.Count == 0 && tdlsAc.Count == 0 && taisTracks.Count == 0 && asdexTracks.Count == 0
+            && tfms == null && tfdm0 == null && tbfm == null)
             return $"Nothing is tracking {cs} right now.";
 
         var best = BestFlight(flights);
@@ -581,6 +588,25 @@ static class TrackRoutes
             }
         }
 
+        // TBFM — arrival metering, and the only source that answers "am I going to be held on the
+        // way in". Two lines at most: the hold and where it is taken, then the centers still to
+        // meter it. The delay is the chain MAXIMUM, never a sum — see TbfmDashboard.
+        if (tbfm != null)
+        {
+            var bp = new List<string>();
+            if (tbfm.DelayMin is { } d && Math.Abs(d) >= 0.1)
+                bp.Add((d > 0 ? "hold " : "early ") + Math.Abs(d).ToString("0.#") + "m");
+            if (!string.IsNullOrEmpty(tbfm.Point))
+                bp.Add("at " + tbfm.Point + (tbfm.Ctr != null ? " (" + tbfm.Ctr + ")" : ""));
+            if (tbfm.StaPoint is { } sp) bp.Add("STA " + HmDt(sp));
+            if (tbfm.StaRwy is { } sr) bp.Add("rwy " + (tbfm.Rwy != null ? tbfm.Rwy + " " : "") + HmDt(sr));
+            if (tbfm.Frozen) bp.Add("frozen");
+            if (tbfm.Suspended) bp.Add("suspended");
+            if (bp.Count > 0) sb.Append("TBFM: ").Append(string.Join(" · ", bp)).Append('\n');
+            if (tbfm.Remaining.Count > 1)
+                sb.Append("Metering: ").Append(string.Join(" ▸ ", tbfm.Remaining)).Append('\n');
+        }
+
         var edct = flights.Select(f => f.EdctTime).FirstOrDefault(e => !string.IsNullOrEmpty(e));
         if (!string.IsNullOrEmpty(edct)) sb.Append("EDCT: ").Append(Hm(edct)).Append('\n');
 
@@ -592,6 +618,7 @@ static class TrackRoutes
         if (taisTracks.Count > 0) srcs.Add("STARS");
         if (asdexTracks.Count > 0) srcs.Add("ASDE-X");
         if (tfdm0 != null) srcs.Add("TFDM");
+        if (tbfm != null) srcs.Add("TBFM");
         if (srcs.Count > 0) sb.Append("in: ").Append(string.Join(" · ", srcs));
 
         return sb.ToString().TrimEnd();
@@ -651,6 +678,7 @@ static class TrackRoutes
         var (legO, legD) = LegOf(flights);
         var tfdm0 = ctx.Tfdm.FlightsByCallsign(cs, legO, legD).FirstOrDefault();
         var tfms = ctx.Tfms.FindByCallsign(cs);
+        var tbfm = ctx.Tbfm.TrackSummary(cs);
         var best = flights
             .OrderByDescending(f => string.IsNullOrEmpty(f.ControllingFacility) ? 0 : 1)
             .ThenBy(f => f.Gufi, StringComparer.Ordinal).FirstOrDefault();
@@ -688,9 +716,18 @@ static class TrackRoutes
         // TFMS: only its DISCRETE state — flight status (PLANNED→ACTIVE→COMPLETED) and a diversion.
         // ETD/ETA/position are re-estimated constantly and would push on every drift.
         if (tfms != null) sb.Append('|').Append(tfms.FlightStatus).Append(';').Append(tfms.DiversionIndicator);
+        // TBFM: the DISCRETE metering state only — which point is being scheduled to, whether the
+        // schedule is frozen or suspended, the assigned runway, and the hold rounded to a whole
+        // minute. The STAs and ETAs themselves are re-estimated on every update and would push on
+        // every drift, the same trap TFMS and TFDM avoid above. Rounding the delay is what makes
+        // it discrete: a hold going 4.6 -> 5.1 min is worth a message, 4.61 -> 4.62 is not.
+        if (tbfm != null)
+            sb.Append('|').Append(tbfm.Point).Append(';').Append(tbfm.Rwy).Append(';')
+              .Append(tbfm.DelayMin is { } d ? Math.Round(d).ToString("0") : "")
+              .Append(tbfm.Frozen ? "F" : "").Append(tbfm.Suspended ? "S" : "");
         sb.Append('|').Append(flights.Count > 0 ? 'S' : '-').Append(taisTracks.Count > 0 ? 'T' : '-')
           .Append(asdexTracks.Count > 0 ? 'A' : '-').Append(tdlsAc.Count > 0 ? 'D' : '-').Append(tfdm0 != null ? 'F' : '-')
-          .Append(tfms != null ? 'M' : '-');
+          .Append(tfms != null ? 'M' : '-').Append(tbfm != null ? 'B' : '-');
         return sb.ToString();
     }
 

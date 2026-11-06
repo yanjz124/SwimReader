@@ -82,6 +82,14 @@
     background:var(--warn); padding:2px 9px; border-radius:5px; letter-spacing:.5px; }
   .stars-strip .ss-own { margin-top:8px; font-size:14px; color:#9fd8ab; letter-spacing:.5px; }
 
+  /* Group heading. The page is a stack of source cards, which reads as a pile unless the stack is
+     told what story it is telling: where the flight IS, what is AHEAD of it, what was PLANNED, and
+     what already happened. Only emitted when a group has a card in it. */
+  .grphdr { margin:18px 14px 2px; font-size:11px; letter-spacing:2.5px; color:#7a7a5a;
+    display:flex; align-items:center; gap:10px; }
+  .grphdr::after { content:""; flex:1; height:1px; background:var(--line); }
+  .grphdr:first-child { margin-top:8px; }
+
   /* Cards */
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; margin:10px 12px; overflow:hidden; }
   .card > h2 { margin:0; padding:9px 14px; font-size:12px; letter-spacing:2px; color:var(--dim);
@@ -161,7 +169,7 @@
     background: #0b1424; color: #9db4d8; font-size: 13px; line-height: 1.5; }
   .tgnote a { color: #6cf; } .tgnote code { color: #cf6; background: #10203a; padding: 1px 5px; border-radius: 4px; }
 </style>
-<script src="/track/track.js?v=23"></script>
+<script src="/track/track.js?v=24"></script>
 <script src="/shared/disclaimer.js?v=2"></script>
 </body>
 </html>

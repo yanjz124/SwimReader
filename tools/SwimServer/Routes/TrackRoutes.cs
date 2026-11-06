@@ -604,11 +604,20 @@ static class TrackRoutes
                            && tbfm.HoldCtr == tbfm.Ctr;
             var at = (string? pt, string? ctr) =>
                 pt == null ? "" : " at " + pt + (ctr != null ? " (" + ctr + ")" : "");
+            var holdShown = false;
             if (tbfm.DelayMin is { } d && Math.Abs(d) >= 0.1)
+            {
                 bp.Add((d > 0 ? "hold " : "early ") + Math.Abs(d).ToString("0.#") + "m"
                        + at(tbfm.HoldPoint, tbfm.HoldCtr)
                        + (sameLink && tbfm.StaPoint is { } hsp ? " STA " + HmDt(hsp) : ""));
-            if (!string.IsNullOrEmpty(tbfm.Point) && !sameLink)
+                holdShown = true;
+            }
+            // Suppress "next" only when the hold line ACTUALLY printed and already named this
+            // point. Keying the suppression on sameLink alone silently deleted the entire TBFM
+            // line for any flight running on schedule — the hold line is gated on a delay of at
+            // least 0.1 min, so a flight with none printed neither, while "Metering:" and the
+            // TBFM source chip still appeared and made it look like the data was there.
+            if (!string.IsNullOrEmpty(tbfm.Point) && !(sameLink && holdShown))
                 bp.Add("next " + tbfm.Point + (tbfm.Ctr != null ? " (" + tbfm.Ctr + ")" : "")
                        + (tbfm.StaPoint is { } sp ? " STA " + HmDt(sp) : ""));
             if (tbfm.StaRwy is { } sr)

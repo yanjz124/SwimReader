@@ -37,7 +37,8 @@ public sealed class SwimCorrelationSource
     private readonly string _sfdpsUrl;
 
     /// <summary>Correlated TRACON tracks, keyed facility:trackNumber. Fed from the event stream.</summary>
-    private readonly ConcurrentDictionary<string, TaggedTrack> _tagged = new();
+    private readonly ConcurrentDictionary<string, FacilityTrack> _tagged = new();
+    private long _namedTracks;
 
     private volatile IReadOnlyList<AdsbFiAircraft> _sfdps = Array.Empty<AdsbFiAircraft>();
     private DateTime _sfdpsAt;
@@ -66,28 +67,74 @@ public sealed class SwimCorrelationSource
         _sfdpsUrl = sfdpsBaseUrl.TrimEnd('/') + "/api/enrich/aircraft";
     }
 
-    private sealed record TaggedTrack(
-        string Callsign, string? Facility, int? ModeSCode, string? Squawk,
-        double Lat, double Lon, int? AltFt, DateTime At);
-
     /// <summary>
-    /// Remember a track that is already correlated, so it can name the same aircraft when a
-    /// neighbouring facility sees it untagged. Called for every track the enrichment service
-    /// decides it does not need to enrich.
+    /// One facility's view of one track. Position and identity arrive in SEPARATE events and are
+    /// joined here on (facility, track number).
+    ///
+    /// <para>This is the whole reason the first version of this source held exactly one entry.
+    /// <c>TrackPositionEvent.Callsign</c> looks like the obvious place to read a correlated
+    /// callsign from and is almost always null — TAIS puts the callsign on the flight plan, and a
+    /// live capture measured 14 of 1,237 track records carrying one. CLAUDE.md documents the same
+    /// trap from the other direction, where the adapter published a callsign nothing read.</para>
     /// </summary>
-    public void NoteTagged(TrackPositionEvent track)
+    private sealed class FacilityTrack
     {
-        if (string.IsNullOrWhiteSpace(track.Callsign)) return;
+        public string? Callsign;
+        public string? Facility;
+        public int? ModeSCode;
+        public string? Squawk;
+        public double Lat, Lon;
+        public int? AltFt;
+        public bool HasPosition;
+        public DateTime At;
+    }
+
+    private static string Key(string? facility, string? trackNumber)
+        => (facility ?? "?") + ":" + (trackNumber ?? "?");
+
+    /// <summary>Record where a track is. Called for every track, correlated or not: whether it is
+    /// usable as evidence depends on a flight plan that may not have arrived yet.</summary>
+    public void NotePosition(TrackPositionEvent track)
+    {
         if (track.IsPseudo) return;      // military injection and friends are not evidence
         // GeoPosition is a struct, so "no position" arrives as 0,0 rather than null. An entry at
-        // the origin would sit in a cell no real traffic occupies and could only ever produce a
-        // false match, so it is not evidence of anything.
+        // the origin sits in a cell no real traffic occupies and could only produce a false
+        // match, so it is not evidence of anything.
         if (track.Position.Latitude == 0 && track.Position.Longitude == 0) return;
-        var key = (track.Facility ?? "?") + ":" + track.TrackNumber;
-        _tagged[key] = new TaggedTrack(
-            track.Callsign.Trim(), track.Facility, track.ModeSCode, track.Squawk,
-            track.Position.Latitude, track.Position.Longitude, track.AltitudeFeet,
-            DateTime.UtcNow);
+        var e = _tagged.GetOrAdd(Key(track.Facility, track.TrackNumber), _ => new FacilityTrack());
+        lock (e)
+        {
+            e.Facility = track.Facility;
+            e.ModeSCode = track.ModeSCode ?? e.ModeSCode;
+            e.Squawk = track.Squawk ?? e.Squawk;
+            e.Lat = track.Position.Latitude;
+            e.Lon = track.Position.Longitude;
+            e.AltFt = track.AltitudeFeet ?? e.AltFt;
+            e.HasPosition = true;
+            e.At = DateTime.UtcNow;
+            if (!string.IsNullOrWhiteSpace(track.Callsign)) e.Callsign = track.Callsign.Trim();
+        }
+    }
+
+    /// <summary>
+    /// Record the callsign a facility has correlated to a track. This is where a tagged target's
+    /// identity actually comes from.
+    /// </summary>
+    public void NoteFlightPlan(FlightPlanDataEvent fp)
+    {
+        // NEVER let our own output back in as evidence. An ADSB_ENRICH event carries a callsign
+        // this service guessed; treating it as a correlated flight plan would let one guess
+        // justify the next, and a wrong one would spread across facilities with no way back.
+        if (fp.Source == "ADSB_ENRICH") return;
+        if (string.IsNullOrWhiteSpace(fp.Callsign)) return;
+        var e = _tagged.GetOrAdd(Key(fp.Facility, fp.TrackNumber), _ => new FacilityTrack());
+        lock (e)
+        {
+            e.Callsign = fp.Callsign.Trim();
+            e.Facility ??= fp.Facility;
+            e.ModeSCode ??= fp.ModeSCode;
+            e.At = DateTime.UtcNow;
+        }
     }
 
     private sealed class EnrichRow
@@ -163,22 +210,33 @@ public sealed class SwimCorrelationSource
         var cutoff = DateTime.UtcNow - TaggedTtl;
         var outp = new List<AdsbFiAircraft>(_sfdps.Count + _tagged.Count);
         outp.AddRange(_sfdps);
+        var named = 0;
         foreach (var kv in _tagged)
         {
-            var t = kv.Value;
-            if (t.At < cutoff) { _tagged.TryRemove(kv.Key, out _); continue; }
+            var e = kv.Value;
+            string? cs; string? fac; int? ms; string? sq; double lat, lon; int? alt; bool pos; DateTime at;
+            lock (e)
+            {
+                cs = e.Callsign; fac = e.Facility; ms = e.ModeSCode; sq = e.Squawk;
+                lat = e.Lat; lon = e.Lon; alt = e.AltFt; pos = e.HasPosition; at = e.At;
+            }
+            if (at < cutoff) { _tagged.TryRemove(kv.Key, out _); continue; }
+            // Only a track that is BOTH identified and located is evidence.
+            if (string.IsNullOrEmpty(cs) || !pos) continue;
+            named++;
             outp.Add(new AdsbFiAircraft
             {
-                Hex = t.ModeSCode.HasValue ? ModeSCodeHelper.ToHexString(t.ModeSCode.Value) : null,
-                Flight = t.Callsign,
-                Squawk = t.Squawk,
-                Lat = t.Lat,
-                Lon = t.Lon,
-                AltitudeOverrideFeet = t.AltFt,
+                Hex = ms.HasValue ? ModeSCodeHelper.ToHexString(ms.Value) : null,
+                Flight = cs,
+                Squawk = sq,
+                Lat = lat,
+                Lon = lon,
+                AltitudeOverrideFeet = alt,
                 SyntheticSource = "tais",
-                SyntheticFacility = t.Facility,
+                SyntheticFacility = fac,
             });
         }
+        Interlocked.Exchange(ref _namedTracks, named);
         return outp;
     }
 
@@ -189,6 +247,10 @@ public sealed class SwimCorrelationSource
         sfdpsFetches = Interlocked.Read(ref _sfdpsFetches),
         sfdpsFailures = Interlocked.Read(ref _sfdpsFailures),
         sfdpsLastError = _lastError,
-        taggedTracks = _tagged.Count,
+        // Tracks held, versus the subset that is actually usable: identified AND located.
+        // The gap between the two is the diagnostic — a large held count with a tiny named count
+        // is the flight-plan join failing, which is exactly how this source first shipped broken.
+        trackedFacilityTracks = _tagged.Count,
+        namedFacilityTracks = Interlocked.Read(ref _namedTracks),
     };
 }

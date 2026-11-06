@@ -112,20 +112,30 @@ public sealed class CallsignEnrichmentService : BackgroundService
         // Fast event consumer: reads events quickly and queues enrichment work
         await foreach (var evt in _eventBus.SubscribeAsync("CallsignEnrichment", ct))
         {
+            // A correlated flight plan is where a tagged target's identity actually lives: TAIS
+            // leaves TrackPositionEvent.Callsign null for all but a handful of tracks, so reading
+            // identity off the position event alone gave this source one usable entry in the
+            // whole NAS. Both halves are needed, joined on (facility, track number).
+            if (evt is FlightPlanDataEvent fp)
+            {
+                _swim.NoteFlightPlan(fp);
+                continue;
+            }
             if (evt is not TrackPositionEvent track)
                 continue;
 
             Interlocked.Increment(ref _seen);
 
-            // A track that already has a callsign needs no enrichment — but it is EVIDENCE.
-            // The same aircraft is often untagged at the neighbouring facility, and this loop
-            // already sees every one of them, so remembering it costs an index entry and names
-            // 24.6% of untagged targets that ADS-B could not.
+            // Every track's position is recorded, correlated or not — whether it can serve as
+            // evidence depends on a flight plan that may not have arrived yet. The same aircraft
+            // is often untagged at the neighbouring facility, and this loop already sees every
+            // one of them, so remembering costs an index entry and names 24.6% of untagged
+            // targets that ADS-B could not.
+            _swim.NotePosition(track);
+
+            // Skip tracks that already have a callsign or are frozen/pseudo
             if (!string.IsNullOrEmpty(track.Callsign))
-            {
-                _swim.NoteTagged(track);
                 continue;
-            }
             if (track.IsFrozen || track.IsPseudo)
                 continue;
             if (!BeaconCodes.IsDiscrete(track.Squawk) && !track.ModeSCode.HasValue)

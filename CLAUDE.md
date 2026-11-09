@@ -2250,6 +2250,72 @@ suspended, and the hold **rounded to a whole minute**. The STAs and ETAs are re-
 update and would push on every drift; rounding the delay is what makes it discrete, so 4.6 → 5.1
 min notifies and 4.61 → 4.62 does not. Same rule TFMS and TFDM already follow.
 
+### What a flight is DOING: four bugs that all read as plausible text
+
+Found by following five live flights across both surfaces rather than from a report. None threw,
+logged, or moved a counter — an altitude renders as a plausible string whatever the unit, and a
+phase is one word that reads fine until you check it against the flight. `TrackPresentationTests`
+pins all of it, because a browser and a hand-read of the bot text confirm nothing here.
+
+**Altitudes were in the wrong unit below FL180.** Everything printed `'FL' + ft/100`
+unconditionally, so every arrival on approach was reported in a unit that does not apply to it —
+`at FL10` for an aircraft on short final at 1,000 ft, `assigned FL90 · at FL166` for one at 9,000
+descending through 16,600. **`FmtAlt` had the correct rule all along and was dead code, never
+called once**, while the live path did its own thing. `Fl()` delegates to it now and `track.js`
+has the matching `altFt()`. The data-block helpers keep the raw zero-padded hundreds — that is
+what a data block shows, not prose.
+
+**The phase label was wrong in both directions, and the fix needed three rounds.** SFDPS's
+`flightStatus` and its ground speed are each unreliable in a specific way:
+
+| symptom | cause |
+|---|---|
+| FL320, 477 kt, position 1 s old → `DROPPED` | SFDPS marks a flight DROPPED when the **losing** center drops the track mid-handoff, before the receiving center reports. It says nothing while radar is current. |
+| landed at ATL → `AIRBORNE` | `COMPLETED` was never consulted, though SFDPS publishes it with an actual arrival time. |
+| taxiing at 6 kt → `AIRBORNE` | **SFDPS's ground speed goes stale on touchdown.** Its last radar fix is on final or the rollout and then stops updating. |
+| stopped on the field at 0 kt → `DROPPED` | same staleness, one level up: the position ages out, so `livePos` is false and the DROPPED test fired first. |
+
+So **a surface movement radar outranks both SFDPS signals** for an aircraft that has landed —
+ASDE-X reports every second — and the test has to sit above the DROPPED test as well as the
+AIRBORNE one. Measured over 290 ASDE-X callsigns, 61 read low-and-fast off SFDPS: 43 were already
+`COMPLETED`, **11 had ASDE-X under 40 kt while SFDPS claimed 81-147 kt** (several parked at 1-7
+kt), and 7 were genuine rollouts, which ASDE-X also reports fast. It is gated on ASDE-X itself
+reporting slow **and** a known low Mode C, which is what keeps the case the original ordering
+guarded against — an airborne aircraft appearing briefly in surface data — and excludes those 7.
+`AIRBORNE` is deliberately **not** gated on position freshness: a coasting flight is still
+airborne, and that would flip the word across one missed scan.
+
+**`sfdps[0]` was arbitrary, so the page and the bot could describe the same flight differently.**
+`/api/track` built its SFDPS array by iterating a `ConcurrentDictionary`, i.e. in enumeration
+order. The bot picks its record with `BestFlight` (non-DROPPED first, then freshest) but
+`/track`'s hero reads `sfdps[0]` — and the page's pick was not merely different, it was arbitrary.
+Measured on en-route traffic: 12 of 237 callsigns carry several GUFIs and 2 were mis-ordered. Low
+frequency, bad when it lands — **NJZ196 led with a DROPPED record at 34,000 ft whose position was
+495 s old, while the live ACTIVE record sat behind it at 20,500 ft and 6 s old.** That is exactly
+the stale dead leg `BestFlight`'s own comment warns about, reaching the page through the one path
+that never consulted it. `CurrentLegFirst` is now the single ordering both use; keeping them as
+separate copies is how the two SimBrief URL builders drifted.
+
+**A source listed as present must contribute a line.** The bot's `Surface` line carried only the
+TDLS gate and runway, which an arrival never has, so a flight taxiing in at ATL listed ASDE-X in
+its sources and then showed nothing from it. It leads with the airport and ground speed now, which
+a surface track always has.
+
+Two smaller ones in the same pass: a `RETRACTION` printed `Next: ZFW/22 · retracted`, but a
+retraction is the controller taking the handoff back so there is no next frequency to name; and
+the TFMS and ASDE-X cards formatted their own altitudes, so the page showed `Altitude 34000 ft`
+directly beside `Assigned Alt FL340` for the same aircraft.
+
+**The `/api/track` ASDE-X entries are `{airport, track:{…}}`** — the fields are nested one level
+down. A checker reading `entry.spdKts` gets `undefined`, which `|| 0` then turns into a *passing*
+comparison; that produced four false positives in the verification pass for this work before the
+nesting was noticed. `track.js` has always read `asd.track.spdKts` correctly.
+
+Verified after the fixes over 110 live flights across every phase: no bogus flight level below
+18,000 ft, no `sfdps[0]` leading with a DROPPED record while a live one exists, no `AIRBORNE`
+while ASDE-X has the aircraft slow and low, no retracted handoff advertised as next, and no source
+listed without a line.
+
 ### The `/t` text page is disabled (and why)
 `/t` was a ~2 KB, no-JS, `<meta http-equiv=refresh content=30>` page meant for constrained wifi. It is
 **turned off**: `GET /t` and `GET /t/{callsign}` now 302 to `/track`, the TEXT link is gone from the page

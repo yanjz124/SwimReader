@@ -933,6 +933,21 @@ static class TrackRoutes
             // nothing about the flight, and reads alarmingly to someone merely following one — a
             // flight at FL320 and 477 kt with a 1-second-old position was labelled DROPPED.
             if (f.FlightStatus == "DROPPED" && !livePos) return ("DROPPED", "r");
+            // A surface movement radar outranks SFDPS's ground speed for an aircraft that has just
+            // landed — the opposite of the precedence below, which is why this sits above the
+            // AIRBORNE test. SFDPS's speed is its last radar fix, taken on final or during the
+            // rollout, and it then stops updating; ASDE-X reports every second.
+            //
+            // Measured over 290 ASDE-X callsigns: 61 read low-and-fast off SFDPS. 43 were already
+            // COMPLETED (caught above), 7 were genuine rollouts, and for 11 ASDE-X had the
+            // aircraft under 40 kt — several at 1-7 kt, i.e. parked — while SFDPS still claimed
+            // 81-147 kt.
+            //
+            // Gated on ASDE-X itself reporting slow AND a known low Mode C, so the case the old
+            // ordering guarded against (a midflight aircraft appearing briefly in surface data)
+            // cannot match, and neither can those 7 rollouts, which ASDE-X also reports fast.
+            if (asd != null && (asd.SpeedKts ?? 0) < 40 && f.ReportedAltitude is { } ra && ra < 1500)
+                return ("ON SURFACE", "g");
             // Deliberately NOT gated on livePos: a coasting flight is still airborne, and making
             // the label depend on freshness would flip it across a single missed radar scan.
             if (f.Latitude != null && (f.GroundSpeed ?? 0) > 40) return ("AIRBORNE", "g");

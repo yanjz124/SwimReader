@@ -109,6 +109,46 @@ public class TrackPresentationTests
         => Assert.Equal("CANCELLED", TrackRoutes.PhaseOf(Flight("CANCELLED", null, null, 0), null, null).label);
 
     [Fact]
+    public void AsdexOutranksAStaleSfdpsSpeedForAnAircraftThatHasLanded()
+    {
+        // The measured case: SFDPS still reporting 147 kt from its last fix on the rollout, while
+        // the surface radar has the aircraft taxiing at 6 kt. SFDPS stops updating on touchdown;
+        // ASDE-X reports every second, so it is the better source here.
+        var f = Flight("ACTIVE", 33.95, 147, posAgeSec: 159);
+        f.ReportedAltitude = 100;
+        Assert.Equal("ON SURFACE", TrackRoutes.PhaseOf(f, new AsdexTrack { SpeedKts = 6 }, null).label);
+    }
+
+    [Fact]
+    public void AGenuineRolloutIsNotCalledSurface()
+    {
+        // ASDE-X reports the rollout fast too, which is what separates it from a taxiing aircraft.
+        var f = Flight("ACTIVE", 33.95, 147, posAgeSec: 2);
+        f.ReportedAltitude = 100;
+        Assert.Equal("AIRBORNE", TrackRoutes.PhaseOf(f, new AsdexTrack { SpeedKts = 138 }, null).label);
+    }
+
+    [Fact]
+    public void AMidflightAircraftInSurfaceDataIsNeverCalledSurface()
+    {
+        // The case the original ordering existed to guard against: an airborne flight briefly
+        // appearing in ASDE-X data must not be relabelled off it. The Mode C gate is what holds.
+        var f = Flight("ACTIVE", 33.95, 450, posAgeSec: 2);
+        f.ReportedAltitude = 35000;
+        Assert.Equal("AIRBORNE", TrackRoutes.PhaseOf(f, new AsdexTrack { SpeedKts = 3 }, null).label);
+    }
+
+    [Fact]
+    public void UnknownModeCDoesNotLetSurfaceDataWin()
+    {
+        // With no reported altitude there is no sanity check on the cross-source match, so the
+        // conservative answer is to leave SFDPS in charge.
+        var f = Flight("ACTIVE", 33.95, 450, posAgeSec: 2);
+        Assert.Null(f.ReportedAltitude);
+        Assert.Equal("AIRBORNE", TrackRoutes.PhaseOf(f, new AsdexTrack { SpeedKts = 3 }, null).label);
+    }
+
+    [Fact]
     public void SurfaceAndTerminalRemainTheFallbacks()
     {
         Assert.Equal("ON SURFACE",

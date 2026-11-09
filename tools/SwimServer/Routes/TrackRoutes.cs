@@ -312,6 +312,47 @@ static class TrackRoutes
     // handed to the Center. TAIS never carries *which* ARTCC/sector, so "C" must be resolved via SFDPS.
     private static bool IsCenterTcp(string? tcp) => string.Equals(tcp?.Trim(), "C", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Is this STARS track's "owner" actually the position the flight is being handed TO, rather
+    /// than the one working it?
+    ///
+    /// <para>TAIS takes the owner from &lt;cps&gt;, and STARS puts the <i>receiving</i> position
+    /// there while an ownership change is still outstanding — so on a center-to-approach handoff the
+    /// TRACON reads as the owner before the pilot has been shipped. SFDPS settles it: ProcessFlight()
+    /// clears every handoff field the moment the controlling unit becomes the receiver, so a
+    /// populated <c>HandoffReceiving</c> is positive evidence the transfer has NOT completed.</para>
+    ///
+    /// <para>Measured across every TAIS facility: of the <c>ocr="pending"</c> tracks SFDPS also had a
+    /// handoff for, <b>15 of 15</b> had <c>handoffReceiving</c> equal to this owner while the
+    /// controlling unit was still the center; none were outbound. Reported as the bot printing
+    /// "Next: RDU/1N" and "Now: RDU/1N" for the same aircraft, with nothing to say it hadn't
+    /// changed hands yet.</para>
+    ///
+    /// <para>Keyed on SFDPS's handoff rather than on <c>ocr</c> on purpose. <c>ocr</c> records the
+    /// <i>kind</i> of the last ownership change, not whether one is outstanding — "normal handoff"
+    /// measured 10 of 14 already owned (controlling sector == owner), so it cannot carry this.</para>
+    /// </summary>
+    private static bool IsPendingReceiver(TaisTrack t, string? pendingTo, string? pendingToRaw)
+    {
+        if (pendingTo == null && pendingToRaw == null) return false;
+        var label = t.Facility + "/" + t.Owner;
+        return string.Equals(label, pendingTo, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(label, pendingToRaw, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// How far along an outstanding transfer is, in the terms ERAM's own field E uses: a proposed
+    /// handoff flashes H, an accepted one shows a steady O, /OK forces it. The "Next" line only ever
+    /// appears while a handoff is open, but open covers proposed and accepted — which is the
+    /// difference between "still on this frequency" and "switching now".
+    private static string HandoffStage(FlightState f) =>
+        f.HandoffForced ? "forced /OK"
+        : (f.HandoffEvent ?? "").ToUpperInvariant() switch
+        {
+            "ACCEPTANCE" => "accepted",
+            "RETRACTION" => "retracted",
+            _ => "pending",
+        };
+
     private static bool IsArtcc(string? fac) =>
         !string.IsNullOrEmpty(fac) && fac!.Length == 3 && char.ToUpperInvariant(fac[0]) == 'Z';
 
@@ -387,11 +428,19 @@ static class TrackRoutes
 
         // Next frequency (en-route SFDPS handoff, else STARS/TAIS pending handoff)
         var hoF = flights.FirstOrDefault(f => !string.IsNullOrEmpty(f.HandoffEvent) && !string.IsNullOrEmpty(f.HandoffReceiving));
+        // The position SFDPS says a transfer is outstanding TO, as a real facility id ("RDU/1N"),
+        // plus the raw token so a STARS owner can be compared against either spelling.
+        string? pendingTo = null, pendingToRaw = null;
         if (hoF != null)
         {
             var (recv, tracon) = MapFacToken(ctx, hoF.ReportingFacility, hoF.HandoffReceiving!);
+            pendingTo = recv; pendingToRaw = hoF.HandoffReceiving;
             var rf = FreqOf(ctx, recv);
-            sb.Append("Next: ").Append(recv).Append(tracon != null ? " (" + hoF.HandoffReceiving + ")" : "").Append(rf != null ? " · " + rf : "").Append('\n');
+            sb.Append("Next: ").Append(recv);
+            // Only name the raw NAS code when it actually differs — "RDU/1N (RDU/1N)" is noise.
+            if (tracon != null && !string.Equals(hoF.HandoffReceiving, recv, StringComparison.OrdinalIgnoreCase))
+                sb.Append(" (").Append(hoF.HandoffReceiving).Append(')');
+            sb.Append(rf != null ? " · " + rf : "").Append(" · ").Append(HandoffStage(hoF)).Append('\n');
         }
         else if (tais0 != null && !string.IsNullOrEmpty(tais0.PendingHandoff))
         {
@@ -418,7 +467,8 @@ static class TrackRoutes
         var ownedTais = taisTracks
             .Where(t => !string.IsNullOrEmpty(t.Owner) && !string.IsNullOrEmpty(t.Facility)
                         && !IsCenterTcp(t.Owner)   // owner "C" = Center owns it, not the TRACON
-                        && (DateTime.UtcNow - t.LastSeen).TotalSeconds < 45)
+                        && (DateTime.UtcNow - t.LastSeen).TotalSeconds < 45
+                        && !IsPendingReceiver(t, pendingTo, pendingToRaw))
             .OrderByDescending(t => t.LastSeen)
             .FirstOrDefault();
         if (ownedTais != null)
@@ -488,10 +538,16 @@ static class TrackRoutes
         foreach (var t in StarsTracks(taisTracks))
         {
             var tf = FreqOf(ctx, t.Facility + "/" + (t.Owner ?? ""));
+            // <cps> is the RECEIVING position while an ownership change is outstanding, so label it
+            // as the inbound handoff rather than as the owner — see IsPendingReceiver.
+            var inbound = IsPendingReceiver(t, pendingTo, pendingToRaw);
             sb.Append("STARS ").Append(t.Facility);
             if (IsCenterTcp(t.Owner)) sb.Append(" · owned by Center");
-            else if (!string.IsNullOrEmpty(t.Owner)) sb.Append(" · owner ").Append(t.Owner).Append(tf != null ? " " + tf : "");
-            if (!string.IsNullOrEmpty(t.HandoffOcr) && t.HandoffOcr != "no change") sb.Append(" · ").Append(t.HandoffOcr);
+            else if (!string.IsNullOrEmpty(t.Owner))
+                sb.Append(inbound ? " · handoff to " : " · owner ").Append(t.Owner).Append(tf != null ? " " + tf : "");
+            // "pending" after "handoff to 1N" says nothing extra.
+            if (!string.IsNullOrEmpty(t.HandoffOcr) && t.HandoffOcr != "no change"
+                && !(inbound && t.HandoffOcr == "pending")) sb.Append(" · ").Append(t.HandoffOcr);
             var tm = new List<string>();
             if (!string.IsNullOrEmpty(t.EntryFix) || !string.IsNullOrEmpty(t.ExitFix)) tm.Add("gates " + (t.EntryFix ?? "—") + "▸" + (t.ExitFix ?? "—"));
             var spd = string.Join(" ", new[] { t.Scratchpad1, t.Scratchpad2 }.Where(x => !string.IsNullOrEmpty(x)));

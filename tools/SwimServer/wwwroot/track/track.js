@@ -94,13 +94,25 @@
     var secp = sec ? '/' + sec : '';
     return tracon ? tracon + secp + ' (' + (fac || '') + ')' : (fac || '') + secp;
   }
-  // Receiving handoff token with the raw NAS code in parens when the server mapped it.
+  // Receiving handoff token with the raw NAS code in parens when the server mapped it — and only
+  // when it differs, since a facility whose NAS code IS its STARS id gave "RDU/1N (RDU)".
   function recvDisp(f) {
     if (!f.handoffReceiving) return '?';
-    return f.handoffReceivingMapped
-      ? f.handoffReceivingMapped + ' (' + f.handoffReceiving.split('/')[0] + ')'
-      : f.handoffReceiving;
+    var raw = f.handoffReceiving.split('/')[0];
+    if (!f.handoffReceivingMapped) return f.handoffReceiving;
+    return f.handoffReceivingMapped === f.handoffReceiving
+      ? f.handoffReceivingMapped
+      : f.handoffReceivingMapped + ' (' + raw + ')';
   }
+
+  // Positions SFDPS says a transfer is outstanding TO, populated per render.
+  //
+  // TAIS takes a STARS track's owner from <cps>, and STARS puts the RECEIVING position there while
+  // an ownership change is still open — so on a center-to-approach handoff the TRACON reads as the
+  // owner before the pilot has been shipped. Anything in here is the NEXT controller, not the
+  // current one. See IsPendingReceiver in TrackRoutes.cs for the measurement behind this.
+  var PENDING_TO = {};
+  function isPendingTcp(fac, tcp) { return !!(fac && tcp && PENDING_TO[fac + '/' + tcp]); }
   // Annotate every "FAC/SECTOR" token found in free text with its frequency, if known.
   function annotateFreqs(text) {
     if (!text) return text;
@@ -113,6 +125,12 @@
   function render(d) {
     lastData = d;
     FREQS = d.freqs || {};
+    PENDING_TO = {};
+    (d.sfdps || []).forEach(function (f) {
+      if (!f.handoffEvent || !f.handoffReceiving) return;
+      PENDING_TO[f.handoffReceiving] = 1;
+      if (f.handoffReceivingMapped) PENDING_TO[f.handoffReceivingMapped] = 1;
+    });
     if (!d.found) {
       statusText.textContent = 'No live data for ' + d.callsign;
       out.innerHTML = `<div class="msg">Nothing is tracking <b>${esc(d.callsign)}</b> right now.<br>It may not be airborne or filed yet. Use the exact callsign (e.g. AAL123, not AA123) or the tail number.</div>`;
@@ -240,8 +258,10 @@
     const sub = [type + wake, (f && f.registration) || ''].filter(Boolean).join(' · ');
     const freq = f && f.sectorFreq;
     const ctrl = f ? facDisp(f.controllingFacility, f.controllingSector, f.controllingTracon) : '';
-    // Terminal (STARS) frequency — the flight can be in a TRACON while ERAM still owns it.
-    const sOwner = tais && tais.owner ? (tais.facility + '/' + tais.owner) : '';
+    // Terminal (STARS) frequency — the flight can be in a TRACON while ERAM still owns it. A
+    // pending receiver is not on frequency yet, so it must not be shown as the terminal one.
+    const sOwner = tais && tais.owner && !isPendingTcp(tais.facility, tais.owner)
+      ? (tais.facility + '/' + tais.owner) : '';
     const sfreq = sOwner ? (FREQS[sOwner] || '') : '';
     // Prominent handoff banner: the sector the flight is moving to next + its frequency.
     // Works for en-route (SFDPS) handoffs and terminal (STARS/TAIS) handoffs.
@@ -548,11 +568,13 @@
   function taisCard(tais) {
     let inner = '';
     tais.forEach(function (t) {
+      const pend = isPendingTcp(t.facility, t.owner);
       inner += `<div class="subhdr">${esc(t.facility)} · STARS</div>`;
       inner += grid([
         ['Track #', t.trackNum], ['Scratchpad', [t.sp1, t.sp2].filter(Boolean).join(' / ')],
-        ['Runway', t.runway], ['Owner', t.owner, 'hl'],
-        ['Frequency', freqOf(t.facility + '/' + t.owner), 'hl'],
+        ['Runway', t.runway],
+        [pend ? 'Handoff to' : 'Owner', t.owner, pend ? 'warn' : 'hl'],
+        [pend ? 'Frequency next' : 'Frequency', freqOf(t.facility + '/' + t.owner), pend ? 'warn' : 'hl'],
         ['Handoff', t.handoff ? (t.handoff + (freqOf(t.facility + '/' + t.handoff) ? '  ·  ' + freqOf(t.facility + '/' + t.handoff) : '')) : null, 'warn'],
         ['Entry Fix', t.entryFix], ['Exit Fix', t.exitFix],
         ['Sqk (asgn)', t.assignedSqk], ['Sqk (rcvd)', t.reportedSqk],
@@ -567,7 +589,8 @@
   function starsStripHtml(t) {
     if (!t) return '';
     const sp = [t.sp1, t.sp2].filter(Boolean).join(' ');
-    const ownParts = [t.owner ? 'OWNER ' + t.owner : '', t.runway ? 'RWY ' + t.runway : ''].filter(Boolean).join('  ·  ');
+    const ownLbl = t.owner ? (isPendingTcp(t.facility, t.owner) ? 'H/O TO ' : 'OWNER ') + t.owner : '';
+    const ownParts = [ownLbl, t.runway ? 'RWY ' + t.runway : ''].filter(Boolean).join('  ·  ');
     return `<div class="stars-strip">
       <div class="ss-hd">${esc(t.facility)} STARS</div>
       <div class="ss-route">${esc(t.entryFix || '—')} <span class="arw">&#9656;</span> ${esc(t.exitFix || '—')}</div>

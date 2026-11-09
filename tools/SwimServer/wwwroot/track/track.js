@@ -10,6 +10,14 @@
 
   // ── format helpers ──
   const fl = a => (a == null ? null : String(Math.round(a / 100)).padStart(3, '0'));
+  // An altitude the way a controller or pilot says it: a flight level at or above the US
+  // transition altitude of 18,000 ft, plain feet below it. Mirrors FmtAlt in TrackRoutes.cs.
+  // Everything here used to print 'FL' + ft/100 unconditionally, so an arrival on approach read
+  // in a unit that doesn't apply to it ('at FL38' for 3,800 ft). `fl` above is the data-block
+  // form (zero-padded hundreds, no unit) and stays as it is.
+  const altFt = a => (a == null ? null
+    : a >= 18000 ? 'FL' + String(Math.round(a / 100)).padStart(3, '0')
+    : (Math.round(a / 100) * 100).toLocaleString('en-US') + ' ft');
   const lid = a => (a && a.length === 4 && a[0] === 'K') ? a.slice(1) : (a || '');
   const stripRmk = s => (s == null ? '' : String(s).replace(/\|/g, ' ').replace(/\s+/g, ' ').trim());
   const extractSec = s => { if (!s) return ''; const i = String(s).indexOf('/'); return i >= 0 ? s.slice(i + 1) : s; };
@@ -236,7 +244,19 @@
     // SFDPS truth wins first — a midflight aircraft can briefly show up in ASDE-X
     // surface data, and we must NOT mislabel an airborne flight as departing.
     if (f) {
-      if (f.status === 'DROPPED') return ['DROPPED', '#ff4444'];
+      // A position counts as a live radar picture for 60 s — the same grace the ERAM scope gives
+      // a DROPPED flight before it leaves the display.
+      const livePos = f.lat != null && f.posAgeSec != null && f.posAgeSec <= 60;
+      if (f.status === 'CANCELLED') return ['CANCELLED', '#ff4444'];
+      // SFDPS publishes COMPLETED with an actual arrival time, so it is down. Without this the
+      // status was ignored and a flight still rolling out read AIRBORNE off its last radar speed.
+      if (f.status === 'COMPLETED') return ['LANDED', '#8a8a3a'];
+      // DROPPED is a handoff artifact as often as a real loss of track — the losing center drops
+      // it before the receiving one reports — so with a live position it says nothing about the
+      // flight and alarms someone who is just following it.
+      if (f.status === 'DROPPED' && !livePos) return ['DROPPED', '#ff4444'];
+      // Deliberately NOT gated on livePos: a coasting flight is still airborne, and making the
+      // label depend on freshness would flip it back and forth across a missed radar scan.
       if (f.lat != null && (f.gs || 0) > 40) return ['AIRBORNE', '#44cc44'];
       if (f.status === 'PROPOSED' || f.lat == null) return ['PRE-DEPARTURE', '#8a8a3a'];
     }
@@ -379,12 +399,12 @@
   }
 
   function altSummary(f) {
-    if (f.assignedVfr) return 'VFR' + (f.reportedAlt ? ' / at FL' + Math.round(f.reportedAlt / 100) : '');
-    if (f.blockFloor != null && f.blockCeil != null) return `block FL${Math.round(f.blockFloor / 100)}-${Math.round(f.blockCeil / 100)}`;
+    if (f.assignedVfr) return 'VFR' + (f.reportedAlt ? ' / at ' + altFt(f.reportedAlt) : '');
+    if (f.blockFloor != null && f.blockCeil != null) return `block ${altFt(f.blockFloor)}-${altFt(f.blockCeil)}`;
     const p = [];
-    if (f.assignedAlt != null) p.push('assigned FL' + Math.round(f.assignedAlt / 100));
-    if (f.interimAlt != null) p.push('interim FL' + Math.round(f.interimAlt / 100));
-    if (f.reportedAlt != null) p.push('at FL' + Math.round(f.reportedAlt / 100));
+    if (f.assignedAlt != null) p.push('assigned ' + altFt(f.assignedAlt));
+    if (f.interimAlt != null) p.push('interim ' + altFt(f.interimAlt));
+    if (f.reportedAlt != null) p.push('at ' + altFt(f.reportedAlt));
     return p.join(' · ') || null;
   }
   function hsf(f) { const p = []; if (f.clrHeading) p.push('H' + f.clrHeading); if (f.clrSpeed) p.push('S' + f.clrSpeed); if (f.clrText) p.push(f.clrText); return p.join(' ') || null; }
@@ -470,7 +490,7 @@
     const plan = grid([
       ['Origin', f.origin], ['Destination', f.dest], ['Alternate', f.alternate],
       ['Rules', f.rules], ['Type', f.flightType], ['STAR', f.star],
-      ['Req. Alt', f.reqAlt ? 'FL' + Math.round(f.reqAlt / 100) : null],
+      ['Req. Alt', altFt(f.reqAlt)],
       ['Req. Speed', f.reqSpeed ? Math.round(f.reqSpeed) + ' kt' : null],
       ['EET (FIR)', f.eet], ['Operator', f.oper], ['Originator', f.originator], ['Remarks', stripRmk(f.remarks) || null],
     ]);
@@ -578,7 +598,7 @@
         ['Handoff', t.handoff ? (t.handoff + (freqOf(t.facility + '/' + t.handoff) ? '  ·  ' + freqOf(t.facility + '/' + t.handoff) : '')) : null, 'warn'],
         ['Entry Fix', t.entryFix], ['Exit Fix', t.exitFix],
         ['Sqk (asgn)', t.assignedSqk], ['Sqk (rcvd)', t.reportedSqk],
-        ['Altitude', t.altFt != null ? 'FL' + Math.round(t.altFt / 100) : null],
+        ['Altitude', altFt(t.altFt)],
         ['Ground Spd', t.gs != null ? Math.round(t.gs) + ' kt' : null],
       ]);
     });
@@ -717,8 +737,8 @@
       ['Type', [t.acType || t.acModel, t.equipmentQualifier].filter(Boolean).join('/')],
       ['Class', [t.category, t.userCategory, t.engineClass].filter(Boolean).join(' · ')],
       ['Beacon', t.beaconCode],
-      ['Req. Alt', t.requestedAlt ? 'FL' + fl(t.requestedAlt) : null],
-      ['Assigned Alt', t.assignedAlt ? 'FL' + fl(t.assignedAlt) : null],
+      ['Req. Alt', altFt(t.requestedAlt)],
+      ['Assigned Alt', altFt(t.assignedAlt)],
       ['Filed speed', [t.filedTas ? t.filedTas + ' kt TAS' : null, t.filedMach ? 'M' + t.filedMach : null].filter(Boolean).join('  ')],
       ['Facility', [t.facility, t.cid ? 'CID ' + t.cid : null].filter(Boolean).join('  ')],
       ['Diversion', t.diversion, 'warn'],

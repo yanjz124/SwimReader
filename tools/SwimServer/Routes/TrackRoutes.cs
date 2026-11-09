@@ -376,7 +376,7 @@ static class TrackRoutes
         return null;
     }
 
-    private static string FmtAlt(double feet)
+    internal static string FmtAlt(double feet)
     {
         int hundreds = (int)Math.Round(feet / 100.0);
         return feet >= 18000 ? "FL" + hundreds.ToString("000") : (hundreds * 100).ToString("#,0") + " ft";
@@ -426,8 +426,12 @@ static class TrackRoutes
 
         sb.Append("Phase: ").Append(PhaseOf(best, asd0, tais0).label).Append('\n');
 
-        // Next frequency (en-route SFDPS handoff, else STARS/TAIS pending handoff)
-        var hoF = flights.FirstOrDefault(f => !string.IsNullOrEmpty(f.HandoffEvent) && !string.IsNullOrEmpty(f.HandoffReceiving));
+        // Next frequency (en-route SFDPS handoff, else STARS/TAIS pending handoff).
+        // A RETRACTION is the controller taking the handoff back, so there is no next frequency to
+        // name — printing one read "Next: ZFW/22 · retracted", which is worse than saying nothing.
+        var hoF = flights.FirstOrDefault(f => !string.IsNullOrEmpty(f.HandoffEvent)
+            && !string.IsNullOrEmpty(f.HandoffReceiving)
+            && !f.HandoffEvent!.Equals("RETRACTION", StringComparison.OrdinalIgnoreCase));
         // The position SFDPS says a transfer is outstanding TO, as a real facility id ("RDU/1N"),
         // plus the raw token so a STARS owner can be compared against either spelling.
         string? pendingTo = null, pendingToRaw = null;
@@ -575,12 +579,18 @@ static class TrackRoutes
             }
         }
 
-        // Surface (ASDE-X): gate / runway
+        // Surface (ASDE-X): where it is on the field, plus gate/runway when TDLS supplied them.
+        // This used to carry ONLY the TDLS gate and runway, which an arrival never has — so a
+        // flight taxiing in at ATL listed ASDE-X as a source and then showed nothing from it.
+        // The airport and ground speed always exist on a surface track, so the line always says
+        // something.
         if (asd0 != null)
         {
             var surf = new List<string>();
+            if (!string.IsNullOrEmpty(asd0.Airport)) surf.Add(asd0.Airport);
             if (!string.IsNullOrEmpty(asd0.TdlsGate)) surf.Add("gate " + asd0.TdlsGate);
             if (!string.IsNullOrEmpty(asd0.TdlsRunway)) surf.Add("rwy " + asd0.TdlsRunway);
+            if (asd0.SpeedKts is { } sk) surf.Add(sk <= 1 ? "stopped" : sk + " kt");
             if (surf.Count > 0) sb.Append("Surface: ").Append(string.Join(" · ", surf)).Append('\n');
         }
 
@@ -872,7 +882,17 @@ static class TrackRoutes
                 + (m.Groups[2].Success ? int.Parse(m.Groups[2].Value) : 0);
         return min + "m";
     }
-    private static string? Fl(double? a) => a == null ? null : "FL" + Math.Round(a.Value / 100);
+    /// <summary>
+    /// An altitude the way a controller or pilot says it: a flight level at or above the US
+    /// transition altitude of 18,000 ft, plain feet below it.
+    ///
+    /// <para>This used to be an unconditional <c>"FL" + round(ft/100)</c>, so every arrival on
+    /// approach read in a unit that does not apply to it — a flight at 9,000 descending through
+    /// 16,600 printed "assigned FL90 · at FL166", and one on short final at 1,000 ft printed
+    /// "at FL10". <see cref="FmtAlt"/> had the correct rule all along and was dead code; this
+    /// delegates to it so there is one implementation rather than two that disagree.</para>
+    /// </summary>
+    private static string? Fl(double? a) => a == null ? null : FmtAlt(a.Value);
     private static string AltText(FlightState f)
     {
         if (f.AssignedVfr) return "VFR" + (f.ReportedAltitude != null ? " / at " + Fl(f.ReportedAltitude) : "");
@@ -894,11 +914,27 @@ static class TrackRoutes
         return e;
     }
     // Flight phase — mirrors phaseOf() in track.js so the text page labels flights the same way.
-    private static (string label, string cls) PhaseOf(FlightState? f, AsdexTrack? asd, TaisTrack? tais)
+    internal static (string label, string cls) PhaseOf(FlightState? f, AsdexTrack? asd, TaisTrack? tais)
     {
         if (f != null)
         {
-            if (f.FlightStatus == "DROPPED") return ("DROPPED", "r");
+            // How fresh a position has to be to count as a live radar picture — the same 1 minute
+            // the ERAM scope keeps a DROPPED flight on display for.
+            var posAge = f.LastPositionTime == default
+                ? int.MaxValue : (int)(DateTime.UtcNow - f.LastPositionTime).TotalSeconds;
+            var livePos = f.Latitude != null && posAge <= 60;
+            if (f.FlightStatus == "CANCELLED") return ("CANCELLED", "r");
+            // SFDPS publishes COMPLETED with an actual arrival time (HV), so it is on the ground.
+            // Without this the status was ignored entirely and a flight that had landed and was
+            // still rolling read AIRBORNE off its last radar speed.
+            if (f.FlightStatus == "COMPLETED") return ("LANDED", "");
+            // DROPPED is a handoff artifact at least as often as a real loss of track: the losing
+            // center drops it before the receiving center reports. With a live position it says
+            // nothing about the flight, and reads alarmingly to someone merely following one — a
+            // flight at FL320 and 477 kt with a 1-second-old position was labelled DROPPED.
+            if (f.FlightStatus == "DROPPED" && !livePos) return ("DROPPED", "r");
+            // Deliberately NOT gated on livePos: a coasting flight is still airborne, and making
+            // the label depend on freshness would flip it across a single missed radar scan.
             if (f.Latitude != null && (f.GroundSpeed ?? 0) > 40) return ("AIRBORNE", "g");
             if (f.FlightStatus == "PROPOSED" || f.Latitude == null) return ("PRE-DEPARTURE", "");
         }

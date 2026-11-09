@@ -254,15 +254,17 @@
       // DROPPED is a handoff artifact as often as a real loss of track — the losing center drops
       // it before the receiving one reports — so with a live position it says nothing about the
       // flight and alarms someone who is just following it.
-      if (f.status === 'DROPPED' && !livePos) return ['DROPPED', '#ff4444'];
-      // A surface movement radar outranks SFDPS's ground speed for an aircraft that has just
-      // landed, which is why this sits above the AIRBORNE test. SFDPS's speed is its last radar
-      // fix — taken on final or during the rollout — and then stops updating, while ASDE-X
-      // reports every second. Measured: 11 of 290 ASDE-X callsigns had SFDPS claiming 81-147 kt
-      // while the surface radar had them at 1-15 kt. Gated on ASDE-X itself reporting slow and a
-      // known low Mode C, so a midflight aircraft appearing briefly in surface data can't match.
+      // A surface movement radar outranks BOTH SFDPS signals below for an aircraft that has
+      // landed, so it sits above the DROPPED test as well as AIRBORNE. SFDPS's speed is its last
+      // radar fix — taken on final or during the rollout — and both the speed and the track then
+      // stop updating, while ASDE-X reports every second; a dropped en-route track says nothing
+      // about an aircraft a surface radar is actively watching. Measured: 11 of 290 ASDE-X
+      // callsigns had SFDPS claiming 81-147 kt while the surface radar had them at 1-15 kt.
+      // Gated on ASDE-X itself reporting slow and a known low Mode C, so a midflight aircraft
+      // appearing briefly in surface data can't match.
       if (asd && (asd.track.spdKts || 0) < 40 && f.reportedAlt != null && f.reportedAlt < 1500)
         return ['ON SURFACE', '#39ff62'];
+      if (f.status === 'DROPPED' && !livePos) return ['DROPPED', '#ff4444'];
       // Deliberately NOT gated on livePos: a coasting flight is still airborne, and making the
       // label depend on freshness would flip it back and forth across a missed radar scan.
       if (f.lat != null && (f.gs || 0) > 40) return ['AIRBORNE', '#44cc44'];

@@ -56,10 +56,15 @@ static class TrackRoutes
             var sfdps = new List<object>();
             string? edct = null;
             var hoEvents = new List<(string time, string source, string center, string summary)>();
-            foreach (var f in ctx.Flights.Values)
+            // Ordered by the SAME rule BestFlight uses, so sfdps[0] is the record representing the
+            // current leg rather than whatever the ConcurrentDictionary happened to enumerate
+            // first. The bot picks via BestFlight while /track's hero reads sfdps[0], so an
+            // unordered array let the two describe the same flight differently — measured on
+            // NJZ196, whose array led with a DROPPED record at 34,000 ft and a 495-second-old
+            // position while the live ACTIVE record sat behind it at 20,500 ft, 6 seconds old.
+            // 12 of 237 en-route callsigns carry several GUFIs and 2 of those were mis-ordered.
+            foreach (var f in CurrentLegFirst(Matching(ctx, callsign)))
             {
-                if (!string.Equals(f.Callsign, callsign, StringComparison.OrdinalIgnoreCase)) continue;
-                if (f.FlightStatus == "CANCELLED") continue;
                 // Map SFDPS TRACON NAS codes (e.g. ORT) to real ids (C90), scoped by reporting ARTCC.
                 var ctrlTracon = ResolveTracon(ctx, f.ReportingFacility, f.ControllingFacility);
                 var ctrlFac = ctrlTracon ?? f.ControllingFacility;
@@ -292,10 +297,21 @@ static class TrackRoutes
     // destination (KBNA) for the flight actually sitting at the gate (KXNA). So prefer a live
     // (non-DROPPED) record, then the freshest-updated one — the active leg always updates most
     // recently, whether it's airborne or a proposed plan being amended pre-departure.
-    private static FlightState? BestFlight(List<FlightState> flights) => flights
+    /// <summary>
+    /// A callsign's SFDPS records, current leg first. One physical aircraft appears once per ARTCC
+    /// tracking it, and a just-landed earlier leg lingers in memory with a stale position, so
+    /// "first" has to mean something.
+    ///
+    /// <para>Shared with the <c>/api/track</c> projection so the array it serializes is in this
+    /// order too. It was two separate rules — <see cref="BestFlight"/> here and "whatever the
+    /// ConcurrentDictionary enumerated first" there — which let the bot and the page describe the
+    /// same flight differently; see the comment at the projection's loop for the measurement.</para>
+    /// </summary>
+    private static IOrderedEnumerable<FlightState> CurrentLegFirst(IEnumerable<FlightState> flights) => flights
         .OrderBy(f => f.FlightStatus == "DROPPED" ? 1 : 0)
-        .ThenByDescending(f => f.LastSeen)
-        .FirstOrDefault();
+        .ThenByDescending(f => f.LastSeen);
+
+    private static FlightState? BestFlight(List<FlightState> flights) => CurrentLegFirst(flights).FirstOrDefault();
 
     private static string Trunc(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
 
@@ -928,26 +944,28 @@ static class TrackRoutes
             // Without this the status was ignored entirely and a flight that had landed and was
             // still rolling read AIRBORNE off its last radar speed.
             if (f.FlightStatus == "COMPLETED") return ("LANDED", "");
-            // DROPPED is a handoff artifact at least as often as a real loss of track: the losing
-            // center drops it before the receiving center reports. With a live position it says
-            // nothing about the flight, and reads alarmingly to someone merely following one — a
-            // flight at FL320 and 477 kt with a 1-second-old position was labelled DROPPED.
-            if (f.FlightStatus == "DROPPED" && !livePos) return ("DROPPED", "r");
-            // A surface movement radar outranks SFDPS's ground speed for an aircraft that has just
-            // landed — the opposite of the precedence below, which is why this sits above the
-            // AIRBORNE test. SFDPS's speed is its last radar fix, taken on final or during the
-            // rollout, and it then stops updating; ASDE-X reports every second.
+            // A surface movement radar outranks BOTH of the SFDPS signals below for an aircraft
+            // that has landed. SFDPS's speed is its last radar fix, taken on final or during the
+            // rollout, and both the speed and the track then stop updating; ASDE-X reports every
+            // second. So this sits above the DROPPED test as well as the AIRBORNE one — a dropped
+            // en-route track says nothing about an aircraft a surface radar is actively watching.
             //
             // Measured over 290 ASDE-X callsigns: 61 read low-and-fast off SFDPS. 43 were already
             // COMPLETED (caught above), 7 were genuine rollouts, and for 11 ASDE-X had the
             // aircraft under 40 kt — several at 1-7 kt, i.e. parked — while SFDPS still claimed
-            // 81-147 kt.
+            // 81-147 kt. Placing this below DROPPED, as it first was, then left three of those
+            // reading DROPPED while stopped or taxiing on the field.
             //
             // Gated on ASDE-X itself reporting slow AND a known low Mode C, so the case the old
             // ordering guarded against (a midflight aircraft appearing briefly in surface data)
             // cannot match, and neither can those 7 rollouts, which ASDE-X also reports fast.
             if (asd != null && (asd.SpeedKts ?? 0) < 40 && f.ReportedAltitude is { } ra && ra < 1500)
                 return ("ON SURFACE", "g");
+            // DROPPED is a handoff artifact at least as often as a real loss of track: the losing
+            // center drops it before the receiving center reports. With a live position it says
+            // nothing about the flight, and reads alarmingly to someone merely following one — a
+            // flight at FL320 and 477 kt with a 1-second-old position was labelled DROPPED.
+            if (f.FlightStatus == "DROPPED" && !livePos) return ("DROPPED", "r");
             // Deliberately NOT gated on livePos: a coasting flight is still airborne, and making
             // the label depend on freshness would flip it across a single missed radar scan.
             if (f.Latitude != null && (f.GroundSpeed ?? 0) > 40) return ("AIRBORNE", "g");

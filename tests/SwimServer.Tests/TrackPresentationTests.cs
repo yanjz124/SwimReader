@@ -120,6 +120,27 @@ public class TrackPresentationTests
     }
 
     [Fact]
+    public void SurfaceDataAlsoOutranksADroppedEnRouteTrack()
+    {
+        // Measured: three aircraft stopped or taxiing on the field read DROPPED, because SFDPS
+        // stops updating the track after landing so the position goes stale and the DROPPED test
+        // fired first. A dropped en-route track says nothing about an aircraft a surface radar is
+        // actively watching at 0 kt.
+        var f = Flight("DROPPED", 33.95, 121, posAgeSec: 400);
+        f.ReportedAltitude = 100;
+        Assert.Equal("ON SURFACE", TrackRoutes.PhaseOf(f, new AsdexTrack { SpeedKts = 0 }, null).label);
+    }
+
+    [Fact]
+    public void ADroppedTrackAtAltitudeIsStillDropped()
+    {
+        // The Mode C gate is what keeps the reordering above from swallowing a real loss of track.
+        var f = Flight("DROPPED", 40.0, 450, posAgeSec: 400);
+        f.ReportedAltitude = 35000;
+        Assert.Equal("DROPPED", TrackRoutes.PhaseOf(f, new AsdexTrack { SpeedKts = 0 }, null).label);
+    }
+
+    [Fact]
     public void AGenuineRolloutIsNotCalledSurface()
     {
         // ASDE-X reports the rollout fast too, which is what separates it from a taxiing aircraft.

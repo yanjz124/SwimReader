@@ -548,7 +548,7 @@
         ['Type', t.tgtType], ['Gate', t.gate || t.gateCode], ['Runway', t.runway],
         ['Speed', t.spdKts != null ? t.spdKts + ' kt' : null],
         ['Heading', t.hdg != null ? Math.round(t.hdg) + '°' : null],
-        ['Altitude', t.altFt != null ? Math.round(t.altFt) + ' ft' : null],
+        ['Altitude', altFt(t.altFt)],
         ['Squawk', t.squawk],
         ['Position', t.lat != null ? `${t.lat.toFixed(4)}, ${t.lon.toFixed(4)}` : null],
         ['Age', t.ageSec != null ? t.ageSec + 's' : null],
@@ -763,7 +763,7 @@
     ]);
     const pos = grid([
       ['Position', (t.lat != null && t.lon != null) ? t.lat.toFixed(3) + ', ' + t.lon.toFixed(3) : null],
-      ['Altitude', t.altitude ? Math.round(t.altitude) + ' ft' : null],
+      ['Altitude', altFt(t.altitude)],
       ['Speed', [t.speed ? Math.round(t.speed) + ' kt' : null, t.groundSpeed ? t.groundSpeed + ' kt GS' : null].filter(Boolean).join('  ')],
       ['Reported', t.positionTime ? hhmm(t.positionTime) + '  (' + agoStr(t.positionTime) + ')' : null],
     ]);

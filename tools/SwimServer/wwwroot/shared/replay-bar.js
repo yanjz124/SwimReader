@@ -147,6 +147,11 @@
       }
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       paused = !paused;
+      // Re-anchor the interpolation on resume. clockMs() extrapolates from the last message as
+      // base + (now - _timeWall) * speed; leaving _timeWall at a pre-pause stamp would make the
+      // first frame after resume jump the whole length of the pause, briefly ageing out every
+      // track until the next batch re-stamps them.
+      if (!paused) _timeWall = Date.now();
       ws.send(JSON.stringify({ cmd: paused ? "pause" : "resume" }));
       bar.querySelector("#rb-pause").textContent = paused ? "▶" : "⏸";
       // The bar is the only thing on screen that can say a blank scope is a pause and not a

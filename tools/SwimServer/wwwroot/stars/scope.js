@@ -38,6 +38,33 @@ const INCIDENT_ID = new URLSearchParams(location.search).get("incident") || "";
 // REPLAY mode links here). Same rule as an incident: in replay mode the live stream is never opened,
 // because live traffic under a replay URL looks exactly like a working replay.
 const REPLAY_MODE = new URLSearchParams(location.search).has("replay");
+
+// ── Radar time ───────────────────────────────────────────────────────────────────────────
+// Every track-ageing rule in this file — LOST_TARGET_MS, the 24 s coast test, the history
+// ticker, dead-reckoning, the 120 s purge — asks "how long since this track last reported".
+// Live, that is wall-clock. In REPLAY it is not: the replay clock runs at the chosen speed and
+// stops dead on a pause. Measuring against Date.now() therefore aged every track out 30 s after
+// a pause and blanked the whole scope (the reported "replay only plays 30 seconds" — the bar
+// still said Playing, so it read as a broken replay), and at 10x it held dead targets ten times
+// too long. scopeNow() is EXACTLY Date.now() when live, so nothing about live changes.
+//
+// It returns a clock anchored near Date.now() rather than the archived timestamp — which is
+// days old — so any site still comparing against Date.now() is wrong by the length of a pause
+// rather than by a week.
+let _rtSeen = null, _rtClock = 0;
+function scopeNow() {
+  const r = window.ReplayBar?.clockMs?.();
+  if (r == null) { _rtSeen = null; return Date.now(); }       // live, or replay not started
+  if (_rtSeen == null) { _rtSeen = r; _rtClock = Date.now(); }
+  // Forward only. A backward seek must not run the ageing clock backwards; a forward one is
+  // allowed to jump, because a track that has not reported in two recorded hours SHOULD age out,
+  // and the snapshot the server sends after a seek re-stamps the ones that are still there.
+  const d = r - _rtSeen;
+  if (d > 0) _rtClock += d;
+  _rtSeen = r;
+  return _rtClock;
+}
+window.scopeNow = scopeNow;
 // The web-DGScope + profile experience (engines, video maps, profile manager) is now THE STARS
 // scope — promoted from the /starsv2 test surface. Always on for both /stars and /starsv2.
 window.STARSV2 = true;
@@ -982,7 +1009,10 @@ function startTaisReplay() {
     rangeUrl: inc ? `/api/incident/${inc}/range` : "/api/replay/range",
     rangeKey: "tais",
     rangeSubKey: fac,
-    onStart:    ()     => { _replayActive = true; clearReplayTracks(); },
+    // Seed the SSA clock from the start time rather than waiting for the first record: until
+    // one arrives the status area was showing LIVE time on a replay page.
+    onStart:    (iso)  => { _replayActive = true; clearReplayTracks();
+                            if (window.SSA && iso) window.SSA.replayTime = iso; },
     onTime:     (iso)  => { if (window.SSA) window.SSA.replayTime = iso; },   // SSA clock → replay time
     onSnapshot: (list) => { clearReplayTracks(); (list || []).forEach(applyTaisRecord); replayAutoCenter(list); },
     onBatch:    (list) => { (list || []).forEach(applyTaisRecord); replayAutoCenter(list); },
@@ -1062,7 +1092,7 @@ function handleTrackUpdate(u) {
   let t = tracks.get(u.Guid);
   const fresh = !t;
   if (!t) { t = { Guid: u.Guid, lastUpdate: 0 }; tracks.set(u.Guid, t); }
-  t.lastUpdate = Date.now();
+  t.lastUpdate = scopeNow();
   if (u.Location) {
     // Track position-fix time (lastPosUpdate) and last *movement* time
     // (lastMoveT) separately from message time. Our feed re-sends the same
@@ -1088,7 +1118,7 @@ function handleTrackUpdate(u) {
       if (!t._history) t._history = [];
       t._history.unshift({ Latitude: u.Location.Latitude, Longitude: u.Location.Longitude });
       while (t._history.length > prefSet.HistoryNum) t._history.pop();
-      t._lastHistoryT = Date.now() / 1000;  // reset history timer so next timer-based point is HistoryRate away
+      t._lastHistoryT = scopeNow() / 1000;  // reset history timer so next timer-based point is HistoryRate away
     }
   }
   if (u.Altitude)      t.Altitude = u.Altitude;
@@ -1192,7 +1222,7 @@ function symbolFor(track) {
 function isCoasting(t) {
   // Based on the last *position fix*, not the last message — the feed can keep
   // sending messages (or a frozen position) without the target actually moving.
-  return (Date.now() - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate)) > 24000; // 2 × 12s scan
+  return (scopeNow() - (t.lastMoveT ?? t.lastPosUpdate ?? t.lastUpdate)) > 24000; // 2 × 12s scan
 }
 
 // ── Velocity extrapolation (Aircraft.ExtrapolatePosition from scope-master C#)
@@ -1205,10 +1235,10 @@ function extrapolatedPosition(t) {
   if (!t._extrapolatedpos) {
     t._extrapolatedpos = { Latitude: t.Location.Latitude, Longitude: t.Location.Longitude };
     // Use position update time, not current time (like C# SetLocation does)
-    t._lastLocationExtrapolateTime = t.lastPosUpdate ?? Date.now();
+    t._lastLocationExtrapolateTime = t.lastPosUpdate ?? scopeNow();
   }
 
-  const now = Date.now();
+  const now = scopeNow();
   const ageHours = (now - t._lastLocationExtrapolateTime) / 3600000;
   const miles = (t.GroundSpeed * ageHours);
 
@@ -1257,7 +1287,7 @@ function tickHistory(t, posNow) {
   if (!posNow) return;
   if (!t._history) t._history = [];
   if (!t._lastHistoryT) t._lastHistoryT = 0;
-  const nowS = Date.now() / 1000;
+  const nowS = scopeNow() / 1000;
   if (nowS - t._lastHistoryT < prefSet.HistoryRate) return;
   t._lastHistoryT = nowS;
 
@@ -2064,7 +2094,7 @@ function drawPosition(t, posNow) {
 
   // ── Primary target return — RadarWindow.cs:6134-6175 (RadarType.FUSED) ──
   // Draw current TargetReturn with its assigned color and fade (from C# sweep logic)
-  const now = Date.now();
+  const now = scopeNow();
   let brightness = prefSet.Brightness.PrimaryTargets;
   if (t.TargetReturn?.Fading && t.TargetReturn?.FadeTime) {
     const ageMs = now - (t.TargetReturn._createdAt ?? now);
@@ -2329,7 +2359,7 @@ setInterval(() => { if (Date.now() - _lastServerCA > 4000) scanSTCA(); }, 1000);
 const LOST_TARGET_MS = 30000;   // LostTargetSeconds = 30
 
 function radarSweep() {
-  const now = Date.now();
+  const now = scopeNow();
 
   for (const t of tracks.values()) {
     if (!t.Location) continue;
@@ -2470,7 +2500,7 @@ function displayPos(t) {
 // Memory backstop: fully drop tracks not updated for a long time (the upstream
 // deletes after ~5 min). Visual hiding happens in drawTracks at LOST_TARGET_MS.
 setInterval(() => {
-  const now = Date.now();
+  const now = scopeNow();
   for (const [guid, t] of tracks) {
     if (now - t.lastUpdate > 120000) { tracks.delete(guid); trackToFp.delete(guid); }
   }
@@ -2716,7 +2746,7 @@ function drawTracks() {
   // DrawTargets + ProcessDataBlocks (cs:6184-6342). DGScope iterates
   // Aircraft, drops those past LostTargetSeconds (cs:5588 / 6187), and
   // calls RedrawTarget + GenerateDataBlock per cs:5590-5597.
-  const now = Date.now();
+  const now = scopeNow();
   const suppressed = dedupByCallsign(now);
   // ── Pre-pass: per-aircraft state sync (mirrors DGScope cs:5719-5742 +
   //    6239-6241). Both loops are inside DrawTargets; we split for clarity.
@@ -3695,7 +3725,9 @@ function _internalPushUrlState() {
   // Signed-on TCP (so a reload stays signed on at the same position).
   setOrDel("tcp", _signedOnTcp, null);
   const search = q.toString();
-  const newUrl = location.pathname + (search ? "?" + search : "");
+  // Keep the fragment: the ReplayBar parks the replay position and speed in it, so dropping
+  // it here meant any DCB press during a replay silently turned the URL back into a live one.
+  const newUrl = location.pathname + (search ? "?" + search : "") + location.hash;
   history.replaceState(null, "", newUrl);
 }
 // Apply on load (after profile so URL params override profile)

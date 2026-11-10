@@ -25,6 +25,7 @@
   let active = false;
   let paused = false;
   let currentTime = null;     // ISO string of latest server-reported time
+  let _timeWall = 0;          // Date.now() when currentTime was received — lets clockMs() interpolate
   let startMs = null, endMs = null;  // available range, from /api/replay/range
   let _vpTimer = null;
   let _saveTimer = null;
@@ -141,12 +142,16 @@
         paused = !paused;
         if (!paused) baselineClock(_vt);              // resume from the frozen time
         bar.querySelector("#rb-pause").textContent = paused ? "▶" : "⏸";
+        setStatus(paused ? "Paused" : "Playing", paused ? "warn" : "ok");
         return;
       }
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       paused = !paused;
       ws.send(JSON.stringify({ cmd: paused ? "pause" : "resume" }));
       bar.querySelector("#rb-pause").textContent = paused ? "▶" : "⏸";
+      // The bar is the only thing on screen that can say a blank scope is a pause and not a
+      // fault — the host ages its targets out while nothing is being delivered.
+      setStatus(paused ? "Paused" : "Playing", paused ? "warn" : "ok");
     };
     bar.querySelector("#rb-speed").onchange = (e) => {
       if (_mode === 'buffered') { baselineClock(_vt); return; }   // re-anchor clock at new rate
@@ -411,6 +416,7 @@
       let msg; try { msg = JSON.parse(evt.data); } catch { return; }
       if (msg.replayTime) {
         currentTime = msg.replayTime;
+        _timeWall = Date.now();
         const tms = new Date(msg.replayTime).getTime();
         bar.querySelector("#rb-time").textContent = fmtClock(new Date(msg.replayTime));
         if (startMs && endMs && endMs > startMs) {
@@ -608,7 +614,12 @@
         p.delete("rspd");
       }
       const h = p.toString();
-      history.replaceState(null, "", h ? "#" + h : location.pathname + location.search);
+      // ALWAYS absolute. scope.html carries <base href="/stars/">, and history.replaceState
+      // resolves a relative URL — a bare "#…" is one — against the BASE, not the document. So
+      // "#replay=…" rewrote /stars/ZNY/N90?r=20&tcp=2A to /stars/#replay=…, throwing away the
+      // facility and every display param; the scope kept running on state it had already read,
+      // and a reload landed on the picker instead of the replay.
+      history.replaceState(null, "", location.pathname + location.search + (h ? "#" + h : ""));
     } catch {}
   }
   function throttleSaveUrl() {
@@ -633,6 +644,20 @@
     setSpeed(v) { if (bar) { bar.querySelector("#rb-speed").value = String(v); bar.querySelector("#rb-speed").dispatchEvent(new Event("change")); } },
     toggle()    { if (bar?.classList.contains("rb-hidden")) open(); else close(); },
     isActive()  { return active; },
+    // The replay's OWN clock in ms — interpolated between server messages so it advances
+    // smoothly, frozen while paused, scaled by the speed setting. null when not replaying, so
+    // callers fall back to Date.now(). A host scope must age its tracks against this: aged
+    // against wall-clock, every target vanishes 30 s after a pause and a 10x replay holds dead
+    // targets ten times too long.
+    clockMs() {
+      if (!active || !currentTime) return null;
+      if (_mode === 'buffered') return currentVt();
+      const base = new Date(currentTime).getTime();
+      if (!isFinite(base)) return null;
+      if (paused || !_timeWall) return base;
+      const spd = parseFloat(bar?.querySelector("#rb-speed")?.value) || 1;
+      return base + (Date.now() - _timeWall) * spd;
+    },
     isOpen()    { return bar && !bar.classList.contains("rb-hidden"); },
     currentTime() { return currentTime; },
     parseZulu,

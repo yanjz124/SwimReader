@@ -3222,6 +3222,73 @@ fails against the old rule and passes against the new one.
 tailing it. The clamp above stops it *racing* there, but following a live recording means resuming
 reads on a gzip stream that is still being appended, which is a real change, not a threshold.
 
+### Pausing a STARS replay blanked the scope, because ageing ran on the wrong clock
+
+Reported as "the 30 second replay still appears and the time on top left doesn't reflect replay
+time", with a screenshot of N90: bar saying **Playing**, clock frozen, **not one target on the
+scope**. Two independent bugs, and the screenshot was showing both at once.
+
+**Track ageing measured wall-clock time.** `LOST_TARGET_MS` (30 s), the 24 s coast test, the
+history ticker, dead reckoning and the 120 s purge all ask "how long since this track reported",
+and all asked `Date.now()`. Live that is right. **In replay it is not**: the replay clock runs at
+the chosen speed and stops dead on a pause. Measured with an in-page sampler at N90, 1x, pause at
+t=55 s:
+
+| t | tracks held | drawn |
+|---|---|---|
+| 55 s (pause) | 141 | 141 |
+| 76 s | 141 | 141 |
+| **77 s** | **141** | **0** |
+
+Exactly 30 s after the last record, with every track still in memory. That is the whole "30
+second replay": pause it — or hit a quiet stretch, which the pacing fix above deliberately now
+*honours* in real time instead of skipping — and the scope blanks half a minute later. At 10x it
+failed the other way, holding dead targets ten times too long.
+
+`scopeNow()` is the radar clock: **exactly `Date.now()` when live**, so live behaviour is
+unchanged, and `ReplayBar.clockMs()` during a replay — interpolated between server messages,
+frozen while paused, scaled by speed. It is anchored near `Date.now()` rather than at the archived
+timestamp, so a site that still reads `Date.now()` is wrong by the length of a pause rather than
+by a week. `clockMs()` must be **re-anchored on resume** (`_timeWall`), or the first frame after a
+pause jumps by the pause's whole length and flashes the scope blank — the same symptom, one step
+later.
+
+Verified after the fix on the same run — pause at t=21 s, resume at t=66 s, sampling both rules
+side by side: **the page's own count never left 140-146**, through the pause and across the
+resume, while the **old wall-clock rule hit 0 at t=52 s and stayed there**. The SSA clock froze at
+`1200/26` and resumed at `1200/27` with no jump, which is what the `_timeWall` re-anchor buys.
+That permanent wall-clock 0 is also the measurement behind the anchoring claim: after a 45 s pause
+the radar clock trails `Date.now()` by 45 s **for the rest of the session**, so any site still
+reading `Date.now()` is quietly wrong from then on. The test is the real guard; the anchor only
+bounds the damage.
+
+**The server was never involved**, and checking that first is what kept this from becoming another
+pacing investigation: reading `/replay/tais/ws/N90` directly from Python gave **0.98x over two
+minutes, 145 messages, largest inter-message gap 4.1 s**. A browser-side stall and a server-side
+one look identical from the page.
+
+**`history.replaceState` under `<base href="/stars/">` throws the path away.** replaceState
+resolves a **relative** URL against the *base*, not the document — and a bare `"#…"` is relative.
+So the bar parking its position rewrote `/stars/ZNY/N90?r=20&tcp=2A` to `/stars/#replay=…`:
+facility and every display param gone, within one save interval. The running page carries on (it
+had already read them), so nothing looks wrong until a reload lands on the picker. **That URL is
+the tell** — a screenshot whose address bar reads `/stars/?r=20&b=…` is this bug, not a typo.
+Fixed in both writers: the bar builds from `location.pathname`, and the scope's own
+`_internalPushUrlState` keeps `location.hash` instead of dropping the replay position on the next
+DCB press.
+
+Two smaller ones from the same trace: the bar still read **"Playing" while paused**, which is what
+made a blank scope look like a broken replay rather than a pause; and the SSA clock showed **live**
+time on a replay page until the first record arrived (now seeded from the start time in `onStart`).
+
+`ReplayClockContractTests` pins all of it, and all three cases fail against the previous commit.
+A browser cannot see either bug — the page loads, nothing throws, and you only meet the first if
+you happen to pause and then wait thirty seconds.
+
+**ERAM already had half of this** (`histClock()` in `eram.js` is replay-aware for history), which
+is why only STARS was reported. Its remaining `Date.now()` uses are legitimate: TBFM is live-only
+in replay, and the point-out 3-minute client timeout is a UI timer.
+
 ### Logging volume (don't let it eat the journal)
 
 The Pi's journal is capped at 500 MB. Left unchecked the two services were writing **~340 lines/s**

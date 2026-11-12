@@ -128,6 +128,7 @@ class NasFusion
     private const int CpuWindow = 32;
     private long _lastDemandTicks = 0;
     private DateTime _lastEvict = DateTime.MinValue;
+    private int _lastEntityCount;
 
     public NasFusion(ServerContext ctx)
         : this(() => ctx.Flights.Values, () => ctx.Tais.AllTracks(), () => ctx.Asdex.AllTracks()) { }
@@ -187,7 +188,10 @@ class NasFusion
         var sw = Stopwatch.StartNew();
         var now = _now();
         var st = new NasFusionStats();
-        var ents = new Dictionary<long, NasEntity>(8192);
+        // Pre-sized from the last pass rather than from a guess: a dictionary that grows from
+        // 8,192 to ~21,000 rehashes three times, and the discarded bucket arrays are pure
+        // garbage on a process already spending ~17% of its time in GC.
+        var ents = new Dictionary<long, NasEntity>(Math.Max(8192, _lastEntityCount + _lastEntityCount / 8));
 
         // Timed per phase, because "the pass costs 250 ms" is not actionable and the first
         // guess about WHICH phase is usually wrong. Measured on the live daytime feed, the
@@ -227,6 +231,7 @@ class NasFusion
         }
         st.AllocBytes = GC.GetAllocatedBytesForCurrentThread() - alloc0;
         st.KeyCount = _idByKey.Count;
+        _lastEntityCount = ents.Count;
         return new NasSnapshot(now, ents, st);
     }
 

@@ -1,4 +1,4 @@
-namespace SwimServer;
+﻿namespace SwimServer;
 
 /// <summary>
 /// Debug / introspection endpoints under /api/debug/*.
@@ -112,6 +112,16 @@ static class DebugRoutes
                 fragmentedMB = gc.FragmentedBytes / 1048576,
                 pauseTimePct = Math.Round(gc.PauseTimePercentage, 2),
                 gen2Collections = GC.CollectionCount(2),
+                gen0Collections = GC.CollectionCount(0),
+                gen1Collections = GC.CollectionCount(1),
+                // Total bytes this process has ever allocated, and the rate that works out to
+                // over its life. The DENOMINATOR: without it, "feature X allocates 19 GB/hour"
+                // cannot be judged - it is either a fifth of what the process already does or a
+                // doubling of it, and those have opposite answers. A lifetime average is the
+                // wrong shape for a spot reading (see "the home page rate was a lifetime
+                // average"), so take two samples and difference them for a live rate.
+                totalAllocatedGB = Math.Round(GC.GetTotalAllocatedBytes(false) / 1073741824.0, 2),
+                uptimeSec = (int)(DateTime.UtcNow - System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime()).TotalSeconds,
                 sfdpsFlights = flights.Count,
                 sfdpsWithPosition = withPos,
                 sfdpsEvents = events,

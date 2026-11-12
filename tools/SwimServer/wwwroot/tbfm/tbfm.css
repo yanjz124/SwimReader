@@ -299,6 +299,8 @@ h2.sec {
 .mapbar select:hover { border-color: #555; }
 #tlegend { color: #7a8794; padding-bottom: 0; }
 .maplegend i { display: inline-block; width: 18px; height: 2px; vertical-align: middle; margin: 0 4px 0 12px; }
+/* <i> in a legend is a color swatch, so emphasis has to be <em>. */
+.maplegend em { font-style: italic; color: #99a; }
 
 @media (max-width: 700px) {
     .strip .cell { min-width: 74px; padding: 6px 12px; }

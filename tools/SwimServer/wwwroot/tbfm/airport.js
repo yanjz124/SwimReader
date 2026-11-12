@@ -101,6 +101,39 @@ function drawField() {
         { className: 'tt', sticky: true }).addTo(map);
 }
 
+/**
+ * Bounds of the points carrying most of the arrivals — the busiest points covering 80% of the
+ * scheduled flights, plus anything within 250 nm of the field.
+ *
+ * Fitting to EVERYTHING puts LAX, metered by 12 centers out to the east coast, on a continental
+ * view where the field is a speck and the terminal arcs are invisible. That is the same mistake
+ * the center map already fixed. The long-haul points are still drawn and one zoom away; this only
+ * decides where the map opens.
+ */
+function coreBounds(points) {
+    const ranked = points.slice().sort((a, b) => (b.scheduled || 0) - (a.scheduled || 0));
+    const total = ranked.reduce((n, p) => n + (p.scheduled || 0), 0);
+    const keep = [];
+    let acc = 0;
+    for (const p of ranked) {
+        const near = field && Math.hypot((p.lat - field.lat),
+            (p.lon - field.lon) * Math.cos(p.lat * Math.PI / 180)) * 60 <= 250;
+        if (near || acc < total * 0.8) {
+            keep.push(p);
+            acc += p.scheduled || 0;
+        }
+    }
+    const out = [];
+    for (const p of keep) {
+        if (p.radiusNm && p.leftAngle != null && p.rightAngle != null) {
+            out.push(...TbfmMap.arcPath(p.lat, p.lon, p.radiusNm, p.leftAngle, p.rightAngle));
+        } else {
+            out.push([p.lat, p.lon]);
+        }
+    }
+    return out;
+}
+
 function drawMap() {
     const g = (board.geometry || []).filter(p => p.lat != null && p.lon != null);
     const el = $('map');
@@ -137,7 +170,8 @@ function drawMap() {
     // Fit once, to the points plus the field. Unlike the center map there is no "busy subset" to
     // prefer — every point here is one this field's own arrivals are scheduled to, so they are
     // all the subject. A refresh must never yank a view the reader has panned.
-    const fit = field ? bounds.concat([[field.lat, field.lon]]) : bounds;
+    const core = coreBounds(g);
+    const fit = (core.length ? core : bounds).concat(field ? [[field.lat, field.lon]] : []);
     if (fit.length && !map._tbfmFitted) {
         map.fitBounds(L.latLngBounds(fit).pad(0.12));
         map._tbfmFitted = true;
@@ -152,6 +186,8 @@ function drawMap() {
         + ` &nbsp;&nbsp; ${g.length} meter point${g.length === 1 ? '' : 's'} from `
         + `${ctrs.length} center${ctrs.length === 1 ? '' : 's'} (${esc(ctrs.join(' '))}) `
         + 'are scheduling arrivals into this field; thicker means more of them. '
+        + 'The view is fitted to the points carrying most of the traffic &mdash; zoom out '
+        + 'for the rest of the funnel, which reaches across the country. '
         + (field ? '' : 'NASR has no position for this field, so it is not marked — TBFM meters '
             + 'some airports NASR does not list. ');
 }

@@ -338,7 +338,7 @@
                 + `<b>${d.located}</b> of ${d.scheduled} metered flights drawn, ${held} held. `
                 + (vecMin > 0 ? `Vector is ${vecMin} min of travel. ` : '')
                 + (leaderNm > 0
-                    ? 'The dashed leader points at the fix &mdash; or the nearest point <i>on</i> '
+                    ? 'The dashed leader points at the fix &mdash; or the nearest point <em>on</em> '
                       + 'the arc, never the arc&rsquo;s center &mdash; it is sequenced to'
                       + (isFinite(leaderNm) ? `, clipped to ${leaderNm} nm. ` : '. ')
                     : '')

@@ -474,4 +474,87 @@ partial class TbfmBridge
             messages = MessageCount,
         };
     }
+
+    // ── /api/tbfm/center/{ctr}/traffic — the metered flights themselves ─────
+
+    /// <summary>
+    /// One metered flight as this center schedules it, ready to be joined to a position.
+    ///
+    /// <para><b>TBFM publishes no position of any kind</b> — not on <c>&lt;air&gt;</c>, not in
+    /// <c>flt</c>. The only lat/lon anywhere in the feed is adaptation geometry (a meter point's
+    /// fix, or an arc's CENTER). So a target on the map is this record joined to SFDPS by
+    /// <b>callsign</b>, which is the same join <see cref="TrackSummary"/> and the arrival board
+    /// already use and for the same reason: TBFM's <c>gufi</c> is ERAM's short form and SFDPS
+    /// doesn't publish it, so there is no id to join on.</para>
+    ///
+    /// <para>Measured at ZLA: 215 of 249 metered callsigns (86%) had an SFDPS position, median age
+    /// 6 s. <b>All 33 misses were oceanic or international inbounds</b> — HNL, ZSPD, MMMX, VHHH,
+    /// RCTP — which TBFM has as <c>TRACKED</c> and is already metering while they are outside
+    /// domestic radar. TFMS fills only 2 of those 33, so that gap is a coverage boundary, not
+    /// something a second source closes. The count of unlocated flights travels in the response so
+    /// the page can say so rather than silently drawing fewer targets than it reports scheduled.</para>
+    /// </summary>
+    public sealed record TbfmTarget(
+        string Aid, string? Apt, string? Dep, string? Type, string? Status,
+        string? Point, string? PointType, DateTime? Sta, DateTime? Eta, double? DelayMin,
+        double? PointLat, double? PointLon,
+        string? HoldCtr, string? HoldPoint, double? HoldMin,
+        string? Rwy, DateTime? StaRwy, int Centers, bool Frozen, bool Suspended);
+
+    /// <summary>
+    /// Every flight this center is metering, with the link this center owns.
+    ///
+    /// <para>Goes through <see cref="GroupFlights"/>, so it inherits liveness, grouping by
+    /// (callsign, destination) and <b>hold as the chain maximum, never the sum</b>. The link shown
+    /// is deliberately <b>this center's own</b> — what its controllers are scheduling — while the
+    /// governing hold is reported separately, because they are usually different points: a flight
+    /// next at a ZLA fix with no delay may be carrying its whole hold from a ZAB fix two links
+    /// later.</para>
+    /// </summary>
+    public List<TbfmTarget> CenterTraffic(string center)
+    {
+        var ctr = (center ?? "").Trim().ToUpperInvariant();
+        var out_ = new List<TbfmTarget>();
+        if (ctr.Length == 0 || !_centers.TryGetValue(ctr, out var c)) return out_;
+        var now = DateTime.UtcNow;
+
+        foreach (var m in GroupFlights(now, ctr: ctr))
+        {
+            // This center's link. A center can hold more than one record for a flight (a
+            // re-schedule to a different point); the freshest is the one being worked.
+            var f = m.Chain.Where(x => CenterOf(x.Source) == ctr)
+                           .OrderByDescending(x => x.LastSeen).FirstOrDefault();
+            if (f is null) continue;
+
+            var name = ScheduledPoint(f);
+            // The arc/fix this center schedules to, so the page can draw a leader to it without a
+            // second lookup. Adaptation names arcs with a trailing dot (HELNS. beside fix HELNS).
+            var adapted = name is null ? null
+                : c.Points.Values.FirstOrDefault(p => p.Name == name)
+                  ?? c.Points.Values.FirstOrDefault(p => p.Name == name + ".");
+
+            // Where the governing hold is actually taken — wherever along the chain it is largest,
+            // which is usually NOT the next point. See TbfmTrack's note.
+            TbfmFlight? hold = null;
+            double? holdMin = null;
+            foreach (var x in m.Chain)
+            {
+                var d = DelayOf(x.StaMeterFix, x.EtaMeterFix);
+                if (d.HasValue && (!holdMin.HasValue || d > holdMin)) { holdMin = d; hold = x; }
+            }
+
+            out_.Add(new TbfmTarget(
+                Aid: m.Aid, Apt: m.Apt, Dep: m.Dep, Type: m.Type, Status: m.Status,
+                Point: name, PointType: PointType(f),
+                Sta: f.StaMeterFix, Eta: f.EtaMeterFix,
+                DelayMin: DelayOf(f.StaMeterFix, f.EtaMeterFix),
+                PointLat: adapted?.Lat, PointLon: adapted?.Lon,
+                HoldCtr: hold is null ? null : CenterOf(hold.Source),
+                HoldPoint: hold is null ? null : ScheduledPoint(hold),
+                HoldMin: holdMin,
+                Rwy: m.Terminal?.Runway, StaRwy: m.Terminal?.StaRunway,
+                Centers: m.Chain.Count, Frozen: m.Frozen, Suspended: m.Suspended));
+        }
+        return out_;
+    }
 }

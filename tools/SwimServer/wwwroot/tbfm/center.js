@@ -91,6 +91,171 @@ async function drawBoundaries() {
     }).addTo(map);
 }
 
+// ── metered traffic ─────────────────────────────────────────────────────────
+// The aircraft being metered to these points, which is what turns the adaptation from a diagram
+// into a picture of what the center is actually doing.
+//
+// TBFM publishes NO position — the only lat/lon in the whole feed is adaptation geometry — so each
+// target is a TBFM schedule joined to SFDPS by callsign, server-side, in
+// /api/tbfm/center/{ctr}/traffic. Measured at ZLA: 86% of metered callsigns have a position,
+// median age 6 s; every miss was an oceanic or international inbound TBFM is metering while it is
+// still outside domestic radar. Those are counted in the legend rather than silently dropped.
+//
+// Refreshed on its OWN timer: positions move on SFDPS's ~12 s cadence while the board's aggregates
+// barely do, so moving a dot must not re-render the tables, the rates and the adaptation.
+const TRAFFIC_PANE = 'tbfmTraffic';
+let traffic = null, trafficLayer = null;
+let showTraffic = localStorage.getItem('tbfm-traffic') !== '0';
+let showAllLinks = localStorage.getItem('tbfm-links') === '1';
+
+// Hold severity, warm as it gets worse. Deliberately NOT the adaptation palette: a target's color
+// has to mean "how much hold", not "what kind of point", or the two readings compete.
+function holdColor(min) {
+    if (min == null || min < 1) return '#9fb0c0';
+    if (min < 5) return '#ffcc44';
+    if (min < 10) return '#ff8844';
+    return '#ff4444';
+}
+
+/** Bearing from (lat,lon) to (lat2,lon2), degrees true. */
+function bearing(lat, lon, lat2, lon2) {
+    const p1 = lat * Math.PI / 180, p2 = lat2 * Math.PI / 180, dl = (lon2 - lon) * Math.PI / 180;
+    const y = Math.sin(dl) * Math.cos(p2);
+    const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+/**
+ * Where on a meter point a flight is actually heading.
+ *
+ * For a FIX that is the fix. For an ARC it is NOT the published lat/lon — that is the arc's CENTER
+ * (the TRACON reference), so a leader drawn to it would point at a spot the aircraft is never
+ * cleared to and, on a 50 nm arc, be wrong by 50 nm. The real target is the point on the arc
+ * nearest the aircraft: the bearing from the center, clamped into the arc's clockwise span.
+ */
+function pointTarget(p, lat, lon) {
+    if (!p || p.lat == null || p.lon == null) return null;
+    if (!p.radiusNm || p.leftAngle == null || p.rightAngle == null) return [p.lat, p.lon];
+    let span = (p.rightAngle - p.leftAngle + 360) % 360;
+    if (span === 0) span = 360;
+    let off = (bearing(p.lat, p.lon, lat, lon) - p.leftAngle + 360) % 360;
+    // Outside the arc: clamp to whichever end is nearer, rather than wrapping to the far one.
+    if (off > span) off = (off - span) < (360 - off) ? span : 0;
+    return dest(p.lat, p.lon, p.leftAngle + off, p.radiusNm);
+}
+
+function drawTraffic() {
+    if (!map) return;
+    if (trafficLayer) { trafficLayer.remove(); trafficLayer = null; }
+    if (!showTraffic || !traffic) { renderTrafficLegend(); return; }
+    if (!map.getPane(TRAFFIC_PANE)) map.createPane(TRAFFIC_PANE).style.zIndex = 450;
+    trafficLayer = L.layerGroup([], { pane: TRAFFIC_PANE }).addTo(map);
+
+    // Adaptation by name, so a leader can be aimed at the real geometry. Arc names carry a
+    // trailing dot in adaptation (HELNS. beside the fix HELNS), so both spellings are indexed.
+    const geo = {};
+    for (const p of (board && board.geometry || [])) {
+        geo[p.name] = p;
+        geo[p.name.replace(/\.$/, '')] = p;
+    }
+
+    for (const t of (traffic.flights || [])) {
+        if (t.lat == null || t.lon == null) continue;
+        const hold = t.holdMin;
+        const col = holdColor(hold);
+        const held = hold != null && hold >= 1;
+
+        // Leader to the point this center is sequencing it to. Held flights only by default:
+        // 215 lines at ZLA bury the adaptation underneath them, and an unheld flight's leader
+        // carries nothing the point's own load count doesn't already give.
+        const p = geo[t.point];
+        if (p && (held || showAllLinks)) {
+            const to = pointTarget(p, t.lat, t.lon);
+            if (to) L.polyline([[t.lat, t.lon], to], {
+                pane: TRAFFIC_PANE, color: col, weight: 0.8,
+                opacity: held ? 0.45 : 0.2, dashArray: '2 4', interactive: false,
+            }).addTo(trafficLayer);
+        }
+
+        // One-minute velocity vector, the same idiom as the ERAM scope: direction of flight reads
+        // instantly and costs one canvas polyline, where a rotated symbol costs a DOM marker each.
+        if (t.vx != null && t.vy != null && (t.vx || t.vy)) {
+            const dLat = t.vy / 60, dLon = t.vx / (60 * Math.cos(t.lat * Math.PI / 180));
+            L.polyline([[t.lat, t.lon], [t.lat + dLat, t.lon + dLon]], {
+                pane: TRAFFIC_PANE, color: col, weight: 1.2, opacity: 0.8, interactive: false,
+            }).addTo(trafficLayer);
+        }
+
+        const fl = t.alt == null ? ''
+            : t.alt >= 18000 ? 'FL' + Math.round(t.alt / 100)
+            : Math.round(t.alt).toLocaleString() + ' ft';
+        const tip = `<b style="color:${col}">${esc(t.aid)}</b>`
+            + (t.type ? ' ' + esc(t.type) : '')
+            + `<br>${esc(t.dep || '?')} &rarr; <b>${esc(t.apt || '?')}</b>`
+            + (fl ? '<br>' + fl : '') + (t.gs ? ' &middot; ' + Math.round(t.gs) + ' kt' : '')
+            + (t.ctrl ? '<br>' + esc(t.ctrl) + (t.sector ? '/' + esc(t.sector) : '') : '')
+            + (t.point ? `<br>next <b>${esc(t.point)}</b>`
+                + (t.pointType ? ' ' + esc(t.pointType) : '')
+                + (t.sta ? ' STA ' + hhmm(t.sta) : '')
+                + (t.eta ? ' ETA ' + hhmm(t.eta) : '') : '')
+            // The governing hold is usually NOT at the next point — TBFM distributes it upstream,
+            // so a flight next at a ZLA fix with no delay can be carrying its whole hold from a
+            // ZAB fix two links later. Naming where it is taken is the point of showing it at all.
+            + (held
+                ? `<br><b style="color:${col}">hold ${hold.toFixed(1)} min</b>`
+                  + (t.holdPoint && (t.holdPoint !== t.point || t.holdCtr !== CTR)
+                      ? ' at ' + esc(t.holdPoint) + (t.holdCtr ? ' (' + esc(t.holdCtr) + ')' : '')
+                      : '')
+                : '<br>no hold')
+            + (t.rwy || t.staRwy ? '<br>rwy ' + esc(t.rwy || '?')
+                + (t.staRwy ? ' STA ' + hhmm(t.staRwy) : '') : '')
+            + (t.centers > 1 ? `<br>metered by ${t.centers} centers` : '')
+            + (t.frozen ? '<br>frozen' : '') + (t.suspended ? '<br>suspended' : '')
+            + (t.posAgeSec != null && t.posAgeSec > 60
+                ? `<br><i>position ${t.posAgeSec}s old</i>` : '');
+
+        L.circleMarker([t.lat, t.lon], {
+            pane: TRAFFIC_PANE, radius: held ? 4 : 2.8, color: col, weight: 1,
+            fillColor: col, fillOpacity: held ? 0.95 : 0.6, opacity: 0.95,
+        }).bindTooltip(tip, { className: 'tt', sticky: true })
+            .on('click', () => window.open('/track/' + encodeURIComponent(t.aid), '_blank'))
+            .addTo(trafficLayer);
+    }
+    renderTrafficLegend();
+}
+
+function renderTrafficLegend() {
+    const el = $('tlegend');
+    if (!el) return;
+    if (!showTraffic) { el.innerHTML = 'Traffic hidden.'; return; }
+    if (!traffic) { el.innerHTML = 'Loading metered traffic&hellip;'; return; }
+    const held = (traffic.flights || [])
+        .filter(t => t.lat != null && t.holdMin != null && t.holdMin >= 1).length;
+    el.innerHTML = '<i style="background:#9fb0c0"></i>no hold'
+        + '<i style="background:#ffcc44"></i>1&ndash;5 min'
+        + '<i style="background:#ff8844"></i>5&ndash;10'
+        + '<i style="background:#ff4444"></i>10+ &nbsp; '
+        + `<b>${traffic.located}</b> of ${traffic.scheduled} metered flights drawn, ${held} held. `
+        + 'The vector is one minute of travel; the dashed leader points at the fix &mdash; or at '
+        + 'the nearest point <i>on</i> the arc, never the arc&rsquo;s center &mdash; this center '
+        + 'is sequencing it to. '
+        + (traffic.unlocated
+            ? `<b>${traffic.unlocated}</b> not drawn: TBFM is metering them but SFDPS has no `
+              + 'position yet &mdash; oceanic and international inbounds, still outside domestic '
+              + 'radar. '
+            : '')
+        + 'Click a target for its full cross-source status.';
+}
+
+async function loadTraffic() {
+    if (!showTraffic) { renderTrafficLegend(); return; }
+    try {
+        const r = await fetch('/api/tbfm/center/' + encodeURIComponent(CTR) + '/traffic');
+        if (!r.ok) return;
+        traffic = await r.json();
+        drawTraffic();
+    } catch { /* a missed poll is a stale dot, not a broken page */ }
+}
 
 // ── map ─────────────────────────────────────────────────────────────────────
 function drawMap() {
@@ -339,6 +504,7 @@ async function load() {
         $('status').textContent = new Date().toISOString().slice(11, 19) + 'Z';
         $('status').classList.add('ok');
         renderStrip(); renderInfo(); drawMap(); renderPoints(); renderRates(); renderAirports();
+        drawTraffic();   // the geometry it just loaded is what aims each leader
         $('note').innerHTML = 'A meter point’s hold is its <b>own</b> — what the sector working '
             + 'it sees — so these do not add up to an airport’s total: a flight held here reads '
             + '~0 at the next point downstream once that hold has been absorbed. '
@@ -362,6 +528,24 @@ window.addEventListener('load', () => {
 $('allapts').onchange = () => board && renderAirports();
 $('q').oninput = () => board && renderPoints();
 $('onlydly').onchange = () => board && renderPoints();
+
+$('tf-traffic').checked = showTraffic;
+$('tf-links').checked = showAllLinks;
+$('tf-traffic').onchange = e => {
+    showTraffic = e.target.checked;
+    localStorage.setItem('tbfm-traffic', showTraffic ? '1' : '0');
+    if (showTraffic && !traffic) loadTraffic(); else drawTraffic();
+};
+$('tf-links').onchange = e => {
+    showAllLinks = e.target.checked;
+    localStorage.setItem('tbfm-links', showAllLinks ? '1' : '0');
+    drawTraffic();
+};
+
 renderPHeader();
 load();
 setInterval(load, 10000);
+// Its own timer, matched to SFDPS's ~12 s cadence. Separate from load() on purpose: a position
+// refresh must not re-render the tables, the rates and the adaptation just to move a dot.
+loadTraffic();
+setInterval(loadTraffic, 12000);

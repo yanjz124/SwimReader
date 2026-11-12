@@ -262,6 +262,17 @@ h2.sec {
 }
 .leaflet-tooltip.tt:before { display: none; }
 .maplegend { padding: 6px 18px; font-size: 10px; color: #666; }
+
+/* Map toggles. Above the map rather than floating on it, so they can never sit over a meter
+   point, and in the same small-caps idiom as the table filter bars. */
+.mapbar {
+    display: flex; gap: 18px; align-items: center;
+    padding: 0 18px 6px; font-size: 9px; letter-spacing: 1px; color: #666;
+}
+.mapbar label { cursor: pointer; user-select: none; }
+.mapbar label:hover { color: #aaa; }
+.mapbar input { vertical-align: middle; margin-right: 5px; accent-color: #cccc44; }
+#tlegend { color: #7a8794; padding-bottom: 0; }
 .maplegend i { display: inline-block; width: 18px; height: 2px; vertical-align: middle; margin: 0 4px 0 12px; }
 
 @media (max-width: 700px) {

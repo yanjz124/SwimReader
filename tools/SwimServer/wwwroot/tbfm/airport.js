@@ -20,7 +20,9 @@ const hhmmss = iso => iso ? String(iso).slice(11, 19) : '';
 
 let board = null;
 let sortKey = 'sta', sortDir = 1;
-const open = new Set();          // callsigns whose chain is expanded
+const expanded = new Set();      // callsigns whose chain is expanded
+// NOT `open`: a top-level lexical `open` shadows window.open for the whole file, and
+// GlobalScopeContractTests flags it because the sibling page does call window.open.
 
 // ── delay formatting ────────────────────────────────────────────────────────
 // Negative is shown as-is, never clamped: it means the record's STA and ETA came from two
@@ -228,7 +230,7 @@ function renderBody() {
         return;
     }
     $('body').innerHTML = rows.map(p => {
-        const f = p.f, isOpen = open.has(f.aid);
+        const f = p.f, isOpen = expanded.has(f.aid);
         return `<tr class="flt ${isOpen ? 'open' : ''}" data-aid="${esc(f.aid)}">
             <td>${hhmm(p.sta)}${p.onRwy ? '' : '<span class="dim">*</span>'}</td>
             <td class="dim">${hhmm(p.eta)}</td>
@@ -251,7 +253,7 @@ function renderBody() {
     for (const tr of $('body').querySelectorAll('tr.flt')) {
         tr.onclick = () => {
             const aid = tr.dataset.aid;
-            if (open.has(aid)) open.delete(aid); else open.add(aid);
+            if (expanded.has(aid)) expanded.delete(aid); else expanded.add(aid);
             renderBody();
         };
     }

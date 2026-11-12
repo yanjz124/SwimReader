@@ -40,6 +40,79 @@ static class TbfmRoutes
         app.MapGet("/api/tbfm/center/{center}", (string center) =>
             ctx.Tbfm.CenterBoard(center) is { } b ? Results.Json(b, ctx.JsonOpts) : Results.NotFound());
 
+        // One center's metered flights WITH a position, for the map's traffic layer.
+        //
+        // TBFM publishes no position at all (see TbfmTarget), so every target here is a TBFM
+        // schedule joined to SFDPS by callsign. The join is done HERE rather than inside
+        // CenterBoard because TbfmBridge holds no SFDPS state and TbfmDashboard is documented as
+        // read-only over the TBFM state — and because positions move on SFDPS's ~12 s cadence
+        // while the board's aggregates barely do, so the page refreshes this on its own timer
+        // instead of re-rendering tables, rates and adaptation to move a dot.
+        //
+        // Deliberately NOT a bulk position dump: it emits only the callsigns this center is
+        // metering, which is why it needs no operator gate where /api/enrich/aircraft does. Both
+        // sides already drop LADD — CenterTraffic through IsLive, and the SFDPS lookup below via
+        // LaddService.IsBlocked — so a blocked aircraft cannot be given a position by combining
+        // them, which is the thing that endpoint's gate exists to prevent.
+        app.MapGet("/api/tbfm/center/{center}/traffic", (string center) =>
+        {
+            var now = DateTime.UtcNow;
+            var targets = ctx.Tbfm.CenterTraffic(center);
+            if (targets.Count == 0 && ctx.Tbfm.CenterBoard(center) is null) return Results.NotFound();
+
+            // One pass over SFDPS, keeping the current leg per callsign. CurrentLegFirst is the
+            // shared rule (TrackRoutes) — a just-landed earlier leg lingers in memory with a stale
+            // position, and picking it would park the target at the wrong airport.
+            var want = targets.Select(t => t.Aid).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var byCs = new Dictionary<string, List<FlightState>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in ctx.Flights.Values)
+            {
+                if (string.IsNullOrEmpty(f.Callsign) || !want.Contains(f.Callsign)) continue;
+                if (LaddService.IsBlocked(f.Callsign, f.Registration)) continue;
+                if (!byCs.TryGetValue(f.Callsign, out var l)) byCs[f.Callsign] = l = new();
+                l.Add(f);
+            }
+            var pos = new Dictionary<string, FlightState>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (cs, l) in byCs)
+            {
+                var best = TrackRoutes.CurrentLegFirst(l).FirstOrDefault(f => f.Latitude.HasValue
+                                                                              && f.Longitude.HasValue);
+                if (best != null) pos[cs] = best;
+            }
+
+            var rows = new List<object>(targets.Count);
+            int located = 0;
+            foreach (var t in targets)
+            {
+                pos.TryGetValue(t.Aid, out var f);
+                if (f != null) located++;
+                rows.Add(new
+                {
+                    aid = t.Aid, apt = t.Apt, dep = t.Dep, type = t.Type, status = t.Status,
+                    point = t.Point, pointType = t.PointType,
+                    sta = t.Sta, eta = t.Eta, delayMin = t.DelayMin,
+                    pointLat = t.PointLat, pointLon = t.PointLon,
+                    holdCtr = t.HoldCtr, holdPoint = t.HoldPoint, holdMin = t.HoldMin,
+                    rwy = t.Rwy, staRwy = t.StaRwy,
+                    centers = t.Centers, frozen = t.Frozen, suspended = t.Suspended,
+                    // SFDPS half. Null throughout for an oceanic inbound TBFM is already metering.
+                    lat = f?.Latitude, lon = f?.Longitude,
+                    alt = f?.ReportedAltitude, gs = f?.GroundSpeed,
+                    vx = f?.TrackVelocityX, vy = f?.TrackVelocityY,
+                    ctrl = f?.ControllingFacility, sector = f?.ControllingSector,
+                    posAgeSec = f is null ? (int?)null : (int)(now - f.LastSeen).TotalSeconds,
+                });
+            }
+            return Results.Json(new
+            {
+                ctr = center.ToUpperInvariant(), ts = now,
+                scheduled = targets.Count, located,
+                // The page says this out loud: an oceanic inbound is metered but undrawable.
+                unlocated = targets.Count - located,
+                flights = rows,
+            }, ctx.JsonOpts);
+        });
+
         app.MapGet("/tbfm", async (HttpContext c) => await Page(c, ctx, "directory.html"));
         // Literal before parameter, so "center" can't be taken for an airport id.
         app.MapGet("/tbfm/center/{center:regex(^[A-Za-z0-9]+$)}", async (HttpContext c, string center) =>

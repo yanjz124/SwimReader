@@ -307,7 +307,7 @@ static class TrackRoutes
     /// ConcurrentDictionary enumerated first" there — which let the bot and the page describe the
     /// same flight differently; see the comment at the projection's loop for the measurement.</para>
     /// </summary>
-    private static IOrderedEnumerable<FlightState> CurrentLegFirst(IEnumerable<FlightState> flights) => flights
+    internal static IOrderedEnumerable<FlightState> CurrentLegFirst(IEnumerable<FlightState> flights) => flights
         .OrderBy(f => f.FlightStatus == "DROPPED" ? 1 : 0)
         .ThenByDescending(f => f.LastSeen);
 

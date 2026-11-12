@@ -22,7 +22,12 @@
 <div class="sub" id="info"></div>
 
 <h2 class="sec">ADAPTATION &mdash; METER POINTS AND ARCS</h2>
+<div class="mapbar">
+    <label><input type="checkbox" id="tf-traffic" checked> METERED TRAFFIC</label>
+    <label><input type="checkbox" id="tf-links"> LEADER ON EVERY FLIGHT</label>
+</div>
 <div id="map"></div>
+<div class="maplegend" id="tlegend"></div>
 <div class="maplegend" id="legend"></div>
 
 <h2 class="sec">METER POINTS IN USE</h2>
@@ -64,7 +69,7 @@
 <div class="note" id="note"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/tbfm/center.js?v=2"></script>
+<script src="/tbfm/center.js?v=3"></script>
 <script src="/idle-timer.js?v=3"></script>
 <script src="/shared/frame.js?v=4"></script>
 <script src="/shared/disclaimer.js?v=2"></script>

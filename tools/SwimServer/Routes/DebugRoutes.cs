@@ -1,4 +1,4 @@
-﻿namespace SwimServer;
+namespace SwimServer;
 
 /// <summary>
 /// Debug / introspection endpoints under /api/debug/*.

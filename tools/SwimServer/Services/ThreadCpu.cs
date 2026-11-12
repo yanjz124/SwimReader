@@ -1,4 +1,4 @@
-﻿namespace SwimServer;
+namespace SwimServer;
 
 /// <summary>
 /// How much CPU the CURRENT THREAD has burned, from <c>/proc/thread-self/stat</c>.

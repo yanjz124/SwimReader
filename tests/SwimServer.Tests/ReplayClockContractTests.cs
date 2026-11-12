@@ -92,24 +92,24 @@ public class ReplayClockContractTests
         var ident = new Regex(@"^[A-Za-z_$][\w$]*$");
         var offenders = new List<string>();
         foreach (var dir in dirs)
-        foreach (var f in Directory.EnumerateFiles(dir, "*.js"))
-        {
-            var src = StripLineComments(File.ReadAllText(f));
-            foreach (Match m in call.Matches(src))
+            foreach (var f in Directory.EnumerateFiles(dir, "*.js"))
             {
-                var arg = m.Groups[1].Value.Trim();
-                // A bare identifier is the common shape — resolve it to its assignment.
-                if (ident.IsMatch(arg))
+                var src = StripLineComments(File.ReadAllText(f));
+                foreach (Match m in call.Matches(src))
                 {
-                    var decl = Regex.Match(src, @"(?:const|let|var)\s+" + Regex.Escape(arg) + @"\s*=\s*([^;]*);");
-                    if (decl.Success) arg = decl.Groups[1].Value.Trim();
+                    var arg = m.Groups[1].Value.Trim();
+                    // A bare identifier is the common shape — resolve it to its assignment.
+                    if (ident.IsMatch(arg))
+                    {
+                        var decl = Regex.Match(src, @"(?:const|let|var)\s+" + Regex.Escape(arg) + @"\s*=\s*([^;]*);");
+                        if (decl.Success) arg = decl.Groups[1].Value.Trim();
+                    }
+                    var ok = arg.StartsWith("location.pathname") || arg.StartsWith("location.href")
+                          || arg.StartsWith("location.origin") || arg.StartsWith("u.pathname")
+                          || arg.StartsWith("\"/") || arg.StartsWith("'/") || arg.StartsWith("`/");
+                    if (!ok) offenders.Add(Path.GetRelativePath(root, f) + ": " + arg);
                 }
-                var ok = arg.StartsWith("location.pathname") || arg.StartsWith("location.href")
-                      || arg.StartsWith("location.origin") || arg.StartsWith("u.pathname")
-                      || arg.StartsWith("\"/") || arg.StartsWith("'/") || arg.StartsWith("`/");
-                if (!ok) offenders.Add(Path.GetRelativePath(root, f) + ": " + arg);
             }
-        }
 
         Assert.True(offenders.Count == 0,
             "replaceState/pushState resolves a RELATIVE url against the page's <base>, so a bare "

@@ -255,6 +255,26 @@ h2.sec {
 
 /* ── Leaflet ──────────────────────────────────────────────────────────────── */
 #map { height: 460px; border-top: 1px solid #222; border-bottom: 1px solid #222; }
+
+/* The map, its controls and its legends travel together so fullscreen takes the lot — a
+   fullscreen map you can't turn the leaders off on is worse than no fullscreen. */
+.mapwrap { display: flex; flex-direction: column; }
+
+/* Expanded: fill the window below the page furniture, still in the document flow so the board
+   below stays one scroll away. */
+.mapwrap.expanded #map { height: calc(100vh - 150px); }
+
+.mapwrap:fullscreen { background: #0d0d0d; height: 100vh; }
+/* flex:1 with min-height:0 is what lets the map actually shrink to fit beside the bar and the
+   legend; without the min-height a flex item refuses to go below its content size. */
+.mapwrap:fullscreen #map { flex: 1 1 auto; height: auto; min-height: 0; border-top: none; }
+.mapwrap:fullscreen .mapbar { padding-top: 10px; }
+
+.mapbtn {
+    background: #151515; color: #cccc44; border: 1px solid #333; cursor: pointer;
+    font: inherit; font-size: 9px; letter-spacing: 1px; padding: 3px 9px;
+}
+.mapbtn:hover { border-color: #666; color: #e4e488; }
 .leaflet-container { background: #06080b; font-family: inherit; }
 .leaflet-tooltip.tt {
     background: #0a0a0a; color: #ddd; border: 1px solid #444;

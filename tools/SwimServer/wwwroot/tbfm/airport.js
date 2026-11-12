@@ -379,6 +379,7 @@ $('onlydly').onchange = renderBody;
 $('onlyrwy').onchange = renderBody;
 
 traffic.bindControls();
+TbfmMap.bindMapSize('mapwrap', () => map);
 
 renderHeader();
 load();

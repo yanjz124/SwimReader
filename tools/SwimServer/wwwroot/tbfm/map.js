@@ -403,11 +403,69 @@
         return self;
     }
 
+    // ── size: expanded and fullscreen ───────────────────────────────────────
+    /**
+     * Wire the EXPAND and FULL SCREEN controls for the map inside `wrapId`.
+     *
+     * Both are the same problem wearing two hats: **Leaflet does not notice that its container
+     * resized.** It caches the pixel size at init and reuses it for tile layout and for hit
+     * testing, so without an invalidateSize() an enlarged map paints its old viewport into the
+     * corner, leaves the rest grey, and puts every tooltip in the wrong place. The call has to
+     * come AFTER layout has settled, hence the rAF — measuring in the same frame as the class
+     * change reads the old height back.
+     *
+     * Fullscreen covers the wrapper rather than the map element so the controls and the legend
+     * come with it; a fullscreen map you cannot turn the leaders off on is worse than no
+     * fullscreen. requestFullscreen rejects when the page isn't allowed it (an iframe without
+     * allowfullscreen, or a browser that refuses outside a user gesture) and that rejection is an
+     * unhandled promise rejection if it isn't caught, so it is.
+     */
+    function bindMapSize(wrapId, getMap) {
+        const wrap = document.getElementById(wrapId);
+        if (!wrap) return;
+        const expandBtn = document.getElementById('tf-expand');
+        const fullBtn = document.getElementById('tf-full');
+
+        const settle = () => requestAnimationFrame(() => {
+            const m = getMap();
+            if (m) m.invalidateSize();
+        });
+
+        if (localStorage.getItem('tbfm-expand') === '1') wrap.classList.add('expanded');
+        const label = () => {
+            if (expandBtn) {
+                expandBtn.textContent = wrap.classList.contains('expanded') ? 'SHRINK' : 'EXPAND';
+            }
+            if (fullBtn) {
+                fullBtn.textContent = document.fullscreenElement ? 'EXIT FULL SCREEN' : 'FULL SCREEN';
+            }
+        };
+        label();
+        settle();
+
+        if (expandBtn) expandBtn.onclick = () => {
+            const on = wrap.classList.toggle('expanded');
+            localStorage.setItem('tbfm-expand', on ? '1' : '0');
+            label();
+            settle();
+        };
+
+        if (fullBtn) fullBtn.onclick = () => {
+            if (document.fullscreenElement) document.exitFullscreen().catch(() => { });
+            else if (wrap.requestFullscreen) wrap.requestFullscreen().catch(() => { });
+        };
+
+        // Covers Escape and the browser's own fullscreen controls, not just our button.
+        document.addEventListener('fullscreenchange', () => { label(); settle(); });
+        // An expanded map is sized off the viewport, so a window resize changes it.
+        window.addEventListener('resize', settle);
+    }
+
     // Published on window explicitly. A top-level `const` in a classic script is NOT a window
     // property, and this repo has already lost a day to two objects of the same name — one a
     // module-scope const, one a window property — being silently different values.
     window.TbfmMap = {
         TYPE_COLOR, dest, bearing, arcPath, pointTarget, clip, holdColor,
-        drawBoundaries, drawPoints, Traffic, BND_PANE, TRAFFIC_PANE,
+        drawBoundaries, drawPoints, Traffic, bindMapSize, BND_PANE, TRAFFIC_PANE,
     };
 })();

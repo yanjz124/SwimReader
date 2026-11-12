@@ -279,6 +279,7 @@ $('q').oninput = () => board && renderPoints();
 $('onlydly').onchange = () => board && renderPoints();
 
 traffic.bindControls();
+TbfmMap.bindMapSize('mapwrap', () => map);
 
 renderPHeader();
 load();

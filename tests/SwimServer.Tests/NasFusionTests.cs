@@ -326,6 +326,44 @@ public class NasFusionTests
         Assert.Equal(0, s.Stats.MatchedByBeacon);
     }
 
+    /// <summary>
+    /// The proximity scan was 80% of the pass cost (196 of 245 ms live), almost all of it spent
+    /// on tier 4 — a tier that is deliberately inert and, measured, would have named 1% of
+    /// targets. So tier 4 is now sampled 1-in-8.
+    ///
+    /// <para><b>Tier 3 must not inherit that sampling.</b> It is a real correlation that really
+    /// merges, and writing the sample check one line earlier would silently reduce beacon
+    /// matching to an eighth with nothing to show for it — the match count would fall, which
+    /// reads exactly like a quiet day. This drives more than 8 correlatable targets through at
+    /// once and requires every one of them to be named.</para>
+    /// </summary>
+    [Fact]
+    public void SamplingTierFourMustNotSampleTierThree()
+    {
+        var sfdps = new List<FlightState>();
+        var tais = new List<(string, TaisTrack)>();
+        for (int i = 0; i < 20; i++)
+        {
+            // Discrete codes, well separated so no pair can be ambiguous with another. Built
+            // digit-wise rather than as 4000+i: beacon codes are OCTAL, and 4000 itself is
+            // non-discrete (military VFR), so the obvious arithmetic range yields 19 of 20
+            // correlatable targets and this test fails for the wrong reason. It did.
+            var sq = $"4{1 + i / 8}{i % 8}1";
+            var lat = 35.0 + i * 0.5;
+            sfdps.Add(Flight($"g{i}", cs: $"N{i:000}XX", sq: sq, lat: lat, lon: -95.0, alt: 7000));
+            tais.Add(("ZZZ", Tais("ZZZ", $"{i:0000}", sq: sq, lat: lat + 0.01, lon: -95.0, alt: 7050)));
+        }
+
+        var snap = Fuse(sfdps: sfdps, tais: tais).Rebuild();
+
+        Assert.Equal(20, snap.Stats.MatchedByBeacon);
+        Assert.Equal(20, snap.Entities.Count);
+        // ...while tier 4 saw only its sample. Reading these as totals would understate by 8x,
+        // which is why the sample size travels with them.
+        Assert.True(snap.Stats.PositionSampled < 20,
+            $"tier 4 should be sampled, saw {snap.Stats.PositionSampled} of 20");
+    }
+
     // ── Classification ──────────────────────────────────────────────────────────────────
 
     /// <summary>

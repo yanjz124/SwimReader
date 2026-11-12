@@ -132,17 +132,22 @@ class NasFusion
         var st = new NasFusionStats();
         var ents = new Dictionary<long, NasEntity>(8192);
 
-        AddSfdps(ents, now, st);
-        AddTais(ents, now, st);
-        AddAsdex(ents, now, st);
+        // Timed per phase, because "the pass costs 250 ms" is not actionable and the first
+        // guess about WHICH phase is usually wrong. Measured on the live daytime feed, the
+        // answer was not the 26,000 source records - it was the proximity scan.
+        var ph = Stopwatch.StartNew();
+        AddSfdps(ents, now, st); st.SfdpsMs = Lap(ph);
+        AddTais(ents, now, st); st.TaisMs = Lap(ph);
+        AddAsdex(ents, now, st); st.AsdexMs = Lap(ph);
 
-        // Everything above is exact-identity work. The tiers below are the only ones that
-        // reason about proximity, and they run once over the finished set rather than per
-        // source — so a candidate is weighed against every other candidate, which is what
-        // makes the decline-on-ambiguity rule mean anything.
-        CorrelateUnidentified(ents, now, st);
+        // Everything above is exact-identity work. The tier below is the only one that reasons
+        // about proximity, and it runs once over the finished set rather than per source - so a
+        // candidate is weighed against every other candidate, which is what makes the
+        // decline-on-ambiguity rule mean anything.
+        CorrelateUnidentified(ents, now, st); st.CorrelateMs = Lap(ph);
 
         foreach (var e in ents.Values) { e.Classify(); st.Count(e.Cls); }
+        st.ClassifyMs = Lap(ph);
 
         if ((now - _lastEvict).TotalSeconds >= 60) { Evict(now); _lastEvict = now; }
 
@@ -150,6 +155,13 @@ class NasFusion
         st.KeyCount = _idByKey.Count;
         st.IdCount = _idSeen.Count;
         return new NasSnapshot(now, ents, st);
+    }
+
+    private static double Lap(Stopwatch sw)
+    {
+        var ms = sw.Elapsed.TotalMilliseconds;
+        sw.Restart();
+        return Math.Round(ms, 1);
     }
 
     // ── SFDPS: lowest position precedence, highest flight-plan precedence ───────────────
@@ -278,15 +290,26 @@ class NasFusion
         }
     }
 
-    // ── Tiers 3 and 4: the only proximity reasoning in the whole index ──────────────────
+    // ── The proximity tier: the only place in the index that reasons about distance ─────
     //
     // Tier 3 (discrete beacon + 5 NM/1,000 ft) MERGES: a discrete code identifies one aircraft,
     // so agreement inside the gate is a positive correlation, and this is the rule the STARS
     // enrichment service already runs on the other side of the house.
     //
-    // Tier 4 (position only) is COUNTED AND NOT ACTED ON. With no identifier there is no
-    // tiebreaker, so "nearest wins" produces a confidently wrong answer rather than a weak one.
-    // Whether the unique-candidate case is worth merging is a question the numbers should answer.
+    // TIER 4 (POSITION ONLY) IS MEASURED ON A SAMPLE AND NEVER APPLIED. With no identifier there
+    // is no tiebreaker, so "nearest wins" produces a confidently wrong answer rather than a weak
+    // one. It was built to be counted so the numbers could decide whether it was worth doing, and
+    // on the live daytime feed they said no: of 10,655 unidentified targets it would have named
+    // 106 - ONE PERCENT - while 9,650 had no candidate within 1.5 NM at all, because an
+    // uncorrelated primary return is overwhelmingly not an aircraft SFDPS is also tracking. It
+    // stays as a sampled counter so that answer can be re-checked rather than assumed.
+    //
+    // AND THAT SCAN WAS THE WHOLE COST OF THE PASS. Running the 9-cell grid probe for every
+    // unidentified target measured 196 of 245 ms - 80% of the CPU this index spends, on a tier
+    // that is deliberately inert. Tier 3 needs the probe only for targets carrying a DISCRETE
+    // beacon code, which is a few hundred rather than ten thousand.
+    private const int PosSampleEvery = 8;
+
     private void CorrelateUnidentified(Dictionary<long, NasEntity> ents, DateTime now, NasFusionStats st)
     {
         // Candidates: entities SFDPS has positioned and named. Bucketed at 0.5 degrees (~30 NM),
@@ -296,11 +319,13 @@ class NasFusion
         {
             if ((e.Sources & NasSource.Sfdps) == 0) continue;
             if (e.PosRank != NasPosRank.Sfdps || e.Callsign is null) continue;
-            if (!grid.TryGetValue(Cell(e.Lat, e.Lon), out var l)) grid[Cell(e.Lat, e.Lon)] = l = new();
+            var c = Cell(e.Lat, e.Lon);
+            if (!grid.TryGetValue(c, out var l)) grid[c] = l = new();
             l.Add(e);
         }
+        st.CandidateCells = grid.Count;
 
-        // Only unidentified, positioned, non-surface targets are worth correlating — a parked
+        // Only unidentified, positioned, non-surface targets are worth correlating - a parked
         // vehicle at ORD is not an SFDPS flight, and a named target needs nothing.
         var pending = new List<NasEntity>();
         foreach (var e in ents.Values)
@@ -308,34 +333,36 @@ class NasFusion
                 pending.Add(e);
         st.Unidentified = pending.Count;
 
+        int n = 0;
         foreach (var e in pending)
         {
-            List<NasEntity>? near = null;
-            for (int dy = -1; dy <= 1; dy++)
-                for (int dx = -1; dx <= 1; dx++)
-                    if (grid.TryGetValue(Cell(e.Lat + dy * 0.5, e.Lon + dx * 0.5), out var l))
-                        (near ??= new()).AddRange(l);
-            if (near is null) { st.PositionNoCandidate++; continue; }
+            var discrete = BeaconCodes.IsDiscrete(e.Squawk);
+            var sampled = (n++ % PosSampleEvery) == 0;
+            // A target with no discrete code that is not in the sample costs nothing at all,
+            // which is the point: that is nine in ten of them.
+            if (!discrete && !sampled) continue;
+            if (sampled) st.PositionSampled++;
 
             NasEntity? beaconHit = null; int beaconN = 0;
-            NasEntity? posHit = null; int posN = 0;
-            foreach (var c in near)
-            {
-                var d = Nm(e.Lat, e.Lon, c.Lat, c.Lon);
-                var dz = e.AltFt is { } a && c.AltFt is { } b ? Math.Abs(a - b) : int.MaxValue;
-                if (BeaconCodes.IsDiscrete(e.Squawk) && e.Squawk == c.Squawk
-                    && d <= BeaconGateNm && dz <= BeaconGateFt) { beaconHit = c; beaconN++; }
-                if (d <= PosGateNm && dz <= PosGateFt) { posHit = c; posN++; }
-            }
+            int posN = 0;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (!grid.TryGetValue(Cell(e.Lat + dy * 0.5, e.Lon + dx * 0.5), out var l)) continue;
+                    foreach (var c in l)
+                    {
+                        var d = Nm(e.Lat, e.Lon, c.Lat, c.Lon);
+                        var dz = e.AltFt is { } a && c.AltFt is { } b ? Math.Abs(a - b) : int.MaxValue;
+                        if (discrete && e.Squawk == c.Squawk && d <= BeaconGateNm && dz <= BeaconGateFt)
+                        { beaconHit = c; beaconN++; }
+                        if (sampled && d <= PosGateNm && dz <= PosGateFt) posN++;
+                    }
+                }
 
-            if (beaconN == 1)
-            {
-                Merge(ents, e, beaconHit!, now);
-                st.MatchedByBeacon++;
-                continue;
-            }
+            if (beaconN == 1) { Merge(ents, e, beaconHit!, now); st.MatchedByBeacon++; continue; }
             if (beaconN > 1) st.BeaconAmbiguous++;
 
+            if (!sampled) continue;
             if (posN == 1) st.WouldMatchByPosition++;
             else if (posN > 1) st.PositionAmbiguous++;
             else st.PositionNoCandidate++;
@@ -583,6 +610,7 @@ class NasSnapshot
 class NasFusionStats
 {
     public double PassMs;
+    public double SfdpsMs, TaisMs, AsdexMs, CorrelateMs, ClassifyMs;
     public int SfdpsRecords, SfdpsPositions, SfdpsStale, SfdpsNoPos;
     public int TaisRecords, TaisPositions;
     public int AsdexRecords, AsdexPositions;
@@ -590,7 +618,7 @@ class NasFusionStats
 
     public int NewIds, KeyAgreements, KeyCount, IdCount;
 
-    public int Unidentified;
+    public int Unidentified, CandidateCells, PositionSampled;
     public int MatchedByBeacon, BeaconAmbiguous;
     public int WouldMatchByPosition, PositionAmbiguous, PositionNoCandidate;
 
@@ -602,6 +630,9 @@ class NasFusionStats
     public object ToJson(int rawRecords) => new
     {
         passMs = Math.Round(PassMs, 1),
+        // Per phase: the total is not actionable, and the first guess about which
+        // phase dominates was wrong here by a factor of four.
+        phaseMs = new { sfdps = SfdpsMs, tais = TaisMs, asdex = AsdexMs, correlate = CorrelateMs, classify = ClassifyMs },
         entities = Total,
         rawRecords,
         // 1.00 means every record was a distinct airplane. Measured 1.05x at the overnight
@@ -627,9 +658,13 @@ class NasFusionStats
         correlation = new
         {
             unidentified = Unidentified,
+            candidateCells = CandidateCells,
             matchedByBeacon = MatchedByBeacon,
             beaconAmbiguous = BeaconAmbiguous,
-            // Tier 4 is measured, never applied — see CorrelateUnidentified.
+            // Tier 4 is measured on a 1-in-8 sample and NEVER applied. The three counts below
+            // are over positionSampled, not over unidentified - they are a rate, not a total,
+            // and reading them as totals understates by 8x.
+            positionSampled = PositionSampled,
             wouldMatchByPosition = WouldMatchByPosition,
             positionAmbiguous = PositionAmbiguous,
             positionNoCandidate = PositionNoCandidate,

@@ -361,6 +361,51 @@ public class NasFusionTests
         Assert.Equal(0, s.Stats.SfdpsPositions);
     }
 
+    /// <summary>
+    /// <b>One airframe, two legs, and the current one must win the identity.</b> SFDPS keeps a
+    /// flight 60 minutes past its last update, so a quick turn has both legs live at once: same
+    /// Mode S, usually the same beacon code, the same position. Merging them is right — it is one
+    /// aeroplane — but <c>Fill</c> keeps the first non-null value it sees, and iterating a
+    /// <c>ConcurrentDictionary</c> is an arbitrary order, so which leg's callsign survived was a
+    /// coin flip.
+    ///
+    /// <para>Measured live: <b>112 of 115</b> named SFDPS flights missing from the index were
+    /// sitting in it under the other leg's name — SWA519/SWA3872, JBU203/JBU204,
+    /// ACA1322/ACA1323, CNS333/N702NF. Consecutive leg numbers, identical hex and squawk. The
+    /// target count is right and nothing errors; the aeroplane just wears the wrong name.</para>
+    /// </summary>
+    [Fact]
+    public void OfTwoLegsOfOneAirframeTheCurrentOneNamesTheEntity()
+    {
+        // The landed leg is FRESHER, which is what makes this a real ordering problem rather
+        // than something freshness alone would fix.
+        var landed = Flight("g-prev", cs: "SWA519", hex: "acd675", sq: "0623",
+                             lat: 33.94, lon: -118.40, alt: 50, ageSec: 1, status: "COMPLETED");
+        var departed = Flight("g-now", cs: "SWA3872", hex: "acd675", sq: "0623",
+                              lat: 33.94, lon: -118.40, alt: 50, ageSec: 20, status: "ACTIVE");
+
+        // Both enumeration orders must give the same answer; that is the whole point.
+        foreach (var order in new[] { new[] { landed, departed }, new[] { departed, landed } })
+        {
+            var s = Fuse(sfdps: order).Rebuild();
+            var e = Assert.Single(s.Entities.Values);
+            Assert.Equal("SWA3872", e.Callsign);
+        }
+    }
+
+    /// <summary>
+    /// And a DROPPED leg loses to a live one the same way — that is the mid-handoff case, where
+    /// the losing center drops the track before the receiving center reports.
+    /// </summary>
+    [Fact]
+    public void ADroppedLegDoesNotNameTheEntityEither()
+    {
+        var dropped = Flight("g-a", cs: "AAL1", hex: "abc111", lat: 40, lon: -75, ageSec: 1, status: "DROPPED");
+        var live = Flight("g-b", cs: "AAL2", hex: "abc111", lat: 40, lon: -75, ageSec: 30, status: "ACTIVE");
+        foreach (var order in new[] { new[] { dropped, live }, new[] { live, dropped } })
+            Assert.Equal("AAL2", One(Fuse(sfdps: order).Rebuild()).Callsign);
+    }
+
     // ── Correlating the uncorrelated ────────────────────────────────────────────────────
 
     /// <summary>

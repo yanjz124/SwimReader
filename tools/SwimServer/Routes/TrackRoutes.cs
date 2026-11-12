@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 
 namespace SwimServer;
@@ -308,8 +308,18 @@ static class TrackRoutes
     /// same flight differently; see the comment at the projection's loop for the measurement.</para>
     /// </summary>
     internal static IOrderedEnumerable<FlightState> CurrentLegFirst(IEnumerable<FlightState> flights) => flights
-        .OrderBy(f => f.FlightStatus == "DROPPED" ? 1 : 0)
+        .OrderBy(f => LegEnded(f) ? 1 : 0)
         .ThenByDescending(f => f.LastSeen);
+
+    /// <summary>
+    /// Has this leg finished? DROPPED was the only case checked, which is the mid-handoff one:
+    /// the losing center drops the track before the receiver reports. But SFDPS also publishes
+    /// COMPLETED with an actual arrival time, and a COMPLETED leg that happens to be FRESHER than
+    /// the live one's last radar fix would otherwise sort first — a landed flight presented as
+    /// the current one.
+    /// </summary>
+    private static bool LegEnded(FlightState f) =>
+        f.FlightStatus is "DROPPED" or "COMPLETED" or "CANCELLED";
 
     private static FlightState? BestFlight(List<FlightState> flights) => CurrentLegFirst(flights).FirstOrDefault();
 

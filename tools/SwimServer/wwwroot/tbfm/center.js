@@ -107,6 +107,13 @@ const TRAFFIC_PANE = 'tbfmTraffic';
 let traffic = null, trafficLayer = null;
 let showTraffic = localStorage.getItem('tbfm-traffic') !== '0';
 let showAllLinks = localStorage.getItem('tbfm-links') === '1';
+// Minutes of travel the velocity vector represents, and how far the leader is allowed to run.
+// Both are lengths on a map that spans the whole country, so both need a control: a leader to a
+// meter point can legitimately be 1,500 nm long, which is true and unreadable.
+let vecMin = parseFloat(localStorage.getItem('tbfm-vec'));
+if (!(vecMin >= 0)) vecMin = 2;
+let leaderNm = parseFloat(localStorage.getItem('tbfm-leader'));
+if (!(leaderNm >= 0)) leaderNm = 40;        // 0 = off, Infinity = all the way to the point
 
 // Hold severity, warm as it gets worse. Deliberately NOT the adaptation palette: a target's color
 // has to mean "how much hold", not "what kind of point", or the two readings compete.
@@ -144,6 +151,18 @@ function pointTarget(p, lat, lon) {
     return dest(p.lat, p.lon, p.leftAngle + off, p.radiusNm);
 }
 
+/** `to`, pulled back along the line from `from` so the segment is at most `maxNm` long. */
+function clip(from, to, maxNm) {
+    if (!to || !(maxNm > 0)) return null;
+    if (!isFinite(maxNm)) return to;
+    const dLat = to[0] - from[0];
+    const dLon = (to[1] - from[1]) * Math.cos(from[0] * Math.PI / 180);
+    const nm = Math.hypot(dLat, dLon) * 60;
+    if (nm <= maxNm) return to;
+    const k = maxNm / nm;
+    return [from[0] + dLat * k, from[1] + (to[1] - from[1]) * k];
+}
+
 function drawTraffic() {
     if (!map) return;
     if (trafficLayer) { trafficLayer.remove(); trafficLayer = null; }
@@ -169,8 +188,11 @@ function drawTraffic() {
         // 215 lines at ZLA bury the adaptation underneath them, and an unheld flight's leader
         // carries nothing the point's own load count doesn't already give.
         const p = geo[t.point];
-        if (p && (held || showAllLinks)) {
-            const to = pointTarget(p, t.lat, t.lon);
+        if (p && leaderNm > 0 && (held || showAllLinks)) {
+            // Capped at leaderNm: a stub still says which fix the flight is being sequenced to,
+            // which is the whole content of the line, without drawing the 1,500 nm of it that
+            // only crosses everything else on the way.
+            const to = clip([t.lat, t.lon], pointTarget(p, t.lat, t.lon), leaderNm);
             if (to) L.polyline([[t.lat, t.lon], to], {
                 pane: TRAFFIC_PANE, color: col, weight: 0.8,
                 opacity: held ? 0.45 : 0.2, dashArray: '2 4', interactive: false,
@@ -179,8 +201,12 @@ function drawTraffic() {
 
         // One-minute velocity vector, the same idiom as the ERAM scope: direction of flight reads
         // instantly and costs one canvas polyline, where a rotated symbol costs a DOM marker each.
-        if (t.vx != null && t.vy != null && (t.vx || t.vy)) {
-            const dLat = t.vy / 60, dLon = t.vx / (60 * Math.cos(t.lat * Math.PI / 180));
+        if (vecMin > 0 && t.vx != null && t.vy != null && (t.vx || t.vy)) {
+            // vx/vy are KNOTS, so one minute of travel is v/3600 degrees — not v/60, which is one
+            // HOUR and is what shipped first: at 450 kt every target grew a 450 nm spike and the
+            // CONUS view turned into a starburst. Same formula as the ERAM scope's velocity vector.
+            const dLat = t.vy * vecMin / 3600;
+            const dLon = t.vx * vecMin / (3600 * Math.cos(t.lat * Math.PI / 180));
             L.polyline([[t.lat, t.lon], [t.lat + dLat, t.lon + dLon]], {
                 pane: TRAFFIC_PANE, color: col, weight: 1.2, opacity: 0.8, interactive: false,
             }).addTo(trafficLayer);
@@ -236,9 +262,12 @@ function renderTrafficLegend() {
         + '<i style="background:#ff8844"></i>5&ndash;10'
         + '<i style="background:#ff4444"></i>10+ &nbsp; '
         + `<b>${traffic.located}</b> of ${traffic.scheduled} metered flights drawn, ${held} held. `
-        + 'The vector is one minute of travel; the dashed leader points at the fix &mdash; or at '
-        + 'the nearest point <i>on</i> the arc, never the arc&rsquo;s center &mdash; this center '
-        + 'is sequencing it to. '
+        + (vecMin > 0 ? `The vector is ${vecMin} min of travel. ` : '')
+        + (leaderNm > 0
+            ? 'The dashed leader points at the fix &mdash; or at the nearest point <i>on</i> the '
+              + 'arc, never the arc&rsquo;s center &mdash; this center is sequencing it to'
+              + (isFinite(leaderNm) ? `, clipped to ${leaderNm} nm. ` : '. ')
+            : '')
         + (traffic.unlocated
             ? `<b>${traffic.unlocated}</b> not drawn: TBFM is metering them but SFDPS has no `
               + 'position yet &mdash; oceanic and international inbounds, still outside domestic '
@@ -539,6 +568,20 @@ $('tf-traffic').onchange = e => {
 $('tf-links').onchange = e => {
     showAllLinks = e.target.checked;
     localStorage.setItem('tbfm-links', showAllLinks ? '1' : '0');
+    drawTraffic();
+};
+// `Infinity` survives a round trip through localStorage as the string "Infinity", which
+// parseFloat reads back correctly — so the select's value can be the number it means.
+$('tf-vec').value = String(vecMin);
+$('tf-leader').value = isFinite(leaderNm) ? String(leaderNm) : 'Infinity';
+$('tf-vec').onchange = e => {
+    vecMin = parseFloat(e.target.value);
+    localStorage.setItem('tbfm-vec', e.target.value);
+    drawTraffic();
+};
+$('tf-leader').onchange = e => {
+    leaderNm = parseFloat(e.target.value);
+    localStorage.setItem('tbfm-leader', e.target.value);
     drawTraffic();
 };
 

@@ -272,6 +272,11 @@ h2.sec {
 .mapbar label { cursor: pointer; user-select: none; }
 .mapbar label:hover { color: #aaa; }
 .mapbar input { vertical-align: middle; margin-right: 5px; accent-color: #cccc44; }
+.mapbar select {
+    background: #151515; color: #cccc44; border: 1px solid #333;
+    font: inherit; font-size: 9px; letter-spacing: 1px; padding: 2px 4px; margin-left: 5px;
+}
+.mapbar select:hover { border-color: #555; }
 #tlegend { color: #7a8794; padding-bottom: 0; }
 .maplegend i { display: inline-block; width: 18px; height: 2px; vertical-align: middle; margin: 0 4px 0 12px; }
 

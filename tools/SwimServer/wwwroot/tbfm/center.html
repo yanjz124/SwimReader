@@ -24,6 +24,24 @@
 <h2 class="sec">ADAPTATION &mdash; METER POINTS AND ARCS</h2>
 <div class="mapbar">
     <label><input type="checkbox" id="tf-traffic" checked> METERED TRAFFIC</label>
+    <label for="tf-vec">VECTOR
+        <select id="tf-vec">
+            <option value="0">off</option>
+            <option value="1">1 min</option>
+            <option value="2">2 min</option>
+            <option value="4">4 min</option>
+            <option value="8">8 min</option>
+        </select>
+    </label>
+    <label for="tf-leader">LEADER
+        <select id="tf-leader">
+            <option value="0">off</option>
+            <option value="20">20 nm</option>
+            <option value="40">40 nm</option>
+            <option value="80">80 nm</option>
+            <option value="Infinity">to the point</option>
+        </select>
+    </label>
     <label><input type="checkbox" id="tf-links"> LEADER ON EVERY FLIGHT</label>
 </div>
 <div id="map"></div>
@@ -69,7 +87,7 @@
 <div class="note" id="note"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/tbfm/center.js?v=3"></script>
+<script src="/tbfm/center.js?v=4"></script>
 <script src="/idle-timer.js?v=3"></script>
 <script src="/shared/frame.js?v=4"></script>
 <script src="/shared/disclaimer.js?v=2"></script>

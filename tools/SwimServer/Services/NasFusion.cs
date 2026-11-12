@@ -175,6 +175,12 @@ class NasFusion
     private NasSnapshot Pass()
     {
         var cpu0 = ThreadCpu.Ms();
+        // The exact analogue of ThreadCpu, and exact rather than sampled: per-thread, so it
+        // needs no baseline and the feed's own allocations cannot contaminate it. Worth having
+        // beside CPU on a box whose memory growth is documented as unsolved and whose GC pause
+        // time already sits at ~17% -- a pass that is cheap in CPU can still be expensive in
+        // garbage, and nothing else here would show that.
+        var alloc0 = GC.GetAllocatedBytesForCurrentThread();
         var sw = Stopwatch.StartNew();
         var now = _now();
         var st = new NasFusionStats();
@@ -215,6 +221,7 @@ class NasFusion
             st.CpuMeanMs = Math.Round(sum / _cpuSamples.Count, 1);
             st.CpuSamples = _cpuSamples.Count;
         }
+        st.AllocBytes = GC.GetAllocatedBytesForCurrentThread() - alloc0;
         st.KeyCount = _idByKey.Count;
         return new NasSnapshot(now, ents, st);
     }
@@ -678,6 +685,7 @@ class NasSnapshot
 class NasFusionStats
 {
     public double PassMs;
+    public long AllocBytes;
     public double? CpuMs;
     public double CpuMeanMs;
     public int CpuSamples;
@@ -708,6 +716,10 @@ class NasFusionStats
         // ...and what that mean costs at the 2 s cadence, as a share of ONE core.
         corePctAt2s = CpuSamples > 0 ? Math.Round(CpuMeanMs / 2000.0 * 100, 1) : (double?)null,
         passMs = Math.Round(PassMs, 1),
+        // Garbage made per pass, and what that is per hour at the 2 s cadence. The second
+        // number is the one that matters: this process already spends ~17% of its time in GC.
+        allocMB = Math.Round(AllocBytes / 1048576.0, 1),
+        allocGBPerHourAt2s = Math.Round(AllocBytes / 1073741824.0 * 1800, 2),
         // Per phase: the total is not actionable, and the first guess about which
         // phase dominates was wrong here by a factor of four.
         phaseMs = new { sfdps = SfdpsMs, tais = TaisMs, asdex = AsdexMs, correlate = CorrelateMs, classify = ClassifyMs },

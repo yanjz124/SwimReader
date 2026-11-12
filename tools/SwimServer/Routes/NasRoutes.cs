@@ -1,4 +1,6 @@
-﻿using System.Text.Json;
+﻿using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
 
 namespace SwimServer;
 
@@ -7,15 +9,89 @@ namespace SwimServer;
 /// question "can this box carry a whole-NAS map" is answered by measurement rather than by
 /// argument, before any pixel is drawn.
 ///
-/// <para><b>Both are operator-gated.</b> They are bulk dumps of every target in the country with
-/// its identity attached — the same material as <c>/api/enrich/aircraft</c>, and far more than
-/// anything on the public site needs. (LADD-blocked aircraft are omitted inside
-/// <see cref="NasFusion"/> regardless, so the gate is defence in depth, not the only defence.)</para>
+/// <para><b>Only <c>/api/nas/stats</c> is operator-gated</b>, and that is because of what it
+/// reports rather than what it is about: CPU and allocation per pass, key-map size, flow-ish
+/// internals. That is deployment state, which is the line this repo already draws for the SYSTEM
+/// group.</para>
+///
+/// <para><c>/api/nas/targets</c> and the socket are <b>not</b> gated, because they are air
+/// traffic — and the precedent is unambiguous: <c>/ws</c> already serves every SFDPS flight with
+/// its full flight plan (a ~2 MB snapshot) to anyone who can reach the site, as do
+/// <c>/api/asdex</c> and <c>/api/tais</c>. Gating the fused view would be inconsistent rather
+/// than careful. (It was gated on the first pass, before that comparison was made.)
+/// <c>/api/enrich/aircraft</c> stays gated for a different reason: it exists to hand one
+/// position-and-beacon-code pair to a correlator, which is the pairing LADD exists to prevent.
+/// LADD-blocked aircraft are omitted inside <see cref="NasFusion"/> for every consumer.</para>
 /// </summary>
 static class NasRoutes
 {
     public static void Register(WebApplication app, ServerContext ctx)
     {
+        // The map itself. Served through AssetVersion.Stamp rather than SendFileAsync, so the
+        // ?v= on nas.js/nas.css is always the newest asset mtime and a returning browser cannot
+        // be left on a cached build. The pages that hand-maintain a ?v=N are the ones that got
+        // this wrong for two months; a new page has no reason to repeat it.
+        app.MapGet("/nas", async (HttpContext c) =>
+        {
+            var dir = Path.Combine(ctx.WebRootPath, "nas");
+            var html = await File.ReadAllTextAsync(Path.Combine(dir, "index.html"));
+            long ver = 0;
+            foreach (var f in Directory.EnumerateFiles(dir)
+                         .Where(f => f.EndsWith(".js") || f.EndsWith(".css")))
+                ver = Math.Max(ver, File.GetLastWriteTimeUtc(f).Ticks);
+            c.Response.Headers.CacheControl = "no-cache";
+            c.Response.ContentType = "text/html";
+            await c.Response.WriteAsync(AssetVersion.Stamp(html, ver));
+        });
+
+        // Viewport-bounded delta stream. Registered before any /nas/{...} parameter route would
+        // be, so the literal segment wins (the same ordering trap as /asdex/ws/{airport}).
+        app.Map("/nas/ws", async (HttpContext c) =>
+        {
+            if (!c.WebSockets.IsWebSocketRequest) { c.Response.StatusCode = 400; return; }
+            using var ws = await SwimWs.AcceptAsync(c);
+            var client = new WsClient(ws) { Reveal = LaddService.Reveal(c) };
+
+            var sendTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await foreach (var data in client.Queue.Reader.ReadAllAsync())
+                    {
+                        if (ws.State != WebSocketState.Open) break;
+                        await ws.SendAsync(data, WebSocketMessageType.Text, true, CancellationToken.None);
+                    }
+                }
+                catch (WebSocketException) { }
+                catch (OperationCanceledException) { }
+            });
+
+            var clientId = ctx.NasStream.AddClient(client);
+            try
+            {
+                // The client drives its own viewport, so unlike every other socket here this one
+                // actually reads. Messages are small ({cmd:"view", bbox, cap, cls, q}); anything
+                // bigger than the buffer is a client bug and is dropped rather than reassembled.
+                var buf = new byte[8192];
+                while (ws.State == WebSocketState.Open)
+                {
+                    var result = await ws.ReceiveAsync(buf, CancellationToken.None);
+                    if (result.MessageType == WebSocketMessageType.Close) break;
+                    if (result.MessageType != WebSocketMessageType.Text || !result.EndOfMessage) continue;
+                    // A malformed command is ignored, never fatal: a socket that dies on bad
+                    // input looks exactly like a server that stopped responding.
+                    ctx.NasStream.SetView(clientId, Encoding.UTF8.GetString(buf, 0, result.Count));
+                }
+            }
+            catch (WebSocketException) { }
+            finally
+            {
+                ctx.NasStream.RemoveClient(clientId);
+                client.Queue.Writer.TryComplete();
+                await sendTask;
+            }
+        });
+
         // What the pass did: entity count, per-class split, per-tier match counts and cost.
         //
         // ?payload=1 also serialises the whole snapshot in the streaming (positional-array) form
@@ -62,7 +138,6 @@ static class NasRoutes
         //   ?held=1                     also include entities with NO position (flight plans)
         app.MapGet("/api/nas/targets", (HttpContext http, string? cls, string? bbox, int? limit, int? delta, int? held) =>
         {
-            if (!LaddService.OperatorView(http)) return LaddService.OperatorOnly();
             var snap = ctx.Nas.Snapshot();
 
             HashSet<string>? want = null;

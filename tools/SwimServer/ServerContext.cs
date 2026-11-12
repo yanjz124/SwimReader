@@ -58,6 +58,9 @@ class ServerContext
     /// </summary>
     public NasFusion Nas { get; set; } = null!;
 
+    /// <summary>Viewport-bounded delta stream over <see cref="Nas"/> for the NAS map.</summary>
+    public NasStream NasStream { get; set; } = null!;
+
     // ── Filesystem paths ────────────────────────────────────────────────────
     public required string WebRootPath { get; init; }
     public required string HistoryDir { get; init; }

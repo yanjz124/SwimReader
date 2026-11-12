@@ -1,0 +1,259 @@
+/* ── NAS map ───────────────────────────────────────────────────────────────
+ * A full-screen overview browser, so it owns its own chrome rather than loading
+ * frame.css (the same choice the ERAM / ASDE-X / STARS scopes make).
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+html, body {
+    height: 100%;
+    background: #05070a;
+    color: #d8d8d8;
+    font-family: 'Consolas', 'Menlo', monospace;
+    overflow: hidden;
+}
+
+#map {
+    position: absolute;
+    inset: 0;
+    background: #05070a;
+}
+
+/* Leaflet's own controls, darkened to match. */
+.leaflet-control-zoom a {
+    background: #14181f;
+    color: #cccc44;
+    border-color: #2a2f38;
+}
+.leaflet-control-zoom a:hover { background: #222832; }
+
+/* ── Top bar ───────────────────────────────────────────────────────────── */
+.bar {
+    position: absolute;
+    top: 8px;
+    left: 108px;
+    right: 8px;
+    z-index: 900;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 5px 12px;
+    font-size: 11px;
+    background: rgba(10, 12, 16, 0.88);
+    border: 1px solid #2a2f38;
+    pointer-events: none;
+}
+.bar .brand {
+    color: #cccc44;
+    letter-spacing: 3px;
+    font-size: 13px;
+}
+.bar .sep { flex: 1; }
+#status { color: #777; }
+#status.ok { color: #44aa44; }
+#status.bad { color: #cc5555; }
+#counts { color: #9aa4b2; }
+#counts b { color: #d8d8d8; font-weight: normal; }
+.warn { color: #ddaa44; }
+
+/* ── Panels ────────────────────────────────────────────────────────────── */
+.panel {
+    position: absolute;
+    z-index: 900;
+    background: rgba(10, 12, 16, 0.92);
+    border: 1px solid #2a2f38;
+    font-size: 11px;
+}
+
+.search {
+    top: 44px;
+    left: 108px;
+    display: flex;
+    align-items: center;
+}
+.search input {
+    width: 290px;
+    max-width: 48vw;
+    padding: 6px 8px;
+    background: transparent;
+    border: 0;
+    color: #d8d8d8;
+    font-family: inherit;
+    font-size: 11px;
+    outline: none;
+}
+.search input::placeholder { color: #5d6672; }
+.search button {
+    background: transparent;
+    border: 0;
+    border-left: 1px solid #2a2f38;
+    color: #777;
+    padding: 6px 9px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+}
+.search button:hover { color: #cccc44; }
+
+/* ── Control stack ─────────────────────────────────────────────────────── */
+.ctl {
+    top: 44px;
+    right: 8px;
+    width: 216px;
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+}
+.ctl-toggle {
+    display: none;
+    width: 100%;
+    background: transparent;
+    border: 0;
+    color: #cccc44;
+    padding: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.grp { padding: 8px 10px; border-bottom: 1px solid #1d222a; }
+.grp:last-child { border-bottom: 0; }
+.grp-h {
+    color: #cccc44;
+    letter-spacing: 2px;
+    font-size: 10px;
+    margin-bottom: 6px;
+}
+.ctl label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    color: #c2c8d0;
+    cursor: pointer;
+    user-select: none;
+}
+.ctl label .n {
+    margin-left: auto;
+    color: #6f7885;
+    font-variant-numeric: tabular-nums;
+}
+.ctl select {
+    margin-left: auto;
+    background: #14181f;
+    color: #d8d8d8;
+    border: 1px solid #2a2f38;
+    font-family: inherit;
+    font-size: 11px;
+    padding: 1px 3px;
+}
+.ctl input[type=checkbox] { accent-color: #cccc44; }
+
+/* Class colour swatch. 10x10, so it reads as a key and not as a stray glyph —
+ * the TBFM legend shipped with an <i> used for emphasis rendering as a blank bar. */
+.ctl .sw {
+    width: 10px;
+    height: 10px;
+    flex: 0 0 10px;
+    display: inline-block;
+    border-radius: 2px;
+}
+.c-enroute  { background: #4ec9ff; }
+.c-terminal { background: #7ee787; }
+.c-surface  { background: #ffd166; }
+.c-untagged { background: #9b8cff; }
+.c-vehicle  { background: #4fd1c5; }
+.c-primary  { background: #5a6472; }
+
+.note {
+    color: #6f7885;
+    font-size: 10px;
+    line-height: 1.35;
+    margin-top: 5px;
+}
+
+/* ── Hover readout ─────────────────────────────────────────────────────── */
+.tip {
+    position: absolute;
+    z-index: 950;
+    display: none;
+    pointer-events: none;
+    background: rgba(8, 10, 14, 0.95);
+    border: 1px solid #39404b;
+    padding: 5px 8px;
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: nowrap;
+    max-width: 320px;
+}
+.tip .t1 { color: #cccc44; }
+.tip .t2 { color: #c2c8d0; }
+.tip .t3 { color: #8b94a2; white-space: normal; }
+
+/* ── Detail panel ──────────────────────────────────────────────────────── */
+.detail {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: 330px;
+    max-width: 92vw;
+    z-index: 960;
+    display: none;
+    flex-direction: column;
+    background: rgba(8, 10, 14, 0.96);
+    border: 1px solid #2a2f38;
+    font-size: 11px;
+}
+.detail.open { display: flex; }
+.d-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #2a2f38;
+    color: #cccc44;
+    letter-spacing: 1px;
+    font-size: 13px;
+}
+.d-head button {
+    margin-left: auto;
+    background: transparent;
+    border: 0;
+    color: #777;
+    font-size: 16px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.d-head button:hover { color: #cccc44; }
+.d-body { padding: 8px 10px; overflow-y: auto; }
+
+.d-sec {
+    color: #cccc44;
+    letter-spacing: 2px;
+    font-size: 10px;
+    margin: 10px 0 4px;
+}
+.d-sec:first-child { margin-top: 0; }
+.d-row {
+    display: flex;
+    gap: 8px;
+    padding: 1px 0;
+}
+.d-row .k { color: #6f7885; flex: 0 0 96px; }
+.d-row .v { color: #d8d8d8; word-break: break-word; }
+.d-empty { color: #6f7885; }
+.d-route {
+    color: #9aa4b2;
+    font-size: 10px;
+    line-height: 1.4;
+    word-break: break-all;
+}
+
+@media (max-width: 760px) {
+    .bar { left: 8px; top: 40px; }
+    .nav-home { top: 8px; }
+    .search { top: 76px; left: 8px; right: 8px; }
+    .search input { width: 100%; max-width: none; }
+    .ctl { top: 8px; right: 8px; width: auto; }
+    .ctl-toggle { display: block; }
+    .ctl-body { display: none; }
+    .ctl.open .ctl-body { display: block; width: 216px; }
+    .detail { top: auto; height: 52vh; left: 8px; right: 8px; width: auto; }
+}

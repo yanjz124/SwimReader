@@ -1,4 +1,4 @@
-using System.Net.WebSockets;
+﻿using System.Net.WebSockets;
 
 namespace SwimServer;
 
@@ -414,6 +414,7 @@ static class EramRoutes
                 ("TFDM", ctx.Tfdm.ClientCount),
                 ("TFMS", ctx.Tfms.ClientCount),
                 ("ITWS", ctx.Itws.ClientCount),
+                ("NAS", ctx.NasStream.ClientCount),
                 ("Replay", ctx.ReplayServer.ClientCount),
             }, ctx.Flights.Count), ctx.JsonOpts);
         });

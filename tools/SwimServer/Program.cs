@@ -663,6 +663,7 @@ var serverCtx = new ServerContext
 
 // Fused NAS index. Takes the context, so it is built right after it and assigned back in.
 serverCtx.Nas = new NasFusion(serverCtx);
+serverCtx.NasStream = new NasStream(serverCtx.Nas);
 
 // Reverse proxy: /dstars/* → SwimReader.Server on port 5000
 DgScopeRoutes.Register(app, serverCtx);
@@ -1399,8 +1400,15 @@ var tfdmPurgeTimer = new Timer(_ => tfdm.PurgeStale(), null, TimeSpan.FromSecond
 // request then still gets a synchronous pass).
 var nasFusionMs = int.TryParse(Environment.GetEnvironmentVariable("NAS_FUSION_MS"), out var nfm) ? nfm : 2000;
 var nasFusionTimer = nasFusionMs > 0
-    ? new Timer(_ => { try { serverCtx.Nas.Tick(); } catch (Exception ex) { Console.WriteLine($"[NAS] pass failed: {ex.Message}"); } },
-                null, TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(nasFusionMs))
+    ? new Timer(_ =>
+        {
+            // The pass first, then the broadcast, on one timer and in this order: the stream
+            // diffs against the snapshot the pass just built, so splitting them across two
+            // timers would hand every client a picture one tick stale half the time.
+            try { serverCtx.Nas.Tick(); } catch (Exception ex) { Console.WriteLine($"[NAS] pass failed: {ex.Message}"); }
+            try { serverCtx.NasStream.Tick(); } catch (Exception ex) { Console.WriteLine($"[NAS] broadcast failed: {ex.Message}"); }
+        },
+        null, TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(nasFusionMs))
     : null;
 
 var tbfmPurgeTimer = new Timer(_ => { tbfm.PurgeStale(); tbfm.SaveAdaptationIfDirty(); }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));

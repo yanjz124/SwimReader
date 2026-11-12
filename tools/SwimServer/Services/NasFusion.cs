@@ -765,6 +765,30 @@ class NasEntity
         AltFt ?? 0, Trk ?? 0, Gs ?? 0, (int)Cls,
     };
 
+    /// <summary>
+    /// The form sent when a target FIRST enters a client's view: the volatile fields plus the
+    /// identity, in one array.
+    ///
+    /// <para>Identity is what hover, labels and client-side highlighting all need, and it is also
+    /// what almost never changes — so sending it on every tick would pay for it hundreds of times
+    /// over. It rides the add instead, and <see cref="ToDelta"/> stays at seven fields for the
+    /// updates, which are the overwhelming majority of what crosses the wire. A target whose
+    /// identity DOES change (an untagged return the facility correlates) is re-sent as an add,
+    /// which the client treats as an upsert.</para>
+    ///
+    /// <para>Same rule as ToDelta: a new field goes on the END.</para>
+    /// </summary>
+    public object[] ToAdd() => new object[]
+    {
+        Id, Math.Round(Lat, 5), Math.Round(Lon, 5),
+        AltFt ?? 0, Trk ?? 0, Gs ?? 0, (int)Cls,
+        Callsign ?? "", Type ?? "", Origin ?? "", Dest ?? "", Owner ?? "",
+    };
+
+    /// <summary>Hash of just the identity fields, so the stream can tell an ordinary position
+    /// update from one that has to re-send who the target is.</summary>
+    public int IdentityHash() => HashCode.Combine(Callsign, Type, Origin, Dest, Owner);
+
     public object ToJson() => new
     {
         id = Id,

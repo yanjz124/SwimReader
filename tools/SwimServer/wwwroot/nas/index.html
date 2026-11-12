@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NAS Map</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='78' font-size='78'>&#127758;</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/nas/nas.css">
+</head>
+<body>
+
+<a class="nav-home" href="/">&larr; HOME</a>
+
+<div id="map"></div>
+
+<!-- Top bar: live counts and the state of the stream -->
+<div class="bar" id="bar">
+    <span class="brand">NAS</span>
+    <span id="status">connecting&hellip;</span>
+    <span class="sep"></span>
+    <span id="counts"></span>
+    <span id="trunc" class="warn"></span>
+</div>
+
+<!-- Search / filter -->
+<div class="panel search" id="searchPanel">
+    <input id="q" type="search" autocomplete="off" spellcheck="false"
+           placeholder="callsign, type, operator, airport, KJFK-KLAX&hellip;">
+    <button id="qclear" title="Clear">&times;</button>
+</div>
+
+<!-- Layers and display controls -->
+<div class="panel ctl" id="ctl">
+    <button class="ctl-toggle" id="ctlToggle" title="Show/hide controls">&#9776;</button>
+    <div class="ctl-body" id="ctlBody">
+
+        <div class="grp">
+            <div class="grp-h">SHOW</div>
+            <label><input type="checkbox" class="cls" value="EnRoute" checked><i class="sw c-enroute"></i>En route<span class="n" data-n="EnRoute"></span></label>
+            <label><input type="checkbox" class="cls" value="Terminal" checked><i class="sw c-terminal"></i>Terminal<span class="n" data-n="Terminal"></span></label>
+            <label><input type="checkbox" class="cls" value="Surface" checked><i class="sw c-surface"></i>Surface<span class="n" data-n="Surface"></span></label>
+            <label><input type="checkbox" class="cls" value="Untagged" checked><i class="sw c-untagged"></i>Untagged<span class="n" data-n="Untagged"></span></label>
+            <label><input type="checkbox" class="cls" value="Vehicle"><i class="sw c-vehicle"></i>Vehicles<span class="n" data-n="Vehicle"></span></label>
+            <label><input type="checkbox" class="cls" value="Primary"><i class="sw c-primary"></i>Primary only<span class="n" data-n="Primary"></span></label>
+            <div class="note" id="primaryNote">
+                Primary-only returns have no identity and no Mode&nbsp;C. About half are not
+                aircraft &mdash; birds, precipitation, ground clutter.
+            </div>
+        </div>
+
+        <div class="grp">
+            <div class="grp-h">DISPLAY</div>
+            <label for="trail">Trails
+                <select id="trail">
+                    <option value="0">off</option>
+                    <option value="4" selected>4</option>
+                    <option value="8">8</option>
+                    <option value="16">16</option>
+                </select>
+            </label>
+            <label for="leader">Leader
+                <select id="leader">
+                    <option value="0">off</option>
+                    <option value="1" selected>1 min</option>
+                    <option value="2">2 min</option>
+                    <option value="4">4 min</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="labels"> Labels</label>
+            <label for="alt">Altitude
+                <select id="alt">
+                    <option value="all" selected>all</option>
+                    <option value="0-5000">SFC&ndash;5,000</option>
+                    <option value="5000-18000">5,000&ndash;FL180</option>
+                    <option value="18000-30000">FL180&ndash;FL300</option>
+                    <option value="30000-99000">FL300+</option>
+                </select>
+            </label>
+        </div>
+
+        <div class="grp">
+            <div class="grp-h">WEATHER</div>
+            <label><input type="checkbox" id="wx"> NEXRAD</label>
+            <label for="wxop">Opacity
+                <select id="wxop">
+                    <option value="25">25%</option>
+                    <option value="45" selected>45%</option>
+                    <option value="70">70%</option>
+                </select>
+            </label>
+        </div>
+
+        <div class="grp">
+            <div class="grp-h">LIMIT</div>
+            <label for="cap">Max targets
+                <select id="cap">
+                    <option value="1000">1,000</option>
+                    <option value="3000" selected>3,000</option>
+                    <option value="6000">6,000</option>
+                    <option value="10000">10,000</option>
+                </select>
+            </label>
+            <div class="note">
+                Above the limit the busiest view is trimmed, identified traffic first.
+                Zoom in or filter to see the rest.
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- Hover readout, follows the cursor -->
+<div id="tip" class="tip"></div>
+
+<!-- Click detail, pulls the full cross-source picture from /api/track -->
+<aside class="detail" id="detail">
+    <div class="d-head">
+        <span id="dTitle">&mdash;</span>
+        <button id="dClose" title="Close">&times;</button>
+    </div>
+    <div class="d-body" id="dBody"></div>
+</aside>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/nas/nas.js"></script>
+<script src="/shared/disclaimer.js" defer></script>
+</body>
+</html>

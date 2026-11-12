@@ -57,6 +57,24 @@ partial class TbfmBridge
         public DateTime? NextSta;
     }
 
+    /// <summary>First non-blank value of <paramref name="get"/> over the chain, nearest the field
+    /// last — so a field only an upstream center published is still reported.</summary>
+    private static string? Pick(IEnumerable<TbfmLink> chain, Func<TbfmLink, string?> get)
+    {
+        string? found = null;
+        foreach (var l in chain)
+            if (get(l) is { Length: > 0 } v) found = v;
+        return found;
+    }
+
+    /// <summary>
+    /// A link's TRACON, or null for "EDC". Every upstream link reports <c>tra</c> as <b>EDC</b> —
+    /// Extended Metering, not a facility — so taking it literally would tell a reader their flight
+    /// is being worked by a TRACON called EDC. Only the terminal link names a real one.
+    /// </summary>
+    private static string? RealTracon(TbfmLink? l) =>
+        l?.Tracon is { Length: > 0 } t && t != "EDC" ? t : null;
+
     private static double? DelayOf(DateTime? sta, DateTime? eta) =>
         sta.HasValue && eta.HasValue ? Math.Round((sta.Value - eta.Value).TotalMinutes, 1) : null;
 
@@ -114,11 +132,27 @@ partial class TbfmBridge
 
     // ── /api/track and the Telegram bot ──────────────────────────────────
 
-    /// <summary>One center's link in a flight's metering chain.</summary>
+    /// <summary>
+    /// One center's link in a flight's metering chain — and the structure it is metered under.
+    ///
+    /// <para><c>Point</c> is what this center schedules to; <c>MeterFix</c> is the airport's meter
+    /// fix, which is <b>not always the same point</b> (live: ZAU schedules AAL1614 with mfx MOTRR
+    /// but sfx FYTTEMF, and their ETAs differ). <c>Gate</c>, <c>StreamClass</c>, <c>Cfg</c> and
+    /// <c>Cat</c> are the rest of what TBFM is sequencing it within: the arrival gate, the stream
+    /// class the schedule belongs to, the runway configuration in force, and whether it is an
+    /// ARRIVAL, a SATELLITE_ARRIVAL or an OVERFLIGHT. All four come straight off <c>mrp</c> and
+    /// were parsed long before anything displayed them.</para>
+    ///
+    /// <para><c>Arcs</c> is the ladder ahead of the fix: a flight crosses the outer arcs (OMA, OOA,
+    /// O3A, O4A) before the meter fix, each with its own STA, and TBFM names them in adaptation
+    /// (MOXEE/T). Past arcs are dropped by <see cref="ArcsJson"/>, per the per-time expiry rule —
+    /// a record kept alive by its fix and runway times can carry a long-dead arc STA.</para>
+    /// </summary>
     public sealed record TbfmLink(
         string? Ctr, string? Point, string? PointType, string? Tracon, string? Gate, string? Cat,
         DateTime? Sta, DateTime? Eta, double? DelayMin, bool Passed, bool Frozen, bool Suspended,
-        int? AgeSec);
+        int? AgeSec, string? MeterFix = null, string? StreamClass = null, string? Cfg = null,
+        string? Rwy = null, DateTime? StaRwy = null, Dictionary<string, object>? Arcs = null);
 
     /// <summary>
     /// One flight's metering.
@@ -140,7 +174,14 @@ partial class TbfmBridge
         string? Ctr, string? Point, DateTime? StaPoint, DateTime? EtaPoint,
         string? HoldCtr, string? HoldPoint,
         string? Rwy, DateTime? StaRwy, DateTime? EtaRwy,
-        IReadOnlyList<string> Remaining, IReadOnlyList<TbfmLink> Chain);
+        IReadOnlyList<string> Remaining, IReadOnlyList<TbfmLink> Chain,
+        // What the flight is being metered UNDER, taken from the terminal link where there is one
+        // (it is the only link that names a real TRACON, a gate, a runway config and a stream
+        // class — every upstream link reports TRACON "EDC", Extended Metering) and from the next
+        // link otherwise, so a flight still six centers out says something rather than nothing.
+        string? MeterFix = null, string? Gate = null, string? StreamClass = null,
+        string? Tracon = null, string? Cfg = null, string? Cat = null,
+        Dictionary<string, object>? Arcs = null);
 
     /// <summary>
     /// One flight's metering: the chain of centers working it, nearest the field last, plus the
@@ -178,7 +219,14 @@ partial class TbfmBridge
             Passed: Passed(f.StaMeterFix, f.StaMeterFixSeen, now),
             Frozen: Yes(f, "sfz") || Yes(f, "rfz"),
             Suspended: Yes(f, "sus"),
-            AgeSec: f.TimesSeen == default ? null : (int)(now - f.TimesSeen).TotalSeconds)).ToList();
+            AgeSec: f.TimesSeen == default ? null : (int)(now - f.TimesSeen).TotalSeconds,
+            // The structure this center is metering it within. Already parsed; nothing rendered it.
+            MeterFix: f.MeterFix,
+            StreamClass: Mr(f, "scn"),
+            Cfg: Mr(f, "cfg"),
+            Rwy: f.Runway,
+            StaRwy: f.StaRunway,
+            Arcs: ArcsJson(f, now))).ToList();
 
         // The link the aircraft is working toward: the first whose point it has not reached.
         var next = chain.FirstOrDefault(l => !l.Passed) ?? chain.LastOrDefault();
@@ -186,6 +234,8 @@ partial class TbfmBridge
         // is the chain maximum, so the point it belongs to is the link holding that maximum.
         var hold = m.DelayMin is { } dm
             ? chain.FirstOrDefault(l => l.DelayMin is { } v && Math.Abs(v - dm) < 0.001) : null;
+        // The link carrying the runway STA — the one adjacent to the arrival TRACON.
+        var term = chain.LastOrDefault(l => l.StaRwy.HasValue);
 
         return new TbfmTrack(
             Dep: m.Dep, Dest: m.Apt, Centers: m.Chain.Count,
@@ -199,7 +249,19 @@ partial class TbfmBridge
             // snapshot), so "the terminal schedule" is unambiguous.
             Rwy: m.Terminal?.Runway, StaRwy: m.Terminal?.StaRunway, EtaRwy: m.Terminal?.EtaRunway,
             Remaining: chain.Where(l => !l.Passed && l.Ctr != null).Select(l => l.Ctr!).Distinct().ToList(),
-            Chain: chain);
+            Chain: chain,
+            // The terminal link is where the real structure lives — it is the one adjacent to the
+            // arrival TRACON, so it is the only one whose `tra` is a TRACON rather than "EDC" and
+            // the only one carrying a runway config. Fall back to the next link (then any link
+            // that has the field at all) so an inbound TBFM has only started metering upstream
+            // still reports its gate and stream class instead of a row of dashes.
+            MeterFix: term?.MeterFix ?? Pick(chain, l => l.MeterFix),
+            Gate: term?.Gate ?? Pick(chain, l => l.Gate),
+            StreamClass: term?.StreamClass ?? Pick(chain, l => l.StreamClass),
+            Tracon: RealTracon(term) ?? Pick(chain, l => RealTracon(l)),
+            Cfg: term?.Cfg ?? Pick(chain, l => l.Cfg),
+            Cat: term?.Cat ?? next?.Cat ?? Pick(chain, l => l.Cat),
+            Arcs: next?.Arcs ?? term?.Arcs);
     }
 
     // ── Rates ────────────────────────────────────────────────────────────────

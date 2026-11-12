@@ -441,10 +441,18 @@ partial class TbfmBridge
     private readonly ConcurrentDictionary<string, string> _unknownSamples = new();
 
     /// <summary>One retained sample per unmodelled &lt;tma&gt; child, LADD-safe (no &lt;air&gt; inside).</summary>
+    // One slot per kind was not enough, and it hid something: `oth` carries at least TWO
+    // different payloads — the metering-status block (tmg/tmss/tms, with `mas` YES/NO per airport
+    // per center) and an interface-status one (int/ifn/ift/ifs, live: ZLC ERAM UP). With a single
+    // slot the newest overwrote the other, so whichever arrived last looked like the whole story
+    // and a parser written from it would silently ignore the rest. Keyed by kind AND by the shape
+    // of its first child, so each distinct payload survives to be read.
     private void KeepUnknownSample(XElement kind)
     {
-        if (_unknownSamples.Count > 8) return;
-        _unknownSamples.TryAdd(kind.Name.LocalName, Truncate(kind.ToString(SaveOptions.DisableFormatting)));
+        if (_unknownSamples.Count > 24) return;
+        var shape = kind.Elements().FirstOrDefault()?.Name.LocalName;
+        var key = shape is null ? kind.Name.LocalName : kind.Name.LocalName + "/" + shape;
+        _unknownSamples.TryAdd(key, Truncate(kind.ToString(SaveOptions.DisableFormatting)));
     }
 
     private static string Truncate(string xml) => xml.Length > 4000 ? xml[..4000] + "…(truncated)" : xml;
@@ -667,7 +675,7 @@ partial class TbfmBridge
     /// Arc STA/ETA pairs still ahead of the flight, keyed oma/ooa/o3a/o4a, each with its name;
     /// null when none.
     /// </summary>
-    private Dictionary<string, object>? ArcsJson(TbfmFlight f, DateTime now)
+    internal Dictionary<string, object>? ArcsJson(TbfmFlight f, DateTime now)
     {
         Dictionary<string, object>? d = null;
         foreach (var (arc, t) in f.ArcTimes)

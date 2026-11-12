@@ -250,4 +250,65 @@ public class TbfmDashboardTests
         Assert.Equal(1, s.GetProperty("airports").GetInt32());
         Assert.Equal(3, s.GetProperty("centers").GetInt32());
     }
+
+    // ── "metered under": the structure, not the hold ─────────────────────────
+
+    /// <summary>
+    /// The structure roll-up comes from the TERMINAL link, because that is the only one that names
+    /// a real TRACON and a runway config — every upstream link reports <c>tra</c> as <b>EDC</b>,
+    /// which is Extended Metering and not a facility. Taking it literally would tell a reader
+    /// their flight is being worked by a TRACON called EDC: exactly the kind of plausible-looking
+    /// wrong answer a browser check sails straight past.
+    /// </summary>
+    [Fact]
+    public void MeteredUnder_TakesTheTerminalLink_AndNeverReportsEdcAsATracon()
+    {
+        var t = ThreeCenterChain().TrackSummary("TST200");
+        Assert.NotNull(t);
+        Assert.Equal("P50", t!.Tracon);          // ZAB's link, the one adjacent to the TRACON
+        Assert.Equal("EAST", t.Cfg);             // a runway config exists only on the terminal link
+        Assert.Equal("ARRIVAL", t.Cat);
+        Assert.Equal("ZAB_GATE", t.Gate);
+        Assert.Equal("PHX_ZDVPHXX", t.StreamClass);
+
+        // Nothing leaks EDC through as a facility.
+        Assert.DoesNotContain("EDC", new[] { t.Tracon, t.Gate, t.StreamClass, t.Cfg, t.Cat });
+        // ...while the raw links still report exactly what TBFM said, which is where "EDC" belongs.
+        Assert.Equal(new[] { "EDC", "EDC", "P50" }, t.Chain.Select(l => l.Tracon).ToArray());
+    }
+
+    /// <summary>
+    /// With no terminal link yet — an inbound TBFM has only started metering upstream — the
+    /// roll-up still reports what the chain does carry rather than a row of dashes, and still
+    /// refuses to call EDC a TRACON.
+    /// </summary>
+    [Fact]
+    public void MeteredUnder_FallsBackToUpstreamLinks_ButStillDropsEdc()
+    {
+        var b = NewBridge();
+        b.Process(Link("ZOB", "TST201", "PHX", "ZAU_N", staMin: 30, etaMin: 30));
+        var t = b.TrackSummary("TST201");
+        Assert.NotNull(t);
+        Assert.Null(t!.Tracon);                  // EDC is the only one on offer, so say nothing
+        Assert.Equal("ZOB_GATE", t.Gate);        // ...but the gate and stream class are real
+        Assert.Equal("PHX_ZAU_N", t.StreamClass);
+        Assert.Null(t.Cfg);                      // no terminal link, so no runway config
+    }
+
+    /// <summary>
+    /// A link tracks the point this center schedules to and the airport's meter fix separately.
+    /// TBFM schedules to <c>sfx</c>, which can be a different point from <c>mfx</c> (live: ZAU
+    /// scheduling AAL1614 to FYTTEMF with mfx MOTRR), so the page can suppress the row when they
+    /// agree instead of printing one restriction as two.
+    /// </summary>
+    [Fact]
+    public void MeterFix_AndScheduledPoint_AreTrackedSeparately()
+    {
+        var t = ThreeCenterChain().TrackSummary("TST200");
+        Assert.NotNull(t);
+        var term = t!.Chain.Last();
+        Assert.Equal("ZDVPHXX", term.Point);
+        Assert.Equal("ZDVPHXX", term.MeterFix);   // Link() sets mfx == sfx; both are populated
+        Assert.Equal(term.MeterFix, t.MeterFix);  // the roll-up takes the terminal link's
+    }
 }

@@ -698,6 +698,31 @@
       ['Destination', t.dest],
       ['Metered by', t.centers + (t.centers === 1 ? ' center' : ' centers')],
     ]);
+    // WHAT IT IS METERED UNDER. All of this was already in the API and none of it was rendered:
+    // the arrival gate, the stream class the schedule sits in, the TRACON, the runway config in
+    // force, and whether TBFM is treating it as an arrival, a satellite arrival or an overflight.
+    // The meter fix is listed separately from "next meter point" because they are NOT always the
+    // same point — TBFM schedules to <sfx>, which can differ from the airport's <mfx>.
+    const struct_ = grid([
+      ['Meter fix', t.meterFix && t.meterFix !== t.point ? t.meterFix : null],
+      ['Arrival gate', t.gate],
+      ['Stream class', t.streamClass],
+      ['TRACON', t.tracon],
+      ['Runway config', t.cfg],
+      ['Metering type', t.cat ? t.cat.replace(/_/g, ' ') : null],
+    ]);
+    const structBlk = struct_ ? '<div class="subhdr">METERED UNDER</div>' + struct_ : '';
+    // The arcs ahead of the fix. A flight crosses the outer arcs (OMA / OOA / O3A / O4A) before
+    // the meter fix, each on its own STA, so these are the restrictions it meets first. Passed
+    // arcs are already dropped server-side.
+    const arcRows = Object.entries(t.arcs || {}).map(function (e) {
+      const a = e[1];
+      return [e[0].toUpperCase(), [a.name, hhmm(a.sta) ? 'STA ' + hhmm(a.sta) : null,
+        hhmm(a.eta) ? 'ETA ' + hhmm(a.eta) : null].filter(Boolean).join('  ·  ')];
+    });
+    const arcBlk = arcRows.length
+      ? '<div class="subhdr">ARCS AHEAD <span class="tag">crossed before the fix</span></div>'
+        + grid(arcRows) : '';
     // Chain overview reuses the TFMS crossing row, so passed links dim and the next is called out.
     const chain = t.chain || [];
     const overview = chain.length > 1
@@ -716,7 +741,7 @@
       return [l.ctr || '?', bits];
     });
     const detail = rows.length ? `<div class="subhdr">BY CENTER</div>` + grid(rows) : '';
-    return `<div class="card"><h2>ARRIVAL METERING (TBFM)${tag}</h2>${head}${overview}${detail}</div>`;
+    return `<div class="card"><h2>ARRIVAL METERING (TBFM)${tag}</h2>${head}${structBlk}${arcBlk}${overview}${detail}</div>`;
   }
 
   function tfmsCard(t) {

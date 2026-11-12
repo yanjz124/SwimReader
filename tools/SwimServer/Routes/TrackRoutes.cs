@@ -708,6 +708,22 @@ static class TrackRoutes
             if (tbfm.Frozen) bp.Add("frozen");
             if (tbfm.Suspended) bp.Add("suspended");
             if (bp.Count > 0) sb.Append("TBFM: ").Append(string.Join(" · ", bp)).Append('\n');
+            // What it is metered UNDER, which is a different question from how much hold it has:
+            // the gate and the stream class it is being sequenced within, the TRACON taking it,
+            // the runway config in force, and the metering type. Only emitted when TBFM actually
+            // named something, since an upstream link carries almost none of it -- "EDC" is
+            // Extended Metering, not a TRACON, and RealTracon already drops it.
+            var under = new List<string>();
+            if (!string.IsNullOrEmpty(tbfm.Gate)) under.Add("gate " + tbfm.Gate);
+            if (!string.IsNullOrEmpty(tbfm.StreamClass)) under.Add(tbfm.StreamClass!);
+            if (!string.IsNullOrEmpty(tbfm.Tracon)) under.Add(tbfm.Tracon!);
+            if (!string.IsNullOrEmpty(tbfm.Cfg)) under.Add("cfg " + tbfm.Cfg);
+            if (!string.IsNullOrEmpty(tbfm.MeterFix) && tbfm.MeterFix != tbfm.Point)
+                under.Add("mtr fix " + tbfm.MeterFix);
+            if (!string.IsNullOrEmpty(tbfm.Cat) && tbfm.Cat != "ARRIVAL")
+                under.Add(tbfm.Cat!.Replace('_', ' ').ToLowerInvariant());
+            if (under.Count > 0)
+                sb.Append("Metered under: ").Append(string.Join(" · ", under)).Append('\n');
             if (tbfm.Remaining.Count > 1)
                 sb.Append("Metering: ").Append(string.Join(" ▸ ", tbfm.Remaining)).Append('\n');
         }

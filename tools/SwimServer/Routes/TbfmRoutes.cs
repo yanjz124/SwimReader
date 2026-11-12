@@ -11,6 +11,9 @@ namespace SwimServer;
 /// </summary>
 static class TbfmRoutes
 {
+    /// <summary>Oldest SFDPS fix the center map will plot a metered flight from.</summary>
+    private const int MaxPosAgeSec = 120;
+
     public static void Register(WebApplication app, ServerContext ctx)
     {
         app.MapGet("/api/tbfm/eram", () => Results.Json(new
@@ -73,11 +76,21 @@ static class TbfmRoutes
                 l.Add(f);
             }
             var pos = new Dictionary<string, FlightState>(StringComparer.OrdinalIgnoreCase);
+            int stale = 0;
             foreach (var (cs, l) in byCs)
             {
                 var best = TrackRoutes.CurrentLegFirst(l).FirstOrDefault(f => f.Latitude.HasValue
                                                                               && f.Longitude.HasValue);
-                if (best != null) pos[cs] = best;
+                if (best == null) continue;
+                // A position too old to plot is worse than no position: SFDPS keeps a flight for
+                // 60 minutes after its last update, and the first live run drew SKW3759 from a
+                // 55-minute-old fix — several hundred miles from where that aircraft actually was,
+                // on a map whose whole subject is proximity to a meter fix. The median age here is
+                // 6 s and p90 is 9 s, so 120 s is many missed scans and still well short of a
+                // ghost. Counted separately from the oceanic case: they look identical on the map
+                // and have nothing to do with each other.
+                if ((now - best.LastSeen).TotalSeconds > MaxPosAgeSec) { stale++; continue; }
+                pos[cs] = best;
             }
 
             var rows = new List<object>(targets.Count);
@@ -107,8 +120,10 @@ static class TbfmRoutes
             {
                 ctr = center.ToUpperInvariant(), ts = now,
                 scheduled = targets.Count, located,
-                // The page says this out loud: an oceanic inbound is metered but undrawable.
-                unlocated = targets.Count - located,
+                // The page says both of these out loud: an oceanic inbound is metered but has no
+                // position at all, which is not the same thing as one whose position went stale.
+                unlocated = targets.Count - located - stale,
+                stale,
                 flights = rows,
             }, ctx.JsonOpts);
         });

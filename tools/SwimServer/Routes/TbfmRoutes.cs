@@ -58,75 +58,17 @@ static class TbfmRoutes
         // LaddService.IsBlocked — so a blocked aircraft cannot be given a position by combining
         // them, which is the thing that endpoint's gate exists to prevent.
         app.MapGet("/api/tbfm/center/{center}/traffic", (string center) =>
-        {
-            var now = DateTime.UtcNow;
-            var targets = ctx.Tbfm.CenterTraffic(center);
-            if (targets.Count == 0 && ctx.Tbfm.CenterBoard(center) is null) return Results.NotFound();
+            TrafficResponse(ctx, center, ctx.Tbfm.CenterTraffic(center),
+                            notFound: ctx.Tbfm.CenterBoard(center) is null));
 
-            // One pass over SFDPS, keeping the current leg per callsign. CurrentLegFirst is the
-            // shared rule (TrackRoutes) — a just-landed earlier leg lingers in memory with a stale
-            // position, and picking it would park the target at the wrong airport.
-            var want = targets.Select(t => t.Aid).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var byCs = new Dictionary<string, List<FlightState>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var f in ctx.Flights.Values)
-            {
-                if (string.IsNullOrEmpty(f.Callsign) || !want.Contains(f.Callsign)) continue;
-                if (LaddService.IsBlocked(f.Callsign, f.Registration)) continue;
-                if (!byCs.TryGetValue(f.Callsign, out var l)) byCs[f.Callsign] = l = new();
-                l.Add(f);
-            }
-            var pos = new Dictionary<string, FlightState>(StringComparer.OrdinalIgnoreCase);
-            int stale = 0;
-            foreach (var (cs, l) in byCs)
-            {
-                var best = TrackRoutes.CurrentLegFirst(l).FirstOrDefault(f => f.Latitude.HasValue
-                                                                              && f.Longitude.HasValue);
-                if (best == null) continue;
-                // A position too old to plot is worse than no position: SFDPS keeps a flight for
-                // 60 minutes after its last update, and the first live run drew SKW3759 from a
-                // 55-minute-old fix — several hundred miles from where that aircraft actually was,
-                // on a map whose whole subject is proximity to a meter fix. The median age here is
-                // 6 s and p90 is 9 s, so 120 s is many missed scans and still well short of a
-                // ghost. Counted separately from the oceanic case: they look identical on the map
-                // and have nothing to do with each other.
-                if ((now - best.LastSeen).TotalSeconds > MaxPosAgeSec) { stale++; continue; }
-                pos[cs] = best;
-            }
-
-            var rows = new List<object>(targets.Count);
-            int located = 0;
-            foreach (var t in targets)
-            {
-                pos.TryGetValue(t.Aid, out var f);
-                if (f != null) located++;
-                rows.Add(new
-                {
-                    aid = t.Aid, apt = t.Apt, dep = t.Dep, type = t.Type, status = t.Status,
-                    point = t.Point, pointType = t.PointType,
-                    sta = t.Sta, eta = t.Eta, delayMin = t.DelayMin,
-                    pointLat = t.PointLat, pointLon = t.PointLon,
-                    holdCtr = t.HoldCtr, holdPoint = t.HoldPoint, holdMin = t.HoldMin,
-                    rwy = t.Rwy, staRwy = t.StaRwy,
-                    centers = t.Centers, frozen = t.Frozen, suspended = t.Suspended,
-                    // SFDPS half. Null throughout for an oceanic inbound TBFM is already metering.
-                    lat = f?.Latitude, lon = f?.Longitude,
-                    alt = f?.ReportedAltitude, gs = f?.GroundSpeed,
-                    vx = f?.TrackVelocityX, vy = f?.TrackVelocityY,
-                    ctrl = f?.ControllingFacility, sector = f?.ControllingSector,
-                    posAgeSec = f is null ? (int?)null : (int)(now - f.LastSeen).TotalSeconds,
-                });
-            }
-            return Results.Json(new
-            {
-                ctr = center.ToUpperInvariant(), ts = now,
-                scheduled = targets.Count, located,
-                // The page says both of these out loud: an oceanic inbound is metered but has no
-                // position at all, which is not the same thing as one whose position went stale.
-                unlocated = targets.Count - located - stale,
-                stale,
-                flights = rows,
-            }, ctx.JsonOpts);
-        });
+        // The airport twin. Same join, same gating, same shape — the only difference is which
+        // link each target carries, which TbfmDashboard decides, not this route.
+        app.MapGet("/api/tbfm/airport/{apt}/traffic", (string apt) =>
+            TrafficResponse(ctx, apt, ctx.Tbfm.AirportTraffic(apt), notFound: false,
+                            // The field itself, so the map can mark it and fit around it. TBFM
+                            // adaptation names airports but publishes no coordinates for them;
+                            // NASR is where a position comes from.
+                            field: FieldPoint(ctx, apt)));
 
         app.MapGet("/tbfm", async (HttpContext c) => await Page(c, ctx, "directory.html"));
         // Literal before parameter, so "center" can't be taken for an airport id.
@@ -134,6 +76,108 @@ static class TbfmRoutes
             await Page(c, ctx, "center.html"));
         app.MapGet("/tbfm/{apt:regex(^[A-Za-z0-9]+$)}", async (HttpContext c, string apt) =>
             await Page(c, ctx, "airport.html"));
+    }
+
+    /// <summary>
+    /// TBFM schedules joined to SFDPS positions, for a map's traffic layer.
+    ///
+    /// <para>TBFM publishes no position at all (see TbfmTarget), so every target here is a TBFM
+    /// schedule joined to SFDPS by callsign. The join happens in the route rather than inside the
+    /// dashboard because TbfmBridge holds no SFDPS state and TbfmDashboard is documented as
+    /// read-only over the TBFM state.</para>
+    ///
+    /// <para>Deliberately NOT a bulk position dump: it emits only the callsigns being metered,
+    /// which is why it needs no operator gate where <c>/api/enrich/aircraft</c> does. Both sides
+    /// already drop LADD — the TBFM side through <c>IsLive</c>, the SFDPS side through
+    /// <c>LaddService.IsBlocked</c> below — so the two cannot be combined to locate a blocked
+    /// aircraft, which is the thing that endpoint's gate exists to prevent.</para>
+    ///
+    /// <para>One implementation for the center map and the airport map on purpose. They differ
+    /// only in which link each target carries, and that is decided upstream in TbfmDashboard;
+    /// two copies of the join is how the SimBrief URL builders drifted.</para>
+    /// </summary>
+    /// <summary>The field's position from NASR, or null if NASR hasn't loaded or doesn't know it
+    /// (TBFM meters some foreign airports — EDDM, EGLL — which NASR has no record of).</summary>
+    private static object? FieldPoint(ServerContext ctx, string apt)
+    {
+        var nasr = ctx.GetNasr();
+        if (nasr is null) return null;
+        var p = ctx.LookupAirport(apt, nasr);
+        return p is null ? null : new { ident = p.Ident, lat = p.Lat, lon = p.Lon };
+    }
+
+    private static IResult TrafficResponse(ServerContext ctx, string id,
+                                           List<TbfmBridge.TbfmTarget> targets, bool notFound,
+                                           object? field = null)
+    {
+        if (targets.Count == 0 && notFound) return Results.NotFound();
+        var now = DateTime.UtcNow;
+
+        // One pass over SFDPS, keeping the current leg per callsign. CurrentLegFirst is the shared
+        // rule (TrackRoutes) — a just-landed earlier leg lingers in memory with a stale position,
+        // and picking it would park the target at the wrong airport.
+        var want = targets.Select(t => t.Aid).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var byCs = new Dictionary<string, List<FlightState>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in ctx.Flights.Values)
+        {
+            if (string.IsNullOrEmpty(f.Callsign) || !want.Contains(f.Callsign)) continue;
+            if (LaddService.IsBlocked(f.Callsign, f.Registration)) continue;
+            if (!byCs.TryGetValue(f.Callsign, out var l)) byCs[f.Callsign] = l = new();
+            l.Add(f);
+        }
+
+        var pos = new Dictionary<string, FlightState>(StringComparer.OrdinalIgnoreCase);
+        int stale = 0;
+        foreach (var (cs, l) in byCs)
+        {
+            var best = TrackRoutes.CurrentLegFirst(l)
+                                  .FirstOrDefault(f => f.Latitude.HasValue && f.Longitude.HasValue);
+            if (best == null) continue;
+            // A position too old to plot is worse than no position: SFDPS keeps a flight for 60
+            // minutes after its last update, and the first live run drew SKW3759 from a
+            // 55-minute-old fix, several hundred miles from where that aircraft actually was, on a
+            // map whose whole subject is proximity to a meter fix. The median age here is 6 s and
+            // p90 is 9 s, so 120 s is many missed scans and still well short of a ghost. Counted
+            // separately from the oceanic case: the two look identical on the map and have
+            // nothing to do with each other.
+            if ((now - best.LastSeen).TotalSeconds > MaxPosAgeSec) { stale++; continue; }
+            pos[cs] = best;
+        }
+
+        var rows = new List<object>(targets.Count);
+        int located = 0;
+        foreach (var t in targets)
+        {
+            pos.TryGetValue(t.Aid, out var f);
+            if (f != null) located++;
+            rows.Add(new
+            {
+                aid = t.Aid, apt = t.Apt, dep = t.Dep, type = t.Type, status = t.Status,
+                ctr = t.Ctr, point = t.Point, pointType = t.PointType,
+                sta = t.Sta, eta = t.Eta, delayMin = t.DelayMin,
+                pointLat = t.PointLat, pointLon = t.PointLon,
+                holdCtr = t.HoldCtr, holdPoint = t.HoldPoint, holdMin = t.HoldMin,
+                rwy = t.Rwy, staRwy = t.StaRwy,
+                centers = t.Centers, frozen = t.Frozen, suspended = t.Suspended,
+                // SFDPS half. Null throughout for an oceanic inbound TBFM is already metering.
+                lat = f?.Latitude, lon = f?.Longitude,
+                alt = f?.ReportedAltitude, gs = f?.GroundSpeed,
+                vx = f?.TrackVelocityX, vy = f?.TrackVelocityY,
+                ctrl = f?.ControllingFacility, sector = f?.ControllingSector,
+                posAgeSec = f is null ? (int?)null : (int)(now - f.LastSeen).TotalSeconds,
+            });
+        }
+        return Results.Json(new
+        {
+            id = id.ToUpperInvariant(), ts = now,
+            scheduled = targets.Count, located,
+            // The page says both of these out loud: an oceanic inbound has no position at all,
+            // which is not the same thing as one whose position went stale.
+            unlocated = targets.Count - located - stale,
+            stale,
+            field,
+            flights = rows,
+        }, ctx.JsonOpts);
     }
 
     private static async Task Page(HttpContext c, ServerContext ctx, string file)

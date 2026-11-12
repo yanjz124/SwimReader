@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TBFM Arrival Metering</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>⏱</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="/shared/common.css?v=2">
 <link rel="stylesheet" href="/tbfm/tbfm.css?v=1">
 <link rel="stylesheet" href="/shared/frame.css?v=4">
@@ -20,6 +21,34 @@
 <div class="strip" id="strip"></div>
 <div class="sub" id="info"></div>
 
+<h2 class="sec">INBOUND FUNNEL &mdash; METER POINTS AND TRAFFIC</h2>
+<div class="mapbar">
+    <label><input type="checkbox" id="tf-traffic" checked> METERED TRAFFIC</label>
+    <label for="tf-vec">VECTOR
+        <select id="tf-vec">
+            <option value="0">off</option>
+            <option value="1">1 min</option>
+            <option value="2">2 min</option>
+            <option value="4">4 min</option>
+            <option value="8">8 min</option>
+        </select>
+    </label>
+    <label for="tf-leader">LEADER
+        <select id="tf-leader">
+            <option value="0">off</option>
+            <option value="20">20 nm</option>
+            <option value="40">40 nm</option>
+            <option value="80">80 nm</option>
+            <option value="Infinity">to the point</option>
+        </select>
+    </label>
+    <label><input type="checkbox" id="tf-links"> LEADER ON EVERY FLIGHT</label>
+</div>
+<div id="map"></div>
+<div class="maplegend" id="tlegend"></div>
+<div class="maplegend" id="legend"></div>
+
+<h2 class="sec">ARRIVALS</h2>
 <div class="filterbar">
     <label for="q">FILTER</label>
     <input type="text" id="q" placeholder="callsign, point, center, gate…" autocomplete="off">
@@ -38,7 +67,9 @@
 <div class="note" id="note"></div>
 
 <script src="/shared/airport-names.js?v=2"></script>
-<script src="/tbfm/airport.js?v=2"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/tbfm/map.js?v=1"></script>
+<script src="/tbfm/airport.js?v=3"></script>
 <script src="/idle-timer.js?v=3"></script>
 <script src="/shared/frame.js?v=4"></script>
 <script src="/shared/disclaimer.js?v=2"></script>

@@ -383,8 +383,104 @@ partial class TbfmBridge
                                    .OrderByDescending(g => g.Count())
                                    .Select(g => (object)new { cfg = g.Key, flights = g.Count() }).ToArray(),
             ts = now,
+            // Geometry for this airport's map: every point its inbounds are actually scheduled
+            // to, resolved against the adaptation of the center that owns each one.
+            //
+            // Unlike the center map this is a UNION ACROSS CENTERS — the whole point of an
+            // arrival board is that several ARTCCs are metering into one field, so the map has to
+            // reach into each of their adaptations rather than one. A point is kept once, keyed
+            // by (center, name), because two centers can adapt points of the same name.
+            geometry = AirportGeometry(flights),
             flights = flights.Select(m => FlightJson(m, now)).ToArray(),
         };
+    }
+
+    /// <summary>
+    /// The adapted points this airport's inbounds are scheduled to, one entry per (center, name).
+    /// Points with no coordinates are left out rather than drawn at 0/0 — a center whose
+    /// adaptation has not arrived yet contributes nothing, which the page reports as a count.
+    /// </summary>
+    private object[] AirportGeometry(List<MeteredFlight> flights)
+    {
+        var seen = new HashSet<(string, string)>();
+        var outp = new List<object>();
+        foreach (var m in flights)
+            foreach (var f in m.Chain)
+            {
+                var ctr = CenterOf(f.Source);
+                var name = ScheduledPoint(f);
+                if (ctr is null || name is null || !_centers.TryGetValue(ctr, out var c)) continue;
+                if (!seen.Add((ctr, name))) continue;
+                // Arc names carry a trailing dot in adaptation (HELNS. beside the fix HELNS).
+                var p = c.Points.Values.FirstOrDefault(x => x.Name == name)
+                        ?? c.Points.Values.FirstOrDefault(x => x.Name == name + ".");
+                if (p?.Lat is null || p.Lon is null) continue;
+                outp.Add(new
+                {
+                    name, ctr, type = p.Type, gate = p.Gate, tracon = p.Tracon,
+                    meterFix = p.MeterFix, lat = p.Lat, lon = p.Lon, radiusNm = p.RadiusNm,
+                    leftAngle = p.LeftAngle, rightAngle = p.RightAngle,
+                    altLow = p.AltLow, altHigh = p.AltHigh,
+                    // How many of this airport's inbounds are scheduled to it right now.
+                    scheduled = flights.Count(x => x.Chain.Any(
+                        y => CenterOf(y.Source) == ctr && ScheduledPoint(y) == name)),
+                });
+            }
+        return outp.ToArray();
+    }
+
+    /// <summary>
+    /// Every flight inbound to one airport, with the link it is working toward, ready to be
+    /// joined to a position. The airport twin of <see cref="CenterTraffic"/>.
+    ///
+    /// <para>The difference that matters: a center map shows <b>its own</b> link for each flight,
+    /// because that is what its controllers are scheduling. An airport map shows the <b>next</b>
+    /// link whichever center owns it, because the question here is "what is coming at this field
+    /// and what is holding it", and for a flight six centers out the answer belongs to a center
+    /// that is not this airport's at all.</para>
+    /// </summary>
+    public List<TbfmTarget> AirportTraffic(string airport)
+    {
+        var apt = (airport ?? "").Trim().ToUpperInvariant();
+        if (apt.Length == 4 && apt[0] == 'K') apt = apt[1..];
+        var now = DateTime.UtcNow;
+        var outp = new List<TbfmTarget>();
+
+        foreach (var m in GroupFlights(now, apt: apt))
+        {
+            // The link it is working toward: the first whose point it has not reached.
+            var f = m.Chain.FirstOrDefault(x => !Passed(x.StaMeterFix, x.StaMeterFixSeen, now))
+                    ?? m.Chain.LastOrDefault();
+            if (f is null) continue;
+            var ctr = CenterOf(f.Source);
+            var name = ScheduledPoint(f);
+            TbfmPoint? adapted = null;
+            if (ctr != null && name != null && _centers.TryGetValue(ctr, out var c))
+                adapted = c.Points.Values.FirstOrDefault(p => p.Name == name)
+                          ?? c.Points.Values.FirstOrDefault(p => p.Name == name + ".");
+
+            TbfmFlight? hold = null;
+            double? holdMin = null;
+            foreach (var x in m.Chain)
+            {
+                var d = DelayOf(x.StaMeterFix, x.EtaMeterFix);
+                if (d.HasValue && (!holdMin.HasValue || d > holdMin)) { holdMin = d; hold = x; }
+            }
+
+            outp.Add(new TbfmTarget(
+                Aid: m.Aid, Apt: m.Apt, Dep: m.Dep, Type: m.Type, Status: m.Status,
+                Point: name, PointType: PointType(f),
+                Sta: f.StaMeterFix, Eta: f.EtaMeterFix,
+                DelayMin: DelayOf(f.StaMeterFix, f.EtaMeterFix),
+                PointLat: adapted?.Lat, PointLon: adapted?.Lon,
+                HoldCtr: hold is null ? null : CenterOf(hold.Source),
+                HoldPoint: hold is null ? null : ScheduledPoint(hold),
+                HoldMin: holdMin,
+                Rwy: m.Terminal?.Runway, StaRwy: m.Terminal?.StaRunway,
+                Centers: m.Chain.Count, Frozen: m.Frozen, Suspended: m.Suspended,
+                Ctr: ctr));
+        }
+        return outp;
     }
 
     private object FlightJson(MeteredFlight m, DateTime now) => new
@@ -561,7 +657,10 @@ partial class TbfmBridge
         string? Point, string? PointType, DateTime? Sta, DateTime? Eta, double? DelayMin,
         double? PointLat, double? PointLon,
         string? HoldCtr, string? HoldPoint, double? HoldMin,
-        string? Rwy, DateTime? StaRwy, int Centers, bool Frozen, bool Suspended);
+        string? Rwy, DateTime? StaRwy, int Centers, bool Frozen, bool Suspended,
+        // Which center owns the link above. Constant on a center map and the whole point
+        // on an airport map, where consecutive rows belong to different ARTCCs.
+        string? Ctr = null);
 
     /// <summary>
     /// Every flight this center is metering, with the link this center owns.
@@ -615,7 +714,8 @@ partial class TbfmBridge
                 HoldPoint: hold is null ? null : ScheduledPoint(hold),
                 HoldMin: holdMin,
                 Rwy: m.Terminal?.Runway, StaRwy: m.Terminal?.StaRunway,
-                Centers: m.Chain.Count, Frozen: m.Frozen, Suspended: m.Suspended));
+                Centers: m.Chain.Count, Frozen: m.Frozen, Suspended: m.Suspended,
+                Ctr: ctr));
         }
         return out_;
     }

@@ -70,6 +70,92 @@ function renderStrip() {
         cell('CENTERS', (b.centers || []).length, 'sm');
 }
 
+// ── map ─────────────────────────────────────────────────────────────────────
+// The inbound funnel: every meter point this field's arrivals are scheduled to, the traffic on
+// its way, and the field itself.
+//
+// Where the center map draws ONE center's adaptation, this one is a union across centers — that
+// is the whole point of an arrival board. A busy field is metered by several ARTCCs at once (live:
+// PHX arrivals were being metered by all 20 CONUS centers), so the points here come from each of
+// their adaptations, every center in play gets its boundary highlighted, and a target's next link
+// may belong to a center that is not this airport's at all.
+//
+// Geometry, boundaries and the traffic layer come from map.js, shared with the center board.
+let map = null, layer = null, field = null;
+
+const traffic = TbfmMap.Traffic({
+    url: () => '/api/tbfm/airport/' + encodeURIComponent(APT) + '/traffic',
+    getMap: () => map,
+    geometry: () => (board && board.geometry) || [],
+    legendEl: 'tlegend',
+    // The field's position rides along with the traffic (NASR, resolved server-side) because the
+    // board itself has no coordinates — TBFM names airports and publishes no position for them.
+    onData: d => { if (d && d.field) { field = d.field; drawField(); } },
+});
+
+function drawField() {
+    if (!map || !field || map._tbfmField) return;
+    map._tbfmField = L.circleMarker([field.lat, field.lon], {
+        radius: 6, color: '#ffffff', weight: 2, fillColor: '#ffffff', fillOpacity: 0.25,
+    }).bindTooltip(`<b>${esc(field.ident)}</b><br>arrival field`,
+        { className: 'tt', sticky: true }).addTo(map);
+}
+
+function drawMap() {
+    const g = (board.geometry || []).filter(p => p.lat != null && p.lon != null);
+    const el = $('map');
+    if (!g.length) {
+        el.innerHTML = '<div class="empty">No adaptation geometry yet for the points metering into '
+            + esc(board.apt) + '. TBFM publishes adaptation rarely — it is cached to disk, so it '
+            + 'fills in over hours — and a field with no inbounds scheduled has nothing to draw.</div>';
+        el.style.height = 'auto';
+        return;
+    }
+    el.style.height = '';
+
+    if (!map) {
+        map = L.map('map', { zoomControl: true, attributionControl: false, preferCanvas: true });
+        L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 11 }).addTo(map);
+    }
+    // Every center metering into this field, so the inbound funnel reads against real airspace
+    // and a point sitting four centers upstream is visibly somebody else's.
+    TbfmMap.drawBoundaries({
+        map,
+        highlight: board.centers || [],
+        get bndLayer() { return map._tbfmBnd; },
+        set bndLayer(v) { map._tbfmBnd = v; },
+    });
+    if (layer) layer.remove();
+    layer = L.layerGroup().addTo(map);
+
+    // The scheduled count travels with each point from the server, so the load lookup is the
+    // point itself rather than a separate table.
+    const { bounds } = TbfmMap.drawPoints(layer, g,
+        p => p.scheduled ? { scheduled: p.scheduled, delayed: 0, delayMin: 0 } : null);
+    drawField();
+
+    // Fit once, to the points plus the field. Unlike the center map there is no "busy subset" to
+    // prefer — every point here is one this field's own arrivals are scheduled to, so they are
+    // all the subject. A refresh must never yank a view the reader has panned.
+    const fit = field ? bounds.concat([[field.lat, field.lon]]) : bounds;
+    if (fit.length && !map._tbfmFitted) {
+        map.fitBounds(L.latLngBounds(fit).pad(0.12));
+        map._tbfmFitted = true;
+    }
+
+    const kinds = [...new Set(g.map(p => p.type).filter(Boolean))].sort();
+    const ctrs = [...new Set(g.map(p => p.ctr).filter(Boolean))].sort();
+    $('legend').innerHTML = kinds.map(k =>
+        `<i style="background:${TbfmMap.TYPE_COLOR[k] || '#888'}"></i>${k}`).join('')
+        + '<i style="background:#6f7f8f"></i>metering ARTCC'
+        + '<i style="background:#44515c"></i>other ARTCC'
+        + ` &nbsp;&nbsp; ${g.length} meter point${g.length === 1 ? '' : 's'} from `
+        + `${ctrs.length} center${ctrs.length === 1 ? '' : 's'} (${esc(ctrs.join(' '))}) `
+        + 'are scheduling arrivals into this field; thicker means more of them. '
+        + (field ? '' : 'NASR has no position for this field, so it is not marked — TBFM meters '
+            + 'some airports NASR does not list. ');
+}
+
 function renderInfo() {
     const b = board;
     const bits = [];
@@ -267,7 +353,8 @@ async function load() {
         document.title = `TBFM ${board.apt} — Arrival Metering`;
         $('status').textContent = new Date().toISOString().slice(11, 19) + 'Z';
         $('status').classList.add('ok');
-        renderStrip(); renderInfo(); renderBody();
+        renderStrip(); renderInfo(); drawMap(); renderBody();
+        traffic.draw();   // the geometry it just loaded is what aims each leader
         $('note').innerHTML = 'A row is one airplane; <b>LNKS</b> is how many centers are metering '
             + 'it. Click a row for the chain, nearest the field last — only the last link carries a '
             + 'runway STA, and an <span class="dim">*</span> on STA means this flight has no runway '
@@ -290,6 +377,13 @@ async function load() {
 $('q').oninput = renderBody;
 $('onlydly').onchange = renderBody;
 $('onlyrwy').onchange = renderBody;
+
+traffic.bindControls();
+
 renderHeader();
 load();
 setInterval(load, 8000);
+// Its own timer, matched to SFDPS's ~12 s cadence. Separate from load() on purpose: a position
+// refresh must not re-render the board, the chains and the adaptation just to move a dot.
+traffic.load();
+setInterval(() => traffic.load(), 12000);

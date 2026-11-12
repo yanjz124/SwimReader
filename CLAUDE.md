@@ -891,6 +891,8 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/history?q=&date=` | Search flight history JSONL by callsign/CID/origin/dest/registration/aircraftType (indexed) or any other field (full-day scan); max 100 results |
 | `GET /api/history/dates` | List available history dates with file sizes |
 | `GET /fdio` | FDIO two-panel flight plan viewer (reuses `/ws` WebSocket + `/api/flights/{gufi}` + `/api/event-xml/`) |
+| `GET /api/tbfm/center/{ctr}/traffic` | A center's metered flights joined to SFDPS positions, for its map |
+| `GET /api/tbfm/airport/{apt}/traffic` | Same for an airport's inbounds, plus the field's NASR position |
 | `GET /api/track/{callsign}` | Combined single-callsign snapshot across all sources — `{callsign, found, sfdps, freqs, tfms, edct, handoffHistory, tdls, tais, asdex}` |
 | `GET /t`, `GET /t/{callsign}` | **Disabled** — redirects to `/track` / `/track/{callsign}` (see Track a Flight section) |
 
@@ -2732,27 +2734,121 @@ new file parsing as a FAV list until someone notices.
 after a restart and the center board says so rather than showing a bare "No rates published", which
 reads like a fault. Adaptation is the part that is cached to disk.
 
-#### `oth` decoded: it carries metering ON/OFF per airport per center
-The one unmodelled `<tma>` kind. A sample was never readable because `KeepSample`'s 20-slot ring is
-all `<air>`; one slot per unknown kind now survives, on `/api/tbfm/debug` as `unknownSamples`. It
-turns out to be the fact the dashboard most wants and cannot currently state:
+#### The maps draw traffic, and TBFM contributes none of the positions
+
+Both the center map and the airport board's "inbound funnel" draw the metered aircraft, not just
+the adaptation. **TBFM publishes no position anywhere in the feed** — not on `<air>`, not in
+`flt`; the only lat/lon it carries is adaptation geometry, and for an arc that is the arc's
+*center*. So every target is a TBFM schedule joined to **SFDPS by callsign**, which is the same
+join `TrackSummary` and the arrival board already use and for the same reason: TBFM's `gufi` is
+ERAM's short form and SFDPS doesn't publish it, so there is no id to join on.
+
+Measured at ZLA before building it: **215 of 249 metered callsigns (86%) had an SFDPS position,
+age p50 6 s / p90 9 s.** All 33 misses were oceanic or international inbounds — HNL, ZSPD, MMGL,
+MMMX, PHOG, MPTO, VHHH, RCTP — which TBFM has as `TRACKED` and is already metering while they sit
+outside domestic radar. **TFMS fills only 2 of those 33**, so that gap is a coverage boundary, not
+something a second source closes; the count travels in the response and the legend says it out
+loud rather than quietly drawing fewer targets than it reports scheduled.
+
+`GET /api/tbfm/center/{ctr}/traffic` and `/api/tbfm/airport/{apt}/traffic`, both served by one
+`TrafficResponse` helper in the route — **not** inside `TbfmDashboard`, which is documented as
+read-only over the TBFM state and holds no SFDPS. They are deliberately **not** a bulk position
+dump: only the callsigns being metered, which is why they need no operator gate where
+`/api/enrich/aircraft` does. Both sides already drop LADD (the TBFM side via `IsLive`, the SFDPS
+side via `LaddService.IsBlocked`), so the two cannot be combined to locate a blocked aircraft.
+
+The two pages differ in exactly one thing, decided server-side: a **center** map shows that
+center's own link for each flight, because that is what its controllers are scheduling; an
+**airport** map shows the *next* link whichever center owns it, because for a flight six centers
+out the answer belongs to a center that is not this airport's at all.
+
+**A stale position is worse than none.** SFDPS keeps a flight 60 minutes past its last update, and
+the first live run drew SKW3759 from a **55-minute-old fix** — hundreds of miles from where that
+aircraft was, on a map whose entire subject is proximity to a meter fix. Capped at 120 s and
+counted as `stale`, separately from `unlocated`: the two look identical on the map and have
+nothing to do with each other.
+
+#### The velocity vector was 60x too long, which is what a second copy buys you
+
+Reported as "the leader lines are super long". They were not the leaders — they were the velocity
+vectors, drawn at sixty times their length. `vx`/`vy` are **knots**, so one minute of travel is
+`v/3600` degrees; the code said `v/60`, which is an **hour**. At 450 kt every target grew a 450 nm
+spike and the CONUS view became a starburst of several hundred crossing lines with the adaptation
+somewhere underneath. **`eram.js` has had the correct formula since forever**
+(`* vectorMinutes / 3600`).
+
+Both maps now run off **`wwwroot/tbfm/map.js`**, which holds the geometry that is easy to get
+wrong — the point *on* an arc rather than its center, the clockwise span, knots-to-degrees — plus
+the boundary layer, the traffic layer and the controls. `center.js` went 532 → 289 lines with no
+behaviour change. This is the third time this repo has paid for two copies of one rule (the
+SimBrief URL builders, `CurrentLegFirst`); the vector bug is what the third copy produced.
+
+`TbfmMap` is published as **`window.TbfmMap`** explicitly. A top-level `const` in a classic script
+is not a window property, and `GlobalScopeContractTests` exists because a day was lost to two
+objects of the same name being silently different values.
+
+**Lengths are controls, not constants.** `VECTOR` (off / 1 / 2 / 4 / 8 min) and `LEADER`
+(off / 20 / 40 / 80 nm / to the point) — a leader to a meter point is legitimately 1,500 nm long,
+which is true and unreadable; a clipped one keeps the whole content of the line (which fix, which
+direction) and drops the part that only crosses everything else. `EXPAND` and `FULL SCREEN` are
+there too, and the thing that makes those more than a CSS class is that **Leaflet caches its
+container size** and reuses it for tile layout *and* hit testing — so without `invalidateSize()`
+an enlarged map paints its old viewport into the corner and puts every tooltip in the wrong place.
+The call runs in a `requestAnimationFrame` (measuring in the same frame as the class change reads
+the old height straight back), and is wired to `fullscreenchange` and `resize`, not just the
+button.
+
+**`.maplegend i` is the color-swatch rule** — an 18×2px inline-block. An `<i>` used for emphasis
+inside legend prose renders as a tiny blank bar with the word floating beside it, which shipped on
+both maps. Emphasis is `<em>` there.
+
+#### What a flight is metered UNDER (`/track` and the bot)
+
+The ARRIVAL METERING card answered "is it held and by how much" and said nothing about the
+structure TBFM is sequencing the flight within. All of it was **already parsed and in the API, and
+nothing rendered it**: the arrival gate, the stream class, the TRACON, the runway configuration,
+the metering type (ARRIVAL / SATELLITE_ARRIVAL / OVERFLIGHT), and the airport's **meter fix** —
+which is *not* always the point a center schedules to, since TBFM schedules to `sfx` and live ZAU
+had AAL1614 at sfx FYTTEMF with mfx MOTRR, their ETAs differing. The arcs ahead of the fix are
+there too: a flight crosses OMA / OOA / O3A / O4A on their own STAs before it reaches the fix.
+
+The roll-up reads the **terminal link** — the one adjacent to the arrival TRACON, and so the only
+one naming a real TRACON or a runway config — falling back to upstream links for the fields they
+do carry, so a flight six centers out still says something.
+
+**`RealTracon` drops "EDC".** Every upstream link reports `tra=EDC`, which is *Extended Metering*,
+not a facility; rendering it raw tells a reader their flight is worked by a TRACON called EDC. The
+raw per-link rows still show what TBFM said, which is where EDC belongs. Pinned by
+`TbfmDashboardTests` and verified by mutation: removing the guard fails one test, pointing the
+roll-up at the first link instead of the terminal one fails two. **A browser cannot see either** —
+a TRACON called EDC renders as a perfectly plausible string.
+
+Both lines live on `TbfmTrack`, the one instance `/track` serializes and the bot reads in C#, so
+the page and the bot cannot drift. Verified live across six flights of different shapes (arrival
+with a runway schedule, overflight, satellite-to-external, a 49.4 min hold): every structure field
+the API reported appeared in the bot's `Metered under:` line, and no EDC leaked into either.
+
+#### `oth` carries two different payloads, and a one-slot ring hid that
+
+`KeepUnknownSample` kept **one sample per kind**, so the newest `oth` overwrote the other and
+whichever arrived last looked like the whole story. There are at least two:
 
 ```xml
 <oth><tmg tmgType="NEW"><tra>MCO</tra><tmss>
-  <tms><apt>MCO</apt><ctr>ZJX</ctr><mas>NO</mas></tms>
-  <tms><apt>MCO</apt><ctr>ZMA</ctr><mas>NO</mas></tms>
-  …one per center
-</tmss></tmg></oth>
+  <tms><apt>MCO</apt><ctr>ZJX</ctr><mas>NO</mas></tms> …
+</tmss></tmg></oth>                                    <!-- metering ON/OFF per airport per center -->
+
+<oth><int><ifn>ZLC</ifn><ift>ERAM</ift><ifs>UP</ifs><ifm>DN</ifm></int></oth>   <!-- interface status -->
 ```
 
-`tmg` is a metering group for a TRACON (`tra`), and each `tms` says whether **that center is
-actively metering into that airport** (`mas`, YES/NO) — `mas` is 157,886 of the element counts, so
-this is published constantly. Today the boards infer "is TBFM working this field" from whether
-schedules exist; this states it. Not parsed yet.
+A parser written from either one alone would have silently ignored the other. The ring is keyed by
+kind **and first-child shape** now, so each payload survives to be read *before* anything is
+written against it. Still unparsed — `mas` is the fact the boards most want and currently infer
+from whether schedules exist.
 
 #### Not surfaced yet
-`oth` is still an unmodelled `<tma>` kind (~10.5k seen) and the `flt` block carries more than the
-pages use — `tcr` (route with per-fix crossing times), `cfx`/`ctm` (coordination fix + time),
+`oth` is still unparsed (both payloads above, ~10.5k seen) and the `flt` block carries more than
+the pages use — `tcr` (route with per-fix crossing times), `cfx`/`ctm` (coordination fix + time),
 `apreq`, `ina`, `est`, `fps`, `drw`/`trw`. They are all already captured raw in `TbfmFlight.Flt`, so
 `GET /api/tbfm/flight/{callsign}` returns them today; the board shows `typ`/`acs`/`bcn`/`tds`/`ara`
 and the filed route (`a10`).

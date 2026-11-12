@@ -118,6 +118,11 @@ class NasFusion
 
     private readonly object _gate = new();
     private volatile NasSnapshot _snap = NasSnapshot.Empty;
+    // A single CPU reading is one clock tick of resolution (10 ms), so a pass is quoted as the
+    // mean over a window rather than as a sample - the same reason feed lag is read over a
+    // window and not glanced at. Guarded by _gate, like the pass itself.
+    private readonly Queue<double> _cpuSamples = new();
+    private const int CpuWindow = 32;
     private long _lastDemandTicks = 0;
     private DateTime _lastEvict = DateTime.MinValue;
 
@@ -169,6 +174,7 @@ class NasFusion
 
     private NasSnapshot Pass()
     {
+        var cpu0 = ThreadCpu.Ms();
         var sw = Stopwatch.StartNew();
         var now = _now();
         var st = new NasFusionStats();
@@ -196,6 +202,19 @@ class NasFusion
         if ((now - _lastEvict).TotalSeconds >= 30) { Evict(now); _lastEvict = now; }
 
         st.PassMs = sw.Elapsed.TotalMilliseconds;
+        // THE number. On a box at load 5-10 the wall time above is mostly contention: measured,
+        // the same pass read 295 ms wall / 75 ms CPU on one occasion and 416 / 433 on another.
+        // Only this one is work.
+        st.CpuMs = ThreadCpu.Since(cpu0);
+        if (st.CpuMs is { } c)
+        {
+            _cpuSamples.Enqueue(c);
+            while (_cpuSamples.Count > CpuWindow) _cpuSamples.Dequeue();
+            double sum = 0;
+            foreach (var v in _cpuSamples) sum += v;
+            st.CpuMeanMs = Math.Round(sum / _cpuSamples.Count, 1);
+            st.CpuSamples = _cpuSamples.Count;
+        }
         st.KeyCount = _idByKey.Count;
         return new NasSnapshot(now, ents, st);
     }
@@ -659,6 +678,9 @@ class NasSnapshot
 class NasFusionStats
 {
     public double PassMs;
+    public double? CpuMs;
+    public double CpuMeanMs;
+    public int CpuSamples;
     public double SfdpsMs, TaisMs, AsdexMs, CorrelateMs, ClassifyMs;
     public int SfdpsRecords, SfdpsPositions, SfdpsStale, SfdpsNoPos;
     public int TaisRecords, TaisPositions;
@@ -678,6 +700,13 @@ class NasFusionStats
 
     public object ToJson(int rawRecords) => new
     {
+        // cpuMs is the cost; passMs is cost PLUS whatever else the box was doing. Quote the
+        // mean, not a sample: one CPU reading is a single 10 ms clock tick of resolution.
+        cpuMs = CpuMs is { } c ? Math.Round(c, 1) : (double?)null,
+        cpuMeanMs = CpuSamples > 0 ? CpuMeanMs : (double?)null,
+        cpuSamples = CpuSamples,
+        // ...and what that mean costs at the 2 s cadence, as a share of ONE core.
+        corePctAt2s = CpuSamples > 0 ? Math.Round(CpuMeanMs / 2000.0 * 100, 1) : (double?)null,
         passMs = Math.Round(PassMs, 1),
         // Per phase: the total is not actionable, and the first guess about which
         // phase dominates was wrong here by a factor of four.

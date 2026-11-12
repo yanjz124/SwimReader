@@ -427,6 +427,35 @@ public class NasFusionTests
     }
 
     /// <summary>
+    /// <b>Positioned outranks not-ended, not the other way round</b> — and the two orderings
+    /// differ on a case that happens at every arrival, every day. An aircraft that has just
+    /// landed has a COMPLETED record with a real, recent fix, while its next rotation is already
+    /// filed as PROPOSED with no position at all.
+    ///
+    /// <para>Ranking ended-ness first would hand the entity to the future flight and leave it
+    /// <b>unpositioned, so undrawn</b> — an aeroplane sitting on a taxiway, vanished from the
+    /// map and named after a flight that has not begun. Ranking position first draws it where it
+    /// actually is, under the name it actually just flew. (Measured: swapping the two terms left
+    /// all 212 other tests green.)</para>
+    /// </summary>
+    [Fact]
+    public void AJustLandedLegOutranksTheNextRotationsFlightPlan()
+    {
+        var landed = Flight("g-arr", cs: "DAL546", hex: "a6ffc3", status: "COMPLETED",
+                            lat: 33.64, lon: -84.43, alt: 1000, ageSec: 15);
+        var nextLeg = Flight("g-next", cs: "DAL1908", hex: "a6ffc3", status: "PROPOSED", ageSec: 1);
+        nextLeg.Latitude = null;
+        nextLeg.Longitude = null;
+
+        foreach (var order in new[] { new[] { nextLeg, landed }, new[] { landed, nextLeg } })
+        {
+            var e = One(Fuse(sfdps: order).Rebuild());
+            Assert.Equal("DAL546", e.Callsign);
+            Assert.True(e.Positioned, "the aircraft is on the field and must still be drawable");
+        }
+    }
+
+    /// <summary>
     /// And a DROPPED leg loses to a live one the same way — that is the mid-handoff case, where
     /// the losing center drops the track before the receiving center reports.
     /// </summary>

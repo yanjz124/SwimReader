@@ -98,7 +98,7 @@ class NasFusion
     //
     // Keyed by the prefixed key string; the value carries when it was last seen, because the two
     // kinds of key expire on completely different schedules (see the TTL constants above).
-    private readonly ConcurrentDictionary<string, KeyRef> _idByKey = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<NasKey, KeyRef> _idByKey = new();
     private long _nextId;
 
     private readonly struct KeyRef
@@ -109,12 +109,15 @@ class NasFusion
     }
 
     /// <summary>
-    /// True for a key that names the AIRCRAFT rather than a facility's slot for it. The prefix is
-    /// the whole distinction: <c>H:</c> Mode S, <c>C:</c> callsign and <c>G:</c> GUFI survive a
-    /// long gap; <c>T:</c> and <c>A:</c> track numbers must not.
+    /// How often a key's timestamp is rewritten, as a fraction of its own lifetime. Rewriting it
+    /// every pass is what a dictionary update costs: <see cref="ConcurrentDictionary{K,V}"/>
+    /// cannot write a value type this large atomically, so it ALLOCATES A FRESH NODE for every
+    /// update — ~68,000 of them a pass here, for timestamps that had barely moved.
     /// </summary>
-    private static bool IsIdentityKey(string key) =>
-        key.Length > 0 && (key[0] == 'H' || key[0] == 'C' || key[0] == 'G');
+    private const int RefreshFraction = 3;
+
+    private static int TtlSeconds(byte kind) =>
+        kind is (byte)'H' or (byte)'C' or (byte)'G' ? IdentityKeyTtlSeconds : TrackKeyTtlSeconds;
 
     private readonly object _gate = new();
     private volatile NasSnapshot _snap = NasSnapshot.Empty;
@@ -254,11 +257,11 @@ class NasFusion
             if (LaddService.IsBlocked(f.Callsign, f.Registration, f.ModeSCode)) { st.LaddOmitted++; continue; }
             st.SfdpsRecords++;
 
-            var keys = new List<string>(4);
-            if (!string.IsNullOrEmpty(f.ModeSCode)) keys.Add("H:" + f.ModeSCode);
-            if (!string.IsNullOrEmpty(f.Callsign)) keys.Add("C:" + f.Callsign!.ToUpperInvariant());
-            if (!string.IsNullOrEmpty(f.Gufi)) keys.Add("G:" + f.Gufi);
-            if (!string.IsNullOrEmpty(f.FdpsGufi)) keys.Add("G:" + f.FdpsGufi);
+            var keys = _keyScratch; keys.Clear();
+            if (!string.IsNullOrEmpty(f.ModeSCode)) keys.Add(NasKey.Hex(f.ModeSCode!));
+            if (!string.IsNullOrEmpty(f.Callsign)) keys.Add(NasKey.Cs(f.Callsign!));
+            if (!string.IsNullOrEmpty(f.Gufi)) keys.Add(NasKey.Gufi(f.Gufi));
+            if (!string.IsNullOrEmpty(f.FdpsGufi)) keys.Add(NasKey.Gufi(f.FdpsGufi!));
             if (keys.Count == 0) continue;
 
             var e = Get(ents, keys, now, st);
@@ -305,9 +308,10 @@ class NasFusion
             st.TaisRecords++;
             if (t.Latitude == 0 && t.Longitude == 0) continue;
 
-            var keys = new List<string>(3) { "T:" + facility + "/" + t.TrackNum };
-            if (!string.IsNullOrEmpty(t.ModeSCode)) keys.Add("H:" + t.ModeSCode);
-            if (!string.IsNullOrEmpty(t.Callsign)) keys.Add("C:" + t.Callsign!.ToUpperInvariant());
+            var keys = _keyScratch; keys.Clear();
+            keys.Add(NasKey.Track(facility, t.TrackNum));
+            if (!string.IsNullOrEmpty(t.ModeSCode)) keys.Add(NasKey.Hex(t.ModeSCode!));
+            if (!string.IsNullOrEmpty(t.Callsign)) keys.Add(NasKey.Cs(t.Callsign!));
 
             var e = Get(ents, keys, now, st);
             e.Sources |= NasSource.Tais;
@@ -343,9 +347,10 @@ class NasFusion
             st.AsdexRecords++;
             if (t.Latitude == 0 && t.Longitude == 0) continue;
 
-            var keys = new List<string>(4) { "A:" + t.Airport + "/" + t.TrackId };
-            if (!string.IsNullOrEmpty(t.Callsign)) keys.Add("C:" + t.Callsign!.ToUpperInvariant());
-            if (!string.IsNullOrEmpty(t.SfdpsGufi)) keys.Add("G:" + t.SfdpsGufi);
+            var keys = _keyScratch; keys.Clear();
+            keys.Add(NasKey.Surface(t.Airport, t.TrackId));
+            if (!string.IsNullOrEmpty(t.Callsign)) keys.Add(NasKey.Cs(t.Callsign!));
+            if (!string.IsNullOrEmpty(t.SfdpsGufi)) keys.Add(NasKey.Gufi(t.SfdpsGufi!));
 
             var e = Get(ents, keys, now, st);
             e.Sources |= NasSource.Asdex;
@@ -478,7 +483,12 @@ class NasFusion
 
     // ── Identity ───────────────────────────────────────────────────────────────────────
 
-    private NasEntity Get(Dictionary<long, NasEntity> ents, List<string> keys, DateTime now, NasFusionStats st)
+    // One scratch list, cleared per record rather than allocated per record. 26,000 records a
+    // pass is 26,000 list-plus-array allocations for something that lives three statements.
+    // Safe because the whole pass runs under _gate on one thread.
+    private readonly List<NasKey> _keyScratch = new(4);
+
+    private NasEntity Get(Dictionary<long, NasEntity> ents, List<NasKey> keys, DateTime now, NasFusionStats st)
     {
         var id = ResolveId(keys, now, st);
         if (!ents.TryGetValue(id, out var e)) ents[id] = e = new NasEntity { Id = id };
@@ -491,7 +501,7 @@ class NasFusion
     /// pointed at the winner — which is both how a new key joins an existing entity and how two
     /// entities that turn out to be one converge instead of alternating.
     /// </summary>
-    private long ResolveId(List<string> keys, DateTime now, NasFusionStats st)
+    private long ResolveId(List<NasKey> keys, DateTime now, NasFusionStats st)
     {
         long id = 0; int hits = 0;
         foreach (var k in keys)
@@ -501,14 +511,23 @@ class NasFusion
             // separate sweep, and a stale TRACK key must stop answering the moment it is stale,
             // not at the next sweep. Otherwise the recycled-track-number bug survives in the
             // window between the two.
-            var ttl = IsIdentityKey(k) ? IdentityKeyTtlSeconds : TrackKeyTtlSeconds;
-            if ((now - r.Seen).TotalSeconds > ttl) { st.KeysExpired++; continue; }
+            if ((now - r.Seen).TotalSeconds > TtlSeconds(k.Kind)) { st.KeysExpired++; continue; }
             hits++;
             if (id == 0 || r.Id < id) id = r.Id;
         }
         if (id == 0) { id = Interlocked.Increment(ref _nextId); st.NewIds++; }
         else if (hits > 1) st.KeyAgreements++;
-        foreach (var k in keys) _idByKey[k] = new KeyRef(id, now);
+
+        foreach (var k in keys)
+        {
+            // Only write when the answer changed or the timestamp is getting old. See
+            // RefreshFraction: an unconditional write allocates a dictionary node per key per
+            // pass, which was ~3 MB of the garbage for no new information.
+            if (_idByKey.TryGetValue(k, out var cur) && cur.Id == id
+                && (now - cur.Seen).TotalSeconds < TtlSeconds(k.Kind) / (double)RefreshFraction)
+            { st.KeyWritesSkipped++; continue; }
+            _idByKey[k] = new KeyRef(id, now);
+        }
         return id;
     }
 
@@ -520,10 +539,7 @@ class NasFusion
     private void Evict(DateTime now)
     {
         foreach (var (k, r) in _idByKey)
-        {
-            var ttl = IsIdentityKey(k) ? IdentityKeyTtlSeconds : TrackKeyTtlSeconds;
-            if ((now - r.Seen).TotalSeconds > ttl) _idByKey.TryRemove(k, out _);
-        }
+            if ((now - r.Seen).TotalSeconds > TtlSeconds(k.Kind)) _idByKey.TryRemove(k, out _);
     }
 
     // ── Geometry / small helpers ───────────────────────────────────────────────────────
@@ -557,6 +573,51 @@ class NasFusion
     }
 }
 
+/// <summary>
+/// One identity key: a kind plus one or two strings it ALREADY HAS.
+///
+/// <para><b>This replaced string keys, and the reason is measured.</b> Building them as
+/// <c>"H:" + hex</c> made the two main source loops 94% of the index's garbage — <b>1,349 bytes
+/// per SFDPS record and 847 per TAIS record</b>, 29 MB a pass, 36 GB an hour, landing on a
+/// process already spending ~17% of its time in GC. Most of it was concatenation: an SFDPS flight
+/// builds four keys and two of them prefix a ~40-character GUFI, and the facility/track keys
+/// concatenated three strings each. None of that produced any information the parts didn't
+/// already carry.</para>
+///
+/// <para>Two string slots rather than one so <c>T:</c> and <c>A:</c> can hold
+/// (facility, track) without joining them. Equality is ORDINAL-IGNORE-CASE, which also removed
+/// the <c>ToUpperInvariant()</c> that was allocating once per callsign per pass.</para>
+/// </summary>
+readonly struct NasKey : IEquatable<NasKey>
+{
+    /// <summary>'H' Mode S, 'C' callsign, 'G' GUFI, 'T' facility track, 'A' airport track.</summary>
+    public readonly byte Kind;
+    public readonly string A;
+    public readonly string? B;
+
+    private NasKey(byte kind, string a, string? b) { Kind = kind; A = a; B = b; }
+
+    public static NasKey Hex(string hex) => new((byte)'H', hex, null);
+    public static NasKey Cs(string callsign) => new((byte)'C', callsign, null);
+    public static NasKey Gufi(string gufi) => new((byte)'G', gufi, null);
+    public static NasKey Track(string facility, string trackNum) => new((byte)'T', facility, trackNum);
+    public static NasKey Surface(string airport, string trackId) => new((byte)'A', airport, trackId);
+
+    public bool Equals(NasKey o) =>
+        Kind == o.Kind
+        && StringComparer.OrdinalIgnoreCase.Equals(A, o.A)
+        && StringComparer.OrdinalIgnoreCase.Equals(B, o.B);
+
+    public override bool Equals(object? o) => o is NasKey k && Equals(k);
+
+    public override int GetHashCode() => HashCode.Combine(
+        Kind,
+        StringComparer.OrdinalIgnoreCase.GetHashCode(A),
+        B is null ? 0 : StringComparer.OrdinalIgnoreCase.GetHashCode(B));
+
+    public override string ToString() => B is null ? $"{(char)Kind}:{A}" : $"{(char)Kind}:{A}/{B}";
+}
+
 [Flags]
 enum NasSource : byte { None = 0, Sfdps = 1, Tais = 2, Asdex = 4 }
 
@@ -582,7 +643,7 @@ enum NasClass : byte
 class NasEntity
 {
     public long Id;
-    public List<string> Keys = new(4);
+    public List<NasKey> Keys = new(4);
     public NasSource Sources;
     public NasPosRank PosRank;
     private int _posPenalty = int.MaxValue;
@@ -708,7 +769,7 @@ class NasFusionStats
     public int AsdexRecords, AsdexPositions;
     public int LaddOmitted;
 
-    public int NewIds, KeyAgreements, KeysExpired, KeyCount;
+    public int NewIds, KeyAgreements, KeysExpired, KeyWritesSkipped, KeyCount;
 
     public int Unidentified, CandidateCells, PositionSampled;
     public int MatchedByBeacon, BeaconAmbiguous;
@@ -765,6 +826,10 @@ class NasFusionStats
             // Keys that answered too late to be trusted. Overwhelmingly recycled TRACK numbers,
             // which is the whole reason the two kinds of key have different lifetimes.
             keysExpired = KeysExpired,
+            // Key writes avoided because the answer had not changed. Each one would have been a
+            // fresh dictionary node; this is the difference between ~68,000 node allocations a
+            // pass and a few thousand.
+            keyWritesSkipped = KeyWritesSkipped,
             keys = KeyCount,
         },
         correlation = new

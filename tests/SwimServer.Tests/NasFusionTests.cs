@@ -231,6 +231,40 @@ public class NasFusionTests
         Assert.NotEqual(id, One(f.Rebuild()).Id);
     }
 
+    /// <summary>
+    /// <b>A target that keeps reporting keeps its id, however long it reports for.</b> This is
+    /// what refreshing a key's timestamp is for, and the TTL tests above cannot see it: they
+    /// check that a short gap is survived and a long one is not, which both pass even if the
+    /// timestamp is written once and never updated. With no refresh, every track in the country
+    /// would be reborn on a fixed 60-second cycle while sitting plainly on the scope — and the
+    /// only symptom would be history trails that all reset together. (Measured: that mutation
+    /// left all 194 other tests green.)
+    /// </summary>
+    [Fact]
+    public void AContinuouslyReportingTargetKeepsItsIdPastEveryTtl()
+    {
+        var clock = DateTime.UtcNow;
+        var t = Tais("PCT", "0421");
+        var fl = Flight("g1", cs: "AAL100", hex: "abc123");
+        var f = Fuse(sfdps: new[] { fl }, tais: new[] { ("PCT", t) }, now: () => clock);
+
+        var first = f.Rebuild();
+        var trackId = first.Entities.Values.Single(e => e.Facility == "PCT").Id;
+        var namedId = first.Entities.Values.Single(e => e.Callsign == "AAL100").Id;
+
+        // Well past three times the track TTL, in steps shorter than it — i.e. exactly the
+        // normal case of a target simply being there.
+        for (int step = 0; step < 12; step++)
+        {
+            clock = clock.AddSeconds(NasFusion.TrackKeyTtlSeconds / 2);
+            t.LastSeen = clock;
+            fl.LastSeen = fl.LastPositionTime = clock;
+            var snap = f.Rebuild();
+            Assert.Equal(trackId, snap.Entities.Values.Single(e => e.Facility == "PCT").Id);
+            Assert.Equal(namedId, snap.Entities.Values.Single(e => e.Callsign == "AAL100").Id);
+        }
+    }
+
     // ── Position precedence ─────────────────────────────────────────────────────────────
 
     /// <summary>

@@ -893,6 +893,8 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /fdio` | FDIO two-panel flight plan viewer (reuses `/ws` WebSocket + `/api/flights/{gufi}` + `/api/event-xml/`) |
 | `GET /api/tbfm/center/{ctr}/traffic` | A center's metered flights joined to SFDPS positions, for its map |
 | `GET /api/tbfm/airport/{apt}/traffic` | Same for an airport's inbounds, plus the field's NASR position |
+| `GET /api/nas/stats` | Fused NAS index: entity count, per-class split, per-tier match counts, CPU/allocation per pass (`?payload=1` adds the wire size) — **operator only** |
+| `GET /api/nas/targets` | The fused targets themselves — `?cls=`, `?bbox=s,w,n,e`, `?limit=`, `?delta=1`, `?held=1` — **operator only** |
 | `GET /api/track/{callsign}` | Combined single-callsign snapshot across all sources — `{callsign, found, sfdps, freqs, tfms, edct, handoffHistory, tdls, tais, asdex}` |
 | `GET /t`, `GET /t/{callsign}` | **Disabled** — redirects to `/track` / `/track/{callsign}` (see Track a Flight section) |
 
@@ -1972,6 +1974,194 @@ advances, so the 240 s health escalation fired and stopped the process — on a 
 now returns early when SFDPS was never started (no `SFDPS_USER`, or `FeedGuard.LiveFeed` false).
 A no-op in production, where both are true, and it is what makes verifying a change locally
 possible at all.
+
+## The fused NAS index — one airplane once, across SFDPS + STARS + ASDE-X
+
+`NasFusion` (`tools/SwimServer/Services/NasFusion.cs`) + `GET /api/nas/stats` and
+`GET /api/nas/targets`, both operator-gated. **Step one of a whole-NAS map, deliberately
+headless**: an entity index and the numbers to judge it, so "can this box carry it" is answered by
+measurement rather than argument before any pixel is drawn.
+
+### Fusion here is an identity problem, not a de-duplication one
+Measured before writing it (overnight trough, then midday):
+
+| | overnight | midday |
+|---|---|---|
+| SFDPS fresh positions | 739 | 4,675 (of 10,732 records; 2,761 stale, 3,273 no position) |
+| TAIS tracks | 3,808, **3,483 with no callsign** | 15,565 |
+| ASDE-X tracks | 1,499, 1,240 unknown | 2,669 |
+| **fused drawable entities** | **~5,710** | **17,000-18,000** (+ ~3,960 held unpositioned) |
+
+The population a NAS map has to draw is dominated by targets **only one source has**, not by
+airliners three sources all publish — duplication measured **1.05x** overnight and 1.7x at
+midday. So the hard part was never collapsing duplicates; it is giving every target a *stable*
+identity and classifying the uncorrelated majority honestly.
+
+### Identity is a key ladder, and the two kinds of key have different lifetimes
+Each record contributes the keys it can prove — Mode S hex, callsign, GUFI, its own
+facility/track-number — and an entity is whatever any of them already resolves to. **Lowest
+(oldest) id wins and every key is re-pointed at it**, which is what makes an id survive a target
+going untagged → tagged → untagged again (a facility drops correlation routinely) even though no
+single key is present throughout.
+
+**A track number is not an identity.** It is a slot a facility assigns and then *recycles*, so
+`T:`/`A:` keys live **60 s** and `H:`/`C:`/`G:` keys live **600 s**. Found by measuring the key
+map, not by reading code: at a uniform ten minutes it settled at ~110,000 keys against ~19,000
+live entities, because terminal churn mints ~130 new entities per pass (~65 targets a second,
+average track life ~3 min). The memory was affordable; the *correctness* was not — ten minutes is
+long enough for a busy TRACON to reissue a number still held, and the next aircraft to get it
+inherits the previous one's entity id, so the client draws one history trail leaping between two
+aeroplanes. Nothing errors. With per-kind TTLs the map plateaus at **64-68k keys**.
+
+Timestamps are refreshed only past a third of their own lifetime — `ConcurrentDictionary` cannot
+write a 16-byte value atomically, so it **allocates a node per update**, and that was ~68,000
+allocations a pass for stamps that had barely moved. ~60,000 writes are skipped per pass now.
+
+### Position precedence is by source; identity comes from the current leg
+ASDE-X reports every second, TAIS every ~5, SFDPS every ~12, so position rank is
+**ASDE-X > TAIS > SFDPS** regardless of write order, and within SFDPS an un-ended leg beats an
+ended one before freshness is weighed. Flight-plan fields go the other way: SFDPS is written first
+and the others only fill nulls. **SFDPS positions over 120 s are refused** — the TBFM map drew
+SKW3759 from a 55-minute-old fix before that rule existed — and counted apart from "no position
+at all", because the two look identical on a map and are unrelated.
+
+**`CurrentLegFirst` (in `TrackRoutes`) is the one ordering, shared.** It had two gaps, both found
+by asking the index about every named SFDPS flight it did *not* contain:
+
+- **115 missing, 112 of them present under the other leg's callsign** — SWA519/SWA3872,
+  JBU203/JBU204, ACA1322/ACA1323, CNS333/N702NF. Consecutive leg numbers, identical hex, squawk
+  and position: one airframe with two legs live inside SFDPS's 60-minute retention. Merging them
+  is right; `Fill` keeping whichever the `ConcurrentDictionary` enumerated first was not.
+- **The remaining 20 were all the next rotation's flight plan.** An airframe files its next leg
+  while still airborne, so SFDPS holds a PROPOSED record with the same Mode S and no position —
+  not "ended", and *fresher*, because plan amendments arrive constantly while a radar position
+  arrives every twelve seconds. SWA1306 at 31,000 ft was labelled SWA1410. A positioned record
+  now outranks an unpositioned one **before** ended-ness: identity and position should come from
+  the same record. Coverage went **115 → 31 → 2** (of 4,751; 0.04%, arrivals between reads).
+
+`LegEnded` also covers COMPLETED and CANCELLED, not just DROPPED — a COMPLETED leg fresher than
+the live one's last fix used to sort first, in `/track` and the bot as well.
+
+### Correlating the uncorrelated: tier 4 is measured and never applied
+Mode S and callsign are exact. **Discrete beacon + 5 NM/1,000 ft merges** (the rule
+`CallsignEnrichmentService` already runs; `BeaconCodes` is *compiled in* from it via a `<Compile
+Include>` rather than copied, because this repo has paid three times for two copies of one rule).
+**Position-only is counted, never acted on** — with no identifier there is no tiebreaker, so
+nearest-wins yields a confidently wrong callsign.
+
+It was built to be counted so the numbers could decide, and they did: of 10,655 unidentified
+targets it would have named **106 — 1%** — while 9,650 had no candidate within 1.5 NM at all,
+because an uncorrelated primary return is overwhelmingly not an aircraft SFDPS also tracks. It
+stays as a **1-in-8 sampled** counter so the answer can be re-checked; the counts are a *rate over
+`positionSampled`*, not totals. Tier 3 deliberately does **not** inherit that sampling — putting
+the sample check one line earlier would cut real beacon correlation to an eighth, and the only
+symptom would be a lower match count, which reads like a quiet day.
+
+Beacon matching names ~890 targets on a cold pass and ~1-25/pass warm: the merge is remembered in
+the key map, so the cost is one-off and the effect accumulates.
+
+**A Mode S shared by two *fresh positioned* records is always one aeroplane in one place** — 18
+such codes, none over 10 NM apart — so the merge needs no distance guard. (The alarming ">100 NM
+apart" pairs in the first pass were a missing age filter in the measuring script: every one paired
+a 25-60 minute stale record with a fresh one, usually under the same callsign.)
+
+### Classification, because half the uncorrelated population is not aircraft
+`enroute / terminal / surface / vehicle / untagged / primary`. **1,725 of 3,483 untagged TAIS
+tracks report altitude 0 AND under 100 kt**, clustered at plains TRACONs (DSM/SUX/ACT/FSD/ICT) at
+local midnight in November — live radar, p50 age 15-30 s, just not airplanes. Drawing them
+unlabelled makes the NAS view ~30% clutter; dropping them silently misrepresents the sensor. They
+get their own class so the map can filter and say so.
+
+Two output bugs here, both found by cross-checking the fused output against its sources rather
+than by measuring cost, and both rendering as something entirely plausible:
+
+- **`surface` meant "ASDE-X positioned it".** ASDE-X covers the approach and departure corridors,
+  so UCA4347 at 3,387 ft and 221 kt was a surface target, with ~200 others — taxiing symbols
+  several thousand feet up. The gate is now ground speed under **40 kt**, the same threshold
+  `/track` uses to separate taxiing from a rollout.
+- **4,008 of 20,241 entities sat at exactly (0, 0)** — a fifth of everything, in a tight cluster
+  in the Gulf of Guinea. 14% of SFDPS is PROPOSED with no position. Those records *belong* in the
+  index (they carry identity, so a flight keeps its id when radar picks it up) but cannot be
+  placed. `NasEntity.Positioned` gates every emission; `entitiesHeld` counts them.
+
+An unidentified return **on** the surface is `primary` whatever its Mode C says — Denver's field
+elevation is 5,430 ft, so the airborne noise-floor test would call every stationary unknown there
+a plausible aircraft.
+
+### What it costs (and how to measure that at all)
+Steady state at midday, ~17,500 entities, **demand-gated so it costs nothing until something
+asks** (the pass no-ops unless a snapshot was requested in the last 60 s):
+
+| | |
+|---|---|
+| CPU | **150 ms/pass = 7.5% of ONE core** at the 2 s cadence |
+| allocation | **10.6-12 MB/pass = ~19 GB/h**, against the process's own ~273 GB/h — **+6%** |
+| wire form | 690 kB raw, **~96 kB deflated**, 40 B/target |
+| key map | 64-68k, plateaued |
+
+**`passMs` is not a cost.** This is the fourth time this repo has read a wall-clock-shaped number
+as work — after `busyPct` charging lock-wait to parsing, `ps %CPU` being a lifetime average, and
+the 250 ms pass that was mostly scheduler delay. On a box at load 5-10 the wall/CPU ratio runs
+1.3-3.9x. **`ThreadCpu`** (`/proc/thread-self/stat`, read either side of the work) is the
+instrument: no baseline, no second window, no assumption the box is quiet.
+
+**And differencing two process-wide windows is also wrong here.** Two such measurements of the
+same code gave **3.7%** and **21.7%** of a core, because the idle baseline itself moved 17% of a
+core between runs. A difference of two noisy numbers is noise. `GC.GetAllocatedBytesForCurrentThread()`
+is the exact per-thread analogue for allocation, and `/api/debug/memory` now carries
+`totalAllocatedGB` as the denominator — without which "19 GB/hour" is unjudgeable.
+
+Both are reported **per phase**, because a total is not actionable and the guess about which phase
+dominates was wrong by 4x. The keys were the answer: built as `"H:" + hex` strings they were
+**94% of the garbage — 1,053 B per SFDPS record and 590 per TAIS record**. A `NasKey` struct
+(kind + the one or two strings the record already holds, ordinal-ignore-case) took the pass from
+22 MB to 10.6 and 230 ms to 150. `LaddService.Normalize` also returns its argument now when there
+is no punctuation to strip (the uppercasing was redundant — every set it is looked up in uses
+`OrdinalIgnoreCase`), which helps every other caller too.
+
+### The wire form
+A positional array, **five decimal places** (1.1 m): one rounding has to serve a continental view
+and a single airport, and 4 dp is 11 m — a thousandth of a pixel at CONUS zoom, a visible
+quantisation on the surface. `[id, lat, lon, altFt, trk, gs, cls]`; **a new field goes on the
+END**, since clients decode by index.
+
+### LADD and gating
+Blocked aircraft are **omitted entirely, not masked** — fusion's whole product is a position
+paired with an identity, which is what the list exists to prevent. ~900 omitted per pass. Both
+endpoints are `LaddService.OperatorView`-gated as well: they are bulk dumps of every target in the
+country with its identity attached.
+
+### What the tests are for, and what the mutation run kept finding
+Every rule above renders as a plausible aeroplane in the right part of the country when it is
+wrong, so **neither a browser nor a live `curl` can see any of it**. `NasFusionTests`,
+`NasKeyTests`, `ThreadCpuTests` and `LaddNormalizeTests` exist for that, and the mutation run is
+what made them real rather than decorative — **five tests were rewritten because a mutation proved
+they could not fail**:
+
+- the position-precedence test passed with the rank comparison deleted (ASDE-X is written last, so
+  it wins on order alone) — it tests `TakePosition` directly now;
+- the convergence test passed with both "highest id wins" *and* "keys never re-pointed", and the
+  case re-pointing actually protects is a facility *losing* correlation;
+- deleting `Kind` from `NasKey`'s equality, and deleting its second component, both left 194 tests
+  green. The second was masked because `GetHashCode` still included it, so the mutated keys landed
+  in different buckets and were never compared — **equality and hashing must be broken together to
+  be visible through the index**, which is why the key type is tested directly;
+- nothing asserted that a target which simply *keeps reporting* keeps its id, so "never refresh a
+  timestamp" passed — with no refresh every track in the country is reborn on a 60 s cycle while
+  sitting plainly on the scope;
+- swapping the two leg-ordering terms passed, and they differ at every arrival.
+
+One test-data note worth keeping: **beacon codes are octal and `4000` is non-discrete**, so a
+naive `4000 + i` range yields 19 correlatable targets of 20 and fails for the wrong reason.
+
+### Open, for the map itself
+- **Viewport-bounded streaming is mandatory, not an optimisation**: 690 kB per update to every
+  client is not a stream. `?bbox=` on `/api/nas/targets` is the shape.
+- The remaining allocation is dominated by rebuilding ~17,500 `NasEntity` objects per pass.
+  Recycling them across passes is the known next lever (it would cost snapshot isolation, which
+  currently comes free); the cadence is the cheaper dial — 4 s halves everything.
+- Tier 4 stays measured. If `wouldMatchByPosition` ever rises well above 1% of `positionSampled`,
+  it is worth revisiting; it has not.
 
 ## The home page rate was a lifetime average
 

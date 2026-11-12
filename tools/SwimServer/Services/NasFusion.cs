@@ -190,18 +190,19 @@ class NasFusion
         // guess about WHICH phase is usually wrong. Measured on the live daytime feed, the
         // answer was not the 26,000 source records - it was the proximity scan.
         var ph = Stopwatch.StartNew();
-        AddSfdps(ents, now, st); st.SfdpsMs = Lap(ph);
-        AddTais(ents, now, st); st.TaisMs = Lap(ph);
-        AddAsdex(ents, now, st); st.AsdexMs = Lap(ph);
+        var pa = alloc0;
+        AddSfdps(ents, now, st); st.SfdpsMs = Lap(ph); st.SfdpsKB = LapAlloc(ref pa);
+        AddTais(ents, now, st); st.TaisMs = Lap(ph); st.TaisKB = LapAlloc(ref pa);
+        AddAsdex(ents, now, st); st.AsdexMs = Lap(ph); st.AsdexKB = LapAlloc(ref pa);
 
         // Everything above is exact-identity work. The tier below is the only one that reasons
         // about proximity, and it runs once over the finished set rather than per source - so a
         // candidate is weighed against every other candidate, which is what makes the
         // decline-on-ambiguity rule mean anything.
-        CorrelateUnidentified(ents, now, st); st.CorrelateMs = Lap(ph);
+        CorrelateUnidentified(ents, now, st); st.CorrelateMs = Lap(ph); st.CorrelateKB = LapAlloc(ref pa);
 
         foreach (var e in ents.Values) { e.Classify(); st.Count(e.Cls); }
-        st.ClassifyMs = Lap(ph);
+        st.ClassifyMs = Lap(ph); st.ClassifyKB = LapAlloc(ref pa);
 
         // Every 30 s, so a 60 s track key is swept within half its own lifetime. ResolveId
         // refuses an expired key regardless, so the sweep is only about memory.
@@ -224,6 +225,17 @@ class NasFusion
         st.AllocBytes = GC.GetAllocatedBytesForCurrentThread() - alloc0;
         st.KeyCount = _idByKey.Count;
         return new NasSnapshot(now, ents, st);
+    }
+
+    // Allocation per phase, for the same reason as time per phase: 20.8 MB a pass is not
+    // actionable, and the guess about which phase makes the garbage is no better than the guess
+    // about which one burns the CPU was.
+    private static double LapAlloc(ref long prev)
+    {
+        var now = GC.GetAllocatedBytesForCurrentThread();
+        var kb = (now - prev) / 1024.0;
+        prev = now;
+        return Math.Round(kb, 0);
     }
 
     private static double Lap(Stopwatch sw)
@@ -690,6 +702,7 @@ class NasFusionStats
     public double CpuMeanMs;
     public int CpuSamples;
     public double SfdpsMs, TaisMs, AsdexMs, CorrelateMs, ClassifyMs;
+    public double SfdpsKB, TaisKB, AsdexKB, CorrelateKB, ClassifyKB;
     public int SfdpsRecords, SfdpsPositions, SfdpsStale, SfdpsNoPos;
     public int TaisRecords, TaisPositions;
     public int AsdexRecords, AsdexPositions;
@@ -723,6 +736,7 @@ class NasFusionStats
         // Per phase: the total is not actionable, and the first guess about which
         // phase dominates was wrong here by a factor of four.
         phaseMs = new { sfdps = SfdpsMs, tais = TaisMs, asdex = AsdexMs, correlate = CorrelateMs, classify = ClassifyMs },
+        phaseKB = new { sfdps = SfdpsKB, tais = TaisKB, asdex = AsdexKB, correlate = CorrelateKB, classify = ClassifyKB },
         entities = Total,
         rawRecords,
         // 1.00 means every record was a distinct airplane. Measured 1.05x at the overnight

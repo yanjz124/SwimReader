@@ -394,6 +394,39 @@ public class NasFusionTests
     }
 
     /// <summary>
+    /// <b>The next leg's flight plan must not name the aeroplane flying this one.</b> An airframe
+    /// files its next rotation while it is still in the air, so SFDPS holds a PROPOSED record for
+    /// a flight that does not exist yet — same Mode S, no position.
+    ///
+    /// <para>That record is not "ended", and its <c>LastSeen</c> is routinely FRESHER than the
+    /// airborne leg's, because flight-plan amendments arrive constantly while a radar position
+    /// arrives every twelve seconds. So on freshness alone the future flight sorted first.
+    /// Measured live after the first ordering fix: <b>20 of the 20 remaining mis-named
+    /// entities</b> were this — SWA1306 in the air labelled SWA1410, ACA739 labelled ACA740,
+    /// DAL546 labelled DAL1908. An aeroplane wearing the name of a flight it has not begun.</para>
+    ///
+    /// <para>The rule is that identity and position should come from the same record, so a
+    /// positioned record outranks an unpositioned one before anything else is weighed.</para>
+    /// </summary>
+    [Fact]
+    public void TheNextLegsFlightPlanDoesNotNameTheAircraftFlyingThisOne()
+    {
+        var airborne = Flight("g-now", cs: "SWA1306", hex: "ac5b43",
+                              lat: 36.08, lon: -115.15, alt: 31000, ageSec: 20);
+        // The next rotation, filed while this one is still airborne: no position, and FRESHER.
+        var nextLeg = Flight("g-next", cs: "SWA1410", hex: "ac5b43", status: "PROPOSED", ageSec: 1);
+        nextLeg.Latitude = null;
+        nextLeg.Longitude = null;
+
+        foreach (var order in new[] { new[] { nextLeg, airborne }, new[] { airborne, nextLeg } })
+        {
+            var e = One(Fuse(sfdps: order).Rebuild());
+            Assert.Equal("SWA1306", e.Callsign);
+            Assert.True(e.Positioned);
+        }
+    }
+
+    /// <summary>
     /// And a DROPPED leg loses to a live one the same way — that is the mid-handoff case, where
     /// the losing center drops the track before the receiving center reports.
     /// </summary>

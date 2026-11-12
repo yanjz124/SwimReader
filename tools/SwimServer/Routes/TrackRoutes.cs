@@ -308,7 +308,16 @@ static class TrackRoutes
     /// same flight differently; see the comment at the projection's loop for the measurement.</para>
     /// </summary>
     internal static IOrderedEnumerable<FlightState> CurrentLegFirst(IEnumerable<FlightState> flights) => flights
-        .OrderBy(f => LegEnded(f) ? 1 : 0)
+        // A record with a position outranks one without, BEFORE anything else is considered.
+        // The next leg's flight plan is not "ended" and its LastSeen is often FRESHER than the
+        // airborne leg's last radar fix, because plan amendments arrive constantly while a
+        // position arrives every twelve seconds - so on freshness alone a PROPOSED next leg sorts
+        // ahead of the aeroplane that is actually flying. Measured on the fused NAS index: 20 of
+        // 20 remaining mis-named entities were this, each an airborne aircraft wearing the
+        // callsign of the flight it was about to operate (SWA1306 flying, labelled SWA1410;
+        // ACA739 labelled ACA740). Identity and position should come from the same record.
+        .OrderBy(f => f.Latitude is null || f.Longitude is null ? 1 : 0)
+        .ThenBy(f => LegEnded(f) ? 1 : 0)
         .ThenByDescending(f => f.LastSeen);
 
     /// <summary>

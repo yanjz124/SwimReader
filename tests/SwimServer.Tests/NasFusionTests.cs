@@ -517,6 +517,97 @@ public class NasFusionTests
         Assert.Equal(0, s.Stats.MatchedByBeacon);
     }
 
+    /// <summary>
+    /// <b>A flight plan is not a target.</b> 14% of SFDPS is PROPOSED and has no radar position
+    /// at all, and those records belong in the index — they carry identity, so the entity id
+    /// survives into the flight when it departs — but they have no lat/lon.
+    ///
+    /// <para>Found by cross-checking the live output against its sources: <b>4,008 entities sat
+    /// at exactly (0, 0)</b>, which on a map is a tight cluster in the Gulf of Guinea. It would
+    /// have read as a projection or renderer fault, not as the index emitting things it cannot
+    /// place — and 4,008 is a fifth of everything.</para>
+    /// </summary>
+    [Fact]
+    public void AFlightWithNoPositionIsHeldButNotDrawable()
+    {
+        var proposed = Flight("g1", cs: "UAL900", status: "PROPOSED");
+        proposed.Latitude = null;
+        proposed.Longitude = null;
+        var s = Fuse(sfdps: new[] { proposed, Flight("g2", cs: "UAL901", lat: 40, lon: -75) }).Rebuild();
+
+        Assert.Equal(2, s.Entities.Count);                 // both held
+        var p = s.Entities.Values.Single(e => e.Callsign == "UAL900");
+        Assert.False(p.Positioned);
+        Assert.True(s.Entities.Values.Single(e => e.Callsign == "UAL901").Positioned);
+
+        // Counted apart from the drawable classes, so the totals cannot quietly include it.
+        Assert.Equal(1, s.Stats.Unpositioned);
+        Assert.Equal(1, s.Stats.Total);
+    }
+
+    /// <summary>
+    /// And the id survives the transition, which is why the unpositioned record is held at all
+    /// rather than skipped: a flight that has been sitting as a flight plan must not be reborn
+    /// the moment radar picks it up.
+    /// </summary>
+    [Fact]
+    public void AProposedFlightKeepsItsIdWhenItDeparts()
+    {
+        var f = Flight("g1", cs: "UAL900", status: "PROPOSED");
+        f.Latitude = null; f.Longitude = null;
+        var fuse = Fuse(sfdps: new[] { f });
+
+        var before = One(fuse.Rebuild());
+        Assert.False(before.Positioned);
+
+        f.Latitude = 40.1; f.Longitude = -75.2; f.FlightStatus = "ACTIVE";
+        f.LastSeen = f.LastPositionTime = DateTime.UtcNow;
+        var after = One(fuse.Rebuild());
+
+        Assert.Equal(before.Id, after.Id);
+        Assert.True(after.Positioned);
+    }
+
+    /// <summary>
+    /// <b>Surface means on the surface, not "ASDE-X positioned it".</b> ASDE-X covers the
+    /// approach and departure corridors, so keying the class on the positioning source labelled
+    /// UCA4347 at 3,387 ft and 221 kt a surface target — live, along with ~200 others. The map
+    /// draws the class, so those are taxiing symbols several thousand feet up: entirely plausible
+    /// to look at, and wrong.
+    /// </summary>
+    [Theory]
+    [InlineData(8, 20, "Surface")]        // taxiing
+    [InlineData(39, 30, "Surface")]       // fast taxi / pushing back
+    [InlineData(140, 1200, "EnRoute")]    // climbing out, still inside surface coverage
+    [InlineData(221, 3387, "EnRoute")]    // the real case this was found on, live
+    public void SurfaceIsAboutGroundSpeedNotAboutWhoPositionedIt(int kts, int altFt, string expectedClass)
+    {
+        var expected = Enum.Parse<NasClass>(expectedClass);
+        var a = Asdex("KIAH", "1", cs: "UCA4347", lat: 29.98, lon: -95.34);
+        a.SpeedKts = kts;
+        a.AltitudeFeet = altFt;
+        var s = Fuse(
+            sfdps: new[] { Flight("g1", cs: "UCA4347", lat: 29.98, lon: -95.34, alt: altFt) },
+            asdex: new[] { a }).Rebuild();
+
+        var e = One(s);
+        Assert.Equal(NasPosRank.Asdex, e.PosRank);   // ASDE-X still owns the position
+        Assert.Equal(expected, e.Cls);               // ...but not the classification
+    }
+
+    /// <summary>An unidentified return on the surface is a primary return whatever its Mode C
+    /// claims — an airport is not at sea level, so the airborne noise-floor test does not
+    /// apply to it.</summary>
+    [Fact]
+    public void AnUnidentifiedSurfaceReturnIsPrimaryRegardlessOfItsModeC()
+    {
+        var a = Asdex("KDEN", "9", lat: 39.86, lon: -104.67, tgt: "unknown");
+        a.AltitudeFeet = 5430;     // Denver's field elevation, not an altitude
+        a.SpeedKts = 6;
+        var s = Fuse(asdex: new[] { a }).Rebuild();
+        Assert.Equal(NasClass.Primary, One(s).Cls);
+    }
+
     // ── LADD ────────────────────────────────────────────────────────────────────────────
 
     /// <summary>

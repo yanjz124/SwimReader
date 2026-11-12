@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace SwimServer;
 
@@ -31,7 +31,8 @@ static class NasRoutes
             if (payload == 1)
             {
                 var deltas = new List<object[]>(snap.Entities.Count);
-                foreach (var e in snap.Entities.Values) deltas.Add(e.ToDelta());
+                foreach (var e in snap.Entities.Values)
+                    if (e.Positioned) deltas.Add(e.ToDelta());
                 var json = JsonSerializer.Serialize(deltas);
                 wire = new
                 {
@@ -58,7 +59,8 @@ static class NasRoutes
         //   ?bbox=s,w,n,e               restrict to a viewport (what the stream will do per client)
         //   ?limit=                     cap (default 2000, so a hand curl doesn't pull 12k rows)
         //   ?delta=1                    emit the positional-array wire form instead of objects
-        app.MapGet("/api/nas/targets", (HttpContext http, string? cls, string? bbox, int? limit, int? delta) =>
+        //   ?held=1                     also include entities with NO position (flight plans)
+        app.MapGet("/api/nas/targets", (HttpContext http, string? cls, string? bbox, int? limit, int? delta, int? held) =>
         {
             if (!LaddService.OperatorView(http)) return LaddService.OperatorOnly();
             var snap = ctx.Nas.Snapshot();
@@ -83,8 +85,11 @@ static class NasRoutes
             int matched = 0;
             foreach (var ent in snap.Entities.Values)
             {
+                // An unpositioned entity is a flight plan, not a target: it has no lat/lon, so
+                // emitting it puts it at (0, 0). ?held=1 includes them for inspection.
+                if (!ent.Positioned && held != 1) continue;
                 if (want is not null && !want.Contains(ent.Cls.ToString())) continue;
-                if (ent.Lat < s || ent.Lat > n || ent.Lon < w || ent.Lon > e) continue;
+                if (ent.Positioned && (ent.Lat < s || ent.Lat > n || ent.Lon < w || ent.Lon > e)) continue;
                 matched++;
                 if (rows.Count >= cap) continue;
                 rows.Add(delta == 1 ? ent.ToDelta() : ent.ToJson());

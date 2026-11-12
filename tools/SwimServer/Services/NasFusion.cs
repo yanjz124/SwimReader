@@ -208,7 +208,11 @@ class NasFusion
         // decline-on-ambiguity rule mean anything.
         CorrelateUnidentified(ents, now, st); st.CorrelateMs = Lap(ph); st.CorrelateKB = LapAlloc(ref pa);
 
-        foreach (var e in ents.Values) { e.Classify(); st.Count(e.Cls); }
+        foreach (var e in ents.Values)
+        {
+            e.Classify();
+            if (e.Positioned) st.Count(e.Cls); else st.Unpositioned++;
+        }
         st.ClassifyMs = Lap(ph); st.ClassifyKB = LapAlloc(ref pa);
 
         // Every 30 s, so a 60 s track key is swept within half its own lifetime. ResolveId
@@ -679,18 +683,52 @@ class NasEntity
         return true;
     }
 
+    /// <summary>
+    /// <b>Surface means ON the surface, not "ASDE-X positioned it".</b> The first version keyed
+    /// this on the positioning source, and the source cross-check caught it immediately: ASDE-X
+    /// covers the approach and departure corridors, so it was labelling UCA4347 at 3,387 ft and
+    /// 221 kt a surface target, along with ~200 others. A map draws the class, so those would
+    /// have been taxiing symbols several thousand feet up.
+    ///
+    /// <para>The gate is ground speed under <see cref="SurfaceMaxKts"/>, which is the same 40 kt
+    /// rule <c>/track</c>'s phase label already uses to tell a taxiing aircraft from a rollout —
+    /// measured there over 290 ASDE-X callsigns. A fast target in surface coverage falls through
+    /// to whatever else knows about it, which is what it is.</para>
+    /// </summary>
     public void Classify()
     {
         if (Vehicle) { Cls = NasClass.Vehicle; return; }
+
+        var onSurface = PosRank == NasPosRank.Asdex && (Gs ?? 0) < SurfaceMaxKts;
         if (Callsign is not null || ModeS is not null)
         {
-            Cls = PosRank == NasPosRank.Asdex ? NasClass.Surface
+            Cls = onSurface ? NasClass.Surface
                 : (Sources & NasSource.Sfdps) != 0 ? NasClass.EnRoute
                 : NasClass.Terminal;
             return;
         }
+        // Unidentified. On the surface it is a primary return whatever its Mode C says (an
+        // airport's altitude is not zero); airborne, the noise floor is no Mode C and slow.
+        if (onSurface) { Cls = NasClass.Primary; return; }
         Cls = (AltFt ?? 0) > 500 || (Gs ?? 0) >= 100 ? NasClass.Untagged : NasClass.Primary;
     }
+
+    /// <summary>
+    /// Above this, a target in surface coverage is flying, not taxiing. Same threshold
+    /// <c>/track</c> uses to separate a taxiing aircraft from a rollout.
+    /// </summary>
+    public const int SurfaceMaxKts = 40;
+
+    /// <summary>
+    /// Whether this entity can be DRAWN. False for a flight plan with no radar position — 14% of
+    /// SFDPS is PROPOSED and not yet departed, and those records legitimately belong in the index
+    /// (they carry identity, so the id survives into the flight) but have no lat/lon at all.
+    ///
+    /// <para>Found by cross-checking the output: 4,008 entities sat at exactly (0, 0), which on a
+    /// map is a tight cluster in the Gulf of Guinea. It would have read as a projection or
+    /// rendering fault rather than as the index emitting things it has no position for.</para>
+    /// </summary>
+    public bool Positioned => PosRank != NasPosRank.None;
 
     /// <summary>
     /// The streaming form: a positional array, no field names. That encoding is what makes a
@@ -777,6 +815,7 @@ class NasFusionStats
     public int NewIds, KeyAgreements, KeysExpired, KeyWritesSkipped, KeyCount;
 
     public int Unidentified, CandidateCells, PositionSampled;
+    public int Unpositioned;
     public int MatchedByBeacon, BeaconAmbiguous;
     public int WouldMatchByPosition, PositionAmbiguous, PositionNoCandidate;
 
@@ -803,11 +842,17 @@ class NasFusionStats
         // phase dominates was wrong here by a factor of four.
         phaseMs = new { sfdps = SfdpsMs, tais = TaisMs, asdex = AsdexMs, correlate = CorrelateMs, classify = ClassifyMs },
         phaseKB = new { sfdps = SfdpsKB, tais = TaisKB, asdex = AsdexKB, correlate = CorrelateKB, classify = ClassifyKB },
+        // Drawable entities. `unpositioned` above are held but cannot be placed.
         entities = Total,
+        entitiesHeld = Total + Unpositioned,
         rawRecords,
         // 1.00 means every record was a distinct airplane. Measured 1.05x at the overnight
         // trough, which is why fusion here is an identity problem and not a dedup one.
         duplication = Total == 0 ? 0 : Math.Round((double)rawRecords / Total, 3),
+        // Entities held but NOT drawable: a flight plan with no radar position. They stay in
+        // the index because they carry identity, so the id survives into the flight once it
+        // departs - but emitting them would put them at (0, 0).
+        unpositioned = Unpositioned,
         classes = new
         {
             enroute = Of(NasClass.EnRoute),

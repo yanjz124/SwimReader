@@ -13,10 +13,12 @@ public class NasFusionTests
     private static NasFusion Fuse(
         IEnumerable<FlightState>? sfdps = null,
         IEnumerable<(string, TaisTrack)>? tais = null,
-        IEnumerable<AsdexTrack>? asdex = null) =>
+        IEnumerable<AsdexTrack>? asdex = null,
+        Func<DateTime>? now = null) =>
         new(() => sfdps ?? Array.Empty<FlightState>(),
             () => tais ?? Array.Empty<(string, TaisTrack)>(),
-            () => asdex ?? Array.Empty<AsdexTrack>());
+            () => asdex ?? Array.Empty<AsdexTrack>(),
+            now);
 
     private static FlightState Flight(string gufi, string? cs = null, string? hex = null,
         double lat = 39, double lon = -77, int alt = 35000, int ageSec = 5,
@@ -146,6 +148,87 @@ public class NasFusionTests
 
         Assert.Single(s.Entities);
         Assert.Equal(2, s.Stats.SfdpsRecords);
+    }
+
+    /// <summary>
+    /// <b>A track number is not an identity.</b> It is a slot a facility assigns and then
+    /// RECYCLES, so it must stop answering long before a Mode S code or a callsign does.
+    ///
+    /// <para>This was found by measuring the key map rather than by reading the code: under
+    /// continuous demand it settled at ~110,000 keys against only ~19,000 live entities, because
+    /// terminal churn mints ~130 new entities per pass (~65 targets a second, average track life
+    /// about three minutes) and every key was held for ten minutes. The memory was affordable;
+    /// the correctness was not. At a busy TRACON, ten minutes is long enough to reissue a number
+    /// this index still holds — and the next aircraft to get it would inherit the previous one's
+    /// entity id, so the client draws a single history trail leaping between two aeroplanes.
+    /// Nothing errors, and no counter moves.</para>
+    ///
+    /// <para>Sixty seconds is what a track key is actually for: covering a scan or two of silence
+    /// so a trail does not break. An identity key keeps the full ten minutes, because a Mode S
+    /// hex still names the same aircraft after a gap.</para>
+    /// </summary>
+    [Fact]
+    public void ATrackNumberExpiresFastAndAnIdentityDoesNot()
+    {
+        var clock = DateTime.UtcNow;
+        var track = Tais("PCT", "0421");                       // no callsign, no Mode S
+        var named = Flight("g1", cs: "AAL100", hex: "abc123");
+        var live = new List<FlightState> { named };
+        var tracks = new List<(string, TaisTrack)> { ("PCT", track) };
+        var f = Fuse(sfdps: live, tais: tracks, now: () => clock);
+
+        void Advance(int sec)
+        {
+            clock = clock.AddSeconds(sec);
+            // The sources restamp as they would on the wire.
+            track.LastSeen = clock;
+            named.LastSeen = named.LastPositionTime = clock;
+        }
+
+        var first = f.Rebuild();
+        var trackId = first.Entities.Values.Single(e => e.Facility == "PCT").Id;
+        var namedId = first.Entities.Values.Single(e => e.Callsign == "AAL100").Id;
+
+        // A short gap must NOT break the track: this is what the key is for.
+        Advance(30);
+        var soon = f.Rebuild();
+        Assert.Equal(trackId, soon.Entities.Values.Single(e => e.Facility == "PCT").Id);
+
+        // Now the facility stops reporting it for longer than a track key lives, and reissues
+        // the number to something else. It must be a NEW entity.
+        clock = clock.AddSeconds(NasFusion.TrackKeyTtlSeconds + 30);
+        track.LastSeen = clock;
+        named.LastSeen = named.LastPositionTime = clock;
+        var recycled = f.Rebuild();
+        var recycledId = recycled.Entities.Values.Single(e => e.Facility == "PCT").Id;
+        Assert.NotEqual(trackId, recycledId);
+
+        // ...while the identity key survived the very same gap, because a Mode S code still
+        // names the same aeroplane.
+        Assert.Equal(namedId, recycled.Entities.Values.Single(e => e.Callsign == "AAL100").Id);
+    }
+
+    /// <summary>
+    /// And the long end of it: an identity key outlives a gap far longer than any track key, so
+    /// an aircraft that drops out of every source for minutes comes back as itself.
+    /// </summary>
+    [Fact]
+    public void AnIdentityKeySurvivesAGapThatWouldKillATrackKeyManyTimesOver()
+    {
+        var clock = DateTime.UtcNow;
+        var fl = Flight("g1", cs: "UAL7", hex: "ddeeff");
+        var f = Fuse(sfdps: new[] { fl }, now: () => clock);
+
+        var id = One(f.Rebuild()).Id;
+        clock = clock.AddSeconds(NasFusion.IdentityKeyTtlSeconds - 30);
+        fl.LastSeen = fl.LastPositionTime = clock;
+        Assert.Equal(id, One(f.Rebuild()).Id);
+
+        // Past its own lifetime it is a new entity, which is correct — at that point nothing
+        // on screen is still showing the old one.
+        clock = clock.AddSeconds(NasFusion.IdentityKeyTtlSeconds + 60);
+        fl.LastSeen = fl.LastPositionTime = clock;
+        Assert.NotEqual(id, One(f.Rebuild()).Id);
     }
 
     // ── Position precedence ─────────────────────────────────────────────────────────────

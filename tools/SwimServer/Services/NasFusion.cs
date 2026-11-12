@@ -49,8 +49,28 @@ class NasFusion
     public const int MaxPosAgeSec = 120;
     /// <summary>Stop running passes when nothing has asked for a snapshot this recently.</summary>
     public const int IdleSeconds = 60;
-    /// <summary>Drop an identity key whose entity hasn't been seen this long.</summary>
-    public const int KeyTtlSeconds = 600;
+    /// <summary>
+    /// How long an IDENTITY key is kept — a Mode S hex, a callsign, a GUFI. These name the
+    /// aircraft, so holding one across a gap in reporting is exactly right.
+    /// </summary>
+    public const int IdentityKeyTtlSeconds = 600;
+
+    /// <summary>
+    /// How long a TRACK key is kept — a facility/track-number or airport/track-id. Much shorter,
+    /// and the difference is correctness, not housekeeping.
+    ///
+    /// <para>A track number is <b>not</b> an identity: it is a slot a facility assigns and then
+    /// RECYCLES. Measured on the live feed, terminal track churn mints ~130 new entities per pass
+    /// — ~65 targets a second, average track life about three minutes — so at a ten-minute TTL a
+    /// busy TRACON will routinely reissue a number this index is still holding, and the next
+    /// aircraft to get it inherits the previous one's entity id. Nothing errors; the client just
+    /// draws one history trail leaping across the screen from one aeroplane to another.</para>
+    ///
+    /// <para>Sixty seconds is what the key is actually FOR: covering a scan or two of silence
+    /// from one source so a trail doesn't break. Beyond that the track is gone, and a number
+    /// that comes back is a different airplane.</para>
+    /// </summary>
+    public const int TrackKeyTtlSeconds = 60;
 
     // Tier 3: a discrete beacon code plus this gate is a positive correlation (the rule
     // CallsignEnrichmentService already uses). Non-discrete codes are never matched on.
@@ -70,11 +90,31 @@ class NasFusion
     private readonly Func<IEnumerable<FlightState>> _sfdps;
     private readonly Func<IEnumerable<(string facility, TaisTrack track)>> _tais;
     private readonly Func<IEnumerable<AsdexTrack>> _asdex;
+    // Injectable only so a test can cross a TTL boundary without sleeping for it. The two key
+    // lifetimes are the rule most worth pinning here and are untestable against a real clock.
+    private readonly Func<DateTime> _now;
 
     // ── Persistent identity map (survives passes; this is what makes ids stable) ────────
-    private readonly ConcurrentDictionary<string, long> _idByKey = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<long, DateTime> _idSeen = new();
+    //
+    // Keyed by the prefixed key string; the value carries when it was last seen, because the two
+    // kinds of key expire on completely different schedules (see the TTL constants above).
+    private readonly ConcurrentDictionary<string, KeyRef> _idByKey = new(StringComparer.Ordinal);
     private long _nextId;
+
+    private readonly struct KeyRef
+    {
+        public readonly long Id;
+        public readonly DateTime Seen;
+        public KeyRef(long id, DateTime seen) { Id = id; Seen = seen; }
+    }
+
+    /// <summary>
+    /// True for a key that names the AIRCRAFT rather than a facility's slot for it. The prefix is
+    /// the whole distinction: <c>H:</c> Mode S, <c>C:</c> callsign and <c>G:</c> GUFI survive a
+    /// long gap; <c>T:</c> and <c>A:</c> track numbers must not.
+    /// </summary>
+    private static bool IsIdentityKey(string key) =>
+        key.Length > 0 && (key[0] == 'H' || key[0] == 'C' || key[0] == 'G');
 
     private readonly object _gate = new();
     private volatile NasSnapshot _snap = NasSnapshot.Empty;
@@ -86,9 +126,11 @@ class NasFusion
 
     internal NasFusion(Func<IEnumerable<FlightState>> sfdps,
                        Func<IEnumerable<(string facility, TaisTrack track)>> tais,
-                       Func<IEnumerable<AsdexTrack>> asdex)
+                       Func<IEnumerable<AsdexTrack>> asdex,
+                       Func<DateTime>? now = null)
     {
         _sfdps = sfdps; _tais = tais; _asdex = asdex;
+        _now = now ?? (() => DateTime.UtcNow);
     }
 
     /// <summary>Force a pass and return it, ignoring demand gating. For tests.</summary>
@@ -128,7 +170,7 @@ class NasFusion
     private NasSnapshot Pass()
     {
         var sw = Stopwatch.StartNew();
-        var now = DateTime.UtcNow;
+        var now = _now();
         var st = new NasFusionStats();
         var ents = new Dictionary<long, NasEntity>(8192);
 
@@ -149,11 +191,12 @@ class NasFusion
         foreach (var e in ents.Values) { e.Classify(); st.Count(e.Cls); }
         st.ClassifyMs = Lap(ph);
 
-        if ((now - _lastEvict).TotalSeconds >= 60) { Evict(now); _lastEvict = now; }
+        // Every 30 s, so a 60 s track key is swept within half its own lifetime. ResolveId
+        // refuses an expired key regardless, so the sweep is only about memory.
+        if ((now - _lastEvict).TotalSeconds >= 30) { Evict(now); _lastEvict = now; }
 
         st.PassMs = sw.Elapsed.TotalMilliseconds;
         st.KeyCount = _idByKey.Count;
-        st.IdCount = _idSeen.Count;
         return new NasSnapshot(now, ents, st);
     }
 
@@ -391,9 +434,7 @@ class NasFusion
             into.PosAgeSec = from.PosAgeSec;
         }
         ents.Remove(from.Id);
-        foreach (var k in from.Keys) _idByKey[k] = into.Id;
-        _idSeen.TryRemove(from.Id, out _);
-        _idSeen[into.Id] = now;
+        foreach (var k in from.Keys) _idByKey[k] = new KeyRef(into.Id, now);
         into.Keys.AddRange(from.Keys);
     }
 
@@ -416,11 +457,20 @@ class NasFusion
     {
         long id = 0; int hits = 0;
         foreach (var k in keys)
-            if (_idByKey.TryGetValue(k, out var v)) { hits++; if (id == 0 || v < id) id = v; }
+        {
+            if (!_idByKey.TryGetValue(k, out var r)) continue;
+            // An expired key is treated as absent rather than deleted here: eviction is a
+            // separate sweep, and a stale TRACK key must stop answering the moment it is stale,
+            // not at the next sweep. Otherwise the recycled-track-number bug survives in the
+            // window between the two.
+            var ttl = IsIdentityKey(k) ? IdentityKeyTtlSeconds : TrackKeyTtlSeconds;
+            if ((now - r.Seen).TotalSeconds > ttl) { st.KeysExpired++; continue; }
+            hits++;
+            if (id == 0 || r.Id < id) id = r.Id;
+        }
         if (id == 0) { id = Interlocked.Increment(ref _nextId); st.NewIds++; }
         else if (hits > 1) st.KeyAgreements++;
-        foreach (var k in keys) _idByKey[k] = id;
-        _idSeen[id] = now;
+        foreach (var k in keys) _idByKey[k] = new KeyRef(id, now);
         return id;
     }
 
@@ -431,12 +481,11 @@ class NasFusion
     /// </summary>
     private void Evict(DateTime now)
     {
-        var dead = new HashSet<long>();
-        foreach (var (id, seen) in _idSeen)
-            if ((now - seen).TotalSeconds > KeyTtlSeconds) dead.Add(id);
-        if (dead.Count == 0) return;
-        foreach (var (k, id) in _idByKey) if (dead.Contains(id)) _idByKey.TryRemove(k, out _);
-        foreach (var id in dead) _idSeen.TryRemove(id, out _);
+        foreach (var (k, r) in _idByKey)
+        {
+            var ttl = IsIdentityKey(k) ? IdentityKeyTtlSeconds : TrackKeyTtlSeconds;
+            if ((now - r.Seen).TotalSeconds > ttl) _idByKey.TryRemove(k, out _);
+        }
     }
 
     // ── Geometry / small helpers ───────────────────────────────────────────────────────
@@ -616,7 +665,7 @@ class NasFusionStats
     public int AsdexRecords, AsdexPositions;
     public int LaddOmitted;
 
-    public int NewIds, KeyAgreements, KeyCount, IdCount;
+    public int NewIds, KeyAgreements, KeysExpired, KeyCount;
 
     public int Unidentified, CandidateCells, PositionSampled;
     public int MatchedByBeacon, BeaconAmbiguous;
@@ -654,7 +703,15 @@ class NasFusionStats
             asdex = new { records = AsdexRecords, positions = AsdexPositions },
             laddOmitted = LaddOmitted,
         },
-        identity = new { newIds = NewIds, keyAgreements = KeyAgreements, keys = KeyCount, ids = IdCount },
+        identity = new
+        {
+            newIds = NewIds,
+            keyAgreements = KeyAgreements,
+            // Keys that answered too late to be trusted. Overwhelmingly recycled TRACK numbers,
+            // which is the whole reason the two kinds of key have different lifetimes.
+            keysExpired = KeysExpired,
+            keys = KeyCount,
+        },
         correlation = new
         {
             unidentified = Unidentified,

@@ -26,6 +26,16 @@
     <InternalsVisibleTo Include="SwimServer.Tests" />
   </ItemGroup>
 
+  <!-- Which beacon codes may be correlated on is ONE rule, and this repo has paid three times for
+       having two copies of one rule (the SimBrief URL builders, CurrentLegFirst, the TBFM velocity
+       vector). NasFusion needs it and it already exists, correct and documented, in the STARS
+       enrichment service - so compile that file in rather than writing a second set of 64
+       block-boundary codes that can drift. There is no ProjectReference because SwimReader.Server
+       is a whole ASP.NET host; this is the one file. -->
+  <ItemGroup>
+    <Compile Include="..\..\src\SwimReader.Server\AdsbFi\BeaconCodes.cs" Link="BeaconCodes.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="SolaceSystems.Solclient.Messaging" Version="10.28.3" />
     <!-- BZip2 decompression for NEXRAD Level III symbology blocks

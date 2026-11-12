@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 
 namespace SwimServer;
 
@@ -125,6 +125,20 @@ static class LaddService
         if (!string.IsNullOrEmpty(registration) && set.Contains(Normalize(registration))) return true;
         if (!string.IsNullOrEmpty(modeSCode) && set.Contains(Normalize(modeSCode))) return true;
         return false;
+    }
+
+    /// <summary>
+    /// Load an explicit block list, for tests. Exists because the rule worth pinning is not
+    /// <see cref="IsBlocked"/> itself — it is that each consumer OMITS a blocked aircraft rather
+    /// than masking it, which cannot be tested without a loaded list. Callers must restore the
+    /// empty list in a <c>finally</c>: this is process-global state.
+    /// </summary>
+    internal static void SetBlockedForTest(IEnumerable<string> ids)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in ids) set.Add(Normalize(id));
+        _blocked = set;
+        _count = set.Count;
     }
 
     /// <summary>Does this request carry the bypass key (query <c>?laddKey=</c>,

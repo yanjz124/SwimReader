@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;
@@ -661,6 +661,9 @@ var serverCtx = new ServerContext
     NexradHttp = nexradHttp,
 };
 
+// Fused NAS index. Takes the context, so it is built right after it and assigned back in.
+serverCtx.Nas = new NasFusion(serverCtx);
+
 // Reverse proxy: /dstars/* → SwimReader.Server on port 5000
 DgScopeRoutes.Register(app, serverCtx);
 
@@ -704,6 +707,9 @@ if (!string.IsNullOrWhiteSpace(telegramToken))
 
 // NASR data endpoints under /api/nasr/* and /api/route/{gufi}
 NasrRoutes.Register(app, serverCtx);
+
+// Fused NAS picture: /api/nas/stats + /api/nas/targets (operator-gated bulk dumps)
+NasRoutes.Register(app, serverCtx);
 
 // Debug / introspection endpoints under /api/debug/*
 DebugRoutes.Register(app, serverCtx);
@@ -1387,6 +1393,16 @@ var tfmsFlushTimer = new Timer(_ => tfms.FlushDirty(), null, TimeSpan.FromSecond
 var tfmsPurgeTimer = new Timer(_ => tfms.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 var tfdmFlushTimer = new Timer(_ => tfdm.FlushDirty(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 var tfdmPurgeTimer = new Timer(_ => tfdm.PurgeStale(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+// Fused NAS index. 2 s cadence, but the pass itself no-ops unless something asked for a
+// snapshot in the last minute - CPU is the scarce resource on the Pi, and an index nobody is
+// looking at should not be built. NAS_FUSION_MS tunes it; 0 disables the timer entirely (a
+// request then still gets a synchronous pass).
+var nasFusionMs = int.TryParse(Environment.GetEnvironmentVariable("NAS_FUSION_MS"), out var nfm) ? nfm : 2000;
+var nasFusionTimer = nasFusionMs > 0
+    ? new Timer(_ => { try { serverCtx.Nas.Tick(); } catch (Exception ex) { Console.WriteLine($"[NAS] pass failed: {ex.Message}"); } },
+                null, TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(nasFusionMs))
+    : null;
+
 var tbfmPurgeTimer = new Timer(_ => { tbfm.PurgeStale(); tbfm.SaveAdaptationIfDirty(); }, null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
 // ITWS: persist 24h time-series history to disk every 5 min (and on shutdown)
 var itwsHistoryTimer = new Timer(_ => itws.SaveHistory(), null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
@@ -1467,7 +1483,7 @@ app.Lifetime.ApplicationStopping.Register(() => GracefulShutdown.Run(
     // half-way through. Irreplaceable state first; replay tails and the flight cache last,
     // since both survive being cut short.
     TimeSpan.FromSeconds(5),
-    ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); }
+    ("stop timers", () => { foreach (var t in allTimers) t.Dispose(); nasFusionTimer?.Dispose(); }
 ),
     ("itws history", () => itws.SaveHistory()),                                   //   65ms
     ("sector/airspace", () => { sectorTracker.Save(cacheDir); airspaceBridge.Save(cacheDir); }

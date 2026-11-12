@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace SwimServer;
@@ -49,6 +49,14 @@ class ServerContext
     /// position data in <see cref="Airspace"/>.</summary>
     public required VnasAirspace EramAirspace { get; init; }
     public required NexradStations NexradStations { get; init; }
+
+    /// <summary>
+    /// The fused NAS picture (SFDPS + TAIS + ASDE-X as one entity per airplane). Not
+    /// <c>required</c> because it takes this context in its constructor, so it is assigned
+    /// immediately after the context is built. Demand-driven: it costs nothing until a request
+    /// asks for a snapshot.
+    /// </summary>
+    public NasFusion Nas { get; set; } = null!;
 
     // ── Filesystem paths ────────────────────────────────────────────────────
     public required string WebRootPath { get; init; }

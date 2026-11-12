@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
@@ -757,6 +757,21 @@ class AsdexBridge
                     if (OnEnrich is not null) OnEnrich(t);
                     result.Add(new { airport, track = t.ToJson() });
                 }
+        return result;
+    }
+
+    /// <summary>
+    /// Every live surface track, typed. Does NOT run <see cref="OnEnrich"/>: the fused NAS index
+    /// reads every airport at once and the enrichment delegate is a per-track SFDPS/TDLS lookup,
+    /// so paying it ~1,500 times a pass would cost far more than the flight-plan fields SFDPS
+    /// already contributes to the same entity.
+    /// </summary>
+    public List<AsdexTrack> AllTracks()
+    {
+        var result = new List<AsdexTrack>();
+        foreach (var tracks in _state.Values)
+            foreach (var t in tracks.Values)
+                result.Add(t);
         return result;
     }
 

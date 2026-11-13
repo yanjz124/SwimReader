@@ -439,12 +439,18 @@ function draw() {
     if (labels) {
         g.font = `${Math.round(8 + r)}px Consolas, monospace`;
         for (const t of visList) {
-            if (!t.cs) continue;
-            g.fillStyle = '#cfd6de';
-            g.fillText(t.cs, t._sx + r + 2, t._sy - 2);
-            if (t.alt) {
+            // An untagged or primary return has no callsign, and used to get no label at all —
+            // so a pair of them from two different TRACONs was two anonymous dots. Fall back to
+            // the reporting facility, then the squawk, which is what it actually has.
+            const top = t.cs || t.fac || t.apt;
+            if (!top) continue;
+            g.fillStyle = t.cs ? '#cfd6de' : '#9aa4b2';
+            g.fillText(top, t._sx + r + 2, t._sy - 2);
+            const sub = t.alt ? String(Math.round(t.alt / 100)).padStart(3, '0')
+                      : (!t.cs && t.sqk ? t.sqk : '');
+            if (sub) {
                 g.fillStyle = '#8b94a2';
-                g.fillText(String(Math.round(t.alt / 100)).padStart(3, '0'), t._sx + r + 2, t._sy + 8 + r * 0.5);
+                g.fillText(sub, t._sx + r + 2, t._sy + 8 + r * 0.5);
             }
         }
     }
@@ -794,12 +800,18 @@ function apply(m) {
     const now = Date.now();
 
     for (const r of (m.add || [])) {
-        const [id, lat, lon, alt, trk, gs, cls, cs, type, org, dst, owner] = r;
+        const [id, lat, lon, alt, trk, gs, cls, cs, type, org, dst, owner,
+               fac, apt, sqk] = r;
         const prev = targets.get(id);
         targets.set(id, {
             id, lat, lon, alt, trk, gs,
             cls: CLASS_NAMES[cls] || 'Primary',
             cs: cs || '', type: type || '', org: org || '', dst: dst || '', owner: owner || '',
+            // What an UNTAGGED target has instead of an identity. `fac` may name several
+            // facilities joined with '+': a primary return near a TRACON boundary is published
+            // by both, and with no Mode S and no callsign nothing merges them, so they arrive
+            // as two entities on top of each other with only this to tell them apart.
+            fac: fac || '', apt: apt || '', sqk: sqk || '',
             t: now,
             // An upsert (identity changed) keeps the trail: it is the same airframe.
             trail: prev ? prev.trail : [],
@@ -921,6 +933,15 @@ function pick(px, py) {
     return best;
 }
 
+// "PCT", "PCT+N90", "KORD", or both. A '+' means several facilities are reporting
+// the same target, which is the thing worth noticing.
+function reportedBy(t) {
+    const bits = [];
+    if (t.fac) bits.push(t.fac);
+    if (t.apt && t.apt !== t.fac) bits.push(t.apt);
+    return bits.length ? bits.join(' ') : null;
+}
+
 function fl(alt) {
     if (!alt) return '—';
     return alt >= 18000 ? 'FL' + String(Math.round(alt / 100)).padStart(3, '0')
@@ -943,10 +964,14 @@ map.getContainer().addEventListener('mousemove', ev => {
 
     const name = t.cs || (t.cls === 'Primary' ? 'primary return' : 'untagged');
     const e = energyFt(t.alt, t.gs);
-    const l2 = [t.type, fl(t.alt), t.gs ? t.gs + ' kt' : null].filter(Boolean).join(' · ');
+    const l2 = [t.type, fl(t.alt), t.gs ? t.gs + ' kt' : null,
+                t.sqk ? 'sq ' + t.sqk : null].filter(Boolean).join(' · ');
     const l3 = [
         t.org || t.dst ? `${t.org || '?'} ▸ ${t.dst || '?'}` : null,
         t.owner || null,
+        // Who is reporting it. For a tagged flight this is extra; for an untagged one it is
+        // the whole answer to "why are there two of these".
+        reportedBy(t),
         t.cls,
         $('color').value === 'energy' ? `E ${Math.round(e).toLocaleString()} ft` : null,
     ].filter(Boolean).join(' · ');
@@ -999,6 +1024,8 @@ function openDetail(t) {
     body.innerHTML = rows('TARGET', [
         ['Class', t.cls],
         ['Type', t.type],
+        ['Reported by', reportedBy(t)],
+        ['Squawk', t.sqk],
         ['Altitude', fl(t.alt)],
         ['Ground speed', t.gs ? t.gs + ' kt' : null],
         ['Energy', `${Math.round(energyFt(t.alt, t.gs)).toLocaleString()} ft`],
@@ -1008,7 +1035,12 @@ function openDetail(t) {
         ['Ownership', t.owner],
     ]) + (t.cs ? '<div class="d-empty">loading…</div>'
                : '<div class="d-sec">NO IDENTITY</div><div class="d-empty">An uncorrelated '
-                 + 'radar return. Nothing else in the NAS knows what this is.</div>');
+                 + 'radar return. Nothing else in the NAS knows what this is'
+                 + (t.fac ? `, beyond ${esc(t.fac)} reporting it` : '')
+                 + (t.fac && t.fac.includes('+')
+                    ? ' — the <b>+</b> means more than one facility is, so the same object may '
+                      + 'also be on screen as a separate target.' : '.')
+                 + '</div>');
 
     clearInterval(detailTimer);
     if (!t.cs) return;
@@ -1045,11 +1077,12 @@ function renderDetail(d) {
     let html = rows('TARGET', [
         ['Class', t ? t.cls : null],
         ['Type', sf.acType || (t && t.type)],
+        ['Reported by', t ? reportedBy(t) : null],
         ['Registration', sf.registration],
         ['Altitude', t ? fl(t.alt) : null],
         ['Ground speed', t && t.gs ? t.gs + ' kt' : null],
         ['Energy', t ? `${Math.round(energyFt(t.alt, t.gs)).toLocaleString()} ft` : null],
-        ['Squawk', sf.squawk],
+        ['Squawk', sf.squawk || (t && t.sqk)],
     ]);
 
     // controllingTracon is the real TRACON id for an SFDPS NAS code (ORT -> C90) and

@@ -106,7 +106,7 @@ public class NasViewTests
         Assert.NotNull(renamed);
         Assert.Null(renamed!.Upd);
         var row = Assert.Single(renamed.Add!);
-        Assert.Equal(12, row.Length);
+        Assert.Equal(15, row.Length);
         Assert.Equal("AAL2", row[7]);
     }
 
@@ -165,6 +165,46 @@ public class NasViewTests
 
         e.Lat += 0.0001;         // fourth decimal: ~11 m, genuinely different
         Assert.NotNull(v.Compute(Snap(e)));
+    }
+
+    /// <summary>
+    /// The add row carries the three things an UNTAGGED target has instead of an identity:
+    /// which facility is reporting it, which airport, and what it is squawking. They are at the
+    /// END of the row, because clients decode by index and anything inserted shifts every field
+    /// after it.
+    /// </summary>
+    [Fact]
+    public void TheAddRowCarriesReportingFacilityAirportAndSquawk()
+    {
+        var e = E(1, cls: NasClass.Untagged);
+        e.AddFacility("PCT");
+        e.Squawk = "4523";
+
+        var row = Assert.Single(new NasView().Compute(Snap(e))!.Add!);
+        Assert.Equal(15, row.Length);
+        Assert.Equal("", row[7]);          // no callsign: that is the point
+        Assert.Equal("PCT", row[12]);
+        Assert.Equal("", row[13]);
+        Assert.Equal("4523", row[14]);
+    }
+
+    /// <summary>
+    /// A second facility reporting the same target must reach the client, which means it has to
+    /// move the IDENTITY hash — a position-only update would leave the client showing one
+    /// facility forever.
+    /// </summary>
+    [Fact]
+    public void GainingASecondReportingFacilityReSendsTheTarget()
+    {
+        var v = new NasView();
+        var e = E(1, cs: "AAL1");
+        e.AddFacility("PCT");
+        v.Compute(Snap(e));
+
+        e.AddFacility("N90");
+        var p = v.Compute(Snap(e));
+        Assert.NotNull(p);
+        Assert.Equal("N90+PCT", Assert.Single(p!.Add!)[12]);
     }
 
     // ── Truncation ─────────────────────────────────────────────────────────────────────

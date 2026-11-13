@@ -339,7 +339,7 @@ class NasFusion
 
             var e = Get(ents, keys, now, st);
             e.Sources |= NasSource.Tais;
-            e.Facility ??= facility;
+            e.AddFacility(facility);
             if (t.IsPseudo) e.Pseudo = true;
 
             Fill(ref e.Callsign, t.Callsign);
@@ -378,7 +378,7 @@ class NasFusion
 
             var e = Get(ents, keys, now, st);
             e.Sources |= NasSource.Asdex;
-            e.Airport ??= t.Airport;
+            e.AddAirport(t.Airport);
             if (string.Equals(t.TargetType, "vehicle", StringComparison.OrdinalIgnoreCase))
                 e.Vehicle = true;
 
@@ -489,8 +489,8 @@ class NasFusion
     {
         if (from.Id == into.Id) return;
         into.Sources |= from.Sources;
-        into.Facility ??= from.Facility;
-        into.Airport ??= from.Airport;
+        into.AddFacility(from.Facility);
+        into.AddAirport(from.Airport);
         Fill(ref into.Squawk, from.Squawk);
         if (from.PosRank > into.PosRank)
         {
@@ -675,6 +675,61 @@ class NasEntity
 
     public string? Callsign, ModeS, Squawk, Type, Origin, Dest, Wake, Registration, Status;
     public string? Owner, Facility, Airport;
+
+    /// <summary>
+    /// Record a terminal facility reporting this target. Several legitimately do: a primary
+    /// return near a TRACON boundary is published by both, and because an uncorrelated return
+    /// has no Mode S and no callsign, nothing in this index merges them — they arrive as two
+    /// entities sitting on top of each other. Which facility each came from is the only thing
+    /// that explains the pair, so it has to reach the map.
+    /// </summary>
+    public void AddFacility(string? f) => Facility = AddToken(Facility, f);
+
+    /// <summary>Same for the surface: an airport can be reported by more than one ASDE-X feed
+    /// where coverage overlaps.</summary>
+    public void AddAirport(string? a) => Airport = AddToken(Airport, a);
+
+    /// <summary>At most this many sources in one joined label before it stops being readable.</summary>
+    internal const int MaxTokens = 4;
+
+    /// <summary>
+    /// Merge a token into a <c>+</c>-joined list, deduped and held in ORDINAL ORDER.
+    ///
+    /// <para>The ordering is not cosmetic. Entities are rebuilt every pass and the sources are
+    /// iterated from a <c>ConcurrentDictionary</c>, so an unsorted list would come out
+    /// "PCT+N90" one pass and "N90+PCT" the next — which changes the identity hash, which makes
+    /// the stream re-send the target in full on every tick, forever, while looking like it is
+    /// working.</para>
+    ///
+    /// <para>The common case — one source, or the same source again — allocates nothing. The
+    /// sort only runs the first time a genuinely different facility appears.</para>
+    /// </summary>
+    internal static string? AddToken(string? list, string? token)
+    {
+        if (string.IsNullOrEmpty(token)) return list;
+        if (list is null) return token;
+
+        // Already present? Compared token-by-token, not with Contains — "N9" is a substring of
+        // "N90" and a substring test would silently drop a real second facility.
+        int i = 0, count = 0;
+        while (i <= list.Length)
+        {
+            var j = list.IndexOf('+', i);
+            if (j < 0) j = list.Length;
+            count++;
+            if (j - i == token.Length && string.CompareOrdinal(list, i, token, 0, token.Length) == 0)
+                return list;
+            i = j + 1;
+        }
+        if (count >= MaxTokens) return list;
+
+        var parts = list.Split('+');
+        var all = new string[parts.Length + 1];
+        Array.Copy(parts, all, parts.Length);
+        all[^1] = token;
+        Array.Sort(all, StringComparer.Ordinal);
+        return string.Join('+', all);
+    }
     public bool Vehicle, Pseudo;
     public double Lat, Lon;
     public int? AltFt, Gs, Trk;
@@ -783,11 +838,18 @@ class NasEntity
         Id, Math.Round(Lat, 5), Math.Round(Lon, 5),
         AltFt ?? 0, Trk ?? 0, Gs ?? 0, (int)Cls,
         Callsign ?? "", Type ?? "", Origin ?? "", Dest ?? "", Owner ?? "",
+        // Appended, never inserted — clients decode by index. These three are what an
+        // UNTAGGED target has instead of an identity: who is reporting it and what it is
+        // squawking. Without them an uncorrelated return is an anonymous dot, and two
+        // facilities reporting one primary are two anonymous dots with nothing to tell them
+        // apart.
+        Facility ?? "", Airport ?? "", Squawk ?? "",
     };
 
     /// <summary>Hash of just the identity fields, so the stream can tell an ordinary position
     /// update from one that has to re-send who the target is.</summary>
-    public int IdentityHash() => HashCode.Combine(Callsign, Type, Origin, Dest, Owner);
+    public int IdentityHash() =>
+        HashCode.Combine(Callsign, Type, Origin, Dest, Owner, Facility, Airport, Squawk);
 
     public object ToJson() => new
     {

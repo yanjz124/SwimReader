@@ -105,7 +105,29 @@
                     <option value="4">4 min</option>
                 </select>
             </label>
-            <label><input type="checkbox" id="labels"> Labels</label>
+            <label for="labels">Labels
+                <select id="labels">
+                    <option value="off" selected>off</option>
+                    <option value="auto">auto</option>
+                    <option value="on">always</option>
+                </select>
+            </label>
+            <div class="lbfields" id="lbFields">
+                <label title="Callsign, or what an untagged target has instead: the facility reporting it"><input type="checkbox" id="lfId" checked> ID</label>
+                <label title="Flight level / altitude in hundreds of feet"><input type="checkbox" id="lfAlt" checked> ALT</label>
+                <label title="ICAO aircraft type"><input type="checkbox" id="lfType"> TYPE</label>
+                <label title="Ground speed in knots"><input type="checkbox" id="lfSpd"> SPD</label>
+                <label title="Origin and destination"><input type="checkbox" id="lfRte"> RTE</label>
+                <label title="Beacon code"><input type="checkbox" id="lfSq"> SQ</label>
+            </div>
+            <div class="note" id="lbNote"></div>
+            <label><input type="checkbox" id="dedupe" checked> Merge cross-facility duplicates</label>
+            <div class="note">
+                One airplane published by two facilities is drawn once. Confirmed by a
+                <em>discrete</em> beacon code plus agreement in position and altitude, and
+                refused outright when one facility reports two of the targets &mdash; that is a
+                formation, not a duplicate.
+            </div>
             <label for="alt">Altitude
                 <select id="alt">
                     <option value="all" selected>all</option>

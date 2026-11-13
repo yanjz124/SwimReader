@@ -36,7 +36,12 @@ const CLASS_COLOR = {
     Surface: '#ffd166',
     Vehicle: '#4fd1c5',
     Untagged: '#9b8cff',
-    Primary: '#5a6472',
+    // Bright enough to FIND against the dark basemap. It was #5a6472, which is
+    // only a shade off the map itself — a target you cannot see is not
+    // de-emphasised, it is missing, and this class is ~20% of the picture.
+    // It stays the coolest and least saturated of the six, so it still reads as
+    // the bottom of the hierarchy rather than competing with real traffic.
+    Primary: '#9fb0c4',
 };
 
 // Dead reckoning is a lie that gets worse with time, so it is capped: past this a
@@ -45,7 +50,6 @@ const CLASS_COLOR = {
 const DR_MAX_MS = 60000;
 // Labels are unreadable in a crowd and expensive to lay out, so they are
 // suppressed above this many on screen however the checkbox is set.
-const LABEL_MAX = 400;
 const TRAIL_MIN_MS = 4000;   // don't record a trail dot more often than this
 const DR_TICK_MS = 110;      // idle repaint rate, so dead reckoning is visible
 
@@ -340,8 +344,19 @@ function drawSymbol(g, t, x, y, r, col, emph) {
 
         default: {
             // Primary only: ERAM's '+' for an uncorrelated return.
+            //
+            // Drawn over a dark halo rather than merely brightened. A one-pixel
+            // cross is hard to pick out wherever the basemap happens to be light
+            // — a city, a coastline, a NEXRAD cell — and raising the colour alone
+            // cannot fix the places where the BACKGROUND is the problem.
             const k = r * 0.95;
-            g.strokeStyle = col; g.lineWidth = emph ? 1.8 : 1;
+            g.strokeStyle = 'rgba(8,11,16,0.85)';
+            g.lineWidth = (emph ? 1.8 : 1.2) + 2;
+            g.beginPath();
+            g.moveTo(x - k, y); g.lineTo(x + k, y);
+            g.moveTo(x, y - k); g.lineTo(x, y + k);
+            g.stroke();
+            g.strokeStyle = col; g.lineWidth = emph ? 1.8 : 1.2;
             g.beginPath();
             g.moveTo(x - k, y); g.lineTo(x + k, y);
             g.moveTo(x, y - k); g.lineTo(x, y + k);
@@ -374,6 +389,100 @@ function altOk(t) {
     return a >= lo && a < hi;
 }
 
+// ── Labels ─────────────────────────────────────────────────────────────────────
+//
+// Which fields a label carries is a setting, because the useful answer depends
+// entirely on the question: a continental overview wants a callsign and nothing
+// else, and one airport's arrivals want type and speed as well.
+//
+// THE HARD PART IS NOT THE TEXT, IT IS THE PLACEMENT. Labels are the one thing
+// on this map whose size does not shrink as you zoom out, so the same 400 targets
+// that are comfortable over one TRACON are a solid block of overlapping text over
+// CONUS. Three rules keep that readable, and the third is what makes the other
+// two worth having:
+//
+//   1. placement is CHOSEN, not fixed - eight candidate anchors around the
+//      target, first free one wins;
+//   2. a label that fits nowhere is DROPPED rather than drawn on top of another,
+//      because two overlapping labels are strictly worse than one label;
+//   3. placement is STICKY and the order is deterministic, so the arrangement
+//      does not reshuffle on every frame. Without this the first two rules
+//      produce a legible still image and an unreadable moving one - which is
+//      exactly the sort of thing that looks fine in a screenshot.
+//
+// The occupancy test is a coarse hash grid rather than pairwise rectangle
+// intersection: at 400 labels that is 160,000 comparisons a frame against a few
+// thousand cell probes, and this runs inside the same rAF as the targets.
+const LB_CELL = 12;
+const LB_BUDGET = 700;          // hard cap on labels per frame - a CPU guard
+const LABEL_MAX = 400;          // 'auto' draws labels only below this many targets
+
+// Candidate anchors, in preference order: right of the target first (reading
+// direction), then left, then the diagonals, then directly above and below.
+// [dx, dy, alignRight, vertical anchor]
+const LB_ANCHORS = [
+    [1, 0], [-1, 0], [1, -1], [1, 1], [-1, -1], [-1, 1], [0, -1], [0, 1],
+];
+
+const lbGrid = new Set();
+function lbKey(cx, cy) { return cx * 100000 + cy; }
+
+function lbFree(x, y, w, h) {
+    const c0 = Math.floor(x / LB_CELL), c1 = Math.floor((x + w) / LB_CELL);
+    const r0 = Math.floor(y / LB_CELL), r1 = Math.floor((y + h) / LB_CELL);
+    for (let cx = c0; cx <= c1; cx++)
+        for (let cy = r0; cy <= r1; cy++)
+            if (lbGrid.has(lbKey(cx, cy))) return false;
+    return true;
+}
+
+function lbTake(x, y, w, h) {
+    const c0 = Math.floor(x / LB_CELL), c1 = Math.floor((x + w) / LB_CELL);
+    const r0 = Math.floor(y / LB_CELL), r1 = Math.floor((y + h) / LB_CELL);
+    for (let cx = c0; cx <= c1; cx++)
+        for (let cy = r0; cy <= r1; cy++) lbGrid.add(lbKey(cx, cy));
+}
+
+/// The lines this target's label should carry, given the field toggles. Line 1 is
+/// the identity; everything else is packed onto as few further lines as possible,
+/// because label HEIGHT is what collides on a busy screen.
+function labelLines(t, f) {
+    const lines = [];
+    if (f.id) {
+        // An untagged return has no callsign. Its facility is the honest answer to
+        // "what is this", and without the fallback half the map labels nothing.
+        let top = t.cs || t.fac || t.apt;
+        if (!top && !f.sq) top = t.sqk;   // else SQ already carries it on line 2
+        if (top) lines.push(top);
+    }
+    const second = [];
+    if (f.type && t.type) second.push(t.type);
+    if (f.alt && t.alt) second.push(altTag(t.alt));
+    if (f.spd && t.gs) second.push(String(t.gs));
+    if (f.sq && t.sqk) second.push(t.sqk);
+    if (second.length) lines.push(second.join(' '));
+    if (f.rte && (t.org || t.dst)) lines.push(`${t.org || '?'}-${t.dst || '?'}`);
+    return lines;
+}
+
+// Zero-padded hundreds of feet - the data-block convention every scope in this
+// repo already uses, and what this map was already drawing.
+//
+// Deliberately NOT the FL-above-18,000 rule that /track and the bot follow. That
+// rule is about PROSE, where "at FL10" for an aircraft on final is the wrong unit
+// for the reader; a data block is read as hundreds of feet by definition and
+// mixing two notations into one column is worse than either.
+function altTag(alt) {
+    return String(Math.round(alt / 100)).padStart(3, '0');
+}
+
+function labelFields() {
+    return {
+        id: $('lfId').checked, type: $('lfType').checked, alt: $('lfAlt').checked,
+        spd: $('lfSpd').checked, rte: $('lfRte').checked, sq: $('lfSq').checked,
+    };
+}
+
 // Last-drawn screen positions, so hover and click pick off what is actually on
 // screen instead of re-projecting every target on every mouse move.
 let visList = [];
@@ -389,7 +498,7 @@ function draw() {
     const now = Date.now();
     const trailN = num('trail', 4);
     const leaderMin = num('leader', 1);
-    const wantLabels = $('labels').checked;
+    const lbMode = $('labels').value;
     const r = 4 * num('size', 1);
     const w = W / dpr, h = H / dpr;
     const pad = 30;
@@ -403,7 +512,7 @@ function draw() {
         t._sx = p.x; t._sy = p.y; t._lat = lat; t._lon = lon;
         visList.push(t);
     }
-    const labels = wantLabels && visList.length <= LABEL_MAX;
+    const labels = lbMode === 'on' || (lbMode === 'auto' && visList.length <= LABEL_MAX);
 
     // Trails first, so targets sit on top of their own history.
     if (trailN > 0) {
@@ -446,24 +555,75 @@ function draw() {
     }
 
     // Labels last so nothing is drawn over them.
-    if (labels) {
-        g.font = `${Math.round(8 + r)}px Consolas, monospace`;
-        for (const t of visList) {
-            // An untagged or primary return has no callsign, and used to get no label at all —
-            // so a pair of them from two different TRACONs was two anonymous dots. Fall back to
-            // the reporting facility, then the squawk, which is what it actually has.
-            const top = t.cs || t.fac || t.apt;
-            if (!top) continue;
-            g.fillStyle = t.cs ? '#cfd6de' : '#9aa4b2';
-            g.fillText(top, t._sx + r + 2, t._sy - 2);
-            const sub = t.alt ? String(Math.round(t.alt / 100)).padStart(3, '0')
-                      : (!t.cs && t.sqk ? t.sqk : '');
-            if (sub) {
-                g.fillStyle = '#8b94a2';
-                g.fillText(sub, t._sx + r + 2, t._sy + 8 + r * 0.5);
-            }
+    lastLabelStat = null;
+    if (labels) drawLabels(g, r);
+}
+
+let lastLabelStat = null;
+
+function drawLabels(g, r) {
+    const f = labelFields();
+    const fs = Math.round(8 + r);
+    const lineH = fs + 2;
+    g.font = `${fs}px Consolas, monospace`;
+    g.textBaseline = 'top';
+
+    lbGrid.clear();
+    // Every TARGET is an obstacle before any label is placed - a label parked on
+    // another aircraft hides the thing the map is for. Same rule the ASDE-X auto
+    // offset follows, and the reason it has to happen in a separate pass first.
+    for (const t of visList) lbTake(t._sx - r, t._sy - r, r * 2, r * 2);
+
+    // Deterministic order so the arrangement is reproducible frame to frame:
+    // identified traffic gets first refusal on the space, ties broken by id and
+    // never by iteration order.
+    const order = visList.slice().sort((a, b) => {
+        const pa = a.cs ? 0 : 1, pb = b.cs ? 0 : 1;
+        return pa !== pb ? pa - pb : (a.id - b.id);
+    });
+
+    let drawn = 0, dropped = 0;
+    for (const t of order) {
+        if (drawn >= LB_BUDGET) { dropped++; continue; }
+        const lines = labelLines(t, f);
+        if (!lines.length) continue;
+
+        let w = 0;
+        for (const ln of lines) w = Math.max(w, g.measureText(ln).width);
+        const h = lines.length * lineH;
+        const gap = r + 3;
+
+        // Sticky: the anchor that worked last frame is tried first, so a label
+        // only moves when it actually has to. Without this, two targets drifting
+        // past each other trade places every frame and both become unreadable.
+        let px = 0, py = 0, placed = false;
+        const tryOrder = t._lb === undefined ? LB_ANCHORS
+                       : [LB_ANCHORS[t._lb], ...LB_ANCHORS];
+        for (let i = 0; i < tryOrder.length; i++) {
+            const [dx, dy] = tryOrder[i];
+            const x = t._sx + (dx > 0 ? gap : dx < 0 ? -gap - w : -w / 2);
+            const y = t._sy + (dy > 0 ? gap : dy < 0 ? -gap - h : -h / 2);
+            if (!lbFree(x, y, w, h)) continue;
+            px = x; py = y; placed = true;
+            // tryOrder holds references INTO LB_ANCHORS, so indexOf recovers the
+            // canonical slot whether this came from the sticky probe or the scan.
+            t._lb = LB_ANCHORS.indexOf(tryOrder[i]);
+            break;
         }
+        // Nowhere free: DROP it. Drawing it anyway would make two labels
+        // unreadable instead of one, which is a strictly worse trade, and at this
+        // density the target symbol is still there to hover.
+        if (!placed) { dropped++; t._lb = undefined; continue; }
+
+        lbTake(px, py, w, h);
+        for (let i = 0; i < lines.length; i++) {
+            g.fillStyle = i === 0 ? (t.cs ? '#e6edf3' : '#9aa4b2') : '#8b94a2';
+            g.fillText(lines[i], px, py + i * lineH);
+        }
+        drawn++;
     }
+    g.textBaseline = 'alphabetic';
+    lastLabelStat = { drawn, dropped };
 }
 
 // ── Boundaries ─────────────────────────────────────────────────────────────────
@@ -811,7 +971,7 @@ function apply(m) {
 
     for (const r of (m.add || [])) {
         const [id, lat, lon, alt, trk, gs, cls, cs, type, org, dst, owner,
-               fac, apt, sqk] = r;
+               fac, apt, sqk, dupN] = r;
         const prev = targets.get(id);
         targets.set(id, {
             id, lat, lon, alt, trk, gs,
@@ -822,6 +982,9 @@ function apply(m) {
             // by both, and with no Mode S and no callsign nothing merges them, so they arrive
             // as two entities on top of each other with only this to tell them apart.
             fac: fac || '', apt: apt || '', sqk: sqk || '',
+            // >1 when this row stands for several facilities' copies of one airplane.
+            // 0 when not deduping, so the two row forms decode identically.
+            dupN: dupN || 0,
             t: now,
             // An upsert (identity changed) keeps the trail: it is the same airframe.
             trail: prev ? prev.trail : [],
@@ -861,6 +1024,7 @@ function sendView(force) {
         cmd: 'view',
         bbox: [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()],
         cap: num('cap', 3000),
+        dedupe: $('dedupe').checked,
         cls,
         q: q || undefined,
     };
@@ -949,7 +1113,10 @@ function reportedBy(t) {
     const bits = [];
     if (t.fac) bits.push(t.fac);
     if (t.apt && t.apt !== t.fac) bits.push(t.apt);
-    return bits.length ? bits.join(' ') : null;
+    if (!bits.length) return null;
+    // The count matters beyond the list because the list is CAPPED at four: a
+    // six-facility target would otherwise read as a four-facility one.
+    return bits.join(' ') + (t.dupN > 1 ? ` (${t.dupN} merged)` : '');
 }
 
 function fl(alt) {
@@ -1184,6 +1351,36 @@ function esc(s) {
 for (const el of document.querySelectorAll('.cls, #cap')) {
     el.addEventListener('change', () => { sendView(true); renderCounts(); });
 }
+// Field toggles only mean something while labels are on, and a row of live
+// checkboxes that do nothing reads as broken rather than as inapplicable.
+function syncLabelUi() {
+    const on = $('labels').value !== 'off';
+    $('lbFields').classList.toggle('off', !on);
+    const st = lastLabelStat;
+    $('lbNote').textContent = !on ? ''
+        : st && st.dropped
+            ? `${st.drawn} shown, ${st.dropped} hidden — no room at this zoom`
+            : 'Labels that cannot fit without overlapping are hidden, not stacked.';
+}
+for (const id of ['lfId', 'lfType', 'lfAlt', 'lfSpd', 'lfRte', 'lfSq']) {
+    $(id).addEventListener('change', () => { paint(); setTimeout(syncLabelUi, 60); });
+}
+$('labels').addEventListener('change', () => { paint(); setTimeout(syncLabelUi, 60); });
+setInterval(syncLabelUi, 1500);
+
+// Dedupe is a SERVER-side filter on what this client is sent, not a draw option,
+// so it has to re-send the view command rather than just repaint.
+// Dedupe is a SERVER-side filter on what this client is sent, not a draw option,
+// so it has to re-send the view command rather than just repaint.
+//
+// It must NOT clear what the client holds. The server's delta is computed against
+// what it believes this client has: flipping the flag re-sends the group leaders
+// (their label changed) and adds or deletes the followers, but a target in NO
+// group has an unchanged identity hash and is correctly sent nothing at all.
+// Clearing locally would therefore delete every solo target permanently - most of
+// the map - and it would look like the toggle broke the stream.
+$('dedupe').addEventListener('change', () => sendView());
+
 for (const id of ['trail', 'leader', 'labels', 'size']) {
     $(id).addEventListener('change', paint);
 }

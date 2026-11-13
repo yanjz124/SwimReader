@@ -1,4 +1,4 @@
-using System.Net.WebSockets;
+﻿using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 
@@ -27,6 +27,43 @@ static class NasRoutes
 {
     public static void Register(WebApplication app, ServerContext ctx)
     {
+        // Flow restrictions per airport, for the map's FLOW overlay: what TBFM is metering and
+        // what TFDM says is constraining the field, joined to a NASR position so it can be drawn.
+        //
+        // Not operator-gated, same reasoning as the targets: this is air traffic, and both
+        // /api/tbfm/airports and /api/tfdm/{apt} already serve it ungated. It is an aggregation
+        // of those, not a new exposure.
+        //
+        // The two halves answer different questions and are deliberately NOT merged into one
+        // "delay" number: TBFM's hold is airborne arrival metering (and is a chain MAXIMUM, never
+        // a sum — a centre that has absorbed the hold reads ~0 one point downstream), while
+        // TFDM's is surface and departure constraint. An airport can have one without the other.
+        app.MapGet("/api/nas/flow", (HttpContext http) =>
+        {
+            var nasr = ctx.GetNasr();
+            var tfdm = ctx.Tfdm.FlowSnapshot();
+            var rows = new List<object>();
+
+            // TBFM first: it names the airports with arrival metering.
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var o in ctx.Tbfm.AirportsSnapshot())
+            {
+                var j = System.Text.Json.JsonSerializer.SerializeToElement(o, ctx.JsonOpts);
+                var apt = j.GetProperty("apt").GetString() ?? "";
+                if (apt.Length == 0) continue;
+                seen.Add(apt);
+                rows.Add(FlowRow(ctx, nasr, apt, j, tfdm.GetValueOrDefault(apt)));
+            }
+            // Then any airport TFDM is restricting that TBFM is not metering at all.
+            foreach (var (apt, t) in tfdm)
+            {
+                if (seen.Contains(apt)) continue;
+                rows.Add(FlowRow(ctx, nasr, apt, null, t));
+            }
+
+            return Results.Json(new { ts = DateTime.UtcNow.ToString("o"), airports = rows }, ctx.JsonOpts);
+        });
+
         // The map itself. Served through AssetVersion.Stamp rather than SendFileAsync, so the
         // ?v= on nas.js/nas.css is always the newest asset mtime and a returning browser cannot
         // be left on a cached build. The pages that hand-maintain a ?v=N are the ones that got
@@ -178,5 +215,51 @@ static class NasRoutes
                 targets = rows,
             }, ctx.JsonOpts);
         });
+    }
+
+    /// <summary>
+    /// One airport's flow row. The position comes from NASR, and an airport we cannot place is
+    /// still returned WITHOUT coordinates rather than dropped — the map skips it, but a caller
+    /// counting restrictions should not silently lose one because the identifier is unknown.
+    /// </summary>
+    private static object FlowRow(ServerContext ctx, NasrData? nasr, string apt,
+                                  System.Text.Json.JsonElement? tbfm, object? tfdm)
+    {
+        double? lat = null, lon = null;
+        if (nasr is not null)
+        {
+            // TBFM uses the bare FAA LID (ORD); NASR answers to either, so try both.
+            var p = ctx.LookupAirport(apt, nasr) ?? ctx.LookupAirport("K" + apt, nasr);
+            if (p is not null) { lat = p.Lat; lon = p.Lon; }
+        }
+
+        int? metered = null, delayed = null;
+        double? maxDelay = null, aar = null;
+        bool aarRestricted = false;
+        string? tracon = null;
+        if (tbfm is { } j)
+        {
+            if (j.TryGetProperty("metered", out var m)) metered = m.GetInt32();
+            if (j.TryGetProperty("delayed", out var d)) delayed = d.GetInt32();
+            if (j.TryGetProperty("maxDelayMin", out var x) && x.ValueKind != System.Text.Json.JsonValueKind.Null)
+                maxDelay = x.GetDouble();
+            if (j.TryGetProperty("aar", out var a) && a.ValueKind != System.Text.Json.JsonValueKind.Null)
+                aar = a.GetDouble();
+            if (j.TryGetProperty("aarRestricted", out var ar)) aarRestricted = ar.GetBoolean();
+            if (j.TryGetProperty("tracon", out var tr) && tr.ValueKind == System.Text.Json.JsonValueKind.String)
+                tracon = tr.GetString();
+        }
+
+        return new
+        {
+            apt, lat, lon,
+            metered, delayed,
+            maxDelayMin = maxDelay,
+            // 3,600/hour is TBFM's "no restriction" default, not a rate: 53 of 57 published AARs
+            // sat at exactly that, including fields that could not take one an hour. `restricted`
+            // is the flag worth reading.
+            aar, aarRestricted, tracon,
+            tfdm,
+        };
     }
 }

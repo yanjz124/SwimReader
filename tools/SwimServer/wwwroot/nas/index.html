@@ -136,6 +136,17 @@
         </div>
 
         <div class="grp">
+            <div class="grp-h">FLOW</div>
+            <label><input type="checkbox" id="bFlow"> Restrictions</label>
+            <div class="note" id="flowNote"></div>
+            <div class="note">
+                Arrival metering from TBFM and surface/departure constraint from TFDM. They are
+                <em>not</em> added together &mdash; one is airborne holding, the other is the
+                field. Ring size is the metering hold; amber means TFDM has something in force.
+            </div>
+        </div>
+
+        <div class="grp">
             <div class="grp-h">WEATHER</div>
             <label><input type="checkbox" id="wx"> NEXRAD</label>
             <label for="wxop">Opacity

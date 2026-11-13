@@ -210,6 +210,19 @@ body.by-value .ctl .sym { color: #8b94a2; }
 .note:empty { display: none; margin: 0; }
 .note em { color: #9aa4b2; font-style: normal; }
 
+/* ── Flow overlay ──────────────────────────────────────────────────────── */
+.flow-chip {
+    font: 10px/1.2 'Consolas', monospace;
+    color: #e4e9ef;
+    background: rgba(8, 10, 14, 0.82);
+    border: 1px solid #39404b;
+    padding: 1px 4px;
+    white-space: nowrap;
+}
+.flow-chip.hot { border-color: #ddaa44; color: #ffd98a; }
+.flow-chip b { color: #ff9f6e; font-weight: normal; }
+.leaflet-pane .flow-chip { pointer-events: none; }
+
 /* ── Hover readout ─────────────────────────────────────────────────────── */
 .tip {
     position: absolute;

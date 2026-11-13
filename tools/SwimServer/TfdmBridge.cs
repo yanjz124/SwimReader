@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -418,6 +418,53 @@ class TfdmBridge
                 .OrderBy(t => t.Name).Select(t => t.ToJson()).ToArray()
             : Array.Empty<object>();
         return new { airport, flights, info = info?.ToJson(), tmis };
+    }
+
+    /// <summary>
+    /// Every airport TFDM is currently saying something restrictive about, flattened for the NAS
+    /// map's flow overlay. Returns airport -> (config, aar, adr, closures, tmis, queue, gridlock).
+    ///
+    /// <para>TMIs are collapsed the same way <c>SnapshotObj</c> collapses them, and for the same
+    /// reason: TFDM publishes one restriction under several <c>tfdmTmiId</c>s and a reissue
+    /// usually arrives under a new id without the old one being deleted, so the raw count
+    /// overstates how much is in force. "UFN" entries are never aged out at all.</para>
+    /// </summary>
+    public Dictionary<string, object> FlowSnapshot()
+    {
+        var outp = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        var keys = new HashSet<string>(_airportInfo.Keys, StringComparer.OrdinalIgnoreCase);
+        foreach (var k in _tmis.Keys) keys.Add(k);
+
+        foreach (var apt in keys)
+        {
+            _airportInfo.TryGetValue(apt, out var info);
+            var tmis = _tmis.TryGetValue(apt, out var tl)
+                ? tl.Values
+                    .GroupBy(t => (t.Name, t.Type, t.ControlledElement, t.Restriction, t.MinutesInTrail, t.MilesInTrail))
+                    .Select(g => g.OrderByDescending(t => t.LastSeen).First())
+                    .ToList()
+                : new List<TfdmTmi>();
+
+            outp[apt] = new
+            {
+                config = info?.Config,
+                aar = info?.Aar,
+                adr = info?.Adr,
+                closed = info?.ClosedRunways,
+                gridlock = info?.Gridlock,
+                departureDelay = info?.DepartureDelay,
+                queue = info?.AirportQueue,
+                tmiCount = tmis.Count,
+                tmis = tmis.OrderBy(t => t.Name).Take(6).Select(t => new
+                {
+                    name = t.Name, type = t.Type, element = t.ControlledElement,
+                    restriction = t.Restriction, mit = t.MilesInTrail, minit = t.MinutesInTrail,
+                    reason = t.Reason, ufn = t.Ufn,
+                }).ToArray(),
+                ageSec = info is null ? (int?)null : (int)(DateTime.UtcNow - info.LastSeen).TotalSeconds,
+            };
+        }
+        return outp;
     }
 
     /// <summary>TFDM surface record(s) for a callsign across all airports (for Track-a-Flight).</summary>

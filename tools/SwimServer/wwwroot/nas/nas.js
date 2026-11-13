@@ -630,6 +630,100 @@ map.on('moveend zoomend', () => { if ($('bSectors').checked) updateSectorLayer()
     } catch { $('kmlRow').style.display = 'none'; }
 })();
 
+// ── Flow restrictions ──────────────────────────────────────────────────────────
+//
+// What is holding traffic, drawn where it is being held. Two sources that answer
+// DIFFERENT questions and are deliberately not combined into one number:
+//
+//   TBFM  arrival metering — airborne holding into a field. The figure is the
+//         governing hold, which the server computes as the chain MAXIMUM; summing
+//         the per-centre delays double-counts, because TBFM distributes a hold
+//         upstream and a centre that has absorbed it reads ~0 one point down.
+//   TFDM  the field itself — runway configuration, AAR/ADR, closures and terminal
+//         restrictions (MIT/MINIT). Surface and departure, not arrival.
+//
+// An airport can easily have one without the other, so the ring shows the metering
+// hold and the chip turns amber when TFDM has something in force.
+let flowLayer = null, flowTimer = null;
+
+// TBFM's "no restriction" default is 3,600/hour — not a rate. 53 of 57 published
+// AARs sat at exactly that, including fields that could not take one an hour, so
+// the server's `aarRestricted` flag is what to read and this is only a guard for
+// anything that reaches the client raw.
+const RATE_UNRESTRICTED = 3600;
+
+async function updateFlow() {
+    if (flowLayer) { map.removeLayer(flowLayer); flowLayer = null; }
+    clearInterval(flowTimer);
+    const note = $('flowNote');
+    if (!$('bFlow').checked) { note.textContent = ''; return; }
+
+    const load = async () => {
+        try {
+            const r = await fetch('/api/nas/flow');
+            if (!r.ok) throw new Error(r.status);
+            const d = await r.json();
+            if (!$('bFlow').checked) return;
+            if (flowLayer) { map.removeLayer(flowLayer); flowLayer = null; }
+
+            const g = L.layerGroup([], { pane: 'nasBounds' });
+            let drawn = 0, held = 0, placed = 0;
+            for (const a of d.airports) {
+                const hold = a.maxDelayMin || 0;
+                const t = a.tfdm || {};
+                const tfdmHot = !!(t.tmiCount || (t.closed && t.closed.length)
+                    || (t.gridlock && t.gridlock !== 'NONE')
+                    || (t.aar && +t.aar > 0 && +t.aar < RATE_UNRESTRICTED));
+                // Only draw what is actually saying something. An airport with a
+                // runway config and nothing else is not a restriction.
+                if (hold < 1 && !tfdmHot && !a.aarRestricted) continue;
+                held++;
+                if (a.lat === null || a.lon === null) continue;   // NASR did not know it
+                placed++;
+
+                // Radius grows with the hold, floored so a flagged field with no
+                // airborne hold is still visible.
+                const rad = Math.max(6, Math.min(26, 6 + hold * 1.6));
+                L.circleMarker([a.lat, a.lon], {
+                    pane: 'nasBounds', interactive: false,
+                    radius: rad, weight: 1.2,
+                    color: hold >= 1 ? '#ff9f6e' : '#ddaa44',
+                    opacity: 0.85, fillColor: '#ff7043',
+                    fillOpacity: hold >= 1 ? Math.min(0.28, 0.05 + hold / 90) : 0.04,
+                }).addTo(g);
+
+                const bits = [];
+                if (hold >= 1) bits.push(`<b>+${hold.toFixed(0)}m</b>`);
+                if (a.aarRestricted && a.aar) bits.push(`AAR ${a.aar}`);
+                if (t.closed && t.closed.length) bits.push(`${t.closed.length} RWY CLSD`);
+                if (t.tmiCount) bits.push(`${t.tmiCount} TMI`);
+                if (t.gridlock && t.gridlock !== 'NONE') bits.push(esc(t.gridlock));
+                L.marker([a.lat, a.lon], {
+                    pane: 'nasBounds', interactive: false,
+                    icon: L.divIcon({
+                        className: '',
+                        html: `<div class="flow-chip${tfdmHot ? ' hot' : ''}">`
+                            + `${esc(a.apt)}${bits.length ? ' ' + bits.join(' ') : ''}</div>`,
+                        iconSize: null, iconAnchor: [-rad + 2, 6],
+                    }),
+                }).addTo(g);
+                drawn++;
+            }
+            g.addTo(map);
+            flowLayer = g;
+            note.textContent = `${drawn} airport${drawn === 1 ? '' : 's'} restricted`
+                + (held > placed ? ` · ${held - placed} unplaced` : '');
+        } catch (e) {
+            console.warn('[NAS] flow:', e.message);
+            note.textContent = 'Flow data unavailable.';
+        }
+    };
+    await load();
+    // TBFM schedules and TFDM airport records both move on the order of a minute;
+    // a 30 s refresh is well inside that and costs one small request.
+    flowTimer = setInterval(load, 30000);
+}
+
 // ── Stream ─────────────────────────────────────────────────────────────────────
 let ws = null, wsTimer = null, lastMsg = 0;
 
@@ -1025,6 +1119,7 @@ for (const id of ['wx', 'wxop']) $(id).addEventListener('change', updateWx);
 $('bArtcc').addEventListener('change', updateArtccLayer);
 $('bSectors').addEventListener('change', updateSectorLayer);
 $('bKml').addEventListener('change', updateKmlLayer);
+$('bFlow').addEventListener('change', updateFlow);
 
 const qEl = $('q');
 let qTimer = null;

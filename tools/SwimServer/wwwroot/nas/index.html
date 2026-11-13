@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>NAS Map</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='78' font-size='78'>&#127758;</text></svg>">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -14,6 +14,11 @@
 <a class="nav-home" href="/">&larr; HOME</a>
 
 <div id="map"></div>
+
+<!-- Top bar and search, stacked: the bar WRAPS at narrow widths (the counts
+     are ~48 characters on their own) and a fixed `top` on the search box below
+     it would be drawn straight over. A flex column cannot collide with itself. -->
+<div class="topstack" id="topStack">
 
 <!-- Top bar: live counts and the state of the stream -->
 <div class="bar" id="bar">
@@ -31,6 +36,8 @@
     <button id="qclear" title="Clear">&times;</button>
 </div>
 
+</div><!-- /topstack -->
+
 <!-- Color scale, shown only when color carries a value rather than a class -->
 <div class="panel scale" id="scale" style="display:none">
     <div class="scale-label" id="scaleLabel"></div>
@@ -40,7 +47,9 @@
 
 <!-- Layers and display controls -->
 <div class="panel ctl" id="ctl">
-    <button class="ctl-toggle" id="ctlToggle" title="Show/hide controls">&#9776;</button>
+    <button class="ctl-toggle" id="ctlToggle" title="Show/hide controls"
+            aria-label="Show or hide controls" aria-expanded="false"
+            aria-controls="ctlBody">&#9776;</button>
     <div class="ctl-body" id="ctlBody">
 
         <div class="grp">

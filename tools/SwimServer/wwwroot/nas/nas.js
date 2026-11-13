@@ -1238,18 +1238,39 @@ function renderLegend() {
         : 'ENERGY (h + v²/2g)  0 → 52,000 ft';
 }
 
-// ── Hover ──────────────────────────────────────────────────────────────────────
+// ── Hover and picking ──────────────────────────────────────────────────────────────────────
 let hoverId = null, selId = null;
 const tip = $('tip');
 
+// Touch and mouse need different hit radii, and that is a property of the EVENT
+// rather than of the device: a tablet with a stylus should get mouse precision,
+// and a touchscreen laptop should get a fat radius for the finger and a thin one
+// for the trackpad, in the same session. matchMedia only SEEDS it -- every
+// pointerdown corrects it, which is what keeps a hybrid machine from being stuck
+// in whichever mode it happened to be touched with first.
+let coarse = matchMedia('(pointer: coarse)').matches;
+addEventListener('pointerdown', ev => {
+    if (ev.pointerType) coarse = ev.pointerType !== 'mouse';
+}, { capture: true, passive: true });
+
+// Is the control panel a collapsible hamburger (narrow) or an always-open
+// sidebar? Read it off the toggle's own computed style rather than re-stating
+// the breakpoint here, so that number lives in exactly one place: the CSS.
+const compact = () => getComputedStyle($('ctlToggle')).display !== 'none';
+
 // Picks off the LAST DRAWN positions, so it costs a scan of what is on screen
 // rather than a re-projection of every target on every mouse move.
-function pick(px, py) {
+function pick(px, py, touch = coarse) {
     const o = layer._origin;
     if (!o) return null;
     const lx = px + (map.containerPointToLayerPoint([0, 0]).x - o.x);
     const ly = py + (map.containerPointToLayerPoint([0, 0]).y - o.y);
-    const grab = 8 + 3 * num('size', 1);
+    // A fingertip covers ~34 CSS px, so an 11 px grab radius means a phone user
+    // cannot reliably select anything at all -- which was most of what "not
+    // mobile friendly" amounted to here. Widened for touch only; the
+    // nearest-target tie-break below is what stops a fat radius from picking the
+    // wrong one of two neighbours, and identified traffic still wins a tie.
+    const grab = (touch ? 22 : 8) + 3 * num('size', 1);
     let best = null, bestD = grab * grab;
     for (const t of visList) {
         const d = (t._sx - lx) ** 2 + (t._sy - ly) ** 2;
@@ -1279,13 +1300,21 @@ function fl(alt) {
 }
 
 let hoverThrottle = 0;
-map.getContainer().addEventListener('mousemove', ev => {
+// `pointermove`, not `mousemove`, for one reason: it says what moved. A tap
+// synthesizes a mousemove on nearly every browser, so on a touchscreen the
+// readout used to appear under the finger and then STAY there -- a touchscreen
+// sends no mouseleave, so nothing was ever going to take it back down.
+map.getContainer().addEventListener('pointermove', ev => {
+    if (ev.pointerType && ev.pointerType !== 'mouse') {
+        if (tip.style.display !== 'none') tip.style.display = 'none';
+        return;
+    }
     const nowMs = performance.now();
     if (nowMs - hoverThrottle < 30) return;
     hoverThrottle = nowMs;
 
     const r = map.getContainer().getBoundingClientRect();
-    const t = pick(ev.clientX - r.left, ev.clientY - r.top);
+    const t = pick(ev.clientX - r.left, ev.clientY - r.top, false);
     if (!t) {
         if (hoverId !== null) { hoverId = null; tip.style.display = 'none'; paint(); }
         return;
@@ -1317,7 +1346,7 @@ map.getContainer().addEventListener('mousemove', ev => {
     tip.style.top = y + 'px';
 });
 
-map.getContainer().addEventListener('mouseleave', () => {
+map.getContainer().addEventListener('pointerleave', () => {
     hoverId = null;
     tip.style.display = 'none';
     paint();
@@ -1330,18 +1359,29 @@ let detailTimer = null;
 map.on('click', ev => {
     const p = map.latLngToContainerPoint(ev.latlng);
     const t = pick(p.x, p.y);
-    if (!t) return;
+    if (!t) {
+        // A tap on empty map is how a phone dismisses a sheet; aiming a thumb at
+        // a 12 px close glyph is not. On a mouse it matches every other map UI,
+        // so there is no reason to make it touch-only.
+        if (detail.classList.contains('open')) closeDetail();
+        // Same for the control panel: while it is open it covers the map, and
+        // the map is what you just reached for.
+        if (compact()) setCtlOpen(false);
+        return;
+    }
     selId = t.id;
     paint();
     openDetail(t);
 });
 
-$('dClose').addEventListener('click', () => {
+function closeDetail() {
     detail.classList.remove('open');
     selId = null;
     clearInterval(detailTimer);
     paint();
-});
+}
+
+$('dClose').addEventListener('click', closeDetail);
 
 function openDetail(t) {
     detail.classList.add('open');
@@ -1555,7 +1595,10 @@ function loadPrefs() {
         for (const c of document.querySelectorAll('.cls')) c.checked = v._cls.includes(c.value);
     // Only ever ADDED: `open` is inert on a wide screen and the default on a narrow
     // one is closed, so there is nothing to restore in the other direction.
-    if (v._open) $('ctl').classList.add('open');
+    if (v._open) {
+        $('ctl').classList.add('open');
+        $('ctlToggle').setAttribute('aria-expanded', 'true');
+    }
 
     return Array.isArray(v._view) && v._view.length === 3 && v._view.every(Number.isFinite)
         ? v._view : null;
@@ -1636,7 +1679,14 @@ qEl.addEventListener('input', () => {
 });
 $('qclear').addEventListener('click', () => { qEl.value = ''; sendView(true); });
 
-$('ctlToggle').addEventListener('click', () => { $('ctl').classList.toggle('open'); });
+function setCtlOpen(open) {
+    $('ctl').classList.toggle('open', open);
+    $('ctlToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+    savePrefs();
+}
+$('ctlToggle').addEventListener('click', () => {
+    setCtlOpen(!$('ctl').classList.contains('open'));
+});
 
 // Settings come back BEFORE the deep link is read, because a URL someone was SENT
 // is a statement about where to look and has to win over wherever this browser

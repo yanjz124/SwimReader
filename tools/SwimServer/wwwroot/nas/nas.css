@@ -3,13 +3,31 @@
  * frame.css (the same choice the ERAM / ASDE-X / STARS scopes make).
  * ──────────────────────────────────────────────────────────────────────────── */
 
+/* Safe areas: the notch and the home indicator. With `viewport-fit=cover` the
+ * map runs under them, so every anchored panel adds the inset back. They are
+ * 0px everywhere else, which is why the desktop rules can use them too rather
+ * than being duplicated inside a media query. */
+:root {
+    --gap: 8px;
+    --sa-t: env(safe-area-inset-top, 0px);
+    --sa-r: env(safe-area-inset-right, 0px);
+    --sa-b: env(safe-area-inset-bottom, 0px);
+    --sa-l: env(safe-area-inset-left, 0px);
+}
+
 html, body {
     height: 100%;
     background: #05070a;
     color: #d8d8d8;
     font-family: 'Consolas', 'Menlo', monospace;
     overflow: hidden;
+    /* A drag that starts on the map must not rubber-band the document, and a tap
+     * must not flash a gray box over a target. */
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
 }
+
+button, select, .nav-home { touch-action: manipulation; }
 
 #map {
     position: absolute;
@@ -26,12 +44,24 @@ html, body {
 .leaflet-control-zoom a:hover { background: #222832; }
 
 /* ── Top bar ───────────────────────────────────────────────────────────── */
-.bar {
+
+/* The stack owns the position; the bar and the search box inside it are in
+   normal flow, so either one can grow without displacing the other. */
+.topstack {
     position: absolute;
-    top: 8px;
-    left: 108px;
-    right: 8px;
+    top: calc(var(--gap) + var(--sa-t));
+    left: calc(108px + var(--sa-l));
+    right: calc(var(--gap) + var(--sa-r));
     z-index: 900;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    pointer-events: none;      /* children opt back in */
+}
+
+.bar {
+    align-self: stretch;
     display: flex;
     align-items: center;
     gap: 14px;
@@ -65,10 +95,11 @@ html, body {
 }
 
 .search {
-    top: 44px;
-    left: 108px;
+    position: static;          /* in the stack now, not anchored */
+    pointer-events: auto;
     display: flex;
     align-items: center;
+    max-width: 100%;
 }
 .search input {
     width: 290px;
@@ -96,8 +127,8 @@ html, body {
 
 /* ── Control stack ─────────────────────────────────────────────────────── */
 .ctl {
-    top: 44px;
-    right: 8px;
+    top: calc(44px + var(--sa-t));
+    right: calc(var(--gap) + var(--sa-r));
     width: 216px;
     max-height: calc(100vh - 60px);
     overflow-y: auto;
@@ -177,8 +208,8 @@ body.by-value .ctl .sym { color: #8b94a2; }
 
 /* ── Color scale ──────────────────────────────────────────────────────────── */
 .scale {
-    bottom: 10px;
-    left: 56px;
+    bottom: calc(10px + var(--sa-b));
+    left: calc(56px + var(--sa-l));
     width: 268px;
     max-width: 60vw;
     padding: 6px 9px 7px;
@@ -244,9 +275,9 @@ body.by-value .ctl .sym { color: #8b94a2; }
 /* ── Detail panel ──────────────────────────────────────────────────────── */
 .detail {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    bottom: 8px;
+    top: calc(var(--gap) + var(--sa-t));
+    right: calc(var(--gap) + var(--sa-r));
+    bottom: calc(var(--gap) + var(--sa-b));
     width: 330px;
     max-width: 92vw;
     z-index: 960;
@@ -277,7 +308,13 @@ body.by-value .ctl .sym { color: #8b94a2; }
     font-family: inherit;
 }
 .d-head button:hover { color: #cccc44; }
-.d-body { padding: 8px 10px; overflow-y: auto; }
+.d-body {
+    padding: 8px 10px;
+    overflow-y: auto;
+    min-height: 0;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
 
 .d-sec {
     color: #cccc44;
@@ -309,17 +346,137 @@ body.by-value .ctl .sym { color: #8b94a2; }
  * painted samples, every coordinate in range) while the PNG came back with tiles and no
  * targets. That is indistinguishable from a dead renderer. */
 
+/* -- Small screens and fingers ----------------------------------------------
+ * Three separate questions, so three separate queries:
+ *   how WIDE the screen is   -> where the panels go
+ *   how the user POINTS      -> how big everything has to be
+ *   how TALL it is           -> landscape, where height is the scarce axis
+ * A tablet with a trackpad wants the first and not the second; a touchscreen
+ * laptop wants the second and not the first. Rolling them into one max-width
+ * query is how you get a map that reflows correctly and still cannot be used.
+ * -------------------------------------------------------------------------- */
+
 @media (max-width: 760px) {
-    .scale { left: 8px; bottom: 8px; width: auto; right: 8px; max-width: none; }
-    .bar { left: 8px; top: 40px; }
-    .nav-home { top: 8px; }
-    .search { top: 76px; left: 8px; right: 8px; }
+    .nav-home {
+        top: calc(var(--gap) + var(--sa-t));
+        left: calc(var(--gap) + var(--sa-l));
+    }
+    /* Below HOME rather than beside it: HOME plus the hamburger leave ~230px of
+       a 360px screen, which is not enough for the counts or the search box. */
+    .topstack {
+        top: calc(38px + var(--sa-t));
+        left: calc(var(--gap) + var(--sa-l));
+        right: calc(52px + var(--gap) + var(--sa-r));
+    }
+    .search { align-self: stretch; }
     .search input { width: 100%; max-width: none; }
-    .ctl { top: 8px; right: 8px; width: auto; }
-    .ctl-toggle { display: block; }
+
+    .ctl {
+        top: calc(var(--gap) + var(--sa-t));
+        width: auto;
+        /* The BODY scrolls, not the panel -- collapsed, the panel is just a
+           button, and a scroll container around it clips its border. */
+        max-height: none;
+        overflow: visible;
+    }
+    .ctl-toggle { display: block; width: 44px; height: 40px; font-size: 19px; }
     .ctl-body { display: none; }
-    .ctl.open .ctl-body { display: block; width: 216px; }
-    .detail { top: auto; height: 52vh; left: 8px; right: 8px; width: auto; }
+    .ctl.open .ctl-body {
+        display: block;
+        width: min(264px, calc(100vw - 2 * var(--gap) - var(--sa-l) - var(--sa-r)));
+        max-height: calc(100vh - 64px - var(--sa-t) - var(--sa-b));
+        max-height: calc(100dvh - 64px - var(--sa-t) - var(--sa-b));
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+    /* An open panel is modal in practice at this width, so it stops pretending
+       to be glass -- 0.92 alpha over moving targets is unreadable. */
+    .ctl.open { background: rgba(8, 10, 14, 0.97); }
+
+    /* Full-bleed, and ABOVE the zoom buttons: bottom-left is already taken, and
+       the old rule laid the gradient straight over them. */
+    .scale {
+        left: calc(var(--gap) + var(--sa-l));
+        right: calc(var(--gap) + var(--sa-r));
+        bottom: calc(var(--gap) + 58px + var(--sa-b));
+        width: auto;
+        max-width: none;
+    }
+
+    /* A bottom sheet, which is where a phone looks for a detail card. */
+    .detail {
+        top: auto;
+        left: calc(var(--gap) + var(--sa-l));
+        right: calc(var(--gap) + var(--sa-r));
+        width: auto;
+        max-width: none;
+        height: 58vh;
+        height: 58dvh;
+    }
+    .d-row .k { flex: 0 0 84px; }
+    .d-row .v { min-width: 0; }
+    /* The hover readout is a mouse affordance; at this width it would also be
+       wider than the screen. JS suppresses it per-event (a stylus on a tablet
+       still gets it) -- this only keeps it inside the screen if it does show. */
+    .tip { max-width: calc(100vw - 2 * var(--gap)); white-space: normal; }
+}
+
+@media (pointer: coarse) {
+    /* 16px is the threshold below which iOS Safari zooms the whole page when a
+       text field takes focus -- and it zooms the MAP with it, which then has to
+       be pinched back by hand. A <select> never triggers that and nothing else
+       here is a text input, so this is the one place a size is forced. */
+    .search input { font-size: 16px; padding: 9px 10px; }
+    .search button { font-size: 19px; padding: 9px 13px; }
+
+    /* ~34px rows. A fingertip covers about 9mm, which is ~34 CSS px at typical
+       phone density, and every row here is a checkbox or a select. */
+    .ctl label { min-height: 34px; padding: 3px 0; font-size: 12px; }
+    .ctl select { min-height: 30px; font-size: 12px; padding: 3px 6px; }
+    .ctl input[type=checkbox] { width: 18px; height: 18px; flex: 0 0 18px; }
+    .grp { padding: 10px 12px; }
+    .grp-h { font-size: 11px; margin-bottom: 8px; }
+    .note { font-size: 11px; }
+    .lbfields { gap: 2px 14px; }
+    .lbfields label { min-height: 30px; font-size: 11px; }
+    .lbfields input[type=checkbox] { width: 16px; height: 16px; flex: 0 0 16px; }
+    .d-head { padding: 10px 12px; }
+    .d-head button { font-size: 22px; min-width: 44px; min-height: 40px; padding: 0 8px; }
+    .leaflet-control-zoom a {
+        width: 36px; height: 36px; line-height: 36px; font-size: 20px;
+    }
+}
+
+/* Landscape on a phone: ~390px of height for all of it. The sheet becomes a
+   side panel, because 58% of 390px is not a card -- and the stack rejoins
+   HOME's row, since the vertical space it was given no longer exists. */
+@media (max-width: 920px) and (max-height: 520px) and (orientation: landscape) {
+    .topstack {
+        top: calc(var(--gap) + var(--sa-t));
+        left: calc(108px + var(--sa-l));
+        right: calc(52px + var(--gap) + var(--sa-r));
+    }
+    .search { align-self: auto; }
+    .search input { width: 240px; }
+    .ctl.open .ctl-body {
+        max-height: calc(100vh - 20px - var(--sa-t) - var(--sa-b));
+        max-height: calc(100dvh - 20px - var(--sa-t) - var(--sa-b));
+    }
+    .detail {
+        top: calc(var(--gap) + var(--sa-t));
+        bottom: calc(var(--gap) + var(--sa-b));
+        left: auto;
+        right: calc(52px + var(--gap) + var(--sa-r));   /* clear the hamburger */
+        width: min(330px, 52vw);
+        height: auto;
+    }
+    .scale {
+        left: calc(58px + var(--sa-l));
+        right: auto;
+        bottom: calc(var(--gap) + var(--sa-b));
+        width: 240px;
+    }
 }
 
 /* Label field toggles: a compact row rather than six stacked checkbox lines,

@@ -669,7 +669,7 @@ function median(v) {
     return a.length ? a[Math.floor(a.length / 2)] : 0;
 }
 
-// One fleet's utilisation, where it goes and what it flies. Everything here is computed server
+// One fleet's utilization, where it goes and what it flies. Everything here is computed server
 // side (see AirlineResearch typeRows) so the numbers match what /api/airlines/{icao} reports.
 // Air time is only counted while an aircraft is inside US airspace, which is all the feed sees,
 // while sector distance is the full great-circle between the route's endpoints. For a domestic
@@ -682,7 +682,7 @@ function impliedKt(t) {
     return t.avgSectorNm / (t.avgSectorMin / 60);
 }
 const CLIPPED_TIP = 'Air time is only measured inside US airspace, but sector distance is the '
-    + 'full route - so this fleet\'s hours, utilisation and sector time cover just the domestic '
+    + 'full route - so this fleet\'s hours, utilization and sector time cover just the domestic '
     + 'portion of each flight. The implied ground speed gives it away.';
 
 // Time + distance for a sector, marked when the two cannot describe the same flight.

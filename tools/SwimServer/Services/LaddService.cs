@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 
 namespace SwimServer;
 
@@ -251,7 +251,7 @@ static class LaddService
         // punctuation needs no new string at all, and SWIM callsigns, registrations and Mode S
         // codes almost never have any.
         //
-        // This is not a micro-optimisation: IsBlocked calls Normalize up to three times per
+        // This is not a micro-optimization: IsBlocked calls Normalize up to three times per
         // record, and the NAS fusion index runs it over ~26,000 records a pass. Measured, that
         // was ~2.5 MB of garbage every two seconds on a process already spending ~17% of its
         // time in GC. Every other caller (the /ws flight projection, each bridge's ToJson) gets

@@ -15,7 +15,7 @@ const QUICK = ['KDCA', 'KIAD', 'KBWI', 'KJFK', 'KEWR', 'KLGA', 'KBOS', 'KPHL', '
 let timer = null;
 
 // ── theme ───────────────────────────────────────────────────────────────────
-// Two palettes: "day", modelled on the ASOS/tower boards this page copies (pale blue field, white
+// Two palettes: "day", modeled on the ASOS/tower boards this page copies (pale blue field, white
 // panels, navy labels, cream value boxes), and "night" for a dim room. Both live entirely in CSS
 // custom properties — including every color in the SVG rose and trend, which is why the drawing
 // code below sets classes rather than fill/stroke attributes. Switching themes restyles what is

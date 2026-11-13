@@ -12,7 +12,7 @@ The flagship. Aggregates a single callsign across every source in one response.
 
 ```
 {callsign, resolvedFrom, found, ts,
- sfdps: [...],        one entry per ARTCC tracking it (same aeroplane, several GUFIs)
+ sfdps: [...],        one entry per ARTCC tracking it (same airplane, several GUFIs)
  freqs: {},           FACILITY/SECTOR -> controller frequency, for every sector mentioned anywhere
  tfms: {},            filed route, procedures, predicted fix/center/sector crossings, CDM times
  edct: {},            ground-stop / ground-delay slot time
@@ -113,13 +113,13 @@ what to use for "what route would I file from A to B" — these are routes that 
 and flown, not generated.
 
 ### `/api/airlines` — ~59 KB · `/api/airlines/{icao}` — **~460 KB, always filter**
-Carrier directory and per-carrier network, fleet and utilisation. Per-fleet rows carry
+Carrier directory and per-carrier network, fleet and utilization. Per-fleet rows carry
 `activeTails` vs `parkedTails`, hours/tail/day, legs/tail/day, average leg time and distance,
 destinations and top routes.
 
 **Caveat the server already flags:** air time is only observed inside US airspace, while leg
 distance is the full great-circle. For a long-haul fleet the two don't describe the same flight —
-check the implied ground speed before quoting hours or utilisation for widebodies.
+check the implied ground speed before quoting hours or utilization for widebodies.
 
 ## Supporting
 

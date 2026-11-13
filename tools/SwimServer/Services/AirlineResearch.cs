@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -86,7 +86,7 @@ sealed class AirlineResearch
     /// <summary>
     /// Per-fleet rollup. <c>Tails</c> counts every airframe of the type that flew for this
     /// carrier in the window; <c>ActiveTails</c> only those that actually operated a flight, so
-    /// the two differ exactly by the parked ones — which is the number that makes a utilisation
+    /// the two differ exactly by the parked ones — which is the number that makes a utilization
     /// figure honest rather than flattering.
     /// </summary>
     private sealed class TypeAcc
@@ -947,7 +947,7 @@ sealed class AirlineResearch
                 hpd = Math.Round(v.AirMin / 60.0 / span / Math.Max(1, v.Tails), 2),
                 flightsPerDay = Math.Round((double)v.Flights / Math.Max(1, v.ActiveDays), 2),
 
-                // ── utilisation ──
+                // ── utilization ──
                 // Parked airframes drag the fleet average down; showing both makes it clear
                 // whether a low h/day is slow flying or aircraft sitting still.
                 activeTails = v.ActiveTails,

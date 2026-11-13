@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -129,7 +129,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
 
             // Every track's position is recorded, correlated or not — whether it can serve as
             // evidence depends on a flight plan that may not have arrived yet. The same aircraft
-            // is often untagged at the neighbouring facility, and this loop already sees every
+            // is often untagged at the neighboring facility, and this loop already sees every
             // one of them, so remembering costs an index entry and names 24.6% of untagged
             // targets that ADS-B could not.
             _swim.NotePosition(track);
@@ -421,13 +421,13 @@ public sealed class CallsignEnrichmentService : BackgroundService
                 // wrong callsign is worse than none.
                 // Split "nothing nearby at all" from "nearby but outside the gate", because the
                 // two have opposite fixes and a single no-candidate count cannot tell them apart.
-                // The 3x3 cell neighbourhood is ~90 NM, so an empty one means the ADS-B region
+                // The 3x3 cell neighborhood is ~90 NM, so an empty one means the ADS-B region
                 // set simply does not cover this facility — widening coverage is the answer, and
                 // loosening the gate would do nothing. A non-empty one that still fails the
                 // 1.5 NM / 500 ft gate is a real near-miss and is about the gate.
-                var neighbourhood = Nearby(index.ByCell,
+                var neighborhood = Nearby(index.ByCell,
                     track.Position.Latitude, track.Position.Longitude).ToList();
-                var near = WithinGate(neighbourhood, track,
+                var near = WithinGate(neighborhood, track,
                     PositionOnlyMatchNm, PositionOnlyAltitudeFeet);
                 aircraft = near.Count == 1 ? near[0] : null;
 
@@ -438,7 +438,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
                     CountSource(aircraft);
                     await PublishEnrichmentAsync(key, track, aircraft, ct);
                 }
-                else if (neighbourhood.Count == 0) Interlocked.Increment(ref _posNoCoverage);
+                else if (neighborhood.Count == 0) Interlocked.Increment(ref _posNoCoverage);
                 else if (near.Count == 0) Interlocked.Increment(ref _posNoCandidate);
                 else Interlocked.Increment(ref _posAmbiguous);
             }
@@ -520,7 +520,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
             .Where(ac =>
                 // A tagged track from the SAME facility is not independent evidence — it is this
                 // facility's own radar picture, so a hit means two of its tracks are within the
-                // gate of each other, which is a duplicate or a genuinely different aeroplane,
+                // gate of each other, which is a duplicate or a genuinely different airplane,
                 // never a correlation. The value of the TAIS source is specifically the
                 // NEIGHBOURING facility that has already identified the same target.
                 !(ac.SyntheticFacility is { } sf && sf == track.Facility) &&
@@ -716,7 +716,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
     // That tier has no identifier to narrow the field, so without an index it would test every
     // ADS-B target in the regional set against every unmatched track — several thousand times a
     // few hundred, every cycle, on a box where CPU is the scarce resource (see CLAUDE.md on the
-    // Pi's co-tenants). Bucketing by half a degree reduces it to the 3x3 neighbourhood.
+    // Pi's co-tenants). Bucketing by half a degree reduces it to the 3x3 neighborhood.
     //
     // CELL_DEG must stay comfortably larger than the gate: 0.5 deg is ~30 NM of latitude against
     // a 1.5 NM gate, so a target within range of a track is always in that track's cell or one
@@ -726,7 +726,7 @@ public sealed class CallsignEnrichmentService : BackgroundService
     private static (int, int) Cell(double lat, double lon) =>
         ((int)Math.Floor(lat / CellDeg), (int)Math.Floor(lon / CellDeg));
 
-    /// <summary>Every target in the 3x3 cell neighbourhood of a position.</summary>
+    /// <summary>Every target in the 3x3 cell neighborhood of a position.</summary>
     private static IEnumerable<AdsbFiAircraft> Nearby(
         Dictionary<(int, int), List<AdsbFiAircraft>> byCell, double lat, double lon)
     {

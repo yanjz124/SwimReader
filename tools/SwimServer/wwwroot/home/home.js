@@ -104,7 +104,7 @@ function feedRow(f, opts) {
     const n0 = (v) => v == null ? '--' : v.toFixed(0);
     return '<span class="fd" title="' + (o.title || '') + '">' + f.feed + '</span>'
         + (st ? '<span class="st ' + st + '" title="' + (STATE_WHY[st] || '') + '">' + st + '</span>'
-              : '<span class="st idle" title="Sub-service of the neighbouring process">·</span>')
+              : '<span class="st idle" title="Sub-service of the neighboring process">·</span>')
         + '<span class="nm c-rate">' + n1(f.msgsPerSec) + '</span>'
         + '<span class="nm c-kb">' + n0(f.kbPerSec) + '</span>'
         + '<span class="nm c-lag">' + n1(f.lagSec, 's') + '</span>'
@@ -149,7 +149,7 @@ function renderThroughputDetail() {
             // flows is reported once for the whole service, not per sub-service, so fold it in
             // or the FLOWS column reads blank on exactly the rows where it is the lever.
             out.push(feedRow(Object.assign({ flows: _stdds.flows }, sv),
-                { noState: true, title: 'STDDS sub-service on the neighbouring process' }));
+                { noState: true, title: 'STDDS sub-service on the neighboring process' }));
         }
         if (tot) {
             const here = feeds.find(f => f.feed === 'STDDS');
@@ -361,7 +361,7 @@ loadStorage();
 setInterval(loadStorage, 5 * 60 * 1000);
 
 // Both feed endpoints, once per poll. Ordered first in refreshStats so the status bar and the
-// THROUGHPUT card read the same snapshot. The STDDS one is a proxy to the neighbouring process
+// THROUGHPUT card read the same snapshot. The STDDS one is a proxy to the neighboring process
 // and returns {reachable:false} rather than failing when that service is restarting.
 async function refreshFeeds() {
     if (!OPERATOR) return;   // _feed stays null; updateThroughput() already tolerates that
@@ -371,7 +371,7 @@ async function refreshFeeds() {
     } catch { /* keep the previous snapshot */ }
 }
 
-// Separate from refreshFeeds so the proxied neighbour (up to a 2 s timeout when it is restarting)
+// Separate from refreshFeeds so the proxied neighbor (up to a 2 s timeout when it is restarting)
 // never holds up the SFDPS rate or any card; it repaints the throughput table when it lands.
 async function refreshStdds() {
     if (!OPERATOR) return;

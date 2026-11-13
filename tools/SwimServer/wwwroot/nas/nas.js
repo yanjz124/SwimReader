@@ -198,11 +198,11 @@ function displayPos(t, now) {
     return [t.lat + nm / 60 * Math.cos(rad), t.lon + nm / 60 * Math.sin(rad) / cosLat];
 }
 
-// ── Colour ─────────────────────────────────────────────────────────────────────
+// ── Color ─────────────────────────────────────────────────────────────────────
 //
-// Three modes. CLASS is what a controller-style display does: colour says what
+// Three modes. CLASS is what a controller-style display does: color says what
 // kind of thing it is. ALTITUDE and ENERGY are what an overview browser wants:
-// colour says where in the vertical the traffic is, which is the question a
+// color says where in the vertical the traffic is, which is the question a
 // whole-NAS view is actually good at answering.
 const RAMP = [
     [0, [255, 112, 67]],       // surface — warm
@@ -248,13 +248,13 @@ function colorOf(t) {
 
 // ── Symbols ────────────────────────────────────────────────────────────────────
 //
-// One shape per class, so the kind of target is legible even when colour is
+// One shape per class, so the kind of target is legible even when color is
 // carrying altitude instead. Two of these borrow conventions already in this
 // repo rather than inventing new ones: ERAM draws an uncorrelated primary as a
 // '+', and the ASDE-X scope draws a vehicle as a square.
 //
 // The airborne classes are heading-oriented; the ones with no identity are
-// deliberately NOT drawn as aeroplanes. A triangle asserts a nose, and therefore
+// deliberately NOT drawn as airplanes. A triangle asserts a nose, and therefore
 // an aircraft — which is a claim the data does not make for a primary return,
 // about half of which are not aircraft at all.
 function drawSymbol(g, t, x, y, r, col, emph) {
@@ -282,7 +282,7 @@ function drawSymbol(g, t, x, y, r, col, emph) {
             break;
 
         case 'Terminal':
-            // Same shape hollow: still an aeroplane with a heading, visibly a
+            // Same shape hollow: still an airplane with a heading, visibly a
             // different layer of the system.
             tri();
             g.strokeStyle = col; g.lineWidth = emph ? 1.8 : 1.1;
@@ -291,7 +291,7 @@ function drawSymbol(g, t, x, y, r, col, emph) {
             break;
 
         case 'Surface': {
-            // A fuselage along the track. On the ground an aeroplane still has a
+            // A fuselage along the track. On the ground an airplane still has a
             // direction, but it is not flying, and a delta would read as airborne.
             const L1 = P(0, -r * 1.2), L2 = P(0, r * 1.2);
             g.lineCap = 'round';
@@ -454,7 +454,7 @@ function draw() {
 //
 // Three sources, deliberately kept separate because they are not the same data:
 //
-//   ARTCC      vNAS ArtccBoundaries.geojson — one lateral outline per centre.
+//   ARTCC      vNAS ArtccBoundaries.geojson — one lateral outline per center.
 //              There is no high/low variant of an ARTCC boundary, so there is no
 //              altitude control over this one.
 //   SECTORS    vNAS Fixed Airspace Volumes: real volumes with a numeric floor and
@@ -503,7 +503,7 @@ async function updateArtccLayer() {
     } catch (e) { console.warn('[NAS] ARTCC boundaries:', e.message); }
 }
 
-// Which centres the current view touches, so the sector layer loads a handful of
+// Which centers the current view touches, so the sector layer loads a handful of
 // ARTCCs rather than all 24 (2,641 volumes, 75,185 points nationally).
 function artccsInView() {
     if (!artccGeo) return [];
@@ -515,8 +515,8 @@ function artccsInView() {
         for (const [lon, lat] of ring) {
             if (b.contains([lat, lon])) { hit = true; break; }
         }
-        // A view wholly inside one centre contains none of its vertices, so also
-        // take the centre whose bounding box contains the view's middle.
+        // A view wholly inside one center contains none of its vertices, so also
+        // take the center whose bounding box contains the view's middle.
         if (!hit) {
             let s = 90, w = 180, n = -90, e = -180;
             for (const [lon, lat] of ring) {
@@ -637,8 +637,8 @@ map.on('moveend zoomend', () => { if ($('bSectors').checked) updateSectorLayer()
 //
 //   TBFM  arrival metering — airborne holding into a field. The figure is the
 //         governing hold, which the server computes as the chain MAXIMUM; summing
-//         the per-centre delays double-counts, because TBFM distributes a hold
-//         upstream and a centre that has absorbed it reads ~0 one point down.
+//         the per-center delays double-counts, because TBFM distributes a hold
+//         upstream and a center that has absorbed it reads ~0 one point down.
 //   TFDM  the field itself — runway configuration, AAR/ADR, closures and terminal
 //         restrictions (MIT/MINIT). Surface and departure, not arrival.
 //
@@ -882,9 +882,9 @@ function renderCounts() {
     }
 }
 
-// The legend has to say what colour MEANS, and that changes with the mode. In
+// The legend has to say what color MEANS, and that changes with the mode. In
 // class mode the swatches are the key; in altitude or energy mode they would be
-// actively misleading, so they go grey and a gradient scale appears instead.
+// actively misleading, so they go gray and a gradient scale appears instead.
 function renderLegend() {
     const mode = $('color').value;
     document.body.classList.toggle('by-value', mode !== 'class');
@@ -1076,8 +1076,8 @@ function renderDetail(d) {
     if (d.tbfm) {
         const b = d.tbfm;
         // The hold is the chain MAXIMUM, which is what the server already computed.
-        // Summing the per-centre delays double-counts: TBFM distributes a hold
-        // upstream and a centre that has absorbed it reads ~0 one point down.
+        // Summing the per-center delays double-counts: TBFM distributes a hold
+        // upstream and a center that has absorbed it reads ~0 one point down.
         if (b.delayMin) flow.push(['Metering hold', `${b.delayMin.toFixed(1)} min`
             + (b.holdCtr ? ` (${b.holdCtr}${b.holdPoint ? '/' + b.holdPoint : ''})` : '')]);
         if (b.point) flow.push(['Meter point', b.point]);

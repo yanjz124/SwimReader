@@ -69,7 +69,7 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
 
 ### Frontends / API Services
 - **NAS Map** (`/nas`) — the whole country as one fused picture: SFDPS + STARS + ASDE-X, one entity
-  per airframe, viewport-bounded delta stream, per-class symbols, colour by class/altitude/energy,
+  per airframe, viewport-bounded delta stream, per-class symbols, color by class/altitude/energy,
   ARTCC and ERAM sector boundaries, NEXRAD, and TBFM/TFDM flow restrictions
 - **ERAM Scope** (`eram.html`) — Leaflet + Canvas radar display with ERAM-style data blocks
 - **Flight Table** (`/flight-table`) — Tabular real-time flight explorer with filtering, pinning, detail panel; the panel carries ICAO FPL, SimBrief (with an airframe/type/variant picker), VATSIM prefile, FlightAware and TDLS history
@@ -590,7 +590,7 @@ process that only sees part of it.
 APDS / ISMC, plus a `TOTAL`), with the same field names SwimServer's `FeedHealth` emits so the two
 render side by side. It is served at `GET /feed` on :5000 and proxied by SwimServer as
 **`GET /api/feed/stdds`** (2 s timeout, 5 s cache, `{reachable:false}` rather than a stall when the
-neighbour restarts). The card shows both shares *and their sum*, which is the real queue rate.
+neighbor restarts). The card shows both shares *and their sum*, which is the real queue rate.
 
 **`ScdsHostedService` had no flow support at all** — a single hardcoded flow, while the other
 five bridges had had `*_FLOWS` for months, and it is the queue's **largest** consumer (~525 msg/s
@@ -623,15 +623,15 @@ Uniform 0.1-0.2 s floors across every sub-service, 0 discards. **A backlogged qu
 anyone messages a tenth of a second old**, so the queue is healthy and there is nothing to drain.
 
 What is real is narrower: **SwimServer's own STDDS path sits at a 3.5 s floor** while the same
-queue delivers to the neighbour at 0.1 s. Ruled out already — parse (gate held 6.3% of wall
-time), gate contention (`waitPct` 0.2%), transport per flow (the neighbour pushes 2.47 MB/s over
+queue delivers to the neighbor at 0.1 s. Ruled out already — parse (gate held 6.3% of wall
+time), gate contention (`waitPct` 0.2%), transport per flow (the neighbor pushes 2.47 MB/s over
 the same 3 flows), and CPU. With competing consumers the broker holds each message for the flow
 it assigned it to, so a consumer whose flows free their in-transit window more slowly sees *its
 own* messages arrive older while the other's flow freely — that is the mechanism to look at next,
 and it is specific to our side.
 
 `STDDS_FLOWS=3` is still earned (floor 6.9 -> 3.5 s, share 74 -> 149 msg/s). **More flows is not:
-that is now measured rather than assumed**, since the neighbour gained nothing from 1 -> 3 and
+that is now measured rather than assumed**, since the neighbor gained nothing from 1 -> 3 and
 reaches a 0.1 s floor regardless. The second-queue option below is also unnecessary for
 throughput — the split costs SwimServer freshness, not the queue capacity.
 
@@ -1481,7 +1481,7 @@ nothing; no layer declares a `<Dimension name="time">`. IEM offers *relative* la
 ~4 MB 12200x5400 PNG per 5-minute slot, EPSG:4326, upper-left `-126.0, 50.0` at 0.005 deg/px per
 its `.wld`, so bounds are lat 23-50, lon -126 to -65. Verified distinct per timestamp. It is a
 whole-CONUS image, not WMS tiles, so the slot is fetched **once** and every tile crops its own box
-out of one downscaled canvas (4x — the native RGBA buffer is ~263 MB); nearest-neighbour
+out of one downscaled canvas (4x — the native RGBA buffer is ~263 MB); nearest-neighbor
 throughout, because smoothing blends palette colors into hues the level classifier has no
 category for. The slot cache is bounded at 3.
 
@@ -1676,7 +1676,7 @@ the query string, so innerHTML would be a reflected-XSS hole on a page anyone ca
 
 ### The STARS picker keyed live traffic on the wrong id (Palm Beach read as dead)
 
-`/stars` showed PBI with no track count, no position chips, and — in REPLAY — greyed out as having
+`/stars` showed PBI with no track count, no position chips, and — in REPLAY — grayed out as having
 no recording, while the TRACON was working 170 tracks with 7 positions staffed. The facility was
 fine. **vNAS calls Palm Beach TRACON `PBI` while TAIS publishes it as `DJT`** (the airport was
 renamed), so all three of the picker's live lookups missed: `taisCounts["PBI"]`, `tcpByFac["PBI"]`,
@@ -1693,21 +1693,21 @@ id itself.
 no feed under their own id at all, and those are legitimate — military RAPCON/RATCFs (CVS, HMN,
 LUF, GUS, NQI …) and Hawaii/Guam/PR, none of which are on our STDDS subscription.
 
-### An SPC colours its own two characters, not the whole data block
+### An SPC colors its own two characters, not the whole data block
 
-CRC gives **no** data-block colour for a special purpose code: "the associated two-character
+CRC gives **no** data-block color for a special purpose code: "the associated two-character
 identifier will be displayed in the first line of the data block", plus an SSA entry and a tone.
-Its one red data-block item is **CA** ("blinking red in the top line"), and its target-colour
+Its one red data-block item is **CA** ("blinking red in the top line"), and its target-color
 descriptions are white = owned, green = another controller's, cyan = highlighted, yellow = incoming
-point out, red = CA. There is no emergency block colour.
+point out, red = CA. There is no emergency block color.
 
 DGScope has one (`RadarWindow.cs:5436 if (Emergency) → DataBlockEmergencyColor`) and this port
 copied it for 7700/7600/7500. The cost was not cosmetic: **white-vs-green is whose aircraft it is**,
 and reddening the block threw that away exactly when it matters most — an emergency on your own
 frequency rendered identically to one three sectors away. Dropped. The `EM`/`RF`/`HJ`/`MI`/`LL`
 identifier is still red on its own line (matching CRC's red `RF EM` SSA line) and still blinks
-until the track is slewed. FDB promotion on an emergency is untouched — that is behaviour, not
-colour.
+until the track is slewed. FDB promotion on an emergency is untouched — that is behavior, not
+color.
 
 The pattern to remember: **appearance follows the CRC docs, algorithms follow the DGScope source.**
 `docs/crc-stars-reference.md` already warned that matching DGScope where CRC is silent moves us
@@ -1728,7 +1728,7 @@ A facility publishes one `mapGroup` per group of TCPs — vNAS says so, every gr
   ScopeServer profile existed ("profile maps supersede vNAS maps on v2"). That inverts the
   precedence: vNAS adaptation is authoritative and covers all 213 facilities; a ScopeServer profile
   is a legacy/reference artifact for a handful. PCT has one and was discarding its own 237 vNAS
-  maps and 15 position groups in favour of the profile's 6-slot binding.
+  maps and 15 position groups in favor of the profile's 6-slot binding.
 
 `selectMapGroup()` is now keyed on `ownTcp()` and called from bootstrap **and** `setOwnTcp`, and
 the profile path runs only when vNAS gave us nothing (`?dgmaps=1` forces it for comparison).
@@ -1781,7 +1781,7 @@ browser that had loaded the page once. The character class also has no `/`, so `
 was never stamped at all.
 
 **This defeats browser-based verification, which is the part to remember.** A fresh headless
-Chromium has an empty cache, so it fetches whatever the HTML names and shows the new behaviour —
+Chromium has an empty cache, so it fetches whatever the HTML names and shows the new behavior —
 every check passes, and would pass no matter how broken the stamping is. Confirming a change in a
 clean browser says nothing about whether a returning user will see it. **Check the emitted tag.**
 `AssetVersion.Stamp` + `AssetVersionTests` (which asserts against the real `scope.html`) exist
@@ -2016,7 +2016,7 @@ live entities, because terminal churn mints ~130 new entities per pass (~65 targ
 average track life ~3 min). The memory was affordable; the *correctness* was not — ten minutes is
 long enough for a busy TRACON to reissue a number still held, and the next aircraft to get it
 inherits the previous one's entity id, so the client draws one history trail leaping between two
-aeroplanes. Nothing errors. With per-kind TTLs the map plateaus at **64-68k keys**.
+airplanes. Nothing errors. With per-kind TTLs the map plateaus at **64-68k keys**.
 
 Timestamps are refreshed only past a third of their own lifetime — `ConcurrentDictionary` cannot
 write a 16-byte value atomically, so it **allocates a node per update**, and that was ~68,000
@@ -2040,7 +2040,7 @@ by asking the index about every named SFDPS flight it did *not* contain:
 - **The remaining 20 were all the next rotation's flight plan.** An airframe files its next leg
   while still airborne, so SFDPS holds a PROPOSED record with the same Mode S and no position —
   not "ended", and *fresher*, because plan amendments arrive constantly while a radar position
-  arrives every twelve seconds. SWA1306 at 31,000 ft was labelled SWA1410. A positioned record
+  arrives every twelve seconds. SWA1306 at 31,000 ft was labeled SWA1410. A positioned record
   now outranks an unpositioned one **before** ended-ness: identity and position should come from
   the same record. Coverage went **115 → 31 → 2** (of 4,751; 0.04%, arrivals between reads).
 
@@ -2065,7 +2065,7 @@ symptom would be a lower match count, which reads like a quiet day.
 Beacon matching names ~890 targets on a cold pass and ~1-25/pass warm: the merge is remembered in
 the key map, so the cost is one-off and the effect accumulates.
 
-**A Mode S shared by two *fresh positioned* records is always one aeroplane in one place** — 18
+**A Mode S shared by two *fresh positioned* records is always one airplane in one place** — 18
 such codes, none over 10 NM apart — so the merge needs no distance guard. (The alarming ">100 NM
 apart" pairs in the first pass were a missing age filter in the measuring script: every one paired
 a 25-60 minute stale record with a fresh one, usually under the same callsign.)
@@ -2074,7 +2074,7 @@ a 25-60 minute stale record with a fresh one, usually under the same callsign.)
 `enroute / terminal / surface / vehicle / untagged / primary`. **1,725 of 3,483 untagged TAIS
 tracks report altitude 0 AND under 100 kt**, clustered at plains TRACONs (DSM/SUX/ACT/FSD/ICT) at
 local midnight in November — live radar, p50 age 15-30 s, just not airplanes. Drawing them
-unlabelled makes the NAS view ~30% clutter; dropping them silently misrepresents the sensor. They
+unlabeled makes the NAS view ~30% clutter; dropping them silently misrepresents the sensor. They
 get their own class so the map can filter and say so.
 
 Two output bugs here, both found by cross-checking the fused output against its sources rather
@@ -2137,7 +2137,7 @@ endpoints are `LaddService.OperatorView`-gated as well: they are bulk dumps of e
 country with its identity attached.
 
 ### What the tests are for, and what the mutation run kept finding
-Every rule above renders as a plausible aeroplane in the right part of the country when it is
+Every rule above renders as a plausible airplane in the right part of the country when it is
 wrong, so **neither a browser nor a live `curl` can see any of it**. `NasFusionTests`,
 `NasKeyTests`, `ThreadCpuTests` and `LaddNormalizeTests` exist for that, and the mutation run is
 what made them real rather than decorative — **five tests were rewritten because a mutation proved
@@ -2160,7 +2160,7 @@ One test-data note worth keeping: **beacon codes are octal and `4000` is non-dis
 naive `4000 + i` range yields 19 correlatable targets of 20 and fails for the wrong reason.
 
 ### Open, for the map itself
-- **Viewport-bounded streaming is mandatory, not an optimisation**: 690 kB per update to every
+- **Viewport-bounded streaming is mandatory, not an optimization**: 690 kB per update to every
   client is not a stream. `?bbox=` on `/api/nas/targets` is the shape.
 - The remaining allocation is dominated by rebuilding ~17,500 `NasEntity` objects per pass.
   Recycling them across passes is the known next lever (it would cost snapshot isolation, which
@@ -2211,20 +2211,20 @@ Measured over a synthesized drag: **25 distinct pane offsets, 1 canvas origin**,
 re-anchor on `moveend`. (`_getNewPixelOrigin` is Leaflet-internal and used deliberately — it is
 the call `L.Renderer` makes, and reimplementing the projection maths to avoid it would be worse.)
 
-### Symbols say what, colour says where
-One shape per class, so the kind of target stays legible when colour is carrying altitude. Two
+### Symbols say what, color says where
+One shape per class, so the kind of target stays legible when color is carrying altitude. Two
 borrow conventions already in this repo rather than inventing any: ERAM draws an uncorrelated
 primary as **`+`**, the ASDE-X scope draws a vehicle as a **square**. En route is a filled delta,
 terminal the same shape hollow, surface a fuselage along the track.
 
-**The classes with no identity are deliberately not aeroplanes.** A triangle asserts a nose and
+**The classes with no identity are deliberately not airplanes.** A triangle asserts a nose and
 therefore an aircraft, which is a claim the data does not make for a primary return — about half
 of which are not aircraft at all.
 
-Colour is a **mode**: by class, by altitude, or by **energy** — specific energy height
+Color is a **mode**: by class, by altitude, or by **energy** — specific energy height
 `h + v²/2g`, a real quantity rather than a blend of two numbers, and the one that makes a fast low
 aircraft and a slow high one comparable (the kinetic term is ~9,000 ft at 450 kt). The legend key
-is therefore the *symbol*, not a colour chip: in by-value mode a chip would be actively lying, so
+is therefore the *symbol*, not a color chip: in by-value mode a chip would be actively lying, so
 the chips go neutral and a gradient scale appears.
 
 ### Airspace: three sources that are not the same data
@@ -2234,15 +2234,15 @@ the chips go neutral and a gradient scale appears.
 | ERAM sector volumes | vNAS FAVs | **reshapes with the altitude filter** — the slabs carry a numeric floor and ceiling |
 | Legacy KML | `AllSectors` / `AllHigh` / `AllLow` | free text only |
 
-Sector volumes load for the centres **in view** (capped at 8); nationally they are 2,641 volumes
+Sector volumes load for the centers **in view** (capped at 8); nationally they are 2,641 volumes
 and 75,185 points. Exclusions and the 99k sentinel volumes are left out — an exclusion is a 3-D
 subtraction, not a boundary anyone works to. The KML list comes from `GET /api/kml`, so a
 deployment without the files does not advertise three dead options.
 
 **The KML parser is `shared/kml-sectors.js` and the ERAM scope delegates to it.** Its
-categorisation is not mechanical: most placemarks carry a `FolderPath`, the **western ARTCCs carry
+categorization is not mechanical: most placemarks carry a `FolderPath`, the **western ARTCCs carry
 none** and have to be recovered by walking up to an ancestor `<Folder>` named like `ZLA_HIGH_NEW`.
-Without that fallback those centres silently vanish, which looks like missing data rather than a
+Without that fallback those centers silently vanish, which looks like missing data rather than a
 parse gap.
 
 All boundary layers are `interactive: false` in a pane below the targets, so none can take a hover
@@ -2253,7 +2253,7 @@ What is holding traffic, drawn where it is held. **Two sources answering differe
 deliberately not added together:**
 
 - **TBFM** — arrival metering, airborne holding into a field. The figure is the governing hold,
-  which is the chain **maximum and never a sum**: TBFM distributes a hold upstream, so a centre
+  which is the chain **maximum and never a sum**: TBFM distributes a hold upstream, so a center
   that has absorbed it reads ~0 one point downstream.
 - **TFDM** — the field itself: runway configuration, AAR/ADR, closures, gridlock, terminal
   restrictions. Surface and departure.
@@ -2267,7 +2267,7 @@ Three traps, all of which shipped and were caught live:
 - **The two feeds key airports differently** — TFDM publishes ICAO (`KLAS`), TBFM the FAA LID
   (`LAS`). Joining raw matched almost nothing: LAS came back as two rows, one with metering and no
   field data and one with field data and no metering, which reads as two different airports. Both
-  sides normalise with `NasRoutes.Lid`, and **only a leading K is stripped** — taking the first
+  sides normalize with `NasRoutes.Lid`, and **only a leading K is stripped** — taking the first
   character off any four-character identifier turns PANC into ANC and PHNL into HNL.
 - **TFDM's gridlock enum is usually negative.** `NO_PREDICTED_GRIDLOCK` was being captioned onto
   the map as though the absence of a problem were a problem.
@@ -2329,7 +2329,7 @@ Each page keeps only what is genuinely its own — row rendering, and its own ro
 **It was two copies, and they drifted.** The same bug had to be fixed twice on one day (a TYPE
 override reloaded the VARIANT list but not the AIRFRAME list, so SimBrief could be handed a tail
 whose real type contradicted the chosen type). Reading the two builders side by side then found
-**four more disagreements, every one silent** — SimBrief ignores a parameter it does not recognise
+**four more disagreements, every one silent** — SimBrief ignores a parameter it does not recognize
 and simply opens with the field blank, so none of these ever produced an error:
 
 | | was | per [the docs](https://developers.navigraph.com/docs/simbrief/using-the-api) |
@@ -2955,7 +2955,7 @@ from the spec (TBFM MIS JMSDD, NSRR); the raw tag is always what the API returns
 - **`con/aar`** (`apt`, `tra`, `rat`, `tim`) and **`con/tar`** (`tra`, `rat`, `tim`, `tarType`).
 
 **`mfx` is whatever point that center schedules to, arc or fix.** Live: ZLA schedules N650AL
-(SAN→OAK) to `PXN`, which is an arc, labelled `<mfx>`. Only the center's adaptation (`mrn/mrt`)
+(SAN→OAK) to `PXN`, which is an arc, labeled `<mfx>`. Only the center's adaptation (`mrn/mrt`)
 says which, exposed as `pointType` (MFX / MFA / OMA / OOA; null until that center's adaptation has
 arrived). Adaptation is published rarely (one center in a ~10-minute capture, none in the first
 minutes after a restart), so it is saved to `flight-cache/tbfm-adaptation.json` (on change, from
@@ -3049,7 +3049,7 @@ On `/tbfm/center/{ctr}` the overlay is fetched **once** into its own layer and i
 meter points is torn down and rebuilt on every 10 s refresh, so boundaries riding on it would be 24
 polygons re-added six times a minute, and the pane pins them *under* the adaptation rather than
 trusting add order to survive each rebuild. The center's own boundary draws solid and brighter, its
-neighbours dashed and dim; all are `interactive: false` so they can never take a tooltip from a
+neighbors dashed and dim; all are `interactive: false` so they can never take a tooltip from a
 meter point. The practical payoff is that extended metering becomes visible as points sitting in
 somebody else's center.
 
@@ -3108,7 +3108,7 @@ somewhere underneath. **`eram.js` has had the correct formula since forever**
 Both maps now run off **`wwwroot/tbfm/map.js`**, which holds the geometry that is easy to get
 wrong — the point *on* an arc rather than its center, the clockwise span, knots-to-degrees — plus
 the boundary layer, the traffic layer and the controls. `center.js` went 532 → 289 lines with no
-behaviour change. This is the third time this repo has paid for two copies of one rule (the
+behavior change. This is the third time this repo has paid for two copies of one rule (the
 SimBrief URL builders, `CurrentLegFirst`); the vector bug is what the third copy produced.
 
 `TbfmMap` is published as **`window.TbfmMap`** explicitly. A top-level `const` in a classic script
@@ -3215,11 +3215,11 @@ A real bug did hide behind this: the **home page's ITWS card** had a `.count` sl
 `home.js` ever wrote to, so it was blank regardless of feed health (as were TFDM and SECTORS). Any
 new card needs its count wired there explicitly.
 
-## Airline intel: per-fleet utilisation, destinations and routes
+## Airline intel: per-fleet utilization, destinations and routes
 
 `/airlines/{icao}` FLEET tab. With no fleet selected it compares every type side by side
 (tails, legs, air h, **h/tail/day with a bar**, legs/tail/day, avg sector, turn, destinations,
-routes, share); selecting one shows that fleet's utilisation, top ten destinations and top ten
+routes, share); selecting one shows that fleet's utilization, top ten destinations and top ten
 routes above its tails. Clicking a comparison row selects the fleet, same as the chips.
 
 All of it is rolled up in `AirlineResearch` `typeRows` — server-side, so the numbers match
@@ -3315,7 +3315,7 @@ LAX 06s vs 07s, ATL 08s vs 09s/10s, MCO 17s vs 18s, PHX 07s vs 08s). Zero unexpl
 check after touching anything here.
 
 ### Deliberately missing
-No lightning/thunderstorm panel like the displays this is modelled on. ITWS publishes lightning but
+No lightning/thunderstorm panel like the displays this is modeled on. ITWS publishes lightning but
 it is **not on our SCDS queue** (26 product types, none of them lightning), and a panel that can only
 ever say "0 strikes" is worse than no panel.
 
@@ -3403,7 +3403,7 @@ that would only 403.
 sample and now falls back, for visitors, to `/api/stats`'s **lifetime average** — the exact number
 ["The home page rate was a lifetime average"](#the-home-page-rate-was-a-lifetime-average) explains
 is not comparable with the SCDS portal. The existing fallback tooltip says "average since start (no
-live sample)", so it is labelled rather than misleading. Fixing it properly means putting one
+live sample)", so it is labeled rather than misleading. Fixing it properly means putting one
 instantaneous SFDPS rate into `/api/stats`; the per-feed table is what must stay private, not that
 single number. The `SRV:` chip is hidden with the group rather than left reading `--`.
 
@@ -3669,7 +3669,7 @@ second replay": pause it — or hit a quiet stretch, which the pacing fix above 
 *honours* in real time instead of skipping — and the scope blanks half a minute later. At 10x it
 failed the other way, holding dead targets ten times too long.
 
-`scopeNow()` is the radar clock: **exactly `Date.now()` when live**, so live behaviour is
+`scopeNow()` is the radar clock: **exactly `Date.now()` when live**, so live behavior is
 unchanged, and `ReplayBar.clockMs()` during a replay — interpolated between server messages,
 frozen while paused, scaled by speed. It is anchored near `Date.now()` rather than at the archived
 timestamp, so a site that still reads `Date.now()` is wrong by the length of a pause rather than

@@ -1,9 +1,9 @@
-namespace SwimServer.Tests;
+﻿namespace SwimServer.Tests;
 
 /// <summary>
 /// The fused NAS index. Every rule here is one a browser and a live <c>curl</c> are both blind
 /// to: a target drawn from the wrong source, from a dead leg, from a 50-minute-old fix, or given
-/// a neighbour's callsign all render as a perfectly plausible airplane in the right part of the
+/// a neighbor's callsign all render as a perfectly plausible airplane in the right part of the
 /// country. The repo has already paid for exactly this class of bug twice — the ADS-B callsign
 /// landing in fields nothing read (every counter healthy, scope correctly blank) and the
 /// cache-busting no-op (every clean-browser check passing regardless).
@@ -160,7 +160,7 @@ public class NasFusionTests
     /// about three minutes) and every key was held for ten minutes. The memory was affordable;
     /// the correctness was not. At a busy TRACON, ten minutes is long enough to reissue a number
     /// this index still holds — and the next aircraft to get it would inherit the previous one's
-    /// entity id, so the client draws a single history trail leaping between two aeroplanes.
+    /// entity id, so the client draws a single history trail leaping between two airplanes.
     /// Nothing errors, and no counter moves.</para>
     ///
     /// <para>Sixty seconds is what a track key is actually for: covering a scan or two of silence
@@ -204,7 +204,7 @@ public class NasFusionTests
         Assert.NotEqual(trackId, recycledId);
 
         // ...while the identity key survived the very same gap, because a Mode S code still
-        // names the same aeroplane.
+        // names the same airplane.
         Assert.Equal(namedId, recycled.Entities.Values.Single(e => e.Callsign == "AAL100").Id);
     }
 
@@ -365,14 +365,14 @@ public class NasFusionTests
     /// <b>One airframe, two legs, and the current one must win the identity.</b> SFDPS keeps a
     /// flight 60 minutes past its last update, so a quick turn has both legs live at once: same
     /// Mode S, usually the same beacon code, the same position. Merging them is right — it is one
-    /// aeroplane — but <c>Fill</c> keeps the first non-null value it sees, and iterating a
+    /// airplane — but <c>Fill</c> keeps the first non-null value it sees, and iterating a
     /// <c>ConcurrentDictionary</c> is an arbitrary order, so which leg's callsign survived was a
     /// coin flip.
     ///
     /// <para>Measured live: <b>112 of 115</b> named SFDPS flights missing from the index were
     /// sitting in it under the other leg's name — SWA519/SWA3872, JBU203/JBU204,
     /// ACA1322/ACA1323, CNS333/N702NF. Consecutive leg numbers, identical hex and squawk. The
-    /// target count is right and nothing errors; the aeroplane just wears the wrong name.</para>
+    /// target count is right and nothing errors; the airplane just wears the wrong name.</para>
     /// </summary>
     [Fact]
     public void OfTwoLegsOfOneAirframeTheCurrentOneNamesTheEntity()
@@ -394,7 +394,7 @@ public class NasFusionTests
     }
 
     /// <summary>
-    /// <b>The next leg's flight plan must not name the aeroplane flying this one.</b> An airframe
+    /// <b>The next leg's flight plan must not name the airplane flying this one.</b> An airframe
     /// files its next rotation while it is still in the air, so SFDPS holds a PROPOSED record for
     /// a flight that does not exist yet — same Mode S, no position.
     ///
@@ -402,8 +402,8 @@ public class NasFusionTests
     /// airborne leg's, because flight-plan amendments arrive constantly while a radar position
     /// arrives every twelve seconds. So on freshness alone the future flight sorted first.
     /// Measured live after the first ordering fix: <b>20 of the 20 remaining mis-named
-    /// entities</b> were this — SWA1306 in the air labelled SWA1410, ACA739 labelled ACA740,
-    /// DAL546 labelled DAL1908. An aeroplane wearing the name of a flight it has not begun.</para>
+    /// entities</b> were this — SWA1306 in the air labeled SWA1410, ACA739 labeled ACA740,
+    /// DAL546 labeled DAL1908. An airplane wearing the name of a flight it has not begun.</para>
     ///
     /// <para>The rule is that identity and position should come from the same record, so a
     /// positioned record outranks an unpositioned one before anything else is weighed.</para>
@@ -433,7 +433,7 @@ public class NasFusionTests
     /// filed as PROPOSED with no position at all.
     ///
     /// <para>Ranking ended-ness first would hand the entity to the future flight and leave it
-    /// <b>unpositioned, so undrawn</b> — an aeroplane sitting on a taxiway, vanished from the
+    /// <b>unpositioned, so undrawn</b> — an airplane sitting on a taxiway, vanished from the
     /// map and named after a flight that has not begun. Ranking position first draws it where it
     /// actually is, under the name it actually just flew. (Measured: swapping the two terms left
     /// all 212 other tests green.)</para>
@@ -594,7 +594,7 @@ public class NasFusionTests
     /// Half the uncorrelated terminal population is not aircraft: measured, 1,725 of 3,483
     /// untagged TAIS tracks report altitude 0 AND under 100 kt, clustered at plains TRACONs at
     /// local midnight in November. They are live radar, so dropping them would misrepresent what
-    /// the sensor sees; drawing them unlabelled makes the NAS view ~30% clutter. They get their
+    /// the sensor sees; drawing them unlabeled makes the NAS view ~30% clutter. They get their
     /// own class so the map can offer a filter and an honest label.
     /// </summary>
     [Fact]
@@ -677,7 +677,7 @@ public class NasFusionTests
 
     /// <summary>
     /// <b>Surface means on the surface, not "ASDE-X positioned it".</b> ASDE-X covers the
-    /// approach and departure corridors, so keying the class on the positioning source labelled
+    /// approach and departure corridors, so keying the class on the positioning source labeled
     /// UCA4347 at 3,387 ft and 221 kt a surface target — live, along with ~200 others. The map
     /// draws the class, so those are taxiing symbols several thousand feet up: entirely plausible
     /// to look at, and wrong.
@@ -773,11 +773,11 @@ public class NasFusionTests
     ///
     /// <para>The precision is pinned at FIVE decimal places (1.1 m) because one rounding serves
     /// both a continental view and a single airport. 4 dp is 11 m: invisible at CONUS zoom, a
-    /// visible quantisation on an ASDE-X surface view where a pixel is a couple of metres. The
+    /// visible quantisation on an ASDE-X surface view where a pixel is a couple of meters. The
     /// cheaper rounding is the one that is wrong in the place that can see it.</para>
     /// </summary>
     [Fact]
-    public void TheDeltaIsSevenPositionalFieldsAtMetrePrecision()
+    public void TheDeltaIsSevenPositionalFieldsAtMeterPrecision()
     {
         var s = Fuse(sfdps: new[]
         {

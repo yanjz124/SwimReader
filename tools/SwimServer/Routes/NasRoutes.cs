@@ -36,7 +36,7 @@ static class NasRoutes
         //
         // The two halves answer different questions and are deliberately NOT merged into one
         // "delay" number: TBFM's hold is airborne arrival metering (and is a chain MAXIMUM, never
-        // a sum — a centre that has absorbed the hold reads ~0 one point downstream), while
+        // a sum — a center that has absorbed the hold reads ~0 one point downstream), while
         // TFDM's is surface and departure constraint. An airport can have one without the other.
         app.MapGet("/api/nas/flow", (HttpContext http) =>
         {
@@ -47,7 +47,7 @@ static class NasRoutes
             // FAA LID (LAS). Joining them raw matched almost nothing — LAS appeared twice, once
             // with metering and no field data and once with field data and no metering, which
             // reads as two different airports rather than a failed join. Both sides are
-            // normalised to the LID, the same way TbfmDashboard.AirportBoard already does.
+            // normalized to the LID, the same way TbfmDashboard.AirportBoard already does.
             var tfdm = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             foreach (var (k, v) in ctx.Tfdm.FlowSnapshot()) tfdm[Lid(k)] = v;
 
@@ -137,9 +137,9 @@ static class NasRoutes
 
         // What the pass did: entity count, per-class split, per-tier match counts and cost.
         //
-        // ?payload=1 also serialises the whole snapshot in the streaming (positional-array) form
+        // ?payload=1 also serializes the whole snapshot in the streaming (positional-array) form
         // and reports its byte length. That is measured on request rather than every pass because
-        // serialising ~12k targets twice a second to produce a number nobody reads would be the
+        // serializing ~12k targets twice a second to produce a number nobody reads would be the
         // sort of self-inflicted cost this index is trying to avoid.
         app.MapGet("/api/nas/stats", (HttpContext http, int? payload) =>
         {
@@ -224,7 +224,7 @@ static class NasRoutes
     }
 
     /// <summary>
-    /// Normalise an airport identifier to the FAA LID the NAS map keys on: KLAS -> LAS.
+    /// Normalize an airport identifier to the FAA LID the NAS map keys on: KLAS -> LAS.
     /// Only a 4-character identifier beginning with K is stripped, which is the same rule
     /// TbfmDashboard uses — PANC and PHNL must keep their prefix.
     /// </summary>

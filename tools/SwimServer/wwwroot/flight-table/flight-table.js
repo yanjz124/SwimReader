@@ -975,7 +975,7 @@ function buildSimBriefUrl(d, choice) {
 // A flight-table record -> the shared SimBrief flight shape (/shared/simbrief.js).
 //
 // Three things the old local builder got wrong, all of which failed silently because SimBrief
-// ignores a parameter it doesn't recognise and just opens with the field blank:
+// ignores a parameter it doesn't recognize and just opens with the field blank:
 //   - `hexcode` was sent top-level; it is an acdata field, so Mode-S never arrived.
 //   - `extrarmk` was sent top-level for RMK/; it is an acdata field too, so remarks never arrived
 //     (and the acdata copy only carried COM/DAT/SUR).

@@ -233,7 +233,7 @@
         <option value="1440">24 h</option>
     </select>
     <span class="lbl" style="margin-left:14px;">BOUNDARIES</span>
-    <select id="bndSel" title="Where sector shapes come from. vNAS: Fixed Airspace Volumes, coloured by who owns each volume right now (AIXM). KML: the old AllSectors.kml file.">
+    <select id="bndSel" title="Where sector shapes come from. vNAS: Fixed Airspace Volumes, colored by who owns each volume right now (AIXM). KML: the old AllSectors.kml file.">
         <option value="fav">vNAS</option>
         <option value="kml">KML</option>
     </select>
@@ -755,7 +755,7 @@ async function loadKmlSectors() {
 
 // ── vNAS Fixed Airspace Volumes ───────────────────────────────────────────
 // A volume is one altitude slab of one sector, `favId` = {sector:3}{volume:2}, with its own polygon.
-// The AIXM feed lists, per position, the favIds it owns — the SAME ids, so colouring is a direct
+// The AIXM feed lists, per position, the favIds it owns — the SAME ids, so coloring is a direct
 // join (no sector-name guessing, which is what the KML path needs and why ZLA was special-cased).
 // Slabs tile in altitude, so the map shows one flight level at a time rather than a category.
 const FAV_LEVEL = { 'Ultra High': 390, 'High Altitude': 300, 'Low Altitude': 180 };

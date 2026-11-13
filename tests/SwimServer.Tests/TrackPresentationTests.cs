@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace SwimServer.Tests;
 
@@ -63,7 +63,7 @@ public class TrackPresentationTests
     [Fact]
     public void DroppedWithALivePositionIsStillAirborne()
     {
-        // The reported case: FL320, 477 kt, position 1 second old, labelled DROPPED. SFDPS marks a
+        // The reported case: FL320, 477 kt, position 1 second old, labeled DROPPED. SFDPS marks a
         // flight DROPPED when the LOSING center drops the track during a handoff, before the
         // receiving center reports — so it says nothing about the flight while radar is current.
         var f = Flight("DROPPED", 35.4, 477, posAgeSec: 1);
@@ -153,7 +153,7 @@ public class TrackPresentationTests
     public void AMidflightAircraftInSurfaceDataIsNeverCalledSurface()
     {
         // The case the original ordering existed to guard against: an airborne flight briefly
-        // appearing in ASDE-X data must not be relabelled off it. The Mode C gate is what holds.
+        // appearing in ASDE-X data must not be relabeled off it. The Mode C gate is what holds.
         var f = Flight("ACTIVE", 33.95, 450, posAgeSec: 2);
         f.ReportedAltitude = 35000;
         Assert.Equal("AIRBORNE", TrackRoutes.PhaseOf(f, new AsdexTrack { SpeedKts = 3 }, null).label);

@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 
 namespace SwimServer.Tests;
 
@@ -68,7 +68,7 @@ public class ReplayClockContractTests
     public void ScopeDefinesTheRadarClockAndTheBarExposesIt()
     {
         // Both halves, because either one alone silently degrades to the wall clock: scopeNow()
-        // falls back to Date.now() when clockMs() is absent, which is exactly the old behaviour.
+        // falls back to Date.now() when clockMs() is absent, which is exactly the old behavior.
         Assert.Matches(@"function scopeNow\(\)", Read("stars", "scope.js"));
         Assert.Contains("window.ReplayBar?.clockMs?.()", Read("stars", "scope.js"));
         Assert.Matches(@"clockMs\(\)\s*\{", Read("shared", "replay-bar.js"));

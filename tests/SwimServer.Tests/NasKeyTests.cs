@@ -1,4 +1,4 @@
-namespace SwimServer.Tests;
+﻿namespace SwimServer.Tests;
 
 /// <summary>
 /// The identity key itself. Everything in the fused index hangs off this type's equality, so a
@@ -51,7 +51,7 @@ public class NasKeyTests
     /// Case must never split an entity. SFDPS publishes Mode S hex lower-case
     /// (<c>-AD9003</c> in supplementalData) while TAIS publishes it upper-case, so an
     /// ordinal comparison would stop the two sources ever joining on the strongest key there
-    /// is — and the only symptom would be the same aeroplane drawn twice.
+    /// is — and the only symptom would be the same airplane drawn twice.
     /// </summary>
     [Theory]
     [InlineData("ad9003", "AD9003")]

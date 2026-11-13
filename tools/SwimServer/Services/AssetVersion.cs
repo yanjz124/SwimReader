@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 
 namespace SwimServer;
 
@@ -20,7 +20,7 @@ namespace SwimServer;
 /// <c>/</c>, so rooted paths were never stamped at all.</para>
 ///
 /// <para><b>The trap worth naming:</b> a fresh headless browser has an empty cache, so it fetches
-/// whatever the HTML says and shows the new behaviour. Browser-based verification therefore
+/// whatever the HTML says and shows the new behavior. Browser-based verification therefore
 /// *cannot* detect this class of bug — it looks like a pass every time. Check the emitted tag, not
 /// just the rendered result.</para>
 /// </summary>

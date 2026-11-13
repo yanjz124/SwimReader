@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text;
 
 namespace SwimServer;
@@ -312,10 +312,10 @@ static class TrackRoutes
         // The next leg's flight plan is not "ended" and its LastSeen is often FRESHER than the
         // airborne leg's last radar fix, because plan amendments arrive constantly while a
         // position arrives every twelve seconds - so on freshness alone a PROPOSED next leg sorts
-        // ahead of the aeroplane that is actually flying. Measured on the fused NAS index: 20 of
+        // ahead of the airplane that is actually flying. Measured on the fused NAS index: 20 of
         // 20 remaining mis-named entities were this, each an airborne aircraft wearing the
-        // callsign of the flight it was about to operate (SWA1306 flying, labelled SWA1410;
-        // ACA739 labelled ACA740). Identity and position should come from the same record.
+        // callsign of the flight it was about to operate (SWA1306 flying, labeled SWA1410;
+        // ACA739 labeled ACA740). Identity and position should come from the same record.
         .OrderBy(f => f.Latitude is null || f.Longitude is null ? 1 : 0)
         .ThenBy(f => LegEnded(f) ? 1 : 0)
         .ThenByDescending(f => f.LastSeen);
@@ -999,7 +999,7 @@ static class TrackRoutes
             // DROPPED is a handoff artifact at least as often as a real loss of track: the losing
             // center drops it before the receiving center reports. With a live position it says
             // nothing about the flight, and reads alarmingly to someone merely following one — a
-            // flight at FL320 and 477 kt with a 1-second-old position was labelled DROPPED.
+            // flight at FL320 and 477 kt with a 1-second-old position was labeled DROPPED.
             if (f.FlightStatus == "DROPPED" && !livePos) return ("DROPPED", "r");
             // Deliberately NOT gated on livePos: a coasting flight is still airborne, and making
             // the label depend on freshness would flip it across a single missed radar scan.

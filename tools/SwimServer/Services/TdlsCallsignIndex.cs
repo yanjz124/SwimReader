@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text;
 
 namespace SwimServer;
@@ -93,7 +93,7 @@ static class TdlsCallsignIndex
 
     /// <summary>Airport totals across ALL recorded history, from memory — the directory's history
     /// grid used to need a day because counting meant reading a day file. The index already knows
-    /// every occurrence's airport, so the whole archive can be summarised without touching disk.
+    /// every occurrence's airport, so the whole archive can be summarized without touching disk.
     /// Cached briefly: it walks every occurrence (~2.4M) and the answer barely moves.</summary>
     public static IReadOnlyList<(string Airport, int Aircraft, int Messages)>? AirportTotals()
     {

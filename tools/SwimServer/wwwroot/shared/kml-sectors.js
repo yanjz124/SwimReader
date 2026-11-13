@@ -2,7 +2,7 @@
  * Parses an `AllSectors.kml` / `AllHighSectors.kml` / `AllLowSectors.kml` into
  * {artcc, name, sectorId, alt, category, coords} records.
  *
- * Extracted from eram.js so there is ONE copy. The categorisation is not
+ * Extracted from eram.js so there is ONE copy. The categorization is not
  * mechanical and would drift immediately if duplicated:
  *
  *   - Most placemarks carry a FolderPath in their description table, as
@@ -11,7 +11,7 @@
  *   - The WESTERN ARTCCs have no FolderPath at all. For those the ARTCC and the
  *     category have to be recovered by walking up to an ancestor <Folder> whose
  *     name looks like "ZLA_HIGH_NEW" and pattern-matching the words in it.
- *     Without that fallback those centres silently vanish — 204 of ~2,124
+ *     Without that fallback those centers silently vanish — 204 of ~2,124
  *     placemarks, which looks like missing data rather than a parse gap.
  *
  * This file is the legacy source. vNAS Fixed Airspace Volumes are better in

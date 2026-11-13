@@ -1,4 +1,4 @@
-namespace SwimServer.Tests;
+﻿namespace SwimServer.Tests;
 
 /// <summary>
 /// One client's viewport and diff over the fused picture.
@@ -6,7 +6,7 @@ namespace SwimServer.Tests;
 /// <para>Everything here fails <i>quietly</i>. A viewport that matches nothing across the
 /// antimeridian looks like a quiet Pacific. A truncation that returns a different subset each
 /// tick looks like a broken renderer. An identity update that never reaches the client leaves an
-/// aeroplane permanently unlabelled. A hash over the un-rounded position makes the delta stream
+/// airplane permanently unlabeled. A hash over the un-rounded position makes the delta stream
 /// send everything, every tick, while appearing to work perfectly. None of it throws, and a
 /// browser shows a plausible map in every case.</para>
 /// </summary>

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace SwimServer;
@@ -27,7 +27,7 @@ static class TdlsGateIndex
     private static string Key(string airport, string callsign) => Apt(airport) + "|" + callsign.ToUpperInvariant();
 
     /// <summary>The departure of <paramref name="callsign"/> from <paramref name="airport"/> closest to
-    /// <paramref name="near"/> within <paramref name="window"/>, searching that UTC day and its neighbours.</summary>
+    /// <paramref name="near"/> within <paramref name="window"/>, searching that UTC day and its neighbors.</summary>
     public static Dep? Find(string dir, string airport, string callsign, DateTime near, TimeSpan window)
     {
         if (string.IsNullOrEmpty(airport) || string.IsNullOrEmpty(callsign)) return null;

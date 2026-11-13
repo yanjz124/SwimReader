@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using SwimReader.Server.AdsbFi;
 
@@ -64,7 +64,7 @@ class NasFusion
     /// — ~65 targets a second, average track life about three minutes — so at a ten-minute TTL a
     /// busy TRACON will routinely reissue a number this index is still holding, and the next
     /// aircraft to get it inherits the previous one's entity id. Nothing errors; the client just
-    /// draws one history trail leaping across the screen from one aeroplane to another.</para>
+    /// draws one history trail leaping across the screen from one airplane to another.</para>
     ///
     /// <para>Sixty seconds is what the key is actually FOR: covering a scan or two of silence
     /// from one source so a trail doesn't break. Beyond that the track is gone, and a number
@@ -262,7 +262,7 @@ class NasFusion
     {
         // CURRENT LEG FIRST, and the reason is measured. One airframe flies two legs inside
         // SFDPS's 60-minute retention, so both records are live at once with the SAME Mode S and
-        // often the same beacon code - which is correct, it IS one aeroplane, and the Mode S key
+        // often the same beacon code - which is correct, it IS one airplane, and the Mode S key
         // merges them into one entity as it should. But `Fill` keeps the FIRST non-null value,
         // and iterating a ConcurrentDictionary gave an arbitrary order, so WHICH LEG'S CALLSIGN
         // SURVIVED WAS A COIN FLIP.
@@ -423,7 +423,7 @@ class NasFusion
     private void CorrelateUnidentified(Dictionary<long, NasEntity> ents, DateTime now, NasFusionStats st)
     {
         // Candidates: entities SFDPS has positioned and named. Bucketed at 0.5 degrees (~30 NM),
-        // so both gates are satisfied by probing the 3x3 neighbourhood.
+        // so both gates are satisfied by probing the 3x3 neighborhood.
         var grid = new Dictionary<long, List<NasEntity>>();
         foreach (var e in ents.Values)
         {
@@ -652,7 +652,7 @@ enum NasPosRank : byte { None = 0, Sfdps = 1, Tais = 2, Asdex = 3 }
 /// What a target IS, which the map needs because half the uncorrelated population is not aircraft.
 /// Measured: 1,725 of 3,483 untagged TAIS tracks report altitude 0 AND under 100 kt, clustered at
 /// plains TRACONs (DSM/SUX/ACT/FSD/ICT) at local midnight in November — live returns, p50 age
-/// 15-30 s, so they are real radar, just not airplanes. Drawing them unlabelled would make the
+/// 15-30 s, so they are real radar, just not airplanes. Drawing them unlabeled would make the
 /// NAS view ~30% clutter; dropping them silently would be a lie about what the radar sees.
 /// </summary>
 enum NasClass : byte
@@ -753,7 +753,7 @@ class NasEntity
     /// <para><b>Five decimal places, not four.</b> One rounding has to serve a view that spans
     /// the continent and a view of one airport, and those want opposite things. 4 dp is 11 m —
     /// about a thousandth of a pixel at CONUS zoom, but a visible quantisation on the surface,
-    /// where ASDE-X reports to roughly a metre and a pixel is a couple of metres. 5 dp is 1.1 m,
+    /// where ASDE-X reports to roughly a meter and a pixel is a couple of meters. 5 dp is 1.1 m,
     /// costs one character per coordinate, and is the only one of the two that is right in both
     /// places.</para>
     ///

@@ -1,4 +1,4 @@
-using System.Net.WebSockets;
+﻿using System.Net.WebSockets;
 
 namespace SwimServer;
 
@@ -11,7 +11,7 @@ namespace SwimServer;
 /// </summary>
 static class EramRoutes
 {
-    // Last good /feed body from the neighbouring STDDS service, so a restart over there shows a
+    // Last good /feed body from the neighboring STDDS service, so a restart over there shows a
     // few seconds of stale numbers rather than an empty card on every dashboard poll.
     private static string? _stddsFeedCache;
     private static DateTime _stddsFeedAt;
@@ -447,7 +447,7 @@ static class EramRoutes
         // host by design.
         //
         // Short timeout and a cached last-good answer: the dashboard polls this every 10s and a
-        // restart of the neighbouring service must degrade to "unreachable", not stall the card.
+        // restart of the neighboring service must degrade to "unreachable", not stall the card.
         app.MapGet("/api/feed/stdds", async (HttpContext req) =>
         {
             if (!LaddService.OperatorView(req)) return LaddService.OperatorOnly();

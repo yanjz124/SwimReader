@@ -1,6 +1,6 @@
 ---
 name: faa-swim
-description: Query live FAA SWIM air-traffic data through a SwimReader server — where a flight is right now across every data source, airport weather and runway winds, airport surface and departure boards, terminal CPDLC clearances, feed health, historical flight records, real filed routes for a city pair, and airline fleet/utilisation research. Use whenever someone asks where a flight is, what conditions or the departure situation are at an airport, what route aircraft actually file somewhere, or to check whether the SWIM feed itself is healthy.
+description: Query live FAA SWIM air-traffic data through a SwimReader server — where a flight is right now across every data source, airport weather and runway winds, airport surface and departure boards, terminal CPDLC clearances, feed health, historical flight records, real filed routes for a city pair, and airline fleet/utilization research. Use whenever someone asks where a flight is, what conditions or the departure situation are at an airport, what route aircraft actually file somewhere, or to check whether the SWIM feed itself is healthy.
 ---
 
 # FAA SWIM data via SwimReader
@@ -62,7 +62,7 @@ Dump one object's keys before writing a filter against a section you haven't use
 | Server load, clients, memory | `/api/system` |
 | Past flights (callsign, route, type, registration…) | `/api/history?q=&date=`, dates via `/api/history/dates` |
 | What do aircraft actually file between two airports? | `/api/dispatch/search?origin=&dest=` |
-| Airline fleets, utilisation, destinations, routes | `/api/airlines`, `/api/airlines/{icao}` |
+| Airline fleets, utilization, destinations, routes | `/api/airlines`, `/api/airlines/{icao}` |
 | Resolve an airport code to name/coords | `/api/airports/find?codes=KJFK,KLAX` |
 | NASR load status and cycle date | `/api/nasr/status` |
 
@@ -90,7 +90,7 @@ pipeline lag. A consumer draining a backlog stamps everything "freshly received"
 measured from receipt cannot on its own prove the data is current.
 
 **One callsign is often several records.** Each ARTCC tracking a flight publishes its own GUFI, so
-`/api/track` returns an `sfdps` array — not a single object. They are the same aeroplane.
+`/api/track` returns an `sfdps` array — not a single object. They are the same airplane.
 
 **CID is per-facility.** Each ARTCC assigns its own computer ID; a CID means nothing without
 knowing which facility issued it, and CIDs are recycled.

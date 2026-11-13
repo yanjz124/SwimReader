@@ -145,8 +145,8 @@ html, body {
 }
 .ctl input[type=checkbox] { accent-color: #cccc44; }
 
-/* The legend key is the SYMBOL, not a colour chip, because colour is a mode here:
- * switch to by-altitude and a colour chip is actively lying about what the colour
+/* The legend key is the SYMBOL, not a color chip, because color is a mode here:
+ * switch to by-altitude and a color chip is actively lying about what the color
  * means, while the shape still tells you what kind of target it is. */
 .ctl .sym {
     width: 14px;
@@ -170,12 +170,12 @@ html, body {
 .c-vehicle  { color: #4fd1c5; }
 .c-primary  { color: #5a6472; }
 
-/* When colour carries altitude or energy, the per-class hues are no longer the
+/* When color carries altitude or energy, the per-class hues are no longer the
  * key — so they go neutral and the gradient scale takes over. Shape keeps doing
  * the class job either way. */
 body.by-value .ctl .sym { color: #8b94a2; }
 
-/* ── Colour scale ──────────────────────────────────────────────────────────── */
+/* ── Color scale ──────────────────────────────────────────────────────────── */
 .scale {
     bottom: 10px;
     left: 56px;

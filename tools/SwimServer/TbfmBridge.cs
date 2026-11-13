@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -219,7 +219,7 @@ partial class TbfmBridge
                     case "con": if (ctr != null) ProcessConfig(kind, Center(ctr), now); break;
                     default:
                         _unknownKinds.AddOrUpdate(kind.Name.LocalName, 1, (_, n) => n + 1);
-                        // `oth` is ~10.5k messages and the only <tma> kind still unmodelled, but
+                        // `oth` is ~10.5k messages and the only <tma> kind still unmodeled, but
                         // KeepSample's ring is dominated by <air> so one never survives to be read.
                         // Hold a few separately; without a sample there is nothing to write a
                         // parser against.
@@ -368,7 +368,7 @@ partial class TbfmBridge
             if (id == null) continue;
             // mar and gar are rates for a METER POINT, not for the TRACON as a whole — they carry
             // an <mfx> naming it. Keying on {kind}/{id} alone collapsed every meter point in a
-            // TRACON onto one entry, so a centre with a dozen metered fixes reported one rate and
+            // TRACON onto one entry, so a center with a dozen metered fixes reported one rate and
             // whichever message arrived last won. The point goes in the key, and stays on the
             // record so a consumer can say which fix a rate belongs to.
             var point = Leaf(r, "mfx");
@@ -440,7 +440,7 @@ partial class TbfmBridge
     /// </summary>
     private readonly ConcurrentDictionary<string, string> _unknownSamples = new();
 
-    /// <summary>One retained sample per unmodelled &lt;tma&gt; child, LADD-safe (no &lt;air&gt; inside).</summary>
+    /// <summary>One retained sample per unmodeled &lt;tma&gt; child, LADD-safe (no &lt;air&gt; inside).</summary>
     // One slot per kind was not enough, and it hid something: `oth` carries at least TWO
     // different payloads — the metering-status block (tmg/tmss/tms, with `mas` YES/NO per airport
     // per center) and an interface-status one (int/ifn/ift/ifs, live: ZLC ERAM UP). With a single

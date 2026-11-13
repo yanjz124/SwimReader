@@ -1,4 +1,4 @@
-using SwimReader.Server.AdsbFi;
+﻿using SwimReader.Server.AdsbFi;
 
 namespace SwimReader.Core.Tests;
 
@@ -8,8 +8,8 @@ namespace SwimReader.Core.Tests;
 /// This is the guard on a wrong-answer bug rather than a missing-answer one. Callsign enrichment
 /// used to match on any squawk inside a 5 NM / 1,000 ft gate, so in busy VFR airspace — where
 /// several <c>1200</c> targets are routinely inside that box — "nearest wins" handed a radar track
-/// a callsign belonging to a different aeroplane. The emergency codes are non-discrete too, so an
-/// aircraft squawking 7700 could be labelled with a bystander's callsign.
+/// a callsign belonging to a different airplane. The emergency codes are non-discrete too, so an
+/// aircraft squawking 7700 could be labeled with a bystander's callsign.
 /// </summary>
 public class BeaconCodesTests
 {

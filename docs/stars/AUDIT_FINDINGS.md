@@ -155,7 +155,7 @@ Ordered by impact. Each cite is `<file>:<line>`.
 
 - **B3.3 — ATPA status cones (Monitor / Caution / Alert)** —
   ATPATcpDisplay.cs + RadarWindow.cs:6100-6150 (estimated).
-  Aircraft in ATPA volumes render colour-coded cones (yellow / orange /
+  Aircraft in ATPA volumes render color-coded cones (yellow / orange /
   red). Our scope.js does nothing for ATPACone.
 
 - **B3.4 — P-Cone rendering** — TPACone.cs.
@@ -254,7 +254,7 @@ Ordered by impact. Each cite is `<file>:<line>`.
 
 2. InvertKeyboard storage: not in PrefSet.cs. Where is it set?
 
-3. Exact J-Ring radius label position relative to ring centre +
+3. Exact J-Ring radius label position relative to ring center +
    leader direction.
 
 4. ATPA mileage formatting in line 3: does it replace or augment the

@@ -82,7 +82,7 @@ const vciAutoManaged = new Set();      // gufis whose VCI is currently auto-cont
 // Also not real ERAM: real controllers offset blocks by hand. When enabled, FDBs
 // that would overlap another FDB (or sit on top of another target) get nudged to
 // a different octant. Two rules keep it from being distracting:
-//   1. Minimise movement — a block only moves when it's actually in conflict,
+//   1. Minimize movement — a block only moves when it's actually in conflict,
 //      and then it takes the first acceptable slot in preference order and is
 //      held there for AUTO_OFF_HOLD_MS before it may move again.
 //   2. Prefer the sides — candidates are ranked by how close they are to abeam
@@ -1743,7 +1743,7 @@ async function loadKml() {
 }
 
 // The parser itself now lives in /shared/kml-sectors.js, so the NAS map parses these files
-// the same way this scope does. The categorisation is the part that matters: most placemarks
+// the same way this scope does. The categorization is the part that matters: most placemarks
 // carry a FolderPath, the western ARTCCs carry none and have to be recovered from an ancestor
 // Folder name, and a second copy of that would drift on the first change.
 async function parseKml() {
@@ -2295,7 +2295,7 @@ function conusComposite(slotIso) {
             c.width = Math.round(img.naturalWidth / CONUS_SCALE);
             c.height = Math.round(img.naturalHeight / CONUS_SCALE);
             const g = c.getContext('2d', { willReadFrequently: true });
-            // Nearest-neighbour deliberately: smoothing blends adjacent palette colors into hues
+            // Nearest-neighbor deliberately: smoothing blends adjacent palette colors into hues
             // classifyNwsPixel never sees, so a green/yellow boundary would classify as neither.
             g.imageSmoothingEnabled = false;
             g.drawImage(img, 0, 0, c.width, c.height);
@@ -2366,7 +2366,7 @@ function remapTile(ctx, level) {
     ctx.putImageData(imageData, 0, 0);
 }
 
-// ── Weather tile cache + neighbour-zoom prefetch ────────────────────────────────────────────
+// ── Weather tile cache + neighbor-zoom prefetch ────────────────────────────────────────────
 // Crossing a zoom level builds a new tile set, and fetching it from nowCOAST takes long enough
 // to see the old stretched weather swap out piece by piece. So fetched images are cached by URL,
 // and after the map settles the zoom levels either side of the current one are fetched in the
@@ -2448,7 +2448,7 @@ const MrmsEramLayer = L.GridLayer.extend({
 //   * the levels either side, padded by PAD_ZOOM (zoom margin)
 // Live only: replay crops one whole-CONUS composite already cached per slot.
 //
-// Requests go through a small queue (WX_PREFETCH_PARALLEL at a time, nearest to centre first)
+// Requests go through a small queue (WX_PREFETCH_PARALLEL at a time, nearest to center first)
 // rather than being fired all at once. Browsers cap connections per host, so a few hundred
 // speculative requests would otherwise sit in front of a tile the user actually needs now.
 // Tiles the layer asks for itself call wxImage() directly and never wait in this queue; a queued
@@ -2483,7 +2483,7 @@ function _wxQueueRing(layer, z, pad, out) {
         }
     }
 }
-function prefetchNexradNeighbours() {
+function prefetchNexradNeighbors() {
     if (!nexradLayer || !map.hasLayer(nexradLayer) || nexradReplayTime()) return;
     const layer = nexradLayer;
     const tz = Math.round(map.getZoom());
@@ -2491,7 +2491,7 @@ function prefetchNexradNeighbours() {
     _wxQueueRing(layer, tz, WX_PAD_NEAR, jobs);
     _wxQueueRing(layer, tz + 1, WX_PAD_ZOOM, jobs);
     _wxQueueRing(layer, tz - 1, WX_PAD_ZOOM, jobs);
-    // Nearest the screen's centre first, whichever zoom it is at, and a cap so a huge window at
+    // Nearest the screen's center first, whichever zoom it is at, and a cap so a huge window at
     // a deep zoom can't hammer nowCOAST. Replaces anything still queued from the last position.
     jobs.sort((p, q) => p.d - q.d);
     _wxQueue = jobs.slice(0, WX_PREFETCH_MAX);
@@ -2502,13 +2502,13 @@ function prefetchNexradNeighbours() {
 let _wxMoveLast = 0;
 map.on('moveend', () => {
     clearTimeout(_wxPrefetchTimer);
-    _wxPrefetchTimer = setTimeout(prefetchNexradNeighbours, 400);
+    _wxPrefetchTimer = setTimeout(prefetchNexradNeighbors, 400);
 });
 map.on('move', () => {
     const now = performance.now();
     if (now - _wxMoveLast < 500) return;
     _wxMoveLast = now;
-    prefetchNexradNeighbours();
+    prefetchNexradNeighbors();
 });
 
 function createNexradLayer() {
@@ -2519,11 +2519,11 @@ function createNexradLayer() {
         tileSize: 256,
         nxLevel: nexradLevel,
     });
-    // Warm the neighbouring zoom levels as soon as this view's tiles are in, so the very first
+    // Warm the neighboring zoom levels as soon as this view's tiles are in, so the very first
     // zoom after load/refresh is covered too (not only zooms after a pan).
     layer.on('load', () => {
         clearTimeout(_wxPrefetchTimer);
-        _wxPrefetchTimer = setTimeout(prefetchNexradNeighbours, 400);
+        _wxPrefetchTimer = setTimeout(prefetchNexradNeighbors, 400);
     });
     return layer;
 }

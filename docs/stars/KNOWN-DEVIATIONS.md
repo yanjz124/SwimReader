@@ -152,7 +152,7 @@ shape.
   = "lighter"` which is additive.
 - **Why:** Browser 2D context limitation. WebGL supports MAX but the
   Phase 1 render path is 2D; switching to WebGL is a Phase 11 cleanup.
-- **Workaround:** Use additive blending. For grey lines at 100% brightness
+- **Workaround:** Use additive blending. For gray lines at 100% brightness
   overlap looks brighter (additive: 280→clipped to 255 white) instead of
   identical (max: 140→140). At default brightness ≤ 50% this is
   imperceptible. Phase 11 may move to WebGL2 and restore exact MAX.

@@ -410,7 +410,7 @@
      * Both are the same problem wearing two hats: **Leaflet does not notice that its container
      * resized.** It caches the pixel size at init and reuses it for tile layout and for hit
      * testing, so without an invalidateSize() an enlarged map paints its old viewport into the
-     * corner, leaves the rest grey, and puts every tooltip in the wrong place. The call has to
+     * corner, leaves the rest gray, and puts every tooltip in the wrong place. The call has to
      * come AFTER layout has settled, hence the rAF — measuring in the same frame as the class
      * change reads the old height back.
      *

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace SwimServer;
 
@@ -26,7 +26,7 @@ class NasView
     public HashSet<NasClass>? Classes;
     public string? Text;
 
-    /// <summary>First payload is a labelled snapshot rather than an "add everything" delta.</summary>
+    /// <summary>First payload is a labeled snapshot rather than an "add everything" delta.</summary>
     public bool First = true;
 
     // Per entity: a hash of the volatile fields and a hash of the identity, kept apart so an

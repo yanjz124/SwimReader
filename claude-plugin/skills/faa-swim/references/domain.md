@@ -14,7 +14,7 @@ Enough air-traffic vocabulary to interpret a SwimReader response without misread
 
 ## Facilities
 
-- **ARTCC** (ZDC, ZNY, ZLA…) — en-route centre, 20 of them covering US airspace. Source of SFDPS.
+- **ARTCC** (ZDC, ZNY, ZLA…) — en-route center, 20 of them covering US airspace. Source of SFDPS.
 - **TRACON** (PCT, A80, N90…) — terminal radar approach control. Source of STARS/TAIS.
 - **Sector** — a controller position within a facility, written `ZDC/16`. Frequencies in
   `/api/track` are keyed this way.
@@ -85,7 +85,7 @@ mis-set, and a brief 7700 is often a finger error. Don't announce an emergency f
 `ACTIVE` (airborne and tracked), `PROPOSED` (filed, not departed), `DROPPED` (track lost or
 handed off out of coverage), `CANCELLED`, `COMPLETED`.
 
-A DROPPED flight is often just transitioning between centres — it is not necessarily an incident.
+A DROPPED flight is often just transitioning between centers — it is not necessarily an incident.
 
 ## Sources and what each is good for
 

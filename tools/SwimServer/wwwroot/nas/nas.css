@@ -419,7 +419,7 @@ body.by-value .ctl .sym { color: #8b94a2; }
     /* The hover readout is a mouse affordance; at this width it would also be
        wider than the screen. JS suppresses it per-event (a stylus on a tablet
        still gets it) -- this only keeps it inside the screen if it does show. */
-    .tip { max-width: calc(100vw - 2 * var(--gap)); white-space: normal; }
+    .tip { max-width: min(320px, calc(100vw - 2 * var(--gap))); white-space: normal; }
 }
 
 @media (pointer: coarse) {

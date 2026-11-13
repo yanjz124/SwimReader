@@ -1238,7 +1238,7 @@ function renderLegend() {
         : 'ENERGY (h + v²/2g)  0 → 52,000 ft';
 }
 
-// ── Hover and picking ──────────────────────────────────────────────────────────────────────
+// ── Hover and picking ──────────────────────────────────────────────────────────
 let hoverId = null, selId = null;
 const tip = $('tip');
 

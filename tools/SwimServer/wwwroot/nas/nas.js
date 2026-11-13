@@ -644,7 +644,17 @@ map.on('moveend zoomend', () => { if ($('bSectors').checked) updateSectorLayer()
 //
 // An airport can easily have one without the other, so the ring shows the metering
 // hold and the chip turns amber when TFDM has something in force.
-let flowLayer = null, flowTimer = null;
+let flowLayer = null, flowTimer = null, flowData = null;
+
+// TFDM reports gridlock as an enum whose NEGATIVE values are the common case --
+// NO_PREDICTED_GRIDLOCK, NONE. Rendering those put "ATL NO_PREDICTED_GRIDLOCK" on
+// the map as though the absence of a problem were a restriction.
+const gridlocked = v => !!v && !/^NO/i.test(v) && v.toUpperCase() !== 'NONE';
+
+// At continental zoom 36 chips overlap into an unreadable band across the east, so
+// detail is earned by zooming: far out, only the airport and the hold.
+const FLOW_DETAIL_ZOOM = 6;
+const FLOW_MAX_CHIPS = 40;
 
 // TBFM's "no restriction" default is 3,600/hour — not a rate. 53 of 57 published
 // AARs sat at exactly that, including fields that could not take one an hour, so
@@ -666,53 +676,8 @@ async function updateFlow() {
             if (!$('bFlow').checked) return;
             if (flowLayer) { map.removeLayer(flowLayer); flowLayer = null; }
 
-            const g = L.layerGroup([], { pane: 'nasBounds' });
-            let drawn = 0, held = 0, placed = 0;
-            for (const a of d.airports) {
-                const hold = a.maxDelayMin || 0;
-                const t = a.tfdm || {};
-                const tfdmHot = !!(t.tmiCount || (t.closed && t.closed.length)
-                    || (t.gridlock && t.gridlock !== 'NONE')
-                    || (t.aar && +t.aar > 0 && +t.aar < RATE_UNRESTRICTED));
-                // Only draw what is actually saying something. An airport with a
-                // runway config and nothing else is not a restriction.
-                if (hold < 1 && !tfdmHot && !a.aarRestricted) continue;
-                held++;
-                if (a.lat === null || a.lon === null) continue;   // NASR did not know it
-                placed++;
-
-                // Radius grows with the hold, floored so a flagged field with no
-                // airborne hold is still visible.
-                const rad = Math.max(6, Math.min(26, 6 + hold * 1.6));
-                L.circleMarker([a.lat, a.lon], {
-                    pane: 'nasBounds', interactive: false,
-                    radius: rad, weight: 1.2,
-                    color: hold >= 1 ? '#ff9f6e' : '#ddaa44',
-                    opacity: 0.85, fillColor: '#ff7043',
-                    fillOpacity: hold >= 1 ? Math.min(0.28, 0.05 + hold / 90) : 0.04,
-                }).addTo(g);
-
-                const bits = [];
-                if (hold >= 1) bits.push(`<b>+${hold.toFixed(0)}m</b>`);
-                if (a.aarRestricted && a.aar) bits.push(`AAR ${a.aar}`);
-                if (t.closed && t.closed.length) bits.push(`${t.closed.length} RWY CLSD`);
-                if (t.tmiCount) bits.push(`${t.tmiCount} TMI`);
-                if (t.gridlock && t.gridlock !== 'NONE') bits.push(esc(t.gridlock));
-                L.marker([a.lat, a.lon], {
-                    pane: 'nasBounds', interactive: false,
-                    icon: L.divIcon({
-                        className: '',
-                        html: `<div class="flow-chip${tfdmHot ? ' hot' : ''}">`
-                            + `${esc(a.apt)}${bits.length ? ' ' + bits.join(' ') : ''}</div>`,
-                        iconSize: null, iconAnchor: [-rad + 2, 6],
-                    }),
-                }).addTo(g);
-                drawn++;
-            }
-            g.addTo(map);
-            flowLayer = g;
-            note.textContent = `${drawn} airport${drawn === 1 ? '' : 's'} restricted`
-                + (held > placed ? ` · ${held - placed} unplaced` : '');
+            flowData = d;
+            drawFlow();
         } catch (e) {
             console.warn('[NAS] flow:', e.message);
             note.textContent = 'Flow data unavailable.';
@@ -722,6 +687,77 @@ async function updateFlow() {
     // TBFM schedules and TFDM airport records both move on the order of a minute;
     // a 30 s refresh is well inside that and costs one small request.
     flowTimer = setInterval(load, 30000);
+}
+
+function drawFlow() {
+    if (!flowData || !$('bFlow').checked) return;
+    if (flowLayer) { map.removeLayer(flowLayer); flowLayer = null; }
+
+    const detail = map.getZoom() >= FLOW_DETAIL_ZOOM;
+    const g = L.layerGroup([], { pane: 'nasBounds' });
+    let drawn = 0, held = 0, placed = 0;
+
+    // Ranked before capping, so a crowded screen keeps the WORST restrictions rather
+    // than whichever the server happened to list first.
+    const sorted = [...flowData.airports].sort((x, y) => (y.maxDelayMin || 0) - (x.maxDelayMin || 0));
+
+    for (const a of sorted) {
+        const hold = a.maxDelayMin || 0;
+        const t = a.tfdm || {};
+        const tfdmHot = !!(t.tmiCount || (t.closed && t.closed.length)
+            || gridlocked(t.gridlock)
+            || (t.aar && +t.aar > 0 && +t.aar < RATE_UNRESTRICTED));
+
+        // Only draw what is actually saying something. An airport merely reporting a
+        // runway configuration is not restricted.
+        if (hold < 1 && !tfdmHot && !a.aarRestricted) continue;
+        held++;
+        if (a.lat === null || a.lon === null) continue;   // NASR did not know it
+        placed++;
+        if (drawn >= FLOW_MAX_CHIPS) continue;
+
+        // Radius grows with the hold, floored so a flagged field with no airborne
+        // hold is still visible.
+        const rad = Math.max(6, Math.min(26, 6 + hold * 1.6));
+        L.circleMarker([a.lat, a.lon], {
+            pane: 'nasBounds', interactive: false,
+            radius: rad, weight: 1.2,
+            color: hold >= 1 ? '#ff9f6e' : '#ddaa44',
+            opacity: 0.85, fillColor: '#ff7043',
+            fillOpacity: hold >= 1 ? Math.min(0.28, 0.05 + hold / 90) : 0.04,
+        }).addTo(g);
+
+        const bits = [];
+        if (hold >= 1) bits.push(`<b>+${hold.toFixed(0)}m</b>`);
+        if (detail) {
+            const aar = a.aarRestricted ? a.aar
+                : (t.aar && +t.aar > 0 && +t.aar < RATE_UNRESTRICTED ? t.aar : null);
+            if (aar) bits.push(`AAR ${esc(String(aar))}`);
+            if (t.closed && t.closed.length) bits.push(`${t.closed.length} RWY CLSD`);
+            if (t.tmiCount) bits.push(`${t.tmiCount} TMI`);
+            if (gridlocked(t.gridlock)) bits.push(esc(t.gridlock));
+        } else if (tfdmHot) {
+            bits.push('●');   // a dot: something is in force, zoom to see what
+        }
+
+        L.marker([a.lat, a.lon], {
+            pane: 'nasBounds', interactive: false,
+            icon: L.divIcon({
+                className: '',
+                html: `<div class="flow-chip${tfdmHot ? ' hot' : ''}">`
+                    + `${esc(a.apt)}${bits.length ? ' ' + bits.join(' ') : ''}</div>`,
+                iconSize: null, iconAnchor: [-rad + 2, 6],
+            }),
+        }).addTo(g);
+        drawn++;
+    }
+
+    g.addTo(map);
+    flowLayer = g;
+    $('flowNote').textContent =
+        `${drawn} shown of ${held} restricted`
+        + (held > placed ? ` · ${held - placed} unplaced` : '')
+        + (detail ? '' : ' · zoom in for detail');
 }
 
 // ── Stream ─────────────────────────────────────────────────────────────────────
@@ -1120,6 +1156,9 @@ $('bArtcc').addEventListener('change', updateArtccLayer);
 $('bSectors').addEventListener('change', updateSectorLayer);
 $('bKml').addEventListener('change', updateKmlLayer);
 $('bFlow').addEventListener('change', updateFlow);
+// The chip detail depends on zoom, so a zoom has to re-render what is already loaded
+// (no refetch -- the data has not changed).
+map.on('zoomend', () => { if ($('bFlow').checked && flowData) drawFlow(); });
 
 const qEl = $('q');
 let qTimer = null;

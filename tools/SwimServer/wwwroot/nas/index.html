@@ -159,8 +159,19 @@
 
         <div class="grp">
             <div class="grp-h">FLOW</div>
-            <label><input type="checkbox" id="bFlow"> Restrictions</label>
+            <label><input type="checkbox" id="bFlow"> Airport restrictions</label>
             <div class="note" id="flowNote"></div>
+            <label><input type="checkbox" id="bFca"> Flow areas (FCA)</label>
+            <label><input type="checkbox" id="bFea"> Evaluation areas (FEA)</label>
+            <div class="note" id="fcaNote"></div>
+            <div class="note">
+                An <em>FCA</em> is a Flow Constrained Area &mdash; a real constraint. An
+                <em>FEA</em> is a Flow Evaluation Area, a traffic manager watching a volume with
+                nothing restricted. TFMS publishes both in the same shape and there are far more
+                FEAs, so they are separate switches: drawing them alike would paint the country
+                with boxes that mean nothing is wrong. Areas outside their own published window
+                are not drawn &mdash; many are defined days ahead.
+            </div>
             <div class="note">
                 Arrival metering from TBFM and surface/departure constraint from TFDM. They are
                 <em>not</em> added together &mdash; one is airborne holding, the other is the

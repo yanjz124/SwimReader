@@ -865,6 +865,130 @@ async function updateFlow() {
     flowTimer = setInterval(load, 30000);
 }
 
+// ── Flow areas: FEA and FCA ────────────────────────────────────────────────────
+//
+// TFMS publishes the actual outline of every flow area, with a floor, a ceiling
+// and its own active window. The bridge parses it now; this draws it.
+//
+// FEA AND FCA ARE SEPARATE SWITCHES because they mean different things. An FCA is
+// a constraint; an FEA is a traffic manager watching a volume with nothing
+// restricted. They arrive in the same message in the same shape and the FEAs are
+// far more numerous, so one combined toggle would paint the country with boxes
+// that mean nothing is wrong.
+//
+// A LINE IS DRAWN AS A LINE. An FCA can be a flow line aircraft cross rather than
+// an area they are inside, and closing it into a two-point ring draws a shape with
+// no interior that merely looks right.
+let fcaLayer = null, fcaTimer = null, fcaData = null;
+
+const FCA_STYLE = {
+    FCA: { color: '#ffb02e', weight: 1.6, opacity: 0.9, fillOpacity: 0.07, dashArray: null },
+    FEA: { color: '#5fa8d3', weight: 1.1, opacity: 0.65, fillOpacity: 0.04, dashArray: '5 4' },
+};
+
+async function updateFca() {
+    const want = $('bFca').checked || $('bFea').checked;
+    if (fcaLayer) { map.removeLayer(fcaLayer); fcaLayer = null; }
+    clearInterval(fcaTimer);
+    if (!want) { $('fcaNote').textContent = ''; return; }
+
+    const load = async () => {
+        try {
+            const r = await fetch('/api/tfms/fca');
+            if (!r.ok) throw new Error(r.status);
+            fcaData = await r.json();
+            drawFca();
+        } catch (e) {
+            console.warn('[NAS] fca:', e.message);
+            $('fcaNote').textContent = 'Flow areas unavailable.';
+        }
+    };
+    await load();
+    // Areas are adaptation-rate, not traffic-rate: they change when a traffic
+    // manager draws one, which is minutes apart at the very fastest.
+    fcaTimer = setInterval(load, 60000);
+}
+
+function drawFca() {
+    if (fcaLayer) { map.removeLayer(fcaLayer); fcaLayer = null; }
+    if (!fcaData) return;
+    const wantFca = $('bFca').checked, wantFea = $('bFea').checked;
+    if (!wantFca && !wantFea) return;
+
+    const g = L.layerGroup([], { pane: 'nasBounds' });
+    const [lo, hi] = altBand();
+    let drawn = 0, offBand = 0;
+
+    for (const a of fcaData.areas || []) {
+        const isFca = (a.type || '').toUpperCase() === 'FCA';
+        if (isFca ? !wantFca : !wantFea) continue;
+        if (!a.points || a.points.length < 2) continue;
+
+        // The ALTITUDE filter applies, because an area has a real floor and ceiling.
+        // An area wholly outside the band the user is looking at is not relevant to
+        // the traffic they can see.
+        if (lo !== null && !bandOverlaps(a.floorFt, a.ceilingFt, lo, hi)) { offBand++; continue; }
+
+        const st = { pane: 'nasBounds', interactive: false, ...FCA_STYLE[isFca ? 'FCA' : 'FEA'] };
+        if (a.shape === 'line') L.polyline(a.points, st).addTo(g);
+        else L.polygon(a.points, st).addTo(g);
+
+        // The label is the only interactive thing: shapes stay interactive:false so
+        // an area can never take a hover or a click from an aircraft, which is the
+        // same rule every other overlay on this map follows.
+        const c = centroid(a.points);
+        const band = a.floorFt != null && a.ceilingFt != null
+            ? `${Math.round(a.floorFt / 100)}\u2013${Math.round(a.ceilingFt / 100)}` : '';
+        L.marker(c, {
+            pane: 'nasBounds',
+            interactive: true,
+            icon: L.divIcon({
+                className: 'fca-lb' + (isFca ? ' fca' : ' fea'),
+                html: `<b>${esc(a.name || a.id)}</b>${band ? ' ' + band : ''}`
+                    + (a.flights ? ` <i>${a.flights}</i>` : ''),
+                iconSize: null,
+            }),
+        }).bindTooltip(
+            `<b>${esc(a.name || '')}</b><br>${isFca ? 'Flow Constrained Area' : 'Flow Evaluation Area'}`
+            + (a.reason ? ` \u00b7 ${esc(a.reason)}` : '')
+            + (band ? `<br>FL${band}` : '')
+            + (a.flights ? `<br>${a.flights} flights` : '')
+            + (a.facility ? `<br>${esc(a.facility)}` : ''),
+            { sticky: true }).addTo(g);
+        drawn++;
+    }
+
+    fcaLayer = g.addTo(map);
+    const d = fcaData;
+    $('fcaNote').textContent =
+        `${drawn} drawn of ${d.active} active (${d.fca} FCA / ${d.fea} FEA)`
+        + (offBand ? ` \u00b7 ${offBand} outside the altitude band` : '')
+        + (d.active > d.withShape ? ` \u00b7 ${d.active - d.withShape} publish no outline` : '');
+}
+
+// The sidebar altitude filter as feet, or [null, null] when it is "all".
+function altBand() {
+    const v = $('alt').value;
+    if (v === 'all') return [null, null];
+    const [a, b] = v.split('-').map(Number);
+    return [a, b];
+}
+
+// Inclusive overlap. An area with no published floor or ceiling is treated as
+// unbounded that way rather than excluded -- missing is not the same as zero, and
+// dropping it would silently hide areas whose band TFMS simply did not state.
+function bandOverlaps(floor, ceil, lo, hi) {
+    const f = floor == null ? -1e9 : floor;
+    const c = ceil == null ? 1e9 : ceil;
+    return c >= lo && f <= hi;
+}
+
+function centroid(pts) {
+    let y = 0, x = 0;
+    for (const p of pts) { y += p[0]; x += p[1]; }
+    return [y / pts.length, x / pts.length];
+}
+
 function drawFlow() {
     if (!flowData || !$('bFlow').checked) return;
     if (flowLayer) { map.removeLayer(flowLayer); flowLayer = null; }
@@ -1381,15 +1505,21 @@ setInterval(syncLabelUi, 1500);
 // the map - and it would look like the toggle broke the stream.
 $('dedupe').addEventListener('change', () => sendView());
 
+for (const id of ['bFca', 'bFea']) $(id).addEventListener('change', updateFca);
+
 for (const id of ['trail', 'leader', 'labels', 'size']) {
     $(id).addEventListener('change', paint);
 }
 $('color').addEventListener('change', () => { renderLegend(); paint(); });
 // Altitude does double duty: it filters targets AND reshapes the sector volumes,
 // which is the thing the FAVs can do and the legacy KML cannot.
+// Altitude does triple duty: it filters targets, reshapes the sector volumes (the
+// thing the FAVs can do and the legacy KML cannot), and decides which flow areas
+// are relevant, since an FEA/FCA carries a real floor and ceiling.
 $('alt').addEventListener('change', () => {
     paint();
     if ($('bSectors').checked) updateSectorLayer();
+    if ($('bFca').checked || $('bFea').checked) drawFca();
 });
 for (const id of ['wx', 'wxop']) $(id).addEventListener('change', updateWx);
 $('bArtcc').addEventListener('change', updateArtccLayer);

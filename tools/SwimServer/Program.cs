@@ -941,6 +941,31 @@ else
 }
 // vNAS/STARS adaptation is an HTTPS poll, not a SWIM queue — always safe to run.
 stars.Start();
+
+// Per-facility radar reference points, for weighting how accurate a reported position is when
+// several facilities publish the same airplane (NasFusion.PosSigmaNm).
+//
+// The feed-id resolution is the same rule StarsRoutes applies and exists for the same reason:
+// vNAS calls Palm Beach TRACON PBI while TAIS publishes it as DJT, and the fused index only ever
+// sees the feed id. Keying on vNAS's id alone silently drops the range term for that facility -
+// which is precisely the mismatch that once made PBI read as a dead facility on the picker.
+var radarRefTimer = new Timer(async _ =>
+{
+    try
+    {
+        await stars.RefreshRadarRefsAsync((facilityId, internalAirports) =>
+        {
+            var known = new HashSet<string>(tais.LiveFacilities(), StringComparer.OrdinalIgnoreCase);
+            if (known.Count == 0 || known.Contains(facilityId)) return facilityId;
+            var hits = internalAirports
+                .Where(a => !string.Equals(a, facilityId, StringComparison.OrdinalIgnoreCase)
+                         && known.Contains(a))
+                .ToArray();
+            return hits.Length == 1 ? hits[0] : facilityId;
+        });
+    }
+    catch (Exception ex) { Console.Error.WriteLine($"[STARS] radar refs: {ex.Message}"); }
+}, null, TimeSpan.FromMinutes(2), TimeSpan.FromHours(24));
 _ = eramAirspace.RunAsync();
 
 // ── ASDE-X enrichment: merge SFDPS + TDLS flight data into surface tracks ───
@@ -1477,7 +1502,7 @@ var taisSnapshotTimer = new Timer(_ =>
 
 // Prevent GC from collecting timers in Release mode — JIT considers local vars dead after last use,
 // so timers silently stop firing. Registering a shutdown callback keeps them reachable.
-var allTimers = new[] { cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer, aircraftSaveTimer /*, poFlushTimer, investigationFlushTimer */ };
+var allTimers = new[] { radarRefTimer, cacheTimer, purgeTimer, statsTimer, healthTimer, nasrTimer, batchTimer, asdexBatchTimer, asdexPurgeTimer, tdlsFlushTimer, tdlsPurgeTimer, taisFlushTimer, taisPurgeTimer, tfmsFlushTimer, tfmsPurgeTimer, itwsHistoryTimer, budgetTimer, csIndexTimer, eramSnapshotTimer, asdexSnapshotTimer, taisSnapshotTimer, sectorTrackerTimer, nexradRefreshTimer, aircraftSaveTimer /*, poFlushTimer, investigationFlushTimer */ };
 // Re-encode finished replay hours gzip → zstd (~10x smaller) so the replay budget reaches much further back.
 ReplayCompactor.Start(replayDir, app.Lifetime.ApplicationStopping);
 // Bundled STARS feed (stars/SwimReader.Server.exe in the desktop package). No-op elsewhere.

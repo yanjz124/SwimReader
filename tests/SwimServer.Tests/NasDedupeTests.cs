@@ -294,34 +294,176 @@ public class NasDedupeTests
     }
 
     /// <summary>
-    /// <b>Leadership is by position RANK, not by id</b>, and the leader is the target that gets
-    /// drawn — so this decides which source's position the map shows. ASDE-X reports every
-    /// second and TAIS every five against SFDPS's twelve, so handing leadership to whichever
-    /// entity happens to hold the lower id would draw a merged target from the slowest feed in
-    /// the group and make it visibly lag the others around it.
+    /// <b>Leadership is by estimated ERROR, not by source rank</b>, and the leader is the target
+    /// that gets drawn — so this decides which report the map shows.
     ///
-    /// <para>The SFDPS record is built first here and therefore owns the LOWER id, so an
-    /// id-ordered rule picks it and a rank-ordered rule picks the terminal track. That is the
-    /// only arrangement in which the two rules disagree, which is why a leadership test built
-    /// from same-source members cannot see this at all.</para>
+    /// <para>Rank alone was the first rule here and it is too coarse. A terminal fix outranks an
+    /// en-route one because TAIS reports every five seconds against SFDPS's twelve — but that is
+    /// a statement about CADENCE, not about this particular report. A 60-second-old terminal fix
+    /// at 450 kt is 7.5 NM stale, and preferring it over a three-second-old en-route one draws
+    /// the merged target seven miles from where the aircraft is.</para>
+    ///
+    /// <para>This is the only arrangement where the two rules disagree, which is why a test built
+    /// from same-source members — or from members that are both fresh — cannot see it at all.</para>
     /// </summary>
     [Fact]
-    public void TheLeaderIsTheBestPositionNotTheOldestId()
+    public void TheLeaderIsTheMostAccuratePositionNotTheBestSource()
     {
-        // Mode S on the blip keeps tier 3 out of this: its pending list is targets with NO
-        // identifier at all, so with a hex code present the merge below is this pass's alone.
-        var blip = Blip("IND", "202", "4512", lat: 39.52);
-        blip.ModeSCode = "A1B2C3";
+        // A minute-old terminal report of a fast aircraft: high rank, badly stale.
+        var blip = Blip("IND", "202", "4512", lat: 39.5);
+        blip.ModeSCode = "A1B2C3";   // keeps tier 3 out: its pending list is unidentified only
+        blip.GroundSpeedKnots = 450;
+        blip.GroundTrackDegrees = 90;
+        blip.LastSeen = DateTime.UtcNow.AddSeconds(-60);
 
-        var f = Fuse(sfdps: new[] { Flight("g1", "DAL123", "4512") },
-                     tais: new[] { ("IND", blip) });
+        // ...against a three-second-old en-route one of the same airplane.
+        var fl = Flight("g1", "DAL123", "4512", lat: 39.5, lon: -83.86);
+        fl.LastPositionTime = DateTime.UtcNow.AddSeconds(-3);
+        fl.LastSeen = fl.LastPositionTime;
+        fl.TrackVelocityX = 450; fl.TrackVelocityY = 0;   // Trk comes from the velocity pair...
+        fl.GroundSpeed = 450;                             // ...and Gs from its own field.
+
+        var f = Fuse(sfdps: new[] { fl }, tais: new[] { ("IND", blip) });
         var snap = f.Rebuild();
 
         var lead = Assert.Single(Leaders(snap));
-        Assert.Equal(NasPosRank.Tais, lead.PosRank);
-        Assert.Equal(39.52, lead.Lat, 3);
+        Assert.Equal(NasPosRank.Sfdps, lead.PosRank);
+        Assert.True(lead.PosAgeSec < 10, $"led with a {lead.PosAgeSec}s fix");
+    }
+
+    /// <summary>
+    /// The error estimate itself. Delay dominates and is exactly known; the source floor only
+    /// decides between reports that are equally fresh.
+    /// </summary>
+    [Fact]
+    public void DelayDominatesTheErrorEstimate()
+    {
+        var f = Fuse();
+        var fresh = new NasEntity { Id = 1, Lat = 39, Lon = -84, Gs = 450, Trk = 90, PosAgeSec = 2 };
+        fresh.TakePosition(NasPosRank.Tais, 0, DateTime.UtcNow);
+        var stale = new NasEntity { Id = 2, Lat = 39, Lon = -84, Gs = 450, Trk = 90, PosAgeSec = 60 };
+        stale.TakePosition(NasPosRank.Asdex, 0, DateTime.UtcNow);
+
+        // 60 s at 450 kt is 7.5 NM of staleness - an order of magnitude past any sensor's own
+        // error, so the BEST source with an old fix still loses to a worse source with a new one.
+        Assert.True(f.PosSigmaNm(stale) > 7, $"{f.PosSigmaNm(stale):F2}");
+        Assert.True(f.PosSigmaNm(fresh) < 1, $"{f.PosSigmaNm(fresh):F2}");
+        Assert.True(f.PosSigmaBand(fresh) < f.PosSigmaBand(stale));
+    }
+
+    /// <summary>
+    /// Banding is what keeps leadership from flapping. Sigma creeps every second as a position
+    /// ages, so comparing it raw would trade leadership between two near-equal members on almost
+    /// every pass — and each flip is a delete plus an add, so the group blinks at the tick rate
+    /// while every counter reports a healthy delta stream.
+    /// </summary>
+    [Fact]
+    public void NearEqualErrorsLandInOneBandSoLeadershipCannotFlap()
+    {
+        var f = Fuse();
+        var a = new NasEntity { Id = 1, Lat = 39, Lon = -84, Gs = 200, Trk = 90, PosAgeSec = 3 };
+        a.TakePosition(NasPosRank.Tais, 0, DateTime.UtcNow);
+        var b = new NasEntity { Id = 2, Lat = 39, Lon = -84, Gs = 200, Trk = 90, PosAgeSec = 4 };
+        b.TakePosition(NasPosRank.Tais, 0, DateTime.UtcNow);
+
+        Assert.NotEqual(f.PosSigmaNm(a), f.PosSigmaNm(b));      // raw sigma does differ...
+        Assert.Equal(f.PosSigmaBand(a), f.PosSigmaBand(b));     // ...and the band does not
+    }
+
+    /// <summary>
+    /// The per-source floor: at equal freshness a surface multilateration fix is intrinsically
+    /// better than an en-route radar one. It is deliberately SMALL - 0.03 against 0.25 NM - which
+    /// is why it can never outvote delay and why, at the half-mile band the comparison uses, it
+    /// only ever breaks a tie. A mutation deleting it proved that: at that resolution the numeric
+    /// floor alone changed no decision at all, so rank is now the explicit in-band tie-break and
+    /// the floor is what makes the reported sigma mean something.
+    /// </summary>
+    [Fact]
+    public void ASurfaceFixIsRatedBetterThanAnEnRouteFixAtEqualAge()
+    {
+        var f = Fuse();
+        var surface = new NasEntity { Id = 1, Lat = 39, Lon = -84, Gs = 0, PosAgeSec = 1 };
+        surface.TakePosition(NasPosRank.Asdex, 0, DateTime.UtcNow);
+        var enroute = new NasEntity { Id = 2, Lat = 39, Lon = -84, Gs = 0, PosAgeSec = 1 };
+        enroute.TakePosition(NasPosRank.Sfdps, 0, DateTime.UtcNow);
+
+        Assert.True(f.PosSigmaNm(surface) < f.PosSigmaNm(enroute));
+    }
+
+    /// <summary>
+    /// Leadership must be able to move to a member that is not the cluster HEAD.
+    ///
+    /// <para>Written because a mutation proved the previous test could not see this: it put the
+    /// fresher record first, so "pick the best band" and "keep whoever you started with" gave the
+    /// same answer and the band comparison could be deleted outright. Here the stale report is
+    /// inserted first and the fresh one second, which is the only arrangement that tells the two
+    /// rules apart.</para>
+    ///
+    /// <para>They are 7.5 NM apart as reported and on top of each other once each is advanced to
+    /// a common instant, so this pins the compensation as well.</para>
+    /// </summary>
+    [Fact]
+    public void LeadershipMovesOffTheClusterHeadWhenAnotherMemberIsBetter()
+    {
+        var stale = Blip("CLE", "101", "0513", lat: 39.5, lon: -84.0);
+        stale.GroundSpeedKnots = 450; stale.GroundTrackDegrees = 90;
+        stale.LastSeen = DateTime.UtcNow.AddSeconds(-60);
+
+        var fresh = Blip("IND", "202", "0513",
+                         lat: 39.5, lon: -84.0 + 7.5 / 60 / Math.Cos(39.5 * Math.PI / 180));
+        fresh.GroundSpeedKnots = 450; fresh.GroundTrackDegrees = 90;
+
+        // Stale FIRST, so it is the cluster head and owns the lower id.
+        var f = Fuse(tais: new[] { ("CLE", stale), ("IND", fresh) });
+        var snap = f.Rebuild();
+
+        var lead = Assert.Single(Leaders(snap));
+        Assert.True(lead.PosAgeSec < 10, $"led with a {lead.PosAgeSec}s fix");
         Assert.True(lead.Id > snap.Entities.Values.Min(e => e.Id),
-                    "the SFDPS record holds the lower id, so this only passes on rank");
+                    "the stale record holds the lower id, so this only passes on the error band");
+    }
+
+    /// <summary>Within one band, the better SENSOR wins - stably, because rank cannot creep the
+    /// way a raw sigma does.</summary>
+    [Fact]
+    public void WithinOneBandTheBetterSensorLeads()
+    {
+        var blip = Blip("IND", "202", "4512", lat: 39.5, lon: -84.0);
+        blip.ModeSCode = "A1B2C3";
+        blip.GroundSpeedKnots = 0; blip.GroundTrackDegrees = 0;
+
+        // Same place, same freshness, worse sensor - and the LOWER id, so an id rule picks it.
+        var fl = Flight("g1", "DAL123", "4512", lat: 39.5, lon: -84.0);
+        fl.GroundSpeed = 0; fl.TrackVelocityX = 0; fl.TrackVelocityY = 0;
+
+        var f = Fuse(sfdps: new[] { fl }, tais: new[] { ("IND", blip) });
+        var lead = Assert.Single(Leaders(f.Rebuild()));
+        Assert.Equal(NasPosRank.Tais, lead.PosRank);
+    }
+
+    /// <summary>
+    /// <b>Latency, not disagreement.</b> Two facilities report where the aircraft WAS at their
+    /// own fix times, and at 450 kt a 40-second difference is 5 NM of pure bookkeeping. Advancing
+    /// each report along its own track to a common instant is what lets the gate be tight: these
+    /// two are 4.5 NM apart as reported, which no sensible raw gate would accept, and on top of
+    /// each other once the delay is taken out.
+    ///
+    /// <para>Measured over 1,562 live groups, compensation takes the within-group spread from
+    /// p50 1.07 / p90 3.32 NM to p50 0.28 / p90 1.30.</para>
+    /// </summary>
+    [Fact]
+    public void LatencyIsCompensatedBeforeTheDistanceGate()
+    {
+        var old = Blip("CLE", "101", "0513", lat: 39.5, lon: -84.0);
+        old.GroundSpeedKnots = 450; old.GroundTrackDegrees = 90;
+        old.LastSeen = DateTime.UtcNow.AddSeconds(-40);
+
+        // 4.5 NM east - where the first aircraft will be in 36 s, reported fresh by the neighbor.
+        var now = Blip("IND", "202", "0513", lat: 39.5, lon: -84.0 + 4.5 / 60 / Math.Cos(39.5 * Math.PI / 180));
+        now.GroundSpeedKnots = 450; now.GroundTrackDegrees = 90;
+
+        var f = Fuse(tais: new[] { ("CLE", old), ("IND", now) });
+        Assert.Single(Leaders(f.Rebuild()));
     }
 
     /// <summary>

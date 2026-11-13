@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -302,6 +302,85 @@ class StarsBridge
             if (_facilityArtcc.TryGetValue(facilityId, out var hit)) return hit;
         }
         return null;
+    }
+
+    // ── Radar reference points, for weighting how accurate a position is ──────────────
+    //
+    // A STARS area publishes a `visibilityCenter` and a `surveillanceRange`, which is the closest
+    // thing vNAS gives to "where this facility's radar is". It is a PROXY and the code says so:
+    // a TRACON's ASRs can sit tens of miles from the center of the area they feed, so this
+    // supports "roughly how far out is this target" and not "how far from the antenna".
+    //
+    // Keyed by BOTH the vNAS facility id and the FEED id, because those differ - Palm Beach is
+    // PBI to vNAS and DJT on the TAIS feed, and the consumer here only ever sees the feed id.
+    // Keying on one alone is the exact mismatch that made PBI read as a dead facility on the
+    // STARS picker.
+    private volatile Dictionary<string, double[][]>? _radarRefs;
+
+    /// <summary>
+    /// Area reference points for a facility, as [lat, lon] pairs, or null when vNAS publishes
+    /// none. Synchronous and allocation-free on the hot path: the fused index calls this once per
+    /// candidate per pass.
+    /// </summary>
+    public double[][]? RadarRefs(string? facilityId)
+    {
+        var map = _radarRefs;
+        if (map is null || facilityId is null) return null;
+        return map.TryGetValue(facilityId, out var v) ? v : null;
+    }
+
+    public int RadarRefCount => _radarRefs?.Count ?? 0;
+
+    /// <summary>Rebuild the reference map from every ARTCC's STARS areas. Daily is ample - this
+    /// is adaptation, not traffic.</summary>
+    public async Task RefreshRadarRefsAsync(Func<string, string[], string?>? resolveFeedId = null)
+    {
+        var map = new Dictionary<string, double[][]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var artccId in await GetArtccIdsAsync())
+        {
+            var doc = await GetArtccAsync(artccId);
+            if (doc is null) continue;
+            if (doc.RootElement.TryGetProperty("facility", out var facility))
+                CollectRadarRefs(facility, map, resolveFeedId);
+        }
+        // An empty result never replaces a map we already hold: vNAS being unreachable must not
+        // silently turn every range term off, which would look like nothing at all.
+        if (map.Count > 0) _radarRefs = map;
+        Console.WriteLine($"[STARS] Radar refs: {map.Count} facility keys");
+    }
+
+    private static void CollectRadarRefs(JsonElement facility, Dictionary<string, double[][]> map,
+                                         Func<string, string[], string?>? resolveFeedId)
+    {
+        if (facility.TryGetProperty("id", out var idEl) && idEl.GetString() is { } id
+            && facility.TryGetProperty("starsConfiguration", out var sc)
+            && sc.ValueKind == JsonValueKind.Object
+            && sc.TryGetProperty("areas", out var areas) && areas.ValueKind == JsonValueKind.Array)
+        {
+            var pts = new List<double[]>();
+            foreach (var a in areas.EnumerateArray())
+            {
+                if (!a.TryGetProperty("visibilityCenter", out var vc)
+                    || vc.ValueKind != JsonValueKind.Object) continue;
+                if (vc.TryGetProperty("lat", out var la) && la.TryGetDouble(out var y)
+                    && vc.TryGetProperty("lon", out var lo) && lo.TryGetDouble(out var x)
+                    && (y != 0 || x != 0))
+                    pts.Add(new[] { y, x });
+            }
+            if (pts.Count > 0)
+            {
+                var arr = pts.ToArray();
+                map[id] = arr;
+                var feed = resolveFeedId?.Invoke(id, InternalAirports(sc));
+                if (feed is { Length: > 0 } && !string.Equals(feed, id, StringComparison.OrdinalIgnoreCase))
+                    map[feed] = arr;
+            }
+        }
+
+        if (facility.TryGetProperty("childFacilities", out var children)
+            && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectRadarRefs(child, map, resolveFeedId);
     }
 
     /// <summary>Recursively index every STARS-configured facility id under a facility tree to its ARTCC.</summary>

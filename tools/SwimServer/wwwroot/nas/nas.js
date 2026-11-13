@@ -75,6 +75,16 @@ map.getPane('nasTargets').style.pointerEvents = 'none';
 
 const $ = id => document.getElementById(id);
 
+// A numeric control, with a fallback. Reading `+el.value` raw returns NaN for a
+// blank or unrecognised option — and `4 * NaN` is NaN, which draws every symbol at
+// radius NaN and empties the map with no error at all. (Found by setting size to
+// "1.0" when the option value is "1": the page looked exactly like a dead renderer.)
+// A stale persisted value or a future option rename would do the same.
+function num(id, fallback) {
+    const v = parseFloat($(id)?.value);
+    return Number.isFinite(v) ? v : fallback;
+}
+
 // ── Weather ────────────────────────────────────────────────────────────────────
 let wxLayer = null;
 function updateWx() {
@@ -88,7 +98,7 @@ function updateWx() {
         layers: 'nexrad-n0q-900913',
         format: 'image/png',
         transparent: true,
-        opacity: +$('wxop').value / 100,
+        opacity: num('wxop', 45) / 100,
         pane: 'nasWx',
     }).addTo(map);
 }
@@ -377,10 +387,10 @@ function draw() {
     g.scale(dpr, dpr);
 
     const now = Date.now();
-    const trailN = +$('trail').value;
-    const leaderMin = +$('leader').value;
+    const trailN = num('trail', 4);
+    const leaderMin = num('leader', 1);
     const wantLabels = $('labels').checked;
-    const r = 4 * (+$('size').value);
+    const r = 4 * num('size', 1);
     const w = W / dpr, h = H / dpr;
     const pad = 30;
 
@@ -850,7 +860,7 @@ function sendView(force) {
     const msg = {
         cmd: 'view',
         bbox: [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()],
-        cap: +$('cap').value,
+        cap: num('cap', 3000),
         cls,
         q: q || undefined,
     };
@@ -886,7 +896,7 @@ function renderCounts() {
         `<b>${shown.toLocaleString()}</b> shown · ${matched.toLocaleString()} in view · `
         + `<b>${total.toLocaleString()}</b> tracked`;
     $('trunc').textContent = truncated
-        ? `trimmed to the ${(+$('cap').value).toLocaleString()} limit — zoom in or filter`
+        ? `trimmed to the ${num('cap', 3000).toLocaleString()} limit — zoom in or filter`
         : '';
     for (const n of document.querySelectorAll('.n')) {
         const v = classCounts[n.dataset.n];
@@ -922,7 +932,7 @@ function pick(px, py) {
     if (!o) return null;
     const lx = px + (map.containerPointToLayerPoint([0, 0]).x - o.x);
     const ly = py + (map.containerPointToLayerPoint([0, 0]).y - o.y);
-    const grab = 8 + 3 * (+$('size').value);
+    const grab = 8 + 3 * num('size', 1);
     let best = null, bestD = grab * grab;
     for (const t of visList) {
         const d = (t._sx - lx) ** 2 + (t._sy - ly) ** 2;

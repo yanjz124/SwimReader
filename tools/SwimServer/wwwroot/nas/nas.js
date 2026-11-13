@@ -171,14 +171,17 @@ const NasCanvas = L.Layer.extend({
     pt(lat, lon) { return map.latLngToLayerPoint([lat, lon]).subtract(this._origin); },
 });
 
-// Declared before the layer is added, because onAdd() -> reset() -> draw() runs
-// synchronously inside addTo(). A `const` further down the file is in its temporal
-// dead zone at that moment, and reading it throws on page load -- which killed the
-// whole script, so the socket never connected and the page just said "connecting".
-// `node --check` cannot see this: it is a runtime error, not a syntax one.
+// The layer is INSTANTIATED AT THE BOTTOM OF THIS FILE, not here, because
+// addTo(map) runs onAdd -> reset -> draw synchronously and draw touches half the
+// module's state. Every `const`/`let` below this point would be in its temporal
+// dead zone at that moment, so each one throws on page load in turn -- and the
+// throw escapes module evaluation, so NOTHING after it runs: the socket never
+// connects and the page sits on "connecting" with an empty canvas. Chasing the
+// names one at a time is whack-a-mole; ordering the construction after the
+// declarations removes the whole class. `node --check` cannot see any of it,
+// because it is a runtime error and not a syntax one.
 let dpr = 1;
-const layer = new NasCanvas();
-layer.addTo(map);
+let layer = null;
 
 // ── Dead reckoning ─────────────────────────────────────────────────────────────
 function displayPos(t, now) {
@@ -1037,6 +1040,11 @@ const qlat = parseFloat(qs.get('lat')), qlon = parseFloat(qs.get('lon'));
 if (Number.isFinite(qlat) && Number.isFinite(qlon)) {
     map.setView([qlat, qlon], parseInt(qs.get('z') || '7', 10));
 }
+
+// Now that every declaration above exists, build the canvas layer (see the note
+// where `layer` is declared) and start the stream.
+layer = new NasCanvas();
+layer.addTo(map);
 
 renderLegend();
 renderCounts();

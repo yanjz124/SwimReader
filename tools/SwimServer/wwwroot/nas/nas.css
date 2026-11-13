@@ -301,8 +301,13 @@ body.by-value .ctl .sym { color: #8b94a2; }
     word-break: break-all;
 }
 
-/* The canvas is positioned by Leaflet's own transform; nothing else may move it. */
-.leaflet-pane canvas { will-change: transform; }
+/* No `will-change: transform` on the canvas. It was added speculatively and buys
+ * nothing — Leaflet is already transforming the pane, and the browser promotes the
+ * layer on its own when it needs to. What it DID do was promote a 1764x902 canvas to
+ * its own compositor layer, which headless Chromium with --disable-gpu then failed to
+ * composite into Page.captureScreenshot: the page probed perfectly (370 targets, 1,322
+ * painted samples, every coordinate in range) while the PNG came back with tiles and no
+ * targets. That is indistinguishable from a dead renderer. */
 
 @media (max-width: 760px) {
     .scale { left: 8px; bottom: 8px; width: auto; right: 8px; max-width: none; }

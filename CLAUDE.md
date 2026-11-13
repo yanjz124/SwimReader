@@ -899,7 +899,9 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/nas/stats` | Fused NAS index: entity count, per-class split, per-tier match counts, CPU/allocation per pass (`?payload=1` adds the wire size) — **operator only** |
 | `WS /nas/ws` | Viewport-bounded delta stream behind the NAS map — `{cmd:"view", bbox, cap, cls, q}` in; `snapshot`/`delta` out |
 | `GET /api/nas/flow` | Per-airport flow restrictions: TBFM arrival metering + TFDM field constraint, joined to a NASR position |
-| `GET /api/nas/targets` | The fused targets themselves — `?cls=`, `?bbox=s,w,n,e`, `?limit=`, `?delta=1`, `?held=1` — **operator only** |
+| `GET /api/tfms/fca` | FEA/FCA outlines with floor/ceiling, schedule and flight count — `?all=1`, `?type=FEA\|FCA` |
+| `GET /api/tfms/restrictions` | Published MIT / APREQ / ground-stop restrictions against named NAS elements |
+| `GET /api/nas/targets` | The fused targets themselves — `?cls=`, `?bbox=s,w,n,e`, `?limit=`, `?delta=1`, `?held=1`, `?dedupe=1`, `?dupes=1` — **operator only** |
 | `GET /api/track/{callsign}` | Combined single-callsign snapshot across all sources — `{callsign, found, sfdps, freqs, tfms, edct, handoffHistory, tdls, tais, asdex}` |
 | `GET /t`, `GET /t/{callsign}` | **Disabled** — redirects to `/track` / `/track/{callsign}` (see Track a Flight section) |
 
@@ -2070,6 +2072,117 @@ such codes, none over 10 NM apart — so the merge needs no distance guard. (The
 apart" pairs in the first pass were a missing age filter in the measuring script: every one paired
 a 25-60 minute stale record with a fresh one, usually under the same callsign.)
 
+### Cross-facility dedupe: one airplane that several facilities each publish
+
+Everything above merges on **exact identity** — Mode S, callsign, GUFI — plus tier 3's discrete
+beacon code against a *named SFDPS flight*. What none of it reaches is the pair that leaves
+behind: an uncorrelated return near a TRACON boundary is published by **both** TRACONs, and with
+no Mode S and no callsign on either copy there is nothing to join them on. They arrive as two
+entities on top of each other.
+
+It is not a rare edge. Live at midday: **1,546 groups covering 4,554 entities — ~18% of the
+index**, chains up to 11 facilities long. One of them:
+
+| facility | callsign | squawk | alt | gs |
+|---|---|---|---|---|
+| C90+MKE | **ENY4023** | 7201 | 15,700 | 374 |
+| AZO / CMI / GRB / HUF / IND / MLI / MSN / RFD / SBN | — | 7201 | 14,600-16,100 | 351-380 |
+
+One regional jet descending over the Midwest, drawn as **ten targets**.
+
+**The evidence is a discrete beacon code plus agreement in three dimensions**, and it is only
+good while it holds — so unlike tier 3 this is recomputed every pass and **never written to the
+key map**. Targets that drift apart stop being one aircraft on the next pass, which is the right
+answer rather than a cache to invalidate.
+
+#### A formation flight is why geometry is not enough
+Two aircraft a quarter-mile apart are *geometrically identical* to one aircraft seen twice: same
+position, same altitude, same speed, and if they share a code the same squawk. No distance gate
+separates those cases, because they are not at different distances.
+
+What separates them is **who is reporting**. A facility assigns one track per radar target, so a
+facility contributing **two** members to a cluster is looking at two airplanes, and the cluster
+is declined whole — counted as a formation and left on the map as the separate targets it is.
+Conflicting callsigns or Mode S codes decline it too. Live: ~14-38 formations declined per pass,
+0 groups with conflicting callsigns in the output.
+
+**Declining must exclude every member for the pass, not release them.** Releasing is the obvious
+thing and it is wrong: a two-ship at CLE plus one IND track declines as a whole, and then the
+*second* CLE track forms the subset `{CLE, IND}`, which is one-per-facility and merges. The
+ambiguity belongs to the cluster, so no subset of it is unambiguous. A test caught that; reading
+the loop did not.
+
+#### It groups, it does not destroy
+The merge is recorded on the entities (leader + members) rather than applied, so the option is
+per **viewer**: one client collapsing its map must not change what another sees, and the raw
+per-facility picture is what you want when the question is radar coverage rather than traffic.
+`{cmd:"view", dedupe:false}` on the socket, `?dedupe=1` / `?dupes=1` on `/api/nas/targets`
+(`dupes=1` returns every member of every group, which is how to audit a merge rather than infer
+it from a count). Default **on** — a target published twice is one airplane, and drawing it twice
+is wrong rather than conservative.
+
+The client must **not** clear what it holds when the flag flips: the server's delta is computed
+against what it believes that client has, so flipping re-sends the group leaders (their label
+changed) and adds or deletes the followers, while a target in *no* group correctly gets nothing.
+Clearing locally would delete every solo target — most of the map — and read as the toggle
+breaking the stream.
+
+### Two reports of one airplane are not at the same place, and that is not error
+
+Each source reports where the aircraft **was** at its own fix time, and those times differ by up
+to a minute across facilities. At 450 kt that is 7.5 NM of pure bookkeeping, so a raw distance
+gate has to be opened wide enough to swallow the latency — which is exactly how much room it then
+gives two genuinely different aircraft.
+
+Measured over 1,562 live groups, advancing each report along its own track to a common instant:
+
+| | p50 | p90 | p99 | max |
+|---|---|---|---|---|
+| raw | 1.07 | 3.32 | 6.00 | 9.03 |
+| **age-compensated** | **0.28** | **1.30** | 4.15 | 8.71 |
+
+The same evidence read correctly is four times sharper, so the gate is **2.0 NM compensated**
+rather than 3.0 raw — tighter *and* catching more. Where track or speed is missing it falls back
+to the raw pair and the wider gate rather than pretending to a precision it does not have. After
+the change, measured again: compensated spread p50 **0.24**, p90 **1.05**, p99 **2.01** NM.
+
+#### Leadership is by estimated error, because the leader is what gets drawn
+
+```
+sigma = hypot( gs * age,  source floor,  azimuth error * range from the facility )
+```
+
+Rank alone was the first rule and it is too coarse. TAIS outranks SFDPS because it reports every
+five seconds against twelve — but that is a claim about **cadence**, not about this particular
+report, and a 60-second-old terminal fix preferred over a 3-second-old en-route one draws the
+aircraft seven miles from where it is.
+
+- **Delay dominates and is exactly known.** 45 s at 450 kt is 5.6 NM, an order of magnitude past
+  any sensor's own error.
+- **Range is angular**: ~0.2 deg is 0.2 NM at 60 NM and 0.5 at 150, so closer to the site is more
+  accurate. It is **honest about what it knows** — vNAS publishes a STARS area's visibility
+  *center*, not its antennas, so this is "roughly how far out in that facility's airspace". Where
+  no reference is published the term is **dropped rather than guessed**.
+  `StarsBridge.RefreshRadarRefsAsync` builds that map from every ARTCC's STARS areas, keyed by
+  **both** the vNAS id and the feed id — those differ (PBI vs DJT) and the index only ever sees
+  the feed id.
+
+**Banded to half a mile.** Raw sigma creeps every second, so comparing it directly would trade
+leadership between near-equal members on almost every pass — and each flip is a delete plus an
+add, so the group blinks at the tick rate while every counter reports a healthy delta stream.
+Inside one band the tie-break is **rank, then id**: stable where a float is not.
+
+Live after the change: leader fix age p50 **5 s**, p90 18 s; the leader is the freshest member
+76% of the time, the rest being within-band ties.
+
+**Two mutations earned their keep.** The *source floor* survived deletion, and rightly — 0.03 vs
+0.25 NM is under the half-mile band, so the number alone could never change a decision; rank is
+now the explicit in-band tie-break. And "keep whoever the cluster started with" passed, because
+the fixture happened to insert the fresher record first — the replacement test inserts the stale
+one first, which is the only arrangement that tells the two rules apart.
+
+Cost: the dedupe phase is ~27 ms of the pass; the index went from 7.5% to **~9% of one core**.
+
 ### Classification, because half the uncorrelated population is not aircraft
 `enroute / terminal / surface / vehicle / untagged / primary`. **1,725 of 3,483 untagged TAIS
 tracks report altitude 0 AND under 100 kt**, clustered at plains TRACONs (DSM/SUX/ACT/FSD/ICT) at
@@ -2305,6 +2418,88 @@ being deleted, so a raw count overstates what is in force.
 An airport NASR cannot place is returned **without** coordinates rather than dropped, and the
 panel reports how many were unplaced — a count of restrictions should not silently lose one to an
 unknown identifier.
+
+### Flow areas: FEA and FCA (`GET /api/tfms/fca`)
+
+TFMS publishes the **outline** of every flow area and `TfmsBridge` was throwing it away, keeping
+only the TMI flight lists keyed by `fcaId` — which is why the dashboards could say 1,300 flights
+are in `1_ORD_ALL` and not where that is. `fi:FXA` carries
+`feaFca/{polygon,line}/points` with `floor`/`ceiling`, plus the reason, the schedule and the
+type; `fi:RSTR` carries the published restrictions (`/api/tfms/restrictions`).
+
+**The type is the first thing to get right.** An **FEA** is a Flow Evaluation Area — a traffic
+manager watching a volume, nothing restricted. An **FCA** is a real constraint. They arrive in
+the same message in the same shape and the FEAs vastly outnumber them (live: **14 FCA / 108
+FEA**), so they are separate switches on the map. One combined toggle paints the country with
+boxes that mean nothing is wrong. `feaFcaType` is the only thing that separates them and is never
+inferred from the name.
+
+**A line is not a degenerate polygon.** An FCA can be a flow *line* aircraft cross rather than an
+area they are inside; closing it into a two-point ring draws something that looks like a line
+while every "is this inside" test downstream answers a question the line never asked.
+
+Three more rules, each of which renders as something plausible when wrong:
+- **Floor and ceiling are hundreds of feet**, as everywhere in TFM — 120 is FL120. Converted once
+  at the parse edge, because a half-converted altitude is a perfectly plausible number.
+- **`active` is not `exists`.** An area is routinely defined days ahead (the LANNA FEA live was
+  defined for a week), so a map that conflates them shows tomorrow's constraints as today's.
+- **An update carrying only a schedule change must not erase geometry already held.** An area
+  with no outline silently stops being drawn, with nothing to say it used to be there.
+
+On the map the shapes are `interactive: false` like every other overlay, so an area can never
+take a hover or a click from an aircraft; the only pointable thing is a small label chip at the
+centroid. The **altitude filter applies**, because an area carries a real floor and ceiling. A
+missing floor or ceiling is treated as unbounded that way rather than excluded — missing is not
+zero.
+
+**Chips get one cell of screen each, FCAs claiming theirs first.** Centroids cluster hard — the
+space-launch hazard areas alone put a dozen names on one patch of Texas — and a stack of
+unreadable chips is worse than none. The *outline* is always drawn; only the name is dropped, and
+the note says how many. Live at CONUS zoom: 75 outlines, 30 chips, 45 names hidden. It re-runs on
+`moveend` as well as `zoomend`, because the collisions are in screen space and a pan changes them
+with no data having moved.
+
+### Labels, and why placement is the hard part
+
+Which fields a label carries is a setting — ID / ALT / TYPE / SPD / RTE / SQ, with off / auto /
+always — because the useful answer depends on the question: a continental overview wants a
+callsign and nothing else, one airport's arrivals want type and speed too.
+
+Labels are the only thing on this map whose size does **not** shrink as you zoom out, so the 400
+targets that are comfortable over one TRACON are a solid block of overlapping text over CONUS.
+Three rules:
+
+1. **placement is chosen** — sixteen candidate anchors (eight directions x two rings) per target,
+   first free one wins;
+2. **a label that fits nowhere is dropped**, not stacked — two overlapping labels are strictly
+   worse than one, and the symbol is still there to hover;
+3. **placement is sticky and the order deterministic** (identified first, then id).
+
+The third is what makes the other two worth having. Without it the first two produce a legible
+still image and an unreadable moving one — exactly the class of thing a screenshot cannot catch.
+Every target symbol is an obstacle before any label is placed, so a label never parks on another
+aircraft; the same rule the ASDE-X auto offset follows.
+
+**The second ring earns a leader line**, because at that distance the association between a label
+and its target stops being obvious — which is why every real scope in this repo draws one.
+Measured at Atlanta, zoom 9, ~320 targets: one ring of eight anchors drew 105 labels and dropped
+209; two rings plus **6 px occupancy cells instead of 12** draw **232** and drop 107. The cell
+size matters because the grid rounds *up* to whole cells, so a coarse cell reserves space the
+label does not occupy — at a 10 px line height a 12 px cell over-reserves by most of a line.
+
+Occupancy is a coarse hash grid, not pairwise rectangles: 400 labels is 160,000 comparisons a
+frame against a few thousand cell probes, inside the same rAF as the targets.
+
+**Altitude in a label is the zero-padded-hundreds data-block form**, deliberately *not* the
+FL-above-18,000 rule `/track` and the bot follow. That rule is about prose, where "at FL10" on
+short final is the wrong unit for a reader; a data block is read as hundreds by definition, and
+mixing two notations in one column is worse than either.
+
+**Primary returns** were `#5a6472`, a shade off the basemap itself — and a target you cannot see
+is not de-emphasized, it is missing. This class is ~20% of the picture. Now `#9fb0c4`, still the
+coolest and least saturated of the six so it stays at the bottom of the hierarchy, and drawn over
+a **dark halo** rather than merely brightened: raising the color cannot help where the
+*background* is the problem, which is any city, coastline or NEXRAD cell the cross falls on.
 
 ### What cost what
 Steady state at midday: index **150 ms CPU/pass = 7.5% of one core**, ~19 GB/h allocation against

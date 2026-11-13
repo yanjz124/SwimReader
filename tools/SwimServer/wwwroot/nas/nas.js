@@ -944,7 +944,19 @@ function drawFca() {
     if (!wantFca && !wantFea) return;
 
     const g = L.layerGroup([], { pane: 'nasBounds' });
-    const [lo, hi] = altBand();
+    // The SAME altBand() the sector layer uses - it returns null for "all", not a
+    // pair. This was briefly a second copy of the function returning [null, null],
+    // which in a classic script SHADOWS the first: the sector layer would have
+    // started receiving a truthy pair for "all" and queried the FAVs with an empty
+    // band. Two copies of one rule, for the fourth time in this repo, and only the
+    // linter saw it.
+    // Named filterBand, NOT band: the loop below declares its own `band` for the
+    // altitude label, and in the same block scope that shadows this one for the
+    // whole body -- so `if (band && ...)` above the inner declaration is a temporal
+    // dead zone reference and throws on the first area drawn. node --check cannot
+    // see it; the linter reported this one as "assigned but never used", which is
+    // the symptom of every reference having resolved to the other binding.
+    const filterBand = altBand();
     let drawn = 0, offBand = 0, hidden = 0;
 
     // Chip placement is the same problem as the target labels and takes the same
@@ -973,7 +985,8 @@ function drawFca() {
         // The ALTITUDE filter applies, because an area has a real floor and ceiling.
         // An area wholly outside the band the user is looking at is not relevant to
         // the traffic they can see.
-        if (lo !== null && !bandOverlaps(a.floorFt, a.ceilingFt, lo, hi)) { offBand++; continue; }
+        if (filterBand
+            && !bandOverlaps(a.floorFt, a.ceilingFt, filterBand[0], filterBand[1])) { offBand++; continue; }
 
         const st = { pane: 'nasBounds', interactive: false, ...FCA_STYLE[isFca ? 'FCA' : 'FEA'] };
         if (a.shape === 'line') L.polyline(a.points, st).addTo(g);
@@ -1018,13 +1031,6 @@ function drawFca() {
 }
 
 // The sidebar altitude filter as feet, or [null, null] when it is "all".
-function altBand() {
-    const v = $('alt').value;
-    if (v === 'all') return [null, null];
-    const [a, b] = v.split('-').map(Number);
-    return [a, b];
-}
-
 // Inclusive overlap. An area with no published floor or ceiling is treated as
 // unbounded that way rather than excluded -- missing is not the same as zero, and
 // dropping it would silently hide areas whose band TFMS simply did not state.

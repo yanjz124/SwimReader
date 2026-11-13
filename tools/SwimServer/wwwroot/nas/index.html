@@ -73,6 +73,26 @@
 
         <div class="grp">
             <div class="grp-h">DISPLAY</div>
+            <label for="base">Basemap
+                <select id="base">
+                    <option value="dark" selected>Dark</option>
+                    <option value="darkl">Dark + labels</option>
+                    <option value="light">Light</option>
+                    <option value="voyager">Voyager</option>
+                    <option value="sat">Satellite</option>
+                    <option value="none">None</option>
+                </select>
+            </label>
+            <label for="basedim">Dim
+                <select id="basedim">
+                    <option value="100">0%</option>
+                    <option value="75">25%</option>
+                    <option value="55">45%</option>
+                    <option value="35">65%</option>
+                    <option value="20">80%</option>
+                </select>
+            </label>
+            <div class="note" id="baseNote"></div>
             <label for="color">Color
                 <select id="color">
                     <option value="class" selected>by class</option>

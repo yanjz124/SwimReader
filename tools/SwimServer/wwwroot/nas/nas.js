@@ -65,7 +65,62 @@ const map = L.map('map', {
 }).setView([39.0, -97.0], 4);
 
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
-L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 14 }).addTo(map);
+
+// ── Basemap ─────────────────────────────────────────────────────
+//
+// The traffic is drawn ON the basemap, so the basemap's job is to stay out of its
+// way. Every alternative here is brighter than the default, and brightness is
+// exactly what competes with the targets -- so each one carries the DIM it wants
+// and selecting it applies that, rather than leaving a washed-out scope and a
+// control to go and discover. Dimming works because the map container is
+// near-black (#05070a): less opacity is literally less basemap.
+//
+// CARTO goes through /basemap/ so the API key stays in the server's .env (see
+// MiscRoutes). Esri's imagery needs no key and is fetched straight from Esri --
+// the browser talks to them directly, as it already does to mesonet for NEXRAD.
+// Attribution is in the note under the control because this map runs with
+// Leaflet's attribution control off.
+const CARTO = n => `/basemap/${n}/{z}/{x}/{y}{r}.png`;
+const ESRI = n => `https://server.arcgisonline.com/ArcGIS/rest/services/${n}/MapServer/tile/{z}/{y}/{x}`;
+const CARTO_CREDIT = '© CARTO, © OpenStreetMap contributors';
+const BASEMAPS = {
+    dark: { urls: [CARTO('dark_nolabels')], dim: 100, credit: CARTO_CREDIT },
+    darkl: { urls: [CARTO('dark_all')], dim: 100, credit: CARTO_CREDIT },
+    light: { urls: [CARTO('light_all')], dim: 35, credit: CARTO_CREDIT },
+    voyager: { urls: [CARTO('rastertiles/voyager')], dim: 55, credit: CARTO_CREDIT },
+    // Imagery PLUS Esri's own reference layer: place names on raw imagery are the
+    // difference between a picture and a map, and theirs is built to sit on it.
+    sat: {
+        urls: [ESRI('World_Imagery'), ESRI('Reference/World_Boundaries_and_Places')],
+        dim: 55, credit: 'Imagery © Esri, Maxar, Earthstar Geographics',
+    },
+    // Not an empty option: a black field is what a radar scope actually looks like,
+    // and it costs no tiles at all on a metered or slow connection.
+    none: { urls: [], dim: 100, credit: 'No basemap — targets and boundaries only.' },
+};
+
+let baseLayers = [];
+// `lastBase` is what makes the recommended dim a DEFAULT rather than an override:
+// it is applied only when the basemap itself CHANGES, so a dim chosen afterwards
+// survives every later redraw and is reset only by picking another basemap. The
+// bootstrap seeds it from the control, or restoring a saved dim would be undone
+// by the first call.
+let lastBase = null;
+
+function updateBase() {
+    const key = $('base').value;
+    const b = BASEMAPS[key] || BASEMAPS.dark;
+    if (key !== lastBase) {
+        lastBase = key;
+        $('basedim').value = String(b.dim);
+    }
+    const op = num('basedim', 100) / 100;
+    for (const l of baseLayers) map.removeLayer(l);
+    // Esri's templates are {z}/{y}/{x} with no extension, which Leaflet is happy
+    // with -- the only thing that must not be assumed is the y/x order.
+    baseLayers = b.urls.map(u => L.tileLayer(u, { maxZoom: 14, opacity: op }).addTo(map));
+    $('baseNote').textContent = b.credit;
+}
 
 // Weather under boundaries under traffic. Leaflet's own overlayPane is 400.
 map.createPane('nasWx');
@@ -1528,6 +1583,67 @@ function esc(s) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ── Remembering the controls ─────────────────────────────────────
+//
+// localStorage, NOT a cookie. A cookie is sent to the server on every request this
+// origin makes -- every tile, every API call, the WebSocket upgrade -- to carry
+// settings the server has no use for, and it is capped around 4 KB. None of this
+// needs to leave the browser, which is why the ASDE-X auto offset and the STARS
+// prefs already live here.
+//
+// Every access is wrapped. In a private window, or with site data blocked, the
+// accessor itself THROWS rather than returning empty -- and a map that will not
+// render without its settings is worse than one that opens on the defaults.
+const PREF_KEY = 'nas.prefs.v1';
+
+// Saved by element id, so ADDING a control needs no migration: an unknown key is
+// ignored on read and a control that no longer exists is skipped. Bump the key
+// only when an existing value's MEANING changes, which is the case a stale entry
+// would restore silently and wrongly.
+//
+// The SEARCH BOX IS DELIBERATELY NOT SAVED. It lives outside #ctl, and a query is
+// a question about one flight right now, not a preference -- a filter restored
+// from last week that hides most of the country reads as the map being broken.
+function savePrefs() {
+    try {
+        const v = {};
+        for (const el of $('ctl').querySelectorAll('input[id], select[id]'))
+            v[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+        // The class filters are a group sharing one class and carrying no ids.
+        v._cls = [...document.querySelectorAll('.cls')].filter(c => c.checked).map(c => c.value);
+        v._open = $('ctl').classList.contains('open');
+        const c = map.getCenter();
+        v._view = [+c.lat.toFixed(4), +c.lng.toFixed(4), map.getZoom()];
+        localStorage.setItem(PREF_KEY, JSON.stringify(v));
+    } catch (e) { /* storage unavailable -- settings are a convenience, not state */ }
+}
+
+// Returns the saved [lat, lon, zoom], or null, for the caller to apply or discard.
+function loadPrefs() {
+    let v = null;
+    try { v = JSON.parse(localStorage.getItem(PREF_KEY) || 'null'); } catch (e) { /* ditto */ }
+    if (!v || typeof v !== 'object') return null;
+
+    for (const [id, val] of Object.entries(v)) {
+        if (id[0] === '_') continue;
+        const el = document.getElementById(id);
+        if (!el || !$('ctl').contains(el)) continue;
+        if (el.type === 'checkbox') el.checked = !!val;
+        // A SELECT is checked against its own options: an option that has since
+        // been removed would otherwise leave the control holding a value nothing
+        // can satisfy -- a KML file that 404s, a cap that reads as NaN.
+        else if (el.tagName !== 'SELECT' || [...el.options].some(o => o.value === val)) el.value = val;
+    }
+    if (Array.isArray(v._cls))
+        for (const c of document.querySelectorAll('.cls')) c.checked = v._cls.includes(c.value);
+    // Only ever ADDED: `open` is inert on a wide screen and the default on a narrow
+    // one is closed, so there is nothing to restore in the other direction.
+    if (v._open) $('ctl').classList.add('open');
+
+    return Array.isArray(v._view) && v._view.length === 3 && v._view.every(Number.isFinite)
+        ? v._view : null;
+}
+
 // ── Controls ───────────────────────────────────────────────────────────────────
 for (const el of document.querySelectorAll('.cls, #cap')) {
     el.addEventListener('change', () => { sendView(true); renderCounts(); });
@@ -1578,6 +1694,7 @@ $('alt').addEventListener('change', () => {
     if ($('bSectors').checked) updateSectorLayer();
     if ($('bFca').checked || $('bFea').checked) drawFca();
 });
+for (const id of ['base', 'basedim']) $(id).addEventListener('change', updateBase);
 for (const id of ['wx', 'wxop']) $(id).addEventListener('change', updateWx);
 $('bArtcc').addEventListener('change', updateArtccLayer);
 $('bSectors').addEventListener('change', updateSectorLayer);
@@ -1602,12 +1719,22 @@ $('qclear').addEventListener('click', () => { qEl.value = ''; sendView(true); })
 
 $('ctlToggle').addEventListener('click', () => { $('ctl').classList.toggle('open'); });
 
+// Settings come back BEFORE the deep link is read, because a URL someone was SENT
+// is a statement about where to look and has to win over wherever this browser
+// happened to be last -- otherwise every shared /nas link lands somewhere else.
+const savedView = loadPrefs();
+syncLabelUi();
+lastBase = $('base').value;
+updateBase();
+
 // Deep link: /nas?q=UAL1&lat=..&lon=..&z=..
 const qs = new URLSearchParams(location.search);
 if (qs.get('q')) qEl.value = qs.get('q');
 const qlat = parseFloat(qs.get('lat')), qlon = parseFloat(qs.get('lon'));
 if (Number.isFinite(qlat) && Number.isFinite(qlon)) {
     map.setView([qlat, qlon], parseInt(qs.get('z') || '7', 10));
+} else if (savedView) {
+    map.setView([savedView[0], savedView[1]], savedView[2]);
 }
 
 // Now that every declaration above exists, build the canvas layer (see the note
@@ -1618,3 +1745,23 @@ layer.addTo(map);
 renderLegend();
 renderCounts();
 connect();
+
+// The overlay loaders run only HERE, after the canvas exists -- they are reached
+// at startup for the first time now that a layer can be restored already on, and
+// the draw path they end in touches `layer`. Same ordering trap this file already
+// carries a note about. Each is a no-op when its own control is off, so they are
+// called unconditionally rather than re-testing six checkboxes.
+updateArtccLayer();
+updateSectorLayer();
+updateKmlLayer();
+updateFlow();
+updateFca();
+updateWx();
+
+// ONE delegated listener instead of a save inside each handler: a control added
+// later would otherwise quietly not persist, which reads as storage failing
+// rather than as a missing line. Delegation also fixes the ORDER -- a listener on
+// the element itself runs before one on an ancestor, so the basemap's recommended
+// dim has already been written to the control by the time this reads it.
+$('ctl').addEventListener('change', savePrefs);
+map.on('moveend zoomend', savePrefs);

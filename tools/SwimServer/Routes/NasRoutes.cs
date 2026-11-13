@@ -41,17 +41,23 @@ static class NasRoutes
         app.MapGet("/api/nas/flow", (HttpContext http) =>
         {
             var nasr = ctx.GetNasr();
-            var tfdm = ctx.Tfdm.FlowSnapshot();
             var rows = new List<object>();
+
+            // THE TWO SOURCES KEY AIRPORTS DIFFERENTLY: TFDM publishes ICAO (KLAS) and TBFM the
+            // FAA LID (LAS). Joining them raw matched almost nothing — LAS appeared twice, once
+            // with metering and no field data and once with field data and no metering, which
+            // reads as two different airports rather than a failed join. Both sides are
+            // normalised to the LID, the same way TbfmDashboard.AirportBoard already does.
+            var tfdm = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (k, v) in ctx.Tfdm.FlowSnapshot()) tfdm[Lid(k)] = v;
 
             // TBFM first: it names the airports with arrival metering.
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var o in ctx.Tbfm.AirportsSnapshot())
             {
                 var j = System.Text.Json.JsonSerializer.SerializeToElement(o, ctx.JsonOpts);
-                var apt = j.GetProperty("apt").GetString() ?? "";
-                if (apt.Length == 0) continue;
-                seen.Add(apt);
+                var apt = Lid(j.GetProperty("apt").GetString() ?? "");
+                if (apt.Length == 0 || !seen.Add(apt)) continue;
                 rows.Add(FlowRow(ctx, nasr, apt, j, tfdm.GetValueOrDefault(apt)));
             }
             // Then any airport TFDM is restricting that TBFM is not metering at all.
@@ -215,6 +221,17 @@ static class NasRoutes
                 targets = rows,
             }, ctx.JsonOpts);
         });
+    }
+
+    /// <summary>
+    /// Normalise an airport identifier to the FAA LID the NAS map keys on: KLAS -> LAS.
+    /// Only a 4-character identifier beginning with K is stripped, which is the same rule
+    /// TbfmDashboard uses — PANC and PHNL must keep their prefix.
+    /// </summary>
+    internal static string Lid(string apt)
+    {
+        apt = apt.Trim().ToUpperInvariant();
+        return apt.Length == 4 && apt[0] == 'K' ? apt[1..] : apt;
     }
 
     /// <summary>

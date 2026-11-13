@@ -26,6 +26,19 @@ class NasView
     public HashSet<NasClass>? Classes;
     public string? Text;
 
+    /// <summary>
+    /// Collapse the index's cross-facility duplicate groups into one target each.
+    ///
+    /// <para>Per CLIENT, not per deployment, because the two pictures answer different
+    /// questions: deduped is "how many airplanes are there", raw is "which facilities can see
+    /// this one". One viewer collapsing its map must not change what another viewer sees, which
+    /// is why the index groups rather than merges and this flag lives out here.</para>
+    ///
+    /// <para>Default ON: a target published twice is one airplane, and drawing it twice is the
+    /// wrong answer rather than the conservative one.</para>
+    /// </summary>
+    public bool Dedupe = true;
+
     /// <summary>First payload is a labeled snapshot rather than an "add everything" delta.</summary>
     public bool First = true;
 
@@ -77,6 +90,10 @@ class NasView
                 if (set.Count > 0) Classes = set;
             }
 
+            if (root.TryGetProperty("dedupe", out var dd)
+                && dd.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                Dedupe = dd.GetBoolean();
+
             Text = root.TryGetProperty("q", out var q) ? q.GetString()?.Trim() : null;
             if (string.IsNullOrEmpty(Text)) Text = null;
             return true;
@@ -97,6 +114,10 @@ class NasView
         foreach (var e in snap.Entities.Values)
         {
             if (!e.Positioned) continue;
+            // A duplicate group's followers are dropped BEFORE the filters, not after: the
+            // leader stands for the whole group, so a follower that passed a filter the leader
+            // failed would otherwise reappear as the second copy this exists to remove.
+            if (Dedupe && e.DupFollower) continue;
             if (e.Lat < South || e.Lat > North) continue;
             if (!LonInRange(e.Lon, West, East)) continue;
             if (Classes is not null && !Classes.Contains(e.Cls)) continue;
@@ -126,9 +147,9 @@ class NasView
         {
             keep.Add(e.Id);
             var vol = VolatileHash(e);
-            var ident = e.IdentityHash();
-            if (!_sent.TryGetValue(e.Id, out var prev)) adds.Add(e.ToAdd());
-            else if (prev.Ident != ident) adds.Add(e.ToAdd());   // upsert: who it is changed
+            var ident = e.IdentityHash(Dedupe);
+            if (!_sent.TryGetValue(e.Id, out var prev)) adds.Add(Row(e));
+            else if (prev.Ident != ident) adds.Add(Row(e));      // upsert: who it is changed
             else if (prev.Vol != vol) upds.Add(e.ToDelta());
             _sent[e.Id] = (vol, ident);
         }
@@ -158,6 +179,11 @@ class NasView
             Classes = ClassCounts(snap.Stats),
         };
     }
+
+    /// <summary>The add row in this client's chosen form. Both forms have the same LENGTH - the
+    /// group count is simply 0 when not deduping - so the client decodes one shape either
+    /// way and toggling the option cannot shift a field by one.</summary>
+    private object[] Row(NasEntity e) => Dedupe ? e.ToAddDeduped() : e.ToAddRaw();
 
     /// <summary>
     /// Longitude ranges wrap. A viewport straddling the antimeridian arrives with west &gt; east

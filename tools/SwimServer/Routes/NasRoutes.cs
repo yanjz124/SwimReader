@@ -179,7 +179,10 @@ static class NasRoutes
         //   ?limit=                     cap (default 2000, so a hand curl doesn't pull 12k rows)
         //   ?delta=1                    emit the positional-array wire form instead of objects
         //   ?held=1                     also include entities with NO position (flight plans)
-        app.MapGet("/api/nas/targets", (HttpContext http, string? cls, string? bbox, int? limit, int? delta, int? held) =>
+        //   ?dedupe=1                   collapse cross-facility duplicate groups to their leader
+        //   ?dupes=1                    ONLY the duplicate groups, which is how to audit them
+        app.MapGet("/api/nas/targets", (HttpContext http, string? cls, string? bbox, int? limit,
+                                        int? delta, int? held, int? dedupe, int? dupes) =>
         {
             var snap = ctx.Nas.Snapshot();
 
@@ -206,6 +209,13 @@ static class NasRoutes
                 // An unpositioned entity is a flight plan, not a target: it has no lat/lon, so
                 // emitting it puts it at (0, 0). ?held=1 includes them for inspection.
                 if (!ent.Positioned && held != 1) continue;
+                // Deduping here is the same rule the stream applies, read from the same
+                // grouping - not a second implementation of it.
+                if (dedupe == 1 && ent.DupFollower) continue;
+                // ...and the inverse, which is what you actually want when auditing a merge:
+                // every member of every group, so a bad one can be read rather than inferred
+                // from a count that went up.
+                if (dupes == 1 && ent.DupOf == 0) continue;
                 if (want is not null && !want.Contains(ent.Cls.ToString())) continue;
                 if (ent.Positioned && (ent.Lat < s || ent.Lat > n || ent.Lon < w || ent.Lon > e)) continue;
                 matched++;

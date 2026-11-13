@@ -208,6 +208,11 @@ class NasFusion
         // decline-on-ambiguity rule mean anything.
         CorrelateUnidentified(ents, now, st); st.CorrelateMs = Lap(ph); st.CorrelateKB = LapAlloc(ref pa);
 
+        // ...and then the one case exact identity cannot reach at all: the SAME airplane
+        // published separately by two facilities, with nothing on either copy to link them.
+        // Grouped, never destroyed - see DedupeCrossFacility.
+        DedupeCrossFacility(ents, st); st.DedupeMs = Lap(ph); st.DedupeKB = LapAlloc(ref pa);
+
         foreach (var e in ents.Values)
         {
             e.Classify();
@@ -505,6 +510,204 @@ class NasFusion
         into.Keys.AddRange(from.Keys);
     }
 
+    // -- Cross-facility dedupe: one airplane that several facilities each publish -------
+    //
+    // Everything above merges on EXACT identity - Mode S, callsign, GUFI - plus tier 3's
+    // discrete beacon code against a named SFDPS flight. What none of it reaches is the pair
+    // that leaves behind: an uncorrelated return near a TRACON boundary is published by BOTH
+    // TRACONs, and with no Mode S and no callsign on either copy there is nothing to join them
+    // on, so they arrive as two entities sitting on top of each other. Measured on the live
+    // feed: 468 co-located groups reported by different facilities, several of them three-way
+    // (CLE / IND / SDF on one target, all squawking 0513).
+    //
+    // THE EVIDENCE IS A DISCRETE BEACON CODE PLUS AGREEMENT IN THREE DIMENSIONS, and it is only
+    // good while it holds. So unlike tier 3 this is recomputed from scratch every pass and
+    // NEVER written to the key map: two targets that drift apart, or whose codes get reassigned,
+    // stop being one aircraft on the next pass. That is the correct answer, not a cache to
+    // invalidate.
+    //
+    // -- AND A FORMATION FLIGHT IS WHY THAT IS NOT ENOUGH ------------------------------
+    //
+    // Two aircraft flying a quarter-mile apart look exactly like one aircraft seen twice: same
+    // position, same altitude, same speed, and - if they are sharing a code - the same squawk.
+    // No distance gate can separate those two cases, because they are not different distances.
+    //
+    // What separates them is WHO IS REPORTING. A facility assigns one track per radar target, so
+    // if a single facility contributes TWO members to a cluster, that facility is looking at two
+    // targets and the cluster holds at least two aircraft. One member per facility is the only
+    // shape that can be one airplane; anything else is declined whole, counted as a formation,
+    // and left on the map as the separate targets it is. Two members carrying DIFFERENT
+    // callsigns, or different Mode S codes, are likewise two aircraft whatever their geometry.
+    //
+    // -- IT GROUPS, IT DOES NOT DESTROY ------------------------------------------------
+    //
+    // The merge is recorded on the entities (leader + members) rather than applied, so the
+    // choice belongs to each VIEWER rather than to the deployment. One client collapsing its
+    // map must not change what another client sees, and the raw per-facility picture is what you
+    // want when the question is radar coverage rather than traffic. NasView and
+    // /api/nas/targets?dedupe=1 read the grouping; the index always computes it.
+    private const double DupGateNm = 3.0;
+    private const int DupGateFt = 900;
+
+    /// <summary>Synthetic source token for SFDPS, which has no facility id of its own. Two SFDPS
+    /// records co-located under one code are two aircraft by the same rule as two TRACON tracks -
+    /// SFDPS's own per-ARTCC copies of one flight are already merged on GUFI and callsign long
+    /// before this runs.</summary>
+    private const string EramToken = "ERAM";
+
+    private void DedupeCrossFacility(Dictionary<long, NasEntity> ents, NasFusionStats st)
+    {
+        // Bucket by the beacon code itself. A discrete code is unique within a facility but
+        // reused all over the country, so a bucket is a handful of entities nationally and the
+        // pairwise sweep inside one is trivial - no grid needed, and no grid means no
+        // double-counting of pairs across cell boundaries.
+        Dictionary<string, List<NasEntity>>? buckets = null;
+        foreach (var e in ents.Values)
+        {
+            if (!e.Positioned || e.Vehicle || e.Pseudo) continue;
+            // Non-discrete codes are refused here for the same reason tier 3 refuses them:
+            // several 1200 targets legitimately sit inside one gate, and 7700/7600/7500 are
+            // shared by definition. A code that identifies nobody cannot confirm anything.
+            if (!BeaconCodes.IsDiscrete(e.Squawk)) continue;
+            buckets ??= new();
+            if (!buckets.TryGetValue(e.Squawk!, out var l)) buckets[e.Squawk!] = l = new();
+            l.Add(e);
+            st.DupCandidates++;
+        }
+        if (buckets is null) return;
+
+        var cluster = new List<NasEntity>(4);
+        // Sentinels in DupOf while the pass runs; both read as "not free" and neither can be
+        // confused with a real leader id, which starts at 1.
+        const long Taken = -1, Declined = -2;
+        var tokens = new List<string>(8);
+        foreach (var bucket in buckets.Values)
+        {
+            if (bucket.Count < 2) continue;
+            for (int i = 0; i < bucket.Count; i++)
+            {
+                var head = bucket[i];
+                if (head.DupOf != 0) continue;          // already taken by an earlier cluster
+                cluster.Clear();
+                cluster.Add(head);
+                // Transitive growth: B within the gate of A and C within the gate of B puts all
+                // three in one cluster even if A and C are not themselves inside it. Growing the
+                // cluster rather than pairing off A-B is what lets the one-per-facility test see
+                // the WHOLE group, and that test only works if it sees everything.
+                for (int grew = 1; grew > 0; )
+                {
+                    grew = 0;
+                    for (int j = i + 1; j < bucket.Count; j++)
+                    {
+                        var cand = bucket[j];
+                        if (cand.DupOf != 0) continue;
+                        foreach (var m in cluster)
+                            if (Near(m, cand)) { cand.DupOf = Taken; cluster.Add(cand); grew++; break; }
+                    }
+                }
+                if (cluster.Count < 2) continue;    // head is still free, which is correct
+
+                if (!Agrees(cluster, tokens, st))
+                {
+                    // Every member is OUT for this pass, not just released back into the pool.
+                    //
+                    // Releasing them is the obvious thing and it is wrong: a formation of two CLE
+                    // tracks plus one IND track declines as a whole, and then the NEXT head - the
+                    // second CLE track - forms the subset {CLE, IND}, which is one-per-facility
+                    // and merges. The ambiguity is a property of the whole cluster, so no subset
+                    // of it is unambiguous. Caught by a test, not by reading this loop.
+                    foreach (var m in cluster) m.DupOf = Declined;
+                    continue;
+                }
+
+                // Leader: the best POSITION in the group, ties by id. Rank rather than freshness,
+                // because a freshness tie-break would hand leadership back and forth between two
+                // equally live feeds and re-send the whole group on every flip.
+                var lead = cluster[0];
+                foreach (var m in cluster)
+                    if (m.PosRank > lead.PosRank || (m.PosRank == lead.PosRank && m.Id < lead.Id))
+                        lead = m;
+
+                // Sorted BEFORE the label is built, not just inside AddToken. The label is
+                // capped at MaxTokens, so for a group with more facilities than that the cap
+                // keeps whichever arrived FIRST - and arrival order comes from iterating a
+                // ConcurrentDictionary, so an unsorted list would pick a different four each
+                // pass. That moves the identity hash and re-sends the target forever, which is
+                // the same trap the facility list itself already documents one level down.
+                tokens.Sort(StringComparer.Ordinal);
+                string? label = null;
+                foreach (var t in tokens) label = NasEntity.AddToken(label, t);
+                foreach (var m in cluster) m.DupOf = lead.Id;
+                lead.DupN = cluster.Count;
+                lead.DupFacility = label;
+                st.DupGroups++;
+                st.DupMerged += cluster.Count - 1;
+                if (cluster.Count > st.DupMaxGroup) st.DupMaxGroup = cluster.Count;
+            }
+        }
+
+        // Sentinels are working state, not output. A target left holding Declined would read as
+        // DupFollower to every viewer - the exact aircraft-deleting bug the decline exists to
+        // prevent, reintroduced by the bookkeeping that prevents it.
+        foreach (var bucket in buckets.Values)
+            foreach (var e in bucket)
+                if (e.DupOf < 0) e.DupOf = 0;
+    }
+
+    private static bool Near(NasEntity a, NasEntity b)
+    {
+        // Altitude first: it is one subtraction and it rejects most of the bucket. Mode C is the
+        // SAME transponder reply read by two sensors, so real duplicates agree closely; the
+        // allowance is for the seconds between the two reports, which at 3,000 fpm is ~250 ft.
+        // A missing Mode C on either side cannot confirm anything, so it refuses.
+        if (a.AltFt is not { } x || b.AltFt is not { } y) return false;
+        if (Math.Abs(x - y) > DupGateFt) return false;
+        return Nm(a.Lat, a.Lon, b.Lat, b.Lon) <= DupGateNm;
+    }
+
+    /// <summary>
+    /// The formation test, and the only thing standing between this and a map that quietly
+    /// deletes half of a two-ship. Fills <paramref name="tokens"/> with the cluster's source
+    /// labels as a side effect, because collecting them IS the test.
+    /// </summary>
+    private static bool Agrees(List<NasEntity> cluster, List<string> tokens, NasFusionStats st)
+    {
+        tokens.Clear();
+        foreach (var m in cluster)
+        {
+            foreach (var t in SourceTokens(m))
+            {
+                // A facility reporting two members of one cluster is a facility looking at two
+                // targets. That is a formation (or simply two aircraft that are close), and no
+                // amount of geometry will say otherwise.
+                if (tokens.Contains(t)) { st.DupFormations++; return false; }
+                tokens.Add(t);
+            }
+            foreach (var o in cluster)
+            {
+                if (ReferenceEquals(m, o)) continue;
+                // Two named targets with different names are two airplanes, full stop. Cheap,
+                // and it catches what the facility test cannot: one TRACON record and one ERAM
+                // record that genuinely belong to different flights.
+                if (Conflict(m.Callsign, o.Callsign) || Conflict(m.ModeS, o.ModeS))
+                { st.DupConflicts++; return false; }
+            }
+        }
+        return true;
+    }
+
+    private static bool Conflict(string? a, string? b) =>
+        a is not null && b is not null && !string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Every source that can claim to be looking at this target: each terminal facility
+    /// reporting it, each surface feed, and SFDPS as one national source.</summary>
+    private static IEnumerable<string> SourceTokens(NasEntity e)
+    {
+        if (e.Facility is { } f) foreach (var t in f.Split('+')) yield return t;
+        if (e.Airport is { } a) foreach (var t in a.Split('+')) yield return t;
+        if ((e.Sources & NasSource.Sfdps) != 0) yield return EramToken;
+    }
+
     // ── Identity ───────────────────────────────────────────────────────────────────────
 
     // One scratch list, cleared per record rather than allocated per record. 26,000 records a
@@ -676,6 +879,21 @@ class NasEntity
     public string? Callsign, ModeS, Squawk, Type, Origin, Dest, Wake, Registration, Status;
     public string? Owner, Facility, Airport;
 
+    // -- Cross-facility duplicate grouping (recomputed every pass, never persisted) -----
+    /// <summary>Id of this target's duplicate-group leader, or 0 when it is in no group. The
+    /// leader carries its own id here, so <see cref="DupFollower"/> is what a deduping viewer
+    /// filters on.</summary>
+    public long DupOf;
+    /// <summary>On the LEADER only: how many entities the group holds (never 1).</summary>
+    public int DupN;
+    /// <summary>On the leader only: every facility reporting the group, <c>+</c>-joined. This is
+    /// the point of merging rather than hiding - "CLE+IND+SDF" says more than any one of the
+    /// three rows it replaced.</summary>
+    public string? DupFacility;
+    /// <summary>A member a deduping viewer should not draw, because the leader stands for it.
+    /// Never the leader itself.</summary>
+    public bool DupFollower => DupOf != 0 && DupOf != Id;
+
     /// <summary>
     /// Record a terminal facility reporting this target. Several legitimately do: a primary
     /// return near a TRACON boundary is published by both, and because an uncorrelated return
@@ -846,10 +1064,46 @@ class NasEntity
         Facility ?? "", Airport ?? "", Squawk ?? "",
     };
 
+    /// <summary>
+    /// The add row as a DEDUPING viewer should see it: the group's facilities in place of this
+    /// one entity's, and the member count appended so the client can say so rather than silently
+    /// showing fewer targets than the index holds.
+    /// </summary>
+    public object[] ToAddDeduped() => Grown(DupN > 1 ? DupFacility ?? Facility : null, DupN > 1 ? DupN : 0);
+
+    /// <summary>The same row for a viewer that is NOT deduping: this entity's own facility, and
+    /// a group count of 0. Same length as the deduped form on purpose - a client that decodes by
+    /// index must not have to know which mode produced the row.</summary>
+    public object[] ToAddRaw() => Grown(null, 0);
+
+    private object[] Grown(string? facility, int dupN)
+    {
+        var r = ToAdd();
+        var row = new object[r.Length + 1];
+        Array.Copy(r, row, r.Length);
+        if (facility is not null) row[FacilityField] = facility;
+        row[^1] = dupN;
+        return row;
+    }
+
+    /// <summary>Index of the facility field in <see cref="ToAdd"/>. Named because the row is
+    /// positional and an off-by-one here would overwrite the callsign with a TRACON id.</summary>
+    internal const int FacilityField = 12;
+
     /// <summary>Hash of just the identity fields, so the stream can tell an ordinary position
-    /// update from one that has to re-send who the target is.</summary>
-    public int IdentityHash() =>
-        HashCode.Combine(Callsign, Type, Origin, Dest, Owner, Facility, Airport, Squawk);
+    /// update from one that has to re-send who the target is. The group fields are in it for a
+    /// deduping viewer: a target that GAINS a second reporting facility has changed identity as
+    /// surely as one that gains a callsign, and without this its label would never update.</summary>
+    /// <summary>
+    /// <paramref name="dedupe"/> mixes in the group, and <c>DupN</c> is in there as well as the
+    /// label because the label is CAPPED: past <see cref="MaxTokens"/> facilities a group that
+    /// grows does not change its label at all, and the count is then the only thing that moves.
+    /// </summary>
+    public int IdentityHash(bool dedupe = false) => dedupe
+        ? HashCode.Combine(Callsign, Type, Origin, Dest, Owner,
+                           DupN > 1 ? DupFacility : Facility, Airport,
+                           HashCode.Combine(Squawk, DupN))
+        : HashCode.Combine(Callsign, Type, Origin, Dest, Owner, Facility, Airport, Squawk);
 
     public object ToJson() => new
     {
@@ -876,6 +1130,9 @@ class NasEntity
         posSrc = PosRank.ToString().ToLowerInvariant(),
         status = Status,
         pseudo = Pseudo ? true : (bool?)null,
+        dupOf = DupOf == 0 ? (long?)null : DupOf,
+        dupN = DupN > 1 ? DupN : (int?)null,
+        dupFacility = DupFacility,
     };
 }
 
@@ -906,8 +1163,8 @@ class NasFusionStats
     public double? CpuMs;
     public double CpuMeanMs;
     public int CpuSamples;
-    public double SfdpsMs, TaisMs, AsdexMs, CorrelateMs, ClassifyMs;
-    public double SfdpsKB, TaisKB, AsdexKB, CorrelateKB, ClassifyKB;
+    public double SfdpsMs, TaisMs, AsdexMs, CorrelateMs, DedupeMs, ClassifyMs;
+    public double SfdpsKB, TaisKB, AsdexKB, CorrelateKB, DedupeKB, ClassifyKB;
     public int SfdpsRecords, SfdpsPositions, SfdpsStale, SfdpsNoPos;
     public int TaisRecords, TaisPositions;
     public int AsdexRecords, AsdexPositions;
@@ -919,6 +1176,8 @@ class NasFusionStats
     public int Unpositioned;
     public int MatchedByBeacon, BeaconAmbiguous;
     public int WouldMatchByPosition, PositionAmbiguous, PositionNoCandidate;
+
+    public int DupCandidates, DupGroups, DupMerged, DupMaxGroup, DupFormations, DupConflicts;
 
     private readonly int[] _cls = new int[6];
     public void Count(NasClass c) => _cls[(int)c]++;
@@ -941,8 +1200,8 @@ class NasFusionStats
         allocGBPerHourAt2s = Math.Round(AllocBytes / 1073741824.0 * 1800, 2),
         // Per phase: the total is not actionable, and the first guess about which
         // phase dominates was wrong here by a factor of four.
-        phaseMs = new { sfdps = SfdpsMs, tais = TaisMs, asdex = AsdexMs, correlate = CorrelateMs, classify = ClassifyMs },
-        phaseKB = new { sfdps = SfdpsKB, tais = TaisKB, asdex = AsdexKB, correlate = CorrelateKB, classify = ClassifyKB },
+        phaseMs = new { sfdps = SfdpsMs, tais = TaisMs, asdex = AsdexMs, correlate = CorrelateMs, dedupe = DedupeMs, classify = ClassifyMs },
+        phaseKB = new { sfdps = SfdpsKB, tais = TaisKB, asdex = AsdexKB, correlate = CorrelateKB, dedupe = DedupeKB, classify = ClassifyKB },
         // Drawable entities. `unpositioned` above are held but cannot be placed.
         entities = Total,
         entitiesHeld = Total + Unpositioned,
@@ -996,6 +1255,19 @@ class NasFusionStats
             wouldMatchByPosition = WouldMatchByPosition,
             positionAmbiguous = PositionAmbiguous,
             positionNoCandidate = PositionNoCandidate,
+        },
+        // Cross-facility duplicate grouping. `formations` is the count that matters most: it is
+        // how often the one-per-facility rule REFUSED to merge, which is the only evidence that
+        // the rule is doing anything at all. A zero there on a busy feed means it is not running.
+        dedupe = new
+        {
+            candidates = DupCandidates,
+            groups = DupGroups,
+            // Entities a deduping viewer does not draw, because a leader stands for them.
+            merged = DupMerged,
+            maxGroup = DupMaxGroup,
+            formations = DupFormations,
+            conflicts = DupConflicts,
         },
     };
 }

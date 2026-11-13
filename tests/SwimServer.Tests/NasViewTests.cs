@@ -106,7 +106,7 @@ public class NasViewTests
         Assert.NotNull(renamed);
         Assert.Null(renamed!.Upd);
         var row = Assert.Single(renamed.Add!);
-        Assert.Equal(15, row.Length);
+        Assert.Equal(16, row.Length);
         Assert.Equal("AAL2", row[7]);
     }
 
@@ -181,7 +181,9 @@ public class NasViewTests
         e.Squawk = "4523";
 
         var row = Assert.Single(new NasView().Compute(Snap(e))!.Add!);
-        Assert.Equal(15, row.Length);
+        // 16 since the duplicate-group count was appended. BOTH dedupe modes emit this length -
+        // see NasDedupeTests.BothAddRowFormsHaveTheSameShape - so a client decodes one shape.
+        Assert.Equal(16, row.Length);
         Assert.Equal("", row[7]);          // no callsign: that is the point
         Assert.Equal("PCT", row[12]);
         Assert.Equal("", row[13]);

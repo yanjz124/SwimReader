@@ -2,20 +2,23 @@
  * An overview browser over the fused NAS picture: SFDPS en route, STARS terminal
  * and ASDE-X surface, one entity per airframe, streamed viewport-bounded.
  *
- * Two things shape the whole file.
+ * Three things shape this file.
  *
- * ONE CANVAS, NOT MARKERS. A continental view holds up to the server's cap of
- * targets (3,000 by default, 10,000 on request). Leaflet markers are a DOM node
- * each and die well before that — the ASDE-X scope already struggles at a few
- * hundred. Everything here is drawn into a single canvas in its own Leaflet pane,
- * which is the same approach eram.js takes for history and velocity vectors.
+ * ONE CANVAS, NOT MARKERS. A continental view holds up to the server's cap
+ * (3,000 by default, 10,000 on request). Leaflet markers are a DOM node each and
+ * die well before that — the ASDE-X scope already struggles at a few hundred.
+ *
+ * THE CANVAS RIDES THE MAP PANE. See NasCanvas: targets are drawn in LAYER
+ * coordinates and the pane's own CSS transform carries them during a drag, so a
+ * pan costs zero redraws and cannot lag the tiles. The first version cancelled
+ * that transform and redrew on a 110 ms throttle, which pinned stale pixels to
+ * the screen while the tiles moved underneath — the targets visibly swam.
  *
  * DEAD RECKONING, BECAUSE THE FEED IS NOT THE FRAME RATE. Positions arrive every
- * two seconds at best, and SFDPS itself only reports every twelve. Drawing only
- * on arrival makes every target jump; advancing each one along its own track
- * between updates is what makes the map look like it is moving rather than
- * stepping. Same formula as eram.js, and the same units trap: ground speed is
- * KNOTS, so one minute of travel is gs/3600 degrees of latitude.
+ * two seconds at best and SFDPS reports every twelve, so drawing only on arrival
+ * makes every target jump. Each one is advanced along its own track between
+ * updates — same formula as eram.js, and the same units trap: ground speed is
+ * KNOTS, so a minute of travel is gs/3600 degrees, not gs/60.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 'use strict';
@@ -36,14 +39,15 @@ const CLASS_COLOR = {
     Primary: '#5a6472',
 };
 
-// Dead reckoning is a lie that gets worse with time, so it is capped: past this
-// a target is drawn where it was last actually reported. 60 s is five SFDPS
-// cycles — beyond that the aircraft may well have turned.
+// Dead reckoning is a lie that gets worse with time, so it is capped: past this a
+// target is drawn where it was last actually reported. 60 s is five SFDPS cycles —
+// beyond that the aircraft may well have turned.
 const DR_MAX_MS = 60000;
 // Labels are unreadable in a crowd and expensive to lay out, so they are
 // suppressed above this many on screen however the checkbox is set.
 const LABEL_MAX = 400;
 const TRAIL_MIN_MS = 4000;   // don't record a trail dot more often than this
+const DR_TICK_MS = 110;      // idle repaint rate, so dead reckoning is visible
 
 // ── Map ────────────────────────────────────────────────────────────────────────
 const map = L.map('map', {
@@ -54,230 +58,578 @@ const map = L.map('map', {
     maxZoom: 14,
 }).setView([39.0, -97.0], 4);
 
-// Same proxied CARTO basemap the scopes use, so there is no third-party tile
-// dependency and no key in the page.
 L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 14 }).addTo(map);
 
-// Weather sits under the traffic. The layer name is `nexrad-n0q-900913`, NOT
-// `nexrad-n0q` — the short name is not in IEM's GetCapabilities at all and
-// silently returns nothing, which cost this repo a debugging round once already.
+// Weather under boundaries under traffic. Leaflet's own overlayPane is 400.
 map.createPane('nasWx');
 map.getPane('nasWx').style.zIndex = 250;
+map.createPane('nasBounds');
+map.getPane('nasBounds').style.zIndex = 400;
+map.getPane('nasBounds').style.pointerEvents = 'none';
 map.createPane('nasTargets');
 map.getPane('nasTargets').style.zIndex = 450;
 map.getPane('nasTargets').style.pointerEvents = 'none';
 
+const $ = id => document.getElementById(id);
+
+// ── Weather ────────────────────────────────────────────────────────────────────
 let wxLayer = null;
 function updateWx() {
-    const on = document.getElementById('wx').checked;
-    const op = +document.getElementById('wxop').value / 100;
+    const on = $('wx').checked;
     if (wxLayer) { map.removeLayer(wxLayer); wxLayer = null; }
     if (!on) return;
+    // The layer name is `nexrad-n0q-900913`, NOT `nexrad-n0q` — the short name is
+    // not in IEM's GetCapabilities at all and silently returns nothing, which cost
+    // this repo a debugging round once already.
     wxLayer = L.tileLayer.wms('https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi', {
         layers: 'nexrad-n0q-900913',
         format: 'image/png',
         transparent: true,
-        opacity: op,
+        opacity: +$('wxop').value / 100,
         pane: 'nasWx',
     }).addTo(map);
 }
-// IEM publishes a new composite every 5 minutes.
 setInterval(() => { if (wxLayer) updateWx(); }, 5 * 60 * 1000);
 
-// ── Canvas overlay ─────────────────────────────────────────────────────────────
-const canvas = document.createElement('canvas');
-canvas.style.position = 'absolute';
-map.getPane('nasTargets').appendChild(canvas);
-const cx = canvas.getContext('2d');
-let dpr = 1;
+// ── The canvas layer ───────────────────────────────────────────────────────────
+//
+// This mirrors what L.Renderer does for Leaflet's own vector layers, and for the
+// same reason: a canvas whose pixels are addressed in LAYER space is carried by
+// the map pane's transform during a pan and scaled during a zoom animation, so it
+// stays glued to the ground with no work at all. Only when the view settles — or
+// when a drag runs past the padded edge — does it reposition and redraw.
+const PAD = 0.4;   // extra canvas, in screens, on each side: pan headroom
 
-function sizeCanvas() {
-    const size = map.getSize();
-    dpr = window.devicePixelRatio || 1;
-    canvas.width = size.x * dpr;
-    canvas.height = size.y * dpr;
-    canvas.style.width = size.x + 'px';
-    canvas.style.height = size.y + 'px';
-    // The pane is positioned by Leaflet, so cancel its offset to keep the canvas
-    // pinned to the viewport and let us draw in plain screen pixels.
-    const topLeft = map.containerPointToLayerPoint([0, 0]);
-    L.DomUtil.setPosition(canvas, topLeft);
-}
-map.on('move zoom resize zoomend viewreset moveend', () => { sizeCanvas(); paint(); });
-sizeCanvas();
+const NasCanvas = L.Layer.extend({
+    onAdd() {
+        this._canvas = L.DomUtil.create('canvas', '');
+        this._canvas.style.position = 'absolute';
+        this._ctx = this._canvas.getContext('2d');
+        map.getPane('nasTargets').appendChild(this._canvas);
+        this.reset();
+    },
+
+    getEvents() {
+        return {
+            viewreset: this.reset,
+            moveend: this.reset,
+            zoomend: this.reset,
+            resize: this.reset,
+            move: this._onMove,
+            zoom: this._onZoom,
+            zoomanim: this._onAnimZoom,
+        };
+    },
+
+    // Re-anchor the canvas to the current view and redraw it crisply.
+    reset() {
+        const size = map.getSize();
+        const padded = size.multiplyBy(1 + 2 * PAD).round();
+        const min = map.containerPointToLayerPoint(size.multiplyBy(-PAD)).round();
+
+        this._origin = min;
+        this._bounds = new L.Bounds(min, min.add(padded));
+        this._center = map.getCenter();
+        this._zoom = map.getZoom();
+
+        dpr = window.devicePixelRatio || 1;
+        this._canvas.width = Math.round(padded.x * dpr);
+        this._canvas.height = Math.round(padded.y * dpr);
+        this._canvas.style.width = padded.x + 'px';
+        this._canvas.style.height = padded.y + 'px';
+        L.DomUtil.setTransform(this._canvas, min, 1);
+        draw();
+    },
+
+    // During a drag the pane transform does the work. The only thing that needs
+    // doing is noticing when the view has run past the padding, which a long fling
+    // or an animated pan will do, and re-anchoring before the edge shows.
+    _onMove() {
+        if (!this._bounds) return;
+        const size = map.getSize();
+        const tl = map.containerPointToLayerPoint([0, 0]);
+        if (!this._bounds.contains(tl) || !this._bounds.contains(tl.add(size))) this.reset();
+    },
+
+    _onZoom() { this._updateTransform(map.getCenter(), map.getZoom()); },
+    _onAnimZoom(e) { this._updateTransform(e.center, e.zoom); },
+
+    // Scale and shift the already-drawn pixels to match a zoom in progress, so the
+    // targets grow with the tiles instead of jumping at the end of the animation.
+    // `_getNewPixelOrigin` is Leaflet-internal; this is the same call L.Renderer
+    // makes, and reimplementing the projection maths to avoid it would be worse.
+    _updateTransform(center, zoom) {
+        if (!this._bounds) return;
+        const scale = map.getZoomScale(zoom, this._zoom);
+        const offset = map.getSize().multiplyBy(0.5 + PAD).multiplyBy(-scale)
+            .add(map.project(this._center, zoom))
+            .subtract(map._getNewPixelOrigin(center, zoom));
+        L.DomUtil.setTransform(this._canvas, offset, scale);
+    },
+
+    // Screen position within the canvas, for a geographic point.
+    pt(lat, lon) { return map.latLngToLayerPoint([lat, lon]).subtract(this._origin); },
+});
+
+let dpr = 1;
+const layer = new NasCanvas();
+layer.addTo(map);
+const cx = () => layer._ctx;
 
 // ── Dead reckoning ─────────────────────────────────────────────────────────────
 function displayPos(t, now) {
     const dt = Math.min(now - t.t, DR_MAX_MS);
     if (dt <= 0 || !t.gs || t.trk === null || t.trk === undefined) return [t.lat, t.lon];
-    // gs is KNOTS: nautical miles per hour. Degrees of latitude per hour is gs/60,
-    // so per second it is gs/3600 — the factor eram.js uses and the TBFM map once
-    // got wrong by exactly 60.
+    // gs is KNOTS — nautical miles per hour. Degrees of latitude per hour is gs/60,
+    // so per millisecond it is gs/60/3600000. The factor the TBFM map got wrong by 60.
     const nm = t.gs * (dt / 3600000);
     const rad = t.trk * Math.PI / 180;
-    const dLat = nm / 60 * Math.cos(rad);
     const cosLat = Math.cos(t.lat * Math.PI / 180) || 1e-6;
-    const dLon = nm / 60 * Math.sin(rad) / cosLat;
-    return [t.lat + dLat, t.lon + dLon];
+    return [t.lat + nm / 60 * Math.cos(rad), t.lon + nm / 60 * Math.sin(rad) / cosLat];
+}
+
+// ── Colour ─────────────────────────────────────────────────────────────────────
+//
+// Three modes. CLASS is what a controller-style display does: colour says what
+// kind of thing it is. ALTITUDE and ENERGY are what an overview browser wants:
+// colour says where in the vertical the traffic is, which is the question a
+// whole-NAS view is actually good at answering.
+const RAMP = [
+    [0, [255, 112, 67]],       // surface — warm
+    [5000, [255, 183, 77]],
+    [12000, [255, 224, 130]],
+    [20000, [126, 231, 135]],
+    [30000, [78, 201, 255]],
+    [40000, [124, 140, 255]],
+    [52000, [199, 125, 255]],  // above anything civil — cool
+];
+
+function ramp(v) {
+    if (!(v > RAMP[0][0])) return rgb(RAMP[0][1]);
+    for (let i = 1; i < RAMP.length; i++) {
+        if (v <= RAMP[i][0]) {
+            const [v0, c0] = RAMP[i - 1], [v1, c1] = RAMP[i];
+            const f = (v - v0) / (v1 - v0);
+            return rgb([0, 1, 2].map(k => Math.round(c0[k] + f * (c1[k] - c0[k]))));
+        }
+    }
+    return rgb(RAMP[RAMP.length - 1][1]);
+}
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+// Specific energy height: the altitude an aircraft could reach by trading all its
+// speed for height, h + v²/2g. A real quantity, not a made-up blend of two
+// numbers — and the one that makes a fast low aircraft and a slow high one read
+// as comparable, which is the whole point of asking for "energy". At 450 kt the
+// kinetic term is about 9,000 ft.
+const KT_TO_MS = 0.514444, G = 9.80665, M_TO_FT = 3.28084;
+function energyFt(alt, gs) {
+    const v = (gs || 0) * KT_TO_MS;
+    return (alt || 0) + (v * v) / (2 * G) * M_TO_FT;
+}
+
+function colorOf(t) {
+    switch ($('color').value) {
+        case 'alt': return ramp(t.alt || 0);
+        case 'energy': return ramp(energyFt(t.alt, t.gs));
+        default: return CLASS_COLOR[t.cls] || '#8b94a2';
+    }
+}
+
+// ── Symbols ────────────────────────────────────────────────────────────────────
+//
+// One shape per class, so the kind of target is legible even when colour is
+// carrying altitude instead. Two of these borrow conventions already in this
+// repo rather than inventing new ones: ERAM draws an uncorrelated primary as a
+// '+', and the ASDE-X scope draws a vehicle as a square.
+//
+// The airborne classes are heading-oriented; the ones with no identity are
+// deliberately NOT drawn as aeroplanes. A triangle asserts a nose, and therefore
+// an aircraft — which is a claim the data does not make for a primary return,
+// about half of which are not aircraft at all.
+function drawSymbol(g, t, x, y, r, col, emph) {
+    const trk = t.trk || 0;
+    const a = trk * Math.PI / 180;
+    const sin = Math.sin(a), cos = Math.cos(a);
+    // Rotate (dx, dy) where -y is the nose, into screen space.
+    const P = (dx, dy) => [x + dx * cos - dy * sin, y + dx * sin + dy * cos];
+
+    g.lineWidth = emph ? 1.6 : 1;
+    g.strokeStyle = emph ? '#ffffff' : col;
+    g.fillStyle = col;
+
+    const tri = () => {
+        const p1 = P(0, -r * 1.25), p2 = P(r * 0.78, r * 0.9), p3 = P(-r * 0.78, r * 0.9);
+        g.beginPath();
+        g.moveTo(p1[0], p1[1]); g.lineTo(p2[0], p2[1]); g.lineTo(p3[0], p3[1]);
+        g.closePath();
+    };
+
+    switch (t.cls) {
+        case 'EnRoute':
+            tri(); g.fill();
+            if (emph) g.stroke();
+            break;
+
+        case 'Terminal':
+            // Same shape hollow: still an aeroplane with a heading, visibly a
+            // different layer of the system.
+            tri();
+            g.strokeStyle = col; g.lineWidth = emph ? 1.8 : 1.1;
+            g.stroke();
+            if (emph) { g.strokeStyle = '#ffffff'; g.stroke(); }
+            break;
+
+        case 'Surface': {
+            // A fuselage along the track. On the ground an aeroplane still has a
+            // direction, but it is not flying, and a delta would read as airborne.
+            const L1 = P(0, -r * 1.2), L2 = P(0, r * 1.2);
+            g.lineCap = 'round';
+            g.lineWidth = Math.max(2, r * 0.95);
+            g.strokeStyle = col;
+            g.beginPath(); g.moveTo(L1[0], L1[1]); g.lineTo(L2[0], L2[1]); g.stroke();
+            g.lineCap = 'butt';
+            if (emph) {
+                g.lineWidth = 1; g.strokeStyle = '#ffffff';
+                g.beginPath(); g.arc(x, y, r * 1.5, 0, 6.283); g.stroke();
+            }
+            break;
+        }
+
+        case 'Untagged': {
+            // Hollow circle plus a heading tick: the radar gives a track, but
+            // nothing in the NAS says what this is.
+            g.beginPath(); g.arc(x, y, r * 0.82, 0, 6.283);
+            g.strokeStyle = col; g.lineWidth = emph ? 1.8 : 1.1; g.stroke();
+            if (t.gs) {
+                const q = P(0, -r * 1.7);
+                g.beginPath(); g.moveTo(x, y); g.lineTo(q[0], q[1]); g.stroke();
+            }
+            if (emph) {
+                g.strokeStyle = '#ffffff'; g.lineWidth = 1;
+                g.beginPath(); g.arc(x, y, r * 1.5, 0, 6.283); g.stroke();
+            }
+            break;
+        }
+
+        case 'Vehicle':
+            // Square, unrotated — the ASDE-X scope's convention.
+            g.fillRect(x - r * 0.75, y - r * 0.75, r * 1.5, r * 1.5);
+            if (emph) g.strokeRect(x - r * 1.2, y - r * 1.2, r * 2.4, r * 2.4);
+            break;
+
+        default: {
+            // Primary only: ERAM's '+' for an uncorrelated return.
+            const k = r * 0.95;
+            g.strokeStyle = col; g.lineWidth = emph ? 1.8 : 1;
+            g.beginPath();
+            g.moveTo(x - k, y); g.lineTo(x + k, y);
+            g.moveTo(x, y - k); g.lineTo(x, y + k);
+            g.stroke();
+            if (emph) {
+                g.strokeStyle = '#ffffff'; g.lineWidth = 1;
+                g.beginPath(); g.arc(x, y, r * 1.6, 0, 6.283); g.stroke();
+            }
+            break;
+        }
+    }
 }
 
 // ── Painting ───────────────────────────────────────────────────────────────────
 let paintQueued = false;
-let lastPaint = 0;
-const PAINT_MIN_MS = 110;   // ~9 fps: enough for smooth motion, cheap enough for 3,000 targets
-
 function paint() {
     if (paintQueued) return;
     paintQueued = true;
-    requestAnimationFrame(() => {
-        paintQueued = false;
-        const now = performance.timeOrigin ? Date.now() : Date.now();
-        if (now - lastPaint < PAINT_MIN_MS) return;
-        lastPaint = now;
-        draw(now);
-    });
+    requestAnimationFrame(() => { paintQueued = false; draw(); });
 }
-// Keep repainting while anything is moving, so dead reckoning is visible.
-setInterval(paint, PAINT_MIN_MS);
-
-const altSel = () => document.getElementById('alt').value;
+// Idle repaints so dead reckoning is visible. A pan needs none of these: the pane
+// transform moves the pixels, so this stays at a modest rate even while dragging.
+setInterval(paint, DR_TICK_MS);
 
 function altOk(t) {
-    const v = altSel();
+    const v = $('alt').value;
     if (v === 'all') return true;
     const [lo, hi] = v.split('-').map(Number);
     const a = t.alt || 0;
     return a >= lo && a < hi;
 }
 
-function draw(now) {
-    const w = canvas.width, h = canvas.height;
-    cx.setTransform(1, 0, 0, 1, 0, 0);
-    cx.clearRect(0, 0, w, h);
-    cx.scale(dpr, dpr);
+// Last-drawn screen positions, so hover and click pick off what is actually on
+// screen instead of re-projecting every target on every mouse move.
+let visList = [];
 
-    const trailN = +document.getElementById('trail').value;
-    const leaderMin = +document.getElementById('leader').value;
-    const wantLabels = document.getElementById('labels').checked;
-    const size = map.getSize();
-    const pad = 40;
+function draw() {
+    const g = cx();
+    if (!g || !layer._origin) return;
+    const W = layer._canvas.width, H = layer._canvas.height;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, W, H);
+    g.scale(dpr, dpr);
 
-    // Count what will actually be drawn before deciding about labels, so the
-    // threshold is about what is on screen and not about what the server sent.
-    const vis = [];
+    const now = Date.now();
+    const trailN = +$('trail').value;
+    const leaderMin = +$('leader').value;
+    const wantLabels = $('labels').checked;
+    const r = 4 * (+$('size').value);
+    const w = W / dpr, h = H / dpr;
+    const pad = 30;
+
+    visList = [];
     for (const t of targets.values()) {
         if (!altOk(t)) continue;
         const [lat, lon] = displayPos(t, now);
-        const p = map.latLngToContainerPoint([lat, lon]);
-        if (p.x < -pad || p.y < -pad || p.x > size.x + pad || p.y > size.y + pad) continue;
-        vis.push([t, p, lat, lon]);
+        const p = layer.pt(lat, lon);
+        if (p.x < -pad || p.y < -pad || p.x > w + pad || p.y > h + pad) continue;
+        t._sx = p.x; t._sy = p.y; t._lat = lat; t._lon = lon;
+        visList.push(t);
     }
-    const labels = wantLabels && vis.length <= LABEL_MAX;
+    const labels = wantLabels && visList.length <= LABEL_MAX;
 
     // Trails first, so targets sit on top of their own history.
     if (trailN > 0) {
-        for (const [t] of vis) {
+        for (const t of visList) {
             if (!t.trail.length) continue;
+            const col = colorOf(t);
             const from = Math.max(0, t.trail.length - trailN);
             for (let i = from; i < t.trail.length; i++) {
-                const q = map.latLngToContainerPoint(t.trail[i]);
+                const q = layer.pt(t.trail[i][0], t.trail[i][1]);
                 const age = (t.trail.length - i) / Math.max(1, trailN);
-                cx.fillStyle = CLASS_COLOR[t.cls] || '#888';
-                cx.globalAlpha = 0.5 * (1 - age) + 0.08;
-                cx.fillRect(q.x - 0.75, q.y - 0.75, 1.5, 1.5);
+                g.fillStyle = col;
+                g.globalAlpha = 0.5 * (1 - age) + 0.08;
+                const s = Math.max(1, r * 0.35);
+                g.fillRect(q.x - s / 2, q.y - s / 2, s, s);
             }
         }
-        cx.globalAlpha = 1;
+        g.globalAlpha = 1;
     }
 
     // Leaders.
     if (leaderMin > 0) {
-        cx.lineWidth = 0.6;
-        for (const [t, p, lat, lon] of vis) {
-            if (!t.gs || t.trk === null) continue;
+        g.lineWidth = 0.6;
+        g.globalAlpha = 0.45;
+        for (const t of visList) {
+            if (!t.gs || t.trk === null || t.trk === undefined) continue;
             const nm = t.gs * (leaderMin / 60);
             const rad = t.trk * Math.PI / 180;
-            const cosLat = Math.cos(lat * Math.PI / 180) || 1e-6;
-            const q = map.latLngToContainerPoint([
-                lat + nm / 60 * Math.cos(rad),
-                lon + nm / 60 * Math.sin(rad) / cosLat,
-            ]);
-            cx.strokeStyle = CLASS_COLOR[t.cls] || '#888';
-            cx.globalAlpha = 0.45;
-            cx.beginPath();
-            cx.moveTo(p.x, p.y);
-            cx.lineTo(q.x, q.y);
-            cx.stroke();
+            const cosLat = Math.cos(t._lat * Math.PI / 180) || 1e-6;
+            const q = layer.pt(t._lat + nm / 60 * Math.cos(rad),
+                               t._lon + nm / 60 * Math.sin(rad) / cosLat);
+            g.strokeStyle = colorOf(t);
+            g.beginPath(); g.moveTo(t._sx, t._sy); g.lineTo(q.x, q.y); g.stroke();
         }
-        cx.globalAlpha = 1;
+        g.globalAlpha = 1;
     }
 
     // Targets.
-    cx.lineWidth = 1;
-    for (const [t, p] of vis) {
-        const col = CLASS_COLOR[t.cls] || '#888';
-        if (t.cls === 'Primary' || t.cls === 'Untagged') {
-            // No identity: a dot, not an aeroplane. Drawing a delta here would
-            // assert a heading and an aircraft that the data does not claim.
-            cx.fillStyle = col;
-            const r = t.cls === 'Primary' ? 1.1 : 1.6;
-            cx.beginPath();
-            cx.arc(p.x, p.y, r, 0, 6.283);
-            cx.fill();
-        } else if (t.cls === 'Vehicle') {
-            cx.fillStyle = col;
-            cx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
-        } else {
-            drawDelta(p.x, p.y, t.trk || 0, col, t.id === hoverId || t.id === selId);
-        }
-        if (labels && t.cs) {
-            cx.fillStyle = '#cfd6de';
-            cx.font = '9px Consolas, monospace';
-            cx.fillText(t.cs, p.x + 6, p.y - 2);
+    for (const t of visList) {
+        drawSymbol(g, t, t._sx, t._sy, r, colorOf(t), t.id === hoverId || t.id === selId);
+    }
+
+    // Labels last so nothing is drawn over them.
+    if (labels) {
+        g.font = `${Math.round(8 + r)}px Consolas, monospace`;
+        for (const t of visList) {
+            if (!t.cs) continue;
+            g.fillStyle = '#cfd6de';
+            g.fillText(t.cs, t._sx + r + 2, t._sy - 2);
             if (t.alt) {
-                cx.fillStyle = '#8b94a2';
-                cx.fillText(String(Math.round(t.alt / 100)).padStart(3, '0'), p.x + 6, p.y + 7);
+                g.fillStyle = '#8b94a2';
+                g.fillText(String(Math.round(t.alt / 100)).padStart(3, '0'), t._sx + r + 2, t._sy + 8 + r * 0.5);
             }
         }
     }
 }
 
-// A small filled triangle pointing along the track. 0 degrees is north, and
-// canvas y grows downward, so the nose is at -y.
-function drawDelta(x, y, trk, col, emphasised) {
-    const r = emphasised ? 6 : 4;
-    const a = trk * Math.PI / 180;
-    const sin = Math.sin(a), cos = Math.cos(a);
-    const pt = (dx, dy) => [x + dx * cos - dy * sin, y + dx * sin + dy * cos];
-    const [x1, y1] = pt(0, -r);
-    const [x2, y2] = pt(r * 0.62, r * 0.72);
-    const [x3, y3] = pt(-r * 0.62, r * 0.72);
-    cx.fillStyle = col;
-    cx.beginPath();
-    cx.moveTo(x1, y1);
-    cx.lineTo(x2, y2);
-    cx.lineTo(x3, y3);
-    cx.closePath();
-    cx.fill();
-    if (emphasised) {
-        cx.strokeStyle = '#ffffff';
-        cx.lineWidth = 1;
-        cx.stroke();
+// ── Boundaries ─────────────────────────────────────────────────────────────────
+//
+// Three sources, deliberately kept separate because they are not the same data:
+//
+//   ARTCC      vNAS ArtccBoundaries.geojson — one lateral outline per centre.
+//              There is no high/low variant of an ARTCC boundary, so there is no
+//              altitude control over this one.
+//   SECTORS    vNAS Fixed Airspace Volumes: real volumes with a numeric floor and
+//              ceiling per slab, so the ALTITUDE filter RESHAPES them. That is
+//              what the FAVs can do and the KML cannot.
+//   KML        the legacy AllSectors/AllHigh/AllLow files. Kept because they are
+//              what exists offline, parsed by the same shared module the ERAM
+//              scope uses. ~4.5 MB and parsed in the browser, so strictly on
+//              demand and never by default.
+const bndLayers = { artcc: null, sectors: null, kml: null };
+const favCache = new Map();     // "ZDC|lo|hi" -> GeoJSON
+const kmlCache = new Map();     // filename -> parsed sectors
+let artccGeo = null;
+
+const BND_STYLE = {
+    artcc: { color: '#5b708a', weight: 1.4, opacity: 0.85, fill: false, interactive: false },
+    sectors: { color: '#48617d', weight: 0.7, opacity: 0.7, fill: false, interactive: false },
+    kml: { color: '#6b5a7d', weight: 0.7, opacity: 0.7, fill: false, interactive: false },
+};
+
+async function loadArtcc() {
+    if (!artccGeo) {
+        const r = await fetch('/api/airspace/artcc-boundaries');
+        if (!r.ok) throw new Error('artcc-boundaries ' + r.status);
+        artccGeo = await r.json();
+    }
+    return artccGeo;
+}
+
+function clearBnd(k) {
+    if (bndLayers[k]) { map.removeLayer(bndLayers[k]); bndLayers[k] = null; }
+}
+
+async function updateArtccLayer() {
+    clearBnd('artcc');
+    if (!$('bArtcc').checked) return;
+    try {
+        const geo = await loadArtcc();
+        bndLayers.artcc = L.geoJSON(geo, {
+            pane: 'nasBounds',
+            style: BND_STYLE.artcc,
+            // interactive:false everywhere, so a boundary can never take a hover
+            // or a click from a target — the lesson the TBFM map learned.
+            interactive: false,
+        }).addTo(map);
+    } catch (e) { console.warn('[NAS] ARTCC boundaries:', e.message); }
+}
+
+// Which centres the current view touches, so the sector layer loads a handful of
+// ARTCCs rather than all 24 (2,641 volumes, 75,185 points nationally).
+function artccsInView() {
+    if (!artccGeo) return [];
+    const b = map.getBounds().pad(0.1);
+    const out = [];
+    for (const f of artccGeo.features) {
+        const ring = f.geometry?.coordinates?.[0] || [];
+        let hit = false;
+        for (const [lon, lat] of ring) {
+            if (b.contains([lat, lon])) { hit = true; break; }
+        }
+        // A view wholly inside one centre contains none of its vertices, so also
+        // take the centre whose bounding box contains the view's middle.
+        if (!hit) {
+            let s = 90, w = 180, n = -90, e = -180;
+            for (const [lon, lat] of ring) {
+                if (lat < s) s = lat; if (lat > n) n = lat;
+                if (lon < w) w = lon; if (lon > e) e = lon;
+            }
+            const c = b.getCenter();
+            hit = c.lat >= s && c.lat <= n && c.lng >= w && c.lng <= e;
+        }
+        if (hit) out.push(f.properties.id);
+    }
+    return out;
+}
+
+function altBand() {
+    const v = $('alt').value;
+    if (v === 'all') return null;
+    const [lo, hi] = v.split('-').map(Number);
+    return [lo, hi];
+}
+
+const SECTOR_ARTCC_MAX = 8;
+
+async function updateSectorLayer() {
+    clearBnd('sectors');
+    if (!$('bSectors').checked) return;
+    const note = $('bndNote');
+    try {
+        await loadArtcc();
+        const ids = artccsInView().slice(0, SECTOR_ARTCC_MAX);
+        if (!ids.length) { note.textContent = 'Zoom to US airspace for sector volumes.'; return; }
+        const band = altBand();
+        const group = L.layerGroup([], { pane: 'nasBounds' });
+        let vols = 0;
+        for (const id of ids) {
+            const key = `${id}|${band ? band.join('-') : 'all'}`;
+            let geo = favCache.get(key);
+            if (!geo) {
+                const q = band ? `?lowFt=${band[0]}&highFt=${band[1]}` : '';
+                const r = await fetch(`/api/airspace/favs/${id}${q}`);
+                if (!r.ok) continue;
+                geo = await r.json();
+                favCache.set(key, geo);
+            }
+            // An exclusion is a 3-D subtraction, not a boundary anyone works to,
+            // and the 99k sentinel volumes encode something unknown — drawing
+            // either as an outline would show a sector that isn't there.
+            const feats = (geo.features || []).filter(f =>
+                !f.properties?.exclude && !f.properties?.sentinel);
+            vols += feats.length;
+            if (feats.length) {
+                L.geoJSON({ type: 'FeatureCollection', features: feats }, {
+                    pane: 'nasBounds', style: BND_STYLE.sectors, interactive: false,
+                }).addTo(group);
+            }
+        }
+        group.addTo(map);
+        bndLayers.sectors = group;
+        note.textContent = `${vols.toLocaleString()} volumes · ${ids.join(' ')}`
+            + (band ? ` · ${band[0].toLocaleString()}–${band[1].toLocaleString()} ft` : ' · all altitudes');
+    } catch (e) {
+        console.warn('[NAS] sector volumes:', e.message);
+        note.textContent = 'Sector volumes unavailable.';
     }
 }
 
+async function updateKmlLayer() {
+    clearBnd('kml');
+    const file = $('bKml').value;
+    const note = $('kmlNote');
+    if (!file) { note.textContent = ''; return; }
+    note.textContent = 'loading…';
+    try {
+        let sectors = kmlCache.get(file);
+        if (!sectors) {
+            sectors = await window.KmlSectors.parse(file);
+            kmlCache.set(file, sectors);
+        }
+        const group = L.layerGroup([], { pane: 'nasBounds' });
+        for (const s of sectors) {
+            L.polyline(s.coords, { pane: 'nasBounds', ...BND_STYLE.kml }).addTo(group);
+        }
+        group.addTo(map);
+        bndLayers.kml = group;
+        note.textContent = `${sectors.length.toLocaleString()} placemarks`;
+    } catch (e) {
+        console.warn('[NAS] KML:', e.message);
+        note.textContent = 'Not available on this deployment.';
+    }
+}
+
+// Sector volumes depend on the viewport, so they reload when it settles — but
+// only when that layer is on, since each reload is a handful of fetches.
+map.on('moveend zoomend', () => { if ($('bSectors').checked) updateSectorLayer(); });
+
+// Offer only the KML files this deployment actually has: they are gitignored and
+// a fresh checkout has none, so a fixed list would advertise three dead options.
+(async () => {
+    try {
+        const r = await fetch('/api/kml');
+        if (!r.ok) return;
+        const files = await r.json();
+        const sel = $('bKml');
+        for (const f of files) {
+            const o = document.createElement('option');
+            o.value = f;
+            o.textContent = f.replace(/\.kml$/i, '').replace(/^All/, '');
+            sel.appendChild(o);
+        }
+        if (!files.length) $('kmlRow').style.display = 'none';
+    } catch { $('kmlRow').style.display = 'none'; }
+})();
+
 // ── Stream ─────────────────────────────────────────────────────────────────────
 let ws = null, wsTimer = null, lastMsg = 0;
-
-function statusEl() { return document.getElementById('status'); }
 
 function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${proto}//${location.host}/nas/ws`);
 
     ws.onopen = () => {
-        statusEl().textContent = 'live';
-        statusEl().className = 'ok';
+        $('status').textContent = 'live';
+        $('status').className = 'ok';
         sendView(true);
     };
     ws.onmessage = ev => {
@@ -289,8 +641,8 @@ function connect() {
         renderCounts();
     };
     ws.onclose = () => {
-        statusEl().textContent = 'reconnecting…';
-        statusEl().className = 'bad';
+        $('status').textContent = 'reconnecting…';
+        $('status').className = 'bad';
         clearTimeout(wsTimer);
         wsTimer = setTimeout(connect, 3000);
     };
@@ -342,11 +694,11 @@ function sendView(force) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const b = map.getBounds().pad(0.35);
     const cls = [...document.querySelectorAll('.cls')].filter(c => c.checked).map(c => c.value);
-    const q = document.getElementById('q').value.trim();
+    const q = $('q').value.trim();
     const msg = {
         cmd: 'view',
         bbox: [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()],
-        cap: +document.getElementById('cap').value,
+        cap: +$('cap').value,
         cls,
         q: q || undefined,
     };
@@ -357,33 +709,32 @@ function sendView(force) {
 }
 
 let viewTimer = null;
-function scheduleView() {
+map.on('moveend zoomend', () => {
     clearTimeout(viewTimer);
     viewTimer = setTimeout(() => sendView(false), 250);
-}
-map.on('moveend zoomend', scheduleView);
+});
 
-// A silent socket looks identical to an empty sky, so say so rather than
-// showing a frozen map as if it were current.
+// A silent socket looks identical to an empty sky, so say so rather than showing
+// a frozen map as if it were current.
 setInterval(() => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const age = Date.now() - lastMsg;
     if (lastMsg && age > 15000) {
-        statusEl().textContent = `no data ${Math.round(age / 1000)}s`;
-        statusEl().className = 'bad';
+        $('status').textContent = `no data ${Math.round(age / 1000)}s`;
+        $('status').className = 'bad';
     } else if (lastMsg) {
-        statusEl().textContent = 'live';
-        statusEl().className = 'ok';
+        $('status').textContent = 'live';
+        $('status').className = 'ok';
     }
 }, 2000);
 
-// ── Counts ─────────────────────────────────────────────────────────────────────
+// ── Counts and legend ──────────────────────────────────────────────────────────
 function renderCounts() {
-    const el = document.getElementById('counts');
-    el.innerHTML = `<b>${shown.toLocaleString()}</b> shown · ${matched.toLocaleString()} in view · `
-                 + `<b>${total.toLocaleString()}</b> tracked`;
-    document.getElementById('trunc').textContent = truncated
-        ? `trimmed to the ${(+document.getElementById('cap').value).toLocaleString()} limit — zoom in or filter`
+    $('counts').innerHTML =
+        `<b>${shown.toLocaleString()}</b> shown · ${matched.toLocaleString()} in view · `
+        + `<b>${total.toLocaleString()}</b> tracked`;
+    $('trunc').textContent = truncated
+        ? `trimmed to the ${(+$('cap').value).toLocaleString()} limit — zoom in or filter`
         : '';
     for (const n of document.querySelectorAll('.n')) {
         const v = classCounts[n.dataset.n];
@@ -391,20 +742,40 @@ function renderCounts() {
     }
 }
 
+// The legend has to say what colour MEANS, and that changes with the mode. In
+// class mode the swatches are the key; in altitude or energy mode they would be
+// actively misleading, so they go grey and a gradient scale appears instead.
+function renderLegend() {
+    const mode = $('color').value;
+    document.body.classList.toggle('by-value', mode !== 'class');
+    const bar = $('scale');
+    if (mode === 'class') { bar.style.display = 'none'; return; }
+    bar.style.display = '';
+    const stops = RAMP.map(([v, c]) =>
+        `${rgb(c)} ${Math.round(100 * v / RAMP[RAMP.length - 1][0])}%`).join(', ');
+    $('scaleBar').style.background = `linear-gradient(to right, ${stops})`;
+    $('scaleLabel').textContent = mode === 'alt'
+        ? 'ALTITUDE  SFC → FL520'
+        : 'ENERGY (h + v²/2g)  0 → 52,000 ft';
+}
+
 // ── Hover ──────────────────────────────────────────────────────────────────────
 let hoverId = null, selId = null;
-const tip = document.getElementById('tip');
+const tip = $('tip');
 
+// Picks off the LAST DRAWN positions, so it costs a scan of what is on screen
+// rather than a re-projection of every target on every mouse move.
 function pick(px, py) {
-    const now = Date.now();
-    let best = null, bestD = 12 * 12;
-    for (const t of targets.values()) {
-        if (!altOk(t)) continue;
-        const [lat, lon] = displayPos(t, now);
-        const p = map.latLngToContainerPoint([lat, lon]);
-        const d = (p.x - px) * (p.x - px) + (p.y - py) * (p.y - py);
-        // Identified traffic wins a tie: it is what someone is looking for, and a
-        // primary return sitting on top of an airliner should not steal the hover.
+    const o = layer._origin;
+    if (!o) return null;
+    const lx = px + (map.containerPointToLayerPoint([0, 0]).x - o.x);
+    const ly = py + (map.containerPointToLayerPoint([0, 0]).y - o.y);
+    const grab = 8 + 3 * (+$('size').value);
+    let best = null, bestD = grab * grab;
+    for (const t of visList) {
+        const d = (t._sx - lx) ** 2 + (t._sy - ly) ** 2;
+        // Identified traffic wins a tie: a primary return sitting on top of an
+        // airliner should not steal the hover.
         if (d < bestD || (d === bestD && best && !best.cs && t.cs)) { best = t; bestD = d; }
     }
     return best;
@@ -416,7 +787,12 @@ function fl(alt) {
                         : alt.toLocaleString() + ' ft';
 }
 
+let hoverThrottle = 0;
 map.getContainer().addEventListener('mousemove', ev => {
+    const nowMs = performance.now();
+    if (nowMs - hoverThrottle < 30) return;
+    hoverThrottle = nowMs;
+
     const r = map.getContainer().getBoundingClientRect();
     const t = pick(ev.clientX - r.left, ev.clientY - r.top);
     if (!t) {
@@ -424,18 +800,20 @@ map.getContainer().addEventListener('mousemove', ev => {
         return;
     }
     if (t.id !== hoverId) { hoverId = t.id; paint(); }
+
     const name = t.cs || (t.cls === 'Primary' ? 'primary return' : 'untagged');
+    const e = energyFt(t.alt, t.gs);
     const l2 = [t.type, fl(t.alt), t.gs ? t.gs + ' kt' : null].filter(Boolean).join(' · ');
     const l3 = [
         t.org || t.dst ? `${t.org || '?'} ▸ ${t.dst || '?'}` : null,
         t.owner || null,
         t.cls,
+        $('color').value === 'energy' ? `E ${Math.round(e).toLocaleString()} ft` : null,
     ].filter(Boolean).join(' · ');
     tip.innerHTML = `<div class="t1">${esc(name)}</div>`
                   + (l2 ? `<div class="t2">${esc(l2)}</div>` : '')
                   + (l3 ? `<div class="t3">${esc(l3)}</div>` : '');
     tip.style.display = 'block';
-    // Flip the tip before it leaves the window rather than after.
     const tw = tip.offsetWidth, th = tip.offsetHeight;
     let x = ev.clientX + 14, y = ev.clientY + 14;
     if (x + tw > window.innerWidth - 8) x = ev.clientX - tw - 14;
@@ -451,7 +829,7 @@ map.getContainer().addEventListener('mouseleave', () => {
 });
 
 // ── Detail panel ───────────────────────────────────────────────────────────────
-const detail = document.getElementById('detail');
+const detail = $('detail');
 let detailTimer = null;
 
 map.on('click', ev => {
@@ -463,7 +841,7 @@ map.on('click', ev => {
     openDetail(t);
 });
 
-document.getElementById('dClose').addEventListener('click', () => {
+$('dClose').addEventListener('click', () => {
     detail.classList.remove('open');
     selId = null;
     clearInterval(detailTimer);
@@ -472,8 +850,8 @@ document.getElementById('dClose').addEventListener('click', () => {
 
 function openDetail(t) {
     detail.classList.add('open');
-    document.getElementById('dTitle').textContent = t.cs || t.cls;
-    const body = document.getElementById('dBody');
+    $('dTitle').textContent = t.cs || t.cls;
+    const body = $('dBody');
 
     // What the stream already gave us renders immediately; the cross-source
     // picture is fetched behind it. An untagged return has no callsign, so there
@@ -483,7 +861,9 @@ function openDetail(t) {
         ['Type', t.type],
         ['Altitude', fl(t.alt)],
         ['Ground speed', t.gs ? t.gs + ' kt' : null],
-        ['Track', t.trk !== null ? String(t.trk).padStart(3, '0') + '°' : null],
+        ['Energy', `${Math.round(energyFt(t.alt, t.gs)).toLocaleString()} ft`],
+        ['Track', t.trk !== null && t.trk !== undefined
+            ? String(t.trk).padStart(3, '0') + '°' : null],
         ['Route', t.org || t.dst ? `${t.org || '?'} ▸ ${t.dst || '?'}` : null],
         ['Ownership', t.owner],
     ]) + (t.cs ? '<div class="d-empty">loading…</div>'
@@ -515,22 +895,25 @@ async function fetchDetail(cs, id) {
 function renderDetail(d) {
     const t = targets.get(selId);
     const sf = (d.sfdps || [])[0] || {};
-    const body = document.getElementById('dBody');
-    // These are the SFDPS projection's own abbreviations (acType, dest, assignedAlt, rules,
-    // status, sectorFreq), checked against the live endpoint rather than assumed: a wrong
-    // name renders as a MISSING ROW, not an error, so the panel would just look sparse. Same
-    // shape as the modeSCode/modeS slip that made a fusion measurement report zero Mode S.
+    const body = $('dBody');
+
+    // These are the SFDPS projection's own abbreviations (acType, dest, assignedAlt,
+    // rules, status, sectorFreq), checked against the live endpoint rather than
+    // assumed: a wrong name renders as a MISSING ROW, not an error, so the panel
+    // would just look sparse. Same shape as the modeSCode/modeS slip that made a
+    // fusion measurement report zero Mode S.
     let html = rows('TARGET', [
         ['Class', t ? t.cls : null],
         ['Type', sf.acType || (t && t.type)],
         ['Registration', sf.registration],
         ['Altitude', t ? fl(t.alt) : null],
         ['Ground speed', t && t.gs ? t.gs + ' kt' : null],
+        ['Energy', t ? `${Math.round(energyFt(t.alt, t.gs)).toLocaleString()} ft` : null],
         ['Squawk', sf.squawk],
     ]);
 
-    // controllingTracon is the real TRACON id for an SFDPS NAS code (ORT -> C90) and is null
-    // for an ARTCC sector, which is exactly when the raw facility is the right thing to show.
+    // controllingTracon is the real TRACON id for an SFDPS NAS code (ORT -> C90) and
+    // is null for an ARTCC sector, which is exactly when the raw facility is right.
     const fac = sf.controllingTracon || sf.controllingFacility;
     html += rows('FLIGHT', [
         ['Route', (sf.origin || t?.org || '?') + ' ▸ ' + (sf.dest || t?.dst || '?')],
@@ -552,13 +935,16 @@ function renderDetail(d) {
     const flow = [];
     if (d.tbfm) {
         const b = d.tbfm;
+        // The hold is the chain MAXIMUM, which is what the server already computed.
+        // Summing the per-centre delays double-counts: TBFM distributes a hold
+        // upstream and a centre that has absorbed it reads ~0 one point down.
         if (b.delayMin) flow.push(['Metering hold', `${b.delayMin.toFixed(1)} min`
             + (b.holdCtr ? ` (${b.holdCtr}${b.holdPoint ? '/' + b.holdPoint : ''})` : '')]);
         if (b.point) flow.push(['Meter point', b.point]);
         if (b.meterFix && b.meterFix !== b.point) flow.push(['Meter fix', b.meterFix]);
+        if (b.rwy) flow.push(['Metered runway', b.rwy]);
         if (b.tracon) flow.push(['Metering TRACON', b.tracon]);
         if (b.frozen) flow.push(['Schedule', 'frozen']);
-        if (b.rwy) flow.push(['Metered runway', b.rwy]);
     }
     if (d.edct) flow.push(['EDCT', String(d.edct)]);
     if (d.tfms) {
@@ -567,7 +953,9 @@ function renderDetail(d) {
         // TFMS calls it the boundary fix; it is the NAS entry point for an inbound.
         if (f.boundaryFix) flow.push(['Boundary fix', f.boundaryFix]);
         if (f.coordinationFix) flow.push(['Coordination fix', f.coordinationFix]);
+        if (f.diversion) flow.push(['Diversion', String(f.diversion)]);
     }
+    if (d.tfdm && d.tfdm.runway) flow.push(['Departure runway', d.tfdm.runway]);
     if (flow.length) html += rows('FLOW', flow);
 
     const terminal = (d.tais || [])[0];
@@ -601,9 +989,9 @@ function rows(title, pairs) {
                               + `<span class="v">${esc(String(v))}</span></div>`).join('');
 }
 
-// Everything in the readouts comes from the feed, and a callsign is free text
-// as far as this page is concerned — so it is escaped, not interpolated raw.
-// Same reason the STARS picker renders its ?notice= with textContent.
+// Everything in the readouts comes from the feed, and a callsign is free text as
+// far as this page is concerned — so it is escaped, not interpolated raw. Same
+// reason the STARS picker renders its ?notice= with textContent.
 function esc(s) {
     return String(s).replace(/[&<>"']/g, c =>
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -613,27 +1001,30 @@ function esc(s) {
 for (const el of document.querySelectorAll('.cls, #cap')) {
     el.addEventListener('change', () => { sendView(true); renderCounts(); });
 }
-for (const id of ['trail', 'leader', 'labels', 'alt']) {
-    document.getElementById(id).addEventListener('change', paint);
+for (const id of ['trail', 'leader', 'labels', 'size']) {
+    $(id).addEventListener('change', paint);
 }
-for (const id of ['wx', 'wxop']) {
-    document.getElementById(id).addEventListener('change', updateWx);
-}
+$('color').addEventListener('change', () => { renderLegend(); paint(); });
+// Altitude does double duty: it filters targets AND reshapes the sector volumes,
+// which is the thing the FAVs can do and the legacy KML cannot.
+$('alt').addEventListener('change', () => {
+    paint();
+    if ($('bSectors').checked) updateSectorLayer();
+});
+for (const id of ['wx', 'wxop']) $(id).addEventListener('change', updateWx);
+$('bArtcc').addEventListener('change', updateArtccLayer);
+$('bSectors').addEventListener('change', updateSectorLayer);
+$('bKml').addEventListener('change', updateKmlLayer);
 
-const qEl = document.getElementById('q');
+const qEl = $('q');
 let qTimer = null;
 qEl.addEventListener('input', () => {
     clearTimeout(qTimer);
     qTimer = setTimeout(() => sendView(true), 300);
 });
-document.getElementById('qclear').addEventListener('click', () => {
-    qEl.value = '';
-    sendView(true);
-});
+$('qclear').addEventListener('click', () => { qEl.value = ''; sendView(true); });
 
-document.getElementById('ctlToggle').addEventListener('click', () => {
-    document.getElementById('ctl').classList.toggle('open');
-});
+$('ctlToggle').addEventListener('click', () => { $('ctl').classList.toggle('open'); });
 
 // Deep link: /nas?q=UAL1&lat=..&lon=..&z=..
 const qs = new URLSearchParams(location.search);
@@ -643,5 +1034,6 @@ if (Number.isFinite(qlat) && Number.isFinite(qlon)) {
     map.setView([qlat, qlon], parseInt(qs.get('z') || '7', 10));
 }
 
-connect();
+renderLegend();
 renderCounts();
+connect();

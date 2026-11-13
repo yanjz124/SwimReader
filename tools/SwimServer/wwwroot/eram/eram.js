@@ -1742,73 +1742,12 @@ async function loadKml() {
     } catch (e) { console.warn('[KML]', e); }
 }
 
+// The parser itself now lives in /shared/kml-sectors.js, so the NAS map parses these files
+// the same way this scope does. The categorisation is the part that matters: most placemarks
+// carry a FolderPath, the western ARTCCs carry none and have to be recovered from an ancestor
+// Folder name, and a second copy of that would drift on the first change.
 async function parseKml() {
-        const parsed = [];
-        const resp = await fetch('/api/kml/AllSectors.kml');
-        if (!resp.ok) throw new Error(`AllSectors.kml: HTTP ${resp.status}`);
-        const text = await resp.text();
-        const parser = new DOMParser();
-        const xml = parser.parseFromString(text, 'text/xml');
-        const placemarks = xml.querySelectorAll('Placemark');
-
-        for (const pm of placemarks) {
-            const name = pm.querySelector('name')?.textContent || '';
-            const desc = pm.querySelector('description')?.textContent || '';
-            const coordEl = pm.querySelector('coordinates');
-            if (!coordEl) continue;
-
-            const descDoc = new DOMParser().parseFromString(desc, 'text/html');
-            const tds = descDoc.querySelectorAll('td');
-            const data = {};
-            for (let i = 0; i < tds.length - 1; i += 2) {
-                data[tds[i].textContent.trim()] = tds[i + 1].textContent.trim();
-            }
-
-            const folderPath = data['FolderPath'] || '';
-            const parts = folderPath.split('/');
-            let artcc = parts.length >= 2 ? parts[1] : '';
-            let category = '';
-            let sectorId = name;
-
-            if (artcc) {
-                // Standard format: FolderPath = "xxx/ZDC/High Altitude (17)/sectorId"
-                const catRaw = parts.length >= 3 ? parts[2] : '';
-                category = catRaw.replace(/\s*\(\d+\)$/, '');
-                sectorId = parts.length >= 4 ? parts[3] : name;
-            } else {
-                // Western ARTCCs: no FolderPath, derive from ancestor Folder names
-                // e.g. Folder "ZLA_HIGH_NEW" → artcc=ZLA, category=High Altitude
-                let el = pm.parentElement;
-                while (el) {
-                    const fn = el.tagName === 'Folder' ? (el.querySelector(':scope > name')?.textContent || '') : '';
-                    const m = fn.match(/^(Z[A-Z]{2})[_ ]/);
-                    if (m) {
-                        artcc = m[1];
-                        const upper = fn.toUpperCase();
-                        if (upper.includes('ULTRA')) category = 'Ultra High';
-                        else if (upper.includes('HIGH')) category = 'High Altitude';
-                        else if (upper.includes('LOW')) category = 'Low Altitude';
-                        else if (upper.includes('APPROACH')) category = 'Approach Control';
-                        else category = 'High Altitude';
-                        break;
-                    }
-                    el = el.parentElement;
-                }
-            }
-            if (!artcc) continue;
-
-            const coords = coordEl.textContent.trim().split(/\s+/).map(c => {
-                const [lon, lat] = c.split(',');
-                return [parseFloat(lat), parseFloat(lon)];
-            }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
-
-            if (coords.length < 2) continue;
-            parsed.push({ artcc, name, sectorId, alt: data['ALT'] || '', category, coords });
-        }
-        const catCounts = {};
-        for (const s of parsed) catCounts[s.category] = (catCounts[s.category] || 0) + 1;
-        console.log(`[KML] Loaded ${parsed.length} sectors`, catCounts);
-        return parsed;
+    return window.KmlSectors.parse('AllSectors.kml');
 }
 
 // ── FAV source ──────────────────────────────────────────────────────────────

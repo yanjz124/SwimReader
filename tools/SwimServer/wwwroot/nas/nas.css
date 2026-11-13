@@ -145,21 +145,61 @@ html, body {
 }
 .ctl input[type=checkbox] { accent-color: #cccc44; }
 
-/* Class colour swatch. 10x10, so it reads as a key and not as a stray glyph —
- * the TBFM legend shipped with an <i> used for emphasis rendering as a blank bar. */
-.ctl .sw {
-    width: 10px;
-    height: 10px;
-    flex: 0 0 10px;
+/* The legend key is the SYMBOL, not a colour chip, because colour is a mode here:
+ * switch to by-altitude and a colour chip is actively lying about what the colour
+ * means, while the shape still tells you what kind of target it is. */
+.ctl .sym {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
     display: inline-block;
-    border-radius: 2px;
 }
-.c-enroute  { background: #4ec9ff; }
-.c-terminal { background: #7ee787; }
-.c-surface  { background: #ffd166; }
-.c-untagged { background: #9b8cff; }
-.c-vehicle  { background: #4fd1c5; }
-.c-primary  { background: #5a6472; }
+.ctl .sym polygon,
+.ctl .sym rect,
+.ctl .sym circle { fill: currentColor; stroke: none; }
+.ctl .sym line { stroke: currentColor; }
+/* Hollow variants mirror what the canvas draws: outline, not fill. */
+.ctl .sym.hollow polygon,
+.ctl .sym.hollow rect,
+.ctl .sym.hollow circle { fill: none; stroke: currentColor; stroke-width: 1.6; }
+
+.c-enroute  { color: #4ec9ff; }
+.c-terminal { color: #7ee787; }
+.c-surface  { color: #ffd166; }
+.c-untagged { color: #9b8cff; }
+.c-vehicle  { color: #4fd1c5; }
+.c-primary  { color: #5a6472; }
+
+/* When colour carries altitude or energy, the per-class hues are no longer the
+ * key — so they go neutral and the gradient scale takes over. Shape keeps doing
+ * the class job either way. */
+body.by-value .ctl .sym { color: #8b94a2; }
+
+/* ── Colour scale ──────────────────────────────────────────────────────────── */
+.scale {
+    bottom: 10px;
+    left: 108px;
+    width: 268px;
+    max-width: 60vw;
+    padding: 6px 9px 7px;
+}
+.scale-label {
+    color: #cccc44;
+    letter-spacing: 1.5px;
+    font-size: 10px;
+    margin-bottom: 4px;
+}
+.scale-bar {
+    height: 8px;
+    border: 1px solid #2a2f38;
+}
+.scale-ticks {
+    display: flex;
+    justify-content: space-between;
+    color: #6f7885;
+    font-size: 9px;
+    margin-top: 2px;
+}
 
 .note {
     color: #6f7885;
@@ -167,6 +207,8 @@ html, body {
     line-height: 1.35;
     margin-top: 5px;
 }
+.note:empty { display: none; margin: 0; }
+.note em { color: #9aa4b2; font-style: normal; }
 
 /* ── Hover readout ─────────────────────────────────────────────────────── */
 .tip {
@@ -246,7 +288,11 @@ html, body {
     word-break: break-all;
 }
 
+/* The canvas is positioned by Leaflet's own transform; nothing else may move it. */
+.leaflet-pane canvas { will-change: transform; }
+
 @media (max-width: 760px) {
+    .scale { left: 8px; bottom: 8px; width: auto; right: 8px; max-width: none; }
     .bar { left: 8px; top: 40px; }
     .nav-home { top: 8px; }
     .search { top: 76px; left: 8px; right: 8px; }

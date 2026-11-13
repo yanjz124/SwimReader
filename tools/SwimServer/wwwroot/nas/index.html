@@ -31,6 +31,13 @@
     <button id="qclear" title="Clear">&times;</button>
 </div>
 
+<!-- Colour scale, shown only when colour carries a value rather than a class -->
+<div class="panel scale" id="scale" style="display:none">
+    <div class="scale-label" id="scaleLabel"></div>
+    <div class="scale-bar" id="scaleBar"></div>
+    <div class="scale-ticks"><span>SFC</span><span>FL180</span><span>FL300</span><span>FL520</span></div>
+</div>
+
 <!-- Layers and display controls -->
 <div class="panel ctl" id="ctl">
     <button class="ctl-toggle" id="ctlToggle" title="Show/hide controls">&#9776;</button>
@@ -38,13 +45,27 @@
 
         <div class="grp">
             <div class="grp-h">SHOW</div>
-            <label><input type="checkbox" class="cls" value="EnRoute" checked><i class="sw c-enroute"></i>En route<span class="n" data-n="EnRoute"></span></label>
-            <label><input type="checkbox" class="cls" value="Terminal" checked><i class="sw c-terminal"></i>Terminal<span class="n" data-n="Terminal"></span></label>
-            <label><input type="checkbox" class="cls" value="Surface" checked><i class="sw c-surface"></i>Surface<span class="n" data-n="Surface"></span></label>
-            <label><input type="checkbox" class="cls" value="Untagged" checked><i class="sw c-untagged"></i>Untagged<span class="n" data-n="Untagged"></span></label>
-            <label><input type="checkbox" class="cls" value="Vehicle"><i class="sw c-vehicle"></i>Vehicles<span class="n" data-n="Vehicle"></span></label>
-            <label><input type="checkbox" class="cls" value="Primary"><i class="sw c-primary"></i>Primary only<span class="n" data-n="Primary"></span></label>
-            <div class="note" id="primaryNote">
+            <!-- The swatch is the SYMBOL, so the key still reads when colour is
+                 carrying altitude instead of class. -->
+            <label><input type="checkbox" class="cls" value="EnRoute" checked>
+                <svg class="sym c-enroute" viewBox="-8 -8 16 16"><polygon points="0,-6 4,4 -4,4"/></svg>
+                En route<span class="n" data-n="EnRoute"></span></label>
+            <label><input type="checkbox" class="cls" value="Terminal" checked>
+                <svg class="sym c-terminal hollow" viewBox="-8 -8 16 16"><polygon points="0,-6 4,4 -4,4"/></svg>
+                Terminal<span class="n" data-n="Terminal"></span></label>
+            <label><input type="checkbox" class="cls" value="Surface" checked>
+                <svg class="sym c-surface" viewBox="-8 -8 16 16"><line x1="0" y1="-5" x2="0" y2="5" stroke-width="4" stroke-linecap="round"/></svg>
+                Surface<span class="n" data-n="Surface"></span></label>
+            <label><input type="checkbox" class="cls" value="Untagged" checked>
+                <svg class="sym c-untagged hollow" viewBox="-8 -8 16 16"><circle cx="0" cy="0" r="3.5"/><line x1="0" y1="0" x2="0" y2="-7"/></svg>
+                Untagged<span class="n" data-n="Untagged"></span></label>
+            <label><input type="checkbox" class="cls" value="Vehicle">
+                <svg class="sym c-vehicle" viewBox="-8 -8 16 16"><rect x="-3" y="-3" width="6" height="6"/></svg>
+                Vehicles<span class="n" data-n="Vehicle"></span></label>
+            <label><input type="checkbox" class="cls" value="Primary">
+                <svg class="sym c-primary hollow" viewBox="-8 -8 16 16"><line x1="-5" y1="0" x2="5" y2="0"/><line x1="0" y1="-5" x2="0" y2="5"/></svg>
+                Primary only<span class="n" data-n="Primary"></span></label>
+            <div class="note">
                 Primary-only returns have no identity and no Mode&nbsp;C. About half are not
                 aircraft &mdash; birds, precipitation, ground clutter.
             </div>
@@ -52,6 +73,22 @@
 
         <div class="grp">
             <div class="grp-h">DISPLAY</div>
+            <label for="color">Colour
+                <select id="color">
+                    <option value="class" selected>by class</option>
+                    <option value="alt">by altitude</option>
+                    <option value="energy">by energy</option>
+                </select>
+            </label>
+            <label for="size">Size
+                <select id="size">
+                    <option value="0.6">XS</option>
+                    <option value="0.8">S</option>
+                    <option value="1" selected>M</option>
+                    <option value="1.4">L</option>
+                    <option value="1.9">XL</option>
+                </select>
+            </label>
             <label for="trail">Trails
                 <select id="trail">
                     <option value="0">off</option>
@@ -78,6 +115,24 @@
                     <option value="30000-99000">FL300+</option>
                 </select>
             </label>
+        </div>
+
+        <div class="grp">
+            <div class="grp-h">AIRSPACE</div>
+            <label><input type="checkbox" id="bArtcc"> ARTCC boundaries</label>
+            <label><input type="checkbox" id="bSectors"> ERAM sector volumes</label>
+            <div class="note" id="bndNote"></div>
+            <label for="bKml" id="kmlRow">Legacy KML
+                <select id="bKml">
+                    <option value="" selected>off</option>
+                </select>
+            </label>
+            <div class="note" id="kmlNote"></div>
+            <div class="note">
+                Sector volumes follow the <em>altitude</em> filter above &mdash; they carry a real
+                floor and ceiling per slab. The KML files cannot do that, and are several
+                megabytes parsed in the browser.
+            </div>
         </div>
 
         <div class="grp">
@@ -124,6 +179,7 @@
 </aside>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/shared/kml-sectors.js"></script>
 <script src="/nas/nas.js"></script>
 <script src="/shared/disclaimer.js" defer></script>
 </body>

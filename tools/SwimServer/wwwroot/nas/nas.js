@@ -171,10 +171,14 @@ const NasCanvas = L.Layer.extend({
     pt(lat, lon) { return map.latLngToLayerPoint([lat, lon]).subtract(this._origin); },
 });
 
+// Declared before the layer is added, because onAdd() -> reset() -> draw() runs
+// synchronously inside addTo(). A `const` further down the file is in its temporal
+// dead zone at that moment, and reading it throws on page load -- which killed the
+// whole script, so the socket never connected and the page just said "connecting".
+// `node --check` cannot see this: it is a runtime error, not a syntax one.
 let dpr = 1;
 const layer = new NasCanvas();
 layer.addTo(map);
-const cx = () => layer._ctx;
 
 // ── Dead reckoning ─────────────────────────────────────────────────────────────
 function displayPos(t, now) {
@@ -359,7 +363,7 @@ function altOk(t) {
 let visList = [];
 
 function draw() {
-    const g = cx();
+    const g = layer && layer._ctx;
     if (!g || !layer._origin) return;
     const W = layer._canvas.width, H = layer._canvas.height;
     g.setTransform(1, 0, 0, 1, 0, 0);

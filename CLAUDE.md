@@ -2459,36 +2459,39 @@ the note says how many. Live at CONUS zoom: 75 outlines, 30 chips, 45 names hidd
 `moveend` as well as `zoomend`, because the collisions are in screen space and a pan changes them
 with no data having moved.
 
-### Labels, and why placement is the hard part
+### Labels: placement was chosen, and that was the bug
 
 Which fields a label carries is a setting — ID / ALT / TYPE / SPD / RTE / SQ, with off / auto /
 always — because the useful answer depends on the question: a continental overview wants a
 callsign and nothing else, one airport's arrivals want type and speed too.
 
-Labels are the only thing on this map whose size does **not** shrink as you zoom out, so the 400
-targets that are comfortable over one TRACON are a solid block of overlapping text over CONUS.
-Three rules:
+**Placement is fixed: one position, right of the symbol, always drawn.** That is a deliberate
+reversal. It replaced a chooser — sixteen candidate anchors (eight directions x two rings),
+a hash-grid occupancy test with every target symbol as an obstacle, sticky placement, a leader
+line on the outer ring, and a label that fitted nowhere being **dropped** rather than drawn over
+its neighbor. Each rule is defensible and the measurements were real (Atlanta, zoom 9, ~320
+targets: one ring drew 105 and dropped 209; two rings plus 6 px cells drew 232 and dropped 107).
 
-1. **placement is chosen** — sixteen candidate anchors (eight directions x two rings) per target,
-   first free one wins;
-2. **a label that fits nowhere is dropped**, not stacked — two overlapping labels are strictly
-   worse than one, and the symbol is still there to hover;
-3. **placement is sticky and the order deterministic** (identified first, then id).
+**It still made the moving map worse, which is the only thing that matters here.** Reported from
+outside as *callsigns popping in and out*: a target drifts past another, loses its slot, its label
+disappears; the neighbor moves on and it comes back. At the 110 ms repaint that is a flicker, and
+a flicker reads as a broken feed rather than as a declutter policy.
 
-The third is what makes the other two worth having. Without it the first two produce a legible
-still image and an unreadable moving one — exactly the class of thing a screenshot cannot catch.
-Every target symbol is an obstacle before any label is placed, so a label never parks on another
-aircraft; the same rule the ASDE-X auto offset follows.
+The trade is not close. Two overlapping labels are hard to read for exactly as long as the two
+aircraft are close to each other. A label that blinks is unreadable the whole time **and** pulls
+the eye to the wrong place. **Stable and overlapping beats clean and unstable.**
 
-**The second ring earns a leader line**, because at that distance the association between a label
-and its target stops being obvious — which is why every real scope in this repo draws one.
-Measured at Atlanta, zoom 9, ~320 targets: one ring of eight anchors drew 105 labels and dropped
-209; two rings plus **6 px occupancy cells instead of 12** draw **232** and drop 107. The cell
-size matters because the grid rounds *up* to whole cells, so a coarse cell reserves space the
-label does not occupy — at a 10 px line height a 12 px cell over-reserves by most of a line.
+Worth keeping as a shape: the original note in this file said the sticky-ordering rule was "what
+makes the other two worth having — without it the first two produce a legible still image and an
+unreadable moving one — exactly the class of thing a screenshot cannot catch." That was correct
+about the failure mode and wrong that stickiness fixed it. Stickiness only delays a move; the
+*drop* is what blinks, and nothing short of not dropping removes it. **A declutter rule that can
+hide a label has to be judged on video, not on a capture**, and the only check that found this
+was a person watching the map.
 
-Occupancy is a coarse hash grid, not pairwise rectangles: 400 labels is 160,000 comparisons a
-frame against a few thousand cell probes, inside the same rAF as the targets.
+What survives: the deterministic order (identified traffic, then id), which now decides who draws
+**on top** where two labels collide rather than who gets the space; and a per-frame count cap,
+raised 700 → 2000, since with no collision test a label costs one `fillText` per line.
 
 **Altitude in a label is the zero-padded-hundreds data-block form**, deliberately *not* the
 FL-above-18,000 rule `/track` and the bot follow. That rule is about prose, where "at FL10" on
@@ -2504,6 +2507,67 @@ a **dark halo** rather than merely brightened: raising the color cannot help whe
 ### What cost what
 Steady state at midday: index **150 ms CPU/pass = 7.5% of one core**, ~19 GB/h allocation against
 the process's own ~273 GB/h. The stream adds a per-client diff bounded by that client's cap.
+
+### The controls are remembered, and the basemap is a choice
+
+`localStorage`, **not a cookie**, which is what was asked for and the wrong store for it: a cookie
+rides along on every request this origin makes — every tile, every API call, the WebSocket
+upgrade — to carry settings the server has no use for, and it is capped around 4 KB. None of
+this leaves the browser, which is why the ASDE-X auto offset and the STARS prefs already live
+there.
+
+Saved by **element id**, so adding a control needs no migration: an unknown key is ignored on read
+and a control that no longer exists is skipped. A `<select>` is checked against its own options
+before being restored, or a removed option leaves the control holding a value nothing can satisfy
+— a KML file that 404s, a cap that reads as `NaN`. Bump `PREF_KEY` only when an existing
+value's *meaning* changes, which is the case a stale entry restores silently and wrongly.
+
+Every access is wrapped: in a private window, or with site data blocked, the accessor itself
+**throws** rather than returning empty, and a map that will not render without its settings is
+worse than one that opens on the defaults.
+
+Two scope decisions:
+- **The search box is not saved.** A query is a question about one flight right now, not a
+  preference, and a filter restored from last week that hides most of the country reads as the
+  map being broken.
+- **The view is saved, but a URL wins.** `/nas?lat=..&lon=..&z=..` is someone being *sent*
+  somewhere; restoring the last view over it would break every shared link.
+
+The overlay loaders (`updateArtccLayer` and friends) now run at startup, because a layer can be
+restored already on — **after** the canvas layer is built, since the draw path touches `layer`.
+Same ordering trap this file already documents for the TDZ bug. `updateBase()` has the same
+constraint for a different reason: `$` is a `const` declared further down the file, so a
+module-scope call sits in its temporal dead zone and takes the whole module with it.
+
+**Basemaps**: dark (the default), dark with labels, light, Voyager, Esri satellite with Esri's own
+reference layer over it, and **none** — a black field is what a radar scope actually looks like
+and costs no tiles at all. CARTO still goes through `/basemap/` so the API key stays in the
+server's `.env`; Esri needs no key and is fetched directly, as NEXRAD already is. Attribution
+sits in a note under the control because this map runs with Leaflet's attribution control off.
+
+**Every alternative is brighter than the default, and brightness is what competes with the
+targets** — so each basemap carries the dim it wants and selecting it applies that, rather than
+leaving a washed-out scope and a control to go and find. Dimming works because the container is
+near-black (`#05070a`): less opacity is literally less basemap. A dim set by hand afterwards
+survives, and is reset only by picking another basemap (`lastBase`; the bootstrap seeds it from
+the control, or restoring a saved dim would be undone by the first call).
+
+### A headless probe rebooted the Pi
+
+Verifying the basemaps in headless Chromium put the Pi's load average at **57** against the
+watchdog's threshold of 24, and the box rebooted — ssh refused, the tunnel returned 530, and
+`last -x reboot` plus `journalctl -b -1` told the story in one line:
+`watchdog[1074]: loadavg 57 24 14 is higher than the given threshold 24 18 12!`
+
+**The basemap tiles are proxied.** A browser sweeping six basemaps over a CONUS viewport makes
+*the Pi* fetch and re-serve hundreds of tiles from cartocdn, on top of the SWIM feeds. Earlier
+probes of this map were cheap because the basemap never changed and the tiles were already cached.
+
+So the check split in two, and the split is the reusable part:
+- **tile reachability is six `curl`s, not six hundred tiles** — one `GET` per basemap URL
+  template is the whole question ("does this path answer"), and it answered 200 for all six;
+- **the browser pass runs on `base=none`** (zero tiles) over a near-empty viewport, because the
+  stream is viewport-bounded and the logic under test is entirely client-side.
 
 ### Two verification traps, both of which cost a round here
 - **`node --check` cannot see a temporal dead zone.** `layer.addTo(map)` runs

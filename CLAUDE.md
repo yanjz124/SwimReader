@@ -2227,6 +2227,30 @@ aircraft and a slow high one comparable (the kinetic term is ~9,000 ft at 450 kt
 is therefore the *symbol*, not a color chip: in by-value mode a chip would be actively lying, so
 the chips go neutral and a gradient scale appears.
 
+### An untagged target's identity is who is reporting it
+The add row carries **facility, airport and squawk** after the flight-plan fields (appended, since
+clients decode by index). For a tagged flight they are extra; for an uncorrelated return they are
+all there is, and without them it is an anonymous dot.
+
+It matters most where the user noticed it: **a primary return near a TRACON boundary is published
+by both facilities**, and with no Mode S and no callsign nothing in the index merges them — they
+arrive as two entities on top of each other. Measured live: **468 co-located groups reported by
+different facilities**, several three-way (`CLE/IND/SDF` on one target, all squawking 0513). The
+facility is the only thing that explains the pair. A target with no callsign is now labelled with
+it, with the squawk underneath instead of a flight level.
+
+Facilities **accumulate** into a `+`-joined list rather than first-one-wins, held in **ordinal
+order**. The ordering is not cosmetic: entities are rebuilt every pass from sources iterated out
+of a `ConcurrentDictionary`, so an unsorted list comes out `PCT+N90` one pass and `N90+PCT` the
+next — which moves the identity hash and makes the stream re-send every multi-facility target in
+full, on every tick, forever, while every counter says the delta stream is working. Membership is
+checked token-by-token and not with `Contains`: **`N9` is a substring of `N90`**, and a substring
+test silently drops a real second facility.
+
+Live examples of the merged case, which arrives via Mode S (TAIS publishes a Mode S code on many
+tracks that have no callsign): `ST3` on `CLE+PIT+YNG`, and untagged returns on `CLE+CMH+D21+TOL`
+and `CMH+CVG+HTS+LEX`.
+
 ### Airspace: three sources that are not the same data
 | layer | source | altitude |
 |---|---|---|
@@ -2300,6 +2324,13 @@ the process's own ~273 GB/h. The stream adds a per-client diff bounded by that c
   after two presented frames, and **use a smaller window** (~900×620) — the box is four cores at
   load 5-10 with `--disable-gpu`. Always probe the DOM alongside the image; the probe is the
   evidence and the image is the illustration.
+- **`will-change: transform` on the canvas made that much worse** and bought nothing (Leaflet
+  already transforms the pane). It promoted a 1764×902 canvas to its own compositor layer, which
+  headless with `--disable-gpu` then dropped from the capture entirely: tiles and no targets,
+  against a page reporting 370 targets and 1,322 painted samples. Removing it fixed the capture.
+- **A numeric control read as `+el.value` returns NaN** for a blank or unrecognised option, and
+  `4 * NaN` draws every symbol at radius NaN — an empty map with nothing in the console. Found by
+  a probe setting size to `"1.0"` when the option value is `"1"`. `num(id, fallback)` guards them.
 
 ## The home page rate was a lifetime average
 

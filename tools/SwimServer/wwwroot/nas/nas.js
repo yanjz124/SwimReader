@@ -945,9 +945,27 @@ function drawFca() {
 
     const g = L.layerGroup([], { pane: 'nasBounds' });
     const [lo, hi] = altBand();
-    let drawn = 0, offBand = 0;
+    let drawn = 0, offBand = 0, hidden = 0;
 
-    for (const a of fcaData.areas || []) {
+    // Chip placement is the same problem as the target labels and takes the same
+    // answer. Area centroids cluster hard -- the space-launch hazard areas alone put
+    // a dozen names on one patch of Texas -- and a stack of unreadable chips is
+    // worse than none. One chip per cell of screen; the OUTLINE is always drawn, it
+    // is only the name that is dropped.
+    const taken = new Set();
+    const cell = p => {
+        const q = map.latLngToContainerPoint(p);
+        return Math.round(q.x / 64) * 10000 + Math.round(q.y / 18);
+    };
+
+    // FCA before FEA, so when the two want one cell the constraint wins it.
+    const areas = (fcaData.areas || []).slice().sort((x, y) => {
+        const fx = (x.type || '').toUpperCase() === 'FCA' ? 0 : 1;
+        const fy = (y.type || '').toUpperCase() === 'FCA' ? 0 : 1;
+        return fx !== fy ? fx - fy : String(x.id).localeCompare(String(y.id));
+    });
+
+    for (const a of areas) {
         const isFca = (a.type || '').toUpperCase() === 'FCA';
         if (isFca ? !wantFca : !wantFea) continue;
         if (!a.points || a.points.length < 2) continue;
@@ -965,6 +983,9 @@ function drawFca() {
         // an area can never take a hover or a click from an aircraft, which is the
         // same rule every other overlay on this map follows.
         const c = centroid(a.points);
+        const k = cell(c);
+        if (taken.has(k)) { hidden++; drawn++; continue; }
+        taken.add(k);
         const band = a.floorFt != null && a.ceilingFt != null
             ? `${Math.round(a.floorFt / 100)}\u2013${Math.round(a.ceilingFt / 100)}` : '';
         L.marker(c, {
@@ -992,7 +1013,8 @@ function drawFca() {
         `${drawn} drawn \u00b7 ${d.active} of ${d.total} in force `
         + `\u00b7 ${d.fca} FCA / ${d.fea} FEA published`
         + (offBand ? ` \u00b7 ${offBand} outside the altitude band` : '')
-        + (d.active > d.withShape ? ` \u00b7 ${d.active - d.withShape} with no outline` : '');
+        + (d.active > d.withShape ? ` \u00b7 ${d.active - d.withShape} with no outline` : '')
+        + (hidden ? ` \u00b7 ${hidden} names hidden` : '');
 }
 
 // The sidebar altitude filter as feet, or [null, null] when it is "all".
@@ -1558,6 +1580,11 @@ $('bFlow').addEventListener('change', updateFlow);
 // The chip detail depends on zoom, so a zoom has to re-render what is already loaded
 // (no refetch -- the data has not changed).
 map.on('zoomend', () => { if ($('bFlow').checked && flowData) drawFlow(); });
+// Chip collisions are in SCREEN space, so a pan changes them with no data having
+// changed -- the same reason the ASDE-X auto offset re-runs on moveend.
+map.on('moveend zoomend', () => {
+    if (($('bFca').checked || $('bFea').checked) && fcaData) drawFca();
+});
 
 const qEl = $('q');
 let qTimer = null;

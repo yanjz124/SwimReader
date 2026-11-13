@@ -51,13 +51,16 @@ const DR_TICK_MS = 110;      // idle repaint rate, so dead reckoning is visible
 
 // ── Map ────────────────────────────────────────────────────────────────────────
 const map = L.map('map', {
-    zoomControl: true,
+    // Leaflet puts the zoom control top-left by default, which is exactly where
+    // common.css floats the HOME button — they overlapped.
+    zoomControl: false,
     attributionControl: false,
     worldCopyJump: true,
     minZoom: 3,
     maxZoom: 14,
 }).setView([39.0, -97.0], 4);
 
+L.control.zoom({ position: 'bottomleft' }).addTo(map);
 L.tileLayer('/basemap/dark_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 14 }).addTo(map);
 
 // Weather under boundaries under traffic. Leaflet's own overlayPane is 400.

@@ -1,4 +1,4 @@
-﻿namespace SwimServer.Tests;
+namespace SwimServer.Tests;
 
 /// <summary>
 /// The identity key itself. Everything in the fused index hangs off this type's equality, so a

@@ -1,4 +1,4 @@
-﻿namespace SwimServer.Tests;
+namespace SwimServer.Tests;
 
 /// <summary>
 /// The fused NAS index. Every rule here is one a browser and a live <c>curl</c> are both blind

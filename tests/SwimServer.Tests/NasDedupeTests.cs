@@ -1,4 +1,4 @@
-﻿namespace SwimServer.Tests;
+namespace SwimServer.Tests;
 
 /// <summary>
 /// Cross-facility dedupe: one airplane that two or more facilities each publish as their own

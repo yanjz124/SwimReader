@@ -1,4 +1,4 @@
-﻿namespace SwimServer.Tests;
+namespace SwimServer.Tests;
 
 /// <summary>
 /// One client's viewport and diff over the fused picture.

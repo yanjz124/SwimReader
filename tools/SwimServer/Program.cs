@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Net.WebSockets;
 using System.Text;

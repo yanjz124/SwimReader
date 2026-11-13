@@ -1,4 +1,4 @@
-﻿using SwimReader.Server.AdsbFi;
+using SwimReader.Server.AdsbFi;
 
 namespace SwimReader.Core.Tests;
 

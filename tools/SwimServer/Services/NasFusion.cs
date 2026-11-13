@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using SwimReader.Server.AdsbFi;
 
@@ -139,7 +139,8 @@ class NasFusion
 
     public NasFusion(ServerContext ctx)
         : this(() => ctx.Flights.Values, () => ctx.Tais.AllTracks(), () => ctx.Asdex.AllTracks(),
-               null, ctx.Stars.RadarRefs) { }
+               null, ctx.Stars.RadarRefs)
+    { }
 
     internal NasFusion(Func<IEnumerable<FlightState>> sfdps,
                        Func<IEnumerable<(string facility, TaisTrack track)>> tais,
@@ -607,7 +608,7 @@ class NasFusion
                 // three in one cluster even if A and C are not themselves inside it. Growing the
                 // cluster rather than pairing off A-B is what lets the one-per-facility test see
                 // the WHOLE group, and that test only works if it sees everything.
-                for (int grew = 1; grew > 0; )
+                for (int grew = 1; grew > 0;)
                 {
                     grew = 0;
                     for (int j = i + 1; j < bucket.Count; j++)

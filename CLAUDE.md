@@ -68,6 +68,9 @@ frontends share the ERAM-yellow dark theme; the home page carries a cover title,
   aren't subscribed on the current queue.
 
 ### Frontends / API Services
+- **NAS Map** (`/nas`) — the whole country as one fused picture: SFDPS + STARS + ASDE-X, one entity
+  per airframe, viewport-bounded delta stream, per-class symbols, colour by class/altitude/energy,
+  ARTCC and ERAM sector boundaries, NEXRAD, and TBFM/TFDM flow restrictions
 - **ERAM Scope** (`eram.html`) — Leaflet + Canvas radar display with ERAM-style data blocks
 - **Flight Table** (`/flight-table`) — Tabular real-time flight explorer with filtering, pinning, detail panel; the panel carries ICAO FPL, SimBrief (with an airframe/type/variant picker), VATSIM prefile, FlightAware and TDLS history
 - **DGScope Server** (`/dstars/{facility}/updates`) — HTTP streaming + WebSocket for DGScope radar clients
@@ -894,6 +897,8 @@ ERAM pre-resolves the route string into fix-by-fix waypoints with estimated time
 | `GET /api/tbfm/center/{ctr}/traffic` | A center's metered flights joined to SFDPS positions, for its map |
 | `GET /api/tbfm/airport/{apt}/traffic` | Same for an airport's inbounds, plus the field's NASR position |
 | `GET /api/nas/stats` | Fused NAS index: entity count, per-class split, per-tier match counts, CPU/allocation per pass (`?payload=1` adds the wire size) — **operator only** |
+| `WS /nas/ws` | Viewport-bounded delta stream behind the NAS map — `{cmd:"view", bbox, cap, cls, q}` in; `snapshot`/`delta` out |
+| `GET /api/nas/flow` | Per-airport flow restrictions: TBFM arrival metering + TFDM field constraint, joined to a NASR position |
 | `GET /api/nas/targets` | The fused targets themselves — `?cls=`, `?bbox=s,w,n,e`, `?limit=`, `?delta=1`, `?held=1` — **operator only** |
 | `GET /api/track/{callsign}` | Combined single-callsign snapshot across all sources — `{callsign, found, sfdps, freqs, tfms, edct, handoffHistory, tdls, tais, asdex}` |
 | `GET /t`, `GET /t/{callsign}` | **Disabled** — redirects to `/track` / `/track/{callsign}` (see Track a Flight section) |
@@ -2162,6 +2167,139 @@ naive `4000 + i` range yields 19 correlatable targets of 20 and fails for the wr
   currently comes free); the cadence is the cheaper dial — 4 s halves everything.
 - Tier 4 stays measured. If `wouldMatchByPosition` ever rises well above 1% of `positionSampled`,
   it is worth revisiting; it has not.
+
+## The NAS map (`/nas`)
+
+The overview browser over the fused index above: `wwwroot/nas/` + `NasStream`/`NasView`
+(`GET /nas`, `WS /nas/ws`, `GET /api/nas/flow`). Ungated, like `/ws` and `/api/asdex` — it is air
+traffic. Only `/api/nas/stats` stays operator-gated, because what *it* reports is CPU, allocation
+and key-map size, which is deployment state.
+
+### The stream is viewport-bounded, and identity rides the add
+The whole fused picture is **690 kB raw, ~96 kB deflated** at ~17,500 targets — ~48 kB/s per
+client at a 2 s cadence, of which almost nothing changed. Each client declares a viewport and
+gets only what is inside it, and of that only what moved.
+
+- **Identity (callsign, type, origin, dest, owner) travels on the ADD, 12 fields; movement is a
+  7-field UPD.** Identity is what hover, labels and highlighting need and also what almost never
+  changes. A target whose identity *does* change — an untagged return a facility correlates, which
+  happens constantly — is re-sent as an add and the client upserts it.
+- **The volatile hash is over the ROUNDED position.** Hashing the raw double marks every target
+  changed every tick from movement below the five decimal places actually transmitted: a delta
+  stream that sends everything, every time, while every counter says it works.
+- **Truncation above the cap is deterministic** — class priority, then entity id. An arbitrary
+  subset makes a third of the screen blink at the tick rate, which reads as a broken renderer
+  rather than a limit. The client is told `shown`/`matched`/`total`.
+- **Longitude ranges wrap.** Leaflet reports a Pacific viewport as west > east (170 → −170), and
+  `lon >= w && lon <= e` then matches *nothing* — over the one stretch where a NAS view
+  legitimately spans the date line, which is where Anchorage and Honolulu traffic is. An empty
+  Pacific looks exactly like a quiet one.
+
+`NasView` holds all of this, separate from the socket, because every rule in it fails silently.
+Eight mutations, all caught.
+
+### The canvas rides the map pane
+`NasCanvas` does what `L.Renderer` does for Leaflet's own vector layers: targets are drawn in
+**layer** coordinates, so the pane's CSS transform carries them during a drag at zero cost, and a
+zoom animation scales the drawn pixels with the tiles. It re-anchors and redraws only when the
+view settles, or when a fling passes the 0.4-screen padding.
+
+The first version cancelled that transform and redrew on a 110 ms throttle, which pinned stale
+pixels to the **screen** while the tiles moved underneath — the targets visibly swam.
+
+Measured over a synthesized drag: **25 distinct pane offsets, 1 canvas origin**, then exactly one
+re-anchor on `moveend`. (`_getNewPixelOrigin` is Leaflet-internal and used deliberately — it is
+the call `L.Renderer` makes, and reimplementing the projection maths to avoid it would be worse.)
+
+### Symbols say what, colour says where
+One shape per class, so the kind of target stays legible when colour is carrying altitude. Two
+borrow conventions already in this repo rather than inventing any: ERAM draws an uncorrelated
+primary as **`+`**, the ASDE-X scope draws a vehicle as a **square**. En route is a filled delta,
+terminal the same shape hollow, surface a fuselage along the track.
+
+**The classes with no identity are deliberately not aeroplanes.** A triangle asserts a nose and
+therefore an aircraft, which is a claim the data does not make for a primary return — about half
+of which are not aircraft at all.
+
+Colour is a **mode**: by class, by altitude, or by **energy** — specific energy height
+`h + v²/2g`, a real quantity rather than a blend of two numbers, and the one that makes a fast low
+aircraft and a slow high one comparable (the kinetic term is ~9,000 ft at 450 kt). The legend key
+is therefore the *symbol*, not a colour chip: in by-value mode a chip would be actively lying, so
+the chips go neutral and a gradient scale appears.
+
+### Airspace: three sources that are not the same data
+| layer | source | altitude |
+|---|---|---|
+| ARTCC boundaries | vNAS `ArtccBoundaries.geojson`, 24 one-ring polygons | **none** — an ARTCC boundary has no high/low variant |
+| ERAM sector volumes | vNAS FAVs | **reshapes with the altitude filter** — the slabs carry a numeric floor and ceiling |
+| Legacy KML | `AllSectors` / `AllHigh` / `AllLow` | free text only |
+
+Sector volumes load for the centres **in view** (capped at 8); nationally they are 2,641 volumes
+and 75,185 points. Exclusions and the 99k sentinel volumes are left out — an exclusion is a 3-D
+subtraction, not a boundary anyone works to. The KML list comes from `GET /api/kml`, so a
+deployment without the files does not advertise three dead options.
+
+**The KML parser is `shared/kml-sectors.js` and the ERAM scope delegates to it.** Its
+categorisation is not mechanical: most placemarks carry a `FolderPath`, the **western ARTCCs carry
+none** and have to be recovered by walking up to an ancestor `<Folder>` named like `ZLA_HIGH_NEW`.
+Without that fallback those centres silently vanish, which looks like missing data rather than a
+parse gap.
+
+All boundary layers are `interactive: false` in a pane below the targets, so none can take a hover
+or a click from an aircraft.
+
+### Flow restrictions (`GET /api/nas/flow`)
+What is holding traffic, drawn where it is held. **Two sources answering different questions,
+deliberately not added together:**
+
+- **TBFM** — arrival metering, airborne holding into a field. The figure is the governing hold,
+  which is the chain **maximum and never a sum**: TBFM distributes a hold upstream, so a centre
+  that has absorbed it reads ~0 one point downstream.
+- **TFDM** — the field itself: runway configuration, AAR/ADR, closures, gridlock, terminal
+  restrictions. Surface and departure.
+
+An airport routinely has one without the other. The ring is sized by the metering hold; the chip
+turns amber when TFDM has something in force. An airport merely reporting a runway config is not
+restricted and is not drawn.
+
+Three traps, all of which shipped and were caught live:
+
+- **The two feeds key airports differently** — TFDM publishes ICAO (`KLAS`), TBFM the FAA LID
+  (`LAS`). Joining raw matched almost nothing: LAS came back as two rows, one with metering and no
+  field data and one with field data and no metering, which reads as two different airports. Both
+  sides normalise with `NasRoutes.Lid`, and **only a leading K is stripped** — taking the first
+  character off any four-character identifier turns PANC into ANC and PHNL into HNL.
+- **TFDM's gridlock enum is usually negative.** `NO_PREDICTED_GRIDLOCK` was being captioned onto
+  the map as though the absence of a problem were a problem.
+- **3,600/hour is TBFM's "no restriction" default, not a rate** — 53 of 57 published AARs sat at
+  exactly that. Read `aarRestricted`.
+
+TMIs are collapsed the way the TFDM airport page already collapses them: one restriction is
+published under several `tfdmTmiId`s and a reissue usually arrives under a new id without the old
+being deleted, so a raw count overstates what is in force.
+
+An airport NASR cannot place is returned **without** coordinates rather than dropped, and the
+panel reports how many were unplaced — a count of restrictions should not silently lose one to an
+unknown identifier.
+
+### What cost what
+Steady state at midday: index **150 ms CPU/pass = 7.5% of one core**, ~19 GB/h allocation against
+the process's own ~273 GB/h. The stream adds a per-client diff bounded by that client's cap.
+
+### Two verification traps, both of which cost a round here
+- **`node --check` cannot see a temporal dead zone.** `layer.addTo(map)` runs
+  `onAdd → reset → draw` *synchronously*, and `draw` touches half the module's state — so every
+  `const`/`let` below that call was in its TDZ and threw in turn (`cx`, then `visList`). The throw
+  escapes module evaluation, so **nothing after it runs**: the socket never connects and the page
+  sits on "connecting" with an empty canvas. One bug that presents as the whole page being dead.
+  The layer is constructed at the **bottom** of the file now.
+- **The Pi's headless screenshots tear.** At a 1600×900 window with a busy canvas and ~1,000 SVG
+  paths, `Page.captureScreenshot` hands back black rectangles, a half-drawn side panel and no
+  canvas content — while the page probes perfectly (counts right, `visList` populated, canvas
+  pixels present, console clean). That reads exactly like a rendering bug and is not one. Capture
+  after two presented frames, and **use a smaller window** (~900×620) — the box is four cores at
+  load 5-10 with `--disable-gpu`. Always probe the DOM alongside the image; the probe is the
+  evidence and the image is the illustration.
 
 ## The home page rate was a lifetime average
 

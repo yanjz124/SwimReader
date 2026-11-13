@@ -1,4 +1,4 @@
-using System.Net.WebSockets;
+﻿using System.Net.WebSockets;
 
 namespace SwimServer;
 
@@ -103,6 +103,15 @@ static class TfmsRoutes
             return f is not null ? Results.Json(f, ctx.JsonOpts) : Results.NotFound();
         });
         app.MapGet("/api/tfms/tmis", () => Results.Json(ctx.Tfms.GetTmis(), ctx.JsonOpts));
+
+        // The flow areas WITH their geometry. ?all=1 includes areas outside their own window
+        // (routinely published days ahead), ?type=FEA|FCA splits the two meanings apart.
+        app.MapGet("/api/tfms/fca", (int? all, string? type) =>
+            Results.Json(ctx.Tfms.GetFcas(all != 1, type), ctx.JsonOpts));
+
+        // Published MIT / APREQ / ground-stop restrictions against named NAS elements.
+        app.MapGet("/api/tfms/restrictions", (int? all) =>
+            Results.Json(ctx.Tfms.GetRestrictions(all != 1), ctx.JsonOpts));
         app.MapGet("/api/tfms/tmis/{fcaId}", (string fcaId) =>
         {
             var t = ctx.Tfms.GetTmi(fcaId);

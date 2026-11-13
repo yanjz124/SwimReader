@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
@@ -26,6 +26,10 @@ class TfmsBridge
     private readonly ConcurrentDictionary<string, TfmsFlight> _flights = new();
     // tmiId → TfmsTmi (active TMIs)
     private readonly ConcurrentDictionary<string, TfmsTmi> _tmis = new();
+    // fcaId -> the area itself (shape, altitude band, schedule). Keyed the same way as _tmis,
+    // so the flight count and the outline join with no lookup table.
+    private readonly ConcurrentDictionary<string, TfmsFca> _fcas = new();
+    private readonly ConcurrentDictionary<string, TfmsRestriction> _restrictions = new();
     // callsign → flightRef key (for O(1) lookup by callsign)
     private readonly ConcurrentDictionary<string, string> _callsignIndex = new(StringComparer.OrdinalIgnoreCase);
     // CDM gate times of flights purged in the last few hours. TFMS drops a flight 30 min after its last
@@ -778,6 +782,94 @@ class TfmsBridge
         if (transFix is not null) flight.DpTransitionFix = transFix;
     }
 
+    // ── FEA / FCA ──────────────────────────────────────────────────────────────────
+    //
+    // TFMS publishes the actual geometry of every flow area and this bridge was throwing it
+    // away, keeping only the TMI flight lists keyed by fcaId. That is why the dashboards could
+    // say 1,300 flights are in "1_ORD_ALL" and not where that is.
+    //
+    // THE TYPE IS THE FIRST THING TO GET RIGHT. An <b>FEA</b> is a Flow Evaluation Area - a
+    // traffic manager watching a volume, with nothing restricted. An <b>FCA</b> is a Flow
+    // Constrained Area, which is a real constraint. They arrive on the same message in the same
+    // shape, and drawing an FEA as a restriction would put dozens of red boxes over the country
+    // that mean nothing is wrong. `feaFcaType` is the only thing that separates them.
+    //
+    // A LINE IS NOT A DEGENERATE POLYGON. An FCA can be defined as a flow LINE that aircraft
+    // cross rather than an area they are inside, and closing it into a two-point polygon draws a
+    // shape with no interior that happens to look like a line - but then every downstream
+    // "is this point inside" test is answering a question the line never asked.
+    private void ProcessFeaFca(XElement fea)
+    {
+        string? El(string n) => fea.Elements().FirstOrDefault(e => e.Name.LocalName == n)?.Value;
+        var id = El("fcaId");
+        if (string.IsNullOrEmpty(id)) return;
+
+        var fca = _fcas.GetOrAdd(id!, _ => new TfmsFca { FcaId = id! });
+        fca.Name = El("fcaName") ?? fca.Name;
+        fca.Reason = El("fcaReason") ?? fca.Reason;
+        fca.Type = El("feaFcaType") ?? fca.Type;
+        fca.Status = El("tmiStatus") ?? fca.Status;
+        fca.Facility = msg_sourceFacility(fea) ?? fca.Facility;
+        if (DateTime.TryParse(El("startTime"), null, DateTimeStyles.AdjustToUniversal, out var st)) fca.Start = st;
+        if (DateTime.TryParse(El("endTime"), null, DateTimeStyles.AdjustToUniversal, out var en)) fca.End = en;
+
+        var shape = fea.Elements().FirstOrDefault(e => e.Name.LocalName is "polygon" or "line");
+        if (shape is not null)
+        {
+            fca.Shape = shape.Name.LocalName;
+            string? S(string n) => shape.Elements().FirstOrDefault(e => e.Name.LocalName == n)?.Value;
+            // Floor and ceiling are HUNDREDS of feet here, as everywhere in TFM: 120 is FL120,
+            // not 120 ft. Stored raw and converted once at the edge, because a half-converted
+            // altitude is the kind of thing that renders as a plausible number.
+            if (int.TryParse(S("floor"), out var fl)) fca.FloorFt = fl * 100;
+            if (int.TryParse(S("ceiling"), out var ce)) fca.CeilingFt = ce * 100;
+            fca.Drawing = !string.Equals(S("drawing"), "FALSE", StringComparison.OrdinalIgnoreCase);
+
+            var pts = new List<double[]>();
+            var ptsEl = shape.Elements().FirstOrDefault(e => e.Name.LocalName == "points");
+            foreach (var pt in ptsEl?.Elements().Where(e => e.Name.LocalName == "point")
+                               ?? Enumerable.Empty<XElement>())
+            {
+                var la = pt.Elements().FirstOrDefault(e => e.Name.LocalName == "latitude")?.Value;
+                var lo = pt.Elements().FirstOrDefault(e => e.Name.LocalName == "longitude")?.Value;
+                if (double.TryParse(la, NumberStyles.Any, CultureInfo.InvariantCulture, out var y)
+                    && double.TryParse(lo, NumberStyles.Any, CultureInfo.InvariantCulture, out var x))
+                    pts.Add(new[] { y, x });
+            }
+            // An empty points list never replaces geometry we already hold: an update that
+            // carries only a schedule change would otherwise erase the shape, and an FCA with no
+            // outline simply stops being drawn with nothing to say it used to be there.
+            if (pts.Count > 0) fca.Points = pts;
+        }
+        fca.LastSeen = DateTime.UtcNow;
+    }
+
+    private static string? msg_sourceFacility(XElement fea) =>
+        fea.Parent?.Attribute("sourceFacility")?.Value;
+
+    private void ProcessRestriction(XElement r)
+    {
+        string? El(string n) => r.Elements().FirstOrDefault(e => e.Name.LocalName == n)?.Value;
+        var id = El("restrictionId");
+        if (string.IsNullOrEmpty(id)) return;
+
+        // action 4 and a stop time in the past are both "this is over". Restrictions are
+        // reissued constantly, so without an expiry the map accumulates every MIT of the day.
+        var rs = _restrictions.GetOrAdd(id!, _ => new TfmsRestriction { Id = id! });
+        rs.Facility = El("facility") ?? rs.Facility;
+        rs.Element = El("restrictedNasElements") ?? rs.Element;
+        rs.Airports = El("airports") ?? rs.Airports;
+        rs.Type = El("restrictionType") ?? rs.Type;
+        rs.Category = El("restrictionCategory") ?? rs.Category;
+        rs.Reason = El("reasonText") ?? rs.Reason;
+        rs.Providing = El("providingFacility") ?? rs.Providing;
+        rs.Requesting = El("requestingFacility") ?? rs.Requesting;
+        if (int.TryParse(El("mitValue"), out var mv)) rs.Value = mv;
+        if (DateTime.TryParse(El("startTime"), null, DateTimeStyles.AdjustToUniversal, out var st)) rs.Start = st;
+        if (DateTime.TryParse(El("stopTime"), null, DateTimeStyles.AdjustToUniversal, out var sp)) rs.Stop = sp;
+        rs.LastSeen = DateTime.UtcNow;
+    }
+
     private void ProcessFiMessage(XElement msg)
     {
         var msgType = msg.Attribute("msgType")?.Value;
@@ -835,6 +927,15 @@ class TfmsBridge
                 cfg.LastSeen = DateTime.UtcNow;
             }
         }
+
+        // FXA — the FEA/FCA itself: its SHAPE, its altitude band and its schedule.
+        var feaFca = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "feaFca");
+        if (feaFca is not null) ProcessFeaFca(feaFca);
+
+        // RSTR — a published restriction (MIT, APREQ, ground stop...) against a named NAS
+        // element: a fix, an airway, a sector or an airport.
+        var rstr = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "restrictionMessage");
+        if (rstr is not null) ProcessRestriction(rstr);
 
         // TMI_FLIGHT_LIST — flights affected by a TMI
         var tmiFlightDataList = msg.Elements().FirstOrDefault(e => e.Name.LocalName == "tmiFlightDataList");
@@ -1199,6 +1300,91 @@ class TfmsBridge
         .OrderByDescending(t => t.Flights.Count)
         .Select(t => t.ToJson())
         .ToArray();
+
+    /// <summary>
+    /// The flow areas with their geometry, joined to the flight count the TMI list already
+    /// carries for the same fcaId.
+    /// </summary>
+    /// <param name="activeOnly">Drop areas outside their own published window. Default true: an
+    /// area is routinely defined days ahead, so "exists" and "in force" are different questions
+    /// and showing tomorrow's constraints as today's is a wrong answer, not extra detail.</param>
+    /// <param name="type">FEA or FCA, since the two mean different things.</param>
+    public object GetFcas(bool activeOnly = true, string? type = null)
+    {
+        var now = DateTime.UtcNow;
+        var rows = new List<object>();
+        int withShape = 0, active = 0, fea = 0, fca = 0;
+        foreach (var f in _fcas.Values)
+        {
+            if (f.ActiveAt(now)) active++;
+            if (f.Points is { Count: > 0 }) withShape++;
+            if (string.Equals(f.Type, "FEA", StringComparison.OrdinalIgnoreCase)) fea++;
+            else if (string.Equals(f.Type, "FCA", StringComparison.OrdinalIgnoreCase)) fca++;
+
+            if (activeOnly && !f.ActiveAt(now)) continue;
+            if (type is not null && !string.Equals(f.Type, type, StringComparison.OrdinalIgnoreCase)) continue;
+            // Nothing to draw. Reported in the counts rather than silently dropped, because
+            // "no areas" and "no geometry for the areas" have completely different causes.
+            if (f.Points is not { Count: > 0 }) continue;
+
+            rows.Add(new
+            {
+                id = f.FcaId,
+                name = f.Name,
+                // FEA | FCA. The client colors on this, so it is never inferred from the name.
+                type = f.Type,
+                reason = f.Reason,
+                status = f.Status,
+                facility = f.Facility,
+                shape = f.Shape,
+                floorFt = f.FloorFt,
+                ceilingFt = f.CeilingFt,
+                start = f.Start?.ToString("o"),
+                end = f.End?.ToString("o"),
+                active = f.ActiveAt(now),
+                points = f.Points,
+                flights = _tmis.TryGetValue(f.FcaId, out var t) ? t.Flights.Count : 0,
+            });
+        }
+        return new
+        {
+            ts = now.ToString("o"),
+            total = _fcas.Count,
+            active,
+            withShape,
+            fea,
+            fca,
+            returned = rows.Count,
+            areas = rows,
+        };
+    }
+
+    public object GetRestrictions(bool activeOnly = true)
+    {
+        var now = DateTime.UtcNow;
+        return new
+        {
+            ts = now.ToString("o"),
+            total = _restrictions.Count,
+            restrictions = _restrictions.Values
+                .Where(r => !activeOnly || r.ActiveAt(now))
+                .OrderBy(r => r.Element)
+                .Select(r => r.ToJson(now))
+                .ToArray(),
+        };
+    }
+
+    /// <summary>Drop areas and restrictions whose window closed well in the past. Both are
+    /// reissued constantly, so without this the map accumulates every MIT of the day.</summary>
+    public void PurgeFlow()
+    {
+        var cut = DateTime.UtcNow.AddHours(-2);
+        foreach (var kv in _fcas)
+            if ((kv.Value.End ?? kv.Value.LastSeen) < cut && kv.Value.LastSeen < cut)
+                _fcas.TryRemove(kv.Key, out _);
+        foreach (var kv in _restrictions)
+            if ((kv.Value.Stop ?? kv.Value.LastSeen) < cut) _restrictions.TryRemove(kv.Key, out _);
+    }
 
     public object? GetTmi(string fcaId)
     {
@@ -1666,6 +1852,78 @@ class TfmsSectorEntry
 {
     public string Name { get; set; } = "";
     public int? ElapsedEntryTime { get; set; }
+}
+
+/// <summary>
+/// One Flow Evaluation Area or Flow Constrained Area, with the geometry TFMS publishes for it.
+///
+/// <para><b>FEA and FCA are not the same thing</b> and arrive in the same message shape. An FEA
+/// is a traffic manager watching a volume; an FCA is a constraint. Live, FEAs outnumber FCAs, so
+/// treating the two alike paints the country with boxes that mean nothing is wrong.</para>
+/// </summary>
+class TfmsFca
+{
+    public string FcaId = "";
+    public string? Name, Reason, Type, Status, Shape, Facility;
+    public DateTime? Start, End;
+    public int? FloorFt, CeilingFt;
+    public bool Drawing = true;
+    /// <summary>[lat, lon] pairs. A polygon's ring is NOT closed by TFMS; a line is a line.</summary>
+    public List<double[]>? Points;
+    public DateTime LastSeen = DateTime.UtcNow;
+
+    /// <summary>In force right now. An area can be published days ahead of its window - the
+    /// LANNA FEA live was defined for a week - so "exists" and "active" are different
+    /// questions and a map that conflates them shows tomorrow's constraints as today's.</summary>
+    public bool ActiveAt(DateTime t) =>
+        (Start is null || t >= Start) && (End is null || t <= End);
+
+    public object ToJson(DateTime now) => new
+    {
+        id = FcaId,
+        name = Name,
+        // FEA | FCA. The client colours on this, so it is never inferred from the name.
+        type = Type,
+        reason = Reason,
+        status = Status,
+        facility = Facility,
+        shape = Shape,
+        floorFt = FloorFt,
+        ceilingFt = CeilingFt,
+        start = Start?.ToString("o"),
+        end = End?.ToString("o"),
+        active = ActiveAt(now),
+        points = Points,
+    };
+}
+
+/// <summary>A published restriction - MIT, APREQ, ground stop - against a named NAS element.</summary>
+class TfmsRestriction
+{
+    public string Id = "";
+    public string? Facility, Element, Airports, Type, Category, Reason, Providing, Requesting;
+    public int? Value;
+    public DateTime? Start, Stop;
+    public DateTime LastSeen = DateTime.UtcNow;
+
+    public bool ActiveAt(DateTime t) => (Start is null || t >= Start) && (Stop is null || t <= Stop);
+
+    public object ToJson(DateTime now) => new
+    {
+        id = Id,
+        facility = Facility,
+        element = Element,
+        airports = Airports,
+        type = Type,
+        category = Category,
+        value = Value,
+        reason = Reason,
+        providing = Providing,
+        requesting = Requesting,
+        start = Start?.ToString("o"),
+        stop = Stop?.ToString("o"),
+        active = ActiveAt(now),
+    };
 }
 
 class TfmsTmi

@@ -356,7 +356,13 @@ body.by-value .ctl .sym { color: #8b94a2; }
  * query is how you get a map that reflows correctly and still cannot be used.
  * -------------------------------------------------------------------------- */
 
-@media (max-width: 760px) {
+/* A comma is OR. The second arm is the one that was missing: a phone in
+   landscape is 844x390, so it is not "narrow" by width and every rule below
+   used to skip it, while the landscape refinements further down still applied.
+   The result was a desktop sidebar with phone-landscape overrides on it,
+   running off the bottom of the screen with no hamburger to close it. Bounded
+   at 1100px so a short but genuinely wide desktop window keeps its sidebar. */
+@media (max-width: 760px), (max-height: 540px) and (max-width: 1100px) {
     .nav-home {
         top: calc(var(--gap) + var(--sa-t));
         left: calc(var(--gap) + var(--sa-l));
@@ -451,7 +457,7 @@ body.by-value .ctl .sym { color: #8b94a2; }
 /* Landscape on a phone: ~390px of height for all of it. The sheet becomes a
    side panel, because 58% of 390px is not a card -- and the stack rejoins
    HOME's row, since the vertical space it was given no longer exists. */
-@media (max-width: 920px) and (max-height: 520px) and (orientation: landscape) {
+@media (max-width: 1100px) and (max-height: 540px) and (orientation: landscape) {
     .topstack {
         top: calc(var(--gap) + var(--sa-t));
         left: calc(108px + var(--sa-l));
@@ -459,10 +465,6 @@ body.by-value .ctl .sym { color: #8b94a2; }
     }
     .search { align-self: auto; }
     .search input { width: 240px; }
-    .ctl.open .ctl-body {
-        max-height: calc(100vh - 20px - var(--sa-t) - var(--sa-b));
-        max-height: calc(100dvh - 20px - var(--sa-t) - var(--sa-b));
-    }
     .detail {
         top: calc(var(--gap) + var(--sa-t));
         bottom: calc(var(--gap) + var(--sa-b));

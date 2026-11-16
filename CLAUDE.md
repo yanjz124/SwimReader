@@ -481,6 +481,110 @@ the 100 cap). Events alone cannot account for it. Whatever else accumulates has 
 identified; `GET /api/debug/memory` plus a gcdump taken shortly after a restart (when the heap is
 small enough to dump safely) is the way in.
 
+**Most of it was answered on 2026-11-15, and not by a gcdump** — see the two sections below. It was
+never a leak: the live heap was flat while the *uncompacted* heap tripled, because a 1 MB gen0
+budget against 100 MB/s of allocation promotes everything. What remains open is the allocation rate
+itself and a 1.2 GB LOH.
+
+### The watchdog was rebooting the box, and the load was not CPU
+
+Reported from outside as "why is it down". **12 reboots in 3 days**, all in daytime traffic, none
+overnight. The cause is one line:
+
+```
+19:01:13 watchdog[1071]: loadavg 26 10 7 is higher than the given threshold 24 18 12!
+19:02:08 watchdog[1071]: loadavg 46 19 10 ...
+19:02:18 watchdog[1071]: Retry timed-out at 65 seconds for <load-average>
+19:02:18 watchdog[1071]: shutting down the system because of error 253 = 'load average too high'
+19:02:19 systemd[1]: Received SIGTERM from PID 1071 (watchdog)
+```
+
+**`last -x reboot` shows these as CLEAN shutdowns**, because the watchdog reboots gracefully — so
+the reboot record looks exactly like somebody typing `reboot`, and reading it that way cost a round
+here. Several entries have no `shutdown` record at all, which is the hardware timer rather than the
+daemon; the daemon's own reboots are the tidy-looking ones.
+
+Ruled out by direct check, each of which would have been the obvious culprit: no OOM kill (**0**
+occurrences in the whole preceding boot), no undervoltage, no thermal throttling, no hung-task
+timeouts, nothing in the deploy log. `ReplayCompactor` looked like the answer for a while — 187
+`[REPLAY] Closed` lines land together at the hour boundary and most reboot timestamps cluster just
+past the hour — but it is single-threaded at `BelowNormal`, sleeps at least as long as each file
+took, and does not start until 20 minutes after an hour closes. Reading the code killed that theory
+faster than measuring would have.
+
+**The load average counts uninterruptible tasks.** Once SwimServer's working set squeezes the page
+cache and writeback backs up on the SD card, load climbs past 24 with nothing burning a core — the
+site was still answering requests right up to the SIGTERM. So the watchdog was converting a slow
+patch into a 90-second outage of every service on the box.
+
+Thresholds **raised, not removed**: 24/18/12 -> 80/60/40. `min-memory` and `max-temperature` stay,
+because those catch a box that is genuinely wedged rather than merely busy, and the observed peak
+was 46/19/10.
+
+Two traps in applying that, both of which bite silently:
+
+- **All three limits had to move.** The reboot line reads `loadavg 46 19 10` against `24 18 12`:
+  load5 was over its own limit too, so changing `max-load-1` alone would have changed nothing at
+  all while looking like a fix.
+- **`systemctl restart watchdog` leaves the box unsupervised.** The stop step exits 1, which fires
+  `OnFailure=wd_keepalive.service`; keepalive takes `/dev/watchdog` — so the hardware timer keeps
+  being petted and the box does *not* reset — and its start **cancels the queued start** of
+  `watchdog` ("Job for watchdog.service canceled"). `systemctl is-active watchdog` then reads
+  **inactive** while the box looks perfectly healthy and no load, memory or temperature check is
+  running. A plain `systemctl start watchdog` afterwards fixes it. Always confirm with
+  `lsof /dev/watchdog` that the holder is `watchdog` and not `wd_keepalive`.
+
+### It was never a leak: a 1 MB nursery against 100 MB/s
+
+**`dotnet-counters` attaches to the live process** — no restart, no gcdump, and it answered in 45
+seconds what "memory is still not solved" had resisted for weeks. It is already installed in
+`~/.dotnet/tools/` on the Pi; `which` does not find it, and it needs
+`DOTNET_ROOT=/home/JY/.dotnet` or it reports a *missing runtime* rather than a missing variable.
+
+| | before | after |
+|---|---|---|
+| **Gen 0 GC budget** | **1 MB** | 67 MB |
+| gen0 collections | **250 / 10 s** | **12 / 10 s** |
+| % time in GC | **41%** | **8%** |
+| time paused by GC | 1,352 ms / 10 s | 782 ms / 10 s |
+| **GC fragmentation** | **54.7%** | **14.5%** |
+| gen2 size | 3,947 MB | 2,575 MB |
+| GC committed | 4,851 MB | 4,161 MB |
+| working set | 5,330 MB | 4,586 MB |
+| process CPU | 27.9% | 17.0% |
+| allocation rate | 1,009 MB / 10 s | 906 MB / 10 s |
+
+**What separated this from a leak was a 45-minute window, not a snapshot.** `gcHeapMB` — the live
+heap — was **flat** (1,862 -> 1,918 MB) while `fragmentedMB` **tripled** (810 -> 2,206) and the
+working set climbed +23.5 MB/min. Nothing was being retained; the heap simply could not be reused.
+Three gcdumps' worth of hunting for what accumulates was looking in the wrong place.
+
+Allocating ~100 MB/s (**360 GB/h**) against a 1 MB gen0 budget is 25 collections a second, so
+objects that should die in the nursery are promoted instead, and background gen2 **sweeps but never
+compacts** — hence gen2 committing about twice its live set. The fix is one line,
+`DOTNET_GCgen0size=0x4000000` (64 MB), in a drop-in at
+`/etc/systemd/system/sfdps-eram.service.d/gc.conf`, reversible by deleting that file. Workstation
+GC, concurrent GC and `RetainVM=false` were already set correctly and were not the problem.
+
+**The shape of the fix is a sawtooth, not a lower number** — the same thing this file says about
+TBFM's lag, on a different metric. Before, the troughs rose 4,022 -> 4,610 MB across 25 minutes and
+nothing was *ever* released. After, it climbs **faster** (+56 MB/min) to a barely-changed peak and
+then **gives back 1.3 GB in a single gen2 collection** (4,404 -> 3,323 MB at 01:45) and starts
+again. Peak working set is not the win; the release is. `availMB` bottomed at **2,559 MB** against
+the ~300-700 MB that preceded each reboot.
+
+**Three things are still open and must not be read as fixed:**
+- **The LOH is 1.2 GB** and is never compacted unless asked
+  (`GCSettings.LargeObjectHeapCompactionMode = CompactOnce`). The apparent doubling from 612 MB is
+  **unattributed**: the before reading was at 1 h 05 m uptime and the after at 1 h 47 m, so there is
+  no matched-uptime comparison and the difference may be nothing but fill.
+- **100 MB/s of allocation is the root cause and is untouched.** The NAS fusion pass accounts for
+  ~5 MB/s of it (documented per phase); the rest is six XML feeds at ~940 msg/s plus the replay
+  writers, and has never been attributed the way the fusion pass was.
+- **One evening window is not a verdict.** Every reboot was in daytime traffic and none overnight,
+  when SFDPS volume halves — so 45 minutes at 02:00Z proves very little. A 13-hour watch at
+  2-minute intervals runs to `swim-watch/long-*.log` to cover the next peak.
+
 ## Feed Health (`GET /api/feed`)
 
 "Are we receiving everything SWIM sends?" is answerable rather than guessed. Per feed
@@ -2551,6 +2655,58 @@ leaving a washed-out scope and a control to go and find. Dimming works because t
 near-black (`#05070a`): less opacity is literally less basemap. A dim set by hand afterwards
 survives, and is reset only by picking another basemap (`lastBase`; the bootstrap seeds it from
 the control, or restoring a saved dim would be undone by the first call).
+
+### Mobile: three queries, because they are three different questions
+
+`/nas` reflowed at narrow widths long before it was usable on a phone, which is the trap worth
+recording: **a layout that passes a screenshot test can still be impossible to operate.**
+
+The queries are deliberately separate, and rolling them into one `max-width` is how the first
+version went wrong:
+
+| query | decides |
+|---|---|
+| `max-width: 760px` | where the panels go |
+| `pointer: coarse` | how big everything has to be |
+| `max-height: 520px and landscape` | the sheet becomes a side panel; 58% of 390px is not a card |
+
+A tablet with a trackpad wants the first and not the second; a touchscreen laptop wants the second
+and not the first.
+
+**The one that actually mattered was not layout at all.** `pick()`'s grab radius was
+`8 + 3 * size` — about **11 px** against a fingertip that covers ~9 mm, or **~34 CSS px**. Selecting
+a target on a phone was mostly luck, and no amount of reflowing fixes that. It is now
+`(touch ? 22 : 8) + 3 * size`, and `touch` comes **from the event, not from the device**: a stylus on
+a tablet still gets mouse precision, and a touchscreen laptop gets a fat radius for the finger and a
+thin one for the trackpad in the same session. `matchMedia` only seeds it; every `pointerdown`
+corrects it. The existing nearest-target tie-break is what keeps the wider radius from picking the
+wrong one of two neighbours.
+
+**`pointermove`, not `mousemove`, because it says what moved.** A tap synthesizes a `mousemove` on
+nearly every browser, so the hover readout appeared under the finger and then **stayed** — a
+touchscreen sends no `mouseleave`, so nothing was ever going to take it back down. The same
+reasoning retires `mouseleave` for `pointerleave`.
+
+**Two absolutely positioned boxes at fixed `top`s cannot be stacked.** `.bar` and `.search` were
+anchored at 8px and 44px; the bar wraps at phone width (the counts are ~48 characters on their own),
+so it was drawn straight over the search box. They are one flex column (`.topstack`) now, which
+cannot collide with itself — and the desktop geometry is unchanged because the column's own offsets
+reproduce it.
+
+Smaller things, each a real failure rather than polish:
+- **16px on the search input.** Below that, iOS Safari zooms the whole page when a text field takes
+  focus — and it zooms the *map* with it, which then has to be pinched back by hand. A `<select>`
+  never triggers it and nothing else here is a text input, so that is the only forced size.
+- **`viewport-fit=cover` plus `env(safe-area-inset-*)`**, so the map runs under the notch and the
+  home indicator while every piece of chrome comes back out. The insets are `0px` everywhere else,
+  which is why the desktop rules use the same `calc()` rather than duplicating them.
+- **`dvh` with a `vh` fallback** on the panel and the sheet, or the URL bar clips them.
+- **The gradient scale was being drawn on top of the zoom buttons** at narrow widths — a
+  pre-existing bug in the old mobile query, since bottom-left was already taken. It sits above them.
+- **A tap on empty map dismisses the sheet and the control panel.** Aiming a thumb at a 12px close
+  glyph is not a gesture, and on a mouse it matches every other map UI, so it is not touch-only.
+- **`compact()` reads the breakpoint off `#ctlToggle`'s computed `display`** rather than restating
+  760px in JS, so the number lives in exactly one place: the CSS.
 
 ### A headless probe rebooted the Pi
 

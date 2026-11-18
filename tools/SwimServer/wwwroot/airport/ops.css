@@ -232,7 +232,10 @@ i.k.tmp { background: var(--t-temp); }
 }
 .rwy:first-child { border-top: 0; padding-top: 0; }
 .rwy .rid { color: var(--value); font-size: 17px; letter-spacing: 1px; }
-.rwy .meta { font-size: 10px; color: var(--ink-2); }
+/* A grid item defaults to min-width:auto, i.e. it refuses to shrink below its own
+   content — so a long runway descriptor pushed the row wider than the panel and the
+   list scrolled sideways on a phone. Same fix as the NAS detail sheet's value cells. */
+.rwy .meta { font-size: 10px; color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
 .rwy .comp { text-align: right; font-size: 12px; white-space: nowrap; }
 .rwy .comp .h { color: var(--good); }
 .rwy .comp .h.tail { color: var(--bad); }
@@ -327,7 +330,7 @@ i.k.tmp { background: var(--t-temp); }
 /* Narrow phones and large text: the runway row's three columns stop fitting, so
    the components move under the identifier rather than being squeezed to nothing. */
 @media (max-width: 420px) {
-  .rwy { grid-template-columns: 50px 1fr; }
+  .rwy { grid-template-columns: 50px minmax(0, 1fr); }
   .rwy .comp { grid-column: 1 / -1; text-align: left; }
   .ident .id { font-size: 26px; }
 }

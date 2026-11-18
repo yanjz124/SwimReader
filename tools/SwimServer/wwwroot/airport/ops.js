@@ -135,6 +135,16 @@ async function load(id) {
         $('note').textContent = 'Could not reach the server for ' + id + '.';
         return;
     }
+    // AWC fails a fetch now and then, and the server can only serve a stale cache if it
+    // has one — on a cold process it does not, so `metar` comes back null and the whole
+    // board blanks: every value reads "--" and the age chip hides, with nothing on screen
+    // to say why. Measured on PHL: one try in three, right after a restart. Keeping the
+    // last good observation is exactly what the age chip is for; it carries its own
+    // obsTime, so it keeps ageing honestly and says how stale it has become.
+    if (!d.metar && lastData?.metar) {
+        d = { ...d, metar: lastData.metar, derived: lastData.derived, history: lastData.history };
+        $('note').textContent = '';
+    }
     render(d);
 
     // The cadence has to match the freshest thing on the page. A METAR is hourly, so a

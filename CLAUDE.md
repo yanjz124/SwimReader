@@ -3760,6 +3760,82 @@ own painted number. Over 168 ends at 18 major airports, 22 "fail" — and all 22
 LAX 06s vs 07s, ATL 08s vs 09s/10s, MCO 17s vs 18s, PHX 07s vs 08s). Zero unexplained. Re-run that
 check after touching anything here.
 
+### How old is this? — the observation chip, and ITWS where it exists
+
+Every number on this board is derived from one METAR, so its age is the single most
+important thing on the page — and it was only in the footer, which on a phone is several
+screens down. There is a chip in the header beside the flight category now: `16m ago ·
+METAR 1454Z`, **counting up once a second** rather than moving only when the poll lands,
+because an age that sits still reads as frozen, which is the doubt it exists to remove.
+Amber past ~70 min and red past ~130: a METAR is reissued hourly, so a little over an
+hour is ordinary and two hours means the station has stopped reporting.
+
+**ITWS can do minute-to-minute wind, at exactly one airport.** Measured 2026-11-18 across
+all **91** airports ITWS publishes anything for: **one (PHL)** carries the
+`Configured Alerts Product`, which is the only product in the whole feed containing an
+anemometer reading. KEWB — the field this was reported from — is not in ITWS at all.
+Widening that is a change to the queue's subscription in the FAA SCDS portal, not to this
+code, exactly as the ITWS section above already says for the dashboard's wind cards.
+
+Live at PHL, which is also the demonstration of why it is worth having:
+
+| | |
+|---|---|
+| METAR wind | **CALM** |
+| ITWS wind | **320° / 3 kt**, sampled 8 s ago |
+| validity | `ca_aw_seconds` 14:59:46 → `ca_wind_expiration_seconds` 15:00:46 — **exactly 60 s** |
+
+Three things worth keeping:
+
+- **No second parser.** `ca_aw_*` was *already* parsed server-side to feed the wind
+  history series, so `ItwsBridge.SurfaceWind` is an accessor beside that parse rather than
+  another copy of the field names — this repo has paid three times for two copies of one
+  rule. The **expiration is deliberately not added to the persisted history sample**: a
+  value that is worthless 60 s later does not belong in `wind.json`, so the current wind is
+  live state rebuilt from the feed like every other bridge. The cost is that even PHL has
+  no reading for the first minute after a restart, which the absence message accounts for.
+- **The poll follows the freshest thing on the page** — 20 s where ITWS exists, 60 s
+  otherwise. A 60 s poll against a 60 s validity window shows an expired reading about half
+  the time. It costs no extra upstream traffic: `CacheTtl` on the AWC fetch is 60 s, so the
+  cache absorbs two polls in three.
+- **Two absences are not the same absence.** The first version's message named PHL, which
+  made it a self-contradiction on PHL's own page during that first minute. It now separates
+  "waiting for this field's next message" from "this field publishes no such product", and
+  the second names no airport.
+
+**A failed fetch must not wipe a good observation.** AWC drops a METAR request now and
+then — measured on PHL at one try in three shortly after a restart. The server already
+serves a stale cache when it has one, but a cold process has none, so `metar` came back
+null, every value read `--`, and the age chip hid with nothing on screen to say why. The
+page keeps the last good observation instead; it carries its own `obsTime`, so it goes on
+ageing honestly rather than pretending there is no weather. **Found by the layout probe,
+not by a report** — PHL's chip read `--` at every viewport while KEWB's was fine.
+
+### The phone tier, and the stamping bug that would have hidden it
+
+The board had a `max-width: 780px` tier that reflowed the grid and stopped there, which is
+why it was *unusable* rather than merely cramped: the header kept its 100px left pad for
+the floating HOME button and a clock row that could not wrap, so the **UTC clock was
+clipped off the right edge**, and the readouts kept their desktop sizes, so a two-line
+value box (`4°C / 40°F`, `-1,754 ft`) was the normal case and every card was double height.
+A 560px tier sizes the values to fit on one line and gives WEATHER/REMARKS the full width;
+a 420px one moves the runway components onto their own row.
+
+Measured at 390x844, 375x667 and 360x640: horizontal scroll **0 px**, nothing offscreen,
+**0 of 14** value boxes wrapping, console clean.
+
+Two bugs the probe caught that a screenshot would not:
+- **The runway list scrolled sideways.** A grid item defaults to `min-width: auto` and so
+  refuses to shrink below its own content, so a long runway descriptor pushed the row wider
+  than its panel. Same fix as the NAS detail sheet's value cells (`min-width: 0`).
+- **`/airport` was served with `SendFileAsync` and a hand-maintained `?v=4`.** That is the
+  exact failure this file documents for `/stars`: a returning browser keeps the cached
+  `ops.css` and never sees the change, while a fresh headless browser passes every check
+  because its cache is empty. It serves through `AssetVersion.Stamp` now — verified by
+  reading the emitted tag, which is the only thing that can see it:
+  `ops.css?v=639306106617464147`. **A new page has no reason to repeat this**; `/nas`
+  already carries the same note.
+
 ### Deliberately missing
 No lightning/thunderstorm panel like the displays this is modeled on. ITWS publishes lightning but
 it is **not on our SCDS queue** (26 product types, none of them lightning), and a panel that can only

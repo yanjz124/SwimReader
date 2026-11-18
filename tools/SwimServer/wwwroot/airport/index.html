@@ -40,6 +40,9 @@
       <div class="clocks">
         <button id="themeBtn" type="button">◐ NIGHT</button>
         <div class="cat" id="hCat"></div>
+        <!-- How old the weather is, where you are already looking. It was only in the
+             METAR footer, which on a phone is several screens down. -->
+        <div class="obs" id="hObs" hidden><b id="hObsAge">--</b><span id="hObsSrc">OBS</span></div>
         <div class="clk"><b id="hZulu">--:--</b><span>UTC</span></div>
         <div class="clk"><b id="hLocal">--:--</b><span id="hLocalLbl">local</span></div>
       </div>
@@ -48,7 +51,14 @@
     <div class="grid">
       <!-- left: the numbers -->
       <div class="col readouts">
-        <div class="field wind"><label>WIND</label><div class="v" id="fWind">---</div></div>
+        <div class="field wind"><label>WIND <span class="src" id="fWindSrc"></span></label><div class="v" id="fWind">---</div></div>
+        <!-- ITWS anemometer wind: a new reading every minute, valid for 60 s. Hidden
+             unless this field actually publishes it, which (measured) is PHL alone. -->
+        <div class="field wind itws" id="fItwsWrap" hidden>
+          <label>ITWS WIND <span class="src" id="fItwsAge"></span></label>
+          <div class="v" id="fItws">---</div>
+          <div class="itws-meta" id="fItwsMeta"></div>
+        </div>
         <div class="field"><label>ALTIMETER</label><div class="v" id="fAltim">--.--</div></div>
         <div class="field"><label>DENSITY ALT</label><div class="v" id="fDensAlt">----</div></div>
         <div class="field"><label>PRESSURE ALT</label><div class="v" id="fPressAlt">----</div></div>

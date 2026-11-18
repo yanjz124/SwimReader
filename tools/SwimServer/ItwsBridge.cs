@@ -62,6 +62,13 @@ class ItwsBridge
     // ── Time-series history (last 24h) ──────────────────────────────────────
     // airport → ordered list of samples; access guarded by lock(list).
     // Each metric carries its own value shape — see History*Sample records below.
+    // The CURRENT surface wind per ITWS site, which is a different thing from the
+    // history series below: it carries the expiration, and it is not persisted.
+    // ITWS stamps each observation valid for 60 s, so a value reloaded from disk
+    // after a restart is already dead -- rebuilt from the feed, like TBFM schedules.
+    private readonly ConcurrentDictionary<string, ItwsWind> _windLatest =
+        new(StringComparer.OrdinalIgnoreCase);
+
     private readonly ConcurrentDictionary<string, List<WindHistorySample>> _windHistory =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, List<StormHistorySample>> _stormHistory =
@@ -338,6 +345,19 @@ class ItwsBridge
             int? gust = ParseInt(GetLocal(ca, "ca_aw_gust_speed"));
             var sample = new WindHistorySample(t, dir, speed, gust);
             AppendDedup(_windHistory, site, sample, s => s.T);
+
+            // Same parse, one extra field: the validity window. ITWS publishes
+            // ca_wind_expiration_seconds exactly 60 s after ca_aw_seconds, which is
+            // what makes this a minute-to-minute number rather than an hourly one.
+            _windLatest[site] = new ItwsWind(
+                Dir: dir,
+                SpeedKt: speed,
+                GustKt: gust,
+                SampledUnix: t,
+                ExpiresUnix: ParseLong(GetLocal(ca, "ca_wind_expiration_seconds")),
+                RunwayConfig: GetLocal(ca, "ca_rwy_name"),
+                LlwasImpaired: ParseInt(GetLocal(ca, "ca_llwas_impaired")) == 1,
+                RadarImpaired: ParseInt(GetLocal(ca, "ca_radar_impaired")) == 1);
         }
         else if (productType == "SM SEP TRACON Product" || productType == "SM SEP 5nm Product")
         {
@@ -661,6 +681,15 @@ class ItwsBridge
     public string? GetRawByKey(string key) =>
         _latest.TryGetValue(key, out var m) ? m.RawXml : null;
 
+    /// <summary>The current ITWS surface wind for one site, or null when that site
+    /// publishes no Configured Alerts product. That is the normal case, not a fault:
+    /// measured 2026-11-18, PHL is the ONLY site on our queue carrying it (of 91 with
+    /// any ITWS product at all), so every other airport falls back to its METAR.
+    /// Widening it is a change to the queue's subscription in the FAA SCDS portal,
+    /// not to this code.</summary>
+    public ItwsWind? SurfaceWind(string site) =>
+        _windLatest.TryGetValue(site.ToUpperInvariant(), out var w) ? w : null;
+
     /// <summary>Topic frequency table — discovery aid for new ITWS products.</summary>
     public object GetTopics() =>
         _topics
@@ -677,6 +706,36 @@ class ItwsBridge
 // Time-series sample types. Each carries an epoch-second timestamp; the
 // JSON shape is what the frontend reads, so field names matter.
 record WindHistorySample(long T, int? Dir, int? Speed, int? Gust);
+
+/// <summary>One ITWS anemometer observation. `Dir == 999` is ITWS's variable-wind
+/// sentinel, not a bearing -- rendering it raw points the arrow at 999 degrees.</summary>
+record ItwsWind(
+    int? Dir, int? SpeedKt, int? GustKt,
+    long SampledUnix, long ExpiresUnix,
+    string? RunwayConfig, bool LlwasImpaired, bool RadarImpaired)
+{
+    public bool Variable => Dir is null or 999;
+    public DateTime SampledUtc => DateTimeOffset.FromUnixTimeSeconds(SampledUnix).UtcDateTime;
+    public DateTime? ExpiresUtc => ExpiresUnix > 0
+        ? DateTimeOffset.FromUnixTimeSeconds(ExpiresUnix).UtcDateTime : null;
+
+    public object ToJson() => new
+    {
+        dirDeg = Variable ? (int?)null : Dir,
+        variable = Variable,
+        speedKt = SpeedKt,
+        gustKt = GustKt is > 0 ? GustKt : null,
+        sampled = SampledUtc,
+        ageSec = (int)(DateTime.UtcNow - SampledUtc).TotalSeconds,
+        expires = ExpiresUtc,
+        // Negative once the observation has outlived its own validity window, which
+        // is the number worth showing: "valid for 23s more" vs "expired 4s ago".
+        validForSec = ExpiresUtc is { } e ? (int)(e - DateTime.UtcNow).TotalSeconds : (int?)null,
+        runwayConfig = RunwayConfig,
+        llwasImpaired = LlwasImpaired,
+        radarImpaired = RadarImpaired,
+    };
+}
 record StormHistorySample(long T, int Count);
 record PrecipHistorySample(long T, int MaxLevel);
 

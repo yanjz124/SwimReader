@@ -62,11 +62,13 @@ function boot() {
     $('picker').hidden = true;
     $('board').hidden = false;
     load(id);
-    clearInterval(timer);
-    timer = setInterval(() => load(id), 60000);   // METARs are hourly; a minute is plenty
     setInterval(clocks, 1000);
     clocks();
 }
+
+// Last render's data, so the once-a-second tick can re-age the observation without
+// refetching. The AGE is what goes stale between polls, not the reading.
+let lastData = null;
 
 function clocks() {
     const n = new Date();
@@ -78,6 +80,49 @@ function clocks() {
             new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
                 .formatToParts(n).find(p => p.type === 'timeZoneName')?.value || 'local';
     } catch { /* label stays "local" */ }
+    tickAges();
+}
+
+// Both ages count up in real time. An observation chip that only moves when the poll
+// lands reads as frozen, which is exactly the doubt it exists to remove.
+function tickAges() {
+    const d = lastData;
+    if (!d) return;
+
+    const m = d.metar;
+    const chip = $('hObs');
+    if (m?.obsTime) {
+        const sec = (Date.now() - new Date(m.obsTime).getTime()) / 1000;
+        chip.hidden = false;
+        $('hObsAge').textContent = ago(m.obsTime);
+        $('hObsSrc').textContent = (m.type || 'METAR') + ' ' + utcHHMM(m.obsTime) + 'Z';
+        // A METAR is normally reissued hourly, so a little over an hour is ordinary and
+        // two hours means the station has stopped reporting -- which is worth saying,
+        // since every derived number on this page is only as current as this one.
+        chip.className = 'obs' + (sec > 7800 ? ' bad' : sec > 4200 ? ' warn' : '');
+    } else chip.hidden = true;
+
+    const w = d.itws?.available ? d.itws.wind : null;
+    if (w) {
+        const sec = (Date.now() - new Date(w.sampled).getTime()) / 1000;
+        $('fItwsAge').textContent = Math.round(sec) + 's ago';
+        // ITWS publishes its own expiry. Counting down to it is more honest than an age:
+        // the question is whether this reading is still valid, not how old it is.
+        const left = w.expires ? (new Date(w.expires).getTime() - Date.now()) / 1000 : null;
+        const meta = [];
+        if (left != null) meta.push(left >= 0
+            ? `valid ${Math.round(left)}s more`
+            : `expired ${Math.round(-left)}s ago`);
+        if (w.runwayConfig) meta.push(w.runwayConfig);
+        if (w.llwasImpaired) meta.push('LLWAS impaired');
+        $('fItwsMeta').textContent = meta.join(' · ');
+        $('fItwsMeta').className = 'itws-meta' + (left != null && left < 0 ? ' stale' : '');
+    }
+}
+
+function utcHHMM(iso) {
+    const d = new Date(iso), z = (x) => String(x).padStart(2, '0');
+    return z(d.getUTCHours()) + z(d.getUTCMinutes());
 }
 
 async function load(id) {
@@ -91,6 +136,14 @@ async function load(id) {
         return;
     }
     render(d);
+
+    // The cadence has to match the freshest thing on the page. A METAR is hourly, so a
+    // minute was plenty; an ITWS wind is stamped valid for exactly 60 s, so polling at
+    // 60 s guarantees showing an expired one about half the time. Re-armed per load
+    // rather than set once, because whether this field has ITWS is only known from the
+    // response.
+    clearInterval(timer);
+    timer = setInterval(() => load(id), d?.itws?.available ? 20000 : 60000);
 }
 
 // ── formatting helpers ──────────────────────────────────────────────────────
@@ -110,6 +163,7 @@ function ago(iso) {
 // ── render ──────────────────────────────────────────────────────────────────
 function render(d) {
     const a = d.airport, m = d.metar, dv = d.derived;
+    lastData = d;
 
     $('hId').textContent = a?.icao || a?.lid || d.id;
     $('hName').textContent = a?.name || d.stationName || (d.found ? '' : 'Unknown identifier');
@@ -159,6 +213,21 @@ function render(d) {
         $('fHi').textContent = Math.round(dv.windChillF) + '°F';
     } else hiWrap.hidden = true;
 
+    // ITWS one-minute wind, where the field has it at all.
+    const iw = d.itws?.available ? d.itws.wind : null;
+    $('fItwsWrap').hidden = !iw;
+    if (iw) {
+        $('fItws').textContent =
+            iw.speedKt === 0 ? 'CALM'
+            : iw.variable ? `VRB ${fmtInt(iw.speedKt)} kt`
+            : `${deg3(iw.dirDeg)}° / ${fmtInt(iw.speedKt)} kt`
+              + (iw.gustKt ? ` G${Math.round(iw.gustKt)}` : '');
+    }
+    // Label the METAR wind as a METAR wind only when something else is on screen to
+    // confuse it with; on 90 of 91 ITWS fields, and every non-ITWS one, it is the only
+    // wind there is and the qualifier would be noise.
+    $('fWindSrc').textContent = iw ? 'METAR' : '';
+
     $('mRaw').textContent = m?.raw || 'No observation available for this identifier.';
     $('mAge').textContent = m?.obsTime ? `${m.type || 'METAR'} · ${ago(m.obsTime)}` : '';
 
@@ -170,6 +239,11 @@ function render(d) {
     const notes = [];
     if (!d.runways?.length) notes.push('No NASR runway data for this identifier — the rose shows wind only.');
     notes.push('Wind and runway alignments are TRUE; runway numbers are magnetic. Components are computed from the observation above, so they are as old as it is.');
+    // Say which it is, rather than leaving the reader to wonder why one field has a
+    // second wind and theirs does not.
+    notes.push(d.itws?.available
+        ? 'ITWS wind is a live anemometer reading, republished every minute and valid for 60 s. The runway components and the rose still come from the METAR.'
+        : (d.itws?.reason || '') + ' METARs are issued hourly, with a SPECI when conditions change.');
     $('note').textContent = notes.join('  ');
 }
 

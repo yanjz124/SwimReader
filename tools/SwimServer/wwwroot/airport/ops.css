@@ -138,6 +138,25 @@ header.bhead { background: transparent; border-bottom: 1px solid var(--line); pa
 .cat.MVFR { color: var(--accent); border-color: var(--accent); }
 .cat.IFR { color: var(--bad); border-color: var(--bad); }
 .cat.LIFR { color: #b23ab2; border-color: #b23ab2; }
+/* How old the weather is. Sits with the flight category because that is the other
+   thing on this page that is a judgement rather than a number. */
+.obs {
+  text-align: right; border: 1px solid var(--line); border-radius: 4px;
+  padding: 3px 9px; background: var(--panel); box-shadow: var(--shadow);
+}
+.obs b { display: block; color: var(--value); font-size: 14px; letter-spacing: .5px; }
+.obs span { font-size: 10px; color: var(--ink-2); letter-spacing: 1px; }
+.obs.warn { border-color: var(--warn); }
+.obs.warn b { color: var(--warn); }
+.obs.bad { border-color: var(--bad); }
+.obs.bad b { color: var(--bad); }
+
+/* The source qualifier on a WIND label — only rendered when two winds are on screen. */
+.field label .src { color: var(--ink-2); letter-spacing: 1px; float: right; font-size: 9px; }
+.field.itws .v { color: var(--good); }
+.itws-meta { margin-top: 4px; font-size: 10px; color: var(--ink-2); line-height: 1.35; }
+.itws-meta.stale { color: var(--warn); }
+
 #themeBtn {
   background: var(--panel); color: var(--ink-2); border: 1px solid var(--line); border-radius: 4px;
   padding: 5px 10px; font: inherit; font-size: 11px; letter-spacing: 1.5px; cursor: pointer;
@@ -251,4 +270,64 @@ i.k.tmp { background: var(--t-temp); }
   .side { grid-template-columns: 1fr; }
   .ident .id { font-size: 26px; }
   .metar { grid-template-columns: 1fr; }
+}
+
+/* ── phone ──────────────────────────────────────────────────────────────────
+   The 780px tier reflowed the grid and stopped there, which is why this page
+   was unusable rather than merely cramped on a phone: the header kept a 100px
+   left pad for the floating HOME button and a non-wrapping clock row, so the
+   UTC clock was clipped off the right edge, and the readout values kept their
+   desktop size, so a two-line value box was the normal case.
+   ────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 560px) {
+  .wrap { padding: 10px 10px 32px; }
+
+  /* HOME floats at top-left, so give it its own band instead of paying 100px of
+     every row's width for it. */
+  header.bhead { padding: 42px 10px 10px; }
+  .bhead { flex-direction: column; align-items: stretch; gap: 10px; margin-bottom: 10px; }
+  .ident { flex-wrap: wrap; gap: 4px 10px; }
+  .ident .id { font-size: 30px; }
+  .ident .name { font-size: 13px; }
+  .ident .sub { font-size: 10px; line-height: 1.45; }
+
+  /* The row that was being cut off. Wrapping is what fixes it; the smaller clock
+     is so it usually does not have to. */
+  .clocks { flex-wrap: wrap; gap: 8px; justify-content: flex-start; }
+  .clk { text-align: left; }
+  .clk b { font-size: 15px; }
+  .obs { text-align: left; }
+
+  /* Values sized so the common ones fit on one line: "4°C / 40°F" and
+     "-1,754 ft" were both wrapping, which is what made every card tall. */
+  .readouts { gap: 6px; }
+  .field { padding: 6px 8px; }
+  .field label { font-size: 9px; letter-spacing: 1px; }
+  .field .v { font-size: 16px; letter-spacing: 0; padding: 2px 5px; }
+  .field.wind .v { font-size: 18px; }
+  .field .v.sm { font-size: 11px; }
+  /* WEATHER and REMARKS are prose; let them have the full width rather than
+     half of it with a ragged wrap. */
+  .field.wide { grid-column: 1 / -1; }
+
+  .rose-box { padding: 5px; }
+  .rose-legend { gap: 8px 12px; font-size: 10px; }
+  .panel { padding: 8px 10px; margin-bottom: 10px; }
+  .trend-legend { gap: 8px; }
+
+  .metar { padding: 8px 10px; gap: 6px; }
+  .metar .mtext { font-size: 11px; }
+  .note { font-size: 10px; }
+
+  .picker { margin: 4vh auto; }
+  .picker h1 { font-size: 20px; letter-spacing: 2px; }
+  .pick-form input { font-size: 17px; width: 130px; padding: 9px 10px; }
+}
+
+/* Narrow phones and large text: the runway row's three columns stop fitting, so
+   the components move under the identifier rather than being squeezed to nothing. */
+@media (max-width: 420px) {
+  .rwy { grid-template-columns: 50px 1fr; }
+  .rwy .comp { grid-column: 1 / -1; text-align: left; }
+  .ident .id { font-size: 26px; }
 }

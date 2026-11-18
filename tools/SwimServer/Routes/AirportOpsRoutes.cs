@@ -32,19 +32,29 @@ static class AirportOpsRoutes
 
     public static void Register(WebApplication app, ServerContext ctx)
     {
-        app.MapGet("/airport", async (HttpContext c) =>
+        // Served through AssetVersion.Stamp rather than SendFileAsync. The ?v=N in the
+        // HTML was hand-maintained, which is the failure mode this repo already paid two
+        // months for on /stars: a returning browser keeps the cached ops.css and never
+        // sees a change, while a fresh headless browser passes every check because its
+        // cache is empty. The stamp is the newest asset mtime, so it cannot rot.
+        async Task SendBoard(HttpContext c)
         {
+            var dir = Path.Combine(ctx.WebRootPath, "airport");
+            var html = await File.ReadAllTextAsync(Path.Combine(dir, "index.html"));
+            long ver = 0;
+            foreach (var f in Directory.EnumerateFiles(dir)
+                         .Where(f => f.EndsWith(".js") || f.EndsWith(".css")))
+                ver = Math.Max(ver, File.GetLastWriteTimeUtc(f).Ticks);
+            c.Response.Headers.CacheControl = "no-cache";
             c.Response.ContentType = "text/html";
-            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "airport", "index.html"));
-        });
+            await c.Response.WriteAsync(AssetVersion.Stamp(html, ver));
+        }
+
+        app.MapGet("/airport", SendBoard);
         // Route constraint, not a regex: in a route pattern a regex's {3,4} has to be written {{3,4}},
         // and getting that wrong throws at startup rather than at request time — it took the server
         // down in a restart loop. length(3,4) says the same thing with nothing to escape.
-        app.MapGet("/airport/{id:length(3,4)}", async (HttpContext c, string id) =>
-        {
-            c.Response.ContentType = "text/html";
-            await c.Response.SendFileAsync(Path.Combine(ctx.WebRootPath, "airport", "index.html"));
-        });
+        app.MapGet("/airport/{id:length(3,4)}", (HttpContext c, string id) => SendBoard(c));
 
         app.MapGet("/api/airport/{id}", async (string id) =>
         {
@@ -111,6 +121,12 @@ static class AirportOpsRoutes
                     remarks = wx.Remarks,
                 },
                 derived = wx is null ? null : Derive(wx, elevFt),
+                // ITWS one-minute anemometer wind, when this field has it. Keyed on the
+                // FAA LID because that is what ITWS publishes as its site id (PHL, not
+                // KPHL). `available:false` with a reason beats an empty card: a blank
+                // panel reads as a fault, and the real answer is that the airport is not
+                // in the alert subscription -- which is true of all but one of them.
+                itws = BuildItws(ctx, lid),
                 runways = rwys.Select(rw => new
                 {
                     id = rw.Id,
@@ -154,6 +170,27 @@ static class AirportOpsRoutes
                     }),
             }, ctx.JsonOpts);
         });
+    }
+
+    /// <summary>The ITWS surface-wind block for one field.
+    ///
+    /// Measured 2026-11-18 across all 91 airports ITWS publishes anything for: exactly
+    /// ONE (PHL) carries the Configured Alerts product, which is the only product in the
+    /// feed that contains an anemometer reading. So for every other airport this returns
+    /// a reason rather than data, and the board keeps showing the METAR -- which is an
+    /// hourly observation, and says so. Widening it is a change to the queue's
+    /// subscription in the FAA SCDS portal, not to this code.</summary>
+    private static object BuildItws(ServerContext ctx, string lid)
+    {
+        var w = ctx.Itws?.SurfaceWind(lid);
+        if (w is not null) return new { available = true, site = lid, wind = w.ToJson() };
+        return new
+        {
+            available = false,
+            site = lid,
+            reason = "No ITWS Configured Alerts product for this field — "
+                   + "only PHL carries it on this subscription.",
+        };
     }
 
     static AirportInfo? Lookup(NasrData? n, string id)

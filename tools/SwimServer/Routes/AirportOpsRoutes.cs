@@ -184,12 +184,22 @@ static class AirportOpsRoutes
     {
         var w = ctx.Itws?.SurfaceWind(lid);
         if (w is not null) return new { available = true, site = lid, wind = w.ToJson() };
+
+        // Two different absences, and naming the wrong one is worse than saying nothing.
+        // The wind is live state rebuilt from the feed, so for the ~minute after a restart
+        // even PHL has none -- and telling a PHL reader "only PHL carries it" is a
+        // self-contradiction on the one page where it matters.
+        var seen = ctx.Itws?.GetRaw("Configured Alerts Product", lid) is not null;
         return new
         {
             available = false,
             site = lid,
-            reason = "No ITWS Configured Alerts product for this field — "
-                   + "only PHL carries it on this subscription.",
+            reason = seen
+                ? "Waiting for this field's next ITWS Configured Alerts message — "
+                + "it publishes about once a minute."
+                : "This field publishes no ITWS Configured Alerts product, which is the "
+                + "only product in the feed carrying an anemometer reading. Of the 91 "
+                + "airports in the ITWS feed, one does.",
         };
     }
 
